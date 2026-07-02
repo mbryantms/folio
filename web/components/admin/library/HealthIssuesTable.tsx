@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Loader2 } from "lucide-react";
+import { ExternalLink, Loader2 } from "lucide-react";
 
 import { BackupStorageCard } from "@/components/admin/library/BackupStorageCard";
 import {
@@ -45,15 +46,45 @@ function severityVariant(s: string): "secondary" | "destructive" {
   return s === "error" ? "destructive" : "secondary";
 }
 
-function payloadSummary(kind: string, p: unknown): string {
-  if (!p || typeof p !== "object") return "";
+/** Health payloads serialize as adjacently-tagged `{kind, data: {…}}`
+ *  (see `library/health.rs::IssueKind`); the synthesized drift row is
+ *  flat. Unwrap to the field object either way — reading top-level keys
+ *  on nested payloads is why summaries used to render raw JSON
+ *  (audit UX-3). */
+function payloadFields(p: unknown): Record<string, unknown> {
+  if (!p || typeof p !== "object") return {};
   const obj = p as Record<string, unknown>;
+  if (obj.data && typeof obj.data === "object") {
+    return obj.data as Record<string, unknown>;
+  }
+  return obj;
+}
+
+function payloadSummary(kind: string, p: unknown): string {
+  const obj = payloadFields(p);
+  if (Object.keys(obj).length === 0) return "";
   const path =
     typeof obj.path === "string"
       ? obj.path
       : typeof obj.file_path === "string"
         ? obj.file_path
         : "";
+
+  // Synth drift row (writeback mode): counts, not a path — the raw JSON
+  // rendered here before.
+  if (kind === "MetadataDriftFromXml") {
+    const issues =
+      typeof obj.drifted_issue_count === "number"
+        ? obj.drifted_issue_count
+        : "?";
+    const series =
+      typeof obj.drifted_series_count === "number"
+        ? obj.drifted_series_count
+        : "?";
+    return `${issues} issue${issues === 1 ? "" : "s"} across ${series} series ${
+      issues === 1 ? "has" : "have"
+    } user edits not yet written to XML`;
+  }
 
   // Tranche A of recovery-visibility — render the structured fields
   // these new kinds carry so the operator sees the count + cause
@@ -73,19 +104,69 @@ function payloadSummary(kind: string, p: unknown): string {
     return path ? `${path} — ${suffix}` : suffix;
   }
 
-  const keys = [
-    "path",
-    "file_path",
-    "series_id",
-    "issue_id",
-    "reason",
-    "details",
-  ];
+  const keys = ["path", "file_path", "folder", "reason", "error", "details"];
+  const parts: string[] = [];
   for (const k of keys) {
     const v = obj[k];
-    if (typeof v === "string" && v.length > 0) return v;
+    if (typeof v === "string" && v.length > 0) parts.push(v);
   }
-  return JSON.stringify(p);
+  if (parts.length > 0) return parts.join(" — ");
+  return JSON.stringify(obj);
+}
+
+/** Entity refs a health payload may carry (audit UX-3). `issue_id` rides
+ *  the `/issues/{id}` permalink redirect; series ids resolve directly —
+ *  `/series/{slug}` accepts a UUID. Today the id-bearing payloads are the
+ *  synth drift row (`affected_series_ids`) and any future kind that adds
+ *  `series_id`/`issue_id`; path-only kinds render no links. */
+function payloadRefs(p: unknown): { seriesIds: string[]; issueId?: string } {
+  const obj = payloadFields(p);
+  const seriesIds: string[] = [];
+  if (typeof obj.series_id === "string") seriesIds.push(obj.series_id);
+  if (Array.isArray(obj.affected_series_ids)) {
+    for (const v of obj.affected_series_ids) {
+      if (typeof v === "string") seriesIds.push(v);
+    }
+  }
+  return {
+    seriesIds,
+    issueId: typeof obj.issue_id === "string" ? obj.issue_id : undefined,
+  };
+}
+
+/** How many series links a drift row renders before truncating with a
+ *  "+N more" note — a library-wide drift can reference hundreds. */
+const MAX_SERIES_LINKS = 5;
+
+/** Jump-to-item links for a health row's payload refs — the fix action
+ *  usually lives on the issue/series page, so hiding rows shouldn't be
+ *  the path of least resistance (audit UX-3). */
+function PayloadRefLinks({ payload }: { payload: unknown }) {
+  const refs = payloadRefs(payload);
+  if (refs.seriesIds.length === 0 && !refs.issueId) return null;
+  const linkCls =
+    "text-foreground/80 hover:text-foreground inline-flex items-center gap-1 text-xs underline-offset-2 hover:underline";
+  const shown = refs.seriesIds.slice(0, MAX_SERIES_LINKS);
+  const extra = refs.seriesIds.length - shown.length;
+  return (
+    <span className="mt-1 flex flex-wrap gap-3">
+      {refs.issueId ? (
+        <Link href={`/issues/${refs.issueId}`} className={linkCls}>
+          <ExternalLink className="size-3" aria-hidden="true" />
+          View issue
+        </Link>
+      ) : null}
+      {shown.map((id, i) => (
+        <Link key={id} href={`/series/${id}`} className={linkCls}>
+          <ExternalLink className="size-3" aria-hidden="true" />
+          {shown.length > 1 ? `View series ${i + 1}` : "View series"}
+        </Link>
+      ))}
+      {extra > 0 ? (
+        <span className="text-muted-foreground text-xs">+{extra} more</span>
+      ) : null}
+    </span>
+  );
 }
 
 export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
@@ -145,8 +226,9 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
         id: "summary",
         header: "Summary",
         cell: ({ row }) => (
-          <span className="text-muted-foreground block text-xs leading-relaxed whitespace-normal wrap-anywhere">
+          <span className="text-muted-foreground block text-xs leading-relaxed wrap-anywhere whitespace-normal">
             {payloadSummary(row.original.kind, row.original.payload)}
+            <PayloadRefLinks payload={row.original.payload} />
           </span>
         ),
       },

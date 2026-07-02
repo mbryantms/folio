@@ -481,3 +481,27 @@ body {
     animation: none;
   }
 }
+
+/* Global reduced-motion reset (audit UX-5).
+ *
+ * Individual surfaces (reader page-turn, selection toolbar, Radix
+ * primitives) already gate their animations, but the long tail —
+ * `animate-pulse` skeletons (~40 consumers), `animate-spin` loaders,
+ * hover transitions — spun regardless of the OS preference. One
+ * app-wide rule covers them all.
+ *
+ * Durations are forced to 0.01ms rather than `animation: none` so any
+ * JS waiting on animationend/transitionend (Radix exit-animation
+ * presence detection, the reader's page-swap timer) still fires —
+ * everything becomes an instant swap instead of silently never
+ * completing. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

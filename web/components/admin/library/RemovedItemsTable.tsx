@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { Loader2 } from "lucide-react";
 
 import {
   AlertDialog,
@@ -24,33 +25,53 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useRemovedItems } from "@/lib/api/queries";
-import { useConfirmIssueRemoval, useRestoreIssue } from "@/lib/api/mutations";
-import type { RemovedIssueView } from "@/lib/api/types";
+import { useRemovedItemsInfinite } from "@/lib/api/queries";
+import {
+  useConfirmIssueRemoval,
+  useRestoreIssue,
+  useRestoreSeries,
+} from "@/lib/api/mutations";
+import type { RemovedIssueView, RemovedSeriesView } from "@/lib/api/types";
 
-type HideAction = { type: "hide" | "rollback"; issueId: string };
+type HideAction = { type: "hide" | "rollback"; id: string };
 
 export function RemovedItemsTable({ libraryId }: { libraryId: string }) {
-  const { data, isLoading, error } = useRemovedItems(libraryId);
+  // Cursor-paginated (audit UX-11): a bulk removal can strand thousands of
+  // issue rows; the old one-shot query loaded them all at once. Removed
+  // series + the total ride on the first page.
+  const {
+    data,
+    isLoading,
+    error,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useRemovedItemsInfinite(libraryId);
   const restore = useRestoreIssue(libraryId);
+  const restoreSeries = useRestoreSeries(libraryId);
   const confirmRemoval = useConfirmIssueRemoval(libraryId);
 
   // Optimistic hide set — items the user just acted on are hidden
   // immediately; the query invalidation drops them from `data` shortly.
   // On mutation failure we roll the item back into view (D7) so a failed
-  // restore/confirm doesn't make the row silently vanish.
+  // restore/confirm doesn't make the row silently vanish. Issue ids
+  // (content hashes) and series ids (UUIDs) can share the set safely.
   const [hidden, dispatch] = React.useReducer(
     (acc: Set<string>, action: HideAction): Set<string> => {
       const next = new Set(acc);
-      if (action.type === "hide") next.add(action.issueId);
-      else next.delete(action.issueId);
+      if (action.type === "hide") next.add(action.id);
+      else next.delete(action.id);
       return next;
     },
     new Set<string>(),
   );
 
-  const visibleIssues = (data?.issues ?? []).filter((i) => !hidden.has(i.id));
-  const visibleSeries = data?.series ?? [];
+  const allIssues = data?.pages.flatMap((p) => p.issues) ?? [];
+  const totalIssues = data?.pages[0]?.total_issues ?? allIssues.length;
+  const visibleIssues = allIssues.filter((i) => !hidden.has(i.id));
+  const visibleSeries = (data?.pages[0]?.series ?? []).filter(
+    (s) => !hidden.has(s.id),
+  );
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
   if (error) return <p className="text-destructive text-sm">{error.message}</p>;
@@ -68,7 +89,10 @@ export function RemovedItemsTable({ libraryId }: { libraryId: string }) {
       {visibleIssues.length > 0 ? (
         <section className="space-y-2">
           <h3 className="text-muted-foreground text-xs font-semibold tracking-widest uppercase">
-            Issues
+            Issues{" "}
+            <span className="font-normal tracking-normal">
+              ({totalIssues.toLocaleString()})
+            </span>
           </h3>
           <div className="border-border bg-card rounded-md border">
             <Table>
@@ -86,22 +110,28 @@ export function RemovedItemsTable({ libraryId }: { libraryId: string }) {
                     key={issue.id}
                     issue={issue}
                     onRestore={() => {
-                      dispatch({ type: "hide", issueId: issue.id });
+                      dispatch({ type: "hide", id: issue.id });
                       restore.mutate(
-                        { issueId: issue.id },
+                        {
+                          seriesSlug: issue.series_slug,
+                          issueSlug: issue.slug,
+                        },
                         {
                           onError: () =>
-                            dispatch({ type: "rollback", issueId: issue.id }),
+                            dispatch({ type: "rollback", id: issue.id }),
                         },
                       );
                     }}
                     onConfirm={() => {
-                      dispatch({ type: "hide", issueId: issue.id });
+                      dispatch({ type: "hide", id: issue.id });
                       confirmRemoval.mutate(
-                        { issueId: issue.id },
+                        {
+                          seriesSlug: issue.series_slug,
+                          issueSlug: issue.slug,
+                        },
                         {
                           onError: () =>
-                            dispatch({ type: "rollback", issueId: issue.id }),
+                            dispatch({ type: "rollback", id: issue.id }),
                         },
                       );
                     }}
@@ -110,6 +140,26 @@ export function RemovedItemsTable({ libraryId }: { libraryId: string }) {
               </TableBody>
             </Table>
           </div>
+          {hasNextPage ? (
+            <div className="flex justify-center pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void fetchNextPage()}
+                disabled={isFetchingNextPage}
+              >
+                {isFetchingNextPage ? (
+                  <>
+                    <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                    Loading more…
+                  </>
+                ) : (
+                  "Load more"
+                )}
+              </Button>
+            </div>
+          ) : null}
         </section>
       ) : null}
       {visibleSeries.length > 0 ? (
@@ -125,28 +175,25 @@ export function RemovedItemsTable({ libraryId }: { libraryId: string }) {
                   <TableHead>Folder</TableHead>
                   <TableHead>Removed at</TableHead>
                   <TableHead>State</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {visibleSeries.map((s) => (
-                  <TableRow key={s.id}>
-                    <TableCell className="font-medium">{s.name}</TableCell>
-                    <TableCell className="text-muted-foreground font-mono text-xs [overflow-wrap:anywhere]">
-                      {s.folder_path ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-xs">
-                      {new Date(s.removed_at).toLocaleString()}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          s.removal_confirmed_at ? "destructive" : "secondary"
-                        }
-                      >
-                        {s.removal_confirmed_at ? "Confirmed" : "Soft-deleted"}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
+                  <SeriesRow
+                    key={s.id}
+                    series={s}
+                    onRestore={() => {
+                      dispatch({ type: "hide", id: s.id });
+                      restoreSeries.mutate(
+                        { seriesSlug: s.slug },
+                        {
+                          onError: () =>
+                            dispatch({ type: "rollback", id: s.id }),
+                        },
+                      );
+                    }}
+                  />
                 ))}
               </TableBody>
             </Table>
@@ -169,9 +216,7 @@ function IssueRow({
   return (
     <TableRow>
       <TableCell className="font-mono text-xs">
-        <span className="block max-w-xl [overflow-wrap:anywhere]">
-          {issue.file_path}
-        </span>
+        <span className="block max-w-xl wrap-anywhere">{issue.file_path}</span>
       </TableCell>
       <TableCell className="text-muted-foreground text-xs">
         {new Date(issue.removed_at).toLocaleString()}
@@ -199,7 +244,7 @@ function IssueRow({
                 <AlertDialogTitle>Confirm permanent removal?</AlertDialogTitle>
                 <AlertDialogDescription>
                   This marks{" "}
-                  <span className="font-mono [overflow-wrap:anywhere]">
+                  <span className="font-mono wrap-anywhere">
                     {issue.file_path}
                   </span>{" "}
                   permanently removed. The original file is unaffected; only
@@ -215,6 +260,41 @@ function IssueRow({
             </AlertDialogContent>
           </AlertDialog>
         ) : null}
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function SeriesRow({
+  series,
+  onRestore,
+}: {
+  series: RemovedSeriesView;
+  onRestore: () => void;
+}) {
+  return (
+    <TableRow>
+      <TableCell className="font-medium">{series.name}</TableCell>
+      <TableCell className="text-muted-foreground font-mono text-xs wrap-anywhere">
+        {series.folder_path ?? "—"}
+      </TableCell>
+      <TableCell className="text-muted-foreground text-xs">
+        {new Date(series.removed_at).toLocaleString()}
+      </TableCell>
+      <TableCell>
+        <Badge
+          variant={series.removal_confirmed_at ? "destructive" : "secondary"}
+        >
+          {series.removal_confirmed_at ? "Confirmed" : "Soft-deleted"}
+        </Badge>
+      </TableCell>
+      <TableCell className="text-right">
+        {/* Restores the series row plus any of its issues whose files are
+            back on disk; the server 409s while the folder is still missing
+            (audit UX-11). */}
+        <Button size="sm" variant="ghost" onClick={onRestore}>
+          Restore
+        </Button>
       </TableCell>
     </TableRow>
   );

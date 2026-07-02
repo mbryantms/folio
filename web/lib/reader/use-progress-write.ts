@@ -48,6 +48,13 @@ const PROGRESS_DEBOUNCE_MS = 300;
 export function useReaderProgressWrite(opts: {
   issueId: string;
   currentPage: number;
+  /** The issue's server-side resume page — seeds the monotonic
+   *  high-water mark. NOT `currentPage`: the reader store re-seeds
+   *  asynchronously on an in-place issue change (end-of-issue nav), so
+   *  `currentPage` still holds the previous issue's page when `issueId`
+   *  flips, and seeding from it clamped the new issue's progress to the
+   *  old issue's page (CQ-TS-3 stale-closure audit). */
+  initialPage: number;
   totalPages: number;
   incognito: boolean;
   /**
@@ -59,19 +66,28 @@ export function useReaderProgressWrite(opts: {
    */
   monotonic?: boolean;
 }): void {
-  const { issueId, currentPage, totalPages, incognito, monotonic = false } =
-    opts;
+  const {
+    issueId,
+    currentPage,
+    initialPage,
+    totalPages,
+    incognito,
+    monotonic = false,
+  } = opts;
   const qc = useQueryClient();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The body the debounce timer would send, kept in a ref so the
   // pagehide flush can post it even though the timer hasn't fired.
   const pendingBody = useRef<Record<string, unknown> | null>(null);
-  // High-water mark for the monotonic guard. Seeded from the first
-  // (resumed) page; reset when the issue changes.
-  const highWater = useRef(currentPage);
+  // High-water mark for the monotonic guard. Seeded from the resume
+  // page; reset when the issue changes.
+  const highWater = useRef(initialPage);
   useEffect(() => {
-    highWater.current = currentPage;
+    highWater.current = initialPage;
     // Only reset on issue change — seeding the new issue's resume page.
+    // `initialPage` is a property of the issue, so it rides along with
+    // the `issueId` flip; re-running on other dep changes would defeat
+    // the ratchet.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [issueId]);
 

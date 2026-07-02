@@ -227,6 +227,9 @@ pub struct PageQuery {
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
     pub q: Option<String>,
+    /// 1-based page (UX-10): search paginates like `series_list`/`browse`
+    /// instead of hard-capping at PAGE_SIZE results.
+    pub page: Option<u64>,
 }
 
 /// Query parameters for `/opds/v1/browse` (M4 of opds-richer-feeds).
@@ -1310,17 +1313,37 @@ async fn search(
     // multi-term (each word must appear in the name), so "uncanny avengers"
     // matches "Uncanny Avengers". Returns matched series as acquisition links
     // pointing at the per-series feed.
+    //
+    // Paginated (audit UX-10): the old hard cap of PAGE_SIZE results with no
+    // pagination rels silently truncated large-library searches in KOReader /
+    // Panels — a violation of the no-silent-truncation invariant on an
+    // external-client surface. Same count + offset + `paginate_links` dance
+    // as `series_list`.
     use crate::util::search::{col_ilike, ilike_pattern};
-    let mut sel = series::Entity::find()
-        .order_by_asc(series::Column::Name)
-        .limit(PAGE_SIZE);
+    let page = q.page.unwrap_or(1).max(1);
+    let offset = (page - 1) * PAGE_SIZE;
+
+    let mut count_sel = series::Entity::find();
+    for token in needle.split_whitespace() {
+        count_sel = count_sel.filter(col_ilike(series::Column::Name, &ilike_pattern(token)));
+    }
+    if let Some(ids) = allowed.as_ref() {
+        count_sel = count_sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    }
+    let total = match count_sel.count(&app.db).await {
+        Ok(n) => n,
+        Err(e) => return server_error(e.to_string()),
+    };
+    let total_pages = total.div_ceil(PAGE_SIZE).max(1);
+
+    let mut sel = series::Entity::find().order_by_asc(series::Column::Name);
     for token in needle.split_whitespace() {
         sel = sel.filter(col_ilike(series::Column::Name, &ilike_pattern(token)));
     }
     if let Some(ids) = allowed.as_ref() {
         sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
     }
-    let rows = match sel.all(&app.db).await {
+    let rows = match sel.offset(offset).limit(PAGE_SIZE).all(&app.db).await {
         Ok(r) => r,
         Err(e) => return server_error(e.to_string()),
     };
@@ -1336,21 +1359,28 @@ async fn search(
         entries.push_str(&render_series_subsection_entry(s, cover, f));
     }
 
+    let base_href = format!("/opds/v1/search?q={}", url_escape(needle));
+    let self_href = if page > 1 {
+        format!("{base_href}&page={page}")
+    } else {
+        base_href.clone()
+    };
     let body = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">
   <id>urn:search:{needle_escaped}</id>
   <title>Search — {needle_escaped}</title>
   <updated>{now}</updated>
-  <link rel="self" href="/opds/v1/search?q={needle_url}" type="{acq}"/>
+  <link rel="self" href="{self_href}" type="{acq}"/>
   <link rel="up" href="/opds/v1" type="{nav}"/>
-{entries}</feed>
+{pagination}{entries}</feed>
 "#,
         needle_escaped = xml_escape(needle),
-        needle_url = url_escape(needle),
+        self_href = xml_escape(&self_href),
         now = now,
         acq = ACQ_CT,
         nav = NAV_CT,
+        pagination = paginate_links(&base_href, page, total_pages),
     );
     atom(body)
 }
@@ -2586,9 +2616,15 @@ fn paginate_links(base_href: &str, page: u64, total_pages: u64) -> String {
     let mut out = String::new();
     // Handle bases that already carry a query string (M4 browse
     // feeds pass `/opds/v1/browse?status=continuing` to preserve
-    // the facet selection across pages). Append with `&` if a `?`
-    // is already present, `?` otherwise.
-    let sep = if base_href.contains('?') { '&' } else { '?' };
+    // the facet selection across pages; UX-10 search passes
+    // `/opds/v1/search?q=…`). Append with `&` if a `?` is already
+    // present, `?` otherwise — as `&amp;`, since these land inside
+    // XML attribute values where a bare `&` is invalid.
+    let sep = if base_href.contains('?') {
+        "&amp;"
+    } else {
+        "?"
+    };
     let push = |out: &mut String, rel: &str, p: u64| {
         out.push_str(&format!(
             "  <link rel=\"{rel}\" href=\"{base_href}{sep}page={p}\" type=\"{ACQ_CT}\"/>\n",

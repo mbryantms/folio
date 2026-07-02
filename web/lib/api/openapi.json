@@ -4098,6 +4098,24 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4110,6 +4128,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "invalid cursor"
           },
           "403": {
             "description": "admin only"
@@ -9466,6 +9487,35 @@
         }
       }
     },
+    "/api/series/{slug}/restore": {
+      "post": {
+        "operationId": "reconcile_restore_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "restored"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series not found"
+          },
+          "409": {
+            "description": "series is not removed, or its folder is still missing on disk"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/resume": {
       "get": {
         "operationId": "series_resume",
@@ -9581,6 +9631,29 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/issues/{id}": {
+      "get": {
+        "operationId": "issue_permalink",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "redirect to the canonical issue URL"
+          },
+          "404": {
+            "description": "issue not found or not visible"
           }
         }
       }
@@ -18822,6 +18895,11 @@
           "post_scan_thumbs",
           "post_scan_search",
           "post_scan_dictionary",
+          "metadata_search_series",
+          "metadata_search_issue",
+          "metadata_apply_series",
+          "metadata_apply_issue",
+          "rewrite_issue_sidecars",
           "archive_edit",
           "backfill",
           "total"
@@ -18837,6 +18915,24 @@
             "format": "int64",
             "description": "Pending backfill drains (cover-phash / variant-cover; B17)."
           },
+          "metadata_apply_issue": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "metadata_apply_series": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pending provider metadata applies (series + issue scope; UX-16)."
+          },
+          "metadata_search_issue": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "metadata_search_series": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pending provider metadata searches (series + issue scope; UX-16)."
+          },
           "post_scan_dictionary": {
             "type": "integer",
             "format": "int64"
@@ -18848,6 +18944,11 @@
           "post_scan_thumbs": {
             "type": "integer",
             "format": "int64"
+          },
+          "rewrite_issue_sidecars": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pending sidecar-XML rewrite jobs (writeback path; UX-16)."
           },
           "scan": {
             "type": "integer",
@@ -19554,11 +19655,28 @@
               "$ref": "#/components/schemas/RemovedIssueView"
             }
           },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cursor for the next page of `issues`; `None` on the last page."
+          },
           "series": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/RemovedSeriesView"
-            }
+            },
+            "description": "Complete on the first page (cursor absent); empty on subsequent\npages. Removed-series counts are small (one row per folder), so\nthey don't paginate — only the per-file issue list does."
+          },
+          "total_issues": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Total removed-issue count. First page only, mirroring the\n`CursorPage::total` convention.",
+            "minimum": 0
           }
         }
       },

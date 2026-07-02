@@ -27,6 +27,7 @@ pub mod form_or_json;
 pub mod health;
 pub mod health_issues;
 pub mod issue_ocr;
+pub mod issue_permalink;
 pub mod issues;
 pub mod komga_compat;
 pub mod libraries;

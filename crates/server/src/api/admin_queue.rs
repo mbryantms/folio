@@ -58,6 +58,14 @@ pub struct QueueDepthView {
     pub post_scan_thumbs: i64,
     pub post_scan_search: i64,
     pub post_scan_dictionary: i64,
+    /// Pending provider metadata searches (series + issue scope; UX-16).
+    pub metadata_search_series: i64,
+    pub metadata_search_issue: i64,
+    /// Pending provider metadata applies (series + issue scope; UX-16).
+    pub metadata_apply_series: i64,
+    pub metadata_apply_issue: i64,
+    /// Pending sidecar-XML rewrite jobs (writeback path; UX-16).
+    pub rewrite_issue_sidecars: i64,
     /// Pending archive page-edit jobs (single + bulk; M7).
     pub archive_edit: i64,
     /// Pending backfill drains (cover-phash / variant-cover; B17).
@@ -637,27 +645,65 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
     let mut thumbs = app.jobs.post_scan_thumbs_storage.clone();
     let mut search = app.jobs.post_scan_search_storage.clone();
     let mut dictionary = app.jobs.post_scan_dictionary_storage.clone();
+    let mut md_search_series = app.jobs.metadata_search_series_storage.clone();
+    let mut md_search_issue = app.jobs.metadata_search_issue_storage.clone();
+    let mut md_apply_series = app.jobs.metadata_apply_series_storage.clone();
+    let mut md_apply_issue = app.jobs.metadata_apply_issue_storage.clone();
+    let mut sidecars = app.jobs.rewrite_issue_sidecars_storage.clone();
     let mut archive_edit = app.jobs.archive_edit_storage.clone();
     let mut backfill = app.jobs.backfill_storage.clone();
 
-    let (scan_n, scan_series_n, thumbs_n, search_n, dictionary_n, archive_edit_n, backfill_n) = tokio::try_join!(
+    let (
+        scan_n,
+        scan_series_n,
+        thumbs_n,
+        search_n,
+        dictionary_n,
+        md_search_series_n,
+        md_search_issue_n,
+        md_apply_series_n,
+        md_apply_issue_n,
+        sidecars_n,
+        archive_edit_n,
+        backfill_n,
+    ) = tokio::try_join!(
         scan.len(),
         scan_series.len(),
         thumbs.len(),
         search.len(),
         dictionary.len(),
+        md_search_series.len(),
+        md_search_issue.len(),
+        md_apply_series.len(),
+        md_apply_issue.len(),
+        sidecars.len(),
         archive_edit.len(),
         backfill.len(),
     )?;
 
-    let total =
-        scan_n + scan_series_n + thumbs_n + search_n + dictionary_n + archive_edit_n + backfill_n;
+    let total = scan_n
+        + scan_series_n
+        + thumbs_n
+        + search_n
+        + dictionary_n
+        + md_search_series_n
+        + md_search_issue_n
+        + md_apply_series_n
+        + md_apply_issue_n
+        + sidecars_n
+        + archive_edit_n
+        + backfill_n;
     Ok(QueueDepthView {
         scan: scan_n,
         scan_series: scan_series_n,
         post_scan_thumbs: thumbs_n,
         post_scan_search: search_n,
         post_scan_dictionary: dictionary_n,
+        metadata_search_series: md_search_series_n,
+        metadata_search_issue: md_search_issue_n,
+        metadata_apply_series: md_apply_series_n,
+        metadata_apply_issue: md_apply_issue_n,
+        rewrite_issue_sidecars: sidecars_n,
         archive_edit: archive_edit_n,
         backfill: backfill_n,
         total,

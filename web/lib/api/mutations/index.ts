@@ -729,10 +729,35 @@ export function useDismissHealthIssue(libraryId: string) {
 
 export function useRestoreIssue(libraryId: string) {
   const qc = useQueryClient();
-  return useApiMutation<null, { issueId: string }>(
-    ({ issueId }) => ({ path: `/issues/${issueId}/restore`, method: "POST" }),
+  // Slug-addressed (UX-11 fix): the server route is
+  // `/series/{series_slug}/issues/{issue_slug}/restore` — the old
+  // id-based path never existed and every restore 404ed.
+  return useApiMutation<null, { seriesSlug: string; issueSlug: string }>(
+    ({ seriesSlug, issueSlug }) => ({
+      path: `/series/${seriesSlug}/issues/${issueSlug}/restore`,
+      method: "POST",
+    }),
     {
       successMessage: "Issue restored",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.removed(libraryId) });
+      },
+    },
+  );
+}
+
+/** `POST /series/{slug}/restore` — restore a soft-removed series and any of
+ *  its issues whose files are back on disk (audit UX-11). 409s while the
+ *  folder is still missing. */
+export function useRestoreSeries(libraryId: string) {
+  const qc = useQueryClient();
+  return useApiMutation<null, { seriesSlug: string }>(
+    ({ seriesSlug }) => ({
+      path: `/series/${seriesSlug}/restore`,
+      method: "POST",
+    }),
+    {
+      successMessage: "Series restored",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.removed(libraryId) });
       },
@@ -817,9 +842,10 @@ export function usePurgeDeadJobs() {
 
 export function useConfirmIssueRemoval(libraryId: string) {
   const qc = useQueryClient();
-  return useApiMutation<null, { issueId: string }>(
-    ({ issueId }) => ({
-      path: `/issues/${issueId}/confirm-removal`,
+  // Slug-addressed (UX-11 fix) — same route mismatch as `useRestoreIssue`.
+  return useApiMutation<null, { seriesSlug: string; issueSlug: string }>(
+    ({ seriesSlug, issueSlug }) => ({
+      path: `/series/${seriesSlug}/issues/${issueSlug}/confirm-removal`,
       method: "POST",
     }),
     {
