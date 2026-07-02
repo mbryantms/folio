@@ -238,26 +238,47 @@ pub async fn reconcile_series(
 ) -> anyhow::Result<()> {
     let now = Utc::now().fixed_offset();
 
+    // PERF-9: project to the 5 columns this reconcile actually reads instead of
+    // loading full issue rows (with the large `comic_info_raw` blob) just to
+    // check file existence — this runs on the file-watch / per-issue-scan hot
+    // path. The sibling `reconcile_series_seen` already uses this projection.
     let issues = IssueEntity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
+        .select_only()
+        .columns([
+            issue::Column::Id,
+            issue::Column::FilePath,
+            issue::Column::SeriesId,
+            issue::Column::Slug,
+            issue::Column::RemovedAt,
+        ])
+        .into_model::<ReconcileIssue>()
         .all(db)
         .await?;
 
     for row in issues {
         let path = Path::new(&row.file_path);
         let exists = path.exists();
+        // Build a targeted ActiveModel from the id so only the two flipped
+        // columns are written (a projected row can't `.into()` a full model).
         match (row.removed_at.is_some(), exists) {
             (false, false) => {
-                let mut am: issue::ActiveModel = row.into();
-                am.removed_at = Set(Some(now));
-                am.removal_confirmed_at = Set(None);
+                let am = issue::ActiveModel {
+                    id: Set(row.id.clone()),
+                    removed_at: Set(Some(now)),
+                    removal_confirmed_at: Set(None),
+                    ..Default::default()
+                };
                 am.update(db).await?;
                 stats.issues_removed += 1;
             }
             (true, true) => {
-                let mut am: issue::ActiveModel = row.into();
-                am.removed_at = Set(None);
-                am.removal_confirmed_at = Set(None);
+                let am = issue::ActiveModel {
+                    id: Set(row.id.clone()),
+                    removed_at: Set(None),
+                    removal_confirmed_at: Set(None),
+                    ..Default::default()
+                };
                 am.update(db).await?;
                 stats.issues_restored += 1;
             }
@@ -441,35 +462,65 @@ async fn mark_empty_series_removed(
     stats: &mut ScanStats,
     events: &mut EventCollector,
 ) -> anyhow::Result<()> {
-    for series_id in series_ids {
-        let any_active = IssueEntity::find()
-            .filter(issue::Column::SeriesId.eq(series_id))
-            .filter(issue::Column::RemovedAt.is_null())
-            .one(db)
-            .await?
-            .is_some();
-        if !any_active {
-            let res = series::Entity::update_many()
-                .col_expr(series::Column::RemovedAt, Expr::value(now))
-                .col_expr(
-                    series::Column::RemovalConfirmedAt,
-                    Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
-                )
-                .filter(series::Column::Id.eq(series_id))
-                .filter(series::Column::RemovedAt.is_null())
-                .exec(db)
-                .await?;
-            stats.series_removed += res.rows_affected;
-            // Only fire when we actually flipped the row (not already removed).
-            if res.rows_affected > 0 {
-                events.record(
-                    Category::Series,
-                    Action::Removed,
-                    Severity::Warning,
-                    format!("Removed empty series {series_id}"),
-                );
-            }
-        }
+    let all_ids: Vec<Uuid> = series_ids.into_iter().collect();
+    if all_ids.is_empty() {
+        return Ok(());
+    }
+
+    // PERF-7: one grouped probe for "which of these series still have an active
+    // issue?" instead of a per-series `.one()` (N+1 by series count).
+    let has_active: HashSet<Uuid> = IssueEntity::find()
+        .select_only()
+        .column(issue::Column::SeriesId)
+        .filter(issue::Column::SeriesId.is_in(all_ids.clone()))
+        .filter(issue::Column::RemovedAt.is_null())
+        .distinct()
+        .into_tuple::<Uuid>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect();
+
+    // The now-empty series among the input. Narrow to the ones still active
+    // (not already soft-deleted) so `stats`/events count only real flips — the
+    // same "don't fire when already removed" semantics the per-row path had.
+    let empty: Vec<Uuid> = all_ids
+        .into_iter()
+        .filter(|id| !has_active.contains(id))
+        .collect();
+    if empty.is_empty() {
+        return Ok(());
+    }
+    let to_flip: Vec<Uuid> = series::Entity::find()
+        .select_only()
+        .column(series::Column::Id)
+        .filter(series::Column::Id.is_in(empty))
+        .filter(series::Column::RemovedAt.is_null())
+        .into_tuple::<Uuid>()
+        .all(db)
+        .await?;
+    if to_flip.is_empty() {
+        return Ok(());
+    }
+
+    // One batched soft-delete for every newly-empty series.
+    series::Entity::update_many()
+        .col_expr(series::Column::RemovedAt, Expr::value(now))
+        .col_expr(
+            series::Column::RemovalConfirmedAt,
+            Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
+        )
+        .filter(series::Column::Id.is_in(to_flip.clone()))
+        .exec(db)
+        .await?;
+    stats.series_removed += to_flip.len() as u64;
+    for series_id in to_flip {
+        events.record(
+            Category::Series,
+            Action::Removed,
+            Severity::Warning,
+            format!("Removed empty series {series_id}"),
+        );
     }
     Ok(())
 }
