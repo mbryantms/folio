@@ -893,59 +893,109 @@ pub async fn bulk_add_members(
     let mut invalid: u32 = 0;
     let now = Utc::now().fixed_offset();
 
+    // PERF-1: validate existence in two batched queries instead of ~2 per
+    // member. The pre-fix loop ran a per-member `count()` for the series *and*
+    // issue kinds, so a 500-member add cost up to ~1000 round-trips. We still
+    // insert per-row below — the two partial-unique indexes
+    // (`collection_entries_{series,issue}_uniq`, each `WHERE … IS NOT NULL`)
+    // can't be expressed as an `insert_many` ON CONFLICT target, so the proven
+    // per-row unique-violation handling stays.
+    struct Candidate {
+        entry_kind: String,
+        series_id: Option<Uuid>,
+        issue_id: Option<String>,
+    }
+    let mut candidates: Vec<Candidate> = Vec::with_capacity(req.members.len());
+    let mut want_series: Vec<Uuid> = Vec::new();
+    let mut want_issues: Vec<String> = Vec::new();
     for member in req.members {
-        let (series_id, issue_id) = match member.entry_kind.as_str() {
+        match member.entry_kind.as_str() {
             ENTRY_KIND_SERIES => match Uuid::parse_str(&member.ref_id) {
-                Ok(uid) => (Some(uid), None),
-                Err(_) => {
-                    invalid += 1;
-                    continue;
+                Ok(uid) => {
+                    want_series.push(uid);
+                    candidates.push(Candidate {
+                        entry_kind: member.entry_kind,
+                        series_id: Some(uid),
+                        issue_id: None,
+                    });
                 }
+                Err(_) => invalid += 1,
             },
             ENTRY_KIND_ISSUE => {
                 if member.ref_id.is_empty() || member.ref_id.len() > 128 {
                     invalid += 1;
-                    continue;
+                } else {
+                    want_issues.push(member.ref_id.clone());
+                    candidates.push(Candidate {
+                        entry_kind: member.entry_kind,
+                        series_id: None,
+                        issue_id: Some(member.ref_id),
+                    });
                 }
-                (None, Some(member.ref_id.clone()))
             }
-            _ => {
-                invalid += 1;
-                continue;
-            }
-        };
+            _ => invalid += 1,
+        }
+    }
 
-        // Existence check before the insert — gives `not_found`
-        // separation from the partial-unique `already_present` case
-        // below.
-        if let Some(sid) = series_id {
-            let exists = series::Entity::find_by_id(sid)
-                .count(&app.db)
-                .await
-                .unwrap_or(0);
-            if exists == 0 {
-                not_found += 1;
-                continue;
+    // Two batched existence probes, projected to just the id column so the
+    // large `issue.comic_info_raw` blob never loads.
+    let existing_series: HashSet<Uuid> = if want_series.is_empty() {
+        HashSet::new()
+    } else {
+        match series::Entity::find()
+            .filter(series::Column::Id.is_in(want_series))
+            .select_only()
+            .column(series::Column::Id)
+            .into_tuple::<Uuid>()
+            .all(&app.db)
+            .await
+        {
+            Ok(ids) => ids.into_iter().collect(),
+            Err(e) => {
+                tracing::error!(error = %e, "collections: bulk-add series existence query failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
         }
-        if let Some(iid) = issue_id.as_deref() {
-            let exists = issue::Entity::find_by_id(iid.to_owned())
-                .count(&app.db)
-                .await
-                .unwrap_or(0);
-            if exists == 0 {
-                not_found += 1;
-                continue;
+    };
+    let existing_issues: HashSet<String> = if want_issues.is_empty() {
+        HashSet::new()
+    } else {
+        match issue::Entity::find()
+            .filter(issue::Column::Id.is_in(want_issues))
+            .select_only()
+            .column(issue::Column::Id)
+            .into_tuple::<String>()
+            .all(&app.db)
+            .await
+        {
+            Ok(ids) => ids.into_iter().collect(),
+            Err(e) => {
+                tracing::error!(error = %e, "collections: bulk-add issue existence query failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
+        }
+    };
+
+    for cand in candidates {
+        // Skip rows whose referenced series/issue doesn't exist — preserves the
+        // `not_found` vs `already_present` split the per-member checks gave.
+        let present = match (&cand.series_id, &cand.issue_id) {
+            (Some(sid), _) => existing_series.contains(sid),
+            (_, Some(iid)) => existing_issues.contains(iid),
+            _ => false,
+        };
+        if !present {
+            not_found += 1;
+            continue;
         }
 
         let insert = collection_entry::ActiveModel {
             id: Set(Uuid::now_v7()),
             saved_view_id: Set(id),
             position: Set(next_pos),
-            entry_kind: Set(member.entry_kind.clone()),
-            series_id: Set(series_id),
-            issue_id: Set(issue_id.clone()),
+            entry_kind: Set(cand.entry_kind),
+            series_id: Set(cand.series_id),
+            issue_id: Set(cand.issue_id),
             added_at: Set(now),
         }
         .insert(&app.db)
@@ -963,9 +1013,9 @@ pub async fn bulk_add_members(
                     already_present += 1;
                 } else {
                     tracing::warn!(error = %e, collection = %id, "bulk-add insert failed");
-                    // Treat unknown errors as `invalid` to keep the
-                    // contract simple — the caller doesn't get to
-                    // distinguish "DB hiccup" from "bad ref_id".
+                    // Treat unknown errors as `invalid` to keep the contract
+                    // simple — the caller doesn't get to distinguish "DB
+                    // hiccup" from "bad ref_id".
                     invalid += 1;
                 }
             }

@@ -125,22 +125,38 @@ pub async fn get_one(
     if !visible_in_library(&app, &user, row.library_id).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
-    let rating = crate::api::series::lookup_user_rating(&app, user.id, "issue", &row.id).await;
-    // Pull the parent series' and library's reading-direction overrides
-    // so the reader can consult them in the resolution chain below
-    // ComicInfo `<Manga>` but above the hard-coded LTR default.
-    // See `manga-and-bulk-metadata-1.0` M1 + M2.
-    let series_dir = series::Entity::find_by_id(row.series_id)
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|s| s.reading_direction);
-    let library_row = library::Entity::find_by_id(row.library_id)
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten();
+    // PERF-8: the rating, parent-series direction, library row, and
+    // creator-slug lookups below are independent of each other (they only need
+    // the already-fetched `row`), so run them concurrently instead of paying
+    // four sequential round-trips. `tokio::join!` polls them together on this
+    // task; each grabs a pooled connection briefly (pool has ample headroom).
+    let series_dir_fut = async {
+        // Parent series' reading-direction override — consulted in the reader's
+        // resolution chain below ComicInfo `<Manga>` but above the LTR default.
+        // See `manga-and-bulk-metadata-1.0` M1 + M2.
+        series::Entity::find_by_id(row.series_id)
+            .one(&app.db)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|s| s.reading_direction)
+    };
+    let library_fut = async {
+        library::Entity::find_by_id(row.library_id)
+            .one(&app.db)
+            .await
+            .ok()
+            .flatten()
+    };
+    // Creator-slug map for this issue's credits. One JOIN against `person` —
+    // the FK populated by the scanner's series rollup. The UI uses this so
+    // credit chips link to /creators/<slug> directly.
+    let (rating, series_dir, library_row, creator_slugs) = tokio::join!(
+        crate::api::series::lookup_user_rating(&app, user.id, "issue", &row.id),
+        series_dir_fut,
+        library_fut,
+        build_issue_creator_slugs(&app, &row.id),
+    );
     let library_default_dir = library_row
         .as_ref()
         .map(|lib| lib.default_reading_direction.clone());
@@ -150,11 +166,6 @@ pub async fn get_one(
     let library_cbr_convert_confirmed = library_row
         .as_ref()
         .is_some_and(|lib| lib.cbr_convert_confirmed_at.is_some());
-    // Creator-slug map for this issue's credits. One JOIN against
-    // `person` — the FK populated by the scanner's series rollup. The
-    // UI uses this so credit chips link to /creators/<slug> directly
-    // (matching how every other detail-page chip resolves).
-    let creator_slugs = build_issue_creator_slugs(&app, &row.id).await;
     let issue_id = row.id.clone();
     let mut view = IssueDetailView::from_model(row, &series_slug);
     view.user_rating = rating;
