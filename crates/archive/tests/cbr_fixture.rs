@@ -105,3 +105,46 @@ fn cbr_to_cbz_roundtrip_preserves_page_bytes() {
         .expect("read converted last page");
     assert_eq!(out_last, last_orig, "last page byte-preserved CBR→CBZ");
 }
+
+/// CQ-TEST-2 (audit 2026-07): CBR cap enforcement, opt-in like the other
+/// fixture tests (no RAR writer exists to commit a fixture). Uses a real
+/// local `fixtures/*.cbr` and tightens the caps below its own shape so
+/// each guard must fire.
+#[test]
+#[ignore = "needs a local fixtures/*.cbr (not committed); run with --ignored"]
+fn cbr_caps_reject_when_tightened() {
+    let Some(path) = first_cbr() else {
+        return; // no local fixture — skip
+    };
+
+    // Baseline: opens under default limits; learn its shape.
+    let a = open(&path, ArchiveLimits::default()).expect("open cbr");
+    let n = a.pages().len() as u64;
+    let max_entry = a
+        .pages()
+        .iter()
+        .map(|e| e.uncompressed_size)
+        .max()
+        .unwrap_or(0);
+    assert!(n > 0, "fixture has pages");
+
+    // Entry-count cap below the real count must reject.
+    let r = open(
+        &path,
+        ArchiveLimits {
+            max_entries: n - 1,
+            ..ArchiveLimits::default()
+        },
+    );
+    assert!(r.is_err(), "entry-count cap must fire (n={n})");
+
+    // Per-entry cap below the largest page must reject.
+    let r = open(
+        &path,
+        ArchiveLimits {
+            max_entry_bytes: max_entry.saturating_sub(1),
+            ..ArchiveLimits::default()
+        },
+    );
+    assert!(r.is_err(), "entry-size cap must fire (max={max_entry})");
+}

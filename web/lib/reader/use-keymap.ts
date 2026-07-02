@@ -4,6 +4,7 @@ import {
   actionForKey,
   shouldSkipHotkey,
   type KeybindAction,
+  pageNavForKey,
 } from "@/lib/reader/keybinds";
 import { firstPageOfGroup, type SpreadGroup } from "@/lib/reader/spreads";
 
@@ -176,24 +177,11 @@ export function useReaderKeymap(opts: {
       e.preventDefault();
       switch (action) {
         case "nextPage":
-          if (
-            direction === "rtl" &&
-            (e.key === "ArrowRight" || e.key === "ArrowLeft")
-          ) {
-            // RTL flip — visual right-arrow goes backwards.
-            if (e.key === "ArrowRight") onPrev();
-            else onNext();
-          } else {
-            onNext();
-          }
-          break;
         case "prevPage":
-          if (
-            direction === "rtl" &&
-            (e.key === "ArrowRight" || e.key === "ArrowLeft")
-          ) {
-            if (e.key === "ArrowLeft") onNext();
-            else onPrev();
+          // RTL flip lives in the pure helper (audit CQ-TEST-5) — visual
+          // arrows invert in RTL, everything else keeps logical meaning.
+          if (pageNavForKey(action, e.key, direction) === "next") {
+            onNext();
           } else {
             onPrev();
           }
