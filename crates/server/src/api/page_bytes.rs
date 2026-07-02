@@ -13,7 +13,7 @@
 use axum::{
     Router,
     body::Body,
-    extract::{Path as AxPath, State},
+    extract::{Path as AxPath, Query, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
@@ -25,8 +25,18 @@ use tokio_util::io::{ReaderStream, SyncIoBridge};
 
 use super::error;
 use crate::auth::CurrentUser;
+use crate::library::page_variants;
 use crate::state::AppState;
 use server_macros::handler;
+
+/// Optional width negotiation (audit FEP-1; `docs/dev/page-variants.md`).
+/// Absent `w` → the original full-resolution path, byte-identical to the
+/// pre-variant behavior.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct PageQuery {
+    #[serde(default)]
+    pub w: Option<u32>,
+}
 
 pub fn routes() -> Router<AppState> {
     Router::new().route("/issues/{id}/pages/{n}", get(serve))
@@ -37,6 +47,7 @@ pub async fn serve(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath((id, n)): AxPath<(String, u32)>,
+    Query(q): Query<PageQuery>,
     headers: HeaderMap,
 ) -> Response {
     let Ok(Some(row)) = issue::Entity::find_by_id(id.clone()).one(&app.db).await else {
@@ -44,6 +55,13 @@ pub async fn serve(
     };
     if !visible(&app, &user, row.library_id).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    }
+
+    // Width-negotiated variant (audit FEP-1). Handled by its own path —
+    // it carries a per-variant ETag, immutable caching, and no Range
+    // support. Everything below stays byte-identical for bare requests.
+    if let Some(w) = q.w {
+        return serve_variant(&app, &row, n as usize, w, &headers).await;
     }
 
     let page_index = n as usize;
@@ -302,6 +320,143 @@ const STREAM_BUF_BYTES: usize = 256 * 1024;
 
 /// 304 response carrying just the validators (no body), for a matched
 /// If-None-Match revalidation.
+/// Serve a width-negotiated page variant (audit FEP-1).
+///
+/// Flow: clamp to the tier ladder → variant ETag / If-None-Match →
+/// disk-cache hit streams the WebP → miss extracts the page, decodes
+/// under `decode_limited`'s caps, downscales (Lanczos3), encodes WebP
+/// q80, writes the cache atomically, and streams from memory. A source
+/// already ≤ the tier streams its original bytes verbatim (no upscale,
+/// nothing cached).
+async fn serve_variant(
+    app: &AppState,
+    row: &issue::Model,
+    page_index: usize,
+    requested_w: u32,
+    headers: &HeaderMap,
+) -> Response {
+    let tier = page_variants::clamp_to_tier(requested_w);
+    let hash = row.content_hash.as_str();
+    let etag_value = format!(
+        "\"{}-{}-w{}\"",
+        &hash[..32.min(hash.len())],
+        page_index,
+        tier
+    );
+
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|c| c.trim() == etag_value))
+    {
+        return not_modified(&etag_value);
+    }
+
+    let variant_headers = |mime: &'static str, len: u64| {
+        let mut hdrs = HeaderMap::new();
+        hdrs.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
+        // Immutable is safe: the cache key (and ETag) embed content_hash,
+        // which changes whenever the archive bytes change. Private: ACL'd.
+        hdrs.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, max-age=31536000, immutable"),
+        );
+        hdrs.insert(
+            header::ETAG,
+            HeaderValue::from_str(&etag_value)
+                .unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),
+        );
+        hdrs.insert(header::CONTENT_LENGTH, HeaderValue::from(len));
+        hdrs
+    };
+
+    // Cache hit: stream the file; bump mtime so the LRU sweep keeps it.
+    let data_path = app.cfg().data_path.clone();
+    let cpath = page_variants::cache_path(&data_path, hash, page_index, tier);
+    if let Ok(meta) = tokio::fs::metadata(&cpath).await
+        && meta.is_file()
+        && let Ok(file) = tokio::fs::File::open(&cpath).await
+    {
+        let cpath_touch = cpath.clone();
+        tokio::task::spawn_blocking(move || page_variants::touch(&cpath_touch));
+        let hdrs = variant_headers("image/webp", meta.len());
+        let body = Body::from_stream(ReaderStream::new(file));
+        return (StatusCode::OK, hdrs, body).into_response();
+    }
+
+    // Miss: extract the full page, render off-thread.
+    let (arc, _pread) = match app
+        .zip_lru
+        .get_or_open_indexed(&row.id, std::path::Path::new(&row.file_path))
+    {
+        Ok(pair) => pair,
+        Err(e) => {
+            tracing::warn!(error = %e, issue_id = %row.id, "zip_lru open failed");
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "archive_unreadable",
+                "archive unreadable",
+            );
+        }
+    };
+    let budget = app.cfg().page_variant_cache_bytes;
+    let result =
+        tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, &'static str), PageError> {
+            let mut cbz = arc.lock().expect("cbz mutex");
+            let entry = {
+                let pages = cbz.pages();
+                pages
+                    .get(page_index)
+                    .copied()
+                    .cloned()
+                    .ok_or(PageError::NotFound)?
+            };
+            let bytes = cbz
+                .read_entry_range(&entry, 0, entry.uncompressed_size)
+                .map_err(|e| PageError::Read(e.to_string()))?;
+            drop(cbz);
+            let (mime, _ext) =
+                sniff(&bytes[..bytes.len().min(16)]).ok_or(PageError::UnsupportedType)?;
+            match page_variants::render_variant(&bytes, tier) {
+                Ok(page_variants::Rendered::Webp(webp_bytes)) => {
+                    // Soft-fail cache write: the response streams from memory
+                    // either way; the next miss recomputes.
+                    if budget > 0
+                        && let Err(e) = page_variants::write_atomic(&cpath, &webp_bytes)
+                    {
+                        tracing::warn!(error = %e, "variant cache write failed");
+                    }
+                    Ok((webp_bytes, "image/webp"))
+                }
+                Ok(page_variants::Rendered::OriginalIsSmaller) => Ok((bytes, mime)),
+                Err(e) => Err(PageError::Read(format!("variant render: {e}"))),
+            }
+        })
+        .await;
+
+    match result {
+        Ok(Ok((bytes, mime))) => {
+            page_variants::spawn_evict_if_needed(data_path, budget);
+            let hdrs = variant_headers(mime, bytes.len() as u64);
+            (StatusCode::OK, hdrs, Body::from(bytes)).into_response()
+        }
+        Ok(Err(PageError::NotFound)) => error(StatusCode::NOT_FOUND, "not_found", "page not found"),
+        Ok(Err(PageError::UnsupportedType)) => error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_media_type",
+            "page bytes are not a supported image type",
+        ),
+        Ok(Err(PageError::Read(e))) => {
+            tracing::warn!(error = %e, "variant render failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "variant task failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        }
+    }
+}
+
 fn not_modified(etag: &str) -> Response {
     let mut hdrs = HeaderMap::new();
     hdrs.insert(

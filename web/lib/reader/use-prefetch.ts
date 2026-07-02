@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { ViewMode } from "@/lib/reader/detect";
 import type { SpreadGroup } from "@/lib/reader/spreads";
+import { pageVariantUrl, selectPageVariantTier } from "@/lib/urls";
 
 // How far to warm around the current position. Forward-weighted (most
 // turns go forward) but we also warm behind so back-nav is instant.
@@ -37,6 +38,11 @@ export function useReaderPrefetch(opts: {
   currentGroupIdx: number;
   groups: ReadonlyArray<SpreadGroup>;
   viewMode: ViewMode;
+  /** Per-page intrinsic widths (FEP-1) — lets warms pick the same
+   *  `?w=` tier the rendered `<img>`'s `srcSet` pick resolves to. */
+  pageWidths?: ReadonlyArray<number | null>;
+  /** False for original-fit / pinch-zoom, which read full-res. */
+  variantsEnabled?: boolean;
 }): void {
   const {
     issueId,
@@ -45,6 +51,8 @@ export function useReaderPrefetch(opts: {
     currentGroupIdx,
     groups,
     viewMode,
+    pageWidths,
+    variantsEnabled = false,
   } = opts;
 
   // Retained decoded images, keyed by URL (insertion-ordered for LRU-ish
@@ -59,7 +67,21 @@ export function useReaderPrefetch(opts: {
     // (audit C12) — prefetching here just double-decodes. Call the hook
     // unconditionally (rules of hooks); skip the work inside the effect.
     if (viewMode === "webtoon") return;
-    const url = (p: number) => `/issues/${issueId}/pages/${p}`;
+    // FEP-1: mirror the <img> srcSet pick — `sizes` is 100vw (single) /
+    // 50vw (double), so the browser targets slot-css-px × dpr and takes
+    // the smallest candidate ≥ that. Same formula here keeps warmed URLs
+    // byte-identical to what the real element requests.
+    const slotCssPx =
+      viewMode === "double" ? window.innerWidth / 2 : window.innerWidth;
+    const targetDevicePx = Math.ceil(
+      slotCssPx * Math.max(1, window.devicePixelRatio || 1),
+    );
+    const url = (p: number) => {
+      const bare = `/issues/${issueId}/pages/${p}`;
+      if (!variantsEnabled) return bare;
+      const tier = selectPageVariantTier(targetDevicePx, pageWidths?.[p]);
+      return tier == null ? bare : pageVariantUrl(bare, tier);
+    };
 
     const pump = () => {
       while (active.current < MAX_CONCURRENT && queue.current.length > 0) {

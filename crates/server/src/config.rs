@@ -136,6 +136,13 @@ pub struct Config {
     #[serde(default = "default_zip_lru_capacity")]
     pub zip_lru_capacity: usize,
 
+    /// Byte budget for the on-disk reader page-variant cache (FEP-1;
+    /// `docs/dev/page-variants.md`). 0 disables caching — variants are
+    /// still served, recomputed per request. Env:
+    /// `COMIC_PAGE_VARIANT_CACHE_BYTES`.
+    #[serde(default = "default_page_variant_cache_bytes")]
+    pub page_variant_cache_bytes: u64,
+
     /// Per-queue worker concurrency for scan jobs (spec §3.2, §11).
     #[serde(default = "default_scan_worker_count")]
     pub scan_worker_count: usize,
@@ -421,6 +428,9 @@ fn default_opds_panels_mode() -> String {
 }
 fn default_zip_lru_capacity() -> usize {
     64
+}
+fn default_page_variant_cache_bytes() -> u64 {
+    2 * 1024 * 1024 * 1024
 }
 fn default_scan_worker_count() -> usize {
     // Bumped from `min(cpu, 4)` to `min(cpu, 8)` after the F-9 perf pass
@@ -1240,6 +1250,7 @@ mod tests {
             redis_url: String::new(),
             library_path: PathBuf::new(),
             data_path: PathBuf::new(),
+            page_variant_cache_bytes: 2 * 1024 * 1024 * 1024,
             public_url: "http://localhost".into(),
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             log_level: "info".into(),

@@ -9,6 +9,7 @@ pub mod hash;
 pub mod health;
 pub mod identity;
 pub mod ignore;
+pub mod page_variants;
 pub mod reconcile;
 pub mod scanner;
 pub mod thumbnails;
