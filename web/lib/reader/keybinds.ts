@@ -468,3 +468,23 @@ export function actionForKey(
   }
   return null;
 }
+
+/** RTL arrow-swap (audit CQ-TEST-5): in RTL reading direction the VISUAL
+ *  arrows invert — right goes backwards, left goes forwards — while
+ *  non-arrow bindings (space, n/p, custom keys) keep their logical
+ *  meaning. Pure so the swap is directly testable; `use-keymap` routes
+ *  both page-nav actions through it. */
+export function pageNavForKey(
+  action: "nextPage" | "prevPage",
+  key: string,
+  direction: "ltr" | "rtl",
+): "next" | "prev" {
+  const isArrow = key === "ArrowRight" || key === "ArrowLeft";
+  if (direction === "rtl" && isArrow) {
+    if (action === "nextPage") {
+      return key === "ArrowRight" ? "prev" : "next";
+    }
+    return key === "ArrowLeft" ? "next" : "prev";
+  }
+  return action === "nextPage" ? "next" : "prev";
+}

@@ -107,6 +107,13 @@ pub enum IssueKind {
         page_index: u32,
         error: String,
     },
+    /// A structurally valid archive that contains ZERO image entries —
+    /// it ingests as a 0-page issue the reader can open but never turn
+    /// (audit CQ-TEST-4). Usually a mispacked file (all pages in a
+    /// nested dir the reader ignores, or a text-only archive).
+    NoPages {
+        path: PathBuf,
+    },
     /// A folder under the library root violates the two-layouts
     /// contract: it's neither a Layout A series folder (CBZs at
     /// depth-1) nor a Layout B publisher container (zero CBZs at
@@ -153,6 +160,7 @@ impl IssueKind {
             Self::RecoveredArchive { .. } => "RecoveredArchive",
             Self::SkippedArchiveEntries { .. } => "SkippedArchiveEntries",
             Self::UnreadablePage { .. } => "UnreadablePage",
+            Self::NoPages { .. } => "NoPages",
             Self::AmbiguousFolder { .. } => "AmbiguousFolder",
             Self::DuplicateExternalId { .. } => "DuplicateExternalId",
         }
@@ -174,6 +182,7 @@ impl IssueKind {
             | Self::UnsupportedArchiveFormat { .. }
             | Self::SkippedArchiveEntries { .. }
             | Self::UnreadablePage { .. }
+            | Self::NoPages { .. }
             | Self::AmbiguousFolder { .. }
             | Self::DuplicateExternalId { .. } => Severity::Warning,
 
@@ -227,6 +236,7 @@ impl IssueKind {
                 // row, not duplicate it.
                 format!("SkippedArchiveEntries:{}:{reason}", path.display())
             }
+            Self::NoPages { path } => format!("NoPages:{}", path.display()),
             Self::UnreadablePage {
                 path, page_index, ..
             } => {
@@ -283,6 +293,7 @@ impl IssueKind {
             | Self::RecoveredArchive { path, .. }
             | Self::SkippedArchiveEntries { path, .. }
             | Self::UnreadablePage { path, .. }
+            | Self::NoPages { path }
             | Self::AmbiguousFolder { path, .. }
             | Self::DuplicateExternalId { path, .. } => Some(path.to_string_lossy().into_owned()),
             Self::FolderNameMismatch { folder, .. } => Some(folder.clone()),

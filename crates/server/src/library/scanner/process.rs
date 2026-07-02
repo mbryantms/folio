@@ -400,6 +400,16 @@ async fn parse_archive_for_ingest(
         }
     };
 
+    // CQ-TEST-4 (audit 2026-07): a structurally valid archive with zero
+    // image entries used to ingest as a silent 0-page issue — openable in
+    // the reader, never turnable, invisible to the operator. Surface it.
+    // Parse-failure states already emitted their own (severity-error) rows.
+    if actual_pages == 0 && parse_state == "active" {
+        health.emit(IssueKind::NoPages {
+            path: path.to_path_buf(),
+        });
+    }
+
     // Merge MetronInfo over ComicInfo for the overlapping fields (spec §4.4 +
     // §6.8: MetronInfo wins).
     if let Some(m) = &metron_opt {

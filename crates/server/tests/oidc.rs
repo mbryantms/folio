@@ -839,3 +839,47 @@ async fn patching_oidc_issuer_evicts_discovery_cache() {
         "post-PATCH /start MUST NOT point at op_a (stale cache); got {location_after}",
     );
 }
+
+/// CQ-TEST-8 (audit 2026-07): the nonce check is the replay defense — an
+/// id_token minted for a DIFFERENT login attempt (wrong nonce) must be
+/// rejected even when state validates and the token signature is good.
+/// Only the missing-nonce/happy paths were covered before; a dropped
+/// nonce comparison would have passed CI.
+#[tokio::test]
+async fn callback_rejects_nonce_mismatch() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc(op.issuer(), false).await;
+    let (state_cookie, state_param) = start_oidc_flow(&app, None).await;
+
+    // Valid signature, valid audience/issuer — but the nonce belongs to
+    // some other flow.
+    let claims = IdTokenClaims::standard(
+        &op.issuer(),
+        "folio-test-client",
+        "subject-replay",
+        "nonce-from-someone-elses-flow",
+        "replay@example.com",
+    );
+    let id_token = sign_id_token(&claims);
+    op.register_token_response(&id_token).await;
+
+    let resp = callback_with(&app, &state_cookie, &state_param, "auth-code-replay").await;
+    assert_ne!(
+        resp.status(),
+        StatusCode::SEE_OTHER,
+        "nonce mismatch must not mint a session"
+    );
+    assert!(
+        extract_set_cookie(&resp, "__Host-comic_session").is_none(),
+        "no session cookie on nonce mismatch"
+    );
+
+    // And no user row was upserted.
+    use sea_orm::EntityTrait;
+    let state = app.state();
+    let users = entity::user::Entity::find().all(&state.db).await.unwrap();
+    assert!(
+        !users.iter().any(|u| u.external_id.starts_with("oidc:")),
+        "nonce mismatch must not upsert a user"
+    );
+}
