@@ -96,6 +96,7 @@ mod m20270117_000001_series_text_language;
 mod m20270118_000001_issue_metadata_review_accepted;
 mod m20270119_000001_series_provider_range;
 mod m20270120_000001_audit_log_created_at_idx;
+mod m20270121_000001_backfill_event_batch_id;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -200,6 +201,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270118_000001_issue_metadata_review_accepted::Migration),
             Box::new(m20270119_000001_series_provider_range::Migration),
             Box::new(m20270120_000001_audit_log_created_at_idx::Migration),
+            Box::new(m20270121_000001_backfill_event_batch_id::Migration),
         ]
     }
 }

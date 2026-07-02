@@ -85,7 +85,7 @@ pub async fn scan_library_with_run_id(
         return Err(anyhow::Error::new(e));
     }
 
-    let scan_id =
+    let (scan_id, batch_id) =
         open_scan_run(state, library_id, "library", None, None, requested_scan_id).await?;
     // Record `scan_id` on the span so every log emitted under this
     // scan inherits it via the RingLayer's parent-span walk. The
@@ -93,15 +93,10 @@ pub async fn scan_library_with_run_id(
     // makes this `.record()` work — fields not declared at
     // attr-time can't be added later.
     tracing::Span::current().record("scan_id", tracing::field::display(scan_id));
-    // A "Scan all" pre-inserts this run with a `batch_id` (M6); surface it on
-    // the Started event so the live dashboard can attribute the library to the
-    // batch. `None` for an ordinary single-library scan.
-    let batch_id = ScanRunEntity::find_by_id(scan_id)
-        .one(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|r| r.batch_id);
+    // A "Scan all" pre-inserts this run with a `batch_id` (M6), returned by
+    // `open_scan_run`; surface it on the Started event so the live dashboard
+    // can attribute the library to the batch. `None` for an ordinary
+    // single-library scan.
     state.events.emit(ScanEvent::Started {
         library_id,
         scan_id,
@@ -114,7 +109,10 @@ pub async fn scan_library_with_run_id(
     let now = Utc::now().fixed_offset();
     let mut health =
         HealthCollector::new(library_id, scan_id, now).with_events(state.events.clone());
-    let mut events = EventCollector::new(library_id, Some(scan_id));
+    // Stamp the batch so every event under this scan lands on the batch
+    // detail page's Changes manifest (M10) — `with_batch` previously had
+    // no callers, leaving that card permanently empty.
+    let mut events = EventCollector::new(library_id, Some(scan_id)).with_batch(batch_id);
     events.record(
         Category::Scan,
         Action::Started,
@@ -429,7 +427,7 @@ pub async fn scan_series_folder(
         );
     }
 
-    let scan_id = open_scan_run(
+    let (scan_id, batch_id) = open_scan_run(
         state,
         library_id,
         kind.as_db_str(),
@@ -452,7 +450,7 @@ pub async fn scan_series_folder(
     let now = Utc::now().fixed_offset();
     let mut health =
         HealthCollector::new_scoped(library_id, scan_id, now).with_events(state.events.clone());
-    let mut events = EventCollector::new(library_id, Some(scan_id));
+    let mut events = EventCollector::new(library_id, Some(scan_id)).with_batch(batch_id);
     events.record(
         Category::Scan,
         Action::Started,
@@ -508,7 +506,7 @@ pub async fn scan_issue_file(
         anyhow::bail!("issue does not belong to library");
     }
 
-    let scan_id = open_scan_run(
+    let (scan_id, batch_id) = open_scan_run(
         state,
         library_id,
         ScanKind::Issue.as_db_str(),
@@ -530,7 +528,7 @@ pub async fn scan_issue_file(
     let now = Utc::now().fixed_offset();
     let mut health =
         HealthCollector::new_scoped(library_id, scan_id, now).with_events(state.events.clone());
-    let mut events = EventCollector::new(library_id, Some(scan_id));
+    let mut events = EventCollector::new(library_id, Some(scan_id)).with_batch(batch_id);
     events.record(
         Category::Scan,
         Action::Started,
@@ -566,10 +564,13 @@ async fn open_scan_run(
     series_id: Option<Uuid>,
     issue_id: Option<String>,
     requested_scan_id: Option<Uuid>,
-) -> anyhow::Result<Uuid> {
+) -> anyhow::Result<(Uuid, Option<Uuid>)> {
     let scan_id = requested_scan_id.unwrap_or_else(Uuid::now_v7);
     let now = Utc::now().fixed_offset();
     if let Some(existing) = ScanRunEntity::find_by_id(scan_id).one(&state.db).await? {
+        // A "Scan all" pre-inserts this run with a `batch_id` (M6) — return
+        // it so every event/emission under the scan can carry the link.
+        let batch_id = existing.batch_id;
         if existing.state == "queued" {
             let mut am: ScanRunAM = existing.into();
             am.state = Set("running".to_owned());
@@ -577,7 +578,7 @@ async fn open_scan_run(
             am.error = Set(None);
             am.update(&state.db).await?;
         }
-        return Ok(scan_id);
+        return Ok((scan_id, batch_id));
     }
     let am = ScanRunAM {
         id: Set(scan_id),
@@ -595,7 +596,7 @@ async fn open_scan_run(
         batch_id: Set(None),
     };
     am.insert(&state.db).await?;
-    Ok(scan_id)
+    Ok((scan_id, None))
 }
 
 /// Persist health issues, close the `scan_runs` row, emit the final WS event
@@ -1554,6 +1555,9 @@ async fn run_phases(
     stats.set_parallel_workers(concurrency as u32);
     let live_tracker = Arc::new(LiveProgressTracker::new());
     let process_started = Instant::now();
+    // Worker-local collectors must inherit the parent's batch stamp or the
+    // per-file events (the bulk of a scan's manifest) lose the batch link.
+    let batch_id = events.batch_id();
     let mut folder_results = futures::stream::iter(plan.folders.clone())
         .map(|planned| {
             let state = state.clone();
@@ -1564,7 +1568,8 @@ async fn run_phases(
                 let mut local_stats = ScanStats::default();
                 let mut local_health = HealthCollector::new(lib.id, scan_id, scan_started_at)
                     .with_events(state.events.clone());
-                let mut local_events = EventCollector::new(lib.id, Some(scan_id));
+                let mut local_events =
+                    EventCollector::new(lib.id, Some(scan_id)).with_batch(batch_id);
                 let label = planned
                     .path
                     .file_name()
