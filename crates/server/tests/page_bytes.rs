@@ -689,3 +689,158 @@ async fn etag_round_trip_with_if_range() {
         .unwrap();
     assert_eq!(resp3.status(), StatusCode::OK);
 }
+
+// ─────────────────────────────────────────────────────────────────
+// FEP-1 — width-negotiated variants (`?w=`); docs/dev/page-variants.md
+// ─────────────────────────────────────────────────────────────────
+
+/// A real decodable PNG (the sniff-only payloads above don't survive
+/// `decode_limited`).
+fn real_png(w: u32, h: u32) -> Vec<u8> {
+    let mut img = image::RgbaImage::new(w, h);
+    for (x, _y, p) in img.enumerate_pixels_mut() {
+        *p = image::Rgba([(x % 251) as u8, 40, 180, 255]);
+    }
+    let mut out = Vec::new();
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .unwrap();
+    out
+}
+
+async fn get_variant(
+    router: &axum::Router,
+    session: &str,
+    id: &str,
+    n: u32,
+    w: u32,
+    if_none_match: Option<&str>,
+) -> axum::response::Response {
+    let mut b = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/issues/{id}/pages/{n}?w={w}"))
+        .header(header::COOKIE, format!("__Host-comic_session={session}"));
+    if let Some(v) = if_none_match {
+        b = b.header(header::IF_NONE_MATCH, v);
+    }
+    router
+        .clone()
+        .oneshot(b.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn variant_renders_webp_then_serves_from_cache() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let cbz = tmp.path().join("v.cbz");
+    let png = real_png(800, 600);
+    build_cbz(&cbz, &png);
+    let size = std::fs::metadata(&cbz).unwrap().len() as i64;
+    let id = seed_issue(&app, &cbz, size).await;
+
+    // Miss: renders + caches. 480 tier from an 800px source downsizes.
+    let resp = get_variant(&app.router, &session, &id, 0, 480, None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get(header::CONTENT_TYPE).unwrap(),
+        "image/webp"
+    );
+    let cache_control = resp
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(cache_control.contains("immutable"), "{cache_control}");
+    let etag = resp
+        .headers()
+        .get(header::ETAG)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let bytes = body_bytes(resp.into_body()).await;
+    let decoded = image::load_from_memory(&bytes).unwrap();
+    assert_eq!(decoded.width(), 480);
+    assert_eq!(decoded.height(), 360);
+
+    // The cache file landed under data_path/cache/pages/{content_hash}.
+    use sea_orm::EntityTrait as _;
+    let row = entity::issue::Entity::find_by_id(id.clone())
+        .one(&sea_orm::Database::connect(&app.db_url).await.unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let cpath = server::library::page_variants::cache_path(
+        &app.state().cfg().data_path,
+        &row.content_hash,
+        0,
+        480,
+    );
+    assert!(cpath.exists(), "variant cached at {cpath:?}");
+
+    // Hit: overwrite the cache file with a different (valid) webp — the
+    // response must serve those bytes verbatim, proving the disk hit.
+    let marker = {
+        let img = image::RgbaImage::from_pixel(10, 10, image::Rgba([1, 2, 3, 255]));
+        let enc = webp::Encoder::from_rgba(img.as_raw(), 10, 10);
+        enc.encode(80.0).to_vec()
+    };
+    std::fs::write(&cpath, &marker).unwrap();
+    let resp = get_variant(&app.router, &session, &id, 0, 480, None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let served = body_bytes(resp.into_body()).await;
+    assert_eq!(served, marker, "second request must stream the cache file");
+
+    // Conditional: If-None-Match on the variant etag → 304, no body.
+    let resp = get_variant(&app.router, &session, &id, 0, 480, Some(&etag)).await;
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+}
+
+#[tokio::test]
+async fn variant_at_or_above_intrinsic_serves_original_bytes() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let cbz = tmp.path().join("small.cbz");
+    let png = real_png(600, 400);
+    build_cbz(&cbz, &png);
+    let size = std::fs::metadata(&cbz).unwrap().len() as i64;
+    let id = seed_issue(&app, &cbz, size).await;
+
+    // 720 tier ≥ 600px intrinsic → original bytes, original content type,
+    // never an upscale.
+    let resp = get_variant(&app.router, &session, &id, 0, 720, None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get(header::CONTENT_TYPE).unwrap(),
+        "image/png"
+    );
+    let served = body_bytes(resp.into_body()).await;
+    assert_eq!(served, png, "original bytes verbatim");
+}
+
+#[tokio::test]
+async fn variant_dimension_bomb_dies_at_decode() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let cbz = tmp.path().join("bomb.cbz");
+    // Real PNG whose declared dimensions exceed decode_limited's 20k-px
+    // cap — cheap to build (thin strip), rejected before any resize.
+    let png = real_png(20_500, 1);
+    build_cbz(&cbz, &png);
+    let size = std::fs::metadata(&cbz).unwrap().len() as i64;
+    let id = seed_issue(&app, &cbz, size).await;
+
+    let resp = get_variant(&app.router, &session, &id, 0, 480, None).await;
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    // The bare full-res path stays available (escape hatch) — streaming
+    // never decodes, so the same file serves fine without `w=`.
+    let resp = get_page(&app.router, &session, &id, 0, None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}

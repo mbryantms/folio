@@ -24,6 +24,8 @@ const SLOW_HINT_MS = 8000;
  */
 export function PageImage({
   src,
+  srcSet,
+  sizes,
   alt,
   fitClass,
   loading,
@@ -34,6 +36,10 @@ export function PageImage({
   thumbSrc,
 }: {
   src: string;
+  /** Width-negotiated variant set (audit FEP-1; `pageBytesSrcSet`).
+   *  Omitted for original-fit / pinch-zoom, where full-res is the point. */
+  srcSet?: string;
+  sizes?: string;
   alt: string;
   fitClass: string;
   loading?: "eager" | "lazy";
@@ -170,6 +176,10 @@ export function PageImage({
       <img
         ref={imgRef}
         src={effectiveSrc}
+        // Retries drop the variant set: the cache-busted `src` must be the
+        // URL actually re-fetched, not shadowed by a still-cached variant.
+        srcSet={retry > 0 ? undefined : srcSet}
+        sizes={srcSet && retry === 0 ? sizes : undefined}
         alt={alt}
         loading={loading}
         fetchPriority={fetchPriority}
