@@ -173,6 +173,9 @@ pub async fn list(
                 .collect(),
         })
         .into_response(),
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, "db", &e.to_string()),
+        Err(e) => {
+            tracing::error!(error = %e, "people query failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "db", "internal")
+        }
     }
 }

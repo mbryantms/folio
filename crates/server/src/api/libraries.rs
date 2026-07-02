@@ -882,11 +882,7 @@ pub async fn scan(
             .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "scan enqueue failed");
-            error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            )
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
         }
     }
 }

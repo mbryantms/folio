@@ -738,6 +738,13 @@ pub async fn refresh(
         _ => return error(StatusCode::UNAUTHORIZED, "auth.invalid", "user gone"),
     };
 
+    // AUTH-2: a disabled account must not rotate a live refresh token into a
+    // fresh access token. Returning here — before `txn.commit()` — rolls back
+    // the rotation performed above, so the session stops rather than advancing.
+    if user_row.state == "disabled" {
+        return error(StatusCode::UNAUTHORIZED, "auth.invalid", "account disabled");
+    }
+
     if txn.commit().await.is_err() {
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
@@ -754,6 +761,38 @@ pub async fn refresh(
         ResponseFormat::Json,
         None,
     )
+}
+
+/// Revoke every non-revoked `auth_session` row for `user_id`, optionally
+/// sparing the session whose refresh-token hash equals `keep_refresh_hash`
+/// (so a self-serve password change keeps the active browser signed in while
+/// cutting off every other device). Called on every `token_version` bump so a
+/// stolen refresh token can't outlive a password change / reset / admin
+/// disable — the `token_version` bump alone only stops *access* tokens, not
+/// the refresh-token rotation (AUTH-1). Best-effort: a DB error is logged and
+/// swallowed so it never blocks the primary mutation. Returns the count revoked.
+pub(crate) async fn revoke_sessions_for_user<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    user_id: uuid::Uuid,
+    keep_refresh_hash: Option<&str>,
+) -> u64 {
+    let mut q = SessionEntity::update_many()
+        .col_expr(
+            auth_session::Column::RevokedAt,
+            sea_orm::sea_query::Expr::value(chrono::Utc::now().fixed_offset()),
+        )
+        .filter(auth_session::Column::UserId.eq(user_id))
+        .filter(auth_session::Column::RevokedAt.is_null());
+    if let Some(h) = keep_refresh_hash {
+        q = q.filter(auth_session::Column::RefreshTokenHash.ne(h));
+    }
+    match q.exec(db).await {
+        Ok(r) => r.rows_affected,
+        Err(e) => {
+            tracing::error!(error = %e, user_id = %user_id, "revoke_sessions_for_user failed");
+            0
+        }
+    }
 }
 
 #[utoipa::path(
@@ -1302,6 +1341,10 @@ pub async fn reset_password(
         tracing::error!(error = %e, user_id = %user_id, "reset-password update failed");
         return fail_at_reset(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
+    // AUTH-1: a reset (account recovery / compromise response) must invalidate
+    // every existing session, not just access tokens via the token_version bump
+    // above. Runs inside the same txn so revocation commits atomically with it.
+    revoke_sessions_for_user(&txn, user_id, None).await;
     let _ = PasswordResetUseEntity::update_many()
         .col_expr(
             password_reset_use::Column::ConsumedAt,

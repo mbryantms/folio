@@ -12,10 +12,12 @@ yanked = "warn"
 # how it reaches our graph, (c) why we can accept it for now. Revisit
 # on every dep-bump pass.
 ignore = [
-    # `instant` unmaintained — transitive via parking_lot / wasm-clock
-    # paths. Compile-time only; the crate just wraps platform clock
-    # APIs. No upstream replacement we can apply at the edge.
-    "RUSTSEC-2024-0384",
+    # NOTE: stale entries pruned 2026-07-01 (audit DEP-1) — cargo-deny
+    # reported these as `advisory-not-detected` (crate no longer in the
+    # graph): RUSTSEC-2024-0384 (instant), RUSTSEC-2025-0134
+    # (rustls-pemfile), RUSTSEC-2025-0111 (tokio-tar), RUSTSEC-2026-0002
+    # (lru 0.12). Re-add if a dep bump reintroduces them.
+    #
     # `number_prefix` unmaintained — transitive via indicatif (CLI
     # progress bars in scanner). Cosmetic formatter; no security
     # surface.
@@ -23,22 +25,21 @@ ignore = [
     # `paste` no longer maintained — proc-macro used at build time by
     # several macro crates. Doesn't ship to runtime. Tracked upstream.
     "RUSTSEC-2024-0436",
-    # `rustls-pemfile` unmaintained — dev-only via `testcontainers ←
-    # bollard`. Not in the production binary; only the integration
-    # test harness pulls it.
-    "RUSTSEC-2025-0134",
-    # `tokio-tar` PAX-header smuggling (CVE-2025-62518) — dev-only via
-    # `testcontainers`. Real CVE but only reachable from the test
-    # harness when reading a maliciously-crafted tar; our tests
-    # consume known-good fixtures + the bollard-side container layer
-    # tarballs come from a trusted source. Track upgrade to
-    # `astral-tokio-tar` when testcontainers ships it.
-    "RUSTSEC-2025-0111",
-    # `lru 0.12` IterMut Stacked Borrows soundness — fixed upstream in
-    # 0.13+. Tracked as a follow-up dep-bump (PR scope: ZipLru +
-    # callers in archive/cbz). Soundness only triggers under Miri's
-    # Stacked Borrows model; safe under Tree Borrows + in practice.
-    "RUSTSEC-2026-0002",
+    # --- OCR / ML stack (candle → comic-text-detector → imageproc), confined
+    # to the optional OCR path; not reachable from the core reader/scanner
+    # request paths. (audit DEP-1, 2026-07-01.)
+    #
+    # `ttf-parser 0.25.1` unmaintained (RUSTSEC-2026-0192) — transitive via
+    # `imageproc → ab_glyph → owned_ttf_parser`. Upstream states "no safe
+    # upgrade available"; the suggested alternative (`skrifa`) isn't adoptable
+    # at our edge. Revisit when comic-text-detector bumps its imageproc pin.
+    "RUSTSEC-2026-0192",
+    # NOTE: `memmap2 0.9.10` unsound (RUSTSEC-2026-0186, transitive via
+    # `candle-core`) is intentionally NOT ignored here — cargo-deny's DB does
+    # not match it, so an ignore entry would only warn as
+    # `advisory-not-detected`. cargo-audit surfaces it as a non-failing warning
+    # (bare `cargo audit` exits 0 on unsound/informational). Revisit when
+    # candle bumps its memmap2 pin.
     # `rsa 0.9.10` Marvin Attack timing sidechannel — transitive via
     # `jsonwebtoken`. Folio signs JWTs with Ed25519 (see
     # `secrets::Secrets::jwt_signing`); the `rsa` crate ships in the
