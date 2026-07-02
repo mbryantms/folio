@@ -46,7 +46,6 @@ export function ProviderBadges({
     <ul className={`flex flex-wrap items-center gap-1 ${className ?? ""}`}>
       {visible.map((r) => (
         <li key={r.source} className="flex items-center">
-
           {r.external_url ? (
             <a
               href={r.external_url}

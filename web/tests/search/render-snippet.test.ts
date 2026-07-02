@@ -54,8 +54,8 @@ describe("renderSearchSnippet", () => {
   });
 
   it("handles multiple <mark> spans in one snippet", () => {
-    expect(
-      renderSearchSnippet("<mark>foo</mark> and <mark>bar</mark>"),
-    ).toBe("<mark>foo</mark> and <mark>bar</mark>");
+    expect(renderSearchSnippet("<mark>foo</mark> and <mark>bar</mark>")).toBe(
+      "<mark>foo</mark> and <mark>bar</mark>",
+    );
   });
 });

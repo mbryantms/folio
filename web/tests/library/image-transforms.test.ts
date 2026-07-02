@@ -74,9 +74,10 @@ describe("image-transforms", () => {
 
   it("crop yields exact dims and clamps an oversized box", () => {
     const base = solid(20, 20, 50);
-    expect([crop(base, 2, 2, 6, 8).width, crop(base, 2, 2, 6, 8).height]).toEqual(
-      [6, 8],
-    );
+    expect([
+      crop(base, 2, 2, 6, 8).width,
+      crop(base, 2, 2, 6, 8).height,
+    ]).toEqual([6, 8]);
     const clamped = crop(base, 8, 8, 999, 999);
     expect([clamped.width, clamped.height]).toEqual([12, 12]);
     // Fully out of bounds → unchanged.

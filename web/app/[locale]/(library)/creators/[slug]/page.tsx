@@ -68,8 +68,7 @@ export default async function CreatorPage({
   // a stale URL (link from a year ago, creator's role mix has
   // changed since) falls back to the overview rather than 404ing.
   const activeRole =
-    activeRoleRaw &&
-    detail.rails.some((r) => r.role === activeRoleRaw)
+    activeRoleRaw && detail.rails.some((r) => r.role === activeRoleRaw)
       ? activeRoleRaw
       : null;
   const activeRail = activeRole
@@ -224,11 +223,7 @@ function SingleRoleGrid({ rail }: { rail: CreatorRoleRail }) {
   );
 }
 
-function SeriesGrid({
-  series,
-}: {
-  series: CreatorRoleRail["series"];
-}) {
+function SeriesGrid({ series }: { series: CreatorRoleRail["series"] }) {
   return (
     <ul
       role="list"

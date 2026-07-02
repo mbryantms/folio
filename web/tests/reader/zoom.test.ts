@@ -87,13 +87,19 @@ describe("isDoubleTap", () => {
 
   it("recognizes a close, quick second tap", () => {
     expect(
-      isDoubleTap({ t: 0, x: 10, y: 10 }, { t: DOUBLE_TAP_MS - 1, x: 20, y: 12 }),
+      isDoubleTap(
+        { t: 0, x: 10, y: 10 },
+        { t: DOUBLE_TAP_MS - 1, x: 20, y: 12 },
+      ),
     ).toBe(true);
   });
 
   it("rejects too-slow or too-far", () => {
     expect(
-      isDoubleTap({ t: 0, x: 10, y: 10 }, { t: DOUBLE_TAP_MS + 50, x: 10, y: 10 }),
+      isDoubleTap(
+        { t: 0, x: 10, y: 10 },
+        { t: DOUBLE_TAP_MS + 50, x: 10, y: 10 },
+      ),
     ).toBe(false);
     expect(
       isDoubleTap(

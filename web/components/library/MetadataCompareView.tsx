@@ -33,7 +33,9 @@ function providerLabel(source: string): string {
   }
 }
 
-export function defaultFieldSources(diff: CompositeDiffResp): Record<string, number> {
+export function defaultFieldSources(
+  diff: CompositeDiffResp,
+): Record<string, number> {
   const out: Record<string, number> = {};
   for (const row of diff.rows) {
     // Only pre-select fields that would actually change.
@@ -98,7 +100,12 @@ export function MetadataCompareView({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <Button variant="ghost" size="sm" onClick={onBack} disabled={isApplying}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onBack}
+          disabled={isApplying}
+        >
           <ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Back to matches
         </Button>
         <span className="text-muted-foreground text-xs">
@@ -122,7 +129,10 @@ export function MetadataCompareView({
                 className="h-16 w-11 flex-none rounded object-cover"
               />
             ) : (
-              <div className="bg-muted h-16 w-11 flex-none rounded" aria-hidden />
+              <div
+                className="bg-muted h-16 w-11 flex-none rounded"
+                aria-hidden
+              />
             )}
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1 text-xs font-medium">
@@ -163,7 +173,11 @@ export function MetadataCompareView({
             <span>Field</span>
             <span>Keep mine</span>
             {columns.map((p) => (
-              <span key={p.ordinal} className="truncate" title={p.title ?? undefined}>
+              <span
+                key={p.ordinal}
+                className="truncate"
+                title={p.title ?? undefined}
+              >
                 {providerLabel(p.source)}
                 {p.title ? (
                   <span className="text-muted-foreground/70 ml-1 font-normal">
@@ -244,7 +258,9 @@ export function MetadataCompareView({
                         name={`fs-${row.field}`}
                         className="flex-none"
                         checked={selected === String(p.ordinal)}
-                        onChange={() => onChangeFieldSource(row.field, p.ordinal)}
+                        onChange={() =>
+                          onChangeFieldSource(row.field, p.ordinal)
+                        }
                       />
                       <span className="truncate text-xs">{value}</span>
                     </label>

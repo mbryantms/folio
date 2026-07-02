@@ -31,9 +31,7 @@ export function HeroCards({ data }: { data: ReadingStatsView }) {
       label: "Series touched",
       value: `${(data.reread_top_series ?? []).length || (data.top_series ?? []).length}`,
       sub:
-        data.reread_top_series?.[0]?.name ??
-        data.top_series?.[0]?.name ??
-        "—",
+        data.reread_top_series?.[0]?.name ?? data.top_series?.[0]?.name ?? "—",
       Icon: Sparkles,
     },
     {

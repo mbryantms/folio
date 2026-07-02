@@ -20,8 +20,7 @@ import { cn } from "@/lib/utils";
  * `className="capitalize"` for call sites whose option values are
  * lowercase keys.
  */
-export interface FilterPillProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export interface FilterPillProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   active: boolean;
   count?: number;
 }

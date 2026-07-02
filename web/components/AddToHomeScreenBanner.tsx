@@ -41,8 +41,7 @@ function isIosSafari(): boolean {
   // iPadOS 13+ reports itself as Mac in `userAgent` — fall back
   // to the touch + Safari heuristic.
   const isIosUa = /iP(hone|od|ad)/.test(ua);
-  const isMacWithTouch =
-    /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;
+  const isMacWithTouch = /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;
   if (!isIosUa && !isMacWithTouch) return false;
   // Chrome / Firefox / Edge on iOS all use the WebKit engine but
   // identify in the UA. Add-to-Home-Screen via share sheet is
@@ -96,15 +95,18 @@ export function AddToHomeScreenBanner() {
     <div
       role="region"
       aria-label="Install Folio"
-      className="bg-card border-border text-card-foreground fixed bottom-[max(1rem,var(--safe-bottom))] left-[max(1rem,var(--safe-left))] right-[max(1rem,var(--safe-right))] z-40 flex items-start gap-3 rounded-lg border p-3 shadow-lg sm:mx-auto sm:max-w-md"
+      className="bg-card border-border text-card-foreground fixed right-[max(1rem,var(--safe-right))] bottom-[max(1rem,var(--safe-bottom))] left-[max(1rem,var(--safe-left))] z-40 flex items-start gap-3 rounded-lg border p-3 shadow-lg sm:mx-auto sm:max-w-md"
     >
-      <Share className="text-muted-foreground mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+      <Share
+        className="text-muted-foreground mt-0.5 h-5 w-5 shrink-0"
+        aria-hidden="true"
+      />
       <div className="min-w-0 flex-1 text-sm">
         <p className="font-medium">Install Folio on your Home Screen.</p>
         <p className="text-muted-foreground mt-1">
           Tap the Share icon in Safari&apos;s toolbar, then choose{" "}
-          <span className="font-medium">Add to Home Screen</span>. The app
-          will launch full-screen the next time you open it.
+          <span className="font-medium">Add to Home Screen</span>. The app will
+          launch full-screen the next time you open it.
         </p>
       </div>
       <Button

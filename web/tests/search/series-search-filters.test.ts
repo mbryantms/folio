@@ -44,7 +44,10 @@ describe("parseSeriesSearchFilters", () => {
   });
 
   it("preserves year range strings as-is", () => {
-    const out = parseSeriesSearchFilters({ year_from: "2018", year_to: "2024" });
+    const out = parseSeriesSearchFilters({
+      year_from: "2018",
+      year_to: "2024",
+    });
     expect(out.yearFrom).toBe("2018");
     expect(out.yearTo).toBe("2024");
   });
@@ -52,7 +55,9 @@ describe("parseSeriesSearchFilters", () => {
 
 describe("seriesSearchFiltersToParams", () => {
   it("returns an empty object when state is at defaults", () => {
-    expect(seriesSearchFiltersToParams(EMPTY_SERIES_SEARCH_FILTERS)).toEqual({});
+    expect(seriesSearchFiltersToParams(EMPTY_SERIES_SEARCH_FILTERS)).toEqual(
+      {},
+    );
   });
 
   it("emits only non-default keys", () => {

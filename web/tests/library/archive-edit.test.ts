@@ -30,9 +30,27 @@ describe("buildOps", () => {
   it("emits a Reorder permutation over survivors", () => {
     // Drag p3 (orig 2) to the front: display order [2,0,1].
     const slots: PageSlot[] = [
-      { orig: 2, rotation: 0, removed: false, replaceId: null, transform: null },
-      { orig: 0, rotation: 0, removed: false, replaceId: null, transform: null },
-      { orig: 1, rotation: 0, removed: false, replaceId: null, transform: null },
+      {
+        orig: 2,
+        rotation: 0,
+        removed: false,
+        replaceId: null,
+        transform: null,
+      },
+      {
+        orig: 0,
+        rotation: 0,
+        removed: false,
+        replaceId: null,
+        transform: null,
+      },
+      {
+        orig: 1,
+        rotation: 0,
+        removed: false,
+        replaceId: null,
+        transform: null,
+      },
     ];
     expect(buildOps(slots)).toEqual([
       { kind: "reorder", new_order: [2, 0, 1] },
@@ -59,9 +77,27 @@ describe("buildOps", () => {
     // Original 4 pages. Remove orig 1; reorder survivors to [3,0,2];
     // rotate the page now at display 0 (orig 3) by 180; replace display 2.
     const slots: PageSlot[] = [
-      { orig: 3, rotation: 180, removed: false, replaceId: null, transform: null },
-      { orig: 0, rotation: 0, removed: false, replaceId: null, transform: null },
-      { orig: 2, rotation: 0, removed: false, replaceId: "img", transform: null },
+      {
+        orig: 3,
+        rotation: 180,
+        removed: false,
+        replaceId: null,
+        transform: null,
+      },
+      {
+        orig: 0,
+        rotation: 0,
+        removed: false,
+        replaceId: null,
+        transform: null,
+      },
+      {
+        orig: 2,
+        rotation: 0,
+        removed: false,
+        replaceId: "img",
+        transform: null,
+      },
       { orig: 1, rotation: 0, removed: true, replaceId: null, transform: null },
     ];
     expect(buildOps(slots)).toEqual([

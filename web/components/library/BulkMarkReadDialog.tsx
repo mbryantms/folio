@@ -102,8 +102,8 @@ export function BulkMarkReadDialog({
             {title ?? `Mark ${count.toLocaleString()} issues as read?`}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            Choose whether this counts as reading activity for today, or
-            should just update your collection silently.
+            Choose whether this counts as reading activity for today, or should
+            just update your collection silently.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <Label
@@ -120,9 +120,9 @@ export function BulkMarkReadDialog({
           <span>
             <span className="font-medium">Updating my collection</span>
             <span className="text-muted-foreground block text-xs">
-              Don&apos;t add to my reading log or count toward
-              today&apos;s reading activity. Recommended when recording
-              issues read previously.
+              Don&apos;t add to my reading log or count toward today&apos;s
+              reading activity. Recommended when recording issues read
+              previously.
             </span>
           </span>
         </Label>

@@ -9,11 +9,10 @@ export interface NativeSelectOption {
   label: string;
 }
 
-export interface NativeSelectProps
-  extends Omit<
-    React.SelectHTMLAttributes<HTMLSelectElement>,
-    "onChange" | "size"
-  > {
+export interface NativeSelectProps extends Omit<
+  React.SelectHTMLAttributes<HTMLSelectElement>,
+  "onChange" | "size"
+> {
   options: NativeSelectOption[];
   /** Called with the selected value (not the raw event). */
   onChange?: (next: string) => void;

@@ -45,7 +45,10 @@ export async function apiGet<T>(path: string): Promise<T> {
     // gateway-timeout ApiError so error boundaries + best-effort callers
     // treat it like any other failed fetch instead of hanging.
     if (e instanceof DOMException && e.name === "TimeoutError") {
-      throw new ApiError(504, `upstream timeout after ${REQUEST_TIMEOUT_MS}ms: ${path}`);
+      throw new ApiError(
+        504,
+        `upstream timeout after ${REQUEST_TIMEOUT_MS}ms: ${path}`,
+      );
     }
     throw e;
   }

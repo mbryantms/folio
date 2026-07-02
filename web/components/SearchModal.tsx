@@ -358,11 +358,7 @@ function RecentsSection({
 }
 
 function KbdGlyph({ children }: { children: React.ReactNode }) {
-  return (
-    <Kbd className="mx-1">
-      {children}
-    </Kbd>
-  );
+  return <Kbd className="mx-1">{children}</Kbd>;
 }
 
 function Thumb({ hit }: { hit: SearchHit }) {
@@ -469,10 +465,7 @@ function ShortcutHint({
     <span className="inline-flex items-center gap-1.5">
       <span className="inline-flex items-center gap-1">
         {keys.map((k, i) => (
-          <Kbd
-            key={i}
-            className="h-5 min-w-5"
-          >
+          <Kbd key={i} className="h-5 min-w-5">
             {k}
           </Kbd>
         ))}
