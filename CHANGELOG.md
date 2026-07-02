@@ -13,6 +13,30 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.0](https://github.com/mbryantms/folio/compare/v0.25.0...v0.26.0) (2026-07-02)
+
+
+### Added
+
+* **observability:** wave 1 audit remediation (request-id correlation, panic capture, handler spans, slow-query + pool metrics) ([#332](https://github.com/mbryantms/folio/issues/332)) ([65e512a](https://github.com/mbryantms/folio/commit/65e512a7e9749c7f9c632279ffb8832a2081b522))
+* **ux:** mobile polish — dialog bottom sheets + instant reader tap (UX-7, UX-8) ([#342](https://github.com/mbryantms/folio/issues/342)) ([79bcb4f](https://github.com/mbryantms/folio/commit/79bcb4fd26b83f6e16ff72c9b8c0ee6e9f8fdfe1))
+* **ux:** wave 4 audit remediation — onboarding, curator workflows, OPDS search paging ([#338](https://github.com/mbryantms/folio/issues/338)) ([749962d](https://github.com/mbryantms/folio/commit/749962d3514a266e47c8dd02637ff29ad995ba8a))
+
+
+### Fixed
+
+* **security:** wave 0 audit remediation (decode caps, session revocation, error hygiene, deps) ([#331](https://github.com/mbryantms/folio/issues/331)) ([990d5e4](https://github.com/mbryantms/folio/commit/990d5e42fb6b6d5f51aa122e230a7471551aed31))
+
+
+### Changed
+
+* **backend:** wave 2a audit remediation (audit_log index, batched collection add, concurrent issue-detail lookups) ([#334](https://github.com/mbryantms/folio/issues/334)) ([903e47b](https://github.com/mbryantms/folio/commit/903e47b06a197efd8e456740822fab1914d62025))
+* **metadata:** single-flight the provider cache (PERF-4) ([#336](https://github.com/mbryantms/folio/issues/336)) ([0cfeae1](https://github.com/mbryantms/folio/commit/0cfeae1fb27be8433a50df9cd36653eb6d6853ec))
+* **reader:** reserve page dimensions + race /auth/me (FEP-2, FEP-4) ([#337](https://github.com/mbryantms/folio/issues/337)) ([c14f7b7](https://github.com/mbryantms/folio/commit/c14f7b719f7d3616580a82c5d9e32fa53c2a9613))
+* **scanner:** gate the post-folder metadata rollup on actual ingest (PERF-2) ([#341](https://github.com/mbryantms/folio/issues/341)) ([69c1f1a](https://github.com/mbryantms/folio/commit/69c1f1a65e08963b0db3d58c57a56bd021238c19))
+* **scanner:** wave 2b — batch reconcile queries (PERF-7, PERF-9) ([#335](https://github.com/mbryantms/folio/issues/335)) ([c03ce60](https://github.com/mbryantms/folio/commit/c03ce60a8f9456c7835a1afe6b164fa70b45a787))
+* wave 2/3 residue — SW thumb cache, scan-manifest projection, query-count guards (FEP-3, PERF-6, PERF-12) ([#340](https://github.com/mbryantms/folio/issues/340)) ([55414d0](https://github.com/mbryantms/folio/commit/55414d01bfd71e7c2a68517b2b6ccd73f43dc929))
+
 ## [0.25.0](https://github.com/mbryantms/folio/compare/v0.24.0...v0.25.0) (2026-06-28)
 
 
