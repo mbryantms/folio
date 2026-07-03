@@ -62,8 +62,7 @@ export function PerDayBarChart({
           labelStyle={{ color: "var(--color-foreground)" }}
           formatter={(_value, _name, item) => {
             const payload = item?.payload as
-              | { active_ms?: number; sessions?: number }
-              | undefined;
+              { active_ms?: number; sessions?: number } | undefined;
             const ms = payload?.active_ms ?? 0;
             const sessions = payload?.sessions ?? 0;
             return [
