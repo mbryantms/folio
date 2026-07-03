@@ -198,18 +198,17 @@
       "platformAutomerge": true
     },
     {
-      "description": "pnpm security overrides (pnpm-workspace.yaml) are temporary pins onto a patched line \u2014 bumping them to a new MAJOR is meaningless churn (the js-yaml v5 PR case). Patch/minor within the pinned line stays enabled; delete each override outright once dependents' ranges clear the vulnerable versions.",
+      "description": "pnpm security overrides \u2014 matched by FILE (the depType-based match never fired; #378 proved it) are temporary pins onto a patched line \u2014 bumping them to a new MAJOR is meaningless churn (the js-yaml v5 PR case). Patch/minor within the pinned line stays enabled; delete each override outright once dependents' ranges clear the vulnerable versions.",
       "matchManagers": [
         "npm"
-      ],
-      "matchDepTypes": [
-        "overrides",
-        "pnpm.overrides"
       ],
       "matchUpdateTypes": [
         "major"
       ],
-      "enabled": false
+      "enabled": false,
+      "matchFileNames": [
+        "pnpm-workspace.yaml"
+      ]
     },
     {
       "description": "The Rust toolchain moves atomically: rust-toolchain.toml and every dtolnay/rust-toolchain@<version> workflow tag land in one PR, or CI compiles with a different rustc than the repo pins.",
