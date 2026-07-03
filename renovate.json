@@ -5,28 +5,41 @@
     ":dependencyDashboard",
     ":semanticCommits",
     ":semanticCommitTypeAll(deps)",
-    ":semanticCommitScopeDisabled"
+    ":semanticCommitScopeDisabled",
+    "helpers:pinGitHubActionDigests"
   ],
   "timezone": "America/New_York",
-  "prConcurrentLimit": 8,
+  "prConcurrentLimit": 15,
   "rangeStrategy": "update-lockfile",
   "minimumReleaseAge": "3 days",
   "internalChecksFilter": "strict",
   "prCreation": "not-pending",
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": ["before 6am on monday"]
+    "schedule": [
+      "before 6am on monday"
+    ]
   },
   "vulnerabilityAlerts": {
-    "labels": ["security"],
-    "schedule": ["at any time"],
+    "labels": [
+      "security"
+    ],
+    "schedule": [
+      "at any time"
+    ],
     "minimumReleaseAge": null
   },
   "packageRules": [
     {
       "description": "Auto-merge non-0.x patch/minor once CI (lint/typecheck/test/build + audits) is green.",
-      "matchManagers": ["npm", "cargo"],
-      "matchUpdateTypes": ["patch", "minor"],
+      "matchManagers": [
+        "npm",
+        "cargo"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "minor"
+      ],
       "matchCurrentVersion": "!/^0\\./",
       "automerge": true,
       "automergeType": "pr",
@@ -36,35 +49,53 @@
       "description": "0.x deps: any bump can break; never auto-merge.",
       "matchCurrentVersion": "/^0\\./",
       "automerge": false,
-      "addLabels": ["zerover-review"]
+      "addLabels": [
+        "zerover-review"
+      ]
     },
     {
       "description": "Group Radix UI primitives into one PR.",
       "groupName": "radix-ui",
-      "matchPackageNames": ["@radix-ui/**"]
+      "matchPackageNames": [
+        "@radix-ui/**"
+      ]
     },
     {
       "description": "Group TanStack libraries.",
       "groupName": "tanstack",
-      "matchPackageNames": ["@tanstack/**"]
+      "matchPackageNames": [
+        "@tanstack/**"
+      ]
     },
     {
       "description": "Majors always require human review + migration.",
-      "matchUpdateTypes": ["major"],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "automerge": false,
-      "addLabels": ["major-review"]
+      "addLabels": [
+        "major-review"
+      ]
     },
     {
-      "description": "eslint 10 is blocked by eslint-plugin-react, pulled in transitively via eslint-config-next (which depends on eslint-plugin-react ^7.37.0). Its latest release, 7.37.5, peer-supports eslint up to ^9.7 only and calls the rule-context API context.getFilename(), which eslint 10 removed (now context.filename). Flat config is already in use (web/eslint.config.mjs) — that is NOT the blocker. Clears only when eslint-plugin-react ships an eslint-10-compatible release AND eslint-config-next adopts it.",
-      "matchPackageNames": ["eslint"],
+      "description": "eslint 10 is blocked by eslint-plugin-react, pulled in transitively via eslint-config-next (which depends on eslint-plugin-react ^7.37.0). Its latest release, 7.37.5, peer-supports eslint up to ^9.7 only and calls the rule-context API context.getFilename(), which eslint 10 removed (now context.filename). Flat config is already in use (web/eslint.config.mjs) \u2014 that is NOT the blocker. Clears only when eslint-plugin-react ships an eslint-10-compatible release AND eslint-config-next adopts it.",
+      "matchPackageNames": [
+        "eslint"
+      ],
       "automerge": false,
-      "addLabels": ["gated-major"]
+      "addLabels": [
+        "gated-major"
+      ]
     },
     {
       "description": "@types/node major must track the Node runtime major, currently 24 (engines.node >=24, .nvmrc, ci.yml node-version, web/Dockerfile node:24). Don't let @types/node run ahead of the runtime; bump both together when Node moves.",
-      "matchPackageNames": ["@types/node"],
+      "matchPackageNames": [
+        "@types/node"
+      ],
       "automerge": false,
-      "addLabels": ["gated-major"]
+      "addLabels": [
+        "gated-major"
+      ]
     },
     {
       "description": "Known breaking-within-minor packages (2026-06 audit found code-migration needs in minor/0.x bumps). react-hook-form/resolvers and react-query were migrated in Stage 3 but stay flagged (future minors have shipped breaking type changes). openapi-typescript needs a matching scripts/build-types-shim.py update before bumping past 7.4.",
@@ -75,35 +106,63 @@
         "@tanstack/react-query"
       ],
       "automerge": false,
-      "addLabels": ["needs-migration-review"]
+      "addLabels": [
+        "needs-migration-review"
+      ]
     },
     {
       "description": "Rust HTTP-client trio must move together (oauth2/openidconnect pin reqwest 0.12).",
-      "matchManagers": ["cargo"],
-      "matchPackageNames": ["reqwest", "oauth2", "openidconnect"],
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchPackageNames": [
+        "reqwest",
+        "oauth2",
+        "openidconnect"
+      ],
       "automerge": false,
       "groupName": "rust-http-client",
-      "addLabels": ["coordinated-bump"]
+      "addLabels": [
+        "coordinated-bump"
+      ]
     },
     {
-      "description": "sea-orm pins sqlx (sea-orm 1.1.x → sqlx 0.8.x). Never bump sqlx standalone — it won't co-resolve. Move as one PR; sqlx 0.9 waits for sea-orm 2.x.",
-      "matchManagers": ["cargo"],
-      "matchPackageNames": ["sea-orm", "sea-orm-migration", "sqlx"],
+      "description": "sea-orm pins sqlx (sea-orm 1.1.x \u2192 sqlx 0.8.x). Never bump sqlx standalone \u2014 it won't co-resolve. Move as one PR; sqlx 0.9 waits for sea-orm 2.x.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchPackageNames": [
+        "sea-orm",
+        "sea-orm-migration",
+        "sqlx"
+      ],
       "automerge": false,
       "groupName": "sea-orm + sqlx",
-      "addLabels": ["coordinated-bump"]
+      "addLabels": [
+        "coordinated-bump"
+      ]
     },
     {
-      "description": "apalis pins the redis crate (apalis-redis 0.6.x → redis 0.27.x). The redis crate never bumps standalone — it moves with apalis/apalis-redis.",
-      "matchManagers": ["cargo"],
-      "matchPackageNames": ["apalis", "apalis-redis", "redis"],
+      "description": "apalis pins the redis crate (apalis-redis 0.6.x \u2192 redis 0.27.x). The redis crate never bumps standalone \u2014 it moves with apalis/apalis-redis.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchPackageNames": [
+        "apalis",
+        "apalis-redis",
+        "redis"
+      ],
       "automerge": false,
       "groupName": "apalis + redis",
-      "addLabels": ["coordinated-bump"]
+      "addLabels": [
+        "coordinated-bump"
+      ]
     },
     {
-      "description": "RustCrypto digest/rand ecosystem moves in lockstep — digest 0.11 (sha2 0.11 / hmac 0.13) and rand 0.10 are breaking jumps that the AEAD/signature crates (argon2, rsa, ed25519-dalek, chacha20poly1305) pin transitively. Group so they never surface as conflicting standalone bumps; needs code migration.",
-      "matchManagers": ["cargo"],
+      "description": "RustCrypto digest/rand ecosystem moves in lockstep \u2014 digest 0.11 (sha2 0.11 / hmac 0.13) and rand 0.10 are breaking jumps that the AEAD/signature crates (argon2, rsa, ed25519-dalek, chacha20poly1305) pin transitively. Group so they never surface as conflicting standalone bumps; needs code migration.",
+      "matchManagers": [
+        "cargo"
+      ],
       "matchPackageNames": [
         "sha2",
         "hmac",
@@ -117,7 +176,60 @@
       ],
       "automerge": false,
       "groupName": "rust-crypto",
-      "addLabels": ["coordinated-bump", "needs-migration-review"]
+      "addLabels": [
+        "coordinated-bump",
+        "needs-migration-review"
+      ]
+    },
+    {
+      "description": "GitHub Actions: digest pins + patch/minor auto-merge once CI is green. Majors stay behind the major-review rule.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "minor",
+        "digest",
+        "pin",
+        "pinDigest"
+      ],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "pnpm security overrides (pnpm-workspace.yaml) are temporary pins onto a patched line \u2014 bumping them to a new MAJOR is meaningless churn (the js-yaml v5 PR case). Patch/minor within the pinned line stays enabled; delete each override outright once dependents' ranges clear the vulnerable versions.",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchDepTypes": [
+        "overrides",
+        "pnpm.overrides"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "The Rust toolchain moves atomically: rust-toolchain.toml and every dtolnay/rust-toolchain@<version> workflow tag land in one PR, or CI compiles with a different rustc than the repo pins.",
+      "groupName": "rust-toolchain",
+      "matchPackageNames": [
+        "rust",
+        "dtolnay/rust-toolchain"
+      ]
+    },
+    {
+      "description": "Dev/test infrastructure images (postgres/redis/dex in compose files) never auto-merge \u2014 a postgres major needs a data-dir migration plan, and dev must stay on the same major CI tests against.",
+      "matchManagers": [
+        "docker-compose",
+        "dockerfile"
+      ],
+      "automerge": false,
+      "addLabels": [
+        "infra-review"
+      ]
     }
-  ]
+  ],
+  "prHourlyLimit": 0
 }

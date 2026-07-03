@@ -22,4 +22,11 @@ ignore = [
     # `rsa 0.9.10` Marvin Attack — transitive via jsonwebtoken; we sign
     # JWTs with Ed25519 only, never call into RSA primitives.
     "RUSTSEC-2023-0071",
+    # `memmap2 0.9.10` unsound "unchecked pointer offset"
+    # (RUSTSEC-2026-0186) — transitive via candle-core in the optional
+    # OCR/ML stack; not reachable from the core reader/scanner request
+    # paths (audit DEP-1, 2026-07-01). Needed now that the weekly job
+    # runs `cargo audit --deny unsound`. Revisit when candle bumps its
+    # memmap2 pin.
+    "RUSTSEC-2026-0186",
 ]

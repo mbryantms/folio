@@ -1,0 +1,51 @@
+# Daily Rust-advisory check (dependency-pipeline audit 2026-07-02).
+#
+# Why this exists alongside the weekly security.yml sweep: the per-PR
+# `cargo deny` job only runs when a PR touches dependency files, so a
+# brand-new RUSTSEC advisory on an UNCHANGED tree either waited for
+# Monday's weekly or ambushed the next unrelated dep-touching PR
+# (the RUSTSEC-2026-0194/quick-xml incident). This runs the fast
+# advisories-only check against main every day and maintains a single
+# tracking issue, making new advisories their own workstream instead
+# of collateral damage on feature PRs.
+name: Advisories (daily)
+
+on:
+  schedule:
+    - cron: "17 6 * * *" # daily, before the working day
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  rust-advisories:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        id: deny
+        continue-on-error: true
+        with:
+          command: check advisories
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.deny.outcome }}
+        run: |
+          set -euo pipefail
+          TITLE="Rust dependency advisories failing on main"
+          EXISTING=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ "$OUTCOME" = "failure" ]; then
+            BODY="\`cargo deny check advisories\` is failing on main as of $(date -u +%F). See the [run log]($RUN_URL) for the advisory details. Triage: bump the crate if a fixed version co-resolves, otherwise add a documented, dated ignore to deny.toml (unsound advisories: .cargo/audit.toml)."
+            if [ -n "$EXISTING" ]; then
+              gh issue comment "$EXISTING" --body "$BODY"
+            else
+              gh issue create --title "$TITLE" --body "$BODY" --label security
+            fi
+          elif [ -n "$EXISTING" ]; then
+            gh issue close "$EXISTING" --comment "Advisories check is green again ([run]($RUN_URL))."
+          fi

@@ -19,7 +19,11 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
-      - run: cargo audit
+      # --deny unsound: bare `cargo audit` exits 0 on unsound/informational
+      # advisories, so e.g. RUSTSEC-2026-0186 (memmap2) never failed anything.
+      # Accepted-risk unsound advisories live in .cargo/audit.toml with the
+      # same documented-ignore convention as deny.toml.
+      - run: cargo audit --deny unsound
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories

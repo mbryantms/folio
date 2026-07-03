@@ -6,7 +6,7 @@ Next.js 16 web app. Spec: [`docs/dev/comic-reader-spec.md`](docs/dev/comic-reade
 ## Stack pins
 
 - **Rust**: edition 2024, axum, sea-orm, apalis (Redis-backed jobs), utoipa for
-  OpenAPI emission. Postgres 17 in dev (older versions break the search migration).
+  OpenAPI emission. Postgres 18 in dev (matches CI/test; versions before 17 break the search migration).
 - **Web**: Next.js 16, React 19.2, Tailwind v4, TanStack Query v5, shadcn/ui
   (copy-in style under `web/components/ui/`).
 - **Dev services**: Postgres 5432, Redis 6380, Dex 5556 — `just dev-services-up`.
