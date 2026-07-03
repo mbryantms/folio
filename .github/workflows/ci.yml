@@ -325,7 +325,7 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - name: Restore Next.js cache
         if: env.WEB == 'true'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: web/.next/cache
           key: ${{ runner.os }}-next-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('web/**/*.ts', 'web/**/*.tsx', 'web/**/*.js', 'web/**/*.jsx', 'web/**/*.mjs', 'web/**/*.css', 'web/**/*.json') }}
