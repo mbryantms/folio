@@ -32,7 +32,7 @@ overrides:
   "js-yaml@>=4.0.0 <4.1.1": "4.2.0"
   # GHSA postcss <8.5.10 parsing advisory; build-chain only.
   # Delete when `pnpm why postcss` shows no in-range consumers.
-  "postcss@<8.5.10": "8.5.15"
+  "postcss@<8.5.10": "8.5.16"
   # GHSA-gv7w-rqvm-qjhr — esbuild <0.28.1 missing binary integrity
   # verification (RCE via NPM_CONFIG_REGISTRY). Reaches us only through
   # the @serwist build toolchain + the vite/vitest dev stack, never the
