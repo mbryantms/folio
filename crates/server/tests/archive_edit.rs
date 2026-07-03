@@ -183,6 +183,50 @@ async fn remove_and_reorder_rewrites_archive() {
 }
 
 #[tokio::test]
+async fn edit_wipes_stale_on_disk_thumbnails() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let p1 = png_bytes(4, 4, [10, 0, 0]);
+    let p2 = png_bytes(4, 4, [0, 20, 0]);
+    let cbz = build_cbz(&[("p1.png", p1.clone()), ("p2.png", p2.clone())]);
+    let (issue_id, _path) = seed_issue_with_cbz(&app, cbz, dir.path()).await;
+    let state = app.state();
+
+    // Pre-edit artifacts on disk: cover, @sm cover, and a strip page.
+    // Every generator in `library::thumbnails` is skip-if-file-exists, so
+    // if the edit leaves these behind the post-edit regen no-ops and the
+    // page map keeps serving pre-edit pixels.
+    let thumbs = app._data_dir.path().join("thumbs");
+    let strip_dir = thumbs.join(&issue_id).join("s");
+    std::fs::create_dir_all(&strip_dir).unwrap();
+    let cover = thumbs.join(format!("{issue_id}.webp"));
+    let cover_sm = thumbs.join(format!("{issue_id}@sm.webp"));
+    let strip = strip_dir.join("1.webp");
+    std::fs::write(&cover, b"stale").unwrap();
+    std::fs::write(&cover_sm, b"stale").unwrap();
+    std::fs::write(&strip, b"stale").unwrap();
+
+    let ops = vec![PageOp::Rotate {
+        ordinal: 0,
+        degrees: Rot::R90,
+    }];
+    edit_one_issue(&state, &job(&issue_id, ops)).await.unwrap();
+
+    assert!(
+        !cover.exists(),
+        "stale cover thumb must be wiped by the edit"
+    );
+    assert!(
+        !cover_sm.exists(),
+        "stale @sm cover thumb must be wiped by the edit"
+    );
+    assert!(
+        !strip.exists(),
+        "stale strip thumb must be wiped by the edit"
+    );
+}
+
+#[tokio::test]
 async fn bulk_remove_last_lowers_per_issue_and_rewrites() {
     let app = TestApp::spawn().await;
     let dir = tempdir().unwrap();

@@ -2,8 +2,9 @@
 //! (`archive-rewrite-1.0` M2).
 //!
 //! Mirrors [`crate::jobs::rewrite_sidecars`]: claim the per-issue rewrite
-//! mutex, rebuild the archive atomically, invalidate the zip-LRU, clear
-//! the thumbnail stamps, stamp `last_rewrite_kind='edit'`, audit, and
+//! mutex, rebuild the archive atomically, invalidate the zip-LRU, wipe the
+//! on-disk thumbnails + clear the stamps (page bytes changed, and the
+//! generators are skip-if-exists), stamp `last_rewrite_kind='edit'`, audit, and
 //! enqueue a scoped rescan so the scanner re-ingests the new bytes (the
 //! content-hash dedupe keeps `issue.id` stable).
 //!
@@ -469,6 +470,24 @@ pub async fn edit_one_issue(
     .map_err(|e| EditError::Image(format!("join: {e}")))??;
 
     state.zip_lru.invalidate(&row.id);
+
+    // Wipe the on-disk thumbnails (cover + @sm + page-strip subtree). Every
+    // generator in `library::thumbnails` is skip-if-file-exists, so clearing
+    // the DB stamps below is not enough — without the wipe the post-edit
+    // regen no-ops against the stale files and the page map / cover keep
+    // serving pre-edit pixels. The next request (or the post-scan worker)
+    // regenerates from the freshly-rewritten archive.
+    {
+        let data_dir = cfg.data_path.clone();
+        let issue_id = row.id.clone();
+        if let Err(e) = tokio::task::spawn_blocking(move || {
+            crate::library::thumbnails::wipe_issue_thumbs(&data_dir, &issue_id);
+        })
+        .await
+        {
+            tracing::warn!(issue_id = %row.id, error = %e, "archive edit: thumb wipe task failed");
+        }
+    }
 
     let moved = (dst_path != archive_path).then(|| dst_path.clone());
 
