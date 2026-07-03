@@ -13,7 +13,7 @@
   "rangeStrategy": "update-lockfile",
   "minimumReleaseAge": "3 days",
   "internalChecksFilter": "strict",
-  "prCreation": "not-pending",
+  "prCreation": "immediate",
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": [
