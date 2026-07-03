@@ -29,7 +29,7 @@ overrides:
   "lodash@<4.18.0": "4.18.1"
   # GHSA js-yaml <4.1.1 code-execution hardening; transitive tooling.
   # Delete when `pnpm why js-yaml` shows no in-range consumers.
-  "js-yaml@>=4.0.0 <4.1.1": "4.2.0"
+  "js-yaml@>=4.0.0 <4.1.1": "4.3.0"
   # GHSA postcss <8.5.10 parsing advisory; build-chain only.
   # Delete when `pnpm why postcss` shows no in-range consumers.
   "postcss@<8.5.10": "8.5.16"
