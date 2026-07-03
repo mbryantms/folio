@@ -229,7 +229,17 @@
       "addLabels": [
         "infra-review"
       ]
+    },
+    {
+      "description": "reqwest is held at 0.12 (see the Cargo.toml comment block): oauth2/openidconnect pin 0.12 in their feature graphs and a local bump pulls two reqwest versions side-by-side. A config-level ceiling beats closed-PR memory (branch cleanup wiped that once and the update resurrected as #350). Remove when oauth2 ships reqwest-0.13 support.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchPackageNames": [
+        "reqwest"
+      ],
+      "allowedVersions": "<0.13"
     }
   ],
-  "prHourlyLimit": 4
+  "prHourlyLimit": 0
 }
