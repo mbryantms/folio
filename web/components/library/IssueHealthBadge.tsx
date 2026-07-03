@@ -101,8 +101,7 @@ function summarizeRow(row: HealthRow): string {
   const data =
     row.payload && typeof row.payload === "object"
       ? ((row.payload as Record<string, unknown>).data as
-          | Record<string, unknown>
-          | undefined)
+          Record<string, unknown> | undefined)
       : undefined;
   if (!data) return row.kind;
   if (row.kind === "SkippedArchiveEntries") {

@@ -74,11 +74,7 @@ export type StatsHeroConfig = {
   metrics: StatsHeroMetric[];
 };
 export type StatsHeroMetric =
-  | "issues"
-  | "hours"
-  | "streak"
-  | "pages"
-  | "pace_spp";
+  "issues" | "hours" | "streak" | "pages" | "pace_spp";
 
 export type HeatmapConfig = {
   weeks: 4 | 8 | 12 | 26 | 52;

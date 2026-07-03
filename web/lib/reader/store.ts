@@ -31,10 +31,7 @@ export type FitMode = "width" | "height" | "original";
  *   - `select-image` — same drag, but the cropped pixels feed
  *     `crypto.subtle.digest` to populate `selection.image_hash`. */
 export type MarkerMode =
-  | "idle"
-  | "select-rect"
-  | "select-text"
-  | "select-image";
+  "idle" | "select-rect" | "select-text" | "select-image";
 
 /** Sketch of a marker the user is about to save. Lives off the store
  *  while the editor is open so the page-flip listener can clear it on

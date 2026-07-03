@@ -17,12 +17,7 @@ import type {
 } from "@/lib/api/types";
 
 type Dimension =
-  | "series"
-  | "publishers"
-  | "imprints"
-  | "genres"
-  | "tags"
-  | CreatorRole;
+  "series" | "publishers" | "imprints" | "genres" | "tags" | CreatorRole;
 
 const DIMENSION_LABELS: Record<Dimension, string> = {
   series: "Series",
