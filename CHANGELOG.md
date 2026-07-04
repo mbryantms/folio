@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.3](https://github.com/mbryantms/folio/compare/v0.26.2...v0.26.3) (2026-07-04)
+
+
+### Fixed
+
+* **archive-edit:** correct stale page dims on rescan + version page/thumb URLs ([#391](https://github.com/mbryantms/folio/issues/391)) ([2dcfcf5](https://github.com/mbryantms/folio/commit/2dcfcf55eef4a3b20eb46027e051157151cee3a8))
+
 ## [0.26.2](https://github.com/mbryantms/folio/compare/v0.26.1...v0.26.2) (2026-07-04)
 
 
