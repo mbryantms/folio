@@ -13,6 +13,14 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.5](https://github.com/mbryantms/folio/compare/v0.26.4...v0.26.5) (2026-07-04)
+
+
+### Fixed
+
+* **archive-edit:** apply EXIF orientation at decode + stop dropping busy edits ([#396](https://github.com/mbryantms/folio/issues/396)) ([b7a4a49](https://github.com/mbryantms/folio/commit/b7a4a4900a43ffda213ea063e836950fede45314))
+* **pwa:** editor tiles bypass the service worker instead of nonce-busting ([#398](https://github.com/mbryantms/folio/issues/398)) ([6f978da](https://github.com/mbryantms/folio/commit/6f978daf7583f7ffef8f61788c4ec24247e8c9ca))
+
 ## [0.26.4](https://github.com/mbryantms/folio/compare/v0.26.3...v0.26.4) (2026-07-04)
 
 
