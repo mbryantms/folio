@@ -98,6 +98,18 @@ export function PageEditor({
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [uploadingOrig, setUploadingOrig] = React.useState<number | null>(null);
   const [adjustOrig, setAdjustOrig] = React.useState<number | null>(null);
+  // Wall-clock stamp minted per dialog open, appended to every tile URL.
+  // `sw=bypass` (below) already exempts the tiles from the CURRENT
+  // service worker — but with `skipWaiting: false` an updated worker
+  // only takes over once the operator accepts the update toast (or
+  // closes every tab), so a browser can run a months-old worker whose
+  // stale-while-revalidate thumb cache knows nothing about the bypass
+  // param and serves its cached copy first. A per-open-unique URL makes
+  // every generation of worker MISS its cache and hit the network.
+  // (The #395 salt+counter nonce was NOT unique — the counter reset on
+  // remount and the salt was per-bundle-load, so soft-nav reopens
+  // collided. A wall-clock read per open cannot collide.)
+  const [openStamp, setOpenStamp] = React.useState(0);
 
   // Render-phase reconciliation (this codebase avoids set-state-in-effect):
   // (re)build the working list once the dialog is open and the real count
@@ -106,6 +118,7 @@ export function PageEditor({
   if (open && resolvedCount !== null && resolvedCount !== builtFor) {
     setBuiltFor(resolvedCount);
     setSlots(initialSlots(resolvedCount));
+    setOpenStamp(Date.now());
   } else if (!open && builtFor !== null) {
     setBuiltFor(null);
     setSlots([]);
@@ -218,6 +231,7 @@ export function PageEditor({
                       <PageCard
                         key={slot.orig}
                         issueId={issue.id}
+                        openStamp={openStamp}
                         slot={slot}
                         position={idx + 1}
                         uploading={uploadingOrig === slot.orig}
@@ -334,6 +348,7 @@ export function PageEditor({
 
 function PageCard({
   issueId,
+  openStamp,
   slot,
   position,
   uploading,
@@ -343,6 +358,8 @@ function PageCard({
   onAdjust,
 }: {
   issueId: string;
+  /** Per-dialog-open wall-clock stamp for the tile URL (see PageEditor). */
+  openStamp: number;
   slot: PageSlot;
   position: number;
   uploading: boolean;
@@ -388,7 +405,7 @@ function PageCard({
             the previous copy first. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={`/issues/${issueId}/pages/${slot.orig}/thumb?sw=bypass`}
+          src={`/issues/${issueId}/pages/${slot.orig}/thumb?sw=bypass&t=${openStamp}`}
           alt={`Page ${position}`}
           className="h-full w-full object-contain transition-transform"
           style={{ transform: `rotate(${slot.rotation}deg)` }}
