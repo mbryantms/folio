@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.2](https://github.com/mbryantms/folio/compare/v0.26.1...v0.26.2) (2026-07-04)
+
+
+### Fixed
+
+* **archive-edit:** stale thumbnails after page edits (server + HTTP caching) ([#390](https://github.com/mbryantms/folio/issues/390)) ([47b351e](https://github.com/mbryantms/folio/commit/47b351ea262651b7c3e1d69b6f3302f0c3666d9a))
+
+
+### Dependencies
+
+* update radix-ui ([#387](https://github.com/mbryantms/folio/issues/387)) ([b05f95b](https://github.com/mbryantms/folio/commit/b05f95beac4071dfb036f64ec9506d5b99d160da))
+* update taiki-e/install-action digest to c93ccc0 ([#389](https://github.com/mbryantms/folio/issues/389)) ([cee86ab](https://github.com/mbryantms/folio/commit/cee86ab5957986afc6730972d20cff788fbf0969))
+
 ## [0.26.1](https://github.com/mbryantms/folio/compare/v0.26.0...v0.26.1) (2026-07-03)
 
 
