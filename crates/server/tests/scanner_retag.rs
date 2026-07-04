@@ -423,3 +423,90 @@ async fn duplicate_content_still_emits_health_issue() {
         .len();
     assert_eq!(issue_count, 1);
 }
+
+/// Archive-edit staleness regression: `ComicInfo.xml` is preserved
+/// verbatim across page rewrites, so after a rotate its `<Pages>` block
+/// declares the *old* dimensions. Because the block looks complete, the
+/// pre-fix scanner skipped the dimension probe entirely (and the probe
+/// only backfilled, never corrected) — the reader's page strip and spread
+/// layout kept portrait sizing for a now-landscape page. Changed bytes
+/// must force a probe that overwrites stale width/height and re-derives
+/// `double_page` from the real aspect.
+#[tokio::test]
+async fn changed_bytes_correct_stale_page_dimensions() {
+    fn real_png(w: u32, h: u32, salt: u8) -> Vec<u8> {
+        let img = image::RgbImage::from_pixel(w, h, image::Rgb([salt, 80, 120]));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .unwrap();
+        buf.into_inner()
+    }
+    fn write_real_cbz(path: &Path, page: &[u8], comic_info: &str) {
+        let f = std::fs::File::create(path).unwrap();
+        let mut zw = zip::ZipWriter::new(f);
+        let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("p0001.png", opts).unwrap();
+        zw.write_all(page).unwrap();
+        zw.start_file("ComicInfo.xml", opts).unwrap();
+        zw.write_all(comic_info.as_bytes()).unwrap();
+        zw.finish().unwrap();
+    }
+
+    // Complete <Pages> block: width/height/DoublePage all present, so the
+    // metadata-completeness gate alone would skip the probe.
+    let comic_info = r#"<?xml version="1.0"?>
+<ComicInfo>
+  <Series>Rotate Test</Series>
+  <Number>1</Number>
+  <Pages>
+    <Page Image="0" Type="FrontCover" ImageWidth="100" ImageHeight="150" DoublePage="false"/>
+  </Pages>
+</ComicInfo>"#;
+
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Rotate Test (2020)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let file = folder.join("Rotate Test 001.cbz");
+    write_real_cbz(&file, &real_png(100, 150, 1), comic_info);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let before = IssueEntity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .expect("row after first scan");
+    let pages = before.pages.as_array().expect("pages json array");
+    assert_eq!(pages[0]["image_width"], 100, "first scan trusts ComicInfo");
+    assert_eq!(pages[0]["image_height"], 150);
+
+    // Simulate a 90° rotate rewrite: page becomes landscape, ComicInfo
+    // preserved verbatim (exactly what the archive-edit job does).
+    write_real_cbz(&file, &real_png(150, 100, 2), comic_info);
+
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let after = IssueEntity::find_by_id(before.id.clone())
+        .one(&state.db)
+        .await
+        .unwrap()
+        .expect("row survives rescan");
+    let pages = after.pages.as_array().expect("pages json array");
+    assert_eq!(
+        pages[0]["image_width"], 150,
+        "changed bytes must force a probe that corrects stale width: {:?}",
+        pages[0],
+    );
+    assert_eq!(pages[0]["image_height"], 100);
+    assert_eq!(
+        pages[0]["double_page"], true,
+        "double_page re-derived from the real aspect (150/100 ≥ 1.2): {:?}",
+        pages[0],
+    );
+}
