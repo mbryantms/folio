@@ -6,7 +6,13 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { coverThumbSrcSet, issueUrl, readerUrl } from "@/lib/urls";
+import {
+  coverThumbSrcSet,
+  issueUrl,
+  pageBytesSrcSet,
+  readerUrl,
+  withContentVersion,
+} from "@/lib/urls";
 
 const ISSUE = { slug: "issue-1", series_slug: "invincible" };
 const SV_ID = "00000000-0000-0000-0000-00000000abcd";
@@ -73,5 +79,32 @@ describe("coverThumbSrcSet", () => {
     // strip page (n > 0) has no small variant
     expect(coverThumbSrcSet("/issues/abc/pages/3/thumb")).toBeNull();
     expect(coverThumbSrcSet("https://cdn.example.com/cover.jpg")).toBeNull();
+  });
+});
+
+describe("withContentVersion", () => {
+  it("appends v to a bare URL and &v to a URL with a query", () => {
+    expect(
+      withContentVersion("/issues/a/pages/3", "2026-07-04T00:00:00Z"),
+    ).toBe("/issues/a/pages/3?v=2026-07-04T00%3A00%3A00Z");
+    expect(
+      withContentVersion("/issues/a/pages/3/thumb?variant=strip", "s1"),
+    ).toBe("/issues/a/pages/3/thumb?variant=strip&v=s1");
+  });
+
+  it("passes the URL through untouched when there is no version", () => {
+    expect(withContentVersion("/issues/a/pages/3", null)).toBe(
+      "/issues/a/pages/3",
+    );
+    expect(withContentVersion("/issues/a/pages/3", undefined)).toBe(
+      "/issues/a/pages/3",
+    );
+  });
+
+  it("composes with pageBytesSrcSet so variant URLs inherit the stamp", () => {
+    const src = withContentVersion("/issues/a/pages/3", "s1");
+    expect(pageBytesSrcSet(src, 1000)).toBe(
+      "/issues/a/pages/3?v=s1&w=480 480w, /issues/a/pages/3?v=s1&w=720 720w, /issues/a/pages/3?v=s1 1000w",
+    );
   });
 });

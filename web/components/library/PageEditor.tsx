@@ -98,6 +98,12 @@ export function PageEditor({
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [uploadingOrig, setUploadingOrig] = React.useState<number | null>(null);
   const [adjustOrig, setAdjustOrig] = React.useState<number | null>(null);
+  // Cache-buster minted per dialog open. The tile URLs are stable across
+  // archive rewrites, so without this a reopen right after an apply shows
+  // whatever the browser cached — including pre-edit thumbs pinned by the
+  // pre-fix `immutable` policy. A fresh `?v=` forces a real fetch, and the
+  // server regenerates wiped thumbs inline from the rewritten archive.
+  const [openNonce, setOpenNonce] = React.useState(0);
 
   // Render-phase reconciliation (this codebase avoids set-state-in-effect):
   // (re)build the working list once the dialog is open and the real count
@@ -106,6 +112,7 @@ export function PageEditor({
   if (open && resolvedCount !== null && resolvedCount !== builtFor) {
     setBuiltFor(resolvedCount);
     setSlots(initialSlots(resolvedCount));
+    setOpenNonce((n) => n + 1);
   } else if (!open && builtFor !== null) {
     setBuiltFor(null);
     setSlots([]);
@@ -218,6 +225,7 @@ export function PageEditor({
                       <PageCard
                         key={slot.orig}
                         issueId={issue.id}
+                        cacheBust={openNonce}
                         slot={slot}
                         position={idx + 1}
                         uploading={uploadingOrig === slot.orig}
@@ -334,6 +342,7 @@ export function PageEditor({
 
 function PageCard({
   issueId,
+  cacheBust,
   slot,
   position,
   uploading,
@@ -343,6 +352,8 @@ function PageCard({
   onAdjust,
 }: {
   issueId: string;
+  /** Per-dialog-open nonce appended to the thumb URL (see PageEditor). */
+  cacheBust: number;
   slot: PageSlot;
   position: number;
   uploading: boolean;
@@ -380,7 +391,7 @@ function PageCard({
             client-side preview until the rewrite re-encodes it. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={`/issues/${issueId}/pages/${slot.orig}/thumb`}
+          src={`/issues/${issueId}/pages/${slot.orig}/thumb?v=e${cacheBust}`}
           alt={`Page ${position}`}
           className="h-full w-full object-contain transition-transform"
           style={{ transform: `rotate(${slot.rotation}deg)` }}

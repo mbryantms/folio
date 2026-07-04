@@ -1,7 +1,11 @@
 import { useEffect, useRef } from "react";
 import type { ViewMode } from "@/lib/reader/detect";
 import type { SpreadGroup } from "@/lib/reader/spreads";
-import { pageVariantUrl, selectPageVariantTier } from "@/lib/urls";
+import {
+  pageVariantUrl,
+  selectPageVariantTier,
+  withContentVersion,
+} from "@/lib/urls";
 
 // How far to warm around the current position. Forward-weighted (most
 // turns go forward) but we also warm behind so back-nav is instant.
@@ -43,6 +47,9 @@ export function useReaderPrefetch(opts: {
   pageWidths?: ReadonlyArray<number | null>;
   /** False for original-fit / pinch-zoom, which read full-res. */
   variantsEnabled?: boolean;
+  /** Archive-content `?v=` stamp — must match the rendered `<img>` URLs
+   *  exactly, or the warm cache misses and every page double-fetches. */
+  urlVersion?: string | null;
 }): void {
   const {
     issueId,
@@ -53,6 +60,7 @@ export function useReaderPrefetch(opts: {
     viewMode,
     pageWidths,
     variantsEnabled = false,
+    urlVersion = null,
   } = opts;
 
   // Retained decoded images, keyed by URL (insertion-ordered for LRU-ish
@@ -77,7 +85,10 @@ export function useReaderPrefetch(opts: {
       slotCssPx * Math.max(1, window.devicePixelRatio || 1),
     );
     const url = (p: number) => {
-      const bare = `/issues/${issueId}/pages/${p}`;
+      const bare = withContentVersion(
+        `/issues/${issueId}/pages/${p}`,
+        urlVersion,
+      );
       if (!variantsEnabled) return bare;
       const tier = selectPageVariantTier(targetDevicePx, pageWidths?.[p]);
       return tier == null ? bare : pageVariantUrl(bare, tier);
@@ -141,5 +152,13 @@ export function useReaderPrefetch(opts: {
     );
     queue.current = want.map(url);
     pump();
-  }, [currentPage, currentGroupIdx, groups, issueId, totalPages, viewMode]);
+  }, [
+    currentPage,
+    currentGroupIdx,
+    groups,
+    issueId,
+    totalPages,
+    viewMode,
+    urlVersion,
+  ]);
 }
