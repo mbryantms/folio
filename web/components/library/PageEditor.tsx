@@ -65,18 +65,6 @@ import { cn } from "@/lib/utils";
 import type { IssueDetailView, TransformStep } from "@/lib/api/types";
 
 /**
- * Salt for the per-open tile cache-buster, minted once per bundle load.
- * The counter alone restarts at 1 on every page load, so `?v=e1` would
- * be the same URL in every session — and the service worker's
- * stale-while-revalidate thumb cache is keyed by full URL, so a
- * previous session's copy would paint first on every fresh open. The
- * salt makes each session's URLs disjoint. Module scope is safe: the
- * tiles only render client-side after the dialog opens, so the value
- * never participates in hydration.
- */
-const OPEN_NONCE_SALT = Date.now().toString(36);
-
-/**
  * Page-byte editor (`archive-rewrite-1.0` M3). A grid of the issue's
  * pages — drag to reorder, rotate, replace, or remove — that lowers to a
  * `PageOp[]` and enqueues an `ArchiveEditJob`. Admin-only; the caller
@@ -110,12 +98,6 @@ export function PageEditor({
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [uploadingOrig, setUploadingOrig] = React.useState<number | null>(null);
   const [adjustOrig, setAdjustOrig] = React.useState<number | null>(null);
-  // Cache-buster minted per dialog open. The tile URLs are stable across
-  // archive rewrites, so without this a reopen right after an apply shows
-  // whatever the browser cached — including pre-edit thumbs pinned by the
-  // pre-fix `immutable` policy. A fresh `?v=` forces a real fetch, and the
-  // server regenerates wiped thumbs inline from the rewritten archive.
-  const [openNonce, setOpenNonce] = React.useState(0);
 
   // Render-phase reconciliation (this codebase avoids set-state-in-effect):
   // (re)build the working list once the dialog is open and the real count
@@ -124,7 +106,6 @@ export function PageEditor({
   if (open && resolvedCount !== null && resolvedCount !== builtFor) {
     setBuiltFor(resolvedCount);
     setSlots(initialSlots(resolvedCount));
-    setOpenNonce((n) => n + 1);
   } else if (!open && builtFor !== null) {
     setBuiltFor(null);
     setSlots([]);
@@ -237,7 +218,6 @@ export function PageEditor({
                       <PageCard
                         key={slot.orig}
                         issueId={issue.id}
-                        cacheBust={openNonce}
                         slot={slot}
                         position={idx + 1}
                         uploading={uploadingOrig === slot.orig}
@@ -354,7 +334,6 @@ export function PageEditor({
 
 function PageCard({
   issueId,
-  cacheBust,
   slot,
   position,
   uploading,
@@ -364,8 +343,6 @@ function PageCard({
   onAdjust,
 }: {
   issueId: string;
-  /** Per-dialog-open nonce appended to the thumb URL (see PageEditor). */
-  cacheBust: number;
   slot: PageSlot;
   position: number;
   uploading: boolean;
@@ -400,10 +377,18 @@ function PageCard({
     >
       <div className="bg-muted relative aspect-[2/3] overflow-hidden">
         {/* Thumbnail addresses the *original* page index; rotation is a
-            client-side preview until the rewrite re-encodes it. */}
+            client-side preview until the rewrite re-encodes it.
+            `sw=bypass` keeps the service worker's serve-stale-first
+            thumb cache out of the path, and the origin serves thumbs
+            `no-cache` — so every dialog open is an ETag revalidation
+            against the archive's current bytes (a 304 when unchanged,
+            fresh pixels right after an edit). Nonce-based busting was
+            tried first and failed: any counter/salt scheme eventually
+            reuses a URL across SPA navigations, and the SW then paints
+            the previous copy first. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={`/issues/${issueId}/pages/${slot.orig}/thumb?v=e${OPEN_NONCE_SALT}-${cacheBust}`}
+          src={`/issues/${issueId}/pages/${slot.orig}/thumb?sw=bypass`}
           alt={`Page ${position}`}
           className="h-full w-full object-contain transition-transform"
           style={{ transform: `rotate(${slot.rotation}deg)` }}
