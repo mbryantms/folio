@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.4](https://github.com/mbryantms/folio/compare/v0.26.3...v0.26.4) (2026-07-04)
+
+
+### Fixed
+
+* **pwa:** stop the service worker from re-serving pre-fix stale thumbnails ([#395](https://github.com/mbryantms/folio/issues/395)) ([d1528a8](https://github.com/mbryantms/folio/commit/d1528a8129ced1100a19ba278edc1ade28df9608))
+
+
+### Dependencies
+
+* update dependency lucide-react to v1.23.0 ([#393](https://github.com/mbryantms/folio/issues/393)) ([ebf128e](https://github.com/mbryantms/folio/commit/ebf128e908ed9b3f9798791773682f89dbc4adf3))
+
 ## [0.26.3](https://github.com/mbryantms/folio/compare/v0.26.2...v0.26.3) (2026-07-04)
 
 
