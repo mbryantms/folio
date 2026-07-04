@@ -355,11 +355,15 @@ async fn serve_variant(
     let variant_headers = |mime: &'static str, len: u64| {
         let mut hdrs = HeaderMap::new();
         hdrs.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
-        // Immutable is safe: the cache key (and ETag) embed content_hash,
-        // which changes whenever the archive bytes change. Private: ACL'd.
+        // The browser caches by URL, and the variant URL (`…?w=480`) is
+        // stable across archive rewrites — only the ETag embeds
+        // content_hash. `immutable` suppressed revalidation for a year and
+        // pinned pre-edit pixels after a page edit, so match the full-res
+        // path: bounded max-age, then a cheap 304 revalidation. Private:
+        // ACL'd.
         hdrs.insert(
             header::CACHE_CONTROL,
-            HeaderValue::from_static("private, max-age=31536000, immutable"),
+            HeaderValue::from_static("private, max-age=3600"),
         );
         hdrs.insert(
             header::ETAG,
