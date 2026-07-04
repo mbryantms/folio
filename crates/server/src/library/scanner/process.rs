@@ -916,22 +916,20 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         }
         // Thumbnails live under the stable `row_id` directory so they
         // survive content-hash drift (retags don't change which row the
-        // thumbs belong to). The post-scan worker will re-encode pages
-        // when `thumbnails_generated_at` is cleared above.
-        let strip_dir =
-            crate::library::thumbnails::issue_thumbs_dir(&state.cfg().data_path, &row_id);
-        if content_changed && strip_dir.exists() {
-            // Best-effort — a leftover stale dir isn't fatal, the worker
-            // will overwrite individual files. But we want to drop pages
-            // that disappeared from the new archive. `remove_dir_all` is
-            // synchronous; route through `spawn_blocking` so the async
-            // ingest path doesn't stall on slow / network-mounted data
-            // dirs. M4 of code-quality-cleanup-1.0.
-            let strip_dir_owned = strip_dir.clone();
+        // thumbs belong to). Changed bytes wipe ALL on-disk artifacts —
+        // the per-issue strip subtree AND the top-level cover/`@sm`
+        // files — because every generator is skip-if-file-exists:
+        // clearing the stamps above re-enqueues the work, but a
+        // surviving file makes the regeneration a no-op and the old art
+        // serves forever (the cover half of this was the archive-edit
+        // staleness bug; external retags hit the same path). Best-effort
+        // + `spawn_blocking` so the async ingest path doesn't stall on
+        // slow / network-mounted data dirs.
+        if content_changed {
+            let data_dir = state.cfg().data_path.clone();
+            let issue_id_owned = row_id.clone();
             let _ = tokio::task::spawn_blocking(move || {
-                if let Err(e) = std::fs::remove_dir_all(&strip_dir_owned) {
-                    tracing::warn!(path = %strip_dir_owned.display(), error = %e, "failed to wipe stale strip dir");
-                }
+                crate::library::thumbnails::wipe_issue_thumbs(&data_dir, &issue_id_owned);
             })
             .await;
         }
@@ -1429,10 +1427,19 @@ fn probe_page_dimensions(archive: &mut dyn archive::ComicArchive) -> Vec<Option<
 }
 
 fn image_dimensions_from_prefix(bytes: &[u8]) -> Option<(u32, u32)> {
-    png_dimensions(bytes)
+    let dims = png_dimensions(bytes)
         .or_else(|| gif_dimensions(bytes))
         .or_else(|| webp_dimensions(bytes))
-        .or_else(|| jpeg_dimensions(bytes))
+        .or_else(|| jpeg_dimensions(bytes))?;
+    // Report *displayed* dimensions: browsers render with
+    // `image-orientation: from-image`, so an EXIF orientation of 5..=8
+    // (the transposed family) swaps the visible axes. These dims feed
+    // `double_page` inference and the reader's layout reservation, both
+    // of which must match what the user actually sees.
+    match crate::util::image_decode::jpeg_exif_orientation(bytes) {
+        Some(5..=8) => Some((dims.1, dims.0)),
+        _ => Some(dims),
+    }
 }
 
 fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {

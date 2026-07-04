@@ -262,6 +262,7 @@ pub async fn edit(
             actor_id: Some(actor.id),
             actor_ip: ctx.ip_string(),
             actor_ua: ctx.user_agent.clone(),
+            attempt: 0,
         })
         .await
     {
@@ -415,6 +416,7 @@ pub async fn bulk_edit(
                 actor_id: Some(actor.id),
                 actor_ip: ctx.ip_string(),
                 actor_ua: ctx.user_agent.clone(),
+                attempt: 0,
             })
             .await
         {

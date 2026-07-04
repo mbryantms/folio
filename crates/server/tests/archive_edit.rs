@@ -103,6 +103,7 @@ fn job(issue_id: &str, ops: Vec<PageOp>) -> ArchiveEditJob {
         actor_id: None,
         actor_ip: None,
         actor_ua: None,
+        attempt: 0,
     }
 }
 
@@ -114,6 +115,7 @@ fn bulk_job(issue_id: &str, op: BulkArchiveOp) -> ArchiveEditJob {
         actor_id: None,
         actor_ip: None,
         actor_ua: None,
+        attempt: 0,
     }
 }
 
