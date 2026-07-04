@@ -754,7 +754,13 @@ async fn variant_renders_webp_then_serves_from_cache() {
         .unwrap()
         .to_str()
         .unwrap();
-    assert!(cache_control.contains("immutable"), "{cache_control}");
+    // Variant URLs are stable across archive rewrites, so the response
+    // must stay revalidatable — bounded max-age, never `immutable` (that
+    // pinned pre-edit pixels for a year after a page edit).
+    assert!(
+        cache_control.contains("max-age=3600") && !cache_control.contains("immutable"),
+        "{cache_control}"
+    );
     let etag = resp
         .headers()
         .get(header::ETAG)
