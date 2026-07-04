@@ -65,6 +65,18 @@ import { cn } from "@/lib/utils";
 import type { IssueDetailView, TransformStep } from "@/lib/api/types";
 
 /**
+ * Salt for the per-open tile cache-buster, minted once per bundle load.
+ * The counter alone restarts at 1 on every page load, so `?v=e1` would
+ * be the same URL in every session — and the service worker's
+ * stale-while-revalidate thumb cache is keyed by full URL, so a
+ * previous session's copy would paint first on every fresh open. The
+ * salt makes each session's URLs disjoint. Module scope is safe: the
+ * tiles only render client-side after the dialog opens, so the value
+ * never participates in hydration.
+ */
+const OPEN_NONCE_SALT = Date.now().toString(36);
+
+/**
  * Page-byte editor (`archive-rewrite-1.0` M3). A grid of the issue's
  * pages — drag to reorder, rotate, replace, or remove — that lowers to a
  * `PageOp[]` and enqueues an `ArchiveEditJob`. Admin-only; the caller
@@ -391,7 +403,7 @@ function PageCard({
             client-side preview until the rewrite re-encodes it. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={`/issues/${issueId}/pages/${slot.orig}/thumb?v=e${cacheBust}`}
+          src={`/issues/${issueId}/pages/${slot.orig}/thumb?v=e${OPEN_NONCE_SALT}-${cacheBust}`}
           alt={`Page ${position}`}
           className="h-full w-full object-contain transition-transform"
           style={{ transform: `rotate(${slot.rotation}deg)` }}

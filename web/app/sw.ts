@@ -72,6 +72,11 @@ declare const self: ServiceWorkerGlobalScope;
  *  uncached by design. */
 const THUMB_PATH_RE = /^\/issues\/[^/]+\/(?:pages\/\d+\/thumb|covers\/[^/]+)$/;
 
+/** Runtime cache for thumbnails. `-v2` retires the original
+ *  `folio-thumbs`, whose entries could be poisoned by pre-v0.26.2
+ *  immutable HTTP-cache responses (purged on activate below). */
+const THUMB_CACHE = "folio-thumbs-v2";
+
 const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
   // `skipWaiting: false` so the new SW does not steal control
@@ -108,18 +113,27 @@ const serwist = new Serwist({
   // caught them and the `/issues/` guard below force-bypassed them —
   // no offline covers, and repeat browsing paid a re-fetch whenever
   // the HTTP cache had evicted. Stale-while-revalidate (not
-  // cache-first, despite the server's `immutable` header) because an
-  // archive page-edit regenerates a thumb under the SAME URL — SWR
-  // self-heals on the next view instead of pinning the old art until
-  // eviction. Cache keys are the full URL including `?variant=`.
-  // Bounded: covers a few screens of grid browsing without letting a
-  // 24k-issue library eat the origin's storage quota.
+  // cache-first) because an archive page-edit regenerates a thumb
+  // under the SAME URL — SWR self-heals on the next view instead of
+  // pinning the old art until eviction. Cache keys are the full URL
+  // including `?variant=` / `?v=`. Bounded: covers a few screens of
+  // grid browsing without letting a 24k-issue library eat the
+  // origin's storage quota.
   runtimeCaching: [
     {
       matcher: ({ sameOrigin, url }) =>
         sameOrigin && THUMB_PATH_RE.test(url.pathname),
       handler: new StaleWhileRevalidate({
-        cacheName: "folio-thumbs",
+        cacheName: THUMB_CACHE,
+        // `no-cache` forces the revalidation fetch to be validated
+        // against the ORIGIN (conditional request; 304 keeps it
+        // cheap). Left at the default, fetch() is answered by the
+        // browser's HTTP cache — and thumb responses cached under the
+        // pre-v0.26.2 `public, max-age=1y, immutable` policy answer
+        // without ever touching the network, so a post-edit
+        // regeneration could never reach this cache: SWR re-cached
+        // the same stale bytes forever.
+        fetchOptions: { cache: "no-cache" },
         plugins: [
           new ExpirationPlugin({
             maxEntries: 1200,
@@ -131,6 +145,16 @@ const serwist = new Serwist({
     },
     ...defaultCache,
   ],
+});
+
+// One-time purge of the pre-v2 thumb cache. Its entries were
+// revalidated through the poisoned HTTP cache (see `fetchOptions`
+// above), so any thumbnail viewed before the fix may be permanently
+// wrong in it — dropping the whole cache is the only reliable reset.
+// Runs on activate, i.e. once per SW update; deleting a missing cache
+// is a no-op.
+self.addEventListener("activate", (event) => {
+  event.waitUntil(caches.delete("folio-thumbs"));
 });
 
 // Hard guard: any same-origin request to a backend API surface
