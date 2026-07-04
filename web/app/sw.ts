@@ -121,8 +121,16 @@ const serwist = new Serwist({
   // origin's storage quota.
   runtimeCaching: [
     {
+      // `?sw=bypass` opts a request out of this cache entirely (see
+      // the fetch listener below) — used by the archive page editor,
+      // whose tiles must reflect the origin's CURRENT bytes on every
+      // open. SWR's serve-stale-first contract is wrong there: after
+      // an edit rewrites pages under the same URL, the first paint
+      // would be the pre-edit copy.
       matcher: ({ sameOrigin, url }) =>
-        sameOrigin && THUMB_PATH_RE.test(url.pathname),
+        sameOrigin &&
+        THUMB_PATH_RE.test(url.pathname) &&
+        url.searchParams.get("sw") !== "bypass",
       handler: new StaleWhileRevalidate({
         cacheName: THUMB_CACHE,
         // `no-cache` forces the revalidation fetch to be validated
@@ -247,8 +255,12 @@ self.addEventListener("fetch", (event: FetchEvent) => {
   // Thumbnail/cover bytes are the one `/issues/…` surface serwist DOES
   // handle (the SWR cache above) — skip the bypass guard for them
   // (audit FEP-3). Everything else under these prefixes stays
-  // native-loader-only.
-  if (THUMB_PATH_RE.test(path)) {
+  // native-loader-only. `?sw=bypass` thumbs intentionally fall through
+  // to the `/issues/` prefix guard below: the native loader performs
+  // the request, and the origin's `no-cache` thumb policy makes every
+  // use an ETag revalidation — guaranteed-current bytes for the
+  // archive page editor.
+  if (THUMB_PATH_RE.test(path) && url.searchParams.get("sw") !== "bypass") {
     return;
   }
   if (
