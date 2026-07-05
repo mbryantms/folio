@@ -113,6 +113,7 @@ export function IssueActions({
   // Mount the lazy page editor on first open; keep it mounted so its close
   // animation still runs (G6).
   const [pageEditorMounted, setPageEditorMounted] = useState(false);
+  const [archiveEditStamp, setArchiveEditStamp] = useState(0);
   if (archiveEditOpen && !pageEditorMounted) setPageEditorMounted(true);
   const [confirmRestore, setConfirmRestore] = useState(false);
   const forceRecreatePageMap = useForceRecreateIssuePageMap(
@@ -138,7 +139,12 @@ export function IssueActions({
         cblSavedViewId={cblSavedViewId}
         onEdit={() => setEditOpen(true)}
         onForceRecreatePageMap={() => setConfirmForceRecreate(true)}
-        onEditArchive={() => setArchiveEditOpen(true)}
+        onEditArchive={() => {
+          // Stamp minted at click time (the rules-of-react-legal spot for
+          // an impure read) — see PageEditor's `openStamp` prop doc.
+          setArchiveEditStamp(Date.now());
+          setArchiveEditOpen(true);
+        }}
         onRestoreArchive={() => setConfirmRestore(true)}
       />
       <EditSheet
@@ -151,6 +157,7 @@ export function IssueActions({
         <PageEditor
           issue={issue}
           open={archiveEditOpen}
+          openStamp={archiveEditStamp}
           onOpenChange={setArchiveEditOpen}
         />
       )}
