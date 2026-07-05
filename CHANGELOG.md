@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.6](https://github.com/mbryantms/folio/compare/v0.26.5...v0.26.6) (2026-07-05)
+
+
+### Fixed
+
+* **pwa:** per-open stamp so editor tiles defeat not-yet-activated workers ([#399](https://github.com/mbryantms/folio/issues/399)) ([f4ed93a](https://github.com/mbryantms/folio/commit/f4ed93afa1cd74fefcde75f57753ceca7df16be5))
+
+
+### Dependencies
+
+* update nextjs monorepo to v16.2.10 ([#400](https://github.com/mbryantms/folio/issues/400)) ([247d576](https://github.com/mbryantms/folio/commit/247d5762d4e411a132615bc2bae1a4b1fe0c2ec5))
+
 ## [0.26.5](https://github.com/mbryantms/folio/compare/v0.26.4...v0.26.5) (2026-07-04)
 
 
