@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.8](https://github.com/mbryantms/folio/compare/v0.26.7...v0.26.8) (2026-07-06)
+
+
+### Fixed
+
+* **metadata:** series-scope apply persists series-row scalars on the writeback path ([#406](https://github.com/mbryantms/folio/issues/406)) ([0e53527](https://github.com/mbryantms/folio/commit/0e535277440f70048698c8b0a55c0251d1eb355b))
+
 ## [0.26.7](https://github.com/mbryantms/folio/compare/v0.26.6...v0.26.7) (2026-07-06)
 
 
