@@ -217,6 +217,53 @@ function CblViewDetailInner({
   // are not surfaced here. Selectable entries are matched entries
   // with a resolved issue; placeholder / missing entries can be
   // selected but contribute no targets to the mutation.
+  // Up Next jump machinery — see `scrollToUpNext` below for the why.
+  // Hoisted above the early returns with the rest of the hooks
+  // (rules-of-hooks).
+  const [jumpTarget, setJumpTarget] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    if (jumpTarget == null) return;
+    // Search still active (or its 200ms debounce hasn't flushed the
+    // cleared value yet): the loaded pages belong to the filtered
+    // query key. Wait — the debounce effect re-runs this one.
+    if (debouncedQ.length > 0) return;
+    const loaded = loadedEntries;
+    if (loaded.some((e) => e.position === jumpTarget)) {
+      // Two rAFs: one for state→DOM commit, one for the layout that
+      // follows — then look up the (now rendered) card. The state
+      // clear rides the same callback so it isn't a synchronous
+      // setState inside the effect body.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          document
+            .getElementById(`cbl-entry-${jumpTarget}`)
+            ?.scrollIntoView({ behavior: "smooth", block: "center" });
+          setJumpTarget(null);
+        }),
+      );
+      return;
+    }
+    const lastLoaded =
+      loaded.length > 0 ? loaded[loaded.length - 1]!.position : -1;
+    if (lastLoaded >= jumpTarget || (!entriesHasNext && !entriesFetchingNext)) {
+      // Walked past the target position without finding it (entry
+      // filtered out by hide-missing) or the list is exhausted —
+      // nothing to scroll to; disarm instead of spinning forever.
+      requestAnimationFrame(() => setJumpTarget(null));
+      return;
+    }
+    if (entriesHasNext && !entriesFetchingNext) {
+      void entriesFetchNext();
+    }
+  }, [
+    jumpTarget,
+    loadedEntries,
+    debouncedQ,
+    entriesHasNext,
+    entriesFetchingNext,
+    entriesFetchNext,
+  ]);
+
   const selection = useSelection(loadedEntries);
   const bulkMark = useBulkMarkProgress();
   const selectButtonRef = React.useRef<HTMLButtonElement | null>(null);
@@ -339,26 +386,22 @@ function CblViewDetailInner({
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
   };
 
-  // Jump the page to the Up Next anchor card. If an active search is
-  // filtering rows out, the target `<li>` may not be rendered — clear
-  // the search first, then defer the scroll a tick so React commits
-  // the unfiltered list before we look up the element. Same approach
-  // used by Reader's "jump to bookmark" path.
+  // Jump the page to the Up Next anchor card.
+  //
+  // The entry list is an infinite query, so on a long CBL the anchor's
+  // page may simply not be fetched yet — `getElementById` finds nothing
+  // and the old implementation silently no-oped. Clicking arms
+  // `jumpTarget` (hoisted with the hooks above), and its effect WALKS
+  // pages (same auto-walk pattern as CollectionViewDetail's reorder
+  // prerequisite) until the target position is loaded, then scrolls to
+  // it. An active search is cleared first — the search is server-side,
+  // so its query key holds a different (filtered) page set; the effect
+  // waits for the debounced key to flip back to the unfiltered list
+  // before walking.
   function scrollToUpNext() {
     if (upNextPosition == null) return;
-    const doScroll = () => {
-      const el = document.getElementById(`cbl-entry-${upNextPosition}`);
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-    };
-    if (q.length > 0) {
-      setQ("");
-      // Two rAFs: one for state→DOM commit, one for the layout that
-      // follows. Cheaper than a setTimeout and avoids racing the
-      // 200ms debounce that runs the row-filter effect.
-      requestAnimationFrame(() => requestAnimationFrame(doScroll));
-    } else {
-      doScroll();
-    }
+    if (q.length > 0) setQ("");
+    setJumpTarget(upNextPosition);
   }
 
   // The server applies the page-local search (`q`) before pagination,
@@ -420,10 +463,18 @@ function CblViewDetailInner({
                 size="sm"
                 onClick={scrollToUpNext}
                 className="h-9"
+                disabled={jumpTarget != null}
                 aria-label="Scroll to Up Next entry"
                 title="Scroll to Up Next entry"
               >
-                <BookOpen className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                {jumpTarget != null ? (
+                  <Loader2
+                    className="mr-1.5 h-4 w-4 animate-spin"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <BookOpen className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                )}
                 Up Next
               </Button>
             )}
