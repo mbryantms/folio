@@ -673,7 +673,10 @@ async fn apply_series_with_writeback_enabled_composes_per_issue_and_triggers_one
     .expect("apply_series");
 
     // M4 path signals: composed_sidecars matches the three eligible
-    // issues; enqueued_rewrite=true; legacy applied_fields empty.
+    // issues; enqueued_rewrite=true. Since the Chew fix, series-row
+    // scalars are ALSO persisted DB-direct (they don't survive the
+    // archive round-trip), so applied_fields reports them — publisher
+    // is in this payload and the seeded series has none.
     assert!(outcome.enqueued_rewrite);
     assert_eq!(outcome.composed_sidecars, 3, "all three issues composed");
     assert!(
@@ -681,7 +684,11 @@ async fn apply_series_with_writeback_enabled_composes_per_issue_and_triggers_one
         "no skip reasons expected: {:?}",
         outcome.sidecar_skip_reasons,
     );
-    assert!(outcome.applied_fields.is_empty());
+    assert!(
+        outcome.applied_fields.iter().any(|f| f == "publisher"),
+        "series scalars persist DB-direct on the sidecar path: {:?}",
+        outcome.applied_fields,
+    );
 
     // Run counts bumped on the apply (as if a single candidate was
     // applied — items_applied=1, not 3, since the run is series-scope).
@@ -1189,4 +1196,174 @@ async fn variant_cover_backfill_skips_ssrf_rejected_hotlink_rows() {
         .unwrap();
     assert!(row.local_path.is_empty(), "backfill keeps rejected hotlink");
     assert!(row.phash.is_none(), "rejected hotlink is not hashed");
+}
+
+#[tokio::test]
+async fn apply_series_with_writeback_persists_uncarriable_series_fields() {
+    // Chew regression: ComicInfo/MetronInfo only carry *issue*-level
+    // summaries, and no schema has a slot for a series deck or alias
+    // list — so the sidecar round-trip can't deliver them and the
+    // scanner never writes `series.summary`. Pre-fix, a series-scope
+    // apply on a writeback library rewrote every archive but the
+    // series page's description never changed. These fields must be
+    // written DB-direct (the sanctioned "XML can't carry it"
+    // exception), honoring fill/replace semantics.
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Chew")
+        .insert(&app.state().db)
+        .await;
+    let payload = build_cbz_bytes("chew-page-1");
+    let cbz = dir.path().join("chew-001.cbz");
+    IssueSeed::new(lib_id, series_id, &cbz, &payload, 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    use server::metadata::cache;
+    use server::metadata::identifier::Source;
+    let series_payload = server::metadata::provider::GenericMetadata {
+        series_name: Some("Chew".into()),
+        publisher: Some("Image Comics".into()),
+        description: Some("Tony Chu is a cibopathic detective.".into()),
+        deck: Some("Crime drama with a culinary twist.".into()),
+        aliases: vec!["Chew: The Series".into()],
+        series_sort_name: Some("Chew".into()),
+        series_type: Some("ongoing".into()),
+        year_began: Some(2009),
+        year_end: Some(2016),
+        source_provider: Some(Source::ComicVine),
+        source_external_id: Some("4050-27155".into()),
+        ..Default::default()
+    };
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Series,
+        "27155",
+        &series_payload,
+    )
+    .await
+    .unwrap();
+
+    let now = Utc::now().fixed_offset();
+    let run_id = Uuid::now_v7();
+    metadata_run::ActiveModel {
+        id: Set(run_id),
+        scope: Set("series".into()),
+        scope_entity_id: Set(Some(series_id.to_string())),
+        library_id: Set(None),
+        triggered_by: Set(None),
+        trigger_kind: Set("manual".into()),
+        providers: Set(vec!["comicvine".into()]),
+        status: Set("completed".into()),
+        started_at: Set(now),
+        finished_at: Set(Some(now)),
+        items_total: Set(1),
+        items_matched_high: Set(1),
+        items_matched_medium: Set(0),
+        items_matched_low: Set(0),
+        items_no_match: Set(0),
+        items_applied: Set(0),
+        items_skipped: Set(0),
+        items_failed: Set(0),
+        error_summary: Set(None),
+        resume_after: Set(None),
+        batch_id: Set(None),
+        query: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+    for ordinal in [0, 1] {
+        metadata_run_candidate::ActiveModel {
+            run_id: Set(run_id),
+            ordinal: Set(ordinal),
+            source: Set("comicvine".into()),
+            external_id: Set("27155".into()),
+            bucket: Set("high".into()),
+            score: Set(95.0),
+            score_breakdown: Set(json!({})),
+            candidate: Set(json!({"kind": "series"})),
+            applied_at: Set(None),
+        }
+        .insert(&app.state().db)
+        .await
+        .unwrap();
+    }
+
+    // Fill-missing: empty series summary/deck/aliases get the provider
+    // values even though the archive round-trip can't carry them.
+    let outcome = server::jobs::metadata_apply::apply_series_inline(
+        &app.state(),
+        series_id,
+        args(run_id, 0, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("apply_series fill");
+    assert!(outcome.enqueued_rewrite);
+    assert!(
+        outcome.applied_fields.iter().any(|f| f == "description"),
+        "description must be in applied_fields: {:?}",
+        outcome.applied_fields,
+    );
+
+    let row = entity::series::Entity::find_by_id(series_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("series row");
+    assert_eq!(
+        row.summary.as_deref(),
+        Some("Tony Chu is a cibopathic detective."),
+        "series summary must land despite the XML round-trip",
+    );
+    assert_eq!(
+        row.deck.as_deref(),
+        Some("Crime drama with a culinary twist."),
+    );
+    assert_eq!(row.aliases, json!(["Chew: The Series"]));
+    // Full DB-direct parity: every scalar the legacy path applies must
+    // land on the writeback path too — the series row is refreshed by
+    // neither the composed XML nor the rescan for any of these.
+    assert_eq!(row.sort_name.as_deref(), Some("Chew"));
+    assert_eq!(row.series_type.as_deref(), Some("ongoing"));
+    assert_eq!(row.year_end, Some(2016));
+    assert_eq!(row.publisher.as_deref(), Some("Image Comics"));
+
+    // Replace-all: a provider-updated description overwrites the
+    // previous (non-user) value on a second apply.
+    let updated = server::metadata::provider::GenericMetadata {
+        description: Some("Updated description from provider.".into()),
+        ..series_payload
+    };
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Series,
+        "27155",
+        &updated,
+    )
+    .await
+    .unwrap();
+    server::jobs::metadata_apply::apply_series_inline(
+        &app.state(),
+        series_id,
+        args(run_id, 1, ApplyMode::ReplaceAll, false),
+    )
+    .await
+    .expect("apply_series replace");
+    let row = entity::series::Entity::find_by_id(series_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("series row");
+    assert_eq!(
+        row.summary.as_deref(),
+        Some("Updated description from provider."),
+        "replace-all must overwrite the provider-set summary",
+    );
 }
