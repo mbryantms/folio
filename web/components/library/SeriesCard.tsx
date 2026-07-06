@@ -34,6 +34,11 @@ import { useShareLink } from "@/lib/ui/use-share-link";
 
 type Size = "sm" | "md";
 
+/** Title stays `text-sm` at every size: series cards share rails and
+ *  grids with the issue-card family (`IssueCard`, `OnDeckCard`,
+ *  `ProgressIssueCard`, `CblWindowCard`), whose titles are all
+ *  `text-sm font-medium` — a larger series title makes mixed surfaces
+ *  (home rails, collections, search) look inconsistent. */
 const sizeClasses: Record<Size, { wrap: string; title: string; meta: string }> =
   {
     sm: {
@@ -43,7 +48,7 @@ const sizeClasses: Record<Size, { wrap: string; title: string; meta: string }> =
     },
     md: {
       wrap: "w-full",
-      title: "text-base",
+      title: "text-sm",
       meta: "text-xs text-muted-foreground",
     },
   };
