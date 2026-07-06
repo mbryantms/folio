@@ -407,7 +407,6 @@ pub(crate) async fn write_series_fields(
 ) -> Result<ApplyOutcome, ApplyError> {
     let mut outcome = ApplyOutcome::default();
     let entity_id_str = series_uuid.to_string();
-    let provenance = fetch_field_provenance_map(&state.db, "series", &entity_id_str).await?;
 
     apply_external_ids(
         &state.db,
@@ -418,6 +417,52 @@ pub(crate) async fn write_series_fields(
         &mut outcome,
     )
     .await?;
+
+    write_series_scalar_fields(
+        state,
+        row,
+        series_uuid,
+        detail,
+        &args,
+        resolver,
+        &mut outcome,
+    )
+    .await?;
+    Ok(outcome)
+}
+
+/// The scalar half of the series apply: every flat `series` column the
+/// provider can fill, decided per-field against provenance +
+/// fill/replace mode, written as one UPDATE, provenance stamped.
+///
+/// Shared by BOTH apply paths. The DB-direct path calls it via
+/// [`write_series_fields`] (which also writes external ids). The
+/// sidecar-writeback path calls it directly, because series-row scalars
+/// do not survive the archive round-trip at all:
+///   - `summary` / `deck` / `aliases` / `sort_name` / `series_type` /
+///     `year_end` have no series-level slot in either XML schema;
+///   - `publisher` / `imprint` are composed per issue but the scanner
+///     never refreshes them on the series row;
+///   - `name` / `year` are deliberately frozen by the scanner
+///     (folder-pinned identity).
+///
+/// Without this, a series-scope apply on a writeback library rewrote
+/// every archive while the series page kept its old description — the
+/// Chew regression. External ids are intentionally NOT written here:
+/// the sidecar path persists them post-apply in the job handler
+/// (`persist_applied_series_external_ids`), per the provider-divergence
+/// invariant.
+pub(crate) async fn write_series_scalar_fields(
+    state: &AppState,
+    row: &series::Model,
+    series_uuid: Uuid,
+    detail: &GenericMetadata,
+    args: &ApplyArgs,
+    resolver: &ProvResolver<'_>,
+    outcome: &mut ApplyOutcome,
+) -> Result<(), ApplyError> {
+    let entity_id_str = series_uuid.to_string();
+    let provenance = fetch_field_provenance_map(&state.db, "series", &entity_id_str).await?;
 
     // Track which fields we're going to write so we can emit a single
     // UPDATE rather than 10+ round trips.
@@ -433,8 +478,8 @@ pub(crate) async fn write_series_fields(
             has,
             &provenance,
             MetadataField::Title,
-            &args,
-            &mut outcome,
+            args,
+            outcome,
             || {
                 new.name = Some(v.to_owned());
             },
@@ -445,8 +490,8 @@ pub(crate) async fn write_series_fields(
         &detail.series_sort_name,
         MetadataField::SortName,
         &provenance,
-        &args,
-        &mut outcome,
+        args,
+        outcome,
         |v| new.sort_name = Some(v),
     );
     decide_str(
@@ -454,8 +499,8 @@ pub(crate) async fn write_series_fields(
         &detail.series_type,
         MetadataField::SeriesType,
         &provenance,
-        &args,
-        &mut outcome,
+        args,
+        outcome,
         |v| new.series_type = Some(v),
     );
     decide_i32(
@@ -463,8 +508,8 @@ pub(crate) async fn write_series_fields(
         detail.year_began,
         MetadataField::YearBegan,
         &provenance,
-        &args,
-        &mut outcome,
+        args,
+        outcome,
         |v| new.year = Some(v),
     );
     decide_i32(
@@ -472,8 +517,8 @@ pub(crate) async fn write_series_fields(
         detail.year_end,
         MetadataField::YearEnd,
         &provenance,
-        &args,
-        &mut outcome,
+        args,
+        outcome,
         |v| new.year_end = Some(v),
     );
     decide_i32(
@@ -481,8 +526,8 @@ pub(crate) async fn write_series_fields(
         detail.volume,
         MetadataField::Volume,
         &provenance,
-        &args,
-        &mut outcome,
+        args,
+        outcome,
         |v| new.volume = Some(v),
     );
     decide_str(
@@ -490,8 +535,8 @@ pub(crate) async fn write_series_fields(
         &detail.publisher,
         MetadataField::Publisher,
         &provenance,
-        &args,
-        &mut outcome,
+        args,
+        outcome,
         |v| new.publisher = Some(v),
     );
     decide_str(
@@ -499,8 +544,8 @@ pub(crate) async fn write_series_fields(
         &detail.imprint,
         MetadataField::Imprint,
         &provenance,
-        &args,
-        &mut outcome,
+        args,
+        outcome,
         |v| new.imprint = Some(v),
     );
     decide_str(
@@ -508,8 +553,8 @@ pub(crate) async fn write_series_fields(
         &detail.deck,
         MetadataField::Deck,
         &provenance,
-        &args,
-        &mut outcome,
+        args,
+        outcome,
         |v| new.deck = Some(v),
     );
     decide_str(
@@ -517,8 +562,8 @@ pub(crate) async fn write_series_fields(
         &detail.description,
         MetadataField::Description,
         &provenance,
-        &args,
-        &mut outcome,
+        args,
+        outcome,
         |v| new.summary = Some(v),
     );
 
@@ -528,8 +573,8 @@ pub(crate) async fn write_series_fields(
             has,
             &provenance,
             MetadataField::Aliases,
-            &args,
-            &mut outcome,
+            args,
+            outcome,
             || {
                 new.aliases =
                     Some(serde_json::to_value(&detail.aliases).unwrap_or(serde_json::json!([])));
@@ -550,7 +595,7 @@ pub(crate) async fn write_series_fields(
 
     // Bump sync timestamp.
     bump_series_sync(&state.db, series_uuid).await?;
-    Ok(outcome)
+    Ok(())
 }
 
 /// M4 of `metadata-sidecar-writeback-1.0`: series-scope XML-first apply.
@@ -764,6 +809,28 @@ pub(crate) async fn apply_series_via_sidecar(
         );
     }
 
+    // Series-row scalars don't survive the archive round-trip (no XML
+    // slot, scanner freeze, or no series-row refresh — see
+    // `write_series_scalar_fields`), so the sidecar path persists the
+    // same scalar set as the DB-direct path, with identical provenance
+    // + fill/replace semantics. External ids stay with the job
+    // handler's `persist_applied_series_external_ids`.
+    let scalar_resolver = ProvResolver::Uniform(ProvSource {
+        set_by: SetBy::Provider(source),
+        source_ext: series_detail.source_external_id.clone(),
+    });
+    let mut scalar_outcome = ApplyOutcome::default();
+    write_series_scalar_fields(
+        state,
+        series_row,
+        series_row.id,
+        &series_detail,
+        args,
+        &scalar_resolver,
+        &mut scalar_outcome,
+    )
+    .await?;
+
     flip_candidate_applied(&state.db, args.run_id, args.ordinal).await?;
 
     // Stamp series-level sync time (parity with the DB-direct `apply_series`,
@@ -776,6 +843,8 @@ pub(crate) async fn apply_series_via_sidecar(
         composed_sidecars,
         sidecar_skip_reasons: skip_reasons,
         suppressed_user_pins: suppressed.into_iter().collect(),
+        applied_fields: scalar_outcome.applied_fields,
+        skipped_fields: scalar_outcome.skipped_fields,
         ..Default::default()
     };
     bump_run_counts(&state.db, args.run_id, &outcome).await?;
