@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.9](https://github.com/mbryantms/folio/compare/v0.26.8...v0.26.9) (2026-07-06)
+
+
+### Fixed
+
+* **compose:** mount postgres 18 volumes at /var/lib/postgresql ([#412](https://github.com/mbryantms/folio/issues/412)) ([0c25bde](https://github.com/mbryantms/folio/commit/0c25bdee1cd4ac19e846b4fdbbe86683c0cf9ec5))
+* **web:** unify series-card title size with issue-card family ([#410](https://github.com/mbryantms/folio/issues/410)) ([78b53a2](https://github.com/mbryantms/folio/commit/78b53a25a304a61ac0d4ab11322b3ab8e7dc920c))
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.53 ([#409](https://github.com/mbryantms/folio/issues/409)) ([05a7541](https://github.com/mbryantms/folio/commit/05a754111a8646088acd80e42a132fc2bce7a812))
+
 ## [0.26.8](https://github.com/mbryantms/folio/compare/v0.26.7...v0.26.8) (2026-07-06)
 
 
