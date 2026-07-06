@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.7](https://github.com/mbryantms/folio/compare/v0.26.6...v0.26.7) (2026-07-06)
+
+
+### Fixed
+
+* **cbl:** Up Next walks entry pages before scrolling on long lists ([#404](https://github.com/mbryantms/folio/issues/404)) ([1fa9fe2](https://github.com/mbryantms/folio/commit/1fa9fe2fea9d2168395b7a702c86a48db8402a01))
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.52 ([#405](https://github.com/mbryantms/folio/issues/405)) ([5555b4b](https://github.com/mbryantms/folio/commit/5555b4b3663c2d47ba53fdced770808a4a9856a8))
+* update taiki-e/install-action digest to 4684b84 ([#402](https://github.com/mbryantms/folio/issues/402)) ([e302581](https://github.com/mbryantms/folio/commit/e3025811072def1547770d0832404e62937f2e66))
+
 ## [0.26.6](https://github.com/mbryantms/folio/compare/v0.26.5...v0.26.6) (2026-07-05)
 
 
