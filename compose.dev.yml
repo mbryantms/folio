@@ -3,15 +3,11 @@
 
 services:
   postgres:
-    # Pinned back to 17: the existing dev data volume was initialized
-    # under PG17 and the 18-alpine image (bumped in #85) changes the
-    # data-directory layout — recreating the container against the old
-    # volume crash-loops. Moving to 18 needs a pg_upgrade pass first.
     # Same major as CI + compose.test.yml (postgres:18) — dev must not run a
     # different Postgres than the suite tests against. NOTE: bumping the major
     # requires re-initializing the volume (postgres won't start an 18 binary
-    # on a 17-initialized data dir): `pg_dump` first if you care about local
-    # progress/settings, then `docker compose -f compose.dev.yml down -v`.
+    # on an older-initialized data dir): `pg_dumpall` under the old major
+    # first, move `.dev-data/postgres` aside, bring the new major up, restore.
     image: postgres:18-alpine
     restart: unless-stopped
     environment:
@@ -30,7 +26,11 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      - ./.dev-data/postgres:/var/lib/postgresql/data
+      # 18+ images require the mount at /var/lib/postgresql (data lives in a
+      # major-versioned subdir, e.g. 18/docker/) and refuse to start when
+      # anything is mounted at the pre-18 /var/lib/postgresql/data path.
+      # See https://github.com/docker-library/postgres/pull/1259.
+      - ./.dev-data/postgres:/var/lib/postgresql
       - ./.dev-data/pg-init/:/docker-entrypoint-initdb.d/:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U comic -d comic_reader"]

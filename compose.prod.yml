@@ -150,7 +150,14 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
       POSTGRES_DB: comic_reader
     volumes:
-      - comic_postgres:/var/lib/postgresql/data
+      # 18+ images require the mount at /var/lib/postgresql (data lives in a
+      # major-versioned subdir, e.g. 18/docker/) and refuse to start when
+      # anything is mounted at the pre-18 /var/lib/postgresql/data path.
+      # Existing deployments with a volume initialized under an older major
+      # must dump/restore (or pg_upgrade) — the 18 entrypoint detects the old
+      # cluster and prints instructions rather than corrupting it.
+      # See https://github.com/docker-library/postgres/pull/1259.
+      - comic_postgres:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U comic -d comic_reader"]
       interval: 5s
