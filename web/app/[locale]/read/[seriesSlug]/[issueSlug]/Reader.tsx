@@ -35,7 +35,7 @@ import {
 } from "@/lib/reader/spreads";
 import { useReaderProgressWrite } from "@/lib/reader/use-progress-write";
 import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
-import { pageBytesSrcSet } from "@/lib/urls";
+import { pageBytesSrcSet, withContentVersion } from "@/lib/urls";
 import { useReaderGestures } from "@/lib/reader/use-swipe";
 import { useReaderKeymap } from "@/lib/reader/use-keymap";
 import {
@@ -96,6 +96,7 @@ export function Reader({
   totalPages,
   initialPage,
   pages,
+  pageUrlVersion,
   manga,
   userDefaultDirection,
   libraryDefaultDirection,
@@ -126,6 +127,11 @@ export function Reader({
   totalPages: number;
   initialPage: number;
   pages: PageInfo[];
+  /** Archive-content stamp (`issue.last_rewrite_at`) appended as `?v=` to
+   *  every page/thumb URL, so a page edit changes the URLs and bypasses
+   *  cache entries pinned under the old immutable policy. Null until the
+   *  archive is first rewritten (URLs stay historical + warm). */
+  pageUrlVersion: string | null;
   manga: string | null;
   userDefaultDirection: Direction | null;
   /** Parent library's `default_reading_direction`. Fallback in the
@@ -743,6 +749,7 @@ export function Reader({
     // read full-res, so warms follow suit.
     pageWidths: pages.map((p) => p.image_width ?? null),
     variantsEnabled: fitMode !== "original" && zoom.scale === 1,
+    urlVersion: pageUrlVersion,
   });
 
   // Reset scroll on page change in single/double mode so each new page
@@ -931,6 +938,7 @@ export function Reader({
             issueId={issueId}
             totalPages={totalPages}
             pages={pages}
+            pageUrlVersion={pageUrlVersion}
             fitClass={fitClass}
             onChromeZone={toggleChrome}
             nextUpData={nextUp.data}
@@ -943,6 +951,7 @@ export function Reader({
             issueId={issueId}
             visiblePages={visiblePages}
             pages={pages}
+            pageUrlVersion={pageUrlVersion}
             direction={direction}
             fitClass={fitClass}
             paneClass={doublePaneClass}
@@ -959,6 +968,7 @@ export function Reader({
             issueId={issueId}
             currentPage={currentPage}
             pageInfo={pages[currentPage]}
+            pageUrlVersion={pageUrlVersion}
             fitClass={fitClass}
             onLeftZone={onLeftZone}
             onRightZone={onRightZone}
@@ -981,6 +991,7 @@ export function Reader({
         currentPage={currentPage}
         direction={direction}
         pages={pages}
+        urlVersion={pageUrlVersion}
       />
       {markerEditorMounted ? (
         <MarkerEditor issueId={issueId} pageNaturalSize={pageNaturalSize} />
@@ -1026,6 +1037,7 @@ function SinglePageView({
   issueId,
   currentPage,
   pageInfo,
+  pageUrlVersion,
   fitClass,
   onLeftZone,
   onRightZone,
@@ -1043,6 +1055,8 @@ function SinglePageView({
   currentPage: number;
   /** Server-known page metadata for the current page (intrinsic dims). */
   pageInfo?: PageInfo;
+  /** Archive-content `?v=` stamp for page/thumb URLs (see Reader). */
+  pageUrlVersion: string | null;
   fitClass: string;
   onLeftZone: () => void;
   onRightZone: () => void;
@@ -1142,7 +1156,10 @@ function SinglePageView({
                 cost. eslint-disable applies only to this element. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={`/issues/${issueId}/pages/${transition.prevPage}`}
+              src={withContentVersion(
+                `/issues/${issueId}/pages/${transition.prevPage}`,
+                pageUrlVersion,
+              )}
               alt=""
               className={`block ${fitClass}`}
               decoding="async"
@@ -1176,19 +1193,28 @@ function SinglePageView({
         >
           <PageImage
             key={`${issueId}-${currentPage}`}
-            src={`/issues/${issueId}/pages/${currentPage}`}
+            src={withContentVersion(
+              `/issues/${issueId}/pages/${currentPage}`,
+              pageUrlVersion,
+            )}
             // FEP-1: sized variants — except original-fit and while
             // zoomed, which always get full-res pixels.
             srcSet={
               singleFitMode !== "original" && zoom.scale === 1
                 ? pageBytesSrcSet(
-                    `/issues/${issueId}/pages/${currentPage}`,
+                    withContentVersion(
+                      `/issues/${issueId}/pages/${currentPage}`,
+                      pageUrlVersion,
+                    ),
                     pageInfo?.image_width,
                   )
                 : undefined
             }
             sizes="100vw"
-            thumbSrc={`/issues/${issueId}/pages/${currentPage}/thumb?variant=strip`}
+            thumbSrc={withContentVersion(
+              `/issues/${issueId}/pages/${currentPage}/thumb?variant=strip`,
+              pageUrlVersion,
+            )}
             alt={`Page ${currentPage + 1}`}
             fitClass={fitClass}
             fetchPriority="high"
@@ -1227,6 +1253,7 @@ function DoublePageView({
   issueId,
   visiblePages,
   pages,
+  pageUrlVersion,
   direction,
   fitClass,
   paneClass,
@@ -1242,6 +1269,8 @@ function DoublePageView({
   visiblePages: readonly number[];
   /** Full page list so each pane can reserve its aspect-ratio height. */
   pages: readonly PageInfo[];
+  /** Archive-content `?v=` stamp for page/thumb URLs (see Reader). */
+  pageUrlVersion: string | null;
   direction: Direction;
   fitClass: string;
   paneClass: string;
@@ -1292,6 +1321,7 @@ function DoublePageView({
               // by the container's `justify-center`, so the cover/last page
               // sits at the same scale as the paired pages (C8).
               paneClass={soloCapped ? "w-1/2 min-w-0" : paneClass}
+              pageUrlVersion={pageUrlVersion}
               onNaturalSize={onNaturalSize(p)}
               naturalSize={pageNaturalSize.current?.get(p) ?? null}
             />
@@ -1313,6 +1343,7 @@ function DoublePagePane({
   issueId,
   page,
   pageInfo,
+  pageUrlVersion,
   fitClass,
   paneClass,
   onNaturalSize,
@@ -1320,6 +1351,8 @@ function DoublePagePane({
 }: {
   issueId: string;
   page: number;
+  /** Archive-content `?v=` stamp for page/thumb URLs (see Reader). */
+  pageUrlVersion: string | null;
   pageInfo?: PageInfo;
   fitClass: string;
   paneClass: string;
@@ -1341,17 +1374,26 @@ function DoublePagePane({
   return (
     <div className={`relative align-top ${paneClass}`}>
       <PageImage
-        src={`/issues/${issueId}/pages/${page}`}
+        src={withContentVersion(
+          `/issues/${issueId}/pages/${page}`,
+          pageUrlVersion,
+        )}
         srcSet={
           paneFitMode !== "original"
             ? pageBytesSrcSet(
-                `/issues/${issueId}/pages/${page}`,
+                withContentVersion(
+                  `/issues/${issueId}/pages/${page}`,
+                  pageUrlVersion,
+                ),
                 pageInfo?.image_width,
               )
             : undefined
         }
         sizes="50vw"
-        thumbSrc={`/issues/${issueId}/pages/${page}/thumb?variant=strip`}
+        thumbSrc={withContentVersion(
+          `/issues/${issueId}/pages/${page}/thumb?variant=strip`,
+          pageUrlVersion,
+        )}
         alt={`Page ${page + 1}`}
         fitClass={fitClass}
         fetchPriority="high"
@@ -1373,6 +1415,7 @@ function WebtoonView({
   issueId,
   totalPages,
   pages,
+  pageUrlVersion,
   fitClass,
   onChromeZone,
   nextUpData,
@@ -1385,6 +1428,8 @@ function WebtoonView({
   /** Server-known page dims — used to reserve each page's layout
    *  height (`aspect-ratio`) before the bytes arrive. */
   pages: PageInfo[];
+  /** Archive-content `?v=` stamp for page/thumb URLs (see Reader). */
+  pageUrlVersion: string | null;
   fitClass: string;
   /** Called when the user taps to toggle the reader chrome. Mirrors
    *  the middle-tap behavior of `<TapZones>` in single / double
@@ -1508,6 +1553,7 @@ function WebtoonView({
                 issueId={issueId}
                 pageIndex={i}
                 pageInfo={pages[i]}
+                pageUrlVersion={pageUrlVersion}
                 fitClass={fitClass}
                 eager={i < 3 || Math.abs(i - currentPage) <= 1}
               />
@@ -1573,12 +1619,15 @@ const WebtoonPage = memo(function WebtoonPage({
   issueId,
   pageIndex,
   pageInfo,
+  pageUrlVersion,
   fitClass,
   eager,
 }: {
   issueId: string;
   pageIndex: number;
   pageInfo?: PageInfo;
+  /** Archive-content `?v=` stamp for page/thumb URLs (see Reader). */
+  pageUrlVersion: string | null;
   fitClass: string;
   eager: boolean;
 }) {
@@ -1599,14 +1648,23 @@ const WebtoonPage = memo(function WebtoonPage({
   return (
     <>
       <PageImage
-        src={`/issues/${issueId}/pages/${pageIndex}`}
+        src={withContentVersion(
+          `/issues/${issueId}/pages/${pageIndex}`,
+          pageUrlVersion,
+        )}
         // FEP-1: webtoon is width-fit by construction; no zoom surface.
         srcSet={pageBytesSrcSet(
-          `/issues/${issueId}/pages/${pageIndex}`,
+          withContentVersion(
+            `/issues/${issueId}/pages/${pageIndex}`,
+            pageUrlVersion,
+          ),
           pageInfo?.image_width,
         )}
         sizes="100vw"
-        thumbSrc={`/issues/${issueId}/pages/${pageIndex}/thumb?variant=strip`}
+        thumbSrc={withContentVersion(
+          `/issues/${issueId}/pages/${pageIndex}/thumb?variant=strip`,
+          pageUrlVersion,
+        )}
         alt={`Page ${pageIndex + 1}`}
         fitClass={fitClass}
         loading={eager ? "eager" : "lazy"}

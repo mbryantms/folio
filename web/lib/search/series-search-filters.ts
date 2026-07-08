@@ -14,11 +14,7 @@
  *  sort (backend falls back to ts_rank_cd relevance). */
 
 export type SeriesSearchSort =
-  | "relevance"
-  | "name"
-  | "year"
-  | "created_at"
-  | "updated_at";
+  "relevance" | "name" | "year" | "created_at" | "updated_at";
 
 export const SERIES_SEARCH_SORT_OPTIONS: ReadonlyArray<{
   value: SeriesSearchSort;

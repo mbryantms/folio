@@ -74,7 +74,9 @@ services:
       POSTGRES_USER: comic
       POSTGRES_PASSWORD: smoke
       POSTGRES_DB: comic_reader
-    tmpfs: ["/var/lib/postgresql/data"]
+    # 18+ images refuse to start with anything mounted at the pre-18
+    # /var/lib/postgresql/data path; the tmpfs goes on the parent instead.
+    tmpfs: ["/var/lib/postgresql"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U comic -d comic_reader"]
       interval: 2s

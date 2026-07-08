@@ -234,19 +234,41 @@ async fn serve_file(
         Variant::CoverSmall => "cs",
         Variant::Strip => "s",
     };
-    // ETag includes variant + page index + thumbnail version so changing
-    // any of them invalidates correctly.
+    let file = match tokio::fs::File::open(path).await {
+        Ok(f) => f,
+        Err(_) => return error(StatusCode::NOT_FOUND, "not_found", "thumbnail unavailable"),
+    };
+    let meta = file.metadata().await.ok();
+    let len = meta.as_ref().map(std::fs::Metadata::len);
+    // ETag derives from the on-disk artifact (size + mtime), not from the
+    // pipeline constant `THUMBNAIL_VERSION`: the URL is stable across
+    // archive rewrites, so a page edit that regenerates the thumbnail must
+    // change the validator or revalidation keeps 304-ing stale pixels.
+    // Every generator writes via tmp+rename, so mtime moves on regen.
+    let stamp = meta
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     let etag = format!(
-        "\"{}-{}-{}-v{}\"",
+        "\"{}-{}-{}-{}-{}\"",
         &issue_id[..32.min(issue_id.len())],
         variant_tag,
         page_index,
-        thumbnails::THUMBNAIL_VERSION
+        len.unwrap_or(0),
+        stamp,
     );
     let mut headers = HeaderMap::new();
+    // `no-cache` = cache but revalidate before reuse. Thumb URLs never
+    // change, while their bytes do (archive edits, force-recreate, format
+    // switches) — an `immutable` year here left the page-map editor and
+    // reader strip showing pre-edit pixels indefinitely. The ETag above
+    // keeps revalidation at 304-with-no-body for the common unchanged case.
+    // `private` because the route is ACL'd per user.
     headers.insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=31536000, immutable"),
+        HeaderValue::from_static("private, no-cache"),
     );
     headers.insert(
         header::ETAG,
@@ -260,12 +282,6 @@ async fn serve_file(
     {
         return (StatusCode::NOT_MODIFIED, headers).into_response();
     }
-
-    let file = match tokio::fs::File::open(path).await {
-        Ok(f) => f,
-        Err(_) => return error(StatusCode::NOT_FOUND, "not_found", "thumbnail unavailable"),
-    };
-    let len = file.metadata().await.map(|m| m.len()).ok();
 
     // Content-Type follows the on-disk extension so old thumbs in the
     // previous format keep serving with the right MIME after a switch.

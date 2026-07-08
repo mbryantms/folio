@@ -456,3 +456,60 @@ async fn thumb_serves_conditional_etag_304() {
     let second = fetch_thumb_response(&app, &session, &id, 0, Some("cover"), Some(&etag)).await;
     assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
 }
+
+#[tokio::test]
+async fn thumb_etag_changes_when_artifact_regenerates() {
+    // Regression for the archive-edit staleness bug: the thumb URL is
+    // stable across rewrites, so the response must (a) force revalidation
+    // (`no-cache`, never `immutable`) and (b) carry an ETag derived from
+    // the on-disk artifact, so a regenerated thumbnail stops matching the
+    // old validator.
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("regen.cbz");
+    build_cbz(&cbz, 2);
+    let id = seed_issue(&app, &cbz).await;
+
+    let first = fetch_thumb_response(&app, &session, &id, 0, Some("cover"), None).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let cache_control = first
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .expect("cache-control")
+        .to_owned();
+    assert!(
+        cache_control.contains("no-cache") && !cache_control.contains("immutable"),
+        "thumb responses must revalidate (got {cache_control:?})"
+    );
+    let etag = first
+        .headers()
+        .get(header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .expect("etag")
+        .to_owned();
+
+    // Simulate a post-edit regeneration: same path, different bytes.
+    let cover = app
+        ._data_dir
+        .path()
+        .join("thumbs")
+        .join(format!("{id}.webp"));
+    let mut bytes = std::fs::read(&cover).unwrap();
+    bytes.extend_from_slice(b"x");
+    std::fs::write(&cover, &bytes).unwrap();
+
+    let second = fetch_thumb_response(&app, &session, &id, 0, Some("cover"), Some(&etag)).await;
+    assert_eq!(
+        second.status(),
+        StatusCode::OK,
+        "a changed artifact must not 304 against the old ETag"
+    );
+    let etag2 = second
+        .headers()
+        .get(header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .expect("etag 2");
+    assert_ne!(etag, etag2, "ETag must change with the artifact bytes");
+}

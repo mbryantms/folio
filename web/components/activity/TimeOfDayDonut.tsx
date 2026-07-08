@@ -76,8 +76,7 @@ export function TimeOfDayDonut({ data }: { data: TimeOfDayBuckets }) {
             labelStyle={{ color: "var(--color-foreground)" }}
             formatter={(_value, _name, item) => {
               const payload = item?.payload as
-                | { value?: number; sessions?: number }
-                | undefined;
+                { value?: number; sessions?: number } | undefined;
               const ms = payload?.value ?? 0;
               const sessions = payload?.sessions ?? 0;
               return [

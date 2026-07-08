@@ -144,6 +144,26 @@ export function pageThumbUrl(issueId: string, page: number): string {
   return `/issues/${encodeURIComponent(issueId)}/pages/${page}/thumb`;
 }
 
+/**
+ * Append an archive-content version stamp (`v`) to a page/thumb URL.
+ *
+ * Page and thumbnail URLs are stable across archive rewrites, so the
+ * browser's cache key never changes when the underlying bytes do. The
+ * server now serves these revalidatable, but entries cached under the
+ * old `immutable` policy are pinned for a year and never revalidate —
+ * the only way past them is a different URL. Callers pass the issue's
+ * `last_rewrite_at` (null until the archive is first rewritten, so
+ * untouched issues keep their historical URLs and warm caches).
+ */
+export function withContentVersion(
+  url: string,
+  version: string | null | undefined,
+): string {
+  if (!version) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}v=${encodeURIComponent(version)}`;
+}
+
 /** Full-resolution page bytes URL. */
 export function pageBytesUrl(issueId: string, page: number): string {
   return `/issues/${encodeURIComponent(issueId)}/pages/${page}`;

@@ -6,6 +6,7 @@ import { computeSpreadGroups, groupIndexForPage } from "@/lib/reader/spreads";
 import { useIssueMarkers } from "@/lib/api/queries";
 import type { Direction } from "@/lib/reader/detect";
 import type { MarkerKind, PageInfo } from "@/lib/api/types";
+import { withContentVersion } from "@/lib/urls";
 import {
   Tooltip,
   TooltipContent,
@@ -52,12 +53,15 @@ export function PageStrip({
   currentPage,
   direction,
   pages,
+  urlVersion,
 }: {
   issueId: string;
   totalPages: number;
   currentPage: number;
   direction: Direction;
   pages: PageInfo[];
+  /** Archive-content `?v=` stamp for thumb URLs (see Reader). */
+  urlVersion: string | null;
 }) {
   const setPage = useReaderStore((s) => s.setPage);
   const visible = useReaderStore((s) => s.pageStripVisible);
@@ -106,9 +110,12 @@ export function PageStrip({
       warmedThumbs.current.add(i);
       const img = new Image();
       img.fetchPriority = "low";
-      img.src = `/issues/${issueId}/pages/${i}/thumb?variant=strip`;
+      img.src = withContentVersion(
+        `/issues/${issueId}/pages/${i}/thumb?variant=strip`,
+        urlVersion,
+      );
     }
-  }, [issueId, currentPage, totalPages]);
+  }, [issueId, currentPage, totalPages, urlVersion]);
   // Marker dots per page — one set of kinds per page index. Empty
   // when the user has no markers on this issue yet. Same TanStack
   // Query cache the reader overlay reads from, so the strip refreshes
@@ -376,7 +383,10 @@ export function PageStrip({
                   {shouldLoad ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img
-                      src={`/issues/${issueId}/pages/${i}/thumb?variant=strip`}
+                      src={withContentVersion(
+                        `/issues/${issueId}/pages/${i}/thumb?variant=strip`,
+                        urlVersion,
+                      )}
                       alt=""
                       // Eager: `shouldLoad` already gates rendering to the
                       // visible + overscan window, so we want these to fetch

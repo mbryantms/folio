@@ -2,8 +2,9 @@
 //! (`archive-rewrite-1.0` M2).
 //!
 //! Mirrors [`crate::jobs::rewrite_sidecars`]: claim the per-issue rewrite
-//! mutex, rebuild the archive atomically, invalidate the zip-LRU, clear
-//! the thumbnail stamps, stamp `last_rewrite_kind='edit'`, audit, and
+//! mutex, rebuild the archive atomically, invalidate the zip-LRU, wipe the
+//! on-disk thumbnails + clear the stamps (page bytes changed, and the
+//! generators are skip-if-exists), stamp `last_rewrite_kind='edit'`, audit, and
 //! enqueue a scoped rescan so the scanner re-ingests the new bytes (the
 //! content-hash dedupe keeps `issue.id` stable).
 //!
@@ -270,6 +271,10 @@ pub struct ArchiveEditJob {
     pub actor_id: Option<Uuid>,
     pub actor_ip: Option<String>,
     pub actor_ua: Option<String>,
+    /// Busy-mutex requeue counter (see [`requeue_busy`]). New enqueues
+    /// leave it 0; the worker bumps it on each rewrite-lock collision.
+    #[serde(default)]
+    pub attempt: u32,
 }
 
 pub async fn handle(job: ArchiveEditJob, state: Data<AppState>) -> Result<(), Error> {
@@ -279,7 +284,7 @@ pub async fn handle(job: ArchiveEditJob, state: Data<AppState>) -> Result<(), Er
     let token = match mutex::try_claim(&mut redis, &job.issue_id, mutex::EDIT_TTL_SECS).await {
         Ok(Some(t)) => t,
         Ok(None) => {
-            tracing::info!(issue_id = %job.issue_id, "archive edit: mutex busy; skipping");
+            requeue_busy(&state, &job).await;
             return Ok(());
         }
         Err(e) => {
@@ -469,6 +474,24 @@ pub async fn edit_one_issue(
     .map_err(|e| EditError::Image(format!("join: {e}")))??;
 
     state.zip_lru.invalidate(&row.id);
+
+    // Wipe the on-disk thumbnails (cover + @sm + page-strip subtree). Every
+    // generator in `library::thumbnails` is skip-if-file-exists, so clearing
+    // the DB stamps below is not enough — without the wipe the post-edit
+    // regen no-ops against the stale files and the page map / cover keep
+    // serving pre-edit pixels. The next request (or the post-scan worker)
+    // regenerates from the freshly-rewritten archive.
+    {
+        let data_dir = cfg.data_path.clone();
+        let issue_id = row.id.clone();
+        if let Err(e) = tokio::task::spawn_blocking(move || {
+            crate::library::thumbnails::wipe_issue_thumbs(&data_dir, &issue_id);
+        })
+        .await
+        {
+            tracing::warn!(issue_id = %row.id, error = %e, "archive edit: thumb wipe task failed");
+        }
+    }
 
     let moved = (dst_path != archive_path).then(|| dst_path.clone());
 
@@ -772,6 +795,70 @@ async fn enqueue_scoped_rescan(
         )
         .await?;
     Ok(())
+}
+
+/// The rewrite mutex is shared with sidecar writeback, so an operator's
+/// edit can land while another rewrite of the same issue is in flight.
+/// Pre-fix the job was silently dropped (`Ok(())` + a log line) — the
+/// operator's Apply appeared to succeed but changed nothing, which is
+/// indistinguishable from "rotation didn't work". Requeue instead, with a
+/// short pacing delay, and give up loudly (library event + audit trail)
+/// only after the retry budget comfortably outlasts the longest mutex TTL.
+const BUSY_MAX_ATTEMPTS: u32 = 40;
+const BUSY_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
+
+async fn requeue_busy(state: &AppState, job: &ArchiveEditJob) {
+    use apalis::prelude::Storage;
+    if job.attempt >= BUSY_MAX_ATTEMPTS {
+        tracing::error!(
+            issue_id = %job.issue_id,
+            attempts = job.attempt,
+            "archive edit: rewrite lock still busy after retry budget; dropping edit",
+        );
+        if let Ok(Some(row)) = issue::Entity::find_by_id(job.issue_id.clone())
+            .one(&state.db)
+            .await
+        {
+            event_log::record(
+                &state.db,
+                NewEvent::new(
+                    row.library_id,
+                    Category::Archive,
+                    Action::Errored,
+                    Severity::Error,
+                    format!("Archive edit dropped for {}: rewrite lock busy", row.slug),
+                )
+                .entity("issue", row.id.clone(), Some(row.slug.clone()))
+                .detail(serde_json::json!({
+                    "attempts": job.attempt,
+                    "ops": job.ops,
+                    "bulk_op": job.bulk_op,
+                })),
+            )
+            .await;
+        }
+        return;
+    }
+    // Pace the retry so a held lock isn't hammered. The worker runs
+    // concurrency=1, so this also spaces out the whole queue — acceptable:
+    // the busy case is rare and per-issue serialization is the point.
+    tokio::time::sleep(BUSY_RETRY_DELAY).await;
+    let mut next = job.clone();
+    next.attempt += 1;
+    let mut storage = state.jobs.archive_edit_storage.clone();
+    if let Err(e) = storage.push(next).await {
+        tracing::error!(
+            issue_id = %job.issue_id,
+            error = %e,
+            "archive edit: busy requeue push failed; edit lost",
+        );
+    } else {
+        tracing::info!(
+            issue_id = %job.issue_id,
+            attempt = job.attempt + 1,
+            "archive edit: mutex busy; requeued",
+        );
+    }
 }
 
 async fn audit_edit(

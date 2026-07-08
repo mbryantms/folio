@@ -440,9 +440,7 @@ function RowKebab({ event }: { event: ReadingLogEventView }) {
   const unhide = useUnhideReadingLogEvent();
   const isHidden = event.is_hidden === true;
   const kind = event.kind as
-    | "issue_finished"
-    | "session_completed"
-    | "marker_created";
+    "issue_finished" | "session_completed" | "marker_created";
   const sourceId = eventIdToSourceId(event.id);
   if (!sourceId) return null;
   const pending = hide.isPending || unhide.isPending;

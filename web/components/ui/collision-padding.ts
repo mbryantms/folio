@@ -24,8 +24,7 @@ export const EDGE_GUTTER = 8;
  * content only mounts on open) to pick up the real insets.
  */
 export function safeAreaCollisionPadding():
-  | number
-  | Partial<Record<string, number>> {
+  number | Partial<Record<string, number>> {
   if (typeof window === "undefined") return EDGE_GUTTER;
   const cs = getComputedStyle(document.documentElement);
   const inset = (name: string) =>

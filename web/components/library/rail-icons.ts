@@ -59,11 +59,7 @@ import {
 import type { SavedViewKind, SavedViewView } from "@/lib/api/types";
 
 export type RailIconCategory =
-  | "reading"
-  | "heroes"
-  | "action"
-  | "filter"
-  | "decorative";
+  "reading" | "heroes" | "action" | "filter" | "decorative";
 
 export type RailIconEntry = {
   key: string;

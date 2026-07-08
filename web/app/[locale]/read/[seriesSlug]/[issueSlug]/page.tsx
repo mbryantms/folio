@@ -202,6 +202,7 @@ export default async function ReadPage({
         totalPages={totalPages}
         initialPage={initialPage}
         pages={(issue.pages as PageInfo[] | null | undefined) ?? []}
+        pageUrlVersion={issue.last_rewrite_at ?? null}
         manga={issue.manga ?? null}
         userDefaultDirection={userDefaultDirection}
         libraryDefaultDirection={libraryDefaultDirection}

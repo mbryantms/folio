@@ -72,6 +72,11 @@ declare const self: ServiceWorkerGlobalScope;
  *  uncached by design. */
 const THUMB_PATH_RE = /^\/issues\/[^/]+\/(?:pages\/\d+\/thumb|covers\/[^/]+)$/;
 
+/** Runtime cache for thumbnails. `-v2` retires the original
+ *  `folio-thumbs`, whose entries could be poisoned by pre-v0.26.2
+ *  immutable HTTP-cache responses (purged on activate below). */
+const THUMB_CACHE = "folio-thumbs-v2";
+
 const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
   // `skipWaiting: false` so the new SW does not steal control
@@ -108,18 +113,35 @@ const serwist = new Serwist({
   // caught them and the `/issues/` guard below force-bypassed them —
   // no offline covers, and repeat browsing paid a re-fetch whenever
   // the HTTP cache had evicted. Stale-while-revalidate (not
-  // cache-first, despite the server's `immutable` header) because an
-  // archive page-edit regenerates a thumb under the SAME URL — SWR
-  // self-heals on the next view instead of pinning the old art until
-  // eviction. Cache keys are the full URL including `?variant=`.
-  // Bounded: covers a few screens of grid browsing without letting a
-  // 24k-issue library eat the origin's storage quota.
+  // cache-first) because an archive page-edit regenerates a thumb
+  // under the SAME URL — SWR self-heals on the next view instead of
+  // pinning the old art until eviction. Cache keys are the full URL
+  // including `?variant=` / `?v=`. Bounded: covers a few screens of
+  // grid browsing without letting a 24k-issue library eat the
+  // origin's storage quota.
   runtimeCaching: [
     {
+      // `?sw=bypass` opts a request out of this cache entirely (see
+      // the fetch listener below) — used by the archive page editor,
+      // whose tiles must reflect the origin's CURRENT bytes on every
+      // open. SWR's serve-stale-first contract is wrong there: after
+      // an edit rewrites pages under the same URL, the first paint
+      // would be the pre-edit copy.
       matcher: ({ sameOrigin, url }) =>
-        sameOrigin && THUMB_PATH_RE.test(url.pathname),
+        sameOrigin &&
+        THUMB_PATH_RE.test(url.pathname) &&
+        url.searchParams.get("sw") !== "bypass",
       handler: new StaleWhileRevalidate({
-        cacheName: "folio-thumbs",
+        cacheName: THUMB_CACHE,
+        // `no-cache` forces the revalidation fetch to be validated
+        // against the ORIGIN (conditional request; 304 keeps it
+        // cheap). Left at the default, fetch() is answered by the
+        // browser's HTTP cache — and thumb responses cached under the
+        // pre-v0.26.2 `public, max-age=1y, immutable` policy answer
+        // without ever touching the network, so a post-edit
+        // regeneration could never reach this cache: SWR re-cached
+        // the same stale bytes forever.
+        fetchOptions: { cache: "no-cache" },
         plugins: [
           new ExpirationPlugin({
             maxEntries: 1200,
@@ -131,6 +153,16 @@ const serwist = new Serwist({
     },
     ...defaultCache,
   ],
+});
+
+// One-time purge of the pre-v2 thumb cache. Its entries were
+// revalidated through the poisoned HTTP cache (see `fetchOptions`
+// above), so any thumbnail viewed before the fix may be permanently
+// wrong in it — dropping the whole cache is the only reliable reset.
+// Runs on activate, i.e. once per SW update; deleting a missing cache
+// is a no-op.
+self.addEventListener("activate", (event) => {
+  event.waitUntil(caches.delete("folio-thumbs"));
 });
 
 // Hard guard: any same-origin request to a backend API surface
@@ -223,8 +255,12 @@ self.addEventListener("fetch", (event: FetchEvent) => {
   // Thumbnail/cover bytes are the one `/issues/…` surface serwist DOES
   // handle (the SWR cache above) — skip the bypass guard for them
   // (audit FEP-3). Everything else under these prefixes stays
-  // native-loader-only.
-  if (THUMB_PATH_RE.test(path)) {
+  // native-loader-only. `?sw=bypass` thumbs intentionally fall through
+  // to the `/issues/` prefix guard below: the native loader performs
+  // the request, and the origin's `no-cache` thumb policy makes every
+  // use an ETag revalidation — guaranteed-current bytes for the
+  // archive page editor.
+  if (THUMB_PATH_RE.test(path) && url.searchParams.get("sw") !== "bypass") {
     return;
   }
   if (

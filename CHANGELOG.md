@@ -13,6 +13,121 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.9](https://github.com/mbryantms/folio/compare/v0.26.8...v0.26.9) (2026-07-06)
+
+
+### Fixed
+
+* **compose:** mount postgres 18 volumes at /var/lib/postgresql ([#412](https://github.com/mbryantms/folio/issues/412)) ([0c25bde](https://github.com/mbryantms/folio/commit/0c25bdee1cd4ac19e846b4fdbbe86683c0cf9ec5))
+* **web:** unify series-card title size with issue-card family ([#410](https://github.com/mbryantms/folio/issues/410)) ([78b53a2](https://github.com/mbryantms/folio/commit/78b53a25a304a61ac0d4ab11322b3ab8e7dc920c))
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.53 ([#409](https://github.com/mbryantms/folio/issues/409)) ([05a7541](https://github.com/mbryantms/folio/commit/05a754111a8646088acd80e42a132fc2bce7a812))
+
+## [0.26.8](https://github.com/mbryantms/folio/compare/v0.26.7...v0.26.8) (2026-07-06)
+
+
+### Fixed
+
+* **metadata:** series-scope apply persists series-row scalars on the writeback path ([#406](https://github.com/mbryantms/folio/issues/406)) ([0e53527](https://github.com/mbryantms/folio/commit/0e535277440f70048698c8b0a55c0251d1eb355b))
+
+## [0.26.7](https://github.com/mbryantms/folio/compare/v0.26.6...v0.26.7) (2026-07-06)
+
+
+### Fixed
+
+* **cbl:** Up Next walks entry pages before scrolling on long lists ([#404](https://github.com/mbryantms/folio/issues/404)) ([1fa9fe2](https://github.com/mbryantms/folio/commit/1fa9fe2fea9d2168395b7a702c86a48db8402a01))
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.52 ([#405](https://github.com/mbryantms/folio/issues/405)) ([5555b4b](https://github.com/mbryantms/folio/commit/5555b4b3663c2d47ba53fdced770808a4a9856a8))
+* update taiki-e/install-action digest to 4684b84 ([#402](https://github.com/mbryantms/folio/issues/402)) ([e302581](https://github.com/mbryantms/folio/commit/e3025811072def1547770d0832404e62937f2e66))
+
+## [0.26.6](https://github.com/mbryantms/folio/compare/v0.26.5...v0.26.6) (2026-07-05)
+
+
+### Fixed
+
+* **pwa:** per-open stamp so editor tiles defeat not-yet-activated workers ([#399](https://github.com/mbryantms/folio/issues/399)) ([f4ed93a](https://github.com/mbryantms/folio/commit/f4ed93afa1cd74fefcde75f57753ceca7df16be5))
+
+
+### Dependencies
+
+* update nextjs monorepo to v16.2.10 ([#400](https://github.com/mbryantms/folio/issues/400)) ([247d576](https://github.com/mbryantms/folio/commit/247d5762d4e411a132615bc2bae1a4b1fe0c2ec5))
+
+## [0.26.5](https://github.com/mbryantms/folio/compare/v0.26.4...v0.26.5) (2026-07-04)
+
+
+### Fixed
+
+* **archive-edit:** apply EXIF orientation at decode + stop dropping busy edits ([#396](https://github.com/mbryantms/folio/issues/396)) ([b7a4a49](https://github.com/mbryantms/folio/commit/b7a4a4900a43ffda213ea063e836950fede45314))
+* **pwa:** editor tiles bypass the service worker instead of nonce-busting ([#398](https://github.com/mbryantms/folio/issues/398)) ([6f978da](https://github.com/mbryantms/folio/commit/6f978daf7583f7ffef8f61788c4ec24247e8c9ca))
+
+## [0.26.4](https://github.com/mbryantms/folio/compare/v0.26.3...v0.26.4) (2026-07-04)
+
+
+### Fixed
+
+* **pwa:** stop the service worker from re-serving pre-fix stale thumbnails ([#395](https://github.com/mbryantms/folio/issues/395)) ([d1528a8](https://github.com/mbryantms/folio/commit/d1528a8129ced1100a19ba278edc1ade28df9608))
+
+
+### Dependencies
+
+* update dependency lucide-react to v1.23.0 ([#393](https://github.com/mbryantms/folio/issues/393)) ([ebf128e](https://github.com/mbryantms/folio/commit/ebf128e908ed9b3f9798791773682f89dbc4adf3))
+
+## [0.26.3](https://github.com/mbryantms/folio/compare/v0.26.2...v0.26.3) (2026-07-04)
+
+
+### Fixed
+
+* **archive-edit:** correct stale page dims on rescan + version page/thumb URLs ([#391](https://github.com/mbryantms/folio/issues/391)) ([2dcfcf5](https://github.com/mbryantms/folio/commit/2dcfcf55eef4a3b20eb46027e051157151cee3a8))
+
+## [0.26.2](https://github.com/mbryantms/folio/compare/v0.26.1...v0.26.2) (2026-07-04)
+
+
+### Fixed
+
+* **archive-edit:** stale thumbnails after page edits (server + HTTP caching) ([#390](https://github.com/mbryantms/folio/issues/390)) ([47b351e](https://github.com/mbryantms/folio/commit/47b351ea262651b7c3e1d69b6f3302f0c3666d9a))
+
+
+### Dependencies
+
+* update radix-ui ([#387](https://github.com/mbryantms/folio/issues/387)) ([b05f95b](https://github.com/mbryantms/folio/commit/b05f95beac4071dfb036f64ec9506d5b99d160da))
+* update taiki-e/install-action digest to c93ccc0 ([#389](https://github.com/mbryantms/folio/issues/389)) ([cee86ab](https://github.com/mbryantms/folio/commit/cee86ab5957986afc6730972d20cff788fbf0969))
+
+## [0.26.1](https://github.com/mbryantms/folio/compare/v0.26.0...v0.26.1) (2026-07-03)
+
+
+### Dependencies
+
+* lock file maintenance ([#386](https://github.com/mbryantms/folio/issues/386)) ([a88bd60](https://github.com/mbryantms/folio/commit/a88bd60bb43a0450bfbdda909b44b5f1388f7d02))
+* pin dependencies ([#371](https://github.com/mbryantms/folio/issues/371)) ([854c318](https://github.com/mbryantms/folio/commit/854c3182b3c5f013ca695615f54bc34b7e1a59dd))
+* update actions/cache action to v6 ([#375](https://github.com/mbryantms/folio/issues/375)) ([d573b6c](https://github.com/mbryantms/folio/commit/d573b6c6d7fb84260fad2841d60187a043d3e9cf))
+* update actions/checkout action to v7 ([#376](https://github.com/mbryantms/folio/issues/376)) ([76852c0](https://github.com/mbryantms/folio/commit/76852c097ab186f19b672f359321d2e6115d1734))
+* update dependency @playwright/test to v1.61.1 ([#363](https://github.com/mbryantms/folio/issues/363)) ([492780b](https://github.com/mbryantms/folio/commit/492780b3c05e08a7874fae6f8ca30b1b499f218e))
+* update dependency @scalar/api-reference-react to v0.9.50 ([#355](https://github.com/mbryantms/folio/issues/355)) ([ad347c0](https://github.com/mbryantms/folio/commit/ad347c0f2211160d18cb6b396da3f068f943248e))
+* update dependency cronstrue to v3.24.0 ([#364](https://github.com/mbryantms/folio/issues/364)) ([1ee00db](https://github.com/mbryantms/folio/commit/1ee00dbfa0c79632cb287f35e1903a2c9c4705a5))
+* update dependency js-yaml@&gt;=4.0.0 &lt;4.1.1 to v4.3.0 ([#365](https://github.com/mbryantms/folio/issues/365)) ([4be89ce](https://github.com/mbryantms/folio/commit/4be89cecf3981a7eb061da12e5acd74d63279beb))
+* update dependency lucide-react to v1.22.0 ([#366](https://github.com/mbryantms/folio/issues/366)) ([944e36e](https://github.com/mbryantms/folio/commit/944e36e7680b84e1aad8b448644813a0c5c0401a))
+* update dependency next-intl to v4.13.1 ([#385](https://github.com/mbryantms/folio/issues/385)) ([a20bbf9](https://github.com/mbryantms/folio/commit/a20bbf9c1831a19e8275cf1432e903d988e32595))
+* update dependency postcss to v8.5.16 ([#356](https://github.com/mbryantms/folio/issues/356)) ([cde8401](https://github.com/mbryantms/folio/commit/cde8401b20997406e638ebec45e895df0dc45b5f))
+* update dependency postcss@&lt;8.5.10 to v8.5.16 ([#357](https://github.com/mbryantms/folio/issues/357)) ([4d1322b](https://github.com/mbryantms/folio/commit/4d1322bf103b1cf4cf31447ee81499ee9f75c900))
+* update dependency prettier to v3.9.4 ([#367](https://github.com/mbryantms/folio/issues/367)) ([54ef3bb](https://github.com/mbryantms/folio/commit/54ef3bb3b4f70a56ad1203f98878d9fc296434d3))
+* update dependency recharts to v3.9.1 ([#382](https://github.com/mbryantms/folio/issues/382)) ([97f1cd9](https://github.com/mbryantms/folio/commit/97f1cd951192a69146ecc2240574518d42a3810c))
+* update dependency vite to v8.1.1 ([#381](https://github.com/mbryantms/folio/issues/381)) ([e9a94d9](https://github.com/mbryantms/folio/commit/e9a94d9ca64b33fb40ceef5a8d51f73f4ab35572))
+* update docker/login-action digest to af1e73f ([#384](https://github.com/mbryantms/folio/issues/384)) ([17c4619](https://github.com/mbryantms/folio/commit/17c4619db686de5ef51b425ad967342585aca727))
+* update pnpm to v11.9.0 ([#369](https://github.com/mbryantms/folio/issues/369)) ([9c95327](https://github.com/mbryantms/folio/commit/9c953270f7355d03630c98fb39dca76c2b57999f))
+* update rust crate arc-swap to v1.9.2 ([#358](https://github.com/mbryantms/folio/issues/358)) ([baa09c2](https://github.com/mbryantms/folio/commit/baa09c2c24a4f1d0f4079e876ff565f2a75551c3))
+* update rust crate log to v0.4.33 ([#359](https://github.com/mbryantms/folio/issues/359)) ([dc02270](https://github.com/mbryantms/folio/commit/dc02270ade6be37721d02c550ce3a76805ce5468))
+* update rust crate tower-http to 0.7 ([#372](https://github.com/mbryantms/folio/issues/372)) ([93b02d0](https://github.com/mbryantms/folio/commit/93b02d0513d9770292f92dc221607db50984f904))
+* update rust crate zeroize to v1.9.0 ([#373](https://github.com/mbryantms/folio/issues/373)) ([dd6e993](https://github.com/mbryantms/folio/commit/dd6e99386b7320e8c5c832b3cf8f0d3386855e06))
+* update rust to v1.96.1 ([#360](https://github.com/mbryantms/folio/issues/360)) ([2a43f0b](https://github.com/mbryantms/folio/commit/2a43f0ba6fe0f6da1585be9c92761be3143fc7b6))
+* update tailwindcss monorepo to v4.3.2 ([#361](https://github.com/mbryantms/folio/issues/361)) ([6c880eb](https://github.com/mbryantms/folio/commit/6c880ebaf8504efaf5b0f654f7e8e4597ac095c7))
+* update tanstack ([#362](https://github.com/mbryantms/folio/issues/362)) ([e67c392](https://github.com/mbryantms/folio/commit/e67c392c6c738bec5f7c976d49d8fa3a79da3256))
+
 ## [0.26.0](https://github.com/mbryantms/folio/compare/v0.25.0...v0.26.0) (2026-07-02)
 
 

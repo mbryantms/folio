@@ -288,6 +288,7 @@ async fn parse_archive_for_ingest(
     size: i64,
     stats: &mut ScanStats,
     health: &mut HealthCollector,
+    verify_dims: bool,
 ) -> anyhow::Result<Option<ParsedArchive>> {
     let path_for_blocking = path.to_path_buf();
     // F-9: tunable read buffer for BLAKE3 hashing. Larger buffers reduce
@@ -311,7 +312,7 @@ async fn parse_archive_for_ingest(
                 crate::library::hash::blake3_file_with_buffer(&path_for_blocking, hash_buffer_kb)?;
             let hash_ms = hash_started.elapsed().as_millis() as u64;
             let (archive_outcome, mut timing, diagnostics) =
-                parse_archive_timed(&path_for_blocking, archive_limits);
+                parse_archive_timed(&path_for_blocking, archive_limits, verify_dims);
             timing.hash_ms = hash_ms;
             Ok::<_, anyhow::Error>((hash, archive_outcome, timing, diagnostics))
         })
@@ -703,6 +704,17 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         _ => {}
     }
 
+    // The file's bytes changed under an existing row (page edit, external
+    // retag): ComicInfo's `<Pages>` block survives page rewrites verbatim,
+    // so its declared per-page dimensions can describe pixels that no
+    // longer exist. Force the dimension probe so `apply_dimension_probe`
+    // corrects stale width/height/double_page from the actual archive.
+    // New rows keep the metadata-completeness gate (probing every page of
+    // a well-tagged first-time library would dominate cold scans).
+    let verify_dims = existing
+        .as_ref()
+        .is_some_and(|row| !row_matches_file(row, size, mtime));
+
     let Some(ParsedArchive {
         hash,
         info,
@@ -710,7 +722,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         parse_state,
         metron_ids,
         metroninfo_present,
-    }) = parse_archive_for_ingest(state, lib, path, size, stats, health).await?
+    }) = parse_archive_for_ingest(state, lib, path, size, stats, health, verify_dims).await?
     else {
         return Ok(());
     };
@@ -904,22 +916,20 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         }
         // Thumbnails live under the stable `row_id` directory so they
         // survive content-hash drift (retags don't change which row the
-        // thumbs belong to). The post-scan worker will re-encode pages
-        // when `thumbnails_generated_at` is cleared above.
-        let strip_dir =
-            crate::library::thumbnails::issue_thumbs_dir(&state.cfg().data_path, &row_id);
-        if content_changed && strip_dir.exists() {
-            // Best-effort — a leftover stale dir isn't fatal, the worker
-            // will overwrite individual files. But we want to drop pages
-            // that disappeared from the new archive. `remove_dir_all` is
-            // synchronous; route through `spawn_blocking` so the async
-            // ingest path doesn't stall on slow / network-mounted data
-            // dirs. M4 of code-quality-cleanup-1.0.
-            let strip_dir_owned = strip_dir.clone();
+        // thumbs belong to). Changed bytes wipe ALL on-disk artifacts —
+        // the per-issue strip subtree AND the top-level cover/`@sm`
+        // files — because every generator is skip-if-file-exists:
+        // clearing the stamps above re-enqueues the work, but a
+        // surviving file makes the regeneration a no-op and the old art
+        // serves forever (the cover half of this was the archive-edit
+        // staleness bug; external retags hit the same path). Best-effort
+        // + `spawn_blocking` so the async ingest path doesn't stall on
+        // slow / network-mounted data dirs.
+        if content_changed {
+            let data_dir = state.cfg().data_path.clone();
+            let issue_id_owned = row_id.clone();
             let _ = tokio::task::spawn_blocking(move || {
-                if let Err(e) = std::fs::remove_dir_all(&strip_dir_owned) {
-                    tracing::warn!(path = %strip_dir_owned.display(), error = %e, "failed to wipe stale strip dir");
-                }
+                crate::library::thumbnails::wipe_issue_thumbs(&data_dir, &issue_id_owned);
             })
             .await;
         }
@@ -1224,20 +1234,28 @@ fn row_needs_comicinfo_count_backfill(row: &issue::Model) -> bool {
 }
 
 fn parse_archive_with(path: &Path, mode: ParseMode, limits: ArchiveLimits) -> ArchiveOutcome {
-    parse_archive_timed_with(path, mode, limits).0
+    parse_archive_timed_with(path, mode, limits, false).0
 }
 
 fn parse_archive_timed(
     path: &Path,
     limits: ArchiveLimits,
+    verify_dims: bool,
 ) -> (ArchiveOutcome, ArchiveTiming, ArchiveDiagnostics) {
-    parse_archive_timed_with(path, ParseMode::FullIngest, limits)
+    parse_archive_timed_with(path, ParseMode::FullIngest, limits, verify_dims)
 }
 
+/// `verify_dims`: the caller knows the file's bytes changed since the last
+/// ingest (page edit, external retag). ComicInfo's `<Pages>` block is
+/// preserved verbatim across page rewrites, so its declared
+/// width/height/DoublePage may describe the *old* pixels — force the
+/// dimension probe and let it correct stale entries instead of only
+/// backfilling missing ones.
 fn parse_archive_timed_with(
     path: &Path,
     mode: ParseMode,
     limits: ArchiveLimits,
+    verify_dims: bool,
 ) -> (ArchiveOutcome, ArchiveTiming, ArchiveDiagnostics) {
     let parse_started = Instant::now();
     let mut timing = ArchiveTiming::default();
@@ -1306,7 +1324,12 @@ fn parse_archive_timed_with(
 
     let should_probe = mode.probe_dimensions()
         && match &info_result {
-            Some(Ok(info)) => comicinfo_needs_dimension_probe(info, actual_pages),
+            // Changed bytes force a probe even when the metadata looks
+            // complete — complete-but-stale is exactly the failure mode.
+            Some(Ok(info)) => {
+                (verify_dims && actual_pages > 0)
+                    || comicinfo_needs_dimension_probe(info, actual_pages)
+            }
             Some(Err(_)) => false,
             None => actual_pages > 0,
         };
@@ -1330,7 +1353,7 @@ fn parse_archive_timed_with(
     let outcome = match info_result {
         Some(Ok(mut info)) => {
             if should_probe {
-                apply_dimension_probe(&mut info, &probed_dims, actual_pages);
+                apply_dimension_probe(&mut info, &probed_dims, actual_pages, verify_dims);
             }
             ArchiveOutcome::Ok {
                 info,
@@ -1342,7 +1365,7 @@ fn parse_archive_timed_with(
         None if metron.is_some() => {
             let mut info = ComicInfo::default();
             if should_probe {
-                apply_dimension_probe(&mut info, &probed_dims, actual_pages);
+                apply_dimension_probe(&mut info, &probed_dims, actual_pages, verify_dims);
             }
             ArchiveOutcome::Ok {
                 info,
@@ -1353,7 +1376,7 @@ fn parse_archive_timed_with(
         None => {
             let mut info = ComicInfo::default();
             if should_probe {
-                apply_dimension_probe(&mut info, &probed_dims, actual_pages);
+                apply_dimension_probe(&mut info, &probed_dims, actual_pages, verify_dims);
             }
             ArchiveOutcome::MissingComicInfo { info, actual_pages }
         }
@@ -1404,10 +1427,19 @@ fn probe_page_dimensions(archive: &mut dyn archive::ComicArchive) -> Vec<Option<
 }
 
 fn image_dimensions_from_prefix(bytes: &[u8]) -> Option<(u32, u32)> {
-    png_dimensions(bytes)
+    let dims = png_dimensions(bytes)
         .or_else(|| gif_dimensions(bytes))
         .or_else(|| webp_dimensions(bytes))
-        .or_else(|| jpeg_dimensions(bytes))
+        .or_else(|| jpeg_dimensions(bytes))?;
+    // Report *displayed* dimensions: browsers render with
+    // `image-orientation: from-image`, so an EXIF orientation of 5..=8
+    // (the transposed family) swaps the visible axes. These dims feed
+    // `double_page` inference and the reader's layout reservation, both
+    // of which must match what the user actually sees.
+    match crate::util::image_decode::jpeg_exif_orientation(bytes) {
+        Some(5..=8) => Some((dims.1, dims.0)),
+        _ => Some(dims),
+    }
 }
 
 fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
@@ -1519,7 +1551,20 @@ fn jpeg_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
 /// `double_page` for entries where the publisher left it null. When pages
 /// are empty (no ComicInfo, no MetronInfo), synthesize one entry per
 /// archive page so the reader gets per-page metadata to iterate.
-fn apply_dimension_probe(info: &mut ComicInfo, probed: &[Option<(u32, u32)>], actual_pages: u32) {
+///
+/// `correct_stale`: the file's bytes changed since the last ingest (page
+/// edit / external retag), so a declared width/height that disagrees with
+/// the probe describes pixels that no longer exist — overwrite it and
+/// re-derive `double_page` from the real aspect (a rotated page flips
+/// portrait<->landscape; the reader's strip and spread layout key off
+/// this). Entries whose declared dims match the probe keep their declared
+/// `double_page`, preserving deliberate publisher flags.
+fn apply_dimension_probe(
+    info: &mut ComicInfo,
+    probed: &[Option<(u32, u32)>],
+    actual_pages: u32,
+    correct_stale: bool,
+) {
     if info.pages.is_empty() {
         // Synthesize. Grow to the archive's actual page count even when
         // some probes failed — a missing dim is a soft error (decoder
@@ -1542,6 +1587,17 @@ fn apply_dimension_probe(info: &mut ComicInfo, probed: &[Option<(u32, u32)>], ac
         let Some(dim) = probed.get(idx as usize).copied().flatten() else {
             continue;
         };
+        let declared_matches =
+            page.image_width == Some(dim.0 as i32) && page.image_height == Some(dim.1 as i32);
+        if correct_stale && !declared_matches {
+            page.image_width = Some(dim.0 as i32);
+            page.image_height = Some(dim.1 as i32);
+            if let Some(infer) = infer_double_page(dim) {
+                page.double_page = Some(infer);
+                page.double_page_inferred = if infer { Some(true) } else { None };
+            }
+            continue;
+        }
         if page.image_width.is_none() {
             page.image_width = Some(dim.0 as i32);
         }
