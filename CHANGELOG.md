@@ -13,6 +13,17 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.10](https://github.com/mbryantms/folio/compare/v0.26.9...v0.26.10) (2026-07-08)
+
+
+### Dependencies
+
+* lock file maintenance ([#408](https://github.com/mbryantms/folio/issues/408)) ([df9be20](https://github.com/mbryantms/folio/commit/df9be20b5c18a66b0f6e5d9165eb337d4d992620))
+* update dependency react-hook-form to v7.81.0 ([#417](https://github.com/mbryantms/folio/issues/417)) ([32c42be](https://github.com/mbryantms/folio/commit/32c42bee7520c3496840e201ba990efe50c5ebd7))
+* update dependency recharts to v3.9.2 ([#414](https://github.com/mbryantms/folio/issues/414)) ([01f5e23](https://github.com/mbryantms/folio/commit/01f5e237c1f4c09efead5fa5da911f44d5f30273))
+* update pnpm to v11.10.0 ([#416](https://github.com/mbryantms/folio/issues/416)) ([5147d71](https://github.com/mbryantms/folio/commit/5147d7199e32d834b34cb8444e0010ea96c61515))
+* update taiki-e/install-action digest to 5041467 ([#413](https://github.com/mbryantms/folio/issues/413)) ([a9f1de9](https://github.com/mbryantms/folio/commit/a9f1de93ad8e08ec87f220794f57828d721d9361))
+
 ## [0.26.9](https://github.com/mbryantms/folio/compare/v0.26.8...v0.26.9) (2026-07-06)
 
 
