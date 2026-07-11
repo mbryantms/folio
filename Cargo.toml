@@ -177,7 +177,7 @@ manga-ocr = "0.5.1"
 # same cache directory at first build (requires internet); set
 # `TESSDATA_PREFIX` to point Folio at a pre-staged copy on
 # air-gapped operators. First build adds ~10 min one-time cost.
-tesseract-rs = { version = "0.2", features = ["build-tesseract"] }
+tesseract-rs = { version = "0.3", features = ["build-tesseract"] }
 
 # Background jobs (Redis-backed via apalis)
 apalis = { version = "0.7", features = ["limit", "tracing"] }
