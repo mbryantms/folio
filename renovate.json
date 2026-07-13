@@ -88,6 +88,19 @@
       ]
     },
     {
+      "description": "typescript 7 is the native-compiler (tsgo) rewrite; its JS compiler API is not a drop-in replacement. openapi-typescript (the `just openapi` codegen) crashes on it (ts.factory.createKeywordTypeNode undefined) and the web lint/typecheck job crashes on ModuleKind.Cjs. Clears when openapi-typescript and the rest of the TS-compiler-API tooling ship typescript-7 support; retest by re-running CI on the renovate branch. Minors within 6.x keep flowing through the normal automerge rule.",
+      "matchPackageNames": [
+        "typescript"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "automerge": false,
+      "addLabels": [
+        "gated-major"
+      ]
+    },
+    {
       "description": "@types/node major must track the Node runtime major, currently 24 (engines.node >=24, .nvmrc, ci.yml node-version, web/Dockerfile node:24). Don't let @types/node run ahead of the runtime; bump both together when Node moves.",
       "matchPackageNames": [
         "@types/node"
