@@ -13,6 +13,31 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.11](https://github.com/mbryantms/folio/compare/v0.26.10...v0.26.11) (2026-07-13)
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.54 ([#427](https://github.com/mbryantms/folio/issues/427)) ([8c73617](https://github.com/mbryantms/folio/commit/8c7361762a10da64f193c278fb12299c5abc0e74))
+* update dependency @types/node to v24.13.3 ([#426](https://github.com/mbryantms/folio/issues/426)) ([e4c4c7a](https://github.com/mbryantms/folio/commit/e4c4c7aeb7ef2e4fe9e221a2afa9ccfa38958c81))
+* update dependency lucide-react to v1.24.0 ([#433](https://github.com/mbryantms/folio/issues/433)) ([2dda5a2](https://github.com/mbryantms/folio/commit/2dda5a22269777fbd356613c459d67b578d42072))
+* update dependency next-intl to v4.13.2 ([#437](https://github.com/mbryantms/folio/issues/437)) ([e5ab7b6](https://github.com/mbryantms/folio/commit/e5ab7b67b3535b0b66f6fe3cbce07bf5cfe18fbb))
+* update dependency prettier to v3.9.5 ([#434](https://github.com/mbryantms/folio/issues/434)) ([5a50970](https://github.com/mbryantms/folio/commit/5a50970ca3f2093e52cfe28295988c15c06d9555))
+* update dependency vite to v8.1.4 ([#430](https://github.com/mbryantms/folio/issues/430)) ([88c8cfc](https://github.com/mbryantms/folio/commit/88c8cfc7e3ac514601873ac17e6c2b18b86165b8))
+* update dependency vitest to v4.1.10 ([#419](https://github.com/mbryantms/folio/issues/419)) ([5382150](https://github.com/mbryantms/folio/commit/538215025cf102e80273588be9675368594c2699))
+* update embarkstudios/cargo-deny-action digest to 6f99e34 ([#438](https://github.com/mbryantms/folio/issues/438)) ([c09661e](https://github.com/mbryantms/folio/commit/c09661e237b9073b51645505095ff0364dae3bbb))
+* update pnpm to v11.11.0 ([#435](https://github.com/mbryantms/folio/issues/435)) ([b44c2fc](https://github.com/mbryantms/folio/commit/b44c2fcf038eb1ee31fdd2a4daa4ac8bff6e98e1))
+* update radix-ui ([#423](https://github.com/mbryantms/folio/issues/423)) ([8c9426f](https://github.com/mbryantms/folio/commit/8c9426f53560097d87e3318ddd451e7755ec06c9))
+* update rust crate ed25519-dalek to v3 ([#422](https://github.com/mbryantms/folio/issues/422)) ([1f3e7a0](https://github.com/mbryantms/folio/commit/1f3e7a084ee4ebfdbb0bf05244e0f307ae6d5dec))
+* update rust crate lru to v0.18.1 ([#432](https://github.com/mbryantms/folio/issues/432)) ([2edcd6a](https://github.com/mbryantms/folio/commit/2edcd6a3125d4b32ba128571baf863d931cdeae0))
+* update rust crate tesseract-rs to 0.3 ([#425](https://github.com/mbryantms/folio/issues/425)) ([fada7fa](https://github.com/mbryantms/folio/commit/fada7fa8e65c9fa09f9d611590f308d340fdd4d7))
+* update rust-toolchain ([#429](https://github.com/mbryantms/folio/issues/429)) ([c18ccfc](https://github.com/mbryantms/folio/commit/c18ccfc42dcab1ac10d0a15d3d25138ab7175877))
+* update softprops/action-gh-release digest to 3d0d988 ([#439](https://github.com/mbryantms/folio/issues/439)) ([d7c3f8d](https://github.com/mbryantms/folio/commit/d7c3f8d8aab8463abd600da4252022305f746163))
+* update taiki-e/install-action digest to 2ca9b94 ([#424](https://github.com/mbryantms/folio/issues/424)) ([ea633c0](https://github.com/mbryantms/folio/commit/ea633c06b2dfbcac299907f77fb7959cd39247b3))
+* update taiki-e/install-action digest to 43aecc8 ([#431](https://github.com/mbryantms/folio/issues/431)) ([c88f9c1](https://github.com/mbryantms/folio/commit/c88f9c13558fc4509f1acc2db66aa0431a547da3))
+* update taiki-e/install-action digest to 5ebac0d ([#418](https://github.com/mbryantms/folio/issues/418)) ([28b26e0](https://github.com/mbryantms/folio/commit/28b26e023a1e1c9915809a31d3c04808ee80f8ba))
+* update taiki-e/install-action digest to c7eb173 ([#421](https://github.com/mbryantms/folio/issues/421)) ([91666c9](https://github.com/mbryantms/folio/commit/91666c9de91053cb0badef087cf6a55099af661f))
+
 ## [0.26.10](https://github.com/mbryantms/folio/compare/v0.26.9...v0.26.10) (2026-07-08)
 
 
