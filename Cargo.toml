@@ -77,7 +77,9 @@ utoipa-axum = "0.2"
 # DB
 sea-orm = { version = "1.1", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-uuid", "with-chrono", "with-json"] }
 sea-orm-migration = { version = "1.1", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
-sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "uuid", "chrono", "json"] }
+# sqlx is intentionally not a direct dependency: no crate consumes it, and
+# sea-orm pins its major. Don't re-add a workspace pin — it can't co-resolve
+# with sea-orm's and would split the tree into two sqlx versions.
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -177,7 +179,7 @@ manga-ocr = "0.5.1"
 # same cache directory at first build (requires internet); set
 # `TESSDATA_PREFIX` to point Folio at a pre-staged copy on
 # air-gapped operators. First build adds ~10 min one-time cost.
-tesseract-rs = { version = "0.2", features = ["build-tesseract"] }
+tesseract-rs = { version = "0.3", features = ["build-tesseract"] }
 
 # Background jobs (Redis-backed via apalis)
 apalis = { version = "0.7", features = ["limit", "tracing"] }
