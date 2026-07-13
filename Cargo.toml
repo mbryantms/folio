@@ -108,7 +108,7 @@ arc-swap = "1.7"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 oauth2 = "5"
 openidconnect = "4"
-ed25519-dalek = { version = "2.1", features = ["rand_core", "pkcs8", "pem"] }
+ed25519-dalek = { version = "3.0", features = ["rand_core", "pkcs8", "pem"] }
 base64 = "0.22"
 # CSV writer for the reading-log data-export endpoint (RFC 4180 quoting).
 csv = "1"
