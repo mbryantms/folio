@@ -36,6 +36,7 @@ jobs:
       docker: ${{ steps.filter.outputs.docker || steps.mergequeue.outputs.full }}
       cargo_deps: ${{ steps.filter.outputs.cargo_deps || steps.mergequeue.outputs.full }}
       web_deps: ${{ steps.filter.outputs.web_deps || steps.mergequeue.outputs.full }}
+      renovate: ${{ steps.filter.outputs.renovate || steps.mergequeue.outputs.full }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       # In the merge queue we validate the actual merged result, so run the
