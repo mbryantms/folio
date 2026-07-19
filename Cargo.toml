@@ -136,7 +136,7 @@ walkdir = "2.5"
 tempfile = "3"
 natord = "1.0.9"
 mime_guess = "2.0"
-infer = "0.19"
+infer = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 # Image-processing kernels (median filter for the page-editor despeckle
 # transform). Pinned to the `image` 0.25 line.
