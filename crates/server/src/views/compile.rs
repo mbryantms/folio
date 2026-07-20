@@ -145,7 +145,7 @@ fn apply_visibility(q: &mut SelectStatement, vis: &VisibleLibraries) {
         return;
     }
     if vis.allowed.is_empty() {
-        q.and_where(Expr::val(false).into());
+        q.and_where(Expr::val(false));
         return;
     }
     let allowed: Vec<Uuid> = vis.allowed.iter().copied().collect();
@@ -242,7 +242,7 @@ fn metadata_completeness_subquery() -> SelectStatement {
         .from(issue::Entity)
         .and_where(Expr::col(issue::Column::State).eq("active"))
         .and_where(Expr::col(issue::Column::RemovedAt).is_null())
-        .add_group_by([Expr::col(issue::Column::SeriesId).into()])
+        .add_group_by([Expr::col(issue::Column::SeriesId)])
         .to_owned()
 }
 
@@ -260,7 +260,7 @@ fn active_issue_count_subquery() -> SelectStatement {
         .from(issue::Entity)
         .and_where(Expr::col(issue::Column::State).eq("active"))
         .and_where(Expr::col(issue::Column::RemovedAt).is_null())
-        .add_group_by([Expr::col(issue::Column::SeriesId).into()])
+        .add_group_by([Expr::col(issue::Column::SeriesId)])
         .to_owned()
 }
 
@@ -287,7 +287,7 @@ fn series_predicate(
     kind: FieldKind,
     col: &'static str,
 ) -> Result<SeaCondition, CompileError> {
-    let lhs: SimpleExpr = Expr::col((series::Entity, Alias::new(col))).into();
+    let lhs: SimpleExpr = Expr::col((series::Entity, Alias::new(col)));
     Ok(SeaCondition::all().add(scalar_predicate(cond, kind, lhs)?))
 }
 
@@ -301,9 +301,9 @@ fn reading_predicate(
     // without surprising three-valued logic at the predicate boundary.
     // Dates stay nullable: `lt`/`gt`/etc. naturally drop NULL rows.
     let usp = series_progress::subquery_alias();
-    let raw: SimpleExpr = Expr::col((usp, Alias::new(col))).into();
+    let raw: SimpleExpr = Expr::col((usp, Alias::new(col)));
     let lhs: SimpleExpr = match kind {
-        FieldKind::Number => Func::coalesce([raw, Expr::val(0_i64).into()]).into(),
+        FieldKind::Number => Func::coalesce([raw, Expr::val(0_i64)]).into(),
         FieldKind::Date => raw,
         _ => {
             return Err(CompileError::Internal(format!(
@@ -513,13 +513,13 @@ fn junction_predicate(
             let sql = format!(
                 "EXISTS (SELECT 1 FROM {table} WHERE {table}.series_id = {series_table}.id{role_clause} AND {table}.{value_col} = ANY($1))",
             );
-            Ok(SeaCondition::all().add(Expr::cust_with_values(&sql, [strs])))
+            Ok(SeaCondition::all().add(Expr::cust_with_values(sql, [strs])))
         }
         Op::Excludes => {
             let sql = format!(
                 "NOT EXISTS (SELECT 1 FROM {table} WHERE {table}.series_id = {series_table}.id{role_clause} AND {table}.{value_col} = ANY($1))",
             );
-            Ok(SeaCondition::all().add(Expr::cust_with_values(&sql, [strs])))
+            Ok(SeaCondition::all().add(Expr::cust_with_values(sql, [strs])))
         }
         Op::IncludesAll => {
             let mut all = SeaCondition::all();
@@ -527,7 +527,7 @@ fn junction_predicate(
                 let sql = format!(
                     "EXISTS (SELECT 1 FROM {table} WHERE {table}.series_id = {series_table}.id{role_clause} AND {table}.{value_col} = $1)",
                 );
-                all = all.add(Expr::cust_with_values(&sql, [s]));
+                all = all.add(Expr::cust_with_values(sql, [s]));
             }
             Ok(all)
         }
@@ -543,10 +543,10 @@ fn sort_expression(field: SortField, order: SortOrder) -> (SimpleExpr, Order) {
         SortOrder::Desc => Order::Desc,
     };
     let expr: SimpleExpr = match field {
-        SortField::Name => Expr::col((series::Entity, series::Column::Name)).into(),
-        SortField::Year => Expr::col((series::Entity, series::Column::Year)).into(),
-        SortField::CreatedAt => Expr::col((series::Entity, series::Column::CreatedAt)).into(),
-        SortField::UpdatedAt => Expr::col((series::Entity, series::Column::UpdatedAt)).into(),
+        SortField::Name => Expr::col((series::Entity, series::Column::Name)),
+        SortField::Year => Expr::col((series::Entity, series::Column::Year)),
+        SortField::CreatedAt => Expr::col((series::Entity, series::Column::CreatedAt)),
+        SortField::UpdatedAt => Expr::col((series::Entity, series::Column::UpdatedAt)),
         // `last_read_at` from `user_series_progress` sources from
         // `reading_sessions.last_heartbeat_at` only — so a series
         // touched solely by bulk-mark / sync writes (which don't
@@ -563,14 +563,13 @@ fn sort_expression(field: SortField, order: SortOrder) -> (SimpleExpr, Order) {
             Expr::col((
                 series_progress::subquery_alias(),
                 Alias::new("last_read_at"),
-            ))
-            .into(),
+            )),
             Expr::cust("TIMESTAMPTZ '1970-01-01'"),
         ])
         .into(),
         SortField::ReadProgress => Func::coalesce([
-            Expr::col((series_progress::subquery_alias(), Alias::new("percent"))).into(),
-            Expr::val(0_i64).into(),
+            Expr::col((series_progress::subquery_alias(), Alias::new("percent"))),
+            Expr::val(0_i64),
         ])
         .into(),
     };
@@ -586,7 +585,7 @@ fn apply_cursor(
     let Some(c) = input.cursor.as_ref() else {
         return;
     };
-    let id_col: SimpleExpr = Expr::col((series::Entity, series::Column::Id)).into();
+    let id_col: SimpleExpr = Expr::col((series::Entity, series::Column::Id));
     let id_op = match order {
         Order::Asc => BinOper::GreaterThan,
         _ => BinOper::SmallerThan,
@@ -595,7 +594,7 @@ fn apply_cursor(
         q.and_where(SimpleExpr::Binary(
             Box::new(id_col),
             id_op,
-            Box::new(Expr::val(c.id).into()),
+            Box::new(Expr::val(c.id)),
         ));
         return;
     }
@@ -616,7 +615,7 @@ fn apply_cursor(
                 .add(SimpleExpr::Binary(
                     Box::new(id_col),
                     id_op,
-                    Box::new(Expr::val(c.id).into()),
+                    Box::new(Expr::val(c.id)),
                 )),
         );
     q.cond_where(composite);
@@ -624,17 +623,17 @@ fn apply_cursor(
 
 fn cursor_value_expr(field: SortField, raw: &str) -> SimpleExpr {
     match field {
-        SortField::Name => Expr::val(raw.to_owned()).into(),
+        SortField::Name => Expr::val(raw.to_owned()),
         SortField::Year => raw
             .parse::<i32>()
-            .map(|n| Expr::val(n).into())
-            .unwrap_or_else(|_| Expr::val(raw.to_owned()).into()),
+            .map(Expr::val)
+            .unwrap_or_else(|_| Expr::val(raw.to_owned())),
         SortField::CreatedAt | SortField::UpdatedAt => {
             Expr::val(raw.to_owned()).cast_as(Alias::new("timestamptz"))
         }
         // sort_value is empty for these — `apply_cursor`'s empty-string
         // branch handles them and never reaches this helper.
-        SortField::LastRead | SortField::ReadProgress => Expr::val(raw.to_owned()).into(),
+        SortField::LastRead | SortField::ReadProgress => Expr::val(raw.to_owned()),
     }
 }
 
@@ -646,10 +645,10 @@ fn scalar_value(
     bad: &dyn Fn(&str) -> CompileError,
 ) -> Result<SimpleExpr, CompileError> {
     match kind {
-        FieldKind::Text | FieldKind::Enum => Ok(Expr::val(as_text(v, bad)?).into()),
-        FieldKind::Number => Ok(Expr::val(as_number(v, bad)?).into()),
-        FieldKind::Date => Ok(Expr::val(as_text(v, bad)?).into()),
-        FieldKind::Uuid => Ok(Expr::val(as_uuid(v, bad)?).into()),
+        FieldKind::Text | FieldKind::Enum => Ok(Expr::val(as_text(v, bad)?)),
+        FieldKind::Number => Ok(Expr::val(as_number(v, bad)?)),
+        FieldKind::Date => Ok(Expr::val(as_text(v, bad)?)),
+        FieldKind::Uuid => Ok(Expr::val(as_uuid(v, bad)?)),
         FieldKind::Multi => Err(bad("multi field requires array op")),
     }
 }

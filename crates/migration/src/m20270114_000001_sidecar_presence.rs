@@ -23,12 +23,12 @@ pub(crate) struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             db.get_database_backend(),
             "ALTER TABLE issues ADD COLUMN metroninfo_present BOOLEAN",
         ))
         .await?;
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             db.get_database_backend(),
             "ALTER TABLE series ADD COLUMN series_json_present BOOLEAN",
         ))
@@ -38,12 +38,12 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             db.get_database_backend(),
             "ALTER TABLE issues DROP COLUMN metroninfo_present",
         ))
         .await?;
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             db.get_database_backend(),
             "ALTER TABLE series DROP COLUMN series_json_present",
         ))

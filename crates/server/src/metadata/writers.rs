@@ -744,7 +744,7 @@ pub async fn set_issue_credits<C: ConnectionTrait>(
                 .do_nothing()
                 .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -802,7 +802,7 @@ pub async fn set_issue_characters<C: ConnectionTrait>(
                 .do_nothing()
                 .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -850,7 +850,7 @@ pub async fn set_issue_teams<C: ConnectionTrait>(
                     .do_nothing()
                     .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -900,7 +900,7 @@ pub async fn set_issue_locations<C: ConnectionTrait>(
                 .do_nothing()
                 .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -947,7 +947,7 @@ pub async fn set_issue_story_arcs<C: ConnectionTrait>(
                     .do_nothing()
                     .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -995,7 +995,7 @@ pub async fn set_issue_concepts<C: ConnectionTrait>(
                 .do_nothing()
                 .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -1042,7 +1042,7 @@ pub async fn set_issue_objects<C: ConnectionTrait>(
                 .do_nothing()
                 .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -1086,7 +1086,7 @@ pub async fn set_issue_universes<C: ConnectionTrait>(
                 .do_nothing()
                 .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -1174,7 +1174,7 @@ pub async fn set_issue_genres<C: ConnectionTrait>(
                     .do_nothing()
                     .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -1217,7 +1217,7 @@ pub async fn set_issue_tags<C: ConnectionTrait>(
                     .do_nothing()
                     .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -1266,7 +1266,7 @@ pub async fn set_series_characters<C: ConnectionTrait>(
                 .do_nothing()
                 .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -1297,7 +1297,7 @@ pub async fn set_series_teams<C: ConnectionTrait>(
                     .do_nothing()
                     .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -1331,7 +1331,7 @@ pub async fn set_series_locations<C: ConnectionTrait>(
                 .do_nothing()
                 .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -1361,7 +1361,7 @@ pub async fn set_series_story_arcs<C: ConnectionTrait>(
                     .do_nothing()
                     .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -1394,7 +1394,7 @@ pub async fn set_series_concepts<C: ConnectionTrait>(
                 .do_nothing()
                 .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -1427,7 +1427,7 @@ pub async fn set_series_objects<C: ConnectionTrait>(
                 .do_nothing()
                 .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -1460,7 +1460,7 @@ pub async fn set_series_universes<C: ConnectionTrait>(
                 .do_nothing()
                 .to_owned(),
             )
-            .do_nothing()
+            .try_insert()
             .exec(db)
             .await?;
     }
@@ -2098,6 +2098,6 @@ pub async fn rebuild_issue_csv_cache<C: ConnectionTrait>(
         "#,
         [issue_id.into()],
     );
-    db.execute(stmt).await?;
+    db.execute_raw(stmt).await?;
     Ok(())
 }

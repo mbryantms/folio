@@ -23,7 +23,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use sea_orm::{ConnectionTrait, FromQueryResult, Statement, Value};
+use sea_orm::{FromQueryResult, Statement, Value};
 use serde::{Deserialize, Serialize};
 use shared::pagination::{CursorPage, decode_cursor, encode_cursor};
 use utoipa_axum::router::OpenApiRouter;

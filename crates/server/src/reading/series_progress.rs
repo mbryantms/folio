@@ -19,7 +19,7 @@
 use entity::user_series_progress;
 use sea_orm::{
     ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    sea_query::{Alias, Expr, Query, SelectStatement},
+    sea_query::{Alias, Expr, ExprTrait, Query, SelectStatement},
 };
 use std::collections::HashMap;
 use uuid::Uuid;

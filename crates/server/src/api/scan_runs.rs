@@ -610,7 +610,7 @@ pub async fn prune(db: &DatabaseConnection, keep: u64) -> anyhow::Result<u64> {
         "#,
         [(keep as i64).into()],
     );
-    let res = db.execute(stmt).await?;
+    let res = db.execute_raw(stmt).await?;
     Ok(res.rows_affected())
 }
 

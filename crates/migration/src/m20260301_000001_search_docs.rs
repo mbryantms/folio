@@ -45,12 +45,12 @@ impl MigrationTrait for Migration {
                 setweight(to_tsvector('simple', coalesce(year::text, '')), 'B') || \
                 setweight(to_tsvector('simple', coalesce(summary, '')), 'D') \
             ) STORED";
-        conn.execute(sea_orm::Statement::from_string(
+        conn.execute_raw(sea_orm::Statement::from_string(
             backend,
             series_doc.to_string(),
         ))
         .await?;
-        conn.execute(sea_orm::Statement::from_string(
+        conn.execute_raw(sea_orm::Statement::from_string(
             backend,
             "CREATE INDEX series_search_doc_gin ON series USING GIN (search_doc)".to_string(),
         ))
@@ -75,19 +75,19 @@ impl MigrationTrait for Migration {
                 setweight(to_tsvector('simple', coalesce(penciller, '')), 'C') || \
                 setweight(to_tsvector('simple', coalesce(summary, '')), 'D') \
             ) STORED";
-        conn.execute(sea_orm::Statement::from_string(
+        conn.execute_raw(sea_orm::Statement::from_string(
             backend,
             issue_doc.to_string(),
         ))
         .await?;
-        conn.execute(sea_orm::Statement::from_string(
+        conn.execute_raw(sea_orm::Statement::from_string(
             backend,
             "CREATE INDEX issues_search_doc_gin ON issues USING GIN (search_doc)".to_string(),
         ))
         .await?;
 
         // pg_trgm helper for autocomplete (used in Phase 6, but the index is cheap).
-        conn.execute(sea_orm::Statement::from_string(
+        conn.execute_raw(sea_orm::Statement::from_string(
             backend,
             "CREATE INDEX series_normalized_name_trgm \
              ON series USING GIN (normalized_name gin_trgm_ops)"
@@ -108,7 +108,7 @@ impl MigrationTrait for Migration {
             "ALTER TABLE issues DROP COLUMN IF EXISTS search_doc",
             "ALTER TABLE series DROP COLUMN IF EXISTS search_doc",
         ] {
-            conn.execute(sea_orm::Statement::from_string(backend, sql.to_string()))
+            conn.execute_raw(sea_orm::Statement::from_string(backend, sql.to_string()))
                 .await?;
         }
         Ok(())

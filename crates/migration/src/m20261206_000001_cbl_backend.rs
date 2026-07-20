@@ -505,7 +505,7 @@ impl MigrationTrait for Migration {
         let backend = manager.get_database_backend();
         manager
             .get_connection()
-            .execute(Statement::from_sql_and_values(
+            .execute_raw(Statement::from_sql_and_values(
                 backend,
                 r"INSERT INTO catalog_sources
                     (id, display_name, github_owner, github_repo, github_branch, enabled)

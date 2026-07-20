@@ -32,7 +32,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use entity::{cbl_entry, cbl_list, issue, progress_record, saved_view, series};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, sea_query::Expr};
+use sea_orm::{
+    ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    sea_query::{Expr, Func},
+};
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -430,7 +433,10 @@ async fn resolve_cbl_next(
         .filter(cbl_entry::Column::CblListId.eq(cbl_list_id))
         .filter(cbl_entry::Column::MatchedIssueId.is_not_null())
         .select_only()
-        .column_as(Expr::col(cbl_entry::Column::Id).count(), "count")
+        .column_as(
+            Expr::from(Func::count(Expr::col(cbl_entry::Column::Id))),
+            "count",
+        )
         .into_tuple::<i64>()
         .one(&app.db)
         .await
@@ -1119,7 +1125,10 @@ async fn resolve_cbl_prev(
         .filter(cbl_entry::Column::CblListId.eq(cbl_list_id))
         .filter(cbl_entry::Column::MatchedIssueId.is_not_null())
         .select_only()
-        .column_as(Expr::col(cbl_entry::Column::Id).count(), "count")
+        .column_as(
+            Expr::from(Func::count(Expr::col(cbl_entry::Column::Id))),
+            "count",
+        )
         .into_tuple::<i64>()
         .one(&app.db)
         .await

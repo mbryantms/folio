@@ -117,7 +117,7 @@ pub async fn record<C: ConnectionTrait>(
 pub async fn prune<C: ConnectionTrait>(db: &C, cutoff_days: i64) -> Result<u64, sea_orm::DbErr> {
     let cutoff = chrono::Utc::now() - chrono::Duration::days(cutoff_days);
     let res = db
-        .execute(sea_orm::Statement::from_sql_and_values(
+        .execute_raw(sea_orm::Statement::from_sql_and_values(
             sea_orm::DatabaseBackend::Postgres,
             "DELETE FROM metadata_match_outcome WHERE created_at < $1",
             [sea_orm::Value::from(cutoff.fixed_offset())],

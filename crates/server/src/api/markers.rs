@@ -730,7 +730,7 @@ pub async fn list(
             // `tag_match` (audit-remediation M9.4).
             let op = q.tag_match.unwrap_or_default().sql_op();
             let sql = format!("tags {op} $1::text[]");
-            select = select.filter(sea_orm::sea_query::Expr::cust_with_values(&sql, [parsed]));
+            select = select.filter(sea_orm::sea_query::Expr::cust_with_values(sql, [parsed]));
         }
     }
     if let Some(needle) = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
@@ -934,7 +934,7 @@ async fn fetch_marker_snippets(
     rows: &[marker::Model],
     q_text: &str,
 ) -> Result<std::collections::HashMap<String, String>, sea_orm::DbErr> {
-    use sea_orm::{ConnectionTrait, FromQueryResult, Statement, Value};
+    use sea_orm::{FromQueryResult, Statement, Value};
     if rows.is_empty() {
         return Ok(std::collections::HashMap::new());
     }

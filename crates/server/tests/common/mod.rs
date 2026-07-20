@@ -244,7 +244,7 @@ async fn build_template_locked(
     admin: &sea_orm::DatabaseConnection,
 ) -> Result<(), String> {
     let exists = admin
-        .query_one(Statement::from_string(
+        .query_one_raw(Statement::from_string(
             DatabaseBackend::Postgres,
             format!("SELECT 1 FROM pg_database WHERE datname = '{TEMPLATE_DB}'"),
         ))

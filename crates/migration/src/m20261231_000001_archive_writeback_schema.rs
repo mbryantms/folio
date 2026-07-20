@@ -97,21 +97,21 @@ impl MigrationTrait for Migration {
         // ranges to surface 400s with a friendly message instead of
         // letting the DB error out — defense in depth.
         let db = manager.get_connection();
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             db.get_database_backend(),
             "ALTER TABLE libraries \
              ADD CONSTRAINT libraries_archive_backup_retain_count_chk \
              CHECK (archive_backup_retain_count BETWEEN 1 AND 5)",
         ))
         .await?;
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             db.get_database_backend(),
             "ALTER TABLE libraries \
              ADD CONSTRAINT libraries_archive_backup_retain_days_chk \
              CHECK (archive_backup_retain_days >= 0)",
         ))
         .await?;
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             db.get_database_backend(),
             "ALTER TABLE issues \
              ADD CONSTRAINT issues_last_rewrite_kind_chk \
@@ -130,7 +130,7 @@ impl MigrationTrait for Migration {
             "ALTER TABLE libraries DROP CONSTRAINT IF EXISTS libraries_archive_backup_retain_days_chk",
             "ALTER TABLE libraries DROP CONSTRAINT IF EXISTS libraries_archive_backup_retain_count_chk",
         ] {
-            db.execute(Statement::from_string(db.get_database_backend(), stmt))
+            db.execute_raw(Statement::from_string(db.get_database_backend(), stmt))
                 .await?;
         }
 

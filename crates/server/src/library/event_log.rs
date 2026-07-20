@@ -299,7 +299,7 @@ pub async fn prune(
         "#,
         [(max_per_library as i64).into(), cutoff.into()],
     );
-    let res = db.execute(stmt).await?;
+    let res = db.execute_raw(stmt).await?;
     Ok(res.rows_affected())
 }
 

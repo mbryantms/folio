@@ -24,14 +24,14 @@ pub(crate) struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             db.get_database_backend(),
             "ALTER TABLE series ALTER COLUMN metadata_sync_paused SET DEFAULT TRUE",
         ))
         .await?;
         // One-time reset: existing series become opt-in too. Operators
         // re-enable auto-sync per series afterwards.
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             db.get_database_backend(),
             "UPDATE series SET metadata_sync_paused = TRUE WHERE metadata_sync_paused = FALSE",
         ))
@@ -44,7 +44,7 @@ impl MigrationTrait for Migration {
         // meaningfully reversible (we can't know which series were
         // originally opted in).
         let db = manager.get_connection();
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             db.get_database_backend(),
             "ALTER TABLE series ALTER COLUMN metadata_sync_paused SET DEFAULT FALSE",
         ))

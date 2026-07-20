@@ -37,8 +37,8 @@ use entity::{
     user as user_entity, user_page, user_view_pin,
 };
 use sea_orm::{
-    ColumnTrait, Condition, ConnectionTrait, EntityTrait, FromQueryResult, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Statement, sea_query::PostgresQueryBuilder,
+    ColumnTrait, Condition, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, Statement, sea_query::PostgresQueryBuilder,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};

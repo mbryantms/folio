@@ -52,7 +52,7 @@ impl MigrationTrait for Migration {
         // DB-level guard mirrors the handler-side validator (defense in
         // depth — a hand-edited row can't store an out-of-range quality).
         let db = manager.get_connection();
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             db.get_database_backend(),
             "ALTER TABLE libraries \
              ADD CONSTRAINT libraries_archive_writeback_jpeg_quality_chk \
@@ -65,7 +65,7 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let db = manager.get_connection();
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             db.get_database_backend(),
             "ALTER TABLE libraries \
              DROP CONSTRAINT IF EXISTS libraries_archive_writeback_jpeg_quality_chk",

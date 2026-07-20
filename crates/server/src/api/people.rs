@@ -15,7 +15,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use sea_orm::{ConnectionTrait, FromQueryResult, Statement, Value};
+use sea_orm::{FromQueryResult, Statement, Value};
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;

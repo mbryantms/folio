@@ -38,7 +38,7 @@ impl MigrationTrait for Migration {
         // they'd otherwise become dangling references. `ref_id` is
         // TEXT (built-in keys share the column with UUID-keyed views),
         // so compare as strings.
-        conn.execute(Statement::from_sql_and_values(
+        conn.execute_raw(Statement::from_sql_and_values(
             backend,
             "DELETE FROM user_sidebar_entries \
              WHERE kind = 'view' AND ref_id = ANY($1::text[])",
@@ -47,7 +47,7 @@ impl MigrationTrait for Migration {
         .await?;
 
         // Drop the views. `user_view_pins` cascades.
-        conn.execute(Statement::from_sql_and_values(
+        conn.execute_raw(Statement::from_sql_and_values(
             backend,
             "DELETE FROM saved_views WHERE id = ANY($1::uuid[])",
             [vec![UNSTARTED_ID.to_string(), STALE_ID.to_string()].into()],
@@ -86,7 +86,7 @@ impl MigrationTrait for Migration {
             ),
         ];
         for (id, name, desc, conditions, sort_field, sort_order, limit) in rows {
-            conn.execute(Statement::from_sql_and_values(
+            conn.execute_raw(Statement::from_sql_and_values(
                 backend,
                 r"INSERT INTO saved_views
                     (id, user_id, kind, name, description, custom_tags,

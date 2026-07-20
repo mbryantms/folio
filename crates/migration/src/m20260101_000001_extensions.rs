@@ -16,7 +16,7 @@ impl MigrationTrait for Migration {
             // pgcrypto is needed by gen_random_uuid() if we ever use it; cheap and ubiquitous.
             "CREATE EXTENSION IF NOT EXISTS pgcrypto;",
         ] {
-            conn.execute(sea_orm::Statement::from_string(backend, sql.to_string()))
+            conn.execute_raw(sea_orm::Statement::from_string(backend, sql.to_string()))
                 .await?;
         }
         Ok(())

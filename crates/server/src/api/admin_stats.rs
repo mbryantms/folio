@@ -17,10 +17,7 @@ use entity::{
     issue, library, scan_run, series,
     user::{self, Entity as UserEntity},
 };
-use sea_orm::{
-    ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter,
-    Statement,
-};
+use sea_orm::{ColumnTrait, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, Statement};
 use serde::Serialize;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;

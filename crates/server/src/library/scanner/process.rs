@@ -1152,7 +1152,7 @@ async fn remember_moved_issue_path<C: ConnectionTrait>(
     old_path: &str,
     new_path: &str,
 ) -> anyhow::Result<()> {
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         r"INSERT INTO issue_paths (issue_id, file_path, is_primary, missing_at)
             VALUES ($1, $2, false, NOW())
@@ -1171,7 +1171,7 @@ async fn remember_primary_issue_path<C: ConnectionTrait>(
     issue_id: &str,
     file_path: &str,
 ) -> anyhow::Result<()> {
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         r"UPDATE issue_paths
             SET is_primary = false
@@ -1179,7 +1179,7 @@ async fn remember_primary_issue_path<C: ConnectionTrait>(
         [issue_id.into(), file_path.into()],
     ))
     .await?;
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         r"INSERT INTO issue_paths (issue_id, file_path, is_primary, missing_at)
             VALUES ($1, $2, true, NULL)

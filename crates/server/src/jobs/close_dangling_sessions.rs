@@ -26,7 +26,7 @@ pub async fn run(db: &DatabaseConnection) -> Result<u64, DbErr> {
     let res = reading_session::Entity::update_many()
         .col_expr(
             reading_session::Column::EndedAt,
-            Expr::col(reading_session::Column::LastHeartbeatAt).into(),
+            Expr::col(reading_session::Column::LastHeartbeatAt),
         )
         .filter(reading_session::Column::EndedAt.is_null())
         .filter(reading_session::Column::LastHeartbeatAt.lt(cutoff))
