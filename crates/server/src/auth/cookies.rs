@@ -85,24 +85,31 @@ fn time_from_std(d: Duration) -> time::Duration {
 /// Generate a fresh CSRF token (32 bytes, base64url, no padding).
 pub fn new_csrf_token() -> String {
     use base64::Engine;
-    use rand::RngCore;
+    use rand::Rng;
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
 /// Generate a fresh refresh-token raw value (32 bytes, base64url, no padding).
 pub fn new_refresh_token_raw() -> String {
     use base64::Engine;
-    use rand::RngCore;
+    use rand::Rng;
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
 pub fn sha256_hex(input: &str) -> String {
     use sha2::{Digest, Sha256};
+    use std::fmt::Write;
     let mut h = Sha256::new();
     h.update(input.as_bytes());
-    format!("{:x}", h.finalize())
+    // digest 0.11's output array no longer implements `LowerHex`.
+    let digest = h.finalize();
+    let mut out = String::with_capacity(digest.len() * 2);
+    for b in digest {
+        let _ = write!(out, "{b:02x}");
+    }
+    out
 }

@@ -19,7 +19,7 @@
 //!   `Secrets::load(&data_dir)?`
 
 use ed25519_dalek::{SECRET_KEY_LENGTH, SigningKey};
-use rand::RngCore;
+use rand::Rng;
 use std::fs;
 use std::io::Write;
 #[cfg(unix)]
@@ -157,7 +157,7 @@ fn load_or_generate_bytes<const N: usize>(
         Ok(out)
     } else {
         let mut out = [0u8; N];
-        rand::thread_rng().fill_bytes(&mut out);
+        rand::rng().fill_bytes(&mut out);
         write_secret(path, &out)?;
         report.regenerated += 1;
         Ok(out)
@@ -182,7 +182,7 @@ fn load_or_generate_ed25519(path: &PathBuf, report: &mut LoadReport) -> anyhow::
         Ok(SigningKey::from_bytes(&secret))
     } else {
         let mut secret = [0u8; SECRET_KEY_LENGTH];
-        rand::thread_rng().fill_bytes(&mut secret);
+        rand::rng().fill_bytes(&mut secret);
         let key = SigningKey::from_bytes(&secret);
         write_secret(path, &secret)?;
         report.regenerated += 1;

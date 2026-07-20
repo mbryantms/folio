@@ -140,11 +140,11 @@ fn ed25519_to_pkcs8_v2(secret: [u8; 32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::RngCore;
+    use rand::Rng;
 
     fn keys() -> JwtKeys {
         let mut secret = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut secret);
+        rand::rng().fill_bytes(&mut secret);
         let signing = SigningKey::from_bytes(&secret);
         JwtKeys::from_secret(&signing, "https://example.com").unwrap()
     }

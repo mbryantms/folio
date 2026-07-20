@@ -54,7 +54,7 @@ pub fn looks_like_app_password(token: &str) -> bool {
 
 fn random_plaintext() -> String {
     let mut bytes = [0u8; SECRET_BYTES];
-    rand::thread_rng().fill(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     // Base32-without-padding keeps the token URL/header safe and avoids
     // the `/` and `+` characters of base64 that some OPDS clients
     // mangle when copy-pasting.

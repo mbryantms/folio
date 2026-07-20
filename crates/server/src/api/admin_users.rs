@@ -37,7 +37,6 @@ use crate::config::AuthMode;
 use crate::middleware::RequestContext;
 use crate::record_admin_action;
 use crate::state::AppState;
-use rand::Rng;
 use server_macros::handler;
 use shared::error::ApiErrorCode;
 
@@ -213,10 +212,11 @@ fn valid_email(value: &str, _: &()) -> garde::Result {
 /// enforces; the admin copies it rather than types it, so length over
 /// memorability is the right trade.
 fn gen_temp_password() -> String {
+    use rand::RngExt;
     const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     (0..20)
-        .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char)
+        .map(|_| ALPHABET[rng.random_range(0..ALPHABET.len())] as char)
         .collect()
 }
 
