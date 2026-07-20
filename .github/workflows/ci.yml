@@ -38,7 +38,7 @@ jobs:
       web_deps: ${{ steps.filter.outputs.web_deps || steps.mergequeue.outputs.full }}
       renovate: ${{ steps.filter.outputs.renovate || steps.mergequeue.outputs.full }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # In the merge queue we validate the actual merged result, so run the
       # full suite rather than path-skipping. paths-filter also has no PR/push
       # base to diff against on a `merge_group` event. `full=true` flows into
@@ -99,7 +99,7 @@ jobs:
     if: needs.changes.outputs.renovate == 'true'
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
@@ -111,7 +111,7 @@ jobs:
     needs: [changes]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
           components: rustfmt
@@ -140,7 +140,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
           components: clippy
@@ -187,7 +187,7 @@ jobs:
         ports: ["6379:6379"]
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # A toolchain bump invalidates every sccache/rust-cache key, so this job
       # occasionally runs fully cold — and a cold workspace build (Tesseract/
       # Leptonica C++, ort, dozens of debug test binaries) overflows the
@@ -296,7 +296,7 @@ jobs:
     env:
       DEPS: ${{ needs.changes.outputs.cargo_deps }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: env.DEPS == 'true'
       - uses: dtolnay/rust-toolchain@1.96.0
         if: env.DEPS == 'true'
@@ -326,7 +326,7 @@ jobs:
     env:
       WEB: ${{ needs.changes.outputs.web }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         if: env.WEB == 'true'
         with:
@@ -474,7 +474,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
@@ -568,7 +568,7 @@ jobs:
     # matters when crates/** changed). Job still reports success when skipped.
     needs: [changes]
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@1.96.0
         if: needs.changes.outputs.rust == 'true'
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -615,7 +615,7 @@ jobs:
           - image: folio-web
             dockerfile: web/Dockerfile
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
         if: env.BUILD == 'true'
       - name: Build (no push)
