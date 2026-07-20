@@ -60,7 +60,9 @@ struct TestKeyMaterial {
 fn key_material() -> &'static TestKeyMaterial {
     static MAT: OnceLock<TestKeyMaterial> = OnceLock::new();
     MAT.get_or_init(|| {
-        let mut rng = rand::thread_rng();
+        // `rsa` 0.9 wants a rand_core 0.6 RNG; workspace rand moved to the
+        // 0.10 core, so use the OsRng that rsa itself re-exports.
+        let mut rng = rsa::rand_core::OsRng;
         let priv_key = RsaPrivateKey::new(&mut rng, 2048).expect("rsa keygen");
         let pub_key = RsaPublicKey::from(&priv_key);
         let pem = priv_key

@@ -13,7 +13,9 @@ use argon2::{
     Algorithm, Argon2, Params, Version,
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
 };
-use rand::rngs::OsRng;
+// `SaltString::generate` requires a rand_core 0.6 RNG (password-hash 0.5);
+// workspace rand is on the 0.10 core, so take OsRng from the re-export chain.
+use argon2::password_hash::rand_core::OsRng;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PasswordError {

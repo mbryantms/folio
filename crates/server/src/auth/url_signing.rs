@@ -23,7 +23,7 @@
 //! the key invalidates every outstanding signed URL — `docs/install/
 //! secrets-backup.md` calls this out for operators.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;

@@ -44,7 +44,7 @@ const NONCE_BYTES: usize = 16;
 /// request's extensions before delegating to `next`.
 pub async fn set_nonce(mut req: Request, next: Next) -> Response {
     let mut bytes = [0u8; NONCE_BYTES];
-    rand::Rng::fill(&mut rand::thread_rng(), &mut bytes[..]);
+    rand::Rng::fill_bytes(&mut rand::rng(), &mut bytes);
     let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
     req.extensions_mut().insert(Nonce(encoded));
     next.run(req).await

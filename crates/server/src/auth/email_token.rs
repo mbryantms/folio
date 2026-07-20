@@ -24,7 +24,7 @@
 //! matching row is still unconsumed.
 
 use base64::Engine;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
