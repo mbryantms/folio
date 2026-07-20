@@ -31,8 +31,11 @@ use chrono::Utc;
 use entity::{issue, series};
 use parsers::series_json::SeriesMetadata;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DbErr, EntityTrait,
-    FromQueryResult, PaginatorTrait, QueryFilter, QuerySelect, Statement, sea_query::Expr,
+    ActiveModelTrait,
+    ActiveValue::Set,
+    ColumnTrait, ConnectionTrait, DbErr, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter,
+    QuerySelect, Statement,
+    sea_query::{Expr, ExprTrait},
 };
 use std::collections::HashMap;
 use uuid::Uuid;

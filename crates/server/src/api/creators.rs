@@ -16,9 +16,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use sea_orm::{
-    ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter, Statement, Value,
-};
+use sea_orm::{ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, Statement, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa_axum::router::OpenApiRouter;

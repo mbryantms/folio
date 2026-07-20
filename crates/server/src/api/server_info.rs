@@ -107,7 +107,7 @@ pub async fn info(State(app): State<AppState>, _admin: RequireAdmin) -> Response
     // us the same signal — does the connection pool have a working session?
     let postgres_ok = app
         .db
-        .execute(Statement::from_string(
+        .execute_raw(Statement::from_string(
             app.db.get_database_backend(),
             "SELECT 1".to_string(),
         ))

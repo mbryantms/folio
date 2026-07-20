@@ -189,7 +189,7 @@ pub async fn replace_issue_metadata<C: ConnectionTrait>(
                         .do_nothing()
                         .to_owned(),
                 )
-                .do_nothing()
+                .try_insert()
                 .exec(db)
                 .await?;
         }
@@ -224,7 +224,7 @@ pub async fn replace_issue_metadata<C: ConnectionTrait>(
                         .do_nothing()
                         .to_owned(),
                 )
-                .do_nothing()
+                .try_insert()
                 .exec(db)
                 .await?;
         }
@@ -284,7 +284,7 @@ pub async fn replace_issue_metadata<C: ConnectionTrait>(
                     .do_nothing()
                     .to_owned(),
                 )
-                .do_nothing()
+                .try_insert()
                 .exec(db)
                 .await?;
         }
@@ -330,7 +330,7 @@ pub async fn replace_issue_metadata<C: ConnectionTrait>(
                     .do_nothing()
                     .to_owned(),
                 )
-                .do_nothing()
+                .try_insert()
                 .exec(db)
                 .await?;
         }
@@ -371,7 +371,7 @@ pub async fn replace_issue_metadata<C: ConnectionTrait>(
                         .do_nothing()
                         .to_owned(),
                 )
-                .do_nothing()
+                .try_insert()
                 .exec(db)
                 .await?;
         }
@@ -413,7 +413,7 @@ pub async fn replace_issue_metadata<C: ConnectionTrait>(
                     .do_nothing()
                     .to_owned(),
                 )
-                .do_nothing()
+                .try_insert()
                 .exec(db)
                 .await?;
         }
@@ -437,7 +437,7 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
         .filter(series_genre::Column::SeriesId.eq(series_id))
         .exec(db)
         .await?;
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         r"INSERT INTO series_genres (series_id, genre)
             SELECT DISTINCT $1, ig.genre
@@ -453,7 +453,7 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
         .filter(series_tag::Column::SeriesId.eq(series_id))
         .exec(db)
         .await?;
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         r"INSERT INTO series_tags (series_id, tag)
             SELECT DISTINCT $1, it.tag
@@ -473,7 +473,7 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
     // issues are the only path that introduces unknown names, so most
     // calls do zero inserts and just refresh the issue_credits join.
     ensure_persons_for_series(db, series_id).await?;
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE issue_credits ic \
          SET person_id = p.id \
@@ -492,7 +492,7 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
         .filter(series_credit::Column::SeriesId.eq(series_id))
         .exec(db)
         .await?;
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         r"INSERT INTO series_credits (series_id, role, person, person_id)
             SELECT DISTINCT $1, ic.role, ic.person, ic.person_id
@@ -508,7 +508,7 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
         .filter(series_character::Column::SeriesId.eq(series_id))
         .exec(db)
         .await?;
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         r#"INSERT INTO series_characters (series_id, "character")
             SELECT DISTINCT $1, ic."character"
@@ -524,7 +524,7 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
         .filter(series_team::Column::SeriesId.eq(series_id))
         .exec(db)
         .await?;
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         r"INSERT INTO series_teams (series_id, team)
             SELECT DISTINCT $1, it.team
@@ -540,7 +540,7 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
         .filter(series_location::Column::SeriesId.eq(series_id))
         .exec(db)
         .await?;
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         r#"INSERT INTO series_locations (series_id, "location")
             SELECT DISTINCT $1, il."location"
@@ -650,7 +650,7 @@ async fn ensure_persons_for_series<C: ConnectionTrait>(
                SELECT 1 FROM person p \
                WHERE p.normalized_name = btrim(lower(ic.person)) \
            )",
-        [Value::Uuid(Some(Box::new(series_id)))],
+        [Value::Uuid(Some(series_id))],
     ))
     .all(db)
     .await?;
@@ -671,7 +671,7 @@ async fn ensure_persons_for_series<C: ConnectionTrait>(
             continue;
         }
         let slug = allocate_person_slug(db, &display_name).await?;
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO person (slug, name, normalized_name) \
              VALUES ($1, $2, $3) \

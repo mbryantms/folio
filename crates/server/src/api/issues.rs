@@ -471,7 +471,7 @@ async fn build_issue_creator_slugs(
     app: &AppState,
     issue_id: &str,
 ) -> std::collections::HashMap<String, String> {
-    use sea_orm::{ConnectionTrait, FromQueryResult, Statement};
+    use sea_orm::{FromQueryResult, Statement};
     #[derive(Debug, FromQueryResult)]
     struct Row {
         person: String,
@@ -2009,7 +2009,7 @@ fn apply_issue_read_status_filter(
     let mut values: Vec<Value> = Vec::with_capacity(statuses.len() + 1);
     values.push(Value::from(user_id));
     values.extend(statuses.into_iter().map(Value::from));
-    select.filter(Expr::cust_with_values(&sql, values))
+    select.filter(Expr::cust_with_values(sql, values))
 }
 
 /// Apply the per-user library visibility filter. Returns `None` when
@@ -2102,7 +2102,7 @@ fn apply_issue_csv_facet_filters(
                ) \
              ) AS piece WHERE lower(trim(piece)) = ANY($1))",
         );
-        select = select.filter(Expr::cust_with_values(&sql, [Value::from(lowered)]));
+        select = select.filter(Expr::cust_with_values(sql, [Value::from(lowered)]));
     }
     select
 }
@@ -2524,14 +2524,14 @@ fn apply_user_rating_cursor(
             let sql =
                 format!("({rating_sq} {cmp} $2 OR ({rating_sq} = $2 AND issues.id {cmp} $3))",);
             select.filter(Expr::cust_with_values(
-                &sql,
+                sql,
                 [Value::from(user_id), Value::from(v), Value::from(c_id)],
             ))
         }
         None => {
             // No-rating boundary: stay in the NULL bucket, paginate by id.
             let sql = format!("{rating_sq} IS NULL");
-            let s = select.filter(Expr::cust_with_values(&sql, [Value::from(user_id)]));
+            let s = select.filter(Expr::cust_with_values(sql, [Value::from(user_id)]));
             if asc {
                 s.filter(issue::Column::Id.gt(c_id))
             } else {
@@ -2695,7 +2695,7 @@ async fn fetch_issue_snippets(
     rows: &[issue::Model],
     q_text: &str,
 ) -> Result<HashMap<String, String>, sea_orm::DbErr> {
-    use sea_orm::{ConnectionTrait, FromQueryResult, Statement, Value};
+    use sea_orm::{FromQueryResult, Statement, Value};
     if rows.is_empty() {
         return Ok(HashMap::new());
     }

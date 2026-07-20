@@ -24,8 +24,8 @@ use entity::{
     user::Entity as UserEntity,
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter,
-    QueryOrder, QuerySelect, Set, Statement, Value,
+    ActiveModelTrait, ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QueryOrder,
+    QuerySelect, Set, Statement, Value,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -628,7 +628,7 @@ pub async fn list(
     if let Some(c) = q.cursor.as_deref() {
         match decode_cursor(c) {
             Some((started_at, id)) => {
-                use sea_orm::sea_query::{Cond, Expr};
+                use sea_orm::sea_query::{Cond, Expr, ExprTrait};
                 query = query.filter(
                     Cond::any()
                         .add(reading_session::Column::StartedAt.lt(started_at))

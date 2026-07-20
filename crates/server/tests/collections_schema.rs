@@ -291,7 +291,7 @@ async fn collection_kind_admitted_and_validated() {
 
     // user_id NOT NULL is required.
     let bad = db
-        .execute(Statement::from_string(
+        .execute_raw(Statement::from_string(
             sea_orm::DatabaseBackend::Postgres,
             r"INSERT INTO saved_views (id, user_id, kind, name, custom_tags,
                                        auto_pin, created_at, updated_at)
@@ -303,7 +303,7 @@ async fn collection_kind_admitted_and_validated() {
 
     // Filter columns must stay NULL on collection rows.
     let bad = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             sea_orm::DatabaseBackend::Postgres,
             r"INSERT INTO saved_views (id, user_id, kind, name, custom_tags,
                                        match_mode, conditions, sort_field,
@@ -439,7 +439,7 @@ async fn per_user_and_global_system_key_uniqueness() {
     // Global system rows still can't share a key — seeded
     // `continue_reading` is already present from M9; attempt a dupe.
     let bad = db
-        .execute(Statement::from_string(
+        .execute_raw(Statement::from_string(
             sea_orm::DatabaseBackend::Postgres,
             r"INSERT INTO saved_views (id, user_id, kind, system_key, name,
                                        custom_tags, auto_pin, created_at, updated_at)
@@ -460,7 +460,7 @@ async fn unstarted_and_stale_templates_dropped() {
     let app = TestApp::spawn().await;
     let db = Database::connect(&app.db_url).await.unwrap();
     let row = db
-        .query_one(Statement::from_string(
+        .query_one_raw(Statement::from_string(
             sea_orm::DatabaseBackend::Postgres,
             "SELECT COUNT(*)::bigint AS n FROM saved_views \
              WHERE id IN (\
@@ -485,7 +485,7 @@ async fn collection_entries_cascade_on_view_delete() {
         .await
         .expect("seed entry");
 
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         sea_orm::DatabaseBackend::Postgres,
         "DELETE FROM saved_views WHERE id = $1::uuid",
         [view_id.into()],
@@ -494,7 +494,7 @@ async fn collection_entries_cascade_on_view_delete() {
     .expect("delete view");
 
     let count: i64 = db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             sea_orm::DatabaseBackend::Postgres,
             "SELECT COUNT(*)::bigint AS c FROM collection_entries WHERE saved_view_id = $1::uuid",
             [view_id.into()],

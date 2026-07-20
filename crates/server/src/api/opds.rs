@@ -33,8 +33,8 @@ use entity::{
     series, series_credit, series_genre, user as user_entity, user_page, user_view_pin,
 };
 use sea_orm::{
-    ColumnTrait, Condition, ConnectionTrait, EntityTrait, FromQueryResult, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Statement, sea_query::PostgresQueryBuilder,
+    ColumnTrait, Condition, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, Statement, sea_query::PostgresQueryBuilder,
 };
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};

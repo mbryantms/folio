@@ -850,7 +850,7 @@ async fn cbl_saved_view_ids_for_candidates(
 /// fields actually used drops that transfer + deserialization by ~20-40x.
 /// The card output is byte-for-byte identical to `IssueSummaryView::
 /// from_model` (see `into_summary_view`).
-#[derive(Clone, Debug, FromQueryResult, DerivePartialModel)]
+#[derive(Clone, Debug, DerivePartialModel)]
 #[sea_orm(entity = "issue::Entity")]
 pub(crate) struct OnDeckIssue {
     pub id: String,

@@ -361,7 +361,7 @@ async fn cascade_on_issue_delete_removes_markers() {
         .await
         .expect("seed marker");
 
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         sea_orm::DatabaseBackend::Postgres,
         "DELETE FROM issues WHERE id = $1",
         [issue_id.clone().into()],
@@ -370,7 +370,7 @@ async fn cascade_on_issue_delete_removes_markers() {
     .expect("delete issue");
 
     let count: i64 = db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             sea_orm::DatabaseBackend::Postgres,
             "SELECT COUNT(*)::bigint AS c FROM markers WHERE issue_id = $1",
             [issue_id.into()],
@@ -394,7 +394,7 @@ async fn cascade_on_user_delete_removes_markers() {
         .await
         .expect("seed marker");
 
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         sea_orm::DatabaseBackend::Postgres,
         "DELETE FROM users WHERE id = $1::uuid",
         [user_id.into()],
@@ -403,7 +403,7 @@ async fn cascade_on_user_delete_removes_markers() {
     .expect("delete user");
 
     let count: i64 = db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             sea_orm::DatabaseBackend::Postgres,
             "SELECT COUNT(*)::bigint AS c FROM markers WHERE user_id = $1::uuid",
             [user_id.into()],

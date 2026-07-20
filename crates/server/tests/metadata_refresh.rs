@@ -38,7 +38,7 @@ async fn seed_issue_at(
         let when = (Utc::now() - Duration::days(days_ago)).fixed_offset();
         app.state()
             .db
-            .execute(Statement::from_sql_and_values(
+            .execute_raw(Statement::from_sql_and_values(
                 sea_orm::DatabaseBackend::Postgres,
                 "UPDATE issues SET created_at = $1 WHERE id = $2",
                 [when.into(), id.clone().into()],

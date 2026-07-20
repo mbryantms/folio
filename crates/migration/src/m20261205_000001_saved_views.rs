@@ -203,7 +203,7 @@ impl MigrationTrait for Migration {
         ] {
             manager
                 .get_connection()
-                .execute(Statement::from_sql_and_values(
+                .execute_raw(Statement::from_sql_and_values(
                     backend,
                     r"INSERT INTO saved_views
                         (id, user_id, kind, name, description, custom_tags,

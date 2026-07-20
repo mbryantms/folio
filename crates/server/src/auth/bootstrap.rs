@@ -11,7 +11,7 @@ pub(crate) async fn lock_first_admin_bootstrap<C>(conn: &C) -> Result<(), DbErr>
 where
     C: ConnectionTrait,
 {
-    conn.execute(Statement::from_string(
+    conn.execute_raw(Statement::from_string(
         conn.get_database_backend(),
         format!("SELECT pg_advisory_xact_lock({FIRST_ADMIN_BOOTSTRAP_LOCK})"),
     ))

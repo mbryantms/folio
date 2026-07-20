@@ -73,7 +73,7 @@ impl MigrationTrait for Migration {
         // if the table grows large enough to feel it.
         manager
             .get_connection()
-            .execute(sea_orm::Statement::from_string(
+            .execute_raw(sea_orm::Statement::from_string(
                 manager.get_database_backend(),
                 "CREATE INDEX IF NOT EXISTS progress_records_user_updated_idx \
                  ON progress_records (user_id, updated_at)"

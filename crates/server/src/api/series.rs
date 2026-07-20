@@ -10,7 +10,8 @@ use chrono::Utc;
 use entity::{issue, library_user_access, series};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, FromQueryResult,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, Value, sea_query::Expr,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, Value,
+    sea_query::{Expr, Func},
 };
 use serde::{Deserialize, Serialize};
 use server_macros::handler;
@@ -1473,7 +1474,7 @@ fn apply_series_cast_setting_filters(
                    WHERE lower(trim(piece)) = ANY($1) \
                  ))",
         );
-        select = select.filter(Expr::cust_with_values(&sql, [Value::from(lowered)]));
+        select = select.filter(Expr::cust_with_values(sql, [Value::from(lowered)]));
     }
     select
 }
@@ -1539,7 +1540,7 @@ fn apply_series_read_status_filter(
     let mut values: Vec<Value> = Vec::with_capacity(statuses.len() + 1);
     values.push(Value::from(user_id));
     values.extend(statuses.into_iter().map(Value::from));
-    select = select.filter(Expr::cust_with_values(&sql, values));
+    select = select.filter(Expr::cust_with_values(sql, values));
     select
 }
 
@@ -1603,7 +1604,7 @@ fn apply_series_metadata_completeness_filter(
             WHERE i.series_id = series.id AND i.state = 'active' AND i.removed_at IS NULL \
          ) agg WHERE agg.active_count > 0 AND {tier_cond})"
     );
-    select.filter(Expr::cust(&sql))
+    select.filter(Expr::cust(sql))
 }
 
 /// Decode the opaque cursor and dispatch to the per-sort
@@ -1976,7 +1977,10 @@ pub(crate) async fn hydrate_series(app: &AppState, rows: Vec<series::Model>) -> 
         .filter(issue::Column::RemovedAt.is_null())
         .select_only()
         .column(issue::Column::SeriesId)
-        .column_as(Expr::col(issue::Column::Id).count(), "issue_count")
+        .column_as(
+            Expr::from(Func::count(Expr::col(issue::Column::Id))),
+            "issue_count",
+        )
         .group_by(issue::Column::SeriesId)
         .into_model::<SeriesIssueCountRow>()
         .all(&app.db)
@@ -2073,7 +2077,7 @@ async fn fetch_metadata_completeness_tiers(
     app: &AppState,
     rows: &[series::Model],
 ) -> HashMap<Uuid, String> {
-    use sea_orm::{ConnectionTrait, FromQueryResult, Statement, Value};
+    use sea_orm::{FromQueryResult, Statement, Value};
     if rows.is_empty() {
         return HashMap::new();
     }
@@ -2999,7 +3003,7 @@ pub(crate) async fn fetch_series_snippets(
     rows: &[series::Model],
     q_text: &str,
 ) -> Result<HashMap<Uuid, String>, sea_orm::DbErr> {
-    use sea_orm::{ConnectionTrait, Statement, Value};
+    use sea_orm::{Statement, Value};
     if rows.is_empty() {
         return Ok(HashMap::new());
     }
@@ -3138,7 +3142,7 @@ async fn compute_metadata_completeness_summary(
     app: &AppState,
     series_id: Uuid,
 ) -> MetadataCompletenessSummary {
-    use sea_orm::{ConnectionTrait, FromQueryResult, Statement};
+    use sea_orm::{FromQueryResult, Statement};
     #[derive(FromQueryResult)]
     struct Row {
         active_count: i64,
@@ -3234,7 +3238,7 @@ impl SeriesMetadataFacets {
 const FACET_RESULT_CAP: u64 = 12;
 
 async fn aggregate_series_metadata(app: &AppState, series_id: Uuid) -> SeriesMetadataFacets {
-    use sea_orm::{ConnectionTrait, Statement};
+    use sea_orm::Statement;
     let backend = app.db.get_database_backend();
 
     #[derive(Debug, FromQueryResult)]

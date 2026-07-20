@@ -27,9 +27,7 @@ use axum::{
 use base64::Engine;
 use chrono::{DateTime, FixedOffset};
 use entity::{issue, library, series, user};
-use sea_orm::{
-    ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter, Statement, Value,
-};
+use sea_orm::{ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, Statement, Value};
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;

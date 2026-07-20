@@ -87,7 +87,7 @@ impl MigrationTrait for Migration {
                 "Up next in your series and reading lists.",
             ),
         ] {
-            conn.execute(Statement::from_sql_and_values(
+            conn.execute_raw(Statement::from_sql_and_values(
                 backend,
                 r"INSERT INTO saved_views
                     (id, user_id, kind, name, description, custom_tags, system_key, auto_pin)

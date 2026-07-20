@@ -22,8 +22,8 @@ use entity::{
     series::{ActiveModel as SeriesAM, normalize_name},
 };
 use sea_orm::{
-    ActiveModelTrait, ConnectionTrait, Database, Set,
-    sea_query::{Alias, Expr, Query},
+    ActiveModelTrait, Database, Set,
+    sea_query::{Alias, Expr, ExprTrait, Query},
 };
 use server::reading::series_progress;
 use tower::ServiceExt;

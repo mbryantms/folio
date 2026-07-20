@@ -32,8 +32,9 @@ use axum::{
 use chrono::{DateTime, FixedOffset};
 use entity::{issue, library_user_access, marker, progress_record, reading_session, series};
 use sea_orm::{
-    ActiveValue::Set, ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QueryOrder,
-    QuerySelect, Statement, sea_query::Expr,
+    ActiveValue::Set,
+    ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect, Statement,
+    sea_query::{Expr, ExprTrait},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};

@@ -95,7 +95,7 @@ async fn collect(
     kind: &str,
     stmt: Statement,
 ) -> Result<Vec<AppearanceView>, sea_orm::DbErr> {
-    let rows = app.db.query_all(stmt).await?;
+    let rows = app.db.query_all_raw(stmt).await?;
     rows.into_iter()
         .map(|r| {
             Ok(AppearanceView {

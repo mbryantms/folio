@@ -42,8 +42,8 @@ use axum::{
 };
 use entity::{issue, library};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter,
-    QuerySelect, Set, Statement,
+    ActiveModelTrait, ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QuerySelect, Set,
+    Statement,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

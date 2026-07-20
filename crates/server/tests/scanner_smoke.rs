@@ -19,8 +19,8 @@ use entity::{
     series::Entity as SeriesEntity,
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, PaginatorTrait,
-    QueryFilter, Set, Statement,
+    ActiveModelTrait, ColumnTrait, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, Set,
+    Statement,
 };
 use server::library::{events::ScanEvent, scanner};
 use std::io::Write;

@@ -62,7 +62,7 @@ impl MigrationTrait for Migration {
         let backend = manager.get_database_backend();
         manager
             .get_connection()
-            .execute(Statement::from_string(
+            .execute_raw(Statement::from_string(
                 backend,
                 "UPDATE user_view_pins SET pinned = TRUE",
             ))

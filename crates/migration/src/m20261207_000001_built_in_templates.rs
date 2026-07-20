@@ -57,7 +57,7 @@ impl MigrationTrait for Migration {
             "00000000-0000-0000-0000-000000000001",
             "00000000-0000-0000-0000-000000000002",
         ] {
-            conn.execute(Statement::from_sql_and_values(
+            conn.execute_raw(Statement::from_sql_and_values(
                 backend,
                 "UPDATE saved_views SET auto_pin = TRUE WHERE id = $1::uuid",
                 [(*id).into()],
@@ -97,7 +97,7 @@ impl MigrationTrait for Migration {
             ),
         ];
         for (id, name, desc, conditions, sort_field, sort_order, limit) in templates {
-            conn.execute(Statement::from_sql_and_values(
+            conn.execute_raw(Statement::from_sql_and_values(
                 backend,
                 r"INSERT INTO saved_views
                     (id, user_id, kind, name, description, custom_tags,
@@ -126,7 +126,7 @@ impl MigrationTrait for Migration {
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let backend = manager.get_database_backend();
         let conn = manager.get_connection();
-        conn.execute(Statement::from_sql_and_values(
+        conn.execute_raw(Statement::from_sql_and_values(
             backend,
             "DELETE FROM saved_views WHERE id = ANY($1::uuid[])",
             [vec![

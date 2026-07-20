@@ -88,7 +88,7 @@ impl MigrationTrait for Migration {
         // Email lookup is case-insensitive in practice; functional index for it.
         manager
             .get_connection()
-            .execute(sea_orm::Statement::from_string(
+            .execute_raw(sea_orm::Statement::from_string(
                 manager.get_database_backend(),
                 "CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_idx \
                  ON users ((lower(email))) WHERE email IS NOT NULL"
