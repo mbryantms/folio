@@ -13,6 +13,22 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.13](https://github.com/mbryantms/folio/compare/v0.26.12...v0.26.13) (2026-07-20)
+
+
+### Dependencies
+
+* bump sea-orm to 2.0 (sea-query 1.0, sqlx 0.9) ([#475](https://github.com/mbryantms/folio/issues/475)) ([9be0ffe](https://github.com/mbryantms/folio/commit/9be0ffe066ad766fdd36fbdd83061eee682192f6))
+* rust-crypto to digest-0.11 line (rand 0.10, hmac 0.13, sha2 0.11, chacha20poly1305 0.11) ([#476](https://github.com/mbryantms/folio/issues/476)) ([6111a30](https://github.com/mbryantms/folio/commit/6111a30c046ac15e96a49959a52a6a4d539436d7))
+* update actions/checkout digest to 3d3c42e ([#474](https://github.com/mbryantms/folio/issues/474)) ([25715a0](https://github.com/mbryantms/folio/commit/25715a06040e3ebddedca40b1f93440e1df8470b))
+* update dependency @scalar/api-reference-react to v0.9.58 ([#470](https://github.com/mbryantms/folio/issues/470)) ([489e23d](https://github.com/mbryantms/folio/commit/489e23d5c2fa7cb0d62e9b22d684ea20888fba8f))
+* update dependency lucide-react to v1.25.0 ([#471](https://github.com/mbryantms/folio/issues/471)) ([2bc8a29](https://github.com/mbryantms/folio/commit/2bc8a2945c0c87b78da27e318f25b1a5af891c07))
+* update dependency vite to v8.1.5 ([#466](https://github.com/mbryantms/folio/issues/466)) ([21a8abc](https://github.com/mbryantms/folio/commit/21a8abc6a02cbaaa19b26797a62e06538d9234f0))
+* update rust crate tokio to v1.52.4 ([#469](https://github.com/mbryantms/folio/issues/469)) ([c6a17b1](https://github.com/mbryantms/folio/commit/c6a17b10b899fe2867fee7d800e692f7987cf6d5))
+* update rust crate tokio to v1.53.0 ([#472](https://github.com/mbryantms/folio/issues/472)) ([c302db8](https://github.com/mbryantms/folio/commit/c302db87d5a5fccf3ad02c64f7f991d314a5ed7a))
+* update taiki-e/install-action digest to a6b2e2d ([#473](https://github.com/mbryantms/folio/issues/473)) ([32eea50](https://github.com/mbryantms/folio/commit/32eea508fe2cfd9c3db583be1c6ea2151ca8165e))
+* update tailwindcss monorepo to v4.3.3 ([#468](https://github.com/mbryantms/folio/issues/468)) ([533a3a1](https://github.com/mbryantms/folio/commit/533a3a1e704bc455f769f64d4731f0f24772c9c7))
+
 ## [0.26.12](https://github.com/mbryantms/folio/compare/v0.26.11...v0.26.12) (2026-07-19)
 
 
