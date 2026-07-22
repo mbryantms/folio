@@ -15,7 +15,7 @@ path = "src/main.rs"
 # parsed `syn` AST nodes outside a proc-macro context — needed for the
 # `file:line:fn` error hints.
 proc-macro2 = { version = "1", features = ["span-locations"] }
-syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+syn = { version = "3", features = ["full", "visit", "extra-traits"] }
 walkdir = "2"
 
 [lints]
