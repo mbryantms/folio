@@ -13,6 +13,32 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.14](https://github.com/mbryantms/folio/compare/v0.26.13...v0.26.14) (2026-07-22)
+
+
+### Fixed
+
+* **deps:** clear pnpm audit high — sharp override to 0.35.3 (libvips CVEs) ([#494](https://github.com/mbryantms/folio/issues/494)) ([683b73c](https://github.com/mbryantms/folio/commit/683b73cf013abfc1ec6ea62782174b43e8bef2a1))
+* **deps:** clear pnpm audit highs — brace-expansion float + js-yaml override widen ([#480](https://github.com/mbryantms/folio/issues/480)) ([1611ea0](https://github.com/mbryantms/folio/commit/1611ea02241303656840fa3c4cb8b204c40a6339))
+
+
+### Dependencies
+
+* update dependency postcss to v8.5.20 ([#491](https://github.com/mbryantms/folio/issues/491)) ([3c457c7](https://github.com/mbryantms/folio/commit/3c457c7dff5fe6983f4ddc149189b44fb27c97ac))
+* update dependency postcss@&lt;8.5.10 to v8.5.20 ([#492](https://github.com/mbryantms/folio/issues/492)) ([1163824](https://github.com/mbryantms/folio/commit/11638249450de18669a342bf027d7886d5f32a88))
+* update dependency react-hook-form to v7.82.0 ([#479](https://github.com/mbryantms/folio/issues/479)) ([ad27646](https://github.com/mbryantms/folio/commit/ad27646eb673139f798f926be6f29d56e1e25179))
+* update pnpm to v11.14.0 ([#478](https://github.com/mbryantms/folio/issues/478)) ([cc297c9](https://github.com/mbryantms/folio/commit/cc297c975683aa2ccdd91f7f30f0d8ee066095bc))
+* update pnpm to v11.15.0 ([#483](https://github.com/mbryantms/folio/issues/483)) ([b0b51bc](https://github.com/mbryantms/folio/commit/b0b51bc41a8275068562f32045f3a9b0ad6412b7))
+* update rust crate anyhow to v1.0.104 ([#484](https://github.com/mbryantms/folio/issues/484)) ([d8fddb8](https://github.com/mbryantms/folio/commit/d8fddb87c38202a8844370e7813c9ba18172925a))
+* update rust crate async-trait to v0.1.91 ([#486](https://github.com/mbryantms/folio/issues/486)) ([3ac6911](https://github.com/mbryantms/folio/commit/3ac691178f029af9bd47b14f685f930a8c372f9f))
+* update rust crate futures to v0.3.33 ([#482](https://github.com/mbryantms/folio/issues/482)) ([f698375](https://github.com/mbryantms/folio/commit/f698375701100083dff41c74ac086e1e49257749))
+* update rust crate proc-macro2 to v1.0.107 ([#489](https://github.com/mbryantms/folio/issues/489)) ([6aa20af](https://github.com/mbryantms/folio/commit/6aa20af82f3013c8b88002b07220c47927ac8017))
+* update rust crate quote to v1.0.47 ([#490](https://github.com/mbryantms/folio/issues/490)) ([8feaa7c](https://github.com/mbryantms/folio/commit/8feaa7ca4b6c53a0e006bf45724dd28aa047d3c9))
+* update rust crate serde to v1.0.229 ([#488](https://github.com/mbryantms/folio/issues/488)) ([87ceede](https://github.com/mbryantms/folio/commit/87ceede3013ca5c8e05fc715af0fb3b413f22720))
+* update rust crate syn to v3 ([#485](https://github.com/mbryantms/folio/issues/485)) ([836e7ee](https://github.com/mbryantms/folio/commit/836e7ee31bee7b289a05b90dbb5af13e945a6b82))
+* update rust crate thiserror to v2.0.19 ([#487](https://github.com/mbryantms/folio/issues/487)) ([f2f80b1](https://github.com/mbryantms/folio/commit/f2f80b1a483fccc991e217983c33f2d61e34edd2))
+* update taiki-e/install-action digest to c44f6b0 ([#493](https://github.com/mbryantms/folio/issues/493)) ([2a0b139](https://github.com/mbryantms/folio/commit/2a0b139a1cf1030beb766cecfebb35f5fa6bb75c))
+
 ## [0.26.13](https://github.com/mbryantms/folio/compare/v0.26.12...v0.26.13) (2026-07-20)
 
 
