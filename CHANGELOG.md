@@ -13,6 +13,25 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.15](https://github.com/mbryantms/folio/compare/v0.26.14...v0.26.15) (2026-07-23)
+
+
+### Dependencies
+
+* update dependency @tanstack/react-query to v5.101.3 ([#504](https://github.com/mbryantms/folio/issues/504)) ([a5b9dc3](https://github.com/mbryantms/folio/commit/a5b9dc3b04a164e154299e6e385c3c5dac1121fd))
+* update dependency @tanstack/react-virtual to v3.14.7 ([#503](https://github.com/mbryantms/folio/issues/503)) ([0ce4f4b](https://github.com/mbryantms/folio/commit/0ce4f4ba81a1b781441be1c3e052544eff042409))
+* update docker/login-action digest to 06fb636 ([#507](https://github.com/mbryantms/folio/issues/507)) ([1522866](https://github.com/mbryantms/folio/commit/15228660a34e4e062ab86039a382962335824dee))
+* update nextjs monorepo to v16.2.11 ([#499](https://github.com/mbryantms/folio/issues/499)) ([c335690](https://github.com/mbryantms/folio/commit/c335690f5b5281058d83e9e59f2427555f02c592))
+* update pnpm to v11.15.1 ([#495](https://github.com/mbryantms/folio/issues/495)) ([b72837d](https://github.com/mbryantms/folio/commit/b72837d458909e95d3aecec2383274e6b046b0c3))
+* update radix-ui ([#498](https://github.com/mbryantms/folio/issues/498)) ([16d8b64](https://github.com/mbryantms/folio/commit/16d8b64034e3b6bcf5413f7874d15b14002ad6fa))
+* update rust crate hyper to v1.11.0 ([#506](https://github.com/mbryantms/folio/issues/506)) ([d321aab](https://github.com/mbryantms/folio/commit/d321aabc066f55bb897dedc57fa324202979b80b))
+* update rust crate serde_json to v1.0.151 ([#501](https://github.com/mbryantms/folio/issues/501)) ([3c8fee1](https://github.com/mbryantms/folio/commit/3c8fee105418c90d86d777348fe663e11ecf6600))
+* update rust crate syn to v3.0.1 ([#497](https://github.com/mbryantms/folio/issues/497)) ([e2081bb](https://github.com/mbryantms/folio/commit/e2081bb9e4e4adac7232f0a94a922d9d11e83bbb))
+* update rust crate syn to v3.0.2 ([#500](https://github.com/mbryantms/folio/issues/500)) ([7b7faec](https://github.com/mbryantms/folio/commit/7b7faecf5bed50d6616710abd4bfe104edd73133))
+* update rust crate time to v0.3.54 ([#502](https://github.com/mbryantms/folio/issues/502)) ([ec36710](https://github.com/mbryantms/folio/commit/ec367100586372ddcec3d3f14d561e1d293eb2dd))
+* update rust crate tokio to v1.53.1 ([#508](https://github.com/mbryantms/folio/issues/508)) ([931a8c3](https://github.com/mbryantms/folio/commit/931a8c39a6a1832e5b0d27dc0cd534d13c02380d))
+* update taiki-e/install-action digest to 7572810 ([#505](https://github.com/mbryantms/folio/issues/505)) ([8126ba5](https://github.com/mbryantms/folio/commit/8126ba59b623afcb76af0a482a0ee645dbe23ed1))
+
 ## [0.26.14](https://github.com/mbryantms/folio/compare/v0.26.13...v0.26.14) (2026-07-22)
 
 
