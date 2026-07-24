@@ -13,6 +13,23 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.16](https://github.com/mbryantms/folio/compare/v0.26.15...v0.26.16) (2026-07-24)
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.59 ([#511](https://github.com/mbryantms/folio/issues/511)) ([2e3cdd2](https://github.com/mbryantms/folio/commit/2e3cdd272d11e614d5780ac2a45a7d4810dcb1af))
+* update dependency @tanstack/react-query to v5.101.4 ([#519](https://github.com/mbryantms/folio/issues/519)) ([f84a9e6](https://github.com/mbryantms/folio/commit/f84a9e62342c5c2c32d72a98ee6cb63b0ce7c141))
+* update dependency next-intl to v4.13.3 ([#518](https://github.com/mbryantms/folio/issues/518)) ([66e7ac1](https://github.com/mbryantms/folio/commit/66e7ac12f9617ddaa0fd189800d10fd1edfed50e))
+* update dependency postcss to v8.5.21 ([#514](https://github.com/mbryantms/folio/issues/514)) ([76900ad](https://github.com/mbryantms/folio/commit/76900adf493413c8d036c669d2bf10790b621554))
+* update dependency postcss@&lt;8.5.10 to v8.5.21 ([#515](https://github.com/mbryantms/folio/issues/515)) ([4adeaeb](https://github.com/mbryantms/folio/commit/4adeaeb76711d6fa73746fe9da4fb1ba58591f2b))
+* update dependency prettier to v3.9.6 ([#513](https://github.com/mbryantms/folio/issues/513)) ([4e37ff2](https://github.com/mbryantms/folio/commit/4e37ff2ce8a1eb72bb5901d9911576c533fd05a8))
+* update dependency recharts to v3.10.0 ([#509](https://github.com/mbryantms/folio/issues/509)) ([6bb4e0d](https://github.com/mbryantms/folio/commit/6bb4e0d894a98d17cc57bb56962a0fb150e970b6))
+* update docker/login-action digest to abd2ef4 ([#517](https://github.com/mbryantms/folio/issues/517)) ([083b165](https://github.com/mbryantms/folio/commit/083b165794e17b435803b92a02158463712fddbb))
+* update react + react-dom to v19.2.8 in lockstep ([#523](https://github.com/mbryantms/folio/issues/523)) ([683bb10](https://github.com/mbryantms/folio/commit/683bb107d9769a1ccd4ae2963ceb9776b8b030a1))
+* update rust crate libc to v0.2.188 ([#512](https://github.com/mbryantms/folio/issues/512)) ([3c43b00](https://github.com/mbryantms/folio/commit/3c43b0074bec81ebce99b495afaa5e6e3d7bdb32))
+* update rust crate tokio-util to v0.7.19 ([#516](https://github.com/mbryantms/folio/issues/516)) ([7878d33](https://github.com/mbryantms/folio/commit/7878d33808d8f9943af506c741ecd0dba11b661a))
+
 ## [0.26.15](https://github.com/mbryantms/folio/compare/v0.26.14...v0.26.15) (2026-07-23)
 
 
