@@ -170,6 +170,14 @@ jobs:
     timeout-minutes: 90
     env:
       CARGO_INCREMENTAL: 0
+      # Full debuginfo is the bulk of the debug target dir (every workspace
+      # test binary carries it), and since the 2026-07-20 runner-image rollout
+      # some hosted runners ship 72 GB root disks (down from 145 GB) — the
+      # full-debug build no longer fits (PR #512 ENOSPC'd twice on a 72 GB
+      # runner). line-tables-only keeps file:line in test-failure backtraces
+      # while shedding most of that footprint. `test`/`bench` profiles inherit
+      # from `dev`, so this covers nextest binaries and doctests alike.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
     services:
@@ -190,16 +198,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # A toolchain bump invalidates every sccache/rust-cache key, so this job
       # occasionally runs fully cold — and a cold workspace build (Tesseract/
-      # Leptonica C++, ort, dozens of debug test binaries) overflows the
-      # ~21 GB free on a hosted runner. PR #429 died twice this way: first ld
+      # Leptonica C++, ort, dozens of debug test binaries) overflows what's
+      # free on a hosted runner. PR #429 died twice this way: first ld
       # SIGBUS (mmap write on a full disk), then an explicit "No space left on
-      # device". Drop the ~25 GB of preinstalled toolchains this job never
-      # uses before the caches are restored.
+      # device". Since the 2026-07-20 image rollout some runners have 72 GB
+      # root disks (vs 145 GB), which re-broke PR #512 — so drop everything
+      # this job never touches, before the caches are restored. The whole
+      # hostedtoolcache can go: the toolchain comes from rustup and nextest is
+      # a prebuilt binary. `docker image prune` keeps the postgres/redis
+      # service images (already running) and drops the rest.
       - name: free runner disk
         run: |
           df -h /
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
-            /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+            /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache \
+            /usr/local/share/powershell /usr/share/swift \
+            /usr/local/share/chromium /usr/local/lib/node_modules \
+            /usr/lib/google-cloud-sdk /opt/microsoft /opt/az \
+            /usr/share/miniconda /opt/pipx
+          sudo docker image prune -af
           df -h /
       - uses: dtolnay/rust-toolchain@1.96.0
       - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
