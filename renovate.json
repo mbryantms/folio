@@ -68,6 +68,17 @@
       ]
     },
     {
+      "description": "react + react-dom must move in lockstep — react-dom's dev builds hard-fail at module load when the versions differ, so a standalone bump of either can never pass the web test job (PRs #521/#522 proved it).",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchPackageNames": [
+        "react",
+        "react-dom"
+      ],
+      "groupName": "react"
+    },
+    {
       "description": "Majors always require human review + migration.",
       "matchUpdateTypes": [
         "major"
