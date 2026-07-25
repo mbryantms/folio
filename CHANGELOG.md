@@ -13,6 +13,24 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.17](https://github.com/mbryantms/folio/compare/v0.26.16...v0.26.17) (2026-07-25)
+
+
+### Dependencies
+
+* update dependency @serwist/cli to v9.5.12 ([#530](https://github.com/mbryantms/folio/issues/530)) ([d11906c](https://github.com/mbryantms/folio/commit/d11906c07e6cd91c58eecfb28822ab49c2119683))
+* update dependency @serwist/next to v9.5.12 ([#531](https://github.com/mbryantms/folio/issues/531)) ([b8ec0b1](https://github.com/mbryantms/folio/commit/b8ec0b14b3325e66c70618119e17bfeb4352fafc))
+* update dependency @serwist/window to v9.5.12 ([#532](https://github.com/mbryantms/folio/issues/532)) ([cdccc5a](https://github.com/mbryantms/folio/commit/cdccc5a96fc9f3c59d1cf2ddfcb5bd15d5e76491))
+* update dependency @tanstack/react-virtual to v3.14.8 ([#536](https://github.com/mbryantms/folio/issues/536)) ([b37ef1b](https://github.com/mbryantms/folio/commit/b37ef1b7a895adf3914591796279d64bc00c722e))
+* update dependency @vitejs/plugin-react to v6.0.4 ([#528](https://github.com/mbryantms/folio/issues/528)) ([7a0c5af](https://github.com/mbryantms/folio/commit/7a0c5af53e8a96009c3c023fae75e7151b13d62d))
+* update dependency postcss to v8.5.22 ([#534](https://github.com/mbryantms/folio/issues/534)) ([0f67bdb](https://github.com/mbryantms/folio/commit/0f67bdb4d1e4f0598023dfbe60970c3ff423e735))
+* update dependency postcss@&lt;8.5.10 to v8.5.22 ([#535](https://github.com/mbryantms/folio/issues/535)) ([64d32f3](https://github.com/mbryantms/folio/commit/64d32f3b9017887e2614f028b4ab044ea334df45))
+* update dependency serwist to v9.5.12 ([#533](https://github.com/mbryantms/folio/issues/533)) ([c8c2065](https://github.com/mbryantms/folio/commit/c8c206572df2ac0e80b4167c38b573dada5c3021))
+* update rust crate fast_image_resize to v6.1.0 ([#525](https://github.com/mbryantms/folio/issues/525)) ([2c45d01](https://github.com/mbryantms/folio/commit/2c45d01b3d3d0308faab74b763da4df871ac03a4))
+* update rust crate libc to v0.2.189 ([#524](https://github.com/mbryantms/folio/issues/524)) ([972dd4e](https://github.com/mbryantms/folio/commit/972dd4e3816fcc033488fdd9cd9e5a1dfc04a952))
+* update rust crate syn to v3.0.3 ([#527](https://github.com/mbryantms/folio/issues/527)) ([0bc88b4](https://github.com/mbryantms/folio/commit/0bc88b4d830835c17c9d0d054a2348a90b57414e))
+* update taiki-e/install-action digest to 3d7d7cd ([#529](https://github.com/mbryantms/folio/issues/529)) ([6744725](https://github.com/mbryantms/folio/commit/67447256052451db43a200fc7bb1b870f4162a0f))
+
 ## [0.26.16](https://github.com/mbryantms/folio/compare/v0.26.15...v0.26.16) (2026-07-24)
 
 
