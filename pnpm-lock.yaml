@@ -213,8 +213,8 @@ importers:
         specifier: 7.13.0
         version: 7.13.0(typescript@6.0.3)
       postcss:
-        specifier: 8.5.21
-        version: 8.5.21
+        specifier: 8.5.22
+        version: 8.5.22
       prettier:
         specifier: 3.9.6
         version: 3.9.6
@@ -7585,7 +7585,7 @@ snapshots:
       '@alloc/quick-lru': 5.2.0
       '@tailwindcss/node': 4.3.3
       '@tailwindcss/oxide': 4.3.3
-      postcss: 8.5.21
+      postcss: 8.5.22
       tailwindcss: 4.3.3
 
   '@tanstack/query-core@5.101.4': {}
@@ -7967,7 +7967,7 @@ snapshots:
       '@vue/shared': 3.5.40
       estree-walker: 2.0.2
       magic-string: 0.30.21
-      postcss: 8.5.21
+      postcss: 8.5.22
       source-map-js: 1.2.1
 
   '@vue/compiler-ssr@3.5.40':
@@ -11009,7 +11009,7 @@ snapshots:
     dependencies:
       lightningcss: 1.32.0
       picomatch: 4.0.5
-      postcss: 8.5.21
+      postcss: 8.5.22
       rolldown: 1.1.5
       tinyglobby: 0.2.17
     optionalDependencies:
