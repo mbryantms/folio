@@ -46,3 +46,24 @@ overrides:
   # shipped bundle, but the audit gate is severity-based. Holds the
   # transitive copies on the patched line.
   "esbuild@<0.28.1": "0.28.1"
+  # GHSA-mh99-v99m-4gvg — brace-expansion <=5.0.7 DoS via unbounded
+  # expansion length (OOM crash). Only the 5.x line has a patched
+  # release, so this override remediates the 5.x copies (glob→minimatch
+  # v10 chains, incl. the @serwist prod path). The 1.x/2.x copies CANNOT
+  # move: no backports exist, and 5.0.8's CJS build named-exports
+  # `expand` where 1.x consumers (minimatch v3 — the eslint chain)
+  # `require()` a bare function — forcing it crashes eslint
+  # ("expand is not a function"). Those copies are accepted in
+  # SECURITY-EXCEPTIONS.md + ignoreGhsas below. Delete both when
+  # `pnpm why brace-expansion` shows no <5.0.8 consumers.
+  "brace-expansion@>=5.0.0 <5.0.8": "5.0.8"
+
+# Advisory exceptions the audit gates skip — every id here has a
+# rationale + delete-when condition in SECURITY-EXCEPTIONS.md (the npm
+# mirror of deny.toml [advisories].ignore).
+auditConfig:
+  ignoreGhsas:
+    # brace-expansion 1.x/2.x copies — no patched backport exists and the
+    # 5.0.8 export shape breaks minimatch v3 consumers; 5.x copies are
+    # remediated by the override above.
+    - GHSA-mh99-v99m-4gvg
