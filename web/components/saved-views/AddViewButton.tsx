@@ -102,7 +102,7 @@ export function NewFilterViewDialog({
         // `overflow-visible` so the field-picker popover (portaled here
         // via PopoverPortalContainer) can extend past the dialog
         // bounds. The inner scroll div still owns long-form overflow.
-        className="flex max-h-[90vh] max-w-4xl flex-col overflow-visible"
+        className="flex max-h-[90vh] flex-col overflow-visible sm:max-w-4xl"
       >
         <DialogHeader>
           <DialogTitle>New filter view</DialogTitle>

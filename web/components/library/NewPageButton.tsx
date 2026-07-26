@@ -83,7 +83,7 @@ export function NewPageButton() {
           if (!o) reset();
         }}
       >
-        <DialogContent className="max-w-sm">
+        <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>New page</DialogTitle>
             <DialogDescription>
