@@ -5,6 +5,15 @@ import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { IssueDetailView, MeView, PageInfo } from "@/lib/api/types";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
 import type { FitMode } from "@/lib/reader/store";
+import { readerViewport } from "@/lib/viewport";
+
+// The reader is always black regardless of the user's theme, so its
+// declared appearance (status-bar tint + color-scheme) is pinned to
+// dark here — overriding the theme-cookie-driven root
+// `generateViewport`. Without this, a light theme (or a light-mode
+// device on `theme=system`) makes iPadOS paint a white status-bar
+// scrim over the artwork whenever the chrome is hidden.
+export const viewport = readerViewport;
 
 type ProgressDelta = {
   records: Array<{
