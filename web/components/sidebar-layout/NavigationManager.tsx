@@ -876,9 +876,9 @@ function AddToSidebarDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* `max-w-3xl` — same width as `ManagePinsDialog` and the CBL
+      {/* `sm:max-w-3xl` — same width as `ManagePinsDialog` and the CBL
        *  Import dialog so the picker family reads as one. */}
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Add to sidebar</DialogTitle>
           <DialogDescription>

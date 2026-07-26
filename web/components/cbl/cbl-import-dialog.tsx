@@ -83,7 +83,7 @@ export function CblImportDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col overflow-hidden">
+      <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>
             {step === "source" ? "Import CBL list" : "Save as view"}

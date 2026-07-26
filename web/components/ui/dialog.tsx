@@ -45,6 +45,15 @@ const DialogContent = React.forwardRef<
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         "max-sm:data-[state=closed]:slide-out-to-bottom max-sm:data-[state=open]:slide-in-from-bottom max-sm:inset-x-0 max-sm:bottom-0 max-sm:max-h-[85dvh] max-sm:overflow-y-auto max-sm:rounded-t-lg max-sm:pb-[max(1.5rem,env(safe-area-inset-bottom))]",
         // >= sm: the centered modal, unchanged.
+        //
+        // Caller overrides for width/position MUST be `sm:`-prefixed
+        // (`sm:max-w-3xl`, not `max-w-3xl`): tailwind-merge only
+        // collapses conflicts within the same variant, so an
+        // unprefixed override keeps BOTH classes and the `sm:` rule
+        // below wins the cascade at desktop widths — the dialog
+        // silently pins to `max-w-lg` no matter what was passed.
+        // (At `< sm` the bottom sheet owns geometry; callers
+        // shouldn't override there anyway.)
         "sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95 sm:data-[state=closed]:slide-out-to-left-1/2 sm:data-[state=closed]:slide-out-to-top-[48%] sm:data-[state=open]:slide-in-from-left-1/2 sm:data-[state=open]:slide-in-from-top-[48%] sm:top-[50%] sm:left-[50%] sm:max-w-lg sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg",
         className,
       )}

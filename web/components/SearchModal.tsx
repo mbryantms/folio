@@ -147,7 +147,7 @@ export function SearchModal({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="top-[10%] flex max-h-[80vh] max-w-xl translate-y-0 flex-col gap-0 overflow-hidden p-0">
+      <DialogContent className="flex max-h-[80vh] flex-col gap-0 overflow-hidden p-0 sm:top-[10%] sm:max-w-xl sm:translate-y-0">
         <DialogTitle className="sr-only">Search</DialogTitle>
         <DialogDescription className="sr-only">
           Quick search across your library. Press Enter to open the highlighted

@@ -131,7 +131,7 @@ function BrowserDialog({
           un-wrappable directory name in the list) inflates the grid
           tracks past max-w-lg and the dialog visibly overflows the
           parent "New library" dialog underneath. */}
-      <DialogContent className="max-w-lg [&>*]:min-w-0">
+      <DialogContent className="sm:max-w-lg [&>*]:min-w-0">
         <DialogHeader>
           <DialogTitle>Choose a library folder</DialogTitle>
           <DialogDescription>
