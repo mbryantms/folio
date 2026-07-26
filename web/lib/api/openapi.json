@@ -6681,6 +6681,25 @@
         }
       }
     },
+    "/api/me/recent-issues": {
+      "get": {
+        "summary": "Newest issues across every library the caller can see, ordered by\ningest time (`issues.created_at`) descending — the issue-level\ncomplement to the series-level \"Recently added series\" filter rail.\nAt most [`RECENT_ISSUES_PER_SERIES_CAP`] issues per series survive\n(scan-flood guard); the rail's detail page shows the uncapped list\nvia `GET /issues?sort=created_at&order=desc`.",
+        "description": "The ACL lives in the SQL (unlike continue-reading's post-filter):\nwith a window this small, filtering after the LIMIT would let rows\nfrom invisible libraries starve out the visible ones.",
+        "operationId": "rails_recent_issues",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecentIssuesView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/me/saved-views": {
       "get": {
         "operationId": "saved_views_list",
@@ -19435,6 +19454,21 @@
           },
           "trigger_kind": {
             "type": "string"
+          }
+        }
+      },
+      "RecentIssuesView": {
+        "type": "object",
+        "description": "Newest-ingests rail. Items are plain issue cards (`series_name`\npopulated so the card heading reads \"Series #N\" across a rail that\nmixes many series).",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueSummaryView"
+            }
           }
         }
       },

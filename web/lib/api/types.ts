@@ -89,6 +89,7 @@ export type ContinueReadingCard = Schemas["ContinueReadingCard"];
 export type ContinueReadingView = Schemas["ContinueReadingView"];
 export type OnDeckCard = Schemas["OnDeckCard"];
 export type OnDeckView = Schemas["OnDeckView"];
+export type RecentIssuesView = Schemas["RecentIssuesView"];
 export type CreateRailDismissalReq = Schemas["CreateDismissalReq"]; // renamed in codegen as CreateDismissalReq
 export type NextUpSource = Schemas["NextUpSource"];
 export type NextUpView = Schemas["NextUpView"];

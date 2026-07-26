@@ -25,6 +25,7 @@ import type { SavedViewView } from "@/lib/api/types";
 import {
   ContinueReadingRailBody,
   OnDeckRailBody,
+  RecentIssuesRailBody,
   useSystemRailIsEmpty,
 } from "./system-rails";
 
@@ -119,6 +120,12 @@ function renderRailBody(
   if (view.kind === "system" && view.system_key === "on_deck") {
     return {
       body: <OnDeckRailBody itemStyle={itemStyle} />,
+      hasMore: true,
+    };
+  }
+  if (view.kind === "system" && view.system_key === "new_issues") {
+    return {
+      body: <RecentIssuesRailBody itemStyle={itemStyle} />,
       hasMore: true,
     };
   }

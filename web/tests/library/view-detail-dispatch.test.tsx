@@ -26,11 +26,17 @@ vi.mock("@/components/saved-views/CollectionViewDetail", () => ({
     return null;
   },
 }));
+vi.mock("@/components/saved-views/SystemViewDetail", () => ({
+  SystemViewDetail: function SystemViewDetail() {
+    return null;
+  },
+}));
 
 import { ViewClient } from "@/app/[locale]/(library)/views/[id]/ViewClient";
 import { CblViewDetail } from "@/components/saved-views/CblViewDetail";
 import { CollectionViewDetail } from "@/components/saved-views/CollectionViewDetail";
 import { FilterViewDetail } from "@/components/saved-views/FilterViewDetail";
+import { SystemViewDetail } from "@/components/saved-views/SystemViewDetail";
 import type { SavedViewView } from "@/lib/api/types";
 
 function view(overrides: Partial<SavedViewView> = {}): SavedViewView {
@@ -89,6 +95,25 @@ describe("ViewClient kind dispatch", () => {
     });
     expect(findByType(tree, CblViewDetail)).toBeTruthy();
     expect(findByType(tree, FilterViewDetail)).toBeFalsy();
+  });
+
+  it("renders SystemViewDetail for system kind (new_issues rail)", () => {
+    const tree = ViewClient({
+      view: view({
+        kind: "system",
+        system_key: "new_issues",
+        is_system: true,
+        user_id: null,
+        match_mode: null,
+        conditions: null,
+        sort_field: null,
+        sort_order: null,
+        result_limit: null,
+      }),
+    });
+    expect(findByType(tree, SystemViewDetail)).toBeTruthy();
+    expect(findByType(tree, FilterViewDetail)).toBeFalsy();
+    expect(findByType(tree, CblViewDetail)).toBeFalsy();
   });
 
   it("renders CollectionViewDetail for collection kind", () => {

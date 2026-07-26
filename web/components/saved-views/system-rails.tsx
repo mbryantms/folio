@@ -2,6 +2,7 @@
 
 import * as React from "react";
 
+import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import {
   OnDeckCard,
   OnDeckCardSkeleton,
@@ -11,7 +12,11 @@ import {
   ProgressIssueCardSkeleton,
 } from "@/components/library/ProgressIssueCard";
 import type { OnDeckCard as OnDeckCardData } from "@/lib/api/types";
-import { useContinueReading, useOnDeck } from "@/lib/api/queries";
+import {
+  useContinueReading,
+  useOnDeck,
+  useRecentIssues,
+} from "@/lib/api/queries";
 
 /**
  * Continue-reading rail body. Lists in-progress issues most-recent first,
@@ -89,6 +94,43 @@ export function OnDeckRailBody({
   );
 }
 
+/**
+ * New-issues rail body. Newest ingests across the library, most-recent
+ * first, at most a few per series (server-side cap) so one bulk import
+ * reads as a short run instead of filling the rail. Cards are the plain
+ * `IssueCard` — cover, progress badge, kebab — with the series name in
+ * the heading since the rail mixes many series.
+ */
+export function RecentIssuesRailBody({
+  itemStyle,
+}: {
+  itemStyle: React.CSSProperties;
+}) {
+  const q = useRecentIssues();
+  if (q.isLoading) {
+    return (
+      <>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} style={itemStyle} className="shrink-0">
+            <IssueCardSkeleton />
+          </div>
+        ))}
+      </>
+    );
+  }
+  const items = q.data?.items ?? [];
+  if (items.length === 0) return null;
+  return (
+    <>
+      {items.map((issue) => (
+        <div key={issue.id} style={itemStyle} className="shrink-0">
+          <IssueCard issue={issue} />
+        </div>
+      ))}
+    </>
+  );
+}
+
 /** Stable React key for an On Deck card. The card kind decides which id
  *  uniquely identifies the row (series_id vs cbl_list_id) — the issue id
  *  alone isn't enough because the same issue can appear under both kinds
@@ -114,11 +156,15 @@ function cardKey(card: OnDeckCardData, index: number): string {
 export function useSystemRailIsEmpty(systemKey: string): boolean {
   const cr = useContinueReading({ enabled: systemKey === "continue_reading" });
   const od = useOnDeck({ enabled: systemKey === "on_deck" });
+  const ri = useRecentIssues({ enabled: systemKey === "new_issues" });
   if (systemKey === "continue_reading") {
     return !cr.isLoading && (cr.data?.items.length ?? 0) === 0;
   }
   if (systemKey === "on_deck") {
     return !od.isLoading && (od.data?.items.length ?? 0) === 0;
+  }
+  if (systemKey === "new_issues") {
+    return !ri.isLoading && (ri.data?.items.length ?? 0) === 0;
   }
   return false;
 }

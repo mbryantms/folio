@@ -409,6 +409,11 @@ export const queryKeys = {
   continueReading: ["rails", "continue-reading"] as const,
   /** On-deck rail (`/me/on-deck`). Same invalidation set as continueReading. */
   onDeck: ["rails", "on-deck"] as const,
+  /** New-issues rail (`/me/recent-issues`) — newest ingests across the
+   *  library, per-series-capped server-side. No mutation invalidates it
+   *  (data changes only when a scan lands); default staleness re-fetches
+   *  on the next home-page visit, same as the filter rails. */
+  recentIssues: ["rails", "recent-issues"] as const,
   /** Reader's single-issue "what's next?" resolver
    *  (`/issues/{id}/next-up`). Separate cache entry per (issue, cbl)
    *  pairing so a CBL-context read and a series-context read don't

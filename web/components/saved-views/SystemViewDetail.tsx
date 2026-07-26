@@ -1,8 +1,10 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { ChevronRight, Sparkles } from "lucide-react";
 
+import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import {
   OnDeckCard,
   OnDeckCardSkeleton,
@@ -13,12 +15,23 @@ import {
 } from "@/components/library/ProgressIssueCard";
 import { useCardSize } from "@/components/library/use-card-size";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
-import { useContinueReading, useOnDeck } from "@/lib/api/queries";
+import {
+  useContinueReading,
+  useIssuesCrossListInfinite,
+  useOnDeck,
+} from "@/lib/api/queries";
 import type {
   ContinueReadingCard,
   OnDeckCard as OnDeckCardData,
   SavedViewView,
 } from "@/lib/api/types";
+
+/** Query filters for the New Issues detail grid: the FULL ingest-ordered
+ *  issue list. Deliberately uncapped — the home rail's per-series cap is
+ *  a preview digest; this page is the complete record (list-pagination
+ *  completeness: a detail surface must never silently truncate). Module
+ *  constant so both hook call sites hash to the same query key. */
+const NEW_ISSUES_FILTERS = { sort: "created_at", order: "desc" } as const;
 
 const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
@@ -33,8 +46,16 @@ const CARD_SIZE_STORAGE_KEY = "folio.systemView.cardSize";
  * slider that matches the home page's affordance.
  */
 export function SystemViewDetail({ view }: { view: SavedViewView }) {
-  const cr = useContinueReading();
-  const od = useOnDeck();
+  const isContinueReading = view.system_key === "continue_reading";
+  const isOnDeck = view.system_key === "on_deck";
+  const isNewIssues = view.system_key === "new_issues";
+
+  const cr = useContinueReading({ enabled: isContinueReading });
+  const od = useOnDeck({ enabled: isOnDeck });
+  // Same key as the grid below — one cache entry, two subscribers.
+  const ni = useIssuesCrossListInfinite(NEW_ISSUES_FILTERS, {
+    enabled: isNewIssues,
+  });
   const [cardSize, setCardSize] = useCardSize({
     storageKey: CARD_SIZE_STORAGE_KEY,
     min: CARD_SIZE_MIN,
@@ -42,14 +63,15 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
     defaultSize: CARD_SIZE_DEFAULT,
   });
 
-  const isContinueReading = view.system_key === "continue_reading";
-  const isOnDeck = view.system_key === "on_deck";
-
   const itemCount = isContinueReading
     ? (cr.data?.items.length ?? null)
     : isOnDeck
       ? (od.data?.items.length ?? null)
-      : null;
+      : isNewIssues
+        ? // `total` rides only the first page (cursor-pagination
+          // convention) — the full library-wide issue count.
+          (ni.data?.pages[0]?.total ?? null)
+        : null;
 
   return (
     <div className="space-y-6">
@@ -109,9 +131,72 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
           <ContinueReadingGrid loading={cr.isLoading} data={cr.data} />
         ) : isOnDeck ? (
           <OnDeckGrid loading={od.isLoading} data={od.data} />
+        ) : isNewIssues ? (
+          <NewIssuesGrid />
         ) : null}
       </div>
     </div>
+  );
+}
+
+/** Complete ingest-ordered issue list, newest first. Walks `/issues`
+ *  pages through an IntersectionObserver sentinel (same idiom as
+ *  `IssuesPanel`) — unlike the home rail, no per-series cap applies
+ *  here, so a bulk import is fully browsable. */
+function NewIssuesGrid() {
+  const query = useIssuesCrossListInfinite(NEW_ISSUES_FILTERS);
+  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Depend on the three fields, not the whole result object — TanStack
+  // returns a fresh object identity per render, so `[query]` would tear
+  // the observer down and rebuild it on every state change.
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  React.useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          if (hasNextPage && !isFetchingNextPage) {
+            void fetchNextPage();
+          }
+        }
+      },
+      { rootMargin: "400px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  if (query.isLoading) {
+    return (
+      <>
+        {Array.from({ length: 12 }).map((_, i) => (
+          <IssueCardSkeleton key={i} />
+        ))}
+      </>
+    );
+  }
+  const items = query.data?.pages.flatMap((p) => p.items) ?? [];
+  if (items.length === 0) {
+    return (
+      <p className="text-muted-foreground col-span-full text-sm">
+        Nothing here yet. Issues land in this list as library scans ingest them.
+      </p>
+    );
+  }
+  return (
+    <>
+      {items.map((issue) => (
+        <IssueCard key={issue.id} issue={issue} />
+      ))}
+      <div ref={sentinelRef} aria-hidden className="col-span-full h-px" />
+      {isFetchingNextPage
+        ? Array.from({ length: 6 }).map((_, i) => (
+            <IssueCardSkeleton key={`next-${i}`} />
+          ))
+        : null}
+    </>
   );
 }
 

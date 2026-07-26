@@ -1,8 +1,10 @@
-//! Home-page system rails: Continue Reading + On Deck + per-user dismissals.
+//! Home-page system rails: Continue Reading + On Deck + New Issues +
+//! per-user dismissals.
 //!
 //! Endpoints:
 //!   - `GET    /me/continue-reading`               — partially-read issues
 //!   - `GET    /me/on-deck`                        — (M3) — next-up issues + CBLs
+//!   - `GET    /me/recent-issues`                  — newest ingests, per-series-capped
 //!   - `POST   /me/rail-dismissals`                — hide a target from a rail
 //!   - `DELETE /me/rail-dismissals/{kind}/{id}`    — undo a dismissal
 //!
@@ -52,9 +54,20 @@ pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(continue_reading))
         .routes(routes!(on_deck))
+        .routes(routes!(recent_issues))
         .routes(routes!(create_dismissal))
         .routes(routes!(delete_dismissal))
 }
+
+/// Cap on how many issues one series may contribute to the New Issues
+/// rail. Pure reverse-chronological, a single bulk import (say a
+/// 200-issue series) fills every rail slot with one series; the cap
+/// keeps the rail a digest of *what* arrived rather than a wall of one
+/// title. The uncapped list stays reachable — the rail's "View all"
+/// page walks `GET /issues?sort=created_at&order=desc`.
+const RECENT_ISSUES_PER_SERIES_CAP: i32 = 3;
+/// Rail preview size; mirrors the web's `RAIL_PREVIEW_LIMIT`.
+const RECENT_ISSUES_LIMIT: i32 = 30;
 
 // ───── Response shapes ─────
 
@@ -119,6 +132,14 @@ pub enum OnDeckCard {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct OnDeckView {
     pub items: Vec<OnDeckCard>,
+}
+
+/// Newest-ingests rail. Items are plain issue cards (`series_name`
+/// populated so the card heading reads "Series #N" across a rail that
+/// mixes many series).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RecentIssuesView {
+    pub items: Vec<IssueSummaryView>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -277,6 +298,131 @@ pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response
             .insert(HeaderName::from_static("server-timing"), value);
     }
     resp
+}
+
+/// Newest issues across every library the caller can see, ordered by
+/// ingest time (`issues.created_at`) descending — the issue-level
+/// complement to the series-level "Recently added series" filter rail.
+/// At most [`RECENT_ISSUES_PER_SERIES_CAP`] issues per series survive
+/// (scan-flood guard); the rail's detail page shows the uncapped list
+/// via `GET /issues?sort=created_at&order=desc`.
+///
+/// The ACL lives in the SQL (unlike continue-reading's post-filter):
+/// with a window this small, filtering after the LIMIT would let rows
+/// from invisible libraries starve out the visible ones.
+#[utoipa::path(
+    operation_id = "rails_recent_issues",    get,
+    path = "/me/recent-issues",
+    responses((status = 200, body = RecentIssuesView))
+)]
+#[handler]
+pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Response {
+    let acl = access::for_user(&app, &user).await;
+
+    #[derive(Debug, FromQueryResult)]
+    struct Row {
+        id: String,
+        slug: String,
+        series_id: Uuid,
+        title: Option<String>,
+        number_raw: Option<String>,
+        sort_number: Option<f64>,
+        year: Option<i32>,
+        page_count: Option<i32>,
+        special_type: Option<String>,
+        created_at: chrono::DateTime<chrono::FixedOffset>,
+        updated_at: chrono::DateTime<chrono::FixedOffset>,
+        series_slug: String,
+        series_name: String,
+    }
+
+    // Rank each issue within its series by ingest recency, keep the top
+    // `CAP` per series, then take the newest `LIMIT` overall. Columns are
+    // projected to what the card renders (see `OnDeckIssue` for the
+    // rationale — full issue rows average ~1.9 KB).
+    let acl_clause = if acl.unrestricted {
+        ""
+    } else if acl.allowed.is_empty() {
+        return Json(RecentIssuesView { items: Vec::new() }).into_response();
+    } else {
+        "AND i.library_id = ANY($3)"
+    };
+    let sql = format!(
+        r#"
+        WITH ranked AS (
+            SELECT i.id, i.slug, i.series_id, i.title, i.number_raw,
+                   i.sort_number, i.year, i.page_count, i.special_type,
+                   i.created_at, i.updated_at,
+                   s.slug AS series_slug, s.name AS series_name,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY i.series_id
+                       ORDER BY i.created_at DESC, i.id DESC
+                   ) AS series_rank
+            FROM issues i
+            JOIN series s ON s.id = i.series_id
+            WHERE i.state = 'active'
+              AND i.removed_at IS NULL
+              {acl_clause}
+        )
+        SELECT id, slug, series_id, title, number_raw, sort_number, year,
+               page_count, special_type, created_at, updated_at,
+               series_slug, series_name
+        FROM ranked
+        WHERE series_rank <= $1
+        ORDER BY created_at DESC, id DESC
+        LIMIT $2
+        "#
+    );
+    let mut values: Vec<sea_orm::Value> = vec![
+        RECENT_ISSUES_PER_SERIES_CAP.into(),
+        RECENT_ISSUES_LIMIT.into(),
+    ];
+    if !acl.unrestricted {
+        let allowed: Vec<Uuid> = acl.allowed.iter().copied().collect();
+        values.push(allowed.into());
+    }
+    let rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        sql,
+        values,
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "rails: recent-issues query failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    let items: Vec<IssueSummaryView> = rows
+        .into_iter()
+        .map(|r| {
+            // `state` is pinned 'active' by the WHERE, so the cover URL is
+            // unconditional (cf. `OnDeckIssue::into_summary_view`).
+            let cover_url = Some(format!("/issues/{}/pages/0/thumb", r.id));
+            IssueSummaryView {
+                id: r.id,
+                slug: r.slug,
+                series_id: r.series_id.to_string(),
+                series_slug: r.series_slug,
+                series_name: Some(r.series_name),
+                title: r.title,
+                number: r.number_raw,
+                sort_number: r.sort_number,
+                year: r.year,
+                page_count: r.page_count,
+                state: "active".to_owned(),
+                cover_url,
+                special_type: r.special_type,
+                created_at: r.created_at.to_rfc3339(),
+                updated_at: r.updated_at.to_rfc3339(),
+            }
+        })
+        .collect();
+
+    Json(RecentIssuesView { items }).into_response()
 }
 
 /// Composes the On Deck rail's cards (series_next + cbl_next mixed),

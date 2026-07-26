@@ -57,7 +57,7 @@ pub const KIND_COLLECTION: &str = "collection";
 /// on first GET in M2).
 pub const SYSTEM_KEY_WANT_TO_READ: &str = "want_to_read";
 
-/// Explicit top-down order for the four `auto_pin` system rails on a
+/// Explicit top-down order for the five `auto_pin` system rails on a
 /// fresh user's home page. Earlier in the slice = higher on the home
 /// page. Anything `auto_pin = true` but not listed here lands after
 /// these, ordered by `created_at` (so future system rails still seed
@@ -67,9 +67,10 @@ pub const SYSTEM_KEY_WANT_TO_READ: &str = "want_to_read";
 /// silently re-order new users' pin sets.
 pub const DEFAULT_HOME_PIN_ORDER: &[&str] = &[
     "00000000-0000-0000-0000-000000000010", // Continue reading (m20261212)
-    "00000000-0000-0000-0000-000000000011", // On deck         (m20261212)
-    "00000000-0000-0000-0000-000000000001", // Recently Added   (m20261205)
-    "00000000-0000-0000-0000-000000000002", // Recently Updated (m20261205)
+    "00000000-0000-0000-0000-000000000011", // On deck          (m20261212)
+    "00000000-0000-0000-0000-000000000012", // New issues       (m20270122)
+    "00000000-0000-0000-0000-000000000001", // Recently added series  (m20261205)
+    "00000000-0000-0000-0000-000000000002", // Recently updated series (m20261205)
 ];
 
 const MAX_RESULT_LIMIT: u64 = 200;

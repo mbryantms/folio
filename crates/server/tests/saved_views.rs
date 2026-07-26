@@ -367,8 +367,8 @@ async fn list_seeds_system_views_pinned_on_first_touch() {
         .collect();
     // M3 originals (auto-pinned) + M9 templates (available-to-pin) +
     // home-rails M1 system views (auto-pinned).
-    assert!(names.iter().any(|n| n == "Recently Added"));
-    assert!(names.iter().any(|n| n == "Recently Updated"));
+    assert!(names.iter().any(|n| n == "Recently added series"));
+    assert!(names.iter().any(|n| n == "Recently updated series"));
     assert!(names.iter().any(|n| n == "Just Finished"));
     // M1 of markers + collections renamed the M9 "Want to Read"
     // filter template to "Unstarted" so the name is free for the
@@ -379,6 +379,7 @@ async fn list_seeds_system_views_pinned_on_first_touch() {
     assert!(!names.iter().any(|n| n == "Stale"));
     assert!(names.iter().any(|n| n == "Continue reading"));
     assert!(names.iter().any(|n| n == "On deck"));
+    assert!(names.iter().any(|n| n == "New issues"));
     // Markers + Collections M3: the per-user Want to Read collection
     // is auto-seeded on first GET /me/saved-views too (the sidebar
     // depends on this surface, not /me/collections).
@@ -396,9 +397,10 @@ async fn list_seeds_system_views_pinned_on_first_touch() {
         sorted,
         vec![
             "Continue reading".to_owned(),
+            "New issues".to_owned(),
             "On deck".to_owned(),
-            "Recently Added".to_owned(),
-            "Recently Updated".to_owned(),
+            "Recently added series".to_owned(),
+            "Recently updated series".to_owned(),
         ],
         "exactly the M3 originals + new rails should auto-pin: {pinned_names:?}"
     );
@@ -895,10 +897,10 @@ async fn create_rejects_invalid_filter() {
 async fn pin_cap_enforced() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "cap@example.com").await;
-    // Trigger the lazy seed so the 4 auto-pinned system views land first.
+    // Trigger the lazy seed so the 5 auto-pinned system views land first.
     let _ = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
-    // 12 - 4 (auto-pinned system rails) = 8 user pins reach the cap.
-    for i in 0..8 {
+    // 12 - 5 (auto-pinned system rails) = 7 user pins reach the cap.
+    for i in 0..7 {
         let body = serde_json::json!({
             "kind": "filter_series",
             "name": format!("View {i}"),
@@ -921,7 +923,7 @@ async fn pin_cap_enforced() {
         let (status, _) = http(&app, Method::POST, &pin_url, Some(&auth), None).await;
         assert_eq!(status, StatusCode::OK, "pin {i}");
     }
-    // The 13th pin should hit the cap.
+    // The next pin should hit the cap.
     let body = serde_json::json!({
         "kind": "filter_series",
         "name": "Overflow",
@@ -952,11 +954,11 @@ async fn pin_cap_enforced() {
 async fn pin_cap_respects_per_user_override() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "cap-override@example.com").await;
-    // Trigger the lazy seed so the 4 auto-pinned system rails land.
+    // Trigger the lazy seed so the 5 auto-pinned system rails land.
     let _ = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
 
-    // Fill to the default cap of 12 (4 auto + 8 user pins).
-    for i in 0..8 {
+    // Fill to the default cap of 12 (5 auto + 7 user pins).
+    for i in 0..7 {
         let body = serde_json::json!({
             "kind": "filter_series",
             "name": format!("View {i}"),
@@ -1266,13 +1268,13 @@ async fn preview_runs_dsl_without_persisting() {
 async fn sidebar_toggle_round_trips_independently_of_pin() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "sidebar@example.com").await;
-    // Trigger seed; pin the Recently Added system view comes auto-pinned.
+    // Trigger seed; the Recently added series system view comes auto-pinned.
     let (_, list) = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
     let recently_added = list["items"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|v| v["name"] == "Recently Added")
+        .find(|v| v["name"] == "Recently added series")
         .unwrap();
     assert_eq!(recently_added["pinned"].as_bool(), Some(true));
     assert_eq!(recently_added["show_in_sidebar"].as_bool(), Some(false));
