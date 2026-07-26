@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.26.18](https://github.com/mbryantms/folio/compare/v0.26.17...v0.26.18) (2026-07-26)
+
+
+### Fixed
+
+* **pwa:** dark status-bar dressing on iPad — theme-cookie-driven theme-color + reader override ([#541](https://github.com/mbryantms/folio/issues/541)) ([7cfeca2](https://github.com/mbryantms/folio/commit/7cfeca25113b5ed3c7fc9bc2fc77c90178ed2ac6))
+
+
+### Dependencies
+
+* update pnpm to v11.16.0 ([#538](https://github.com/mbryantms/folio/issues/538)) ([5e6cde7](https://github.com/mbryantms/folio/commit/5e6cde706e754d1bce8518277074307eeb86b06a))
+
 ## [0.26.17](https://github.com/mbryantms/folio/compare/v0.26.16...v0.26.17) (2026-07-25)
 
 
