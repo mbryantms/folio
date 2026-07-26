@@ -69,6 +69,7 @@ import type {
   OnDeckView,
   PageListView,
   PreviewReq,
+  RecentIssuesView,
   RefreshLogListView,
   IssueListView,
   IssueSearchView,
@@ -2035,6 +2036,19 @@ export function useOnDeck(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.onDeck,
     queryFn: () => jsonFetch<OnDeckView>("/me/on-deck"),
+    enabled: opts?.enabled ?? true,
+    staleTime: 60_000,
+  });
+}
+
+/** Newest issues across the library (ingest order, per-series-capped
+ *  server-side so a bulk import can't flood the preview). Drives the
+ *  New Issues rail on the home page; the rail's detail page walks the
+ *  uncapped list via `useIssuesCrossListInfinite`. */
+export function useRecentIssues(opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.recentIssues,
+    queryFn: () => jsonFetch<RecentIssuesView>("/me/recent-issues"),
     enabled: opts?.enabled ?? true,
     staleTime: 60_000,
   });

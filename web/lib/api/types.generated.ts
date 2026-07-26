@@ -2992,6 +2992,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/recent-issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Newest issues across every library the caller can see, ordered by
+         *     ingest time (`issues.created_at`) descending — the issue-level
+         *     complement to the series-level "Recently added series" filter rail.
+         *     At most [`RECENT_ISSUES_PER_SERIES_CAP`] issues per series survive
+         *     (scan-flood guard); the rail's detail page shows the uncapped list
+         *     via `GET /issues?sort=created_at&order=desc`.
+         * @description The ACL lives in the SQL (unlike continue-reading's post-filter):
+         *     with a window this small, filtering after the LIMIT would let rows
+         *     from invisible libraries starve out the visible ones.
+         */
+        get: operations["rails_recent_issues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/saved-views": {
         parameters: {
             query?: never;
@@ -8253,6 +8280,14 @@ export interface components {
             /** @description Series slug for linking to the affected page, when resolvable. */
             series_slug?: string | null;
             trigger_kind: string;
+        };
+        /**
+         * @description Newest-ingests rail. Items are plain issue cards (`series_name`
+         *     populated so the card heading reads "Series #N" across a rail that
+         *     mixes many series).
+         */
+        RecentIssuesView: {
+            items: components["schemas"]["IssueSummaryView"][];
         };
         RefreshLibraryResp: {
             jobs_coalesced: number;
@@ -15874,6 +15909,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    rails_recent_issues: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecentIssuesView"];
+                };
             };
         };
     };

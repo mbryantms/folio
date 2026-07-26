@@ -13,7 +13,7 @@
 //!   - PATCH rejects unknown `kind` and duplicate `(kind, ref_id)`
 //!     pairs.
 //!   - Default home pin order seeds Continue Reading → On Deck →
-//!     Recently Added → Recently Updated.
+//!     New Issues → Recently added series → Recently updated series.
 
 mod common;
 
@@ -444,7 +444,7 @@ async fn default_home_pin_order_is_curated() {
 
     // First touch seeds auto-pin system views into user_view_pins. The
     // top-down pin order is curated: Continue Reading → On Deck →
-    // Recently Added → Recently Updated.
+    // New Issues → Recently added series → Recently updated series.
     let (status, json) = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let items = json["items"].as_array().unwrap();
@@ -465,8 +465,9 @@ async fn default_home_pin_order_is_curated() {
         vec![
             "Continue reading".to_owned(),
             "On deck".to_owned(),
-            "Recently Added".to_owned(),
-            "Recently Updated".to_owned(),
+            "New issues".to_owned(),
+            "Recently added series".to_owned(),
+            "Recently updated series".to_owned(),
         ],
         "fresh user pin order should be curated top-down",
     );

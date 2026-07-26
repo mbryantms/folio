@@ -561,6 +561,7 @@ async fn system_rails_seeded_and_immutable() {
         .collect();
     assert!(system_keys.contains(&"continue_reading"));
     assert!(system_keys.contains(&"on_deck"));
+    assert!(system_keys.contains(&"new_issues"));
     for v in items.iter().filter(|v| v["kind"] == "system") {
         assert_eq!(v["pinned"], true);
         assert_eq!(v["is_system"], true);
@@ -1850,4 +1851,150 @@ async fn on_deck_cbl_acl_invisible_finished_prefix_still_counts() {
     assert_eq!(cbl_cards[0]["issue"]["id"], visible_issue);
     assert_eq!(cbl_cards[0]["position"], 2);
     assert_eq!(cbl_cards[0]["last_activity"], t0.to_rfc3339());
+}
+
+// ───── New Issues rail (`/me/recent-issues`) ─────
+
+/// Overwrite an issue's `created_at` so recency ordering is
+/// deterministic (the seed helpers stamp everything `now`).
+async fn stamp_issue_created_at(
+    app: &TestApp,
+    issue_id: &str,
+    when: chrono::DateTime<chrono::FixedOffset>,
+) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    IssueAM {
+        id: Unchanged(issue_id.to_owned()),
+        created_at: Set(when),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+}
+
+/// Soft-remove an issue (mirrors the scanner's tombstone write).
+async fn soft_remove_issue(app: &TestApp, issue_id: &str) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    IssueAM {
+        id: Unchanged(issue_id.to_owned()),
+        removed_at: Set(Some(Utc::now().fixed_offset())),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn recent_issues_caps_per_series_and_orders_desc() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "ri-order@example.com").await;
+
+    let base = Utc::now().fixed_offset();
+    let at = |secs: i64| base + chrono::Duration::seconds(secs);
+
+    // Series A: five active issues, newest ingests overall. The
+    // per-series cap (3) must keep only the three newest.
+    let (lib_a, series_a, a1) = seed_one_issue(&app, "ri-a").await;
+    stamp_issue_created_at(&app, &a1, at(101)).await;
+    for n in 2..=5 {
+        let id = seed_extra_issue(&app, lib_a, series_a, n as f64, &format!("ri-a-{n}")).await;
+        stamp_issue_created_at(&app, &id, at(100 + n)).await;
+    }
+    // A soft-removed issue newer than everything must never surface.
+    let removed = seed_extra_issue(&app, lib_a, series_a, 6.0, "ri-a-6").await;
+    stamp_issue_created_at(&app, &removed, at(200)).await;
+    soft_remove_issue(&app, &removed).await;
+
+    // Series B: two older issues — both fit under the cap.
+    let (_lib_b, series_b, b1) = seed_one_issue(&app, "ri-b").await;
+    stamp_issue_created_at(&app, &b1, at(10)).await;
+    let b2 = seed_extra_issue(&app, _lib_b, series_b, 2.0, "ri-b-2").await;
+    stamp_issue_created_at(&app, &b2, at(20)).await;
+
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/recent-issues",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().unwrap();
+    let ids: Vec<&str> = items.iter().map(|i| i["id"].as_str().unwrap()).collect();
+
+    // Cap: series A contributes its three newest (5, 4, 3) — not #1/#2,
+    // and not the removed #6. Then B's two, newest first.
+    // Issue ids are `{series simple uuid zero-padded to 62}{nn}` — match
+    // on the embedded series uuid, not a prefix.
+    let a_ids: Vec<&str> = ids
+        .iter()
+        .copied()
+        .filter(|id| id.contains(&series_a.simple().to_string()))
+        .collect();
+    assert_eq!(a_ids.len(), 3, "per-series cap should keep 3 of A's 5");
+    let numbers: Vec<&str> = items
+        .iter()
+        .map(|i| i["number"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        numbers,
+        vec!["5", "4", "3", "2", "1"],
+        "overall order is created_at desc with the cap applied",
+    );
+    assert!(
+        !ids.contains(&removed.as_str()),
+        "soft-removed issues never surface"
+    );
+
+    // Cards carry the parent series name for the rail heading.
+    assert_eq!(items[0]["series_name"], "Series ri-a");
+    assert_eq!(items[3]["series_name"], "Series ri-b");
+    // Cover URL is derived like every other rail card.
+    let cover = items[0]["cover_url"].as_str().unwrap();
+    assert!(
+        cover.ends_with("/pages/0/thumb"),
+        "cover_url shape: {cover}"
+    );
+}
+
+#[tokio::test]
+async fn recent_issues_respects_library_acl() {
+    let app = TestApp::spawn().await;
+    // First registration is the admin; the second is the ACL-scoped user.
+    let _admin = register(&app, "ri-acl-admin@example.com").await;
+    let user = register(&app, "ri-acl-user@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (_lib_a, _series_a, _a1) = seed_one_issue(&app, "ri-acl-a").await;
+    let (lib_b, _series_b, b1) = seed_one_issue(&app, "ri-acl-b").await;
+
+    // No grants → empty rail (not an error).
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/recent-issues",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["items"].as_array().unwrap().len(), 0);
+
+    // Grant library B only → only B's issue surfaces.
+    grant_access(&app, user.user_id, lib_b).await;
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/recent-issues",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], b1);
 }

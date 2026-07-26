@@ -2577,7 +2577,10 @@ async fn hydrate_and_respond(
         .filter_map(|i| {
             let s = series_lookup.get(&i.series_id)?;
             let series_slug = s.slug.clone();
-            Some(IssueSummaryView::from_model(i, &series_slug))
+            // `series_name` so card headings read "Series #N" on the
+            // cross-library surfaces (grid issues mode, search, the New
+            // Issues detail page) — this list inherently mixes series.
+            Some(IssueSummaryView::from_model(i, &series_slug).with_series_name(s.name.clone()))
         })
         .collect();
     Json(IssueListView {
