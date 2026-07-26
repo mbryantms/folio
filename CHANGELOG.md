@@ -13,6 +13,25 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.0](https://github.com/mbryantms/folio/compare/v0.26.18...v0.27.0) (2026-07-26)
+
+
+### Added
+
+* **rails:** issue-level "New issues" home rail with per-series cap ([#545](https://github.com/mbryantms/folio/issues/545)) ([59ca94b](https://github.com/mbryantms/folio/commit/59ca94b920722a86c5c644a1a13112d62b22c279))
+
+
+### Fixed
+
+* **web:** dialog width overrides must be sm:-prefixed to beat the base sm:max-w-lg ([#548](https://github.com/mbryantms/folio/issues/548)) ([f62fddc](https://github.com/mbryantms/folio/commit/f62fddc386ba1cfaeabac8a5e9a627c4efcce10a))
+
+
+### Dependencies
+
+* update dependency lucide-react to v1.26.0 ([#542](https://github.com/mbryantms/folio/issues/542)) ([3f324de](https://github.com/mbryantms/folio/commit/3f324de3af5442b16dab0dcc6ebed8e737f8b64e))
+* update dependency next-intl to v4.13.4 ([#546](https://github.com/mbryantms/folio/issues/546)) ([4b37ba4](https://github.com/mbryantms/folio/commit/4b37ba4b5be9e50838b13b0862e591bf1000fd02))
+* update taiki-e/install-action digest to 41049aa ([#544](https://github.com/mbryantms/folio/issues/544)) ([990deee](https://github.com/mbryantms/folio/commit/990deeefe483959b2b62c709d1389d998c8403a4))
+
 ## [0.26.18](https://github.com/mbryantms/folio/compare/v0.26.17...v0.26.18) (2026-07-26)
 
 
