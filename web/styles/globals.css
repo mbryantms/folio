@@ -12,6 +12,14 @@
  */
 :root,
 [data-theme="dark"] {
+  /* Tell the UA this is dark content: native form controls, scrollbars,
+   * and the system chrome around a standalone PWA (the iPadOS status-bar
+   * backing in particular) all key off `color-scheme`. Each theme block
+   * declares its own; the light/amber blocks below override to `light`.
+   * The <meta name="color-scheme"> emitted from lib/viewport.ts carries
+   * the same signal for the pre-CSS paint. */
+  color-scheme: dark;
+
   --background: 222 22% 6%;
   --foreground: 210 20% 96%;
 
@@ -67,6 +75,8 @@
 }
 
 [data-theme="light"] {
+  color-scheme: light;
+
   --background: 0 0% 100%;
   --foreground: 222 47% 11%;
   --card: 0 0% 100%;
@@ -105,6 +115,8 @@
  * `--accent` / `--ring` on top of these base tokens.
  */
 [data-theme="amber"] {
+  color-scheme: light;
+
   --background: 38 35% 93%;
   --foreground: 28 30% 15%;
   --card: 38 45% 96%;

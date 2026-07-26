@@ -890,6 +890,20 @@ export function Reader({
         incognito={incognito}
       />
 
+      {/* Status-bar scrim for standalone PWA mode. Fitted pages sit below
+       * the safe-area inset, but webtoon scroll and pinch-zoomed pages run
+       * artwork under the status bar — this keeps the system glyphs
+       * legible over a dark fade that matches the reader instead of
+       * whatever backing the OS improvises. Height is the inset itself,
+       * so on desktop / non-notched devices it collapses to 0 and paints
+       * nothing. z-20 keeps it under the chrome (z-30), which brings its
+       * own opaque safe-area backing when visible; mirrors PageStrip's
+       * `--safe-bottom` bar on the home-indicator side. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-x-0 top-0 z-20 h-(--safe-top) bg-gradient-to-b from-black/80 to-transparent"
+      />
+
       {peekActive && (
         // Peek-mode banner. Fixed at the top, below the safe-area
         // inset so it clears the iPhone notch / Dynamic Island. z-30

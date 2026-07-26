@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { themedViewport } from "@/lib/viewport";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import { cookies, headers } from "next/headers";
@@ -132,40 +133,21 @@ export const metadata: Metadata = {
 };
 
 /**
- * Explicit viewport with pinch-zoom enabled. Without this, Next's
- * default omits `maximum-scale` / `userScalable`, but some embeds
- * and some PWA installs still end up at scale=1 only. Pinning the
- * values explicitly guarantees mobile users can pinch-zoom anywhere
- * in the app to read small text on series/issue cards, the admin
- * tables, and OPDS pages. The reader (Reader.tsx) opts back into
- * native pinch-zoom by setting `touch-action: pan-y pinch-zoom`
- * on its container — its drag handler ignores the swipe when
- * `visualViewport.scale > 1` so panning a zoomed page doesn't
- * accidentally turn the page.
- *
- * `viewportFit: "cover"` lets the app paint into the area behind
- * the iOS notch / Dynamic Island. Interactive elements that need
- * to stay clear of the inset (the topbar in particular) read the
- * `env(safe-area-inset-*)` CSS variables from their own padding;
- * the body itself is allowed to extend full-bleed.
- *
- * `themeColor` drives the iOS status bar tint and the Android
- * browser chrome color. Light and dark variants are emitted as
- * separate `<meta name="theme-color">` tags with `media` queries.
- * The hex values mirror the dark and light `--background` tokens
- * from `web/styles/globals.css`.
+ * Viewport shape + rationale live in `web/lib/viewport.ts` (shared
+ * with the reader route's per-page override). This is a function
+ * rather than a static export because `themeColor` / `colorScheme`
+ * must follow the user's cookie-driven theme, not the device's
+ * `prefers-color-scheme` — otherwise a dark-themed app on a
+ * light-mode iPad declares itself white and iPadOS paints a white
+ * status-bar backing over dark content in standalone mode. The
+ * route is already dynamic (RootLayout reads the same cookie jar),
+ * so this adds no rendering cost.
  */
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 5,
-  userScalable: true,
-  viewportFit: "cover",
-  themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#0c1012" },
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-  ],
-};
+export async function generateViewport(): Promise<Viewport> {
+  const jar = await cookies();
+  const themeCookie = jar.get(THEME_COOKIE)?.value;
+  return themedViewport(isTheme(themeCookie) ? themeCookie : "dark");
+}
 
 // Post-Human-URLs M3: locale is no longer a route param. Read it via
 // `getLocale()` from next-intl/server, which resolves cookie/header per
