@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.2](https://github.com/mbryantms/folio/compare/v0.27.1...v0.27.2) (2026-07-29)
+
+
+### Fixed
+
+* **metadata:** actually record field provenance from the scanner and sidecar applies ([#567](https://github.com/mbryantms/folio/issues/567)) ([ad7295b](https://github.com/mbryantms/folio/commit/ad7295b2ae0cda590fd9989c4005d90b73acc134))
+
+
+### Dependencies
+
+* update docker/login-action digest to dbcb813 ([#565](https://github.com/mbryantms/folio/issues/565)) ([66ead75](https://github.com/mbryantms/folio/commit/66ead75833e72477ada48da0d377c8d42696c327))
+
 ## [0.27.1](https://github.com/mbryantms/folio/compare/v0.27.0...v0.27.1) (2026-07-29)
 
 
