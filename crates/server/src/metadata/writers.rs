@@ -39,7 +39,7 @@ use entity::{
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseBackend, DbErr,
-    EntityTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect, Statement,
+    EntityTrait, ExprTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect, Statement,
 };
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -56,6 +56,7 @@ pub enum SetBy {
     User,
     ComicInfo,
     MetronInfo,
+    SeriesJson,
     Provider(Source),
     ScannerInference,
     ScannerFolderTag,
@@ -68,13 +69,40 @@ impl SetBy {
             SetBy::User => "user".into(),
             SetBy::ComicInfo => "comicinfo".into(),
             SetBy::MetronInfo => "metroninfo".into(),
+            SetBy::SeriesJson => "series_json".into(),
             SetBy::Provider(s) => s.as_str().into(),
             SetBy::ScannerInference => "scanner_inference".into(),
             SetBy::ScannerFolderTag => "scanner_folder_tag".into(),
             SetBy::CrossReference => "cross_reference".into(),
         }
     }
+
+    /// File/scanner-derived codes — the weakest attribution tier. A
+    /// re-ingest of a file can't know who put the data *in* the file,
+    /// so these codes may refresh each other but never overwrite a
+    /// `user` or provider row (see `write_file_field_provenance`).
+    pub fn is_file_sourced(self) -> bool {
+        matches!(
+            self,
+            SetBy::ComicInfo
+                | SetBy::MetronInfo
+                | SetBy::SeriesJson
+                | SetBy::ScannerInference
+                | SetBy::ScannerFolderTag
+        )
+    }
 }
+
+/// The `set_by` codes `write_file_field_provenance` is allowed to
+/// overwrite — kept as a slice so the guard's SQL `IN` list and
+/// `SetBy::is_file_sourced` can't drift apart.
+const FILE_SOURCED_SET_BY: [&str; 5] = [
+    "comicinfo",
+    "metroninfo",
+    "series_json",
+    "scanner_inference",
+    "scanner_folder_tag",
+];
 
 // ─────────────────────────────────────────────────────────────────
 // Cover overwrite policy.
@@ -499,6 +527,108 @@ pub async fn write_field_provenance<C: ConnectionTrait>(
         .exec(db)
         .await?;
     Ok(())
+}
+
+/// Scanner-ingest provenance: batch-upsert file-sourced rows for every
+/// `(field, set_by)` pair, refusing to overwrite rows whose `set_by`
+/// outranks a file re-ingest. Attribution strength is
+/// **user > provider > file**: a `user` pin or a provider apply knows
+/// *who* chose the value; re-reading the file only proves the value is
+/// in the file. The guard is the `DO UPDATE ... WHERE set_by IN (file
+/// codes)` clause, so the precedence rule holds atomically even when a
+/// writeback-triggered rescan races the apply job that wrote the
+/// provider rows.
+///
+/// Every `set_by` passed here must satisfy [`SetBy::is_file_sourced`]
+/// (debug-asserted) — provider/user writes go through
+/// [`write_field_provenance`], which overwrites unconditionally.
+pub async fn write_file_field_provenance<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: &str,
+    pairs: &[(crate::metadata::MetadataField, SetBy)],
+) -> Result<(), DbErr> {
+    if pairs.is_empty() {
+        return Ok(());
+    }
+    debug_assert!(pairs.iter().all(|(_, sb)| sb.is_file_sourced()));
+    let now = chrono::Utc::now().fixed_offset();
+    let models = pairs
+        .iter()
+        .map(|(field, set_by)| field_provenance::ActiveModel {
+            entity_type: Set(entity_type.into()),
+            entity_id: Set(entity_id.into()),
+            field: Set(field.key()),
+            set_by: Set(set_by.as_str()),
+            set_at: Set(now),
+            source_external_id: Set(None),
+        });
+    field_provenance::Entity::insert_many(models)
+        .on_conflict(
+            OnConflict::columns([
+                field_provenance::Column::EntityType,
+                field_provenance::Column::EntityId,
+                field_provenance::Column::Field,
+            ])
+            .update_columns([
+                field_provenance::Column::SetBy,
+                field_provenance::Column::SetAt,
+                field_provenance::Column::SourceExternalId,
+            ])
+            .action_and_where(
+                sea_orm::sea_query::Expr::col((
+                    field_provenance::Entity,
+                    field_provenance::Column::SetBy,
+                ))
+                .is_in(FILE_SOURCED_SET_BY),
+            )
+            .to_owned(),
+        )
+        .exec_without_returning(db)
+        .await?;
+    Ok(())
+}
+
+/// Companion to [`write_file_field_provenance`]: drop file-sourced rows
+/// for fields the freshly-parsed sidecar no longer carries, so the
+/// provenance table doesn't keep describing a column the same ingest
+/// just nulled out. Same precedence guard — `user`/provider rows are
+/// never deleted by a scan.
+pub async fn delete_file_field_provenance<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: &str,
+    fields: &[crate::metadata::MetadataField],
+) -> Result<(), DbErr> {
+    if fields.is_empty() {
+        return Ok(());
+    }
+    field_provenance::Entity::delete_many()
+        .filter(field_provenance::Column::EntityType.eq(entity_type))
+        .filter(field_provenance::Column::EntityId.eq(entity_id))
+        .filter(field_provenance::Column::Field.is_in(fields.iter().map(|f| f.key())))
+        .filter(field_provenance::Column::SetBy.is_in(FILE_SOURCED_SET_BY))
+        .exec(db)
+        .await?;
+    Ok(())
+}
+
+/// Field keys with a `set_by='user'` provenance row — the scanner's
+/// user-precedence source. Generic over [`ConnectionTrait`] (unlike
+/// `sidecar_compose::load_user_pins`) so it runs inside the scanner's
+/// per-batch transaction handle.
+pub async fn fetch_user_pinned_fields<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: &str,
+) -> Result<HashSet<String>, DbErr> {
+    let rows = field_provenance::Entity::find()
+        .filter(field_provenance::Column::EntityType.eq(entity_type))
+        .filter(field_provenance::Column::EntityId.eq(entity_id))
+        .filter(field_provenance::Column::SetBy.eq("user"))
+        .all(db)
+        .await?;
+    Ok(rows.into_iter().map(|r| r.field).collect())
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1810,6 +1940,7 @@ pub async fn set_issue_variants<C: ConnectionTrait>(
         SetBy::User
         | SetBy::ComicInfo
         | SetBy::MetronInfo
+        | SetBy::SeriesJson
         | SetBy::ScannerInference
         | SetBy::ScannerFolderTag
         | SetBy::CrossReference => None,

@@ -1286,3 +1286,278 @@ async fn imageless_archive_surfaces_no_pages_health_row() {
         "sibling with pages unflagged"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Field provenance from the scanner ingest (fix/field-provenance-writes).
+// The ingest stamps file-tier rows (`comicinfo` / `metroninfo` /
+// `scanner_inference`) for every metadata field the sidecars carried,
+// through a guarded writer that never overwrites `user` or provider
+// rows — attribution strength is user > provider > file.
+// ─────────────────────────────────────────────────────────────────
+
+async fn issue_prov_map(
+    db: &sea_orm::DatabaseConnection,
+    issue_id: &str,
+) -> std::collections::HashMap<String, String> {
+    entity::field_provenance::Entity::find()
+        .filter(entity::field_provenance::Column::EntityType.eq("issue"))
+        .filter(entity::field_provenance::Column::EntityId.eq(issue_id))
+        .all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.field, r.set_by))
+        .collect()
+}
+
+#[tokio::test]
+async fn ingest_writes_file_provenance_with_per_file_attribution() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Prov (2024)");
+    std::fs::create_dir_all(&folder).unwrap();
+
+    // ComicInfo carries title + format + writer; MetronInfo overrides
+    // summary and contributes characters — per-field attribution must
+    // reflect which file actually won each value.
+    let comic_info = r#"<?xml version="1.0"?>
+        <ComicInfo>
+            <Series>Prov</Series>
+            <Number>1</Number>
+            <Title>From ComicInfo</Title>
+            <Format>Annual</Format>
+            <Summary>ComicInfo summary.</Summary>
+            <Writer>CI Writer</Writer>
+        </ComicInfo>"#;
+    let metron_info = r#"<?xml version="1.0"?>
+        <MetronInfo>
+            <Series>Prov</Series>
+            <Summary>Metron summary wins.</Summary>
+            <Characters>
+                <Character>Alana</Character>
+            </Characters>
+        </MetronInfo>"#;
+    write_cbz_with_xml(
+        &folder.join("Prov 001.cbz"),
+        1,
+        2,
+        Some(comic_info),
+        Some(metron_info),
+    );
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issue = IssueEntity::find().one(&state.db).await.unwrap().unwrap();
+    let prov = issue_prov_map(&state.db, &issue.id).await;
+    assert_eq!(prov.get("title").map(String::as_str), Some("comicinfo"));
+    assert_eq!(prov.get("format").map(String::as_str), Some("comicinfo"));
+    assert_eq!(prov.get("credits").map(String::as_str), Some("comicinfo"));
+    assert_eq!(
+        prov.get("description").map(String::as_str),
+        Some("metroninfo"),
+        "MetronInfo overrode the summary, so attribution follows it"
+    );
+    assert_eq!(
+        prov.get("characters").map(String::as_str),
+        Some("metroninfo")
+    );
+    assert!(
+        !prov.contains_key("tags"),
+        "fields no sidecar carried get no provenance row"
+    );
+}
+
+#[tokio::test]
+async fn rescan_preserves_user_and_provider_provenance_and_user_values() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Sticky (2024)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let cbz = folder.join("Sticky 001.cbz");
+    write_cbz_with_xml(
+        &cbz,
+        1,
+        2,
+        Some(
+            r#"<?xml version="1.0"?><ComicInfo><Series>Sticky</Series><Number>1</Number><Title>File Title</Title><Characters>Old Cast</Characters></ComicInfo>"#,
+        ),
+        None,
+    );
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issue = IssueEntity::find().one(&state.db).await.unwrap().unwrap();
+
+    // Simulate a user edit (PATCH dual-write shape: column + user pin)
+    // and a provider apply on `characters` — through the real writer,
+    // which upserts over the rows the first scan just recorded.
+    let mut am: entity::issue::ActiveModel = issue.clone().into();
+    am.title = Set(Some("My Hand-Picked Title".into()));
+    am.update(&state.db).await.unwrap();
+    use server::metadata::MetadataField;
+    use server::metadata::identifier::Source;
+    use server::metadata::writers::{SetBy, write_field_provenance};
+    write_field_provenance(
+        &state.db,
+        "issue",
+        &issue.id,
+        MetadataField::Title,
+        SetBy::User,
+        None,
+    )
+    .await
+    .unwrap();
+    write_field_provenance(
+        &state.db,
+        "issue",
+        &issue.id,
+        MetadataField::Characters,
+        SetBy::Provider(Source::Metron),
+        None,
+    )
+    .await
+    .unwrap();
+
+    // External retag: new bytes, new title, new characters.
+    write_cbz_with_xml(
+        &cbz,
+        2,
+        2,
+        Some(
+            r#"<?xml version="1.0"?><ComicInfo><Series>Sticky</Series><Number>1</Number><Title>Retagged Title</Title><Characters>New Cast</Characters></ComicInfo>"#,
+        ),
+        None,
+    );
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let after = IssueEntity::find_by_id(issue.id.clone())
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after.title.as_deref(),
+        Some("My Hand-Picked Title"),
+        "user-pinned title must survive the rescan"
+    );
+    assert_eq!(
+        after.characters.as_deref(),
+        Some("New Cast"),
+        "provider provenance guards the attribution row, not the value — the file still refreshes it"
+    );
+
+    let prov = issue_prov_map(&state.db, &issue.id).await;
+    assert_eq!(
+        prov.get("title").map(String::as_str),
+        Some("user"),
+        "file re-ingest must not downgrade a user pin"
+    );
+    assert_eq!(
+        prov.get("characters").map(String::as_str),
+        Some("metron"),
+        "file re-ingest must not downgrade provider attribution"
+    );
+}
+
+#[tokio::test]
+async fn force_rescan_backfills_missing_provenance() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Backfill (2024)");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz_with_xml(
+        &folder.join("Backfill 001.cbz"),
+        1,
+        2,
+        Some(
+            r#"<?xml version="1.0"?><ComicInfo><Series>Backfill</Series><Number>1</Number><Title>T</Title></ComicInfo>"#,
+        ),
+        None,
+    );
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issue = IssueEntity::find().one(&state.db).await.unwrap().unwrap();
+    assert!(!issue_prov_map(&state.db, &issue.id).await.is_empty());
+
+    // Wipe (models a pre-provenance library) and prove a plain rescan
+    // of unchanged files does NOT backfill…
+    entity::field_provenance::Entity::delete_many()
+        .exec(&state.db)
+        .await
+        .unwrap();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    assert!(
+        issue_prov_map(&state.db, &issue.id).await.is_empty(),
+        "unchanged files skip ingest, so no backfill on a normal scan"
+    );
+
+    // …while a force scan re-parses every archive and restores rows.
+    scanner::scan_library_with(&state, lib_id, true)
+        .await
+        .unwrap();
+    let prov = issue_prov_map(&state.db, &issue.id).await;
+    assert_eq!(prov.get("title").map(String::as_str), Some("comicinfo"));
+}
+
+#[tokio::test]
+async fn series_reconcile_writes_series_json_provenance() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series ProvSeries (2014)");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz_with_xml(
+        &folder.join("ProvSeries 001.cbz"),
+        1,
+        2,
+        Some(
+            r#"<?xml version="1.0"?><ComicInfo><Series>ProvSeries</Series><Number>1</Number></ComicInfo>"#,
+        ),
+        None,
+    );
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    // Sidecar arrives after the fact — the reconcile self-heal path is
+    // what applies (and now attributes) the changes.
+    std::fs::write(
+        folder.join("series.json"),
+        r#"{
+            "metadata": {
+                "name": "ProvSeries Deluxe",
+                "status": "Ended",
+                "description_text": "Curated blurb."
+            }
+        }"#,
+    )
+    .unwrap();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let series = SeriesEntity::find()
+        .filter(entity::series::Column::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(series.name, "ProvSeries Deluxe");
+    let prov: std::collections::HashMap<String, String> = entity::field_provenance::Entity::find()
+        .filter(entity::field_provenance::Column::EntityType.eq("series"))
+        .filter(entity::field_provenance::Column::EntityId.eq(series.id.to_string()))
+        .all(&state.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.field, r.set_by))
+        .collect();
+    assert_eq!(prov.get("title").map(String::as_str), Some("series_json"));
+    assert_eq!(prov.get("status").map(String::as_str), Some("series_json"));
+    assert_eq!(
+        prov.get("description").map(String::as_str),
+        Some("series_json")
+    );
+}

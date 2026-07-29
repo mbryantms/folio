@@ -22,10 +22,13 @@ pub struct Model {
     pub entity_id: String,
     #[sea_orm(primary_key, auto_increment = false)]
     pub field: String,
-    /// `'user' | 'comicinfo' | 'metroninfo' | 'comicvine' | 'metron'
-    /// | 'scanner_inference' | 'scanner_folder_tag'`. `'user'` rows
-    /// are sacred — skipped on every Apply unless the caller passes
-    /// `override_user_edits=true`.
+    /// `'user' | 'comicinfo' | 'metroninfo' | 'series_json' |
+    /// 'comicvine' | 'metron' | 'scanner_inference' |
+    /// 'scanner_folder_tag'`. `'user'` rows are sacred — skipped on
+    /// every Apply unless the caller passes `override_user_edits=true`.
+    /// File/scanner codes are the weakest tier: the scanner's guarded
+    /// writer refreshes them freely but never overwrites `user` or
+    /// provider rows (see `writers::write_file_field_provenance`).
     pub set_by: String,
     pub set_at: DateTimeWithTimeZone,
     /// Which provider record this came from (provider's external id

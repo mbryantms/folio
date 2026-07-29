@@ -1367,3 +1367,211 @@ async fn apply_series_with_writeback_persists_uncarriable_series_fields() {
         "replace-all must overwrite the provider-set summary",
     );
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Provider field-provenance from the sidecar branch
+// (fix/field-provenance-writes). The XML can't carry "ComicVine set
+// this on date X" and the scoped rescan's file-tier writes are guarded
+// from overwriting provider rows, so the apply itself records the true
+// source — same metadata-only exception class as variant covers.
+// ─────────────────────────────────────────────────────────────────
+
+use sea_orm::{ColumnTrait, QueryFilter};
+
+async fn issue_prov(
+    app: &TestApp,
+    issue_id: &str,
+) -> std::collections::HashMap<String, (String, Option<String>)> {
+    field_provenance::Entity::find()
+        .filter(field_provenance::Column::EntityType.eq("issue"))
+        .filter(field_provenance::Column::EntityId.eq(issue_id))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.field, (r.set_by, r.source_external_id)))
+        .collect()
+}
+
+#[tokio::test]
+async fn apply_issue_with_writeback_writes_provider_field_provenance() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let cbz = dir.path().join("saga-1.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    use server::metadata::cache;
+    use server::metadata::identifier::Source;
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Issue,
+        "67890",
+        &stub_provider_payload(),
+    )
+    .await
+    .unwrap();
+    let (run_id, ordinal) = seed_issue_run(&app, &issue_id, "comicvine").await;
+
+    apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        args(run_id, ordinal, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("apply_issue");
+
+    let prov = issue_prov(&app, &issue_id).await;
+    // Provider-contributed fields (title, description, credits,
+    // characters in the stub) get provider rows with the provider's
+    // external id for the issue.
+    for field in ["title", "description", "credits", "characters"] {
+        assert_eq!(
+            prov.get(field),
+            Some(&("comicvine".to_owned(), Some("67890".to_owned()))),
+            "field {field} must be attributed to the provider",
+        );
+    }
+    // Fields the provider had nothing for keep no rows (the composer
+    // kept the DB value), and page_count is excluded by design (the
+    // scanner ingests the archive's real count, not the XML's claim).
+    for field in ["tags", "genres", "page_count"] {
+        assert!(
+            !prov.contains_key(field),
+            "unexpected provenance for {field}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn apply_issue_writeback_pin_suppresses_provider_provenance() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let cbz = dir.path().join("saga-1.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
+        .with_title("My Hand-Edited Title")
+        .insert(&app.state().db)
+        .await;
+
+    let now = Utc::now().fixed_offset();
+    field_provenance::ActiveModel {
+        entity_type: Set("issue".into()),
+        entity_id: Set(issue_id.clone()),
+        field: Set("title".into()),
+        set_by: Set("user".into()),
+        source_external_id: Set(None),
+        set_at: Set(now),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+
+    use server::metadata::cache;
+    use server::metadata::identifier::Source;
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Issue,
+        "67890",
+        &stub_provider_payload(),
+    )
+    .await
+    .unwrap();
+    let (run_id, ordinal) = seed_issue_run(&app, &issue_id, "comicvine").await;
+
+    apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        args(run_id, ordinal, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("apply_issue");
+
+    let prov = issue_prov(&app, &issue_id).await;
+    assert_eq!(
+        prov.get("title").map(|(s, _)| s.as_str()),
+        Some("user"),
+        "composer suppressed the provider title, so the pin must survive",
+    );
+    assert_eq!(
+        prov.get("description").map(|(s, _)| s.as_str()),
+        Some("comicvine"),
+        "unpinned provider-contributed fields still attribute to the provider",
+    );
+}
+
+#[tokio::test]
+async fn apply_issue_writeback_override_retires_user_pin() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let cbz = dir.path().join("saga-1.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
+        .with_title("My Hand-Edited Title")
+        .insert(&app.state().db)
+        .await;
+
+    let now = Utc::now().fixed_offset();
+    field_provenance::ActiveModel {
+        entity_type: Set("issue".into()),
+        entity_id: Set(issue_id.clone()),
+        field: Set("title".into()),
+        set_by: Set("user".into()),
+        source_external_id: Set(None),
+        set_at: Set(now),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+
+    use server::metadata::cache;
+    use server::metadata::identifier::Source;
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Issue,
+        "67890",
+        &stub_provider_payload(),
+    )
+    .await
+    .unwrap();
+    let (run_id, ordinal) = seed_issue_run(&app, &issue_id, "comicvine").await;
+
+    apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        args(run_id, ordinal, ApplyMode::FillMissing, true),
+    )
+    .await
+    .expect("apply_issue");
+
+    let prov = issue_prov(&app, &issue_id).await;
+    assert_eq!(
+        prov.get("title").map(|(s, _)| s.as_str()),
+        Some("comicvine"),
+        "override_user_edits must retire the stale user pin so the \
+         follow-up rescan can ingest the overridden value",
+    );
+}

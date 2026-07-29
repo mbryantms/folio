@@ -262,6 +262,12 @@ struct ParsedArchive {
     /// counts as present). Persisted to `issues.metroninfo_present` for the
     /// issue Metadata tab's source-files report.
     metroninfo_present: bool,
+    /// [`MetadataField::key`] set MetronInfo won during the destructive
+    /// merge into `info` — the only surviving record of which file
+    /// contributed which field. Drives the `comicinfo` vs `metroninfo`
+    /// attribution on the ingest's `field_provenance` writes. Empty when
+    /// no MetronInfo.xml was present.
+    metron_fields: std::collections::HashSet<String>,
 }
 
 /// Outcome of the by-content-hash dedupe check, when no row was found
@@ -413,9 +419,10 @@ async fn parse_archive_for_ingest(
 
     // Merge MetronInfo over ComicInfo for the overlapping fields (spec §4.4 +
     // §6.8: MetronInfo wins).
-    if let Some(m) = &metron_opt {
-        merge_metron_into_comicinfo(&mut info, m);
-    }
+    let metron_fields = match &metron_opt {
+        Some(m) => merge_metron_into_comicinfo(&mut info, m),
+        None => std::collections::HashSet::new(),
+    };
 
     let metron_ids = metron_opt.as_ref().map(|m| m.ids.clone());
     let metroninfo_present = metron_opt.is_some();
@@ -427,6 +434,7 @@ async fn parse_archive_for_ingest(
         parse_state,
         metron_ids,
         metroninfo_present,
+        metron_fields,
     }))
 }
 
@@ -722,6 +730,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         parse_state,
         metron_ids,
         metroninfo_present,
+        metron_fields,
     }) = parse_archive_for_ingest(state, lib, path, size, stats, health, verify_dims).await?
     else {
         return Ok(());
@@ -737,6 +746,40 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     let inferred = filename::infer_with_opts(leaf, filename_opts(lib));
 
     let series_publisher = info.publisher.clone().or(inferred.publisher.clone());
+
+    // Volume + publisher are the two fields where filename/folder
+    // inference backstops the sidecar XML — resolve them once (both
+    // stamp branches used to duplicate the expression) and remember
+    // which side won so the provenance rows attribute honestly
+    // (`comicinfo`/`metroninfo` vs `scanner_inference`).
+    let volume_from_file = info
+        .volume
+        .filter(|&v| filename::plausible_volume(v, info.year))
+        .is_some();
+    let resolved_volume = info
+        .volume
+        .filter(|&v| filename::plausible_volume(v, info.year))
+        .or(inferred.volume);
+    let publisher_from_file = info
+        .publisher
+        .as_deref()
+        .is_some_and(|s| !s.trim().is_empty());
+    let publisher_present = publisher_from_file
+        || inferred
+            .publisher
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty());
+
+    // Per-field provenance consequences of this parse — computed once,
+    // written after whichever stamp branch runs.
+    let (prov_pairs, prov_absent) = file_provenance_plan(
+        &info,
+        &metron_fields,
+        resolved_volume.is_some(),
+        volume_from_file,
+        publisher_present,
+        publisher_from_file,
+    );
 
     // Build issue. (Series identity was resolved by the caller in process_folder.)
     let number_raw = info
@@ -804,10 +847,29 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     }
 
     if let Some(row) = existing {
-        // Fields the user has overridden via `PATCH /issues/{id}` are sticky:
-        // the scanner refreshes everything else from ComicInfo but leaves
-        // these alone. Cheap O(n) check on a tiny array.
+        // Fields the user has overridden are sticky: the scanner
+        // refreshes everything else from ComicInfo but leaves these
+        // alone. Two sources, matching the PATCH handler's dual-write:
+        //   - `field_provenance` rows with `set_by='user'` — the
+        //     canonical pin store, kept current by provider applies
+        //     (an `override_user_edits` apply overwrites the row, so
+        //     the follow-up writeback rescan ingests the overridden
+        //     value instead of deadlocking on a stale pin);
+        //   - the legacy `user_edited` JSON list — still authoritative
+        //     for columns without a `MetadataField` slot (sort_number,
+        //     number_raw, web_url, alternate_series, black_and_white).
         let edited = user_edited_set(&row.user_edited);
+        let user_pins =
+            crate::metadata::writers::fetch_user_pinned_fields(db, "issue", &row.id).await?;
+        // `summary` / `description` alias the same column (PATCH pins
+        // write `summary`; provider applies write `description`) —
+        // accept either, mirroring the composer's pin check.
+        let pinned = |f: crate::metadata::MetadataField| {
+            user_pins.contains(&f.key())
+                || (matches!(f, crate::metadata::MetadataField::Description)
+                    && user_pins.contains("summary"))
+        };
+        use crate::metadata::MetadataField as F;
         // Track whether the actual file contents changed. Force scans go
         // through this branch even when size+mtime match — in that case
         // there's no point invalidating thumbnails, since the rendered
@@ -829,31 +891,47 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         am.content_hash = Set(hash);
         am.special_type = Set(special_type.clone());
         am.metroninfo_present = Set(Some(metroninfo_present));
-        am.title = Set(info.title.clone());
+        if !pinned(F::Title) {
+            am.title = Set(info.title.clone());
+        }
         if !edited.contains("sort_number") {
             am.sort_number = Set(sort_number);
         }
-        am.number_raw = Set(number_raw);
+        if !edited.contains("number_raw") {
+            am.number_raw = Set(number_raw);
+        }
         // ComicInfo `<Volume>` and MetronInfo carry the same Mylar3
         // `V<year>` pollution as filenames. Gate every source through
         // `plausible_volume` so year-stamped values get dropped at
-        // ingest — same rule already applied to `inferred.volume`.
-        am.volume = Set(info
-            .volume
-            .filter(|&v| filename::plausible_volume(v, info.year))
-            .or(inferred.volume));
-        am.year = Set(info.year);
-        am.month = Set(info.month);
-        am.day = Set(info.day);
-        am.summary = Set(info.summary.clone());
-        am.notes = Set(info.notes.clone());
-        if !edited.contains("language_code") {
+        // ingest — same rule already applied to `inferred.volume`
+        // (resolved once above, alongside the provenance attribution).
+        if !pinned(F::Volume) {
+            am.volume = Set(resolved_volume);
+        }
+        if !pinned(F::CoverDate) {
+            am.year = Set(info.year);
+            am.month = Set(info.month);
+            am.day = Set(info.day);
+        }
+        if !pinned(F::Description) {
+            am.summary = Set(info.summary.clone());
+        }
+        if !pinned(F::Notes) {
+            am.notes = Set(info.notes.clone());
+        }
+        if !pinned(F::LanguageCode) && !edited.contains("language_code") {
             am.language_code = Set(info.language_iso.clone());
         }
-        am.format = Set(info.format.clone());
-        am.black_and_white = Set(info.black_and_white);
-        am.manga = Set(info.manga.clone());
-        if !edited.contains("age_rating") {
+        if !pinned(F::Format) {
+            am.format = Set(info.format.clone());
+        }
+        if !edited.contains("black_and_white") {
+            am.black_and_white = Set(info.black_and_white);
+        }
+        if !pinned(F::Manga) {
+            am.manga = Set(info.manga.clone());
+        }
+        if !pinned(F::AgeRating) && !edited.contains("age_rating") {
             am.age_rating = Set(info.age_rating.clone());
         }
         am.page_count = Set(resolved_page_count);
@@ -868,32 +946,50 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             Set(parsers::comicinfo::front_cover_page_index(&info.pages).unwrap_or(0));
         am.pages = Set(pages_json);
         am.comic_info_raw = Set(comic_info_raw);
-        am.alternate_series = Set(info.alternate_series.clone());
-        am.story_arc = Set(info.story_arc.clone());
-        am.story_arc_number = Set(info.story_arc_number.clone());
-        am.characters = Set(info.characters.clone());
-        am.teams = Set(info.teams.clone());
-        am.locations = Set(info.locations.clone());
-        if !edited.contains("tags") {
+        if !edited.contains("alternate_series") {
+            am.alternate_series = Set(info.alternate_series.clone());
+        }
+        if !pinned(F::StoryArcs) {
+            am.story_arc = Set(info.story_arc.clone());
+            am.story_arc_number = Set(info.story_arc_number.clone());
+        }
+        if !pinned(F::Characters) {
+            am.characters = Set(info.characters.clone());
+        }
+        if !pinned(F::Teams) {
+            am.teams = Set(info.teams.clone());
+        }
+        if !pinned(F::Locations) {
+            am.locations = Set(info.locations.clone());
+        }
+        if !pinned(F::Tags) && !edited.contains("tags") {
             am.tags = Set(info.tags.clone());
         }
-        if !edited.contains("genre") {
+        if !pinned(F::Genres) && !edited.contains("genre") {
             am.genre = Set(info.genre.clone());
         }
-        am.writer = Set(info.writer.clone());
-        am.penciller = Set(info.penciller.clone());
-        am.inker = Set(info.inker.clone());
-        am.colorist = Set(info.colorist.clone());
-        am.letterer = Set(info.letterer.clone());
-        am.cover_artist = Set(info.cover_artist.clone());
-        am.editor = Set(info.editor.clone());
-        am.translator = Set(info.translator.clone());
-        am.publisher = Set(info.publisher.clone().or(series_publisher.clone()));
-        am.imprint = Set(info.imprint.clone());
+        if !pinned(F::Credits) {
+            am.writer = Set(info.writer.clone());
+            am.penciller = Set(info.penciller.clone());
+            am.inker = Set(info.inker.clone());
+            am.colorist = Set(info.colorist.clone());
+            am.letterer = Set(info.letterer.clone());
+            am.cover_artist = Set(info.cover_artist.clone());
+            am.editor = Set(info.editor.clone());
+            am.translator = Set(info.translator.clone());
+        }
+        if !pinned(F::Publisher) {
+            am.publisher = Set(info.publisher.clone().or(series_publisher.clone()));
+        }
+        if !pinned(F::Imprint) {
+            am.imprint = Set(info.imprint.clone());
+        }
         am.scan_information = Set(info.scan_information.clone());
         am.community_rating = Set(info.community_rating);
         am.review = Set(info.review.clone());
-        am.web_url = Set(info.web.clone());
+        if !edited.contains("web_url") {
+            am.web_url = Set(info.web.clone());
+        }
         // External-ID writes (CV / Metron / GTIN from ComicInfo) move
         // to the external_ids table via writers::set_legacy_id_trio.
         // Called after the update lands (line ~669) so the issue row
@@ -963,6 +1059,18 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         }
         // F-1: pass the just-updated model directly instead of re-fetching by id.
         super::metadata_rollup::replace_issue_metadata_from_model(db, &updated).await?;
+        // Field provenance: this ingest re-derived every unpinned
+        // metadata column from the file, so record file-level
+        // attribution for the fields the sidecars carried and prune
+        // file-sourced rows for fields the file no longer has. Both
+        // writes are guarded — `user` pins and provider attributions
+        // outrank a file re-ingest, so the post-writeback rescan
+        // refreshes values without downgrading "ComicVine set this"
+        // to "it was in the file".
+        crate::metadata::writers::write_file_field_provenance(db, "issue", &row_id, &prov_pairs)
+            .await?;
+        crate::metadata::writers::delete_file_field_provenance(db, "issue", &row_id, &prov_absent)
+            .await?;
         stats.files_updated += 1;
         let label = issue_label(info.title.as_deref(), number_label.as_deref(), &updated.id);
         let e = events
@@ -1010,14 +1118,9 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             title: Set(info.title.clone()),
             sort_number: Set(sort_number),
             number_raw: Set(number_raw),
-            // Same plausibility gate as the update path above —
-            // ComicInfo / MetronInfo `<Volume>` values in the
-            // 1900–2100 year range are Mylar3 stamps, not real
-            // volumes.
-            volume: Set(info
-                .volume
-                .filter(|&v| filename::plausible_volume(v, info.year))
-                .or(inferred.volume)),
+            // Same plausibility gate as the update path — resolved once
+            // above the branch split, alongside its provenance flag.
+            volume: Set(resolved_volume),
             year: Set(info.year),
             month: Set(info.month),
             day: Set(info.day),
@@ -1116,6 +1219,17 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         }
         // F-1: pass the just-inserted model directly instead of re-fetching by id.
         super::metadata_rollup::replace_issue_metadata_from_model(db, &inserted).await?;
+        // Field provenance for the fresh row — no pins can exist yet,
+        // and nothing to prune. (The guarded writer is still the right
+        // entry point: a content-hash dedupe race could resurface an
+        // old row's provenance under this id.)
+        crate::metadata::writers::write_file_field_provenance(
+            db,
+            "issue",
+            &inserted.id,
+            &prov_pairs,
+        )
+        .await?;
         stats.files_added += 1;
         let label = issue_label(info.title.as_deref(), number_label.as_deref(), &inserted.id);
         let e = events
@@ -1655,18 +1769,32 @@ fn infer_double_page(dim: (u32, u32)) -> Option<bool> {
 
 /// Apply MetronInfo's stronger metadata over the ComicInfo defaults
 /// (spec §4.4 + §6.8 — MetronInfo wins where both populate the same field).
-fn merge_metron_into_comicinfo(info: &mut ComicInfo, m: &MetronInfo) {
+///
+/// Returns the [`MetadataField::key`] set MetronInfo actually won, so the
+/// ingest can attribute each field's `field_provenance` row to the file
+/// that contributed the value (`metroninfo` vs `comicinfo`). Fields with
+/// no provenance slot (`series`, `number`, `gtin` — the latter rides the
+/// `external_ids` channel) merge without recording.
+fn merge_metron_into_comicinfo(
+    info: &mut ComicInfo,
+    m: &MetronInfo,
+) -> std::collections::HashSet<String> {
+    use crate::metadata::MetadataField as F;
+    let mut won: std::collections::HashSet<String> = std::collections::HashSet::new();
     if m.title.is_some() {
         info.title = m.title.clone();
+        won.insert(F::Title.key());
     }
     if m.series.is_some() {
         info.series = m.series.clone();
     }
     if m.publisher.is_some() {
         info.publisher = m.publisher.clone();
+        won.insert(F::Publisher.key());
     }
     if m.imprint.is_some() {
         info.imprint = m.imprint.clone();
+        won.insert(F::Imprint.key());
     }
     if m.number.is_some() {
         info.number = m.number.clone();
@@ -1677,30 +1805,39 @@ fn merge_metron_into_comicinfo(info: &mut ComicInfo, m: &MetronInfo) {
         && filename::plausible_volume(v, m.year)
     {
         info.volume = Some(v);
+        won.insert(F::Volume.key());
     }
     if m.year.is_some() {
         info.year = m.year;
+        won.insert(F::CoverDate.key());
     }
     if m.month.is_some() {
         info.month = m.month;
+        won.insert(F::CoverDate.key());
     }
     if m.day.is_some() {
         info.day = m.day;
+        won.insert(F::CoverDate.key());
     }
     if m.summary.is_some() {
         info.summary = m.summary.clone();
+        won.insert(F::Description.key());
     }
     if m.notes.is_some() {
         info.notes = m.notes.clone();
+        won.insert(F::Notes.key());
     }
     if m.age_rating.is_some() {
         info.age_rating = m.age_rating.clone();
+        won.insert(F::AgeRating.key());
     }
     if m.language.is_some() {
         info.language_iso = m.language.clone();
+        won.insert(F::LanguageCode.key());
     }
     if m.manga.is_some() {
         info.manga = m.manga.clone();
+        won.insert(F::Manga.key());
     }
     if m.gtin.is_some() {
         info.gtin = m.gtin.clone();
@@ -1715,48 +1852,162 @@ fn merge_metron_into_comicinfo(info: &mut ComicInfo, m: &MetronInfo) {
     // `split_csv` (which splits on both) recovers the correct list.
     if !m.teams.is_empty() {
         info.teams = Some(join_csv_unambiguous(&m.teams));
+        won.insert(F::Teams.key());
     }
     if !m.characters.is_empty() {
         info.characters = Some(join_csv_unambiguous(&m.characters));
+        won.insert(F::Characters.key());
     }
     if !m.locations.is_empty() {
         info.locations = Some(join_csv_unambiguous(&m.locations));
+        won.insert(F::Locations.key());
     }
     if !m.tags.is_empty() {
         info.tags = Some(join_csv_unambiguous(&m.tags));
+        won.insert(F::Tags.key());
     }
     if !m.genres.is_empty() {
         info.genre = Some(join_csv_unambiguous(&m.genres));
+        won.insert(F::Genres.key());
     }
     if !m.story_arcs.is_empty() {
         info.story_arc = Some(join_csv_unambiguous(&m.story_arcs));
+        won.insert(F::StoryArcs.key());
     }
 
-    // Role-tagged credits collapse into ComicInfo's flat strings.
+    // Role-tagged credits collapse into ComicInfo's flat strings. Any
+    // role Metron carries marks the whole `credits` field Metron-won —
+    // provenance is per-field, not per-role.
     if let Some(w) = m.writer() {
         info.writer = Some(w);
+        won.insert(F::Credits.key());
     }
     if let Some(w) = m.penciller() {
         info.penciller = Some(w);
+        won.insert(F::Credits.key());
     }
     if let Some(w) = m.inker() {
         info.inker = Some(w);
+        won.insert(F::Credits.key());
     }
     if let Some(w) = m.colorist() {
         info.colorist = Some(w);
+        won.insert(F::Credits.key());
     }
     if let Some(w) = m.letterer() {
         info.letterer = Some(w);
+        won.insert(F::Credits.key());
     }
     if let Some(w) = m.cover_artist() {
         info.cover_artist = Some(w);
+        won.insert(F::Credits.key());
     }
     if let Some(w) = m.editor() {
         info.editor = Some(w);
+        won.insert(F::Credits.key());
     }
     if let Some(w) = m.translator() {
         info.translator = Some(w);
+        won.insert(F::Credits.key());
     }
+    won
+}
+
+/// The `field_provenance` consequences of one parsed archive: which
+/// `(field, set_by)` rows this ingest establishes, and which fields the
+/// sidecar XML no longer carries (candidates for the guarded prune).
+///
+/// Scope notes:
+/// - Only fields with a [`MetadataField`] slot appear — `number_raw`,
+///   `web_url`, `black_and_white`, `alternate_series`, `sort_number`
+///   have no provenance vocabulary (same holes as the PATCH handler's
+///   `patch_field_key_to_metadata_field`).
+/// - `PageCount` is excluded on purpose: the stored count comes from
+///   the archive's real image entries, not the XML's claim.
+/// - Issue summary is recorded under [`MetadataField::Description`],
+///   matching the provider-apply vocabulary (`summary` is the PATCH
+///   pin alias for the same column).
+/// - Volume + publisher may fall back to filename/folder inference;
+///   the caller passes which side won so those attribute as
+///   `scanner_inference` instead of a file code.
+fn file_provenance_plan(
+    info: &ComicInfo,
+    metron_fields: &std::collections::HashSet<String>,
+    volume_present: bool,
+    volume_from_file: bool,
+    publisher_present: bool,
+    publisher_from_file: bool,
+) -> (
+    Vec<(
+        crate::metadata::MetadataField,
+        crate::metadata::writers::SetBy,
+    )>,
+    Vec<crate::metadata::MetadataField>,
+) {
+    use crate::metadata::MetadataField as F;
+    use crate::metadata::writers::SetBy;
+    let has = |s: &Option<String>| s.as_deref().is_some_and(|v| !v.trim().is_empty());
+    let file_set_by = |f: F| {
+        if metron_fields.contains(&f.key()) {
+            SetBy::MetronInfo
+        } else {
+            SetBy::ComicInfo
+        }
+    };
+    let mut pairs: Vec<(F, SetBy)> = Vec::new();
+    let mut absent: Vec<F> = Vec::new();
+    let mut record = |field: F, present: bool, set_by_override: Option<SetBy>| {
+        if present {
+            pairs.push((field, set_by_override.unwrap_or_else(|| file_set_by(field))));
+        } else {
+            absent.push(field);
+        }
+    };
+    record(F::Title, has(&info.title), None);
+    record(F::Description, has(&info.summary), None);
+    record(F::Notes, has(&info.notes), None);
+    record(F::Imprint, has(&info.imprint), None);
+    record(F::LanguageCode, has(&info.language_iso), None);
+    record(F::AgeRating, has(&info.age_rating), None);
+    record(F::Format, has(&info.format), None);
+    record(F::Manga, has(&info.manga), None);
+    record(F::ScanInformation, has(&info.scan_information), None);
+    record(F::CommunityRating, info.community_rating.is_some(), None);
+    record(
+        F::CoverDate,
+        info.year.is_some() || info.month.is_some() || info.day.is_some(),
+        None,
+    );
+    record(F::Characters, has(&info.characters), None);
+    record(F::Teams, has(&info.teams), None);
+    record(F::Locations, has(&info.locations), None);
+    record(F::Tags, has(&info.tags), None);
+    record(F::Genres, has(&info.genre), None);
+    record(F::StoryArcs, has(&info.story_arc), None);
+    let any_credit = [
+        &info.writer,
+        &info.penciller,
+        &info.inker,
+        &info.colorist,
+        &info.letterer,
+        &info.cover_artist,
+        &info.editor,
+        &info.translator,
+    ]
+    .into_iter()
+    .any(has);
+    record(F::Credits, any_credit, None);
+    record(
+        F::Volume,
+        volume_present,
+        (!volume_from_file).then_some(SetBy::ScannerInference),
+    );
+    record(
+        F::Publisher,
+        publisher_present,
+        (!publisher_from_file).then_some(SetBy::ScannerInference),
+    );
+    (pairs, absent)
 }
 
 /// Mirror of `sidecar_compose::join_unambiguous_csv`. Joins with `; `
@@ -1875,10 +2126,11 @@ pub fn peek_identity_hint(
     let info = match parse_archive_with(path, ParseMode::IdentityOnly, limits) {
         ArchiveOutcome::Ok { info, metron, .. } => {
             // Apply MetronInfo precedence so the identity hint reflects the
-            // strongest available metadata.
+            // strongest available metadata. The won-field set is only
+            // needed by the ingest's provenance writes, not for identity.
             let mut info = info;
             if let Some(m) = metron.as_ref() {
-                merge_metron_into_comicinfo(&mut info, m);
+                let _ = merge_metron_into_comicinfo(&mut info, m);
             }
             info
         }
