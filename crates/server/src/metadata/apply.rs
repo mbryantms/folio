@@ -363,17 +363,17 @@ pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
     let lib = entity::library::Entity::find_by_id(row.library_id)
         .one(&state.db)
         .await?;
-    if let Some(lib) = lib
-        && lib.metadata_writeback_enabled
-        && lib.allow_archive_writeback
-    {
-        return apply_series_via_sidecar(state, &args, &row, source, detail).await;
-    }
-
     let resolver = ProvResolver::Uniform(ProvSource {
         set_by: SetBy::Provider(source),
         source_ext: detail.source_external_id.clone(),
     });
+    if let Some(lib) = lib
+        && lib.metadata_writeback_enabled
+        && lib.allow_archive_writeback
+    {
+        return apply_series_via_sidecar(state, &args, &row, source, detail, &resolver).await;
+    }
+
     let run_id = args.run_id;
     let ordinal = args.ordinal;
     let outcome = write_series_fields(state, &row, series_uuid, &detail, args, &resolver).await?;
@@ -622,6 +622,7 @@ pub(crate) async fn apply_series_via_sidecar(
     series_row: &series::Model,
     source: Source,
     series_detail: GenericMetadata,
+    resolver: &ProvResolver<'_>,
 ) -> Result<ApplyOutcome, ApplyError> {
     // Eligible issues: state='active' (the scanner's happy-path
     // value — covers ComicInfo-present + MissingComicInfo files).
@@ -813,12 +814,10 @@ pub(crate) async fn apply_series_via_sidecar(
     // slot, scanner freeze, or no series-row refresh — see
     // `write_series_scalar_fields`), so the sidecar path persists the
     // same scalar set as the DB-direct path, with identical provenance
-    // + fill/replace semantics. External ids stay with the job
-    // handler's `persist_applied_series_external_ids`.
-    let scalar_resolver = ProvResolver::Uniform(ProvSource {
-        set_by: SetBy::Provider(source),
-        source_ext: series_detail.source_external_id.clone(),
-    });
+    // + fill/replace semantics — resolved through the caller's
+    // `resolver` so a composite apply attributes each field to the
+    // provider that actually contributed it. External ids stay with
+    // the job handler's `persist_applied_series_external_ids`.
     let mut scalar_outcome = ApplyOutcome::default();
     write_series_scalar_fields(
         state,
@@ -826,7 +825,7 @@ pub(crate) async fn apply_series_via_sidecar(
         series_row.id,
         &series_detail,
         args,
-        &scalar_resolver,
+        resolver,
         &mut scalar_outcome,
     )
     .await?;
@@ -869,6 +868,7 @@ pub(crate) async fn apply_issue_via_sidecar(
     row: &entity::issue::Model,
     source: Source,
     detail: GenericMetadata,
+    resolver: &ProvResolver<'_>,
 ) -> Result<ApplyOutcome, ApplyError> {
     let Some(series_row) = entity::series::Entity::find_by_id(row.series_id)
         .one(&state.db)
@@ -932,7 +932,6 @@ pub(crate) async fn apply_issue_via_sidecar(
 
     let comic_info_xml = parsers::comicinfo::serialize(&comic_info);
     let metron_info_xml = parsers::metroninfo::serialize(&metron_info);
-    let _ = source; // recorded by the rewrite job via the audit row's payload
 
     use apalis::prelude::Storage;
     let mut storage = state.jobs.rewrite_issue_sidecars_storage.clone();
@@ -1003,6 +1002,55 @@ pub(crate) async fn apply_issue_via_sidecar(
     // as the variant-cover write above.
     bump_issue_sync(&state.db, &row.id).await?;
 
+    // Field provenance: the XML schemas can't carry "ComicVine set this
+    // on date X", and the scoped rescan's file-level attribution is
+    // guarded from *overwriting* provider rows — so the apply itself is
+    // the only place the true source is known. Same metadata-only
+    // exception class as the variant-cover write above. Skips mirror
+    // the composer's decisions: provider-empty fields kept their DB
+    // value, `selected_fields` is the per-field opt-in gate, and a
+    // user pin means the composer suppressed the provider's value
+    // (unless `override_user_edits` collapsed the pins — then the
+    // unconditional upsert below is also what retires the stale `user`
+    // row, letting the follow-up rescan ingest the overridden value).
+    // Best-effort: a provenance failure never fails the apply.
+    for &field in SIDECAR_ISSUE_PROVENANCE_FIELDS {
+        if crate::metadata::merge::field_richness(
+            &detail,
+            field,
+            crate::metadata::merge::MergeScope::Issue,
+        ) == 0
+        {
+            continue;
+        }
+        if let Some(sel) = &args.selected_fields
+            && !sel.contains(&field.key())
+        {
+            continue;
+        }
+        if !args.override_user_edits && sidecar_pin_matches(&issue_user_pins, field) {
+            continue;
+        }
+        let prov = resolver.resolve(&field.key());
+        if let Err(e) = writers::write_field_provenance(
+            &state.db,
+            "issue",
+            &row.id,
+            field,
+            prov.set_by,
+            prov.source_ext,
+        )
+        .await
+        {
+            tracing::warn!(
+                issue_id = row.id,
+                field = %field.key(),
+                error = %e,
+                "apply_issue_via_sidecar: field_provenance write failed",
+            );
+        }
+    }
+
     let outcome = ApplyOutcome {
         enqueued_rewrite: true,
         suppressed_user_pins,
@@ -1042,17 +1090,17 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
     let lib = entity::library::Entity::find_by_id(row.library_id)
         .one(&state.db)
         .await?;
-    if let Some(lib) = lib
-        && lib.metadata_writeback_enabled
-        && lib.allow_archive_writeback
-    {
-        return apply_issue_via_sidecar(state, &args, &row, source, detail).await;
-    }
-
     let resolver = ProvResolver::Uniform(ProvSource {
         set_by: SetBy::Provider(source),
         source_ext: detail.source_external_id.clone(),
     });
+    if let Some(lib) = lib
+        && lib.metadata_writeback_enabled
+        && lib.allow_archive_writeback
+    {
+        return apply_issue_via_sidecar(state, &args, &row, source, detail, &resolver).await;
+    }
+
     let run_id = args.run_id;
     let ordinal = args.ordinal;
     let outcome =
@@ -2005,6 +2053,46 @@ fn active_i32(v: &ActiveValue<i32>) -> i32 {
         ActiveValue::Set(n) | ActiveValue::Unchanged(n) => *n,
         _ => 0,
     }
+}
+
+/// Issue-scope fields the sidecar (XML-first) apply records provenance
+/// for: the intersection of (a) fields the composer sources from the
+/// provider detail, (b) fields either sidecar schema can carry, and
+/// (c) fields the scanner ingests back into issue columns on the
+/// scoped rescan. Anything outside that intersection would produce a
+/// provenance row describing a value that never lands in the DB —
+/// e.g. `Sku`/`Price`/`StoreDate`/`FocDate` (composed into MetronInfo
+/// but not yet scanner-ingested), `PageCount` (ingested from the
+/// archive's real image entries, not the XML's claim), and the covers
+/// (no provenance rows on the DB-direct branch either).
+const SIDECAR_ISSUE_PROVENANCE_FIELDS: &[MetadataField] = &[
+    MetadataField::Title,
+    MetadataField::Description,
+    MetadataField::AgeRating,
+    MetadataField::CoverDate,
+    MetadataField::LanguageCode,
+    MetadataField::Format,
+    MetadataField::Publisher,
+    MetadataField::Imprint,
+    MetadataField::Volume,
+    MetadataField::CommunityRating,
+    MetadataField::ScanInformation,
+    MetadataField::Credits,
+    MetadataField::Characters,
+    MetadataField::Teams,
+    MetadataField::Locations,
+    MetadataField::StoryArcs,
+    MetadataField::Tags,
+    MetadataField::Genres,
+];
+
+/// Composer pin vocabulary per field: `summary`/`description` alias
+/// the same issue-summary column (PATCH pins write `summary`, provider
+/// applies write `description`); everything else pins under its own
+/// [`MetadataField::key`]. Mirrors `compose_comicinfo`'s check.
+fn sidecar_pin_matches(pins: &std::collections::HashSet<String>, field: MetadataField) -> bool {
+    pins.contains(&field.key())
+        || (matches!(field, MetadataField::Description) && pins.contains("summary"))
 }
 
 /// Walk every `applied_fields` entry and emit a `field_provenance`

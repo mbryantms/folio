@@ -693,8 +693,15 @@ pub async fn apply_composite(
                 .ok_or(ApplyError::SeriesGone)?;
             let writeback = library_is_writeback(state, series_row.library_id).await?;
             let outcome = if writeback {
-                apply_series_via_sidecar(state, &apply_args, &series_row, primary_source, merged)
-                    .await?
+                apply_series_via_sidecar(
+                    state,
+                    &apply_args,
+                    &series_row,
+                    primary_source,
+                    merged,
+                    &resolver,
+                )
+                .await?
             } else {
                 write_series_fields(
                     state,
@@ -715,8 +722,15 @@ pub async fn apply_composite(
                 .ok_or(ApplyError::IssueGone)?;
             let writeback = library_is_writeback(state, issue_row.library_id).await?;
             let outcome = if writeback {
-                apply_issue_via_sidecar(state, &apply_args, &issue_row, primary_source, merged)
-                    .await?
+                apply_issue_via_sidecar(
+                    state,
+                    &apply_args,
+                    &issue_row,
+                    primary_source,
+                    merged,
+                    &resolver,
+                )
+                .await?
             } else {
                 // Cover provider = the source of the candidate chosen for
                 // the primary cover, else the primary source (cover block

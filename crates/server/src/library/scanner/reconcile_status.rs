@@ -255,6 +255,15 @@ where
 
     let mut am: series::ActiveModel = row.clone().into();
     let mut dirty = false;
+    // Guarded provenance for the fields this reconcile actually
+    // changes: series.json-sourced values attribute as `series_json`,
+    // aggregate-derived ones (MODE volume, Count-implied status) as
+    // `scanner_inference`. Flushed through the file-tier writer below,
+    // so `user`/provider rows always outrank a rescan.
+    use crate::metadata::MetadataField as F;
+    use crate::metadata::writers::SetBy;
+    let mut prov: Vec<(F, SetBy)> = Vec::new();
+    let mut prov_absent: Vec<F> = Vec::new();
 
     // series.json presence: record whether a usable sidecar was found in the
     // folder at scan time, for the issue Metadata tab's source-files report.
@@ -286,6 +295,14 @@ where
         am.status = Set(s.to_owned());
         am.updated_at = Set(Utc::now().fixed_offset());
         dirty = true;
+        prov.push((
+            F::Status,
+            if sidecar.and_then(|m| m.status.as_deref()).is_some() {
+                SetBy::SeriesJson
+            } else {
+                SetBy::ScannerInference
+            },
+        ));
     }
 
     // summary: write only when sidecar provided one AND we don't
@@ -298,6 +315,7 @@ where
         am.summary = Set(Some(s));
         am.updated_at = Set(Utc::now().fixed_offset());
         dirty = true;
+        prov.push((F::Description, SetBy::SeriesJson));
     }
 
     // CV id backfill routes through writers::set_external_id
@@ -357,6 +375,13 @@ where
         am.volume = Set(new_value);
         am.updated_at = Set(Utc::now().fixed_offset());
         dirty = true;
+        match new_value {
+            // Explicit sidecar null: the value is gone — prune a
+            // stale file-tier row instead of describing a NULL.
+            None => prov_absent.push(F::Volume),
+            Some(_) if sidecar.is_some() => prov.push((F::Volume, SetBy::SeriesJson)),
+            Some(_) => prov.push((F::Volume, SetBy::ScannerInference)),
+        }
     }
 
     if let Some(name) = sidecar
@@ -369,6 +394,7 @@ where
         am.normalized_name = Set(entity::series::normalize_name(name));
         am.updated_at = Set(Utc::now().fixed_offset());
         dirty = true;
+        prov.push((F::Title, SetBy::SeriesJson));
     }
 
     if let Some(publisher) = sidecar
@@ -380,10 +406,21 @@ where
         am.publisher = Set(Some(publisher.to_owned()));
         am.updated_at = Set(Utc::now().fixed_offset());
         dirty = true;
+        prov.push((F::Publisher, SetBy::SeriesJson));
     }
 
     if dirty {
         am.update(db).await?;
+        let series_id = row.id.to_string();
+        crate::metadata::writers::write_file_field_provenance(db, "series", &series_id, &prov)
+            .await?;
+        crate::metadata::writers::delete_file_field_provenance(
+            db,
+            "series",
+            &series_id,
+            &prov_absent,
+        )
+        .await?;
     }
     Ok(())
 }

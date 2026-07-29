@@ -226,14 +226,25 @@ When reviewing PRs that touch the metadata apply path:
 - **New direct `writers::set_*` call inside `apply_*` for entity-row
   writes**: reject. The writeback path is composer + scanner; if the
   scalar needs to land in the DB, add it to `process.rs` so the rescan
-  picks it up.
+  picks it up. The sanctioned **metadata-only** exceptions (rows the
+  XML schemas can't carry) are: variant covers
+  (`set_issue_variants`), `last_metadata_sync_at` (`bump_issue_sync`),
+  and per-field provenance (`write_field_provenance` over
+  `SIDECAR_ISSUE_PROVENANCE_FIELDS` — the XML can't say "ComicVine set
+  this", so the apply records it; the scanner's own file-tier writes
+  are guarded and won't downgrade those rows on the follow-up rescan).
 - **`MetadataField::iter()` without an `is_junction()` / `is_cover()`
   guard**: reject. Junctions go through `writers::set_issue_*` (cache
   rebuild side effect); variants go through `set_issue_variants`;
   scalar columns through `apply_issue_updates`.
 - **`INSERT INTO field_provenance` from a non-writers caller**: reject.
   Always go through `writers::set_external_id` / the per-field write
-  helpers so the precedence rule fires.
+  helpers so the precedence rule fires. Scanner-side callers use the
+  guarded tier — `writers::write_file_field_provenance` /
+  `delete_file_field_provenance` — whose `ON CONFLICT … WHERE set_by
+  IN (file codes)` clause makes attribution strength
+  (**user > provider > file**) hold atomically even when a
+  writeback-triggered rescan races the apply job.
 
 The cleanup PR after M7 will physically remove the legacy DB-direct
 branch from `apply_issue` / `apply_series` once the

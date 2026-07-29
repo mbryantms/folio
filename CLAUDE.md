@@ -339,7 +339,14 @@ Default admin (first registered user becomes admin):
     scanner ingest is the canonical path; direct writers from the
     sidecar apply path are reserved for **metadata-only** rows the
     XML schemas don't carry (today: variant covers via
-    `set_issue_variants`).
+    `set_issue_variants`, and per-field provenance via
+    `write_field_provenance` over `SIDECAR_ISSUE_PROVENANCE_FIELDS` —
+    the XML can't say "ComicVine set this on date X", so the apply
+    records it; the scanner's file-tier provenance writes
+    (`writers::write_file_field_provenance`, `ON CONFLICT … WHERE`
+    guard) refresh `comicinfo`/`metroninfo`/`series_json` rows freely
+    but never downgrade `user` or provider rows — attribution
+    strength is **user > provider > file**).
   - Add a synth row to `library_health_issue` via the scanner. Drift
     surfacing is **synthesized per-request** in
     [`api/health_issues.rs::list`](crates/server/src/api/health_issues.rs) —

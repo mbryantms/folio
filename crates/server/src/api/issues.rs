@@ -257,6 +257,7 @@ fn provenance_source_label(set_by: &str) -> &'static str {
         "user" => "You",
         "comicinfo" => "ComicInfo.xml",
         "metroninfo" => "MetronInfo.xml",
+        "series_json" => "series.json",
         "comicvine" => "ComicVine",
         "metron" => "Metron",
         "scanner_inference" => "Scanner (filename)",
