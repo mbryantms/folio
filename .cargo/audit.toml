@@ -29,4 +29,16 @@ ignore = [
     # runs `cargo audit --deny unsound`. Revisit when candle bumps its
     # memmap2 pin.
     "RUSTSEC-2026-0186",
+    # `rkyv 0.7.46` out-of-bounds reads on archives containing Rc/Arc
+    # (RUSTSEC-2026-0235). NOT in the build graph: rust_decimal declares
+    # rkyv both ways (`^0.7.46` and `^0.8.13`) as optional deps, and no
+    # feature we enable turns either on — `cargo tree -i rkyv -e normal
+    # --all-features --target all` prints nothing, so it never compiles
+    # and never ships. It exists only as a Cargo.lock line, which is all
+    # cargo-audit reads; cargo-deny's graph is feature-aware and never
+    # sees it, which is why `cargo deny check advisories` stays green on
+    # the same tree. This entry is therefore audit.toml-ONLY — adding it
+    # to deny.toml would just log `advisory-not-detected`.
+    # Revisit when sqlx/rust_decimal drop the 0.7 optional dep.
+    "RUSTSEC-2026-0235",
 ]
