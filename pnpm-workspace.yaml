@@ -56,7 +56,7 @@ overrides:
   # ("expand is not a function"). Those copies are accepted in
   # SECURITY-EXCEPTIONS.md + ignoreGhsas below. Delete both when
   # `pnpm why brace-expansion` shows no <5.0.8 consumers.
-  "brace-expansion@>=5.0.0 <5.0.8": "5.0.8"
+  "brace-expansion@>=5.0.0 <5.0.8": "5.0.9"
 
 # Advisory exceptions the audit gates skip — every id here has a
 # rationale + delete-when condition in SECURITY-EXCEPTIONS.md (the npm
