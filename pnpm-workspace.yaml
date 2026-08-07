@@ -31,7 +31,7 @@ overrides:
   # (<4.3.0 quadratic-CPU merge-key DoS); transitive tooling only —
   # @redocly/openapi-core@1.34.x exact-pins 4.2.0 so it can't float.
   # Delete when `pnpm why js-yaml` shows no in-range consumers.
-  "js-yaml@>=4.0.0 <4.3.0": "4.3.0"
+  "js-yaml@>=4.0.0 <4.3.0": "4.3.1"
   # GHSA postcss <8.5.10 parsing advisory; build-chain only.
   # Delete when `pnpm why postcss` shows no in-range consumers.
   "postcss@<8.5.10": "8.5.23"
