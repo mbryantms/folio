@@ -80,6 +80,9 @@ jobs:
               - 'Cargo.lock'
               - 'crates/*/Cargo.toml'
               - 'deny.toml'
+              # cargo-audit's ignore list. Without this the job that reads
+              # the file is skipped by the very PR that edits it.
+              - '.cargo/audit.toml'
               - '.github/workflows/ci.yml'
             web_deps:
               - 'package.json'
