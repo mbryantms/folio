@@ -41,6 +41,15 @@ overrides:
   # GHSA postcss <8.5.10 parsing advisory; build-chain only.
   # Delete when `pnpm why postcss` shows no in-range consumers.
   "postcss@<8.5.10": "8.5.25"
+  # GHSA-2v37-7h3g-55p8 — nanoid custom generators loop indefinitely when
+  # `size` is 0 (DoS). Reaches us prod-side through the Scalar API-reference
+  # Vue chain (…>vue>@vue/compiler-sfc>postcss>nanoid); postcss's own range
+  # is ^3.3.11, so pinning postcss above does NOT lift nanoid off the
+  # vulnerable line — it needs its own entry.
+  # The advisory's second range (>=4.0.0 <5.1.6) needs no entry: the only
+  # 5.x copy we resolve is 5.1.16, already past it.
+  # Delete when `pnpm why nanoid` shows no in-range consumers.
+  "nanoid@<3.3.17": "3.3.17"
   # GHSA-f88m-g3jw-g9cj — sharp <0.35.0 inherited libvips CVEs
   # (CVE-2026-33327/-33328/-35590/-35591). Prod path: next pins
   # sharp ^0.34.5 so it can't float to the patched line.
