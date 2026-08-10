@@ -49,7 +49,7 @@ overrides:
   # The advisory's second range (>=4.0.0 <5.1.6) needs no entry: the only
   # 5.x copy we resolve is 5.1.16, already past it.
   # Delete when `pnpm why nanoid` shows no in-range consumers.
-  "nanoid@<3.3.17": "3.3.17"
+  "nanoid@<3.3.17": "3.3.18"
   # GHSA-f88m-g3jw-g9cj — sharp <0.35.0 inherited libvips CVEs
   # (CVE-2026-33327/-33328/-35590/-35591). Prod path: next pins
   # sharp ^0.34.5 so it can't float to the patched line.
