@@ -183,6 +183,21 @@
       ]
     },
     {
+      "description": "testcontainers-modules exact-tracks the testcontainers minor (0.15 → testcontainers ^0.27), and both pull bollard, which exact-pins bollard-stubs. Bumping testcontainers alone makes the two bollard majors demand conflicting bollard-stubs versions and cargo fails to resolve before it compiles anything. Move as one PR; a testcontainers minor waits for the matching testcontainers-modules release.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchPackageNames": [
+        "testcontainers",
+        "testcontainers-modules"
+      ],
+      "automerge": false,
+      "groupName": "testcontainers",
+      "addLabels": [
+        "coordinated-bump"
+      ]
+    },
+    {
       "description": "RustCrypto digest/rand ecosystem moves in lockstep \u2014 digest 0.11 (sha2 0.11 / hmac 0.13) and rand 0.10 are breaking jumps that the AEAD/signature crates (argon2, rsa, ed25519-dalek, chacha20poly1305) pin transitively. Group so they never surface as conflicting standalone bumps; needs code migration.",
       "matchManagers": [
         "cargo"
