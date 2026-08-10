@@ -40,7 +40,7 @@ overrides:
   "js-yaml@>=4.0.0 <4.3.1": "4.3.1"
   # GHSA postcss <8.5.10 parsing advisory; build-chain only.
   # Delete when `pnpm why postcss` shows no in-range consumers.
-  "postcss@<8.5.10": "8.5.25"
+  "postcss@<8.5.10": "8.5.26"
   # GHSA-2v37-7h3g-55p8 — nanoid custom generators loop indefinitely when
   # `size` is 0 (DoS). Reaches us prod-side through the Scalar API-reference
   # Vue chain (…>vue>@vue/compiler-sfc>postcss>nanoid); postcss's own range
