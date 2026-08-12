@@ -58,7 +58,7 @@ Shipped:
 - `scan_runs.stats` adds `thumbs_generated` / `thumbs_failed` counters
 
 Deferred to a follow-up session (Phase 1b stretch / bridge to Phase 2):
-- **Format coverage**: CBR (`unrar` subprocess + `prlimit`), CB7 (`sevenz-rust`), CBT (stdlib `tar`), folder-of-images, EPUB comic-style predicate (§4.5)
+- **Format coverage**: CBR (`unrar` subprocess + `prlimit`), CB7 (`sevenz-rust2`), CBT (stdlib `tar`), folder-of-images, EPUB comic-style predicate (§4.5)
 - **MetronInfo ↔ scanner merge**: parser exists and tests pass, but the scanner's per-issue field merge currently only honors ComicInfo and series.json; MetronInfo isn't yet preferred over ComicInfo for fields it provides
 - **apalis worker**: thumbnails run synchronously inline; moving to a Redis-backed background queue would unblock Phase A's >1000 issues/min target
 - **JXL → AVIF transcode** (no JXL fixtures yet; defer until needed)
@@ -188,8 +188,9 @@ preferences (3), security_headers (3), thumbnails (3) suites all green.
 Cross-cutting tech debt entries (carry-over for follow-up plan):
 
 - **Full CBR + CB7 readers** — extension recognized + dispatch wired; readers
-  return "not implemented" today. Add real impls using `unrar` + `sevenz-rust`
-  (deps already present)
+  return "not implemented" today. Add real impls using `unrar` (dep present)
+  and `sevenz-rust2` (needs adding — the old `sevenz-rust` pin was dropped as
+  abandoned/vulnerable, RUSTSEC-2026-0245)
 - **Volume year-vs-sequence column split** (§6.4) — today the raw `volume`
   is stored as-is; needs mini-migration + parser branch
 - **Hash-mismatch supersession** (§6.2) — modified-in-place files update the

@@ -18,5 +18,12 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 syn = { version = "3", features = ["full", "visit", "extra-traits"] }
 walkdir = "2"
 
+# `proc-macro2` is never named in our source — it is depended on purely to turn
+# on `span-locations` for the copy `syn` resolves to. `cargo machete` therefore
+# reports it as unused; dropping it silently degrades the `file:line:fn` hints
+# at runtime rather than failing the build, so pin it here as a known exception.
+[package.metadata.cargo-machete]
+ignored = ["proc-macro2"]
+
 [lints]
 workspace = true

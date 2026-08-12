@@ -9,9 +9,6 @@ publish.workspace = true
 [dependencies]
 sea-orm = { workspace = true }
 serde = { workspace = true }
-uuid = { workspace = true }
-chrono = { workspace = true }
-shared = { path = "../shared" }
 
 [lints]
 workspace = true

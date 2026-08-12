@@ -55,7 +55,6 @@ rand = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 jsonwebtoken = { workspace = true }
-oauth2 = { workspace = true }
 openidconnect = { workspace = true }
 ed25519-dalek = { workspace = true }
 base64 = { workspace = true }
@@ -71,7 +70,6 @@ zeroize = { workspace = true }
 time = { workspace = true }
 lettre = { workspace = true }
 walkdir = { workspace = true }
-infer = { workspace = true }
 image = { workspace = true }
 imageproc = { workspace = true }
 # Text-bubble detection on cropped reader regions. Gated behind a
@@ -115,11 +113,11 @@ dotenvy = { workspace = true }
 # Tracing / metrics
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-tracing-opentelemetry = { workspace = true }
-opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-opentelemetry-otlp = { workspace = true }
-opentelemetry-stdout = { workspace = true }
+# NOTE: the opentelemetry / tracing-opentelemetry / OTLP-exporter stack was
+# deliberately dropped for v1 (see `observability::init` and
+# docs/dev/incompleteness-audit.md §D-9) — the Prometheus `/metrics` endpoint
+# covers operator monitoring. The crates sat here unused, dragging a whole
+# tonic/gRPC subtree into the build; re-add them when OTLP is actually wired.
 log = "0.4"
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
@@ -130,7 +128,6 @@ utoipa = { workspace = true }
 utoipa-axum = { workspace = true }
 
 # Misc
-once_cell = { workspace = true }
 url = { workspace = true }
 slug = { workspace = true }
 reqwest = { workspace = true }
