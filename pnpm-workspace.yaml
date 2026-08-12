@@ -60,7 +60,7 @@ overrides:
   # the @serwist build toolchain + the vite/vitest dev stack, never the
   # shipped bundle, but the audit gate is severity-based. Holds the
   # transitive copies on the patched line.
-  "esbuild@<0.28.1": "0.28.1"
+  "esbuild@<0.28.1": "0.28.2"
   # brace-expansion DoS pair — GHSA-mh99-v99m-4gvg (<=5.0.7, unbounded
   # expansion length) and GHSA-rgw5-rvv9-x895 (unbounded intermediate
   # arrays, which bypasses the first one's mitigation). Between them they
