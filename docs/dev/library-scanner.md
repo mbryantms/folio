@@ -729,8 +729,11 @@ markers, a saved-view CBL slot). Two recovery paths:
   fingerprint logic carries dead branches for each.
 - **CBR / CB7 readers** — extension recognized + dispatch wired;
   readers return a clear "format not implemented" so the scanner emits
-  `UnsupportedArchiveFormat`. Add real implementations using `unrar`
-  and `sevenz-rust` (deps already present).
+  `UnsupportedArchiveFormat`. Add a real CBR implementation using `unrar`
+  (dep already present). CB7 needs a 7z decoder added first — use
+  `sevenz-rust2`; the original `sevenz-rust` pin was dropped because it is
+  abandoned and carries an unfixable extraction path-traversal advisory
+  (RUSTSEC-2026-0245 / RUSTSEC-2026-0246).
 - **Volume year-vs-sequence column split** (spec §6.4) — today the raw
   `volume` value is stored as-is.
 - **Hash-mismatch supersession** (spec §6.2) — modified-in-place files

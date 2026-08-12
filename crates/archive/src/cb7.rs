@@ -1,9 +1,17 @@
 //! CB7 (7z-archived) comic reader — **scaffolded only** in Library
 //! Scanner v1, Milestone 12. Same status as [`crate::cbr`].
 //!
-//! `sevenz-rust` 0.6 is in the workspace deps and the wiring point exists
-//! in [`crate::open`]; the full implementation (decompress per entry to a
-//! bounded buffer, enforce ratio guard, expose entries) is deferred.
+//! The wiring point exists in [`crate::open`]; the full implementation
+//! (decompress per entry to a bounded buffer, enforce ratio guard, expose
+//! entries) is deferred.
+//!
+//! No 7z decoder is currently in the dependency graph. `sevenz-rust` used to
+//! be pinned here unused; it was dropped because it is abandoned and carries
+//! an unfixable extraction path-traversal advisory (RUSTSEC-2026-0245 /
+//! RUSTSEC-2026-0246). When CB7 is implemented, take `sevenz-rust2` — the
+//! maintained fork the advisory points at — and route entry extraction
+//! through the same [`ArchiveLimits`](crate::ArchiveLimits) guards `cbz`
+//! applies, rather than any library-provided extract-to-directory helper.
 
 use crate::{ArchiveEntry, ArchiveError, ArchiveLimits, comic_archive::ComicArchive};
 use std::path::{Path, PathBuf};

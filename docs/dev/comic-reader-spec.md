@@ -147,7 +147,7 @@ These rows document the *intended* mobile stack so server/API decisions stay com
 
 ### 4.1 Archives
 - **Primary:** `.cbz` (ZIP). Stored uncompressed reads via direct seek.
-- **Secondary:** `.cbr` (RAR — read-only via host-installed `unrar` binary; provided by the Docker base image; license note in `LICENSE-THIRD-PARTY.md`), `.cb7` (7z via `sevenz-rust`), `.cbt` (tar, stdlib), folder-of-images, `.epub` (comic-style only — predicate in §4.5).
+- **Secondary:** `.cbr` (RAR — read-only via host-installed `unrar` binary; provided by the Docker base image; license note in `LICENSE-THIRD-PARTY.md`), `.cb7` (7z via `sevenz-rust2`), `.cbt` (tar, stdlib), folder-of-images, `.epub` (comic-style only — predicate in §4.5).
 - **Image formats inside (allowlist):** JPEG, PNG, WebP, AVIF, JXL, GIF. Anything else is skipped at scan time and surfaced as a per-issue warning. **SVG entries are rejected outright** (script-bearing).
 - **Page ordering:** natural sort (numeric-aware), then case-insensitive lex. Skip files matching `^\.|^__MACOSX|Thumbs\.db|\.xml$|\.json$|\.txt$`.
 
@@ -1454,7 +1454,7 @@ Each phase entry calls out **forward-compat considerations** — things to desig
 - **Done when:** scan a CBZ-only fixtures library, browse it on the web, see correct ComicInfo metadata. Adversarial-fixture suite (§16.1) passes — every malicious archive rejected with the expected typed error.
 
 ### Phase 1b — Format coverage, async thumbnails, search foundation
-- Archive readers: CBR (via `unrar` subprocess with §4.1.1 limits), CB7 (`sevenz-rust`), CBT (stdlib `tar`), folder-of-images, EPUB with §4.5 comic-style predicate.
+- Archive readers: CBR (via `unrar` subprocess with §4.1.1 limits), CB7 (`sevenz-rust2`), CBT (stdlib `tar`), folder-of-images, EPUB with §4.5 comic-style predicate.
 - Additional parsers: series.json (Mylar3), MetronInfo.xml.
 - Thumbnail pipeline runs as full apalis worker (background).
 - API endpoints: get page thumbnail.
