@@ -1,11 +1,10 @@
 "use client";
 
 import * as React from "react";
-import type { ColumnDef } from "@tanstack/react-table";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DataTable } from "@/components/ui/data-table";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuditLog, type AuditFilters } from "@/lib/api/queries";
@@ -100,7 +99,7 @@ export function AuditTable({ pinnedActorId }: AuditTableProps) {
 
   const { data, isLoading, error, isFetching } = useAuditLog(filters);
 
-  const columns = React.useMemo<ColumnDef<AuditEntryView>[]>(
+  const columns = React.useMemo<DataTableColumn<AuditEntryView>[]>(
     () => [
       {
         accessorKey: "created_at",

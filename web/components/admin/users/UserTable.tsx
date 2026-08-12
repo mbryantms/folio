@@ -2,12 +2,11 @@
 
 import * as React from "react";
 import Link from "next/link";
-import type { ColumnDef } from "@tanstack/react-table";
 import { Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DataTable } from "@/components/ui/data-table";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { FilterPill } from "@/components/ui/filter-pill";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -69,7 +68,7 @@ export function UserTable() {
 
   const { data, isLoading, error, isFetching } = useUserList(filters);
 
-  const columns = React.useMemo<ColumnDef<AdminUserView>[]>(
+  const columns = React.useMemo<DataTableColumn<AdminUserView>[]>(
     () => [
       {
         accessorKey: "email",
