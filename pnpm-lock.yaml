@@ -126,7 +126,7 @@ importers:
         version: 1.1.1(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       cron-parser:
         specifier: ^5.5.0
-        version: 5.8.0
+        version: 5.8.1
       cronstrue:
         specifier: ^3.14.0
         version: 3.24.0
@@ -3107,8 +3107,8 @@ packages:
   crelt@1.0.7:
     resolution: {integrity: sha512-aK6BbWfhf4U/wCcLHKPJl/xa6VkVstRaPywWtMKGwuOLc/wZTyQYuoxgvZnNsBvv7Kg3YTBQYYBCggcviQczuA==}
 
-  cron-parser@5.8.0:
-    resolution: {integrity: sha512-ZSCxMmGTIHMgpHyDpndbqzzVJKgjamXPhi1n9ZNSSxDpclRhaP+8QdMQKYwJTi9Vok6AbzJlquZ8FZ/Ft/gqaA==}
+  cron-parser@5.8.1:
+    resolution: {integrity: sha512-fVw5nGEkTVmiPKo3fY0j28Thq6jR00VKWyL22llWrsbII4sDHI+8Kx1kcL+QzGQJfCfk64bbMotrgTZRpzYpLQ==}
     engines: {node: '>=18'}
 
   cronstrue@3.24.0:
@@ -8473,7 +8473,7 @@ snapshots:
 
   crelt@1.0.7: {}
 
-  cron-parser@5.8.0:
+  cron-parser@5.8.1:
     dependencies:
       luxon: 3.7.2
 
