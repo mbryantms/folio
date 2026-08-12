@@ -2,13 +2,18 @@
 
 import * as React from "react";
 import {
+  columnVisibilityFeature,
+  createCoreRowModel,
+  createSortedRowModel,
   flexRender,
-  getCoreRowModel,
-  getSortedRowModel,
+  rowSortingFeature,
+  sortFns,
+  tableFeatures,
+  useTable,
   type ColumnDef,
-  type SortingState,
   type Row,
-  useReactTable,
+  type RowData,
+  type SortingState,
 } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ChevronRight, ChevronsUpDown } from "lucide-react";
 
@@ -22,20 +27,51 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
-export interface DataTableProps<TData, TValue> {
-  columns: ColumnDef<TData, TValue>[];
+// v9 features are opt-in and tree-shakeable, so the table declares exactly what
+// this wrapper renders: sortable headers (`rowSortingFeature` + the `sortFns`
+// registry the default comparators resolve through) and `getVisibleCells`
+// (`columnVisibilityFeature`). Row models are slots on the same object.
+// Deliberately absent: `rowSelectionFeature` — nothing here selects rows — and
+// `rowExpandingFeature`, since expansion is local `expanded` state below rather
+// than table state.
+const dataTableFeatures = tableFeatures({
+  rowSortingFeature,
+  columnVisibilityFeature,
+  coreRowModel: createCoreRowModel(),
+  sortedRowModel: createSortedRowModel(),
+  sortFns,
+});
+
+/** The feature set every `DataTable` column def is bound to. */
+export type DataTableFeatures = typeof dataTableFeatures;
+
+/**
+ * Column def for a `DataTable`. v9 threads the feature set through as
+ * `ColumnDef`'s first type argument; this alias keeps that an implementation
+ * detail so call sites stay `DataTableColumn<MyView>[]`.
+ */
+export type DataTableColumn<TData extends RowData> = ColumnDef<
+  DataTableFeatures,
+  TData
+>;
+
+/** Row handed to `renderExpanded`. */
+export type DataTableRow<TData extends RowData> = Row<DataTableFeatures, TData>;
+
+export interface DataTableProps<TData extends RowData> {
+  columns: DataTableColumn<TData>[];
   data: TData[];
   /** Render an expanded row body. When provided, rows toggle on click. */
-  renderExpanded?: (row: Row<TData>) => React.ReactNode;
+  renderExpanded?: (row: DataTableRow<TData>) => React.ReactNode;
   emptyMessage?: string;
 }
 
-export function DataTable<TData, TValue>({
+export function DataTable<TData extends RowData>({
   columns,
   data,
   renderExpanded,
   emptyMessage = "No rows.",
-}: DataTableProps<TData, TValue>) {
+}: DataTableProps<TData>) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
   // Stable prefix for `aria-controls` wiring between an expander button and
@@ -43,15 +79,15 @@ export function DataTable<TData, TValue>({
   const tableId = React.useId();
   // The expander adds a leading column, so empty/detail rows must span it too.
   const totalCols = columns.length + (renderExpanded ? 1 : 0);
-  // TanStack Table returns non-memoizable functions; React Compiler skips.
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const table = useReactTable({
+  // v8's `useReactTable` returned non-memoizable functions, so React Compiler
+  // had to skip this component (`react-hooks/incompatible-library`). v9 reads
+  // through a store, so no opt-out is needed here any more.
+  const table = useTable<DataTableFeatures, TData>({
+    features: dataTableFeatures,
     data,
     columns,
     state: { sorting },
     onSortingChange: setSorting,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
   });
 
   return (
@@ -124,7 +160,6 @@ export function DataTable<TData, TValue>({
               return (
                 <React.Fragment key={row.id}>
                   <TableRow
-                    data-state={row.getIsSelected() ? "selected" : undefined}
                     // Whole-row click stays a mouse affordance; the
                     // keyboard / screen-reader path is the real button in
                     // the leading cell below (audit E8).

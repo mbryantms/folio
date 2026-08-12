@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import type { ColumnDef } from "@tanstack/react-table";
 import { ExternalLink, Loader2 } from "lucide-react";
 
 import { BackupStorageCard } from "@/components/admin/library/BackupStorageCard";
@@ -18,7 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DataTable } from "@/components/ui/data-table";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { FilterPill } from "@/components/ui/filter-pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useHealthIssuesInfinite } from "@/lib/api/queries";
@@ -201,7 +200,7 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
   };
   const kindFacets = counts?.kinds ?? [];
 
-  const columns = React.useMemo<ColumnDef<HealthIssueView>[]>(
+  const columns = React.useMemo<DataTableColumn<HealthIssueView>[]>(
     () => [
       {
         accessorKey: "severity",
