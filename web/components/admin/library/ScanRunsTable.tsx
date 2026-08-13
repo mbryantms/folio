@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import type { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
 
 import { Loader2 } from "lucide-react";
@@ -13,7 +12,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { DataTable } from "@/components/ui/data-table";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useScanRunsInfinite } from "@/lib/api/queries";
@@ -92,7 +91,7 @@ export function ScanRunsTable({ libraryId }: { libraryId: string }) {
     [data],
   );
 
-  const columns = React.useMemo<ColumnDef<ScanRunView>[]>(
+  const columns = React.useMemo<DataTableColumn<ScanRunView>[]>(
     () => [
       {
         accessorKey: "started_at",
