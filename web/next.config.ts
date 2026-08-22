@@ -8,6 +8,27 @@ const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 // is not used (§C3) — all routes run in Node.
 const config: NextConfig = {
   output: "standalone",
+  // next 16.3.1 bumped @swc/helpers 0.5.15 -> 0.5.23, which added a
+  // `module-sync` export condition:
+  //   0.5.15  { import: esm/…, default: cjs/….cjs }
+  //   0.5.23  { module-sync: esm/…, webpack: esm/…, import: …, default: … }
+  // Next's `require-hook.js` pulls the helpers in with `require()`. The
+  // standalone file tracer resolves that through `default` and copies only
+  // `cjs/`, but Node >=22.10 honours `module-sync` FIRST and asks for
+  // `esm/` — which was never copied. The container then dies at boot with
+  //   MODULE_NOT_FOUND …/@swc/helpers/esm/_interop_require_default.js
+  // and restart-loops (shipped in v0.27.5).
+  //
+  // `next build` cannot catch this: the tracer does not validate its own
+  // output, so the build is green and the bundle is silently incomplete.
+  // Only booting the image fails — hence the compose smoke test now gating
+  // the image build in CI. Force the whole package in until the tracer
+  // learns the condition; this is additive, so it cannot change resolution.
+  outputFileTracingIncludes: {
+    "**/*": [
+      "../node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/**",
+    ],
+  },
   reactStrictMode: true,
   poweredByHeader: false,
   // React Compiler (audit G4, chunk 1.0b). Auto-memoizes components and
