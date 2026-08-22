@@ -621,6 +621,24 @@ jobs:
     # when neither image's inputs changed (e.g. a docs/CHANGELOG-only PR): the
     # job still runs so the required check reports, it just does nothing.
     needs: [changes, rust-check, web-check]
+    # MUST be explicit. A job's implicit condition is `success()`, which is
+    # evaluated over the TRANSITIVE ancestor set — so when `rust-clippy` /
+    # `rust-test` skip (a non-Rust PR), this job skips too, even though
+    # `rust-check` itself succeeded via its own `always()`. A skipped matrix
+    # job reports ONE check run named `Docker — amd64 build` (bare, no matrix
+    # suffix), so the per-image contexts
+    #   Docker — amd64 build (folio, Dockerfile)
+    #   Docker — amd64 build (folio-web, web/Dockerfile)
+    # never appear — and if those are branch-protection required checks, every
+    # non-Rust PR blocks forever waiting on a status that cannot arrive.
+    # (That is exactly what wedged the v0.27.6 release PR on 2026-08-22.)
+    # `always() && <gate>.result == 'success'` keeps the original intent —
+    # don't burn an image build behind failed checks — while guaranteeing the
+    # matrix expands and both contexts always report.
+    if: >-
+      always() &&
+      needs.rust-check.result == 'success' &&
+      needs.web-check.result == 'success'
     env:
       # Per-image: the server image rebuilds on Rust changes, the web image on
       # web changes; either rebuilds on a Dockerfile change. `docker` is true
@@ -666,6 +684,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     needs: [changes, docker-build]
+    # Same transitive-skip reason as docker-build above. If docker-build
+    # genuinely failed this skips, which is fine: docker-build is itself a
+    # required check, so the PR is blocked on that rather than deadlocked here.
+    if: always() && needs.docker-build.result == 'success'
     env:
       # Gated on the STEPS, not the job — same reason `docker-build` above
       # does it this way: the job must still run so the required check
