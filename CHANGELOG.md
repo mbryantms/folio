@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.6](https://github.com/mbryantms/folio/compare/v0.27.5...v0.27.6) (2026-08-22)
+
+
+### Fixed
+
+* **web:** force @swc/helpers into the standalone bundle; smoke-test images in CI ([#652](https://github.com/mbryantms/folio/issues/652)) ([2e09714](https://github.com/mbryantms/folio/commit/2e0971491867c48d991d9eb749bc645ae7aaafa4))
+
 ## [0.27.5](https://github.com/mbryantms/folio/compare/v0.27.4...v0.27.5) (2026-08-22)
 
 
