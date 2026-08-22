@@ -13,6 +13,34 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.5](https://github.com/mbryantms/folio/compare/v0.27.4...v0.27.5) (2026-08-22)
+
+
+### Fixed
+
+* **deps:** repair nanoid override selector and bump h2 for RUSTSEC-2026-0258 ([#646](https://github.com/mbryantms/folio/issues/646)) ([0b90a6a](https://github.com/mbryantms/folio/commit/0b90a6a17f90b77028e4ede7221d71399728e502))
+
+
+### Dependencies
+
+* update dependency @axe-core/playwright to v4.13.0 ([#635](https://github.com/mbryantms/folio/issues/635)) ([f50221e](https://github.com/mbryantms/folio/commit/f50221e66274f2d5dcb27a6e03b5e2161d9431af))
+* update dependency @hookform/resolvers to v5.9.1 ([#642](https://github.com/mbryantms/folio/issues/642)) ([df56659](https://github.com/mbryantms/folio/commit/df56659d01c01b6c0deee6dcca55b6337fd8f0e5))
+* update dependency @scalar/api-reference-react to v0.9.63 ([#639](https://github.com/mbryantms/folio/issues/639)) ([7de4ad6](https://github.com/mbryantms/folio/commit/7de4ad6817aa9045597fcffc5295e0baa3e2802f))
+* update dependency @tanstack/react-virtual to v3.14.10 ([#647](https://github.com/mbryantms/folio/issues/647)) ([2e3be8e](https://github.com/mbryantms/folio/commit/2e3be8e78f384872686b6eae7aa2cc5795012e02))
+* update dependency cron-parser to v5.9.0 ([#640](https://github.com/mbryantms/folio/issues/640)) ([a62b7d7](https://github.com/mbryantms/folio/commit/a62b7d79c8fff12ecf967718f984685e2bc139ee))
+* update dependency lucide-react to v1.33.0 ([#651](https://github.com/mbryantms/folio/issues/651)) ([9a3ef32](https://github.com/mbryantms/folio/commit/9a3ef3222d05aacb3839b2fb0770e958310a0e6b))
+* update dependency next-intl to v4.13.7 ([#648](https://github.com/mbryantms/folio/issues/648)) ([b10d5d5](https://github.com/mbryantms/folio/commit/b10d5d5ecff2a392efc91fe2fc2f0bbedf875be1))
+* update dependency vitest to v4.1.11 ([#649](https://github.com/mbryantms/folio/issues/649)) ([86e2219](https://github.com/mbryantms/folio/commit/86e2219c338dfc110904fa7d6d0e1e115aa34213))
+* update dependency zustand to v5.0.15 ([#638](https://github.com/mbryantms/folio/issues/638)) ([c4235e0](https://github.com/mbryantms/folio/commit/c4235e0fda1070564f112dd43d036e9cddadbdde))
+* update docker/setup-buildx-action digest to 37fe631 ([#645](https://github.com/mbryantms/folio/issues/645)) ([3fd50c6](https://github.com/mbryantms/folio/commit/3fd50c684276ec9b94892950186233bce854a6d0))
+* update google/osv-scanner-action action to v2.5.1 ([#650](https://github.com/mbryantms/folio/issues/650)) ([759645f](https://github.com/mbryantms/folio/commit/759645ffe1e7ff2b09a2d088f18dc960aecf5c83))
+* update nextjs monorepo to v16.3.1 ([#641](https://github.com/mbryantms/folio/issues/641)) ([c50f100](https://github.com/mbryantms/folio/commit/c50f10030b85e2e83f7384a216d34a022ec82830))
+* update pnpm to v11.22.0 ([#644](https://github.com/mbryantms/folio/issues/644)) ([546d5c9](https://github.com/mbryantms/folio/commit/546d5c91fc33b743292fa2ffef8642551d7760ae))
+* update rust crate futures to v0.3.34 ([#634](https://github.com/mbryantms/folio/issues/634)) ([ae65f84](https://github.com/mbryantms/folio/commit/ae65f84251fc5bed70fba6f32c58f9940787eb04))
+* update rust crate uuid to v1.24.1 ([#643](https://github.com/mbryantms/folio/issues/643)) ([96a4186](https://github.com/mbryantms/folio/commit/96a418670ee7b7e0d88f3f9d328ac544f2d692de))
+* update sea-orm + sqlx to v2.0.2 ([#637](https://github.com/mbryantms/folio/issues/637)) ([d7629ae](https://github.com/mbryantms/folio/commit/d7629aebdae4d10547e0210291180b919ea8fe11))
+* update taiki-e/install-action digest to 82cd3e7 ([#633](https://github.com/mbryantms/folio/issues/633)) ([322800a](https://github.com/mbryantms/folio/commit/322800a86c02fa8f7f0113836a113984412169e0))
+
 ## [0.27.4](https://github.com/mbryantms/folio/compare/v0.27.3...v0.27.4) (2026-08-13)
 
 
