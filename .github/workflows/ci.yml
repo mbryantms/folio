@@ -649,3 +649,68 @@ jobs:
           tags: ${{ matrix.image }}:ci
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  # A green `docker-build` only proves the images ASSEMBLE. v0.27.5 shipped a
+  # folio-web image that built cleanly and then restart-looped on boot:
+  # next 16.3.1's standalone file tracer copied @swc/helpers' `cjs/` while
+  # Node resolved the `module-sync` condition to `esm/`, so the bundle was
+  # silently missing files nothing checks at build time. `compose.test.yml`
+  # already existed and would have caught it on the first boot — it just was
+  # never wired into CI, only reachable by hand via `just docker-test`.
+  #
+  # This job closes that gap: it boots both production images against real
+  # postgres + redis and asserts /healthz, /readyz and a server-rendered
+  # sign-in page. Make it a REQUIRED check alongside `docker-build`.
+  docker-smoke:
+    name: Docker — image smoke test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    needs: [changes, docker-build]
+    # Only meaningful when an image actually got rebuilt. Note `web` already
+    # covers pnpm-lock.yaml / package.json / pnpm-workspace.yaml, so a
+    # dependency-only PR (which is exactly how v0.27.5 broke) reaches here.
+    if: >-
+      needs.docker-build.result == 'success' &&
+      (needs.changes.outputs.rust == 'true' ||
+       needs.changes.outputs.web == 'true' ||
+       needs.changes.outputs.docker == 'true')
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+      # Rebuild with `load: true` so the images land in the local docker
+      # daemon under the tags compose.test.yml expects. docker-build already
+      # populated the gha cache in this same run, so both are cache hits.
+      - name: Load folio:dev
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: folio:dev
+          cache-from: type=gha,scope=folio
+      - name: Load folio-web:dev
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: web/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: folio-web:dev
+          cache-from: type=gha,scope=folio-web
+      # Mirrors `just docker-test`. `up --wait` gates on the healthchecks —
+      # the web healthcheck is what a boot-crash trips — then `run --rm smoke`
+      # supplies the exit code (--abort-on-container-exit can't be used: the
+      # app-init chown container is intentionally short-lived).
+      - name: Smoke test (boot both images, assert endpoints)
+        run: |
+          docker compose -f compose.test.yml up -d --wait --wait-timeout 120 postgres redis app web
+          docker compose -f compose.test.yml run --rm smoke
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose -f compose.test.yml logs --no-color --tail 200
+      - name: Tear down
+        if: always()
+        run: docker compose -f compose.test.yml down --volumes --remove-orphans
