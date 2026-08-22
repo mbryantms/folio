@@ -48,8 +48,13 @@ overrides:
   # vulnerable line — it needs its own entry.
   # The advisory's second range (>=4.0.0 <5.1.6) needs no entry: the only
   # 5.x copy we resolve is 5.1.16, already past it.
+  # NOTE: same exclusive-selector trap as js-yaml above — the key must stay
+  # one patch AHEAD of the pinned value. This entry was `<3.3.17` while the
+  # advisory range widened to `<3.3.18`, so `postcss@8.5.26` (itself an
+  # override output) pulled nanoid 3.3.17 straight past the selector and the
+  # audit gate went red on every PR.
   # Delete when `pnpm why nanoid` shows no in-range consumers.
-  "nanoid@<3.3.17": "3.3.18"
+  "nanoid@<3.3.19": "3.3.18"
   # GHSA-f88m-g3jw-g9cj — sharp <0.35.0 inherited libvips CVEs
   # (CVE-2026-33327/-33328/-35590/-35591). Prod path: next pins
   # sharp ^0.34.5 so it can't float to the patched line.
