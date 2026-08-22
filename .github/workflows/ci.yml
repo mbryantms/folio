@@ -666,21 +666,27 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     needs: [changes, docker-build]
-    # Only meaningful when an image actually got rebuilt. Note `web` already
-    # covers pnpm-lock.yaml / package.json / pnpm-workspace.yaml, so a
-    # dependency-only PR (which is exactly how v0.27.5 broke) reaches here.
-    if: >-
-      needs.docker-build.result == 'success' &&
-      (needs.changes.outputs.rust == 'true' ||
-       needs.changes.outputs.web == 'true' ||
-       needs.changes.outputs.docker == 'true')
+    env:
+      # Gated on the STEPS, not the job — same reason `docker-build` above
+      # does it this way: the job must still run so the required check
+      # reports. A job skipped by a job-level `if:` can leave a required
+      # status unreported and wedge a docs-only PR forever.
+      #
+      # The smoke stack needs BOTH images, so run whenever either one's
+      # inputs moved. `web` already covers pnpm-lock.yaml / package.json /
+      # pnpm-workspace.yaml, so a dependency-only PR — which is exactly how
+      # v0.27.5 broke — reaches here.
+      SMOKE: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.docker == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: env.SMOKE == 'true'
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+        if: env.SMOKE == 'true'
       # Rebuild with `load: true` so the images land in the local docker
       # daemon under the tags compose.test.yml expects. docker-build already
       # populated the gha cache in this same run, so both are cache hits.
       - name: Load folio:dev
+        if: env.SMOKE == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
@@ -691,6 +697,7 @@ jobs:
           tags: folio:dev
           cache-from: type=gha,scope=folio
       - name: Load folio-web:dev
+        if: env.SMOKE == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
@@ -705,12 +712,13 @@ jobs:
       # supplies the exit code (--abort-on-container-exit can't be used: the
       # app-init chown container is intentionally short-lived).
       - name: Smoke test (boot both images, assert endpoints)
+        if: env.SMOKE == 'true'
         run: |
           docker compose -f compose.test.yml up -d --wait --wait-timeout 120 postgres redis app web
           docker compose -f compose.test.yml run --rm smoke
       - name: Container logs on failure
-        if: failure()
+        if: failure() && env.SMOKE == 'true'
         run: docker compose -f compose.test.yml logs --no-color --tail 200
       - name: Tear down
-        if: always()
+        if: always() && env.SMOKE == 'true'
         run: docker compose -f compose.test.yml down --volumes --remove-orphans
