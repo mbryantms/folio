@@ -851,7 +851,7 @@ fn encode_variant_to_disk(
 fn rgba_to_rgb(rgba: &[u8]) -> Vec<u8> {
     let pixels = rgba.len() / 4;
     let mut out = Vec::with_capacity(pixels * 3);
-    for chunk in rgba.chunks_exact(4) {
+    for chunk in rgba.as_chunks::<4>().0 {
         out.extend_from_slice(&chunk[..3]);
     }
     out
