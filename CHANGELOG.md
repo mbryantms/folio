@@ -13,6 +13,24 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.7](https://github.com/mbryantms/folio/compare/v0.27.6...v0.27.7) (2026-08-24)
+
+
+### Fixed
+
+* clear clippy 1.98 lints blocking the rust toolchain bump ([#661](https://github.com/mbryantms/folio/issues/661)) ([d059ec7](https://github.com/mbryantms/folio/commit/d059ec74fe084ea3a217d1b25c72147bc002ca3a))
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.65 ([#662](https://github.com/mbryantms/folio/issues/662)) ([e76813c](https://github.com/mbryantms/folio/commit/e76813c72b34346927fd6819912f7174661c71f8))
+* update dependency @vitejs/plugin-react to v6.1.0 ([#657](https://github.com/mbryantms/folio/issues/657)) ([b8b019a](https://github.com/mbryantms/folio/commit/b8b019af5469f2a65eba345cfa742a86087155db))
+* update dependency vite to v8.2.2 ([#659](https://github.com/mbryantms/folio/issues/659)) ([cd61f20](https://github.com/mbryantms/folio/commit/cd61f209b9e5f653ab73462821673972bcabe357))
+* update nextjs monorepo to v16.3.2 ([#663](https://github.com/mbryantms/folio/issues/663)) ([0aab290](https://github.com/mbryantms/folio/commit/0aab29004c83de482e899f449fecee8b9e35a3d2))
+* update rust crate blake3 to v1.8.7 ([#660](https://github.com/mbryantms/folio/issues/660)) ([d33c648](https://github.com/mbryantms/folio/commit/d33c648365b7265aa806297a12553e04945b8825))
+* update rust-toolchain ([#655](https://github.com/mbryantms/folio/issues/655)) ([6e2fc95](https://github.com/mbryantms/folio/commit/6e2fc950d3343ebfea140ea5fce897e1a785f62d))
+* update taiki-e/install-action digest to 6cd1350 ([#656](https://github.com/mbryantms/folio/issues/656)) ([816ea6c](https://github.com/mbryantms/folio/commit/816ea6c5ce375cc6741da90530e70a6a7be5dc43))
+
 ## [0.27.6](https://github.com/mbryantms/folio/compare/v0.27.5...v0.27.6) (2026-08-22)
 
 
