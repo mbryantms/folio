@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useIssueMarkers, useIssuePageTextRegions } from "@/lib/api/queries";
 import { useCreateMarker, useDeleteMarker } from "@/lib/api/mutations";
+import { primaryPointerIsCoarse } from "@/lib/reader/coarse-pointer";
 import { markerToCreateReq } from "@/lib/markers/recreate";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import {
@@ -198,6 +199,13 @@ export function MarkerOverlay({
     );
 
   const [drag, setDrag] = React.useState<DragState | null>(null);
+  // Standalone-PWA WebKit wedge (see lib/reader/coarse-pointer.ts):
+  // on coarse-pointer devices the select drag binds through touch
+  // events instead of pointer events. Exclusive binding — attaching
+  // both sets would double-run the drag (and double-open the editor)
+  // on devices where the pointer stream still works. Input class
+  // can't change mid-session; resolve once per mount.
+  const touchInput = React.useMemo(() => primaryPointerIsCoarse(), []);
   // Track the image's position + size within the wrapper so the SVG
   // overlay aligns with the rendered image (not the wider flex
   // container that holds it). Recomputed whenever the wrapper or
@@ -355,25 +363,29 @@ export function MarkerOverlay({
       window.removeEventListener("keydown", onKey, { capture: true });
   }, [markerMode, setMarkerMode, drag]);
 
+  // Coords are computed against the IMAGE's rect, not the wrapper's,
+  // so a drag is stored in image-relative percentages regardless of
+  // whether the wrapper has whitespace around the image (e.g. at
+  // fit=height when the page is narrower than the viewport).
+  function clientToImagePercent(clientX: number, clientY: number) {
+    const rect = imgRef.current!.getBoundingClientRect();
+    return {
+      x: clamp(((clientX - rect.left) / rect.width) * 100, 0, 100),
+      y: clamp(((clientY - rect.top) / rect.height) * 100, 0, 100),
+    };
+  }
+
   function handlePointerDown(e: React.PointerEvent<SVGSVGElement>) {
     if (!enabled || !imgRef.current) return;
     e.preventDefault();
-    // Coords are computed against the IMAGE's rect, not the wrapper's,
-    // so a drag is stored in image-relative percentages regardless of
-    // whether the wrapper has whitespace around the image (e.g. at
-    // fit=height when the page is narrower than the viewport).
-    const rect = imgRef.current.getBoundingClientRect();
-    const x = clamp(((e.clientX - rect.left) / rect.width) * 100, 0, 100);
-    const y = clamp(((e.clientY - rect.top) / rect.height) * 100, 0, 100);
+    const { x, y } = clientToImagePercent(e.clientX, e.clientY);
     setDrag({ startX: x, startY: y, currentX: x, currentY: y });
     (e.target as SVGSVGElement).setPointerCapture(e.pointerId);
   }
 
   function handlePointerMove(e: React.PointerEvent<SVGSVGElement>) {
     if (!imgRef.current) return;
-    const rect = imgRef.current.getBoundingClientRect();
-    const x = clamp(((e.clientX - rect.left) / rect.width) * 100, 0, 100);
-    const y = clamp(((e.clientY - rect.top) / rect.height) * 100, 0, 100);
+    const { x, y } = clientToImagePercent(e.clientX, e.clientY);
     if (!drag) {
       // Idle hover in text mode: light up the bubble under the
       // pointer. The rects can't take CSS :hover themselves (they're
@@ -387,10 +399,48 @@ export function MarkerOverlay({
     setDrag((prev) => (prev ? { ...prev, currentX: x, currentY: y } : prev));
   }
 
-  async function handlePointerUp(e: React.PointerEvent<SVGSVGElement>) {
+  function handlePointerUp(e: React.PointerEvent<SVGSVGElement>) {
     if (!drag) return;
     e.preventDefault();
     (e.target as SVGSVGElement).releasePointerCapture(e.pointerId);
+    void completeDrag();
+  }
+
+  // Touch-path equivalents, bound instead of the pointer handlers on
+  // coarse-pointer devices (standalone-PWA WebKit wedge — see
+  // lib/reader/coarse-pointer.ts). Touch events implicitly capture to
+  // the element the touch started on, so there is no pointer-capture
+  // dance; the `touch-action: none` the SVG carries while a select
+  // mode is live keeps native pan/pinch from stealing the drag.
+  // React's root-level touch listeners are passive, so no
+  // preventDefault here — scroll suppression is entirely the
+  // touch-action's job. No hover path: touch has no hover, and
+  // tap-to-OCR hit-tests at release inside `completeDrag`.
+  function handleTouchStart(e: React.TouchEvent<SVGSVGElement>) {
+    if (!enabled || !imgRef.current) return;
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0]!;
+    const { x, y } = clientToImagePercent(t.clientX, t.clientY);
+    setDrag({ startX: x, startY: y, currentX: x, currentY: y });
+  }
+
+  function handleTouchMove(e: React.TouchEvent<SVGSVGElement>) {
+    if (!drag || !imgRef.current) return;
+    const t = e.touches[0];
+    if (!t) return;
+    const { x, y } = clientToImagePercent(t.clientX, t.clientY);
+    setDrag((prev) => (prev ? { ...prev, currentX: x, currentY: y } : prev));
+  }
+
+  function handleTouchEnd() {
+    void completeDrag();
+  }
+
+  // Release path shared by both event bindings: tap-to-OCR on a
+  // near-zero drag, otherwise finalize the dragged region into a
+  // PendingMarker and open the editor.
+  async function completeDrag() {
+    if (!drag) return;
     const release = drag;
     setDrag(null);
 
@@ -490,12 +540,31 @@ export function MarkerOverlay({
         aria-hidden={markerMode === "idle" ? "true" : undefined}
         viewBox="0 0 100 100"
         preserveAspectRatio="none"
-        style={{ position: "absolute", ...svgPositionStyle }}
+        style={{
+          position: "absolute",
+          ...svgPositionStyle,
+          // While a select mode is live the SVG owns the drag outright:
+          // opting out of native touch handling keeps the reader's
+          // pan-y / pinch-zoom from cancelling a selection mid-drag.
+          // Matters for both bindings — the touch path has no pointer
+          // capture at all, and the pointer path otherwise loses
+          // near-vertical drags to native scroll via pointercancel.
+          touchAction: enabled ? "none" : undefined,
+        }}
         className={cn("z-20 select-none", cursorClass)}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={() => setDrag(null)}
+        {...(touchInput
+          ? {
+              onTouchStart: handleTouchStart,
+              onTouchMove: handleTouchMove,
+              onTouchEnd: handleTouchEnd,
+              onTouchCancel: () => setDrag(null),
+            }
+          : {
+              onPointerDown: handlePointerDown,
+              onPointerMove: handlePointerMove,
+              onPointerUp: handlePointerUp,
+              onPointerCancel: () => setDrag(null),
+            })}
       >
         {regionMarkers.map((marker) => (
           <RegionMarkerRect

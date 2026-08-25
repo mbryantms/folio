@@ -1,43 +1,9 @@
 import { useGesture } from "@use-gesture/react";
 import { useMemo, type RefObject } from "react";
+import { primaryPointerIsCoarse } from "@/lib/reader/coarse-pointer";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
 
 const SWIPE_THRESHOLD_PX = 30;
-
-/**
- * iOS/iPadOS home-screen web apps (standalone PWAs) have a WebKit
- * defect in the pointer-event path `useGesture` binds by default:
- * after an in-app navigation (close an issue, open another), the
- * standalone web-app process stops delivering the captured
- * `pointermove`/`pointerup` stream that follows `pointerdown`, so
- * every swipe reads as a motionless tap and page-turn drags go dead.
- * The wedge is process-wide — it survives further route changes and
- * only force-quitting the app clears it — and it never reproduces in
- * Safari proper, whose pointer-capture plumbing is separate from the
- * standalone shell's. (Same defect family as WebKit's long-standing
- * installed-PWA pointer-capture bugs; see e.g.
- * https://developer.apple.com/forums/thread/690691 and
- * openseadragon/openseadragon#1962.)
- *
- * Touch-event delivery is unaffected, so on coarse-pointer devices
- * (phones/tablets — every device that can hit the standalone bug and
- * where finger drag is the primary input) the drag binds through raw
- * touch events instead (`drag.pointer.touch`). Behavior is otherwise
- * identical: `touch-action: pan-y pinch-zoom` on the container still
- * lets the browser claim vertical scroll + pinch natively (the drag
- * gets a `touchcancel` exactly like it got a `pointercancel`).
- *
- * Deliberately NOT a blanket `touch: true`: with that set, use-gesture
- * binds only touch handlers on any touch-capable device, which would
- * break mouse drag-to-pan on touchscreen laptops. A fine primary
- * pointer keeps the pointer-events path.
- */
-function primaryPointerIsCoarse(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    window.matchMedia("(pointer: coarse)").matches
-  );
-}
 
 /**
  * The reader's single drag-gesture claim layer (audit C4 + C9). One
@@ -87,7 +53,13 @@ export function useReaderGestures(opts: {
     onPanStart,
     onPan,
   } = opts;
-  // Input class can't change mid-session; resolve once per mount.
+  // Standalone-PWA WebKit wedge: bind through touch events on
+  // coarse-pointer devices (see lib/reader/coarse-pointer.ts). With
+  // `drag.pointer.touch` set, behavior is otherwise identical —
+  // `touch-action: pan-y pinch-zoom` on the container still lets the
+  // browser claim vertical scroll + pinch natively (the drag gets a
+  // `touchcancel` exactly like it got a `pointercancel`). Input class
+  // can't change mid-session; resolve once per mount.
   const touchEvents = useMemo(() => primaryPointerIsCoarse(), []);
   useGesture(
     {
@@ -125,7 +97,7 @@ export function useReaderGestures(opts: {
         threshold: 10,
         enabled,
         // Touch-event binding on coarse-pointer devices — dodges the
-        // standalone-PWA pointer-capture wedge (see header comment).
+        // standalone-PWA pointer-capture wedge (coarse-pointer.ts).
         pointer: { touch: touchEvents },
       },
       eventOptions: { passive: false },
