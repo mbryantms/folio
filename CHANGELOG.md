@@ -13,6 +13,21 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.8](https://github.com/mbryantms/folio/compare/v0.27.7...v0.27.8) (2026-08-25)
+
+
+### Fixed
+
+* **reader:** bind swipe drag via touch events on coarse-pointer devices ([#667](https://github.com/mbryantms/folio/issues/667)) ([22916c1](https://github.com/mbryantms/folio/commit/22916c197ac5706897eb4a3c6caf22c95f026c78))
+
+
+### Dependencies
+
+* update dependency react-hook-form to v7.86.0 ([#666](https://github.com/mbryantms/folio/issues/666)) ([4c1e053](https://github.com/mbryantms/folio/commit/4c1e053d5b71f188a7f32735f3ba70d39907659e))
+* update rust crate log to v0.4.34 ([#669](https://github.com/mbryantms/folio/issues/669)) ([24d599d](https://github.com/mbryantms/folio/commit/24d599d2e3e6799cdf94e7e1b351015ea148a5b8))
+* update rust crate uuid to v1.25.0 ([#668](https://github.com/mbryantms/folio/issues/668)) ([826d974](https://github.com/mbryantms/folio/commit/826d974ef0b384017221d4abf2fb81c5642f9962))
+* update taiki-e/install-action digest to b6ff580 ([#664](https://github.com/mbryantms/folio/issues/664)) ([7aa883b](https://github.com/mbryantms/folio/commit/7aa883baf3599ad06f09b3d0cbf4d7845f2e42d9))
+
 ## [0.27.7](https://github.com/mbryantms/folio/compare/v0.27.6...v0.27.7) (2026-08-24)
 
 
