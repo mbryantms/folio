@@ -1,0 +1,41 @@
+# osv-scanner configuration for the weekly `Security` workflow's `osv-scan` job.
+#
+# OSV aggregates the same RustSec advisories that `cargo audit` and
+# `cargo deny` read, but it does NOT honour `.cargo/audit.toml` or
+# `deny.toml` — so every accepted-risk advisory has to be restated here
+# or the job fails on findings we've already triaged. Keep this list in
+# sync with `.cargo/audit.toml` + `deny.toml` on every dep-bump pass;
+# the two entries unique to this file are called out below.
+
+# ── Mirrored from .cargo/audit.toml ──────────────────────────────────
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0119"
+reason = "`number_prefix` unmaintained (transitive via indicatif)."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+reason = "`paste` no longer maintained (build-time proc-macro)."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2023-0071"
+reason = "`rsa 0.9.10` Marvin Attack — transitive via jsonwebtoken; we sign JWTs with Ed25519 only, never call into RSA primitives."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0235"
+reason = "`rkyv 0.7.46` OOB reads — NOT in the build graph. rust_decimal declares rkyv as an optional dep both ways and no feature we enable turns either on, so it never compiles and never ships; it exists only as a Cargo.lock line, which is all lockfile scanners read."
+
+# ── Unique to this file ──────────────────────────────────────────────
+# Unmaintained-only advisories. `cargo audit` reports these as allowed
+# warnings and exits 0 (the job runs `--deny unsound`, not `--deny
+# warnings`), so they never needed an audit.toml entry. OSV has no
+# warning tier — any finding is a non-zero exit — so they must be
+# ignored explicitly here.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0173"
+reason = "`proc-macro-error2` unmaintained — build-time proc-macro via sea-bae -> sea-orm-macros. Compile-time only, never linked into the shipped binary."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0192"
+reason = "`ttf-parser` unmaintained — transitive via owned_ttf_parser -> ab_glyph -> imageproc -> comic-text-detector, i.e. the optional OCR/ML stack's debug-image text rendering. Not reachable from the core reader/scanner request paths."

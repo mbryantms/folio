@@ -56,7 +56,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: google/osv-scanner-action@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1
+      # NOTE: the scanner lives in the `osv-scanner-action/` SUBDIRECTORY of
+      # the repo. The repo-root `action.yml` is a metadata-only stub with no
+      # top-level `runs:` section, so referencing `google/osv-scanner-action@…`
+      # fails to load the action outright ("Top level 'runs:' section is
+      # required"). Renovate still tracks the digest through the subpath.
+      - uses: google/osv-scanner-action/osv-scanner-action@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1
         with:
           scan-args: |-
             --lockfile=Cargo.lock
