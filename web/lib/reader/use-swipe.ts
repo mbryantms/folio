@@ -1,5 +1,6 @@
 import { useGesture } from "@use-gesture/react";
-import type { RefObject } from "react";
+import { useMemo, type RefObject } from "react";
+import { primaryPointerIsCoarse } from "@/lib/reader/coarse-pointer";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
 
 const SWIPE_THRESHOLD_PX = 30;
@@ -52,6 +53,14 @@ export function useReaderGestures(opts: {
     onPanStart,
     onPan,
   } = opts;
+  // Standalone-PWA WebKit wedge: bind through touch events on
+  // coarse-pointer devices (see lib/reader/coarse-pointer.ts). With
+  // `drag.pointer.touch` set, behavior is otherwise identical —
+  // `touch-action: pan-y pinch-zoom` on the container still lets the
+  // browser claim vertical scroll + pinch natively (the drag gets a
+  // `touchcancel` exactly like it got a `pointercancel`). Input class
+  // can't change mid-session; resolve once per mount.
+  const touchEvents = useMemo(() => primaryPointerIsCoarse(), []);
   useGesture(
     {
       onDragStart: () => {
@@ -87,6 +96,9 @@ export function useReaderGestures(opts: {
         filterTaps: true,
         threshold: 10,
         enabled,
+        // Touch-event binding on coarse-pointer devices — dodges the
+        // standalone-PWA pointer-capture wedge (coarse-pointer.ts).
+        pointer: { touch: touchEvents },
       },
       eventOptions: { passive: false },
     },
