@@ -109,7 +109,11 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedCbl, ParseError> {
         });
     }
 
-    let mut reader = Reader::from_reader(bytes);
+    // See `xml_input::to_utf8` — quick-xml 0.42 rejects the whole
+    // document on any non-UTF-8 byte; normalize first so one bad byte
+    // can't drop an entire sidecar.
+    let text = crate::xml_input::to_utf8(bytes);
+    let mut reader = Reader::from_reader(text.as_bytes());
     let cfg = reader.config_mut();
     cfg.trim_text(true);
     cfg.expand_empty_elements = false;
@@ -129,13 +133,13 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedCbl, ParseError> {
             Ok(Event::DocType(_)) => return Err(ParseError::DoctypeRejected),
 
             Ok(Event::Start(e)) => {
-                let name = element_name(&e)?;
+                let name = element_name(&e);
                 if in_matchers && name != "Matchers" {
                     matchers_has_children = true;
                 }
                 match name.as_str() {
                     "Book" if path.last().map(String::as_str) == Some("Books") => {
-                        let book = book_from_start(&e)?;
+                        let book = book_from_start(&e);
                         current_book = Some(book);
                     }
                     "Matchers" => in_matchers = true,
@@ -146,17 +150,17 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedCbl, ParseError> {
             }
 
             Ok(Event::Empty(e)) => {
-                let name = element_name(&e)?;
+                let name = element_name(&e);
                 if in_matchers && name != "Matchers" {
                     matchers_has_children = true;
                 }
                 let parent = path.last().map(String::as_str);
                 if name == "Database" && parent == Some("Book") {
                     if let Some(book) = current_book.as_mut() {
-                        book.databases.push(database_from_attrs(&e)?);
+                        book.databases.push(database_from_attrs(&e));
                     }
                 } else if name == "Book" && parent == Some("Books") {
-                    let book = book_from_start(&e)?;
+                    let book = book_from_start(&e);
                     if out.books.len() < MAX_BOOKS {
                         out.books.push(book);
                     }
@@ -165,9 +169,7 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedCbl, ParseError> {
             }
 
             Ok(Event::End(e)) => {
-                let name = std::str::from_utf8(e.name().as_ref())
-                    .map_err(|e| ParseError::Malformed(e.to_string()))?
-                    .to_string();
+                let name = e.name().into_inner().to_string();
                 match name.as_str() {
                     "Book" => {
                         if let Some(book) = current_book.take()
@@ -202,14 +204,10 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedCbl, ParseError> {
             }
 
             Ok(Event::Text(t)) => {
-                // quick-xml 0.40 removed `BytesText::unescape()`; the
-                // old single-shot is now `decode()` followed by an
-                // explicit `escape::unescape()`. Both can fail (encoding
-                // error / invalid entity) and roll up as Malformed.
-                let decoded = t
-                    .decode()
-                    .map_err(|e| ParseError::Malformed(e.to_string()))?;
-                let s = quick_xml::escape::unescape(&decoded)
+                // quick-xml 0.42 hands back `&str`, so the old `decode()`
+                // step is gone; `escape::unescape()` remains and its
+                // failure (invalid entity) still rolls up as Malformed.
+                let s = quick_xml::escape::unescape(&t)
                     .map_err(|e| ParseError::Malformed(e.to_string()))?;
                 current_text.push_str(&s);
             }
@@ -232,17 +230,14 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedCbl, ParseError> {
     Ok(out)
 }
 
-fn element_name<'a>(e: &'a quick_xml::events::BytesStart<'a>) -> Result<String, ParseError> {
-    let name = std::str::from_utf8(e.name().as_ref())
-        .map_err(|e| ParseError::Malformed(e.to_string()))?
-        .to_string();
-    Ok(name)
+fn element_name(e: &quick_xml::events::BytesStart<'_>) -> String {
+    e.name().into_inner().to_string()
 }
 
-fn book_from_start(e: &quick_xml::events::BytesStart<'_>) -> Result<ParsedCblBook, ParseError> {
+fn book_from_start(e: &quick_xml::events::BytesStart<'_>) -> ParsedCblBook {
     let mut book = ParsedCblBook::default();
     for attr in e.attributes().with_checks(false).flatten() {
-        let k = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+        let k = attr.key.as_ref().to_string();
         let v = attr
             .normalized_value(quick_xml::XmlVersion::Implicit1_0)
             .map(|c| c.into_owned())
@@ -255,15 +250,13 @@ fn book_from_start(e: &quick_xml::events::BytesStart<'_>) -> Result<ParsedCblBoo
             _ => {}
         }
     }
-    Ok(book)
+    book
 }
 
-fn database_from_attrs(
-    e: &quick_xml::events::BytesStart<'_>,
-) -> Result<ParsedCblDatabase, ParseError> {
+fn database_from_attrs(e: &quick_xml::events::BytesStart<'_>) -> ParsedCblDatabase {
     let mut db = ParsedCblDatabase::default();
     for attr in e.attributes().with_checks(false).flatten() {
-        let k = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+        let k = attr.key.as_ref().to_string();
         let v = attr
             .normalized_value(quick_xml::XmlVersion::Implicit1_0)
             .map(|c| c.into_owned())
@@ -275,7 +268,7 @@ fn database_from_attrs(
             _ => {}
         }
     }
-    Ok(db)
+    db
 }
 
 /// Serialize a [`ParsedCbl`] back to CBL XML — the inverse of [`parse`].

@@ -96,7 +96,11 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
         });
     }
 
-    let mut reader = Reader::from_reader(bytes);
+    // See `xml_input::to_utf8` — quick-xml 0.42 rejects the whole
+    // document on any non-UTF-8 byte; normalize first so one bad byte
+    // can't drop an entire sidecar.
+    let text = crate::xml_input::to_utf8(bytes);
+    let mut reader = Reader::from_reader(text.as_bytes());
     let cfg = reader.config_mut();
     // See `comicinfo::parse` for the rationale — quick-xml 0.40 emits
     // entity refs as separate events, so `trim_text(true)` would strip
@@ -116,13 +120,11 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
         match reader.read_event_into(&mut buf) {
             Ok(Event::DocType(_)) => return Err(ParseError::DoctypeRejected),
             Ok(Event::Start(e)) => {
-                let name = std::str::from_utf8(e.name().as_ref())
-                    .map_err(|err| ParseError::Malformed(err.to_string()))?
-                    .to_string();
+                let name = e.name().into_inner().to_string();
                 if name == "Credit" {
                     current_creator_role = None;
                     for attr in e.attributes().with_checks(false).flatten() {
-                        if attr.key.as_ref() == b"role" {
+                        if attr.key.as_ref() == "role" {
                             current_creator_role = attr
                                 .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                                 .ok()
@@ -132,7 +134,7 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
                 } else if name == "ID" {
                     current_id_source = None;
                     for attr in e.attributes().with_checks(false).flatten() {
-                        if attr.key.as_ref() == b"source" {
+                        if attr.key.as_ref() == "source" {
                             current_id_source = attr
                                 .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                                 .ok()
@@ -144,9 +146,7 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
                 text.clear();
             }
             Ok(Event::End(e)) => {
-                let name = std::str::from_utf8(e.name().as_ref())
-                    .map_err(|err| ParseError::Malformed(err.to_string()))?
-                    .to_string();
+                let name = e.name().into_inner().to_string();
                 if path.last().map(|s| s.as_str()) == Some(name.as_str()) {
                     let value = std::mem::take(&mut text);
                     let value = value.trim().to_string();
@@ -171,13 +171,11 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
                 }
             }
             Ok(Event::Text(t)) => {
-                // quick-xml 0.40: `BytesText::unescape()` removed;
-                // chain `decode()` + `escape::unescape()`. Errors fall
-                // back to empty (matches the old `.unwrap_or_default`).
-                let s = t
-                    .decode()
-                    .ok()
-                    .and_then(|d| quick_xml::escape::unescape(&d).ok().map(|u| u.into_owned()))
+                // quick-xml 0.42 event payloads are already `&str`, so only
+                // `escape::unescape()` is left of the old `decode()` chain.
+                // Errors fall back to empty (matches `.unwrap_or_default`).
+                let s = quick_xml::escape::unescape(&t)
+                    .map(|u| u.into_owned())
                     .unwrap_or_default();
                 text.push_str(&s);
             }
@@ -188,20 +186,18 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
                 // this branch the angle brackets in HTML-bearing
                 // `<Summary>`/`<Description>` round-trips disappeared.
                 // See `comicinfo.rs` for the full incident note.
-                if let Ok(content) = r.decode() {
-                    if let Some(num) = content.strip_prefix('#') {
-                        if let Some(ch) = decode_numeric_char_ref(num) {
-                            text.push(ch);
-                        }
-                    } else if let Some(resolved) =
-                        quick_xml::escape::resolve_predefined_entity(&content)
-                    {
-                        text.push_str(resolved);
+                let content: &str = &r;
+                if let Some(num) = content.strip_prefix('#') {
+                    if let Some(ch) = decode_numeric_char_ref(num) {
+                        text.push(ch);
                     }
+                } else if let Some(resolved) = quick_xml::escape::resolve_predefined_entity(content)
+                {
+                    text.push_str(resolved);
                 }
             }
             Ok(Event::CData(t)) => {
-                text.push_str(&String::from_utf8_lossy(t.as_ref()));
+                text.push_str(&t);
             }
             Ok(Event::Eof) => break,
             Err(e) => return Err(ParseError::Malformed(e.to_string())),
