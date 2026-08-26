@@ -3,6 +3,8 @@
 //! All XML parsers MUST disable DOCTYPE / external entity resolution (§17.12).
 //! All JSON parsers cap input size at 256 KiB before parse (§A7).
 
+pub(crate) mod xml_input;
+
 pub mod cbl;
 pub mod comicinfo;
 pub mod filename;

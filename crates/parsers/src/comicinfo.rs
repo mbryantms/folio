@@ -139,7 +139,11 @@ pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
         });
     }
 
-    let mut reader = Reader::from_reader(bytes);
+    // See `xml_input::to_utf8` — quick-xml 0.42 rejects the whole
+    // document on any non-UTF-8 byte; normalize first so one bad byte
+    // can't drop an entire sidecar.
+    let text = crate::xml_input::to_utf8(bytes);
+    let mut reader = Reader::from_reader(text.as_bytes());
     let cfg = reader.config_mut();
     // `trim_text(false)`: with quick-xml 0.40 emitting entity refs as
     // separate `GeneralRef` events, `trim_text(true)` strips the
@@ -167,13 +171,11 @@ pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
         match reader.read_event_into(&mut buf) {
             Ok(Event::DocType(_)) => return Err(ParseError::DoctypeRejected),
             Ok(Event::Start(e)) => {
-                let name = std::str::from_utf8(e.name().as_ref())
-                    .map_err(|e| ParseError::Malformed(e.to_string()))?
-                    .to_string();
+                let name = e.name().into_inner().to_string();
                 if name == "Page" {
                     current_page_attrs.clear();
                     for attr in e.attributes().with_checks(false).flatten() {
-                        let k = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                        let k = attr.key.as_ref().to_string();
                         let v = attr
                             .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                             .map(|c| c.into_owned())
@@ -185,13 +187,11 @@ pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
                 current_text.clear();
             }
             Ok(Event::Empty(e)) => {
-                let name = std::str::from_utf8(e.name().as_ref())
-                    .map_err(|e| ParseError::Malformed(e.to_string()))?
-                    .to_string();
+                let name = e.name().into_inner().to_string();
                 if name == "Page" {
                     let mut attrs = BTreeMap::new();
                     for attr in e.attributes().with_checks(false).flatten() {
-                        let k = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                        let k = attr.key.as_ref().to_string();
                         let v = attr
                             .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                             .map(|c| c.into_owned())
@@ -204,9 +204,7 @@ pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
                 }
             }
             Ok(Event::End(e)) => {
-                let name = std::str::from_utf8(e.name().as_ref())
-                    .map_err(|e| ParseError::Malformed(e.to_string()))?
-                    .to_string();
+                let name = e.name().into_inner().to_string();
                 if name == "Page" {
                     if let Some(p) = page_from_attrs(&current_page_attrs) {
                         info.pages.push(p);
@@ -227,14 +225,12 @@ pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
                 path.pop();
             }
             Ok(Event::Text(t)) => {
-                // quick-xml 0.40 split `BytesText::unescape()` into
-                // `decode()` + `escape::unescape()`. We chain Option
-                // ladders so a decode/unescape failure falls back to
-                // empty (matches the old `.unwrap_or_default()` shape).
-                let s = t
-                    .decode()
-                    .ok()
-                    .and_then(|d| quick_xml::escape::unescape(&d).ok().map(|u| u.into_owned()))
+                // quick-xml 0.42 event payloads are already `&str`, so the
+                // old `decode()` step is gone; only `escape::unescape()`
+                // remains. An unescape failure still falls back to empty
+                // (matches the old `.unwrap_or_default()` shape).
+                let s = quick_xml::escape::unescape(&t)
+                    .map(|u| u.into_owned())
                     .unwrap_or_default();
                 current_text.push_str(&s);
             }
@@ -253,24 +249,22 @@ pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
                 // event by resolving the entity to its character +
                 // pushing it into the current_text buffer alongside the
                 // surrounding Text events.
-                if let Ok(content) = r.decode() {
-                    if let Some(num) = content.strip_prefix('#') {
-                        if let Some(ch) = decode_numeric_char_ref(num) {
-                            current_text.push(ch);
-                        }
-                    } else if let Some(resolved) =
-                        quick_xml::escape::resolve_predefined_entity(&content)
-                    {
-                        current_text.push_str(resolved);
+                let content: &str = &r;
+                if let Some(num) = content.strip_prefix('#') {
+                    if let Some(ch) = decode_numeric_char_ref(num) {
+                        current_text.push(ch);
                     }
-                    // Unknown entities (e.g. `&nbsp;` in pre-HTML5 ComicInfo
-                    // files) silently drop — same conservative posture as
-                    // pre-0.40, where `unescape()` would have errored and
-                    // the chained Option ladder fell back to empty.
+                } else if let Some(resolved) = quick_xml::escape::resolve_predefined_entity(content)
+                {
+                    current_text.push_str(resolved);
                 }
+                // Unknown entities (e.g. `&nbsp;` in pre-HTML5 ComicInfo
+                // files) silently drop — same conservative posture as
+                // pre-0.40, where `unescape()` would have errored and
+                // the chained Option ladder fell back to empty.
             }
             Ok(Event::CData(t)) => {
-                current_text.push_str(&String::from_utf8_lossy(t.as_ref()));
+                current_text.push_str(&t);
             }
             Ok(Event::Eof) => break,
             Err(e) => return Err(ParseError::Malformed(e.to_string())),
@@ -1151,5 +1145,23 @@ mod tests {
         let info = parse(xml.as_bytes()).expect("parse");
         // U+00E9 = é, U+2014 = em dash.
         assert_eq!(info.summary.as_deref(), Some("café — bistro"));
+    }
+
+    #[test]
+    fn non_utf8_byte_does_not_reject_the_whole_sidecar() {
+        // ComicRack-era sidecars are often windows-1252. quick-xml 0.42
+        // aborts the entire parse on the first invalid UTF-8 byte, so
+        // `xml_input::to_utf8` normalizes up front. Every other field must
+        // still ingest — only the offending one degrades.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(br#"<?xml version="1.0" encoding="windows-1252"?>"#);
+        bytes.extend_from_slice(b"\n<ComicInfo><Title>Hello</Title><Writer>Caf");
+        bytes.push(0xE9); // lone latin-1 'é' — invalid UTF-8
+        bytes.extend_from_slice(b"</Writer><Number>5</Number></ComicInfo>");
+
+        let info = parse(&bytes).expect("sidecar must still parse");
+        assert_eq!(info.title.as_deref(), Some("Hello"));
+        assert_eq!(info.number.as_deref(), Some("5"));
+        assert_eq!(info.writer.as_deref(), Some("Caf\u{FFFD}"));
     }
 }
