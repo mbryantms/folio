@@ -49,7 +49,7 @@
     "@scalar/api-reference-react": "^0.9.42",
     "@serwist/next": "9.5.12",
     "@serwist/window": "9.5.12",
-    "@tanstack/react-query": "5.102.2",
+    "@tanstack/react-query": "5.102.3",
     "@tanstack/react-table": "9.1.2",
     "@tanstack/react-virtual": "^3.14.2",
     "@use-gesture/react": "^10.3.1",
