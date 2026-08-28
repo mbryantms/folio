@@ -13,6 +13,28 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.9](https://github.com/mbryantms/folio/compare/v0.27.8...v0.27.9) (2026-08-28)
+
+
+### Fixed
+
+* **ci:** repair the weekly Security job — event-listener bump, osv action path, OSV ignore list ([#670](https://github.com/mbryantms/folio/issues/670)) ([42aac98](https://github.com/mbryantms/folio/commit/42aac9870def6e40a582059029d337455ac5735f))
+
+
+### Dependencies
+
+* update dependency @tanstack/react-query to v5.102.1 ([#672](https://github.com/mbryantms/folio/issues/672)) ([d4cece0](https://github.com/mbryantms/folio/commit/d4cece008eeac432fffbe09ce621977b626aa6b9))
+* update dependency @tanstack/react-query to v5.102.2 ([#677](https://github.com/mbryantms/folio/issues/677)) ([d44a6ff](https://github.com/mbryantms/folio/commit/d44a6ffc5625315109f33686e8c2b0f165c3f9b3))
+* update dependency @tanstack/react-query to v5.102.3 ([#683](https://github.com/mbryantms/folio/issues/683)) ([4a3cbeb](https://github.com/mbryantms/folio/commit/4a3cbeb1117e0150f67aa93d564953f3c17e7fb7))
+* update dependency @types/react-dom to v19.2.5 ([#678](https://github.com/mbryantms/folio/issues/678)) ([84a4c5c](https://github.com/mbryantms/folio/commit/84a4c5ce7297927166fa7d27d25a367e64a41093))
+* update dependency lucide-react to v1.34.0 ([#680](https://github.com/mbryantms/folio/issues/680)) ([f93671d](https://github.com/mbryantms/folio/commit/f93671dccc0a7b277e5e29db0ab29f891b5f7f88))
+* update pnpm to v11.23.0 ([#676](https://github.com/mbryantms/folio/issues/676)) ([e27ceed](https://github.com/mbryantms/folio/commit/e27ceedbb88d3caa76f67e47df174b09aa16856c))
+* update pnpm to v11.24.0 ([#681](https://github.com/mbryantms/folio/issues/681)) ([db5313a](https://github.com/mbryantms/folio/commit/db5313a1e6564bcac7cd12cb6588c7f54ddb2658))
+* update rust crate quick-xml to 0.42 ([#673](https://github.com/mbryantms/folio/issues/673)) ([9a470db](https://github.com/mbryantms/folio/commit/9a470dba144bd5e909550b7e6e1045d1df27a472))
+* update rust crate syn to v3.0.4 ([#679](https://github.com/mbryantms/folio/issues/679)) ([600df26](https://github.com/mbryantms/folio/commit/600df264aa2ffdf92b00eed898a1d4a579431779))
+* update taiki-e/install-action digest to 37f7c57 ([#682](https://github.com/mbryantms/folio/issues/682)) ([471e7e8](https://github.com/mbryantms/folio/commit/471e7e830750dd57d2c31bb290f9d40f50698e8b))
+* update taiki-e/install-action digest to fcf5432 ([#675](https://github.com/mbryantms/folio/issues/675)) ([736fb5f](https://github.com/mbryantms/folio/commit/736fb5f61a7d756c60d240658392d7895fe7c5df))
+
 ## [0.27.8](https://github.com/mbryantms/folio/compare/v0.27.7...v0.27.8) (2026-08-25)
 
 
