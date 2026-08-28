@@ -74,7 +74,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
-    "@next/eslint-plugin-next": "16.3.2",
+    "@next/eslint-plugin-next": "16.3.3",
     "@playwright/test": "1.62.1",
     "@serwist/cli": "9.5.12",
     "@tailwindcss/postcss": "4.3.3",
@@ -86,7 +86,7 @@
     "babel-plugin-react-compiler": "1.0.0",
     "esbuild": "^0.28.1",
     "eslint": "9.39.5",
-    "eslint-config-next": "16.3.2",
+    "eslint-config-next": "16.3.3",
     "openapi-typescript": "7.13.0",
     "postcss": "8.5.26",
     "prettier": "3.9.6",
