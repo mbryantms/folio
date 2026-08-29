@@ -37,7 +37,7 @@ overrides:
   # advisory against it goes unremediated (that is exactly how
   # GHSA-5p4m-2wfm-xmqj slipped through).
   # Delete when `pnpm why js-yaml` shows no in-range consumers.
-  "js-yaml@>=4.0.0 <4.3.1": "4.3.1"
+  "js-yaml@>=4.0.0 <4.3.1": "4.3.2"
   # GHSA postcss <8.5.10 parsing advisory; build-chain only.
   # Delete when `pnpm why postcss` shows no in-range consumers.
   "postcss@<8.5.10": "8.5.26"
