@@ -59,7 +59,7 @@ overrides:
   # (CVE-2026-33327/-33328/-35590/-35591). Prod path: next pins
   # sharp ^0.34.5 so it can't float to the patched line.
   # Delete when next's sharp range reaches >=0.35.0.
-  "sharp@<0.35.0": "0.35.3"
+  "sharp@<0.35.0": "0.35.4"
   # GHSA-gv7w-rqvm-qjhr — esbuild <0.28.1 missing binary integrity
   # verification (RCE via NPM_CONFIG_REGISTRY). Reaches us only through
   # the @serwist build toolchain + the vite/vitest dev stack, never the
