@@ -6,6 +6,7 @@ import { computeSpreadGroups, groupIndexForPage } from "@/lib/reader/spreads";
 import { useIssueMarkers } from "@/lib/api/queries";
 import type { Direction } from "@/lib/reader/detect";
 import type { MarkerKind, PageInfo } from "@/lib/api/types";
+import { SWIPE_IGNORE_ATTR } from "@/lib/reader/use-swipe";
 import { withContentVersion } from "@/lib/urls";
 import {
   Tooltip,
@@ -285,6 +286,13 @@ export function PageStrip({
     <TooltipProvider delayDuration={350}>
       <nav
         aria-label="Page navigator"
+        // Opt the whole strip out of the reader's page-turn/pan drag
+        // (use-swipe.ts): the thumbnail rail scrolls horizontally
+        // itself, and under the touch-event binding a strip scroll
+        // would otherwise ALSO run the container drag — turning the
+        // page on lift and snapping the freshly-scrolled strip back
+        // to the new page's thumb.
+        {...{ [SWIPE_IGNORE_ATTR]: "" }}
         data-state={mounted && visible ? "open" : "closed"}
         aria-hidden={mounted && visible ? undefined : true}
         // `inert` while closed: the strip holds up to `totalPages`

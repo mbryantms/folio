@@ -6,6 +6,38 @@ import type { Direction, ViewMode } from "@/lib/reader/detect";
 const SWIPE_THRESHOLD_PX = 30;
 
 /**
+ * Opt-out attribute for chrome surfaces nested inside the reader's
+ * gesture container that own their own horizontal touch interaction
+ * (today: the PageStrip's scrollable thumbnail rail). A drag that
+ * starts inside a subtree carrying this attribute is ignored by every
+ * drag handler below — no page-turn, no pan.
+ *
+ * Why an explicit opt-out: the touch-event binding (coarse-pointer
+ * devices, see coarse-pointer.ts) changed who wins when a drag starts
+ * on a scrollable chrome child. With pointer events, the browser
+ * fired `pointercancel` the moment native scroll claimed the touch,
+ * killing the drag before it could act. Touch events have no such
+ * courtesy — WebKit keeps delivering `touchmove` to the start target
+ * throughout a native scroll — so a strip scroll also ran the
+ * container's drag to completion: the lift turned the page, and the
+ * page-change recenter effect snapped the strip right back, reading
+ * as "the strip won't scroll".
+ */
+export const SWIPE_IGNORE_ATTR = "data-swipe-ignore";
+
+/** True when the drag's originating element sits inside an opted-out
+ *  chrome subtree. `event.target` is stable across the whole drag in
+ *  both bindings: touch events keep the touch-start target for every
+ *  `touchmove`/`touchend`, and the pointer path captures the pointer
+ *  to it. */
+function startedInIgnoredChrome(event: { target: EventTarget | null }) {
+  return (
+    event.target instanceof Element &&
+    event.target.closest(`[${SWIPE_IGNORE_ATTR}]`) !== null
+  );
+}
+
+/**
  * The reader's single drag-gesture claim layer (audit C4 + C9). One
  * `useGesture` on the reader pane — two instances would race each other's
  * native listeners, the exact ordering bug the `enabled` gate guards.
@@ -63,13 +95,15 @@ export function useReaderGestures(opts: {
   const touchEvents = useMemo(() => primaryPointerIsCoarse(), []);
   useGesture(
     {
-      onDragStart: () => {
+      onDragStart: ({ event }) => {
+        if (startedInIgnoredChrome(event)) return;
         if (panActive) onPanStart();
       },
-      onDrag: ({ movement: [mx, my] }) => {
-        if (panActive) onPan(mx, my);
+      onDrag: ({ event, movement: [mx, my] }) => {
+        if (panActive && !startedInIgnoredChrome(event)) onPan(mx, my);
       },
-      onDragEnd: ({ movement: [mx], cancel }) => {
+      onDragEnd: ({ event, movement: [mx], cancel }) => {
+        if (startedInIgnoredChrome(event)) return;
         // Panning consumed the drag; the offset is already applied.
         if (panActive) return;
         if (viewMode === "webtoon") {
