@@ -13,6 +13,27 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.10](https://github.com/mbryantms/folio/compare/v0.27.9...v0.27.10) (2026-08-30)
+
+
+### Fixed
+
+* **reader:** exempt the page strip from the page-turn drag ([#695](https://github.com/mbryantms/folio/issues/695)) ([cb99b48](https://github.com/mbryantms/folio/commit/cb99b48b070d1c53ebbc7ac6a9c09f52e8190949))
+
+
+### Dependencies
+
+* update dependency @tanstack/react-query to v5.102.5 ([#687](https://github.com/mbryantms/folio/issues/687)) ([f6d4621](https://github.com/mbryantms/folio/commit/f6d4621d7217b6b7e03f7c057d2477a57a7636fe))
+* update dependency js-yaml@&gt;=4.0.0 &lt;4.3.1 to v4.3.2 ([#691](https://github.com/mbryantms/folio/issues/691)) ([9442f17](https://github.com/mbryantms/folio/commit/9442f1708d0dad0c8fd64243795f08838ca538d8))
+* update dependency next to v16.3.3 ([#686](https://github.com/mbryantms/folio/issues/686)) ([ab8b1bf](https://github.com/mbryantms/folio/commit/ab8b1bfb9b9643a7a04dd6451b8e72f5740649be))
+* update dependency next-intl to v4.14.0 ([#694](https://github.com/mbryantms/folio/issues/694)) ([8c2895f](https://github.com/mbryantms/folio/commit/8c2895f0a1ac13d92f39c476dab7d68e2f6c132f))
+* update dependency sharp@&lt;0.35.0 to v0.35.4 ([#688](https://github.com/mbryantms/folio/issues/688)) ([a25c1d5](https://github.com/mbryantms/folio/commit/a25c1d5bb4ec311260c95e57c7dd3cfac8ec55b6))
+* update nextjs monorepo to v16.3.3 ([#684](https://github.com/mbryantms/folio/issues/684)) ([7a4b3ab](https://github.com/mbryantms/folio/commit/7a4b3abdc92918c20701f90748674781392dc776))
+* update rust crate uuid to v1.26.0 ([#692](https://github.com/mbryantms/folio/issues/692)) ([a577734](https://github.com/mbryantms/folio/commit/a577734eaaad75e2278f352ba4f8efd9fd8b2302))
+* update softprops/action-gh-release digest to efb3536 ([#693](https://github.com/mbryantms/folio/issues/693)) ([1714cd7](https://github.com/mbryantms/folio/commit/1714cd72df80b92f8c087c3e87b8c7cbb5adc55f))
+* update taiki-e/install-action digest to 742a331 ([#689](https://github.com/mbryantms/folio/issues/689)) ([6505b34](https://github.com/mbryantms/folio/commit/6505b34182b11a3762397aab3cbb5cc30d5b33fc))
+* update tanstack ([#690](https://github.com/mbryantms/folio/issues/690)) ([953246f](https://github.com/mbryantms/folio/commit/953246f4f7cb62e092f42ca5ab0229d5b571934a))
+
 ## [0.27.9](https://github.com/mbryantms/folio/compare/v0.27.8...v0.27.9) (2026-08-28)
 
 
