@@ -13,6 +13,21 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.11](https://github.com/mbryantms/folio/compare/v0.27.10...v0.27.11) (2026-08-30)
+
+
+### Fixed
+
+* **reader:** survive the standalone-PWA resume wedge that kills swipe ([#701](https://github.com/mbryantms/folio/issues/701)) ([1ee493a](https://github.com/mbryantms/folio/commit/1ee493aa2404bc962cb5465f853d538b7ae4cbed))
+
+
+### Dependencies
+
+* update dependency @tanstack/react-query to v5.102.8 ([#698](https://github.com/mbryantms/folio/issues/698)) ([5fafff0](https://github.com/mbryantms/folio/commit/5fafff0070143ffe971db69fe93d2136d510e3a8))
+* update dependency @testing-library/react to v16.3.3 ([#700](https://github.com/mbryantms/folio/issues/700)) ([dd0a00b](https://github.com/mbryantms/folio/commit/dd0a00bc205fcc72e1a68bfd6bb2fb701fc8166d))
+* update rust crate argon2 to 0.6 ([#699](https://github.com/mbryantms/folio/issues/699)) ([96c7763](https://github.com/mbryantms/folio/commit/96c77630b28461e36625105f50f7af54bae7a921))
+* update taiki-e/install-action digest to 1ed6d7b ([#696](https://github.com/mbryantms/folio/issues/696)) ([47c8911](https://github.com/mbryantms/folio/commit/47c89112ab6fc158af2c956ff92e8e002bc269b8))
+
 ## [0.27.10](https://github.com/mbryantms/folio/compare/v0.27.9...v0.27.10) (2026-08-30)
 
 
