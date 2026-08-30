@@ -1,9 +1,12 @@
 import { useGesture } from "@use-gesture/react";
-import { useMemo, type RefObject } from "react";
+import { useEffect, useMemo, useRef, type RefObject } from "react";
 import { primaryPointerIsCoarse } from "@/lib/reader/coarse-pointer";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
 
 const SWIPE_THRESHOLD_PX = 30;
+/** Native pinch-zoom past this scale means a one-finger drag pans the
+ *  zoomed viewport and must not turn the page. */
+const PINCH_ZOOM_SCALE_MIN = 1.05;
 
 /**
  * Opt-out attribute for chrome surfaces nested inside the reader's
@@ -38,6 +41,74 @@ function startedInIgnoredChrome(event: { target: EventTarget | null }) {
 }
 
 /**
+ * Maps a completed horizontal drag to a page-turn. Shared by the
+ * primary gesture binding and the pointer-stream fallback below so
+ * both agree on threshold and reading-direction mapping.
+ * Swipe-right (positive mx) → previous page in LTR, next in RTL.
+ */
+export function swipeAction(
+  mx: number,
+  direction: Direction,
+): "next" | "prev" | null {
+  if (Math.abs(mx) < SWIPE_THRESHOLD_PX) return null;
+  const swipeIsForward = direction === "rtl" ? mx > 0 : mx < 0;
+  return swipeIsForward ? "next" : "prev";
+}
+
+/**
+ * True when the user is genuinely pinch-zoomed (native browser zoom),
+ * in which case a one-finger drag pans the zoomed viewport and a
+ * swipe must not turn the page out from under the reader.
+ *
+ * `visualViewport.scale` alone is not trustworthy for this: iOS
+ * standalone PWAs are known to resume from the background with stale
+ * visualViewport state that only a force-quit clears (same bug family
+ * as the stuck-viewport-height keyboard bug), and a stale scale > 1
+ * here silently ate every swipe — the drag ran to completion and the
+ * lift declined to act, while tap-to-turn kept working. So corroborate
+ * the scale with the layout-vs-visual width ratio: when actually
+ * pinch-zoomed the visual viewport is narrower than the layout
+ * viewport by exactly the scale factor; a scale reading the widths
+ * don't back is stale and is ignored.
+ */
+export function isPinchZoomed(
+  scale: number,
+  visualWidth: number,
+  layoutWidth: number,
+): boolean {
+  if (scale <= PINCH_ZOOM_SCALE_MIN) return false;
+  // No usable widths to corroborate with — trust the scale reading.
+  if (visualWidth <= 0 || layoutWidth <= 0) return true;
+  return layoutWidth / visualWidth > PINCH_ZOOM_SCALE_MIN;
+}
+
+function pinchZoomedNow(): boolean {
+  if (typeof window === "undefined") return false;
+  const vv = window.visualViewport;
+  if (!vv) return false;
+  return isPinchZoomed(
+    vv.scale,
+    vv.width,
+    document.documentElement.clientWidth,
+  );
+}
+
+type ReaderGestureOpts = {
+  target: RefObject<HTMLDivElement | null>;
+  enabled: boolean;
+  viewMode: ViewMode;
+  direction: Direction;
+  onNext: () => void;
+  onPrev: () => void;
+  /** When true the drag pans the page instead of turning it. */
+  panActive: boolean;
+  /** Drag start while panning — caller snapshots the current offset. */
+  onPanStart: () => void;
+  /** Movement (px, from drag start) while panning. */
+  onPan: (dx: number, dy: number) => void;
+};
+
+/**
  * The reader's single drag-gesture claim layer (audit C4 + C9). One
  * `useGesture` on the reader pane — two instances would race each other's
  * native listeners, the exact ordering bug the `enabled` gate guards.
@@ -60,20 +131,7 @@ function startedInIgnoredChrome(event: { target: EventTarget | null }) {
  * marker editor (the SVG overlay's native listeners would otherwise read
  * a horizontal drag as a page-flip).
  */
-export function useReaderGestures(opts: {
-  target: RefObject<HTMLDivElement | null>;
-  enabled: boolean;
-  viewMode: ViewMode;
-  direction: Direction;
-  onNext: () => void;
-  onPrev: () => void;
-  /** When true the drag pans the page instead of turning it. */
-  panActive: boolean;
-  /** Drag start while panning — caller snapshots the current offset. */
-  onPanStart: () => void;
-  /** Movement (px, from drag start) while panning. */
-  onPan: (dx: number, dy: number) => void;
-}): void {
+export function useReaderGestures(opts: ReaderGestureOpts): void {
   const {
     target,
     enabled,
@@ -110,15 +168,10 @@ export function useReaderGestures(opts: {
           cancel();
           return;
         }
-        if (typeof window !== "undefined") {
-          const scale = window.visualViewport?.scale ?? 1;
-          if (scale > 1.05) return;
-        }
-        if (Math.abs(mx) < SWIPE_THRESHOLD_PX) return;
-        // Swipe-right (positive mx) → previous page in LTR, next in RTL.
-        const swipeIsForward = direction === "rtl" ? mx > 0 : mx < 0;
-        if (swipeIsForward) onNext();
-        else onPrev();
+        if (pinchZoomedNow()) return;
+        const action = swipeAction(mx, direction);
+        if (action === "next") onNext();
+        else if (action === "prev") onPrev();
       },
     },
     {
@@ -137,4 +190,109 @@ export function useReaderGestures(opts: {
       eventOptions: { passive: false },
     },
   );
+
+  // Kept fresh so the fallback listeners below (bound once) read the
+  // current gate state at event time instead of a stale closure.
+  const optsRef = useRef(opts);
+  useEffect(() => {
+    optsRef.current = opts;
+  });
+
+  // Resume-wedge fallback — the sequel to the coarse-pointer touch
+  // binding above. The standalone-PWA WebKit defect family starves one
+  // input stream after a lifecycle event: an in-app navigation can kill
+  // the captured *pointer* stream (which the touch binding dodges), and
+  // a background/reopen cycle can come back with the *touch* stream
+  // starved instead — touchmove stops arriving while WebKit still
+  // synthesizes clicks, so tap-to-turn keeps working and swipe goes
+  // silently dead until force-quit.
+  //
+  // This fallback watches the pointer stream in parallel and completes
+  // a page-turn ONLY for a drag during which not a single touchmove was
+  // delivered — i.e. exactly when the touch binding cannot have seen
+  // the swipe. On a healthy device every past-threshold finger drag
+  // produces touchmoves, so the fallback never acts and can't
+  // double-turn. It deliberately handles page-turn only (not pan): it
+  // has no move stream to track a pan with, and TapZones still covers
+  // navigation while zoomed.
+  //
+  // No listener here uses pointer capture, and the up/cancel listeners
+  // ride on `window` — staying clear of the captured-stream machinery
+  // the original wedge starves. This is not a second drag *claim* (the
+  // audit C4 rule): it never preventDefaults, never cancels, and stands
+  // down whenever the primary binding could have run.
+  useEffect(() => {
+    // Fine-pointer devices already ride the pointer path in the primary
+    // binding; the fallback only pairs with the touch binding.
+    if (!touchEvents) return;
+    const el = target.current;
+    if (!el) return;
+    let gesture: {
+      id: number;
+      x: number;
+      y: number;
+      sawTouchMove: boolean;
+      ignored: boolean;
+    } | null = null;
+    const onTouchMove = () => {
+      if (gesture) gesture.sawTouchMove = true;
+    };
+    const onDown = (e: PointerEvent) => {
+      if (e.pointerType !== "touch") return;
+      if (gesture !== null) {
+        // Second concurrent finger — a pinch, not a swipe. Abort.
+        gesture = null;
+        return;
+      }
+      gesture = {
+        id: e.pointerId,
+        x: e.clientX,
+        y: e.clientY,
+        sawTouchMove: false,
+        ignored: startedInIgnoredChrome(e),
+      };
+    };
+    const onCancel = () => {
+      gesture = null;
+    };
+    const onUp = (e: PointerEvent) => {
+      const g = gesture;
+      gesture = null;
+      if (!g || e.pointerId !== g.id) return;
+      // Touch stream is alive → the primary binding owns this drag.
+      if (g.sawTouchMove || g.ignored) return;
+      const { enabled, viewMode, direction, panActive, onNext, onPrev } =
+        optsRef.current;
+      if (!enabled || panActive || viewMode === "webtoon") return;
+      if (pinchZoomedNow()) return;
+      const dx = e.clientX - g.x;
+      const dy = e.clientY - g.y;
+      // Vertical intent belongs to native scroll.
+      if (Math.abs(dx) <= Math.abs(dy)) return;
+      const action = swipeAction(dx, direction);
+      if (action === "next") onNext();
+      else if (action === "prev") onPrev();
+    };
+    el.addEventListener("pointerdown", onDown, { passive: true });
+    window.addEventListener("touchmove", onTouchMove, {
+      passive: true,
+      capture: true,
+    });
+    window.addEventListener("pointerup", onUp, {
+      passive: true,
+      capture: true,
+    });
+    window.addEventListener("pointercancel", onCancel, {
+      passive: true,
+      capture: true,
+    });
+    return () => {
+      el.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("touchmove", onTouchMove, { capture: true });
+      window.removeEventListener("pointerup", onUp, { capture: true });
+      window.removeEventListener("pointercancel", onCancel, {
+        capture: true,
+      });
+    };
+  }, [touchEvents, target]);
 }
