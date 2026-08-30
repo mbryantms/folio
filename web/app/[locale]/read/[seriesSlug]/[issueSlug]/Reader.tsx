@@ -1141,7 +1141,22 @@ function SinglePageView({
     const ro = new ResizeObserver(measure);
     ro.observe(wrap);
     if (imgRef.current) ro.observe(imgRef.current);
-    return () => ro.disconnect();
+    // Re-measure when the app returns to the foreground. An iOS
+    // standalone PWA can report bogus geometry while suspending, and a
+    // measurement latched from that state never self-corrects — the
+    // ResizeObserver won't refire when the restored sizes match what it
+    // last saw. A stale `overflowing=true` flips the gesture layer into
+    // pan mode, silently turning every swipe into a clamped no-op.
+    const onResume = () => {
+      if (document.visibilityState === "visible") measure();
+    };
+    window.addEventListener("pageshow", onResume);
+    document.addEventListener("visibilitychange", onResume);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("pageshow", onResume);
+      document.removeEventListener("visibilitychange", onResume);
+    };
   }, [currentPage, fitClass, zoom.scale, onOverflowChange, panMetricsRef]);
   const natural = pageNaturalSize.current?.get(currentPage) ?? null;
   return (
