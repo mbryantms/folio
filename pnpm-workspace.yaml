@@ -82,3 +82,14 @@ overrides:
   "brace-expansion@<1.1.18": "1.1.18"
   "brace-expansion@>=2.0.0 <2.1.4": "2.1.4"
   "brace-expansion@>=5.0.0 <5.0.9": "5.0.9"
+  # browserslist high pair — GHSA-73wf-gq98-2v4g (normalizeStats crash /
+  # prototype write via untrusted browserslist-stats.json) and
+  # GHSA-c83g-rgw3-j3cx (unbounded query-result cache → OOM), both
+  # <=4.28.6, patched in 4.28.7. Transitive-only (14 paths: babel,
+  # next/serwist build chain, update-browserslist-db); every consumer
+  # range is >=4-shaped, so this pin exists only because `pnpm update`
+  # can't move a transitive dep — the lockfile held 4.28.6.
+  # Selector stays one patch AHEAD of the pin (see js-yaml note above).
+  # Delete when `pnpm why browserslist` shows no in-range (<4.28.7)
+  # consumers, i.e. once the lockfile naturally resolves past 4.28.6.
+  "browserslist@<4.28.9": "4.28.8"
