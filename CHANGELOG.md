@@ -13,6 +13,22 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.12](https://github.com/mbryantms/folio/compare/v0.27.11...v0.27.12) (2026-09-01)
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.66 ([#707](https://github.com/mbryantms/folio/issues/707)) ([9b752a4](https://github.com/mbryantms/folio/commit/9b752a4884a4e65779910ed258af7e075a52fb26))
+* update dependency @tanstack/react-table to v9.2.4 ([#709](https://github.com/mbryantms/folio/issues/709)) ([28a9658](https://github.com/mbryantms/folio/commit/28a9658dccfc15797e78660e1e714cff84837743))
+* update dependency @vitejs/plugin-react to v6.1.1 ([#703](https://github.com/mbryantms/folio/issues/703)) ([fdabe4d](https://github.com/mbryantms/folio/commit/fdabe4d9127133323fb3365faf30ad5791caedcc))
+* update dependency lucide-react to v1.35.0 ([#705](https://github.com/mbryantms/folio/issues/705)) ([baebeb9](https://github.com/mbryantms/folio/commit/baebeb9ed83277bb042ea9443cb861f1c31f7224))
+* update dependency lucide-react to v1.37.0 ([#712](https://github.com/mbryantms/folio/issues/712)) ([40cd3dd](https://github.com/mbryantms/folio/commit/40cd3dd7ace12bbcc861a5c2a1725d351ad318cc))
+* update dependency next-intl to v4.14.1 ([#706](https://github.com/mbryantms/folio/issues/706)) ([1964b20](https://github.com/mbryantms/folio/commit/1964b2004395e6472281ed7882df3e8cff0316d2))
+* update dependency zod to v4.5.1 ([#710](https://github.com/mbryantms/folio/issues/710)) ([d331b22](https://github.com/mbryantms/folio/commit/d331b22dda0218a0fd63aa3ec7e570107c3bfc7e))
+* update dependency zod to v4.5.2 ([#711](https://github.com/mbryantms/folio/issues/711)) ([592521b](https://github.com/mbryantms/folio/commit/592521b3d5a911fec5b83199332f9c5cbda5d2c8))
+* update rust crate hyper to v1.11.1 ([#708](https://github.com/mbryantms/folio/issues/708)) ([fa1d495](https://github.com/mbryantms/folio/commit/fa1d495bb858dbd9ba674468665e56c9247491b9))
+* update rust crate lru to v0.18.3 ([#702](https://github.com/mbryantms/folio/issues/702)) ([ff2f302](https://github.com/mbryantms/folio/commit/ff2f30204b3672af2ed1b31858b0aadeb1b721fc))
+
 ## [0.27.11](https://github.com/mbryantms/folio/compare/v0.27.10...v0.27.11) (2026-08-30)
 
 
