@@ -69,7 +69,7 @@
     "serwist": "9.5.12",
     "sonner": "2.0.8",
     "tailwind-merge": "3.6.0",
-    "zod": "4.5.2",
+    "zod": "4.5.4",
     "zustand": "5.0.15"
   },
   "devDependencies": {
