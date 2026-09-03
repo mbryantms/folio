@@ -119,7 +119,7 @@ csv = "1"
 # header/URL safe without the `+`/`/` characters from base64 that some
 # clients mangle on paste.
 data-encoding = "2.6"
-constant_time_eq = "0.5"
+constant_time_eq = "0.6"
 zeroize = { version = "1.8", features = ["derive"] }
 time = "0.3"
 
