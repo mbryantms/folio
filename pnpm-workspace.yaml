@@ -92,4 +92,4 @@ overrides:
   # Selector stays one patch AHEAD of the pin (see js-yaml note above).
   # Delete when `pnpm why browserslist` shows no in-range (<4.28.7)
   # consumers, i.e. once the lockfile naturally resolves past 4.28.6.
-  "browserslist@<4.28.9": "4.28.8"
+  "browserslist@<4.28.9": "4.28.9"
