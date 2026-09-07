@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "description": "Self-hostable comic reader (workspace root)",
-  "packageManager": "pnpm@11.25.0",
+  "packageManager": "pnpm@12.3.3",
   "engines": {
     "node": ">=24"
   },
