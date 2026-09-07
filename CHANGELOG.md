@@ -13,6 +13,43 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.13](https://github.com/mbryantms/folio/compare/v0.27.12...v0.27.13) (2026-09-07)
+
+
+### Fixed
+
+* **deps:** pin browserslist off the GHSA-73wf/GHSA-c83g lines (audit gate) ([#717](https://github.com/mbryantms/folio/issues/717)) ([e309023](https://github.com/mbryantms/folio/commit/e30902375c8ac5000f6df6ac9508c0a0fb5980bd))
+
+
+### Dependencies
+
+* update dependency @types/react-dom to v19.2.6 ([#734](https://github.com/mbryantms/folio/issues/734)) ([f801498](https://github.com/mbryantms/folio/commit/f801498b4f1bbfcd9655fbd2f7c8369fc0f8fbf5))
+* update dependency @types/react-dom to v19.2.7 ([#735](https://github.com/mbryantms/folio/issues/735)) ([c96f375](https://github.com/mbryantms/folio/commit/c96f3753b033a43b235ad76275b4d268db2abdd5))
+* update dependency lucide-react to v1.38.0 ([#720](https://github.com/mbryantms/folio/issues/720)) ([d62d507](https://github.com/mbryantms/folio/commit/d62d507bac7a8404920db493d5bca7817112e38e))
+* update dependency lucide-react to v1.39.0 ([#724](https://github.com/mbryantms/folio/issues/724)) ([326bd91](https://github.com/mbryantms/folio/commit/326bd910bb5fcfc1191f5ec883c966d51e60f7c6))
+* update dependency lucide-react to v1.40.0 ([#733](https://github.com/mbryantms/folio/issues/733)) ([6a35003](https://github.com/mbryantms/folio/commit/6a350031cce374db806fa2f3284fe4abef3bc34e))
+* update dependency lucide-react to v1.41.0 ([#741](https://github.com/mbryantms/folio/issues/741)) ([9d54eb1](https://github.com/mbryantms/folio/commit/9d54eb1437035db29cf2817e6032442e926d475d))
+* update dependency next-intl to v4.14.2 ([#723](https://github.com/mbryantms/folio/issues/723)) ([9a88d01](https://github.com/mbryantms/folio/commit/9a88d01cda1c4e3d83064c4569cbf9bc19f9e65a))
+* update dependency postcss to v8.5.27 ([#731](https://github.com/mbryantms/folio/issues/731)) ([20596ed](https://github.com/mbryantms/folio/commit/20596ed0d1634ce608d77215292755ed945956fe))
+* update dependency postcss to v8.5.28 ([#737](https://github.com/mbryantms/folio/issues/737)) ([ed060d8](https://github.com/mbryantms/folio/commit/ed060d805313e17b451364767a0119f23413cb8f))
+* update dependency postcss@&lt;8.5.10 to v8.5.27 ([#732](https://github.com/mbryantms/folio/issues/732)) ([6c49caa](https://github.com/mbryantms/folio/commit/6c49caa8ed1e6a2f0b82e0372b53911d98f8d17e))
+* update dependency postcss@&lt;8.5.10 to v8.5.28 ([#738](https://github.com/mbryantms/folio/issues/738)) ([678cd00](https://github.com/mbryantms/folio/commit/678cd007cab80fdfb789a5e87486316d885b9470))
+* update dependency react-hook-form to v7.87.0 ([#718](https://github.com/mbryantms/folio/issues/718)) ([8eb8a01](https://github.com/mbryantms/folio/commit/8eb8a01a0d42383ce8700032585e40c5c5181247))
+* update dependency vitest to v5 ([#736](https://github.com/mbryantms/folio/issues/736)) ([fe6fd7c](https://github.com/mbryantms/folio/commit/fe6fd7cc60f4e68d2a5715985a8c9b7e767ade0d))
+* update dependency zod to v4.5.4 ([#715](https://github.com/mbryantms/folio/issues/715)) ([9a7de89](https://github.com/mbryantms/folio/commit/9a7de894cb1491fc8d95a7e2eab6feec1133a1ae))
+* update docker/dockerfile docker tag to v1.27 ([#727](https://github.com/mbryantms/folio/issues/727)) ([ec5c6aa](https://github.com/mbryantms/folio/commit/ec5c6aa3cda89124ceeab40c86720a5ead890a08))
+* update nextjs monorepo to v16.3.4 ([#722](https://github.com/mbryantms/folio/issues/722)) ([2fd1157](https://github.com/mbryantms/folio/commit/2fd1157a3425ef25a902d2d22e0fee9bb95f2e8c))
+* update pnpm to v11.25.0 ([#713](https://github.com/mbryantms/folio/issues/713)) ([954c8d9](https://github.com/mbryantms/folio/commit/954c8d997d02aaf7b193436883ec1f1733bb874b))
+* update pnpm to v12.3.4 ([#740](https://github.com/mbryantms/folio/issues/740)) ([ec1c1d9](https://github.com/mbryantms/folio/commit/ec1c1d9478d7ab62cb7e1d2faa48e32ba2fedb87))
+* update rust crate constant_time_eq to 0.6 ([#719](https://github.com/mbryantms/folio/issues/719)) ([5ee2c8b](https://github.com/mbryantms/folio/commit/5ee2c8bcfb9836634e57fb320873e7624be59934))
+* update rust crate lru to v0.18.4 ([#730](https://github.com/mbryantms/folio/issues/730)) ([b3f17a1](https://github.com/mbryantms/folio/commit/b3f17a193c24f789c746f1ec85d5f037dca9179b))
+* update rust crate tower-http to v0.7.1 ([#721](https://github.com/mbryantms/folio/issues/721)) ([6cf570d](https://github.com/mbryantms/folio/commit/6cf570dba858d633b9b34c95b798af9b8bb9ceb0))
+* update rust to v1.98.1 ([#729](https://github.com/mbryantms/folio/issues/729)) ([620bb9b](https://github.com/mbryantms/folio/commit/620bb9b5c95d032646f5e7fc217173d1143bbf79))
+* update taiki-e/install-action digest to 0758d23 ([#716](https://github.com/mbryantms/folio/issues/716)) ([644c8d0](https://github.com/mbryantms/folio/commit/644c8d0f31b33209f5c2fc08ba2731f1ab793981))
+* update taiki-e/install-action digest to 5bf6ce0 ([#725](https://github.com/mbryantms/folio/issues/725)) ([ed46dbb](https://github.com/mbryantms/folio/commit/ed46dbbb6b605060f71a99bb545b8b9eac1e630b))
+* update taiki-e/install-action digest to 7b8d471 ([#726](https://github.com/mbryantms/folio/issues/726)) ([7ff472b](https://github.com/mbryantms/folio/commit/7ff472bfb72d244bd03fb5e1ba5338d618e3437e))
+* update taiki-e/install-action digest to 84f5ac3 ([#739](https://github.com/mbryantms/folio/issues/739)) ([dfe7308](https://github.com/mbryantms/folio/commit/dfe7308efe06e4c95a06ce34a8cc4f05eba5d9a1))
+
 ## [0.27.12](https://github.com/mbryantms/folio/compare/v0.27.11...v0.27.12) (2026-09-01)
 
 
