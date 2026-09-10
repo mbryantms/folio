@@ -99,9 +99,10 @@ mod tests {
     #[test]
     fn write_pages_roundtrips_via_reader() {
         let dst = NamedTempFile::new().unwrap();
+        // PNG-signed so the reader's open-time content sniff keeps them.
         let pages = vec![
-            ("png".to_string(), b"PAGEONE".to_vec(), 0),
-            ("png".to_string(), b"PAGETWO".to_vec(), 0),
+            ("png".to_string(), b"\x89PNG\r\n\x1a\nPAGEONE".to_vec(), 0),
+            ("png".to_string(), b"\x89PNG\r\n\x1a\nPAGETWO".to_vec(), 0),
         ];
         let extras = vec![("ComicInfo.xml".to_string(), b"<ComicInfo/>".to_vec(), 0)];
         write_pages(pages, extras, dst.path(), ArchiveLimits::default()).unwrap();
@@ -109,8 +110,14 @@ mod tests {
         let mut c = Cbt::open(dst.path(), ArchiveLimits::default()).unwrap();
         let names: Vec<String> = c.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(names, vec!["p0001.png", "p0002.png"]);
-        assert_eq!(c.read_entry_bytes("p0001.png").unwrap(), b"PAGEONE");
-        assert_eq!(c.read_entry_bytes("p0002.png").unwrap(), b"PAGETWO");
+        assert_eq!(
+            c.read_entry_bytes("p0001.png").unwrap(),
+            b"\x89PNG\r\n\x1a\nPAGEONE"
+        );
+        assert_eq!(
+            c.read_entry_bytes("p0002.png").unwrap(),
+            b"\x89PNG\r\n\x1a\nPAGETWO"
+        );
         // The sidecar is preserved (surfaced via the reader's lookup map).
         assert!(c.find("ComicInfo.xml").is_some());
     }

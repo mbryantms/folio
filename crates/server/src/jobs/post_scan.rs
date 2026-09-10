@@ -246,16 +246,20 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                             format,
                             quality,
                         ),
+                        // `total_pages` is the archive's page count and must
+                        // stay that way: `reconcile_page_count` below stamps it
+                        // onto `issue.page_count`. The cover is one of those
+                        // pages (`cover_page_index`), not an extra — the old
+                        // `+1` here made every `cover_page_map` job reconcile
+                        // to one more page than the archive holds.
                         ThumbsJobKind::CoverAndStrip => cover_result.and_then(|_| {
-                            let mut strips = thumbnails::generate_strips_with_quality(
+                            thumbnails::generate_strips_with_quality(
                                 &data_dir,
                                 &mut *archive,
                                 &issue_id,
                                 format,
                                 quality,
-                            )?;
-                            strips.total_pages = strips.total_pages.saturating_add(1);
-                            Ok(strips)
+                            )
                         }),
                     };
                 outcome.map(|o| (o, cover_hashes))

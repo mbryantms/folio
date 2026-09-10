@@ -16,6 +16,7 @@ pub mod cbz;
 pub mod cbz_write;
 pub mod comic_archive;
 pub mod entry_name;
+pub mod image_sniff;
 
 pub use comic_archive::ComicArchive;
 
@@ -147,10 +148,12 @@ pub struct ArchiveEntry {
 }
 
 /// An entry the archive crate dropped from the page index because a
-/// soft defense fired (today: the compression-ratio cap in
-/// [`cbz::Cbz`]). Surfaced via [`ComicArchive::entries_skipped`] so the
-/// scanner can emit a structured health-issue instead of users
-/// discovering "wait, where are pages 47 and 48?" months later.
+/// soft defense fired — the compression-ratio cap in [`cbz::Cbz`], or
+/// the content sniff in every reader (an image-named entry whose bytes
+/// aren't an image; see [`image_sniff`]). Surfaced via
+/// [`ComicArchive::entries_skipped`] so the scanner can emit a
+/// structured health-issue instead of users discovering "wait, where
+/// are pages 47 and 48?" months later.
 #[derive(Debug, Clone)]
 pub struct SkippedEntry {
     /// Entry name as recorded by the zip CD. May contain weird bytes;
@@ -159,8 +162,10 @@ pub struct SkippedEntry {
     pub uncompressed_size: u64,
     pub compressed_size: u64,
     /// Static reason string — match-on safely. Today's universe:
-    /// `"compression ratio cap"`. New reasons should be added near
-    /// the code that emits them so they stay grep-able.
+    /// `"compression ratio cap"` (cbz.rs) and
+    /// [`image_sniff::SKIP_REASON_NOT_AN_IMAGE`] (every reader). New
+    /// reasons should be added near the code that emits them so they
+    /// stay grep-able.
     pub reason: &'static str,
 }
 

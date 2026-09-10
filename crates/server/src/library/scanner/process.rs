@@ -338,10 +338,11 @@ async fn parse_archive_for_ingest(
         });
     }
     if !diagnostics.skipped.is_empty() {
-        // Group by reason so a future file that trips multiple soft
-        // defenses gets one row per defense. Today only the
-        // compression-ratio cap can fire, so the loop typically runs
-        // once.
+        // Group by reason so a file that trips multiple soft defenses
+        // gets one row per defense. Two can fire today: the CBZ
+        // compression-ratio cap, and the content sniff every reader
+        // runs over image-named entries (`archive::image_sniff` — the
+        // "ComicInfo.xml saved as -0001.jpg" publisher bug).
         let mut by_reason: std::collections::HashMap<&'static str, u32> =
             std::collections::HashMap::new();
         for s in &diagnostics.skipped {

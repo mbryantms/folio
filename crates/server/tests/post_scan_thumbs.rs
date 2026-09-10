@@ -215,6 +215,97 @@ async fn seed_issue(app: &TestApp, file_path: &Path, pages: usize) -> String {
     hash
 }
 
+/// Regression for the 2026-09 production wave of "Thumbnail generation
+/// failed … The image format could not be determined": a publisher CBZ
+/// whose first image-named entry is a `ComicInfo.xml` document. The
+/// archive crate now drops that entry from the page index at open, so
+/// the cover job must succeed, hash + encode the first *real* page, and
+/// the strip pass must reconcile `page_count` down to the real pages.
+#[tokio::test]
+async fn cover_job_succeeds_when_first_entry_is_a_misnamed_sidecar() {
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("misnamed.cbz");
+    {
+        let f = std::fs::File::create(&cbz).unwrap();
+        let mut zw = zip::ZipWriter::new(f);
+        let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("Issue/Issue-0001.jpg", opts).unwrap();
+        zw.write_all(b"<?xml version='1.0' encoding='utf-8'?>\n<ComicInfo/>")
+            .unwrap();
+        for n in 0..3 {
+            zw.start_file(format!("Issue/Issue-{:04}.jpg", n + 2), opts)
+                .unwrap();
+            zw.write_all(&solid_png([(n * 60) as u8, 100, 200, 255]))
+                .unwrap();
+        }
+        zw.start_file("ComicInfo.xml", opts).unwrap();
+        zw.write_all(b"<ComicInfo/>").unwrap();
+        zw.finish().unwrap();
+    }
+    // Seed with the *wrong* (pre-fix) count of 4 so the strip pass has
+    // something to reconcile.
+    let id = seed_issue(&app, &cbz, 4).await;
+
+    let state = app.state();
+    handle_thumbs(
+        ThumbsJob::cover_and_strip(id.clone()),
+        apalis::prelude::Data::new(state.clone()),
+    )
+    .await
+    .unwrap();
+
+    let row = IssueEntity::find_by_id(id.clone())
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.thumbnails_error, None,
+        "the XML entry must not reach the decoder"
+    );
+    assert!(row.thumbnails_generated_at.is_some());
+    assert_eq!(
+        row.page_count,
+        Some(3),
+        "page_count reconciles to the real image entries"
+    );
+
+    // The cover is the first *real* page (solid [0,100,200]); decode the
+    // WebP and check the centre pixel with a lossy-encode tolerance.
+    let cover = thumbnails::cover_path(&state.cfg().data_path, &id, thumbnails::ThumbFormat::Webp);
+    assert!(cover.exists(), "cover thumb missing: {}", cover.display());
+    let img = image::load_from_memory(&std::fs::read(&cover).unwrap())
+        .unwrap()
+        .to_rgba8();
+    let px = img.get_pixel(img.width() / 2, img.height() / 2).0;
+    for (got, want) in px.iter().zip([0u8, 100, 200]) {
+        assert!(
+            (i16::from(*got) - i16::from(want)).abs() <= 8,
+            "cover pixel {px:?} should be the first real page's colour"
+        );
+    }
+
+    // Strips exist for exactly the three real pages.
+    for n in 0..3 {
+        let strip = thumbnails::strip_path(
+            &state.cfg().data_path,
+            &id,
+            n,
+            thumbnails::ThumbFormat::Webp,
+        );
+        assert!(strip.exists(), "strip {n} missing");
+    }
+    let extra = thumbnails::strip_path(
+        &state.cfg().data_path,
+        &id,
+        3,
+        thumbnails::ThumbFormat::Webp,
+    );
+    assert!(!extra.exists(), "no strip for the dropped XML entry");
+}
+
 #[tokio::test]
 async fn cover_worker_generates_cover_without_eager_strips() {
     let app = TestApp::spawn().await;

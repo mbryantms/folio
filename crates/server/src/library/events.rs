@@ -127,8 +127,10 @@ pub enum ScanEvent {
         issue_id: String,
         kind: String,
     },
-    /// The job finished successfully. `pages` is the number of strip thumbs
-    /// generated (cover is implied as +1).
+    /// The job finished successfully. `pages` is the archive's page count
+    /// as the job walked it (`1` for cover-only jobs). The cover is one of
+    /// those pages, never an extra — the same number feeds
+    /// `issue.page_count` reconciliation in the worker.
     #[serde(rename = "thumbs.completed")]
     ThumbsCompleted {
         library_id: Uuid,

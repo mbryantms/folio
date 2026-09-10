@@ -43,6 +43,9 @@ fn build_cbz_bytes(label: &str) -> Vec<u8> {
         let opts = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored);
         zw.start_file("page-001.png", opts).unwrap();
+        // PNG-signed so the archive crate's open-time content sniff keeps
+        // the entry as a page; the label keeps each fixture distinct.
+        zw.write_all(b"\x89PNG\r\n\x1a\n").unwrap();
         zw.write_all(label.as_bytes()).unwrap();
         zw.finish().unwrap();
     }

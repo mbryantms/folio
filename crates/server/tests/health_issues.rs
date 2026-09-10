@@ -543,12 +543,102 @@ fn write_cbz_with_undecodable_page(path: &Path) {
     let mut zw = zip::ZipWriter::new(f);
     let stored: zip::write::SimpleFileOptions =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-    // Random non-image bytes. No PNG / JPEG magic, no recognized
-    // header. The `image` crate's decoder family rejects on header.
-    let junk: Vec<u8> = (0u8..=255u8).cycle().take(2048).collect();
+    // A real PNG signature (so the archive crate's open-time content
+    // sniff keeps the entry as a page — a signature-less body would be
+    // dropped at scan time as `SkippedArchiveEntries` instead) followed
+    // by garbage: the `image` decoder accepts the header and fails on
+    // the corrupt body, which is exactly the "truncated / corrupt past
+    // the header" case `UnreadablePage` exists for.
+    let mut junk: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    junk.extend((0u8..=255u8).cycle().take(2048));
     zw.start_file("page-001.png", stored).unwrap();
     zw.write_all(&junk).unwrap();
     zw.finish().unwrap();
+}
+
+/// Minimal valid 1×1 PNG so the issue ingests with real, decodable pages.
+fn one_pixel_png() -> Vec<u8> {
+    vec![
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ]
+}
+
+/// The production shape behind the 2026-09 "Thumbnail generation failed …
+/// The image format could not be determined" wave: a publisher CBZ whose
+/// first image-named entry is a `ComicInfo.xml` document (`…-0001.jpg`),
+/// followed by the real pages and a root `ComicInfo.xml`.
+fn write_cbz_with_misnamed_sidecar_page(path: &Path) {
+    let f = std::fs::File::create(path).unwrap();
+    let mut zw = zip::ZipWriter::new(f);
+    let opts: zip::write::SimpleFileOptions =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let xml = "<?xml version='1.0' encoding='utf-8'?>\n<ComicInfo><Series>Misnamed</Series><Number>1</Number></ComicInfo>";
+    let png = one_pixel_png();
+    zw.start_file("Misnamed 001 (2024)/Misnamed-001-0001.jpg", opts)
+        .unwrap();
+    zw.write_all(xml.as_bytes()).unwrap();
+    zw.start_file("Misnamed 001 (2024)/Misnamed-001-0002.jpg", opts)
+        .unwrap();
+    zw.write_all(&png).unwrap();
+    zw.start_file("Misnamed 001 (2024)/Misnamed-001-0003.jpg", opts)
+        .unwrap();
+    zw.write_all(&png).unwrap();
+    zw.start_file("ComicInfo.xml", opts).unwrap();
+    zw.write_all(xml.as_bytes()).unwrap();
+    zw.finish().unwrap();
+}
+
+/// Regression for the misnamed-sidecar publisher bug: the XML-bodied
+/// `-0001.jpg` must be excluded from the page count (so cover / reader /
+/// OCR all agree page 0 is the first real image) and surfaced as a
+/// `SkippedArchiveEntries` warning naming the sniff reason — without a
+/// spurious `NoPages` row.
+#[tokio::test]
+async fn misnamed_sidecar_page_entry_is_dropped_and_surfaced() {
+    use entity::issue;
+
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+
+    let folder = tmp.path().join("Misnamed (2024)");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz_with_misnamed_sidecar_page(&folder.join("Misnamed 001.cbz"));
+
+    let lib_id = create_library(&app, tmp.path(), false).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issues = issue::Entity::find().all(&state.db).await.unwrap();
+    assert_eq!(issues.len(), 1, "the file must still ingest as an issue");
+    assert_eq!(
+        issues[0].page_count,
+        Some(2),
+        "page_count must count only the real image entries"
+    );
+    assert_eq!(issues[0].state, "active");
+
+    let health = HealthEntity::find().all(&state.db).await.unwrap();
+    assert!(
+        !health.iter().any(|i| i.kind == "NoPages"),
+        "two real pages remain — NoPages must not fire",
+    );
+    let skipped = health
+        .iter()
+        .find(|i| i.kind == "SkippedArchiveEntries")
+        .expect("SkippedArchiveEntries row for the misnamed entry");
+    let data = &skipped.payload["data"];
+    assert_eq!(data["dropped"].as_u64().unwrap(), 1);
+    // 2 real pages + root ComicInfo.xml kept, + 1 dropped = 4 seen.
+    assert_eq!(data["total"].as_u64().unwrap(), 4);
+    assert_eq!(
+        data["reason"].as_str().unwrap(),
+        archive::image_sniff::SKIP_REASON_NOT_AN_IMAGE
+    );
+    assert_eq!(skipped.severity, "warning");
 }
 
 /// Tranche C of recovery-visibility:

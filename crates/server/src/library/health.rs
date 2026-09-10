@@ -84,11 +84,14 @@ pub enum IssueKind {
         technique: String,
     },
     /// One or more entries inside the archive were dropped from the
-    /// page index because a soft defense rejected them (today: the
-    /// compression-ratio cap rejects entries that claim a >200x
-    /// expansion ratio). The archive opens; the user sees `dropped`
-    /// fewer pages than the archive claims. Surfaces as a warning
-    /// so operators can decide whether to repack the file.
+    /// page index because a soft defense rejected them: the
+    /// compression-ratio cap (entries claiming a >200x expansion), or
+    /// the open-time content sniff (an image-named entry whose bytes
+    /// aren't an image — e.g. a `ComicInfo.xml` document saved as
+    /// `-0001.jpg`; see `archive::image_sniff`). The archive opens; the
+    /// user sees `dropped` fewer pages than the archive claims. Surfaces
+    /// as a warning so operators can decide whether to repack the file.
+    /// `reason` carries the archive crate's static reason string.
     SkippedArchiveEntries {
         path: PathBuf,
         dropped: u32,

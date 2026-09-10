@@ -455,9 +455,12 @@ mod tests {
     /// Returns a temp file whose path can be passed to `Cbz::open`.
     fn build_fixture() -> (NamedTempFile, [Vec<u8>; 3], Vec<u8>) {
         let tmp = NamedTempFile::new().expect("temp");
-        let page0 = b"PAGE0BYTES".to_vec();
-        let page1 = b"PAGE1BYTES_SLIGHTLY_LONGER".to_vec();
-        let page2 = b"PAGE2".to_vec();
+        // JPEG-signed so the reader's open-time content sniff keeps
+        // them as pages; the distinctive tails keep byte-equality
+        // assertions meaningful.
+        let page0 = b"\xFF\xD8\xFFPAGE0BYTES".to_vec();
+        let page1 = b"\xFF\xD8\xFFPAGE1BYTES_SLIGHTLY_LONGER".to_vec();
+        let page2 = b"\xFF\xD8\xFFPAGE2".to_vec();
         let info = b"<?xml version=\"1.0\"?><ComicInfo><Title>Fixture</Title></ComicInfo>".to_vec();
         {
             let mut zw = ZipWriter::new(tmp.reopen().expect("reopen"));
@@ -748,7 +751,7 @@ mod tests {
         let mut src = Cbz::open(src_file.path(), ArchiveLimits::default()).unwrap();
         let idx = page_indices(&src);
 
-        let new_bytes = b"FRESH_ENCODED_PAGE".to_vec();
+        let new_bytes = b"\x89PNG\r\n\x1a\nFRESH_ENCODED_PAGE".to_vec();
         let plan = vec![
             OutputPage {
                 ext: "jpg".into(),

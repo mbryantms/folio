@@ -11,12 +11,17 @@
 //! Same security limits as `cbz.rs` (entry count, total bytes, per-entry
 //! size). Tar has no compression — ratio guard reduces to total-bytes
 //! enforcement.
+//!
+//! Page candidates are content-sniffed at open ([`crate::image_sniff`]):
+//! one seek + short read per image-named entry, then the ones whose bytes
+//! aren't an image are dropped from the index and reported via
+//! [`ComicArchive::entries_skipped`].
 
 use crate::{
-    ArchiveEntry, ArchiveError, ArchiveLimits, comic_archive::ComicArchive,
-    entry_name::validate as sanitize_entry_name,
+    ArchiveEntry, ArchiveError, ArchiveLimits, SkippedEntry, comic_archive::ComicArchive,
+    entry_name::validate as sanitize_entry_name, image_sniff,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -31,6 +36,8 @@ pub struct Cbt {
     /// used by `read_entry_bytes` to seek without re-walking the tar.
     offsets: HashMap<String, u64>,
     limits: ArchiveLimits,
+    /// Image-named entries whose bytes failed the content sniff at open.
+    skipped: Vec<SkippedEntry>,
 }
 
 impl Cbt {
@@ -92,12 +99,75 @@ impl Cbt {
             }
         }
 
-        Ok(Self {
+        let mut me = Self {
             path: path_buf,
             entries,
             offsets,
             limits,
-        })
+            skipped: Vec::new(),
+        };
+        me.drop_non_image_pages();
+        Ok(me)
+    }
+
+    /// Content-sniff every page candidate; drop the ones whose leading
+    /// bytes aren't an image signature. Tar entries are uncompressed and
+    /// we already know every data offset, so this is one `seek` + one
+    /// `SNIFF_LEN`-byte read per candidate. A candidate whose prefix can't
+    /// be read is kept — that's for the consumer to report.
+    fn drop_non_image_pages(&mut self) {
+        let candidates: Vec<ArchiveEntry> = self
+            .entries
+            .iter()
+            .filter(|e| image_sniff::has_image_extension(&e.name))
+            .cloned()
+            .collect();
+        if candidates.is_empty() {
+            return;
+        }
+        let Ok(mut f) = File::open(&self.path) else {
+            return;
+        };
+        let mut dropped: HashSet<String> = HashSet::new();
+        for entry in candidates {
+            let Some(&offset) = self.offsets.get(&entry.name) else {
+                continue;
+            };
+            let len = entry.uncompressed_size.min(image_sniff::SNIFF_LEN as u64) as usize;
+            let mut head = vec![0u8; len];
+            let read_ok = f
+                .seek(SeekFrom::Start(offset))
+                .and_then(|_| f.read_exact(&mut head))
+                .is_ok();
+            if !read_ok {
+                tracing::debug!(
+                    path = %self.path.display(),
+                    entry = %entry.name,
+                    "cbt: page prefix unreadable during sniff; keeping entry",
+                );
+                continue;
+            }
+            if image_sniff::sniff(&head).is_some() {
+                continue;
+            }
+            tracing::warn!(
+                path = %self.path.display(),
+                entry = %entry.name,
+                size = entry.uncompressed_size,
+                "cbt: dropping image-named entry whose bytes aren't an image",
+            );
+            self.skipped.push(SkippedEntry {
+                name: entry.name.clone(),
+                uncompressed_size: entry.uncompressed_size,
+                compressed_size: entry.compressed_size,
+                reason: image_sniff::SKIP_REASON_NOT_AN_IMAGE,
+            });
+            self.offsets.remove(&entry.name);
+            dropped.insert(entry.name);
+        }
+        if !dropped.is_empty() {
+            self.entries.retain(|e| !dropped.contains(&e.name));
+        }
     }
 }
 
@@ -106,8 +176,11 @@ impl ComicArchive for Cbt {
         &self.entries
     }
     fn pages(&self) -> Vec<&ArchiveEntry> {
-        let mut imgs: Vec<&ArchiveEntry> =
-            self.entries.iter().filter(|e| is_image(&e.name)).collect();
+        let mut imgs: Vec<&ArchiveEntry> = self
+            .entries
+            .iter()
+            .filter(|e| image_sniff::has_image_extension(&e.name))
+            .collect();
         imgs.sort_by(|a, b| natord::compare(&a.name, &b.name));
         imgs
     }
@@ -116,6 +189,9 @@ impl ComicArchive for Cbt {
         self.entries
             .iter()
             .find(|e| e.name.to_ascii_lowercase() == lower)
+    }
+    fn entries_skipped(&self) -> &[SkippedEntry] {
+        &self.skipped
     }
     fn read_entry_bytes(&mut self, name: &str) -> Result<Vec<u8>, ArchiveError> {
         let lower = name.to_ascii_lowercase();
@@ -162,13 +238,62 @@ impl ComicArchive for Cbt {
     }
 }
 
-fn is_image(name: &str) -> bool {
-    let ext = std::path::Path::new(name)
-        .extension()
-        .and_then(|s| s.to_str())
-        .map(str::to_ascii_lowercase);
-    matches!(
-        ext.as_deref(),
-        Some("jpg" | "jpeg" | "png" | "webp" | "avif" | "gif" | "jxl")
-    )
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PNG_SIG: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+    fn build_cbt(entries: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
+        let f = tempfile::Builder::new()
+            .suffix(".cbt")
+            .tempfile()
+            .expect("tempfile");
+        let mut tw = tar::Builder::new(f.reopen().expect("reopen"));
+        for (name, bytes) in entries {
+            let mut header = tar::Header::new_ustar();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            tw.append_data(&mut header, name, *bytes).expect("append");
+        }
+        tw.finish().expect("finish");
+        f
+    }
+
+    /// Production shape: a ComicInfo document saved under a `.jpg` name
+    /// must not count as a page, and must be reported as skipped.
+    #[test]
+    fn image_named_non_image_entry_is_dropped_and_reported() {
+        let xml = b"<?xml version='1.0' encoding='utf-8'?>\n<ComicInfo/>";
+        let mut png = PNG_SIG.to_vec();
+        png.extend_from_slice(&[0, 0, 0, 13]);
+        let tmp = build_cbt(&[
+            ("Issue/x-0001.jpg", xml),
+            ("Issue/x-0002.jpg", &png),
+            ("ComicInfo.xml", b"<ComicInfo/>"),
+        ]);
+        let a = Cbt::open(tmp.path(), ArchiveLimits::default()).expect("open");
+        let pages: Vec<String> = a.pages().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(pages, vec!["Issue/x-0002.jpg"]);
+        assert!(
+            a.find("Issue/x-0001.jpg").is_none(),
+            "dropped from the index"
+        );
+        assert!(a.find("ComicInfo.xml").is_some(), "sidecars untouched");
+        let skipped = a.entries_skipped();
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].name, "Issue/x-0001.jpg");
+        assert_eq!(skipped[0].reason, image_sniff::SKIP_REASON_NOT_AN_IMAGE);
+    }
+
+    #[test]
+    fn real_image_entries_are_untouched() {
+        let mut png = PNG_SIG.to_vec();
+        png.extend_from_slice(&[0, 0, 0, 13]);
+        let tmp = build_cbt(&[("01.png", &png), ("02.png", &png)]);
+        let a = Cbt::open(tmp.path(), ArchiveLimits::default()).expect("open");
+        assert_eq!(a.pages().len(), 2);
+        assert!(a.entries_skipped().is_empty());
+    }
 }
