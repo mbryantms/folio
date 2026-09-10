@@ -13,6 +13,27 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.14](https://github.com/mbryantms/folio/compare/v0.27.13...v0.27.14) (2026-09-10)
+
+
+### Fixed
+
+* **archive:** content-sniff page entries so misnamed sidecars can't become page 0 ([#753](https://github.com/mbryantms/folio/issues/753)) ([3df976f](https://github.com/mbryantms/folio/commit/3df976fb11f51bed3d6b4d7e3453f6da6515756e))
+
+
+### Dependencies
+
+* update dependency @playwright/test to v1.63.0 ([#746](https://github.com/mbryantms/folio/issues/746)) ([eea87e7](https://github.com/mbryantms/folio/commit/eea87e77b805aec34f7cc4d08659d85b2e188620))
+* update dependency @scalar/api-reference-react to v0.9.67 ([#750](https://github.com/mbryantms/folio/issues/750)) ([cabd838](https://github.com/mbryantms/folio/commit/cabd8385a2d871306a4ab8ad49539280aca1df10))
+* update dependency @tanstack/react-virtual to v3.14.11 ([#751](https://github.com/mbryantms/folio/issues/751)) ([466996e](https://github.com/mbryantms/folio/commit/466996e6b6d71596ef9e729fa702ae78cd8c9e93))
+* update dependency browserslist@&lt;4.28.9 to v4.28.9 ([#742](https://github.com/mbryantms/folio/issues/742)) ([f794800](https://github.com/mbryantms/folio/commit/f794800e99859d087c77dfa7546692f8011966ef))
+* update dependency lucide-react to v1.42.0 ([#749](https://github.com/mbryantms/folio/issues/749)) ([73f0322](https://github.com/mbryantms/folio/commit/73f032228752da3a4f23ddeecd1458535cf9d690))
+* update rust crate ipnet to v2.12.2 ([#747](https://github.com/mbryantms/folio/issues/747)) ([77988c4](https://github.com/mbryantms/folio/commit/77988c4b64924f44d69420d84eb43897c28e6956))
+* update rust crate syn to v3.0.5 ([#743](https://github.com/mbryantms/folio/issues/743)) ([5a0f851](https://github.com/mbryantms/folio/commit/5a0f851eb146bd25be32f7457106a0ab02645a08))
+* update taiki-e/install-action digest to c3ec0de ([#748](https://github.com/mbryantms/folio/issues/748)) ([13e1ace](https://github.com/mbryantms/folio/commit/13e1ace4fe07163402e5a87949d4bdb3eeac8d1d))
+* update taiki-e/install-action digest to d438492 ([#744](https://github.com/mbryantms/folio/issues/744)) ([19cdab4](https://github.com/mbryantms/folio/commit/19cdab46fd045bbdb136cf72eb4c4f75402a2d89))
+* update taiki-e/install-action digest to fa23953 ([#752](https://github.com/mbryantms/folio/issues/752)) ([f9f8391](https://github.com/mbryantms/folio/commit/f9f8391f491a2c8dd1dc82b8efc5118726fcfcd3))
+
 ## [0.27.13](https://github.com/mbryantms/folio/compare/v0.27.12...v0.27.13) (2026-09-07)
 
 
