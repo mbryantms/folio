@@ -21,6 +21,11 @@ pub trait ComicArchive: Send {
     fn entries(&self) -> &[ArchiveEntry];
     /// Image entries in natural-sort order. Caller treats this as the page
     /// list (spec §6.6).
+    ///
+    /// "Image" means the name carries an image extension **and** the
+    /// leading bytes carry an image signature ([`crate::image_sniff`]).
+    /// Readers run the sniff once at open; entries that fail it are
+    /// excluded here and reported via [`Self::entries_skipped`].
     fn pages(&self) -> Vec<&ArchiveEntry>;
     /// Case-insensitive lookup of a metadata-style entry (`ComicInfo.xml`,
     /// `MetronInfo.xml`, etc.).
@@ -49,9 +54,10 @@ pub trait ComicArchive: Send {
     }
 
     /// Entries the archive dropped from the page index because a soft
-    /// defense fired during open (today: `Cbz`'s compression-ratio cap).
-    /// Defaulted to empty so non-zip readers inherit; the scanner
-    /// surfaces a `SkippedArchiveEntries` health-issue when non-empty.
+    /// defense fired during open (`Cbz`'s compression-ratio cap, or the
+    /// content sniff every reader runs over image-named entries). The
+    /// scanner surfaces a `SkippedArchiveEntries` health-issue when
+    /// non-empty. Defaulted to empty for readers with nothing to report.
     fn entries_skipped(&self) -> &[SkippedEntry] {
         &[]
     }

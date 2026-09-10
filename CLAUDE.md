@@ -91,6 +91,15 @@ Default admin (first registered user becomes admin):
   - The harness drops each clone DB on teardown so databases/connections stay
     flat on the shared server — do not remove `TestApp::Drop` or a big test file
     will exhaust `max_connections`.
+- **Archive fixtures need real image signatures.** Every reader
+  (CBZ/CBT/CBR) content-sniffs page candidates at open
+  ([`archive::image_sniff`](crates/archive/src/image_sniff.rs)) and
+  drops image-named entries whose bytes carry no image magic (reported
+  as `SkippedArchiveEntries`). A test that writes `b"x"` under
+  `page-001.png` gets a zero-page archive; prefix the PNG 8-byte
+  signature (`\x89PNG\r\n\x1a\n`) or JPEG `FF D8 FF` instead. A
+  "corrupt page" fixture (deep-validate `UnreadablePage`) is a real
+  signature followed by garbage.
 - Web tests: vitest under `web/tests/`. Tests that touch routing/auth mock
   `next/navigation` and `@/lib/api/fetch`; see
   [web/tests/admin/layout.test.tsx](web/tests/admin/layout.test.tsx).

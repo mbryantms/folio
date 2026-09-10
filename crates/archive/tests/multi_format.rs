@@ -28,8 +28,10 @@ fn cbt_round_trip() {
     write_tar(
         &p,
         &[
-            ("page-001.png", b"\x89PNGfake-bytes-001"),
-            ("page-002.png", b"\x89PNGfake-bytes-002"),
+            // Full 8-byte PNG signature: the reader content-sniffs pages
+            // at open and drops anything without a real image magic.
+            ("page-001.png", b"\x89PNG\r\n\x1a\nfake-bytes-001"),
+            ("page-002.png", b"\x89PNG\r\n\x1a\nfake-bytes-002"),
             ("ComicInfo.xml", b"<ComicInfo></ComicInfo>"),
         ],
     );
@@ -45,7 +47,7 @@ fn cbt_round_trip() {
     assert_eq!(bytes, b"<ComicInfo></ComicInfo>");
 
     let p1 = archive.read_entry_bytes("page-001.png").unwrap();
-    assert_eq!(p1, b"\x89PNGfake-bytes-001");
+    assert_eq!(p1, b"\x89PNG\r\n\x1a\nfake-bytes-001");
 }
 
 #[test]
@@ -181,7 +183,9 @@ fn cbt_within_limits_still_opens() {
     // everything.
     let tmp = tempfile::tempdir().unwrap();
     let p = tmp.path().join("ok.cbt");
-    let page = vec![0u8; 800];
+    // PNG-signed so the open-time content sniff keeps both as pages.
+    let mut page = b"\x89PNG\r\n\x1a\n".to_vec();
+    page.resize(800, 0u8);
     write_tar(
         &p,
         &[("a.png", page.as_slice()), ("b.png", page.as_slice())],

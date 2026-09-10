@@ -582,20 +582,22 @@ async fn suffix_range_returns_last_n_bytes() {
 }
 
 #[tokio::test]
-async fn unsupported_media_type_returns_415() {
+async fn non_image_bytes_under_image_name_are_never_served() {
+    // An image-named entry whose bytes carry no allowlisted magic used to
+    // reach the per-request sniff and 415. The archive crate now content-
+    // sniffs page candidates at open and drops such entries from the page
+    // index, so the request 404s before any bytes are read: the entry is
+    // not a page at all. The per-request sniff stays as defense-in-depth
+    // (unit-tested below via `sniff_*`).
     let app = TestApp::spawn().await;
     let session = register_admin(&app).await;
 
     let dir = tempfile::tempdir().unwrap();
-    let cbz = dir.path().join("svg.cbz");
-    // CBZ contains an .svg-named entry — but our sniffer also recognizes the
-    // angle-bracket prefix, so it would reject either way. Use plain text bytes
-    // (no allowlisted magic) to trigger 415.
+    let cbz = dir.path().join("text.cbz");
     let f = std::fs::File::create(&cbz).unwrap();
     let mut zw = zip::ZipWriter::new(f);
     let opts: zip::write::SimpleFileOptions =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-    // .png extension so it appears in `pages()`, but bytes don't match any allowlisted magic.
     zw.start_file("page-001.png", opts).unwrap();
     zw.write_all(b"not a real image, just plain text bytes")
         .unwrap();
@@ -616,7 +618,7 @@ async fn unsupported_media_type_returns_415() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

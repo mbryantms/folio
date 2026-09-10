@@ -11,8 +11,8 @@
 //! decompressing — so a 42 KB → 4 GiB bomb is rejected without allocation.
 
 use crate::entry_name;
-use crate::{ArchiveEntry, ArchiveError, ArchiveLimits, SkippedEntry, recovery};
-use std::collections::HashMap;
+use crate::{ArchiveEntry, ArchiveError, ArchiveLimits, SkippedEntry, image_sniff, recovery};
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -49,13 +49,12 @@ pub fn is_rewrite_skipped(name: &str) -> bool {
     is_skipped(name)
 }
 
-/// Image extensions we accept inside an archive.
-fn is_image(name: &str) -> bool {
-    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-    matches!(
-        ext.as_str(),
-        "jpg" | "jpeg" | "png" | "webp" | "avif" | "gif" | "jxl"
-    )
+/// Page *candidate* predicate: image extension and not a sidecar / trash
+/// entry. The open path additionally content-sniffs every candidate
+/// ([`Cbz::drop_non_image_pages`]), so by the time [`Cbz::pages`] runs
+/// this is the whole filter.
+fn is_page_name(name: &str) -> bool {
+    image_sniff::has_image_extension(name) && !is_skipped(&name.to_ascii_lowercase())
 }
 
 pub struct Cbz {
@@ -79,9 +78,10 @@ pub struct Cbz {
     /// [`crate::recovery`] for the tag constants.
     recovery: Option<&'static str>,
     /// Entries the open path dropped from the page index because a soft
-    /// defense fired (compression-ratio cap, today). Exposed via
-    /// [`Cbz::entries_skipped`] so the scanner can emit a
-    /// `SkippedArchiveEntries` health-issue. Empty in the happy path.
+    /// defense fired (compression-ratio cap, or an image-named entry
+    /// whose bytes aren't an image). Exposed via [`Cbz::entries_skipped`]
+    /// so the scanner can emit a `SkippedArchiveEntries` health-issue.
+    /// Empty in the happy path.
     skipped: Vec<SkippedEntry>,
 }
 
@@ -197,8 +197,9 @@ impl Cbz {
     }
 
     /// Entries dropped from the page index by a soft defense at open
-    /// time. The scanner reads this to emit `SkippedArchiveEntries`
-    /// health-issues. Empty in the happy path.
+    /// time (compression-ratio cap, content sniff). The scanner reads
+    /// this to emit `SkippedArchiveEntries` health-issues. Empty in the
+    /// happy path.
     pub fn entries_skipped(&self) -> &[SkippedEntry] {
         &self.skipped
     }
@@ -464,7 +465,7 @@ impl Cbz {
             by_canonical.insert(safe.canonical, idx);
         }
 
-        Ok(Self {
+        let mut me = Self {
             path,
             limits,
             archive,
@@ -473,7 +474,85 @@ impl Cbz {
             by_canonical,
             recovery,
             skipped,
-        })
+        };
+        me.drop_non_image_pages();
+        Ok(me)
+    }
+
+    /// Content-sniff every page candidate and drop the ones whose bytes
+    /// aren't an image (see [`crate::image_sniff`] for the motivating
+    /// case: a `ComicInfo.xml` document saved under a `-0001.jpg` name).
+    ///
+    /// Runs once at open. Cost is one `by_index` + a `SNIFF_LEN`-byte read
+    /// per candidate — a seek plus a short read for Stored entries, one
+    /// inflate block for Deflated ones — so a 500-page omnibus adds low
+    /// single-digit milliseconds. The reader's `ZipLru` amortises that
+    /// across page requests.
+    ///
+    /// A candidate whose prefix can't be read at all is **kept**: that's
+    /// a read/decode failure for the consumer to report (deep-validate's
+    /// `UnreadablePage`), not evidence about what the bytes are.
+    ///
+    /// Dropped entries leave `entries` / `find` / the pread layout too,
+    /// matching the compression-ratio skip's "gone from the index"
+    /// semantics; the rewrite path walks raw zip ordinals, so the bytes
+    /// still round-trip through `cbz_write::rebuild` untouched.
+    fn drop_non_image_pages(&mut self) {
+        let candidates: Vec<(usize, ArchiveEntry)> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| is_page_name(&e.name))
+            .map(|(pos, e)| (pos, e.clone()))
+            .collect();
+        let mut dropped: HashSet<usize> = HashSet::new();
+        for (pos, entry) in candidates {
+            let head = match self.read_entry_prefix(&entry, image_sniff::SNIFF_LEN) {
+                Ok(head) => head,
+                Err(e) => {
+                    tracing::debug!(
+                        path = %self.path.display(),
+                        entry = %entry.name,
+                        error = %e,
+                        "cbz: page prefix unreadable during sniff; keeping entry",
+                    );
+                    continue;
+                }
+            };
+            if image_sniff::sniff(&head).is_some() {
+                continue;
+            }
+            tracing::warn!(
+                path = %self.path.display(),
+                entry = %entry.name,
+                size = entry.uncompressed_size,
+                "cbz: dropping image-named entry whose bytes aren't an image",
+            );
+            self.skipped.push(SkippedEntry {
+                name: entry.name.clone(),
+                uncompressed_size: entry.uncompressed_size,
+                compressed_size: entry.compressed_size,
+                reason: image_sniff::SKIP_REASON_NOT_AN_IMAGE,
+            });
+            dropped.insert(pos);
+        }
+        if dropped.is_empty() {
+            return;
+        }
+        // `entry_layout` is aligned 1:1 with `entries` and `by_canonical`
+        // stores positions into it, so all three are rebuilt together.
+        let entries = std::mem::take(&mut self.entries);
+        let layout = std::mem::take(&mut self.entry_layout);
+        self.by_canonical.clear();
+        for (pos, (entry, layout)) in entries.into_iter().zip(layout).enumerate() {
+            if dropped.contains(&pos) {
+                continue;
+            }
+            self.by_canonical
+                .insert(entry.name.to_ascii_lowercase(), self.entries.len());
+            self.entries.push(entry);
+            self.entry_layout.push(layout);
+        }
     }
 
     /// Build the lock-free [`PreadIndex`] for this archive's `Stored` entries
@@ -592,12 +671,14 @@ impl Cbz {
         self.read_entry_prefix(&entry, max_bytes)
     }
 
-    /// Page entries in natural-sort order (numeric-aware).
+    /// Page entries in natural-sort order (numeric-aware). Content-sniffed
+    /// at open: an image-named entry whose bytes aren't an image is not
+    /// here (see [`Cbz::entries_skipped`]).
     pub fn pages(&self) -> Vec<&ArchiveEntry> {
         let mut pages: Vec<&ArchiveEntry> = self
             .entries
             .iter()
-            .filter(|e| is_image(&e.name) && !is_skipped(&e.name.to_ascii_lowercase()))
+            .filter(|e| is_page_name(&e.name))
             .collect();
         pages.sort_by(|a, b| natord::compare_ignore_case(&a.name, &b.name));
         pages
@@ -1213,6 +1294,17 @@ mod tests {
         f
     }
 
+    const PNG_SIG: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+    /// A PNG-signed payload with arbitrary trailing bytes: passes the
+    /// open-time content sniff (so it counts as a page) while giving
+    /// byte-exactness tests a distinctive body to compare against.
+    fn png_signed(body: impl IntoIterator<Item = u8>) -> Vec<u8> {
+        let mut v = PNG_SIG.to_vec();
+        v.extend(body);
+        v
+    }
+
     fn one_pixel_png() -> Vec<u8> {
         // Minimal 1x1 PNG.
         vec![
@@ -1230,8 +1322,8 @@ mod tests {
         // equal BOTH the locked zip-reader read and the original payload —
         // full entry and an arbitrary sub-range. A wrong offset would surface
         // here as mismatched bytes.
-        let p0: Vec<u8> = (0..600u32).map(|i| (i % 251) as u8).collect();
-        let p1: Vec<u8> = (0..777u32).map(|i| ((i * 7 + 3) % 253) as u8).collect();
+        let p0 = png_signed((0..600u32).map(|i| (i % 251) as u8));
+        let p1 = png_signed((0..777u32).map(|i| ((i * 7 + 3) % 253) as u8));
         let tmp = build_cbz_with(&[("p0.png", &p0), ("p1.png", &p1)], true);
         let mut cbz = Cbz::open(tmp.path(), ArchiveLimits::default()).expect("open");
 
@@ -1283,7 +1375,7 @@ mod tests {
     fn pread_index_omits_deflated_entries() {
         // Compressed entries can't be read straight off disk, so they must be
         // absent from the index — the caller falls back to the locked path.
-        let p: Vec<u8> = vec![42u8; 4096];
+        let p = png_signed(std::iter::repeat_n(42u8, 4096));
         let tmp = build_cbz_with(&[("c.png", &p)], false); // Deflated
         let cbz = Cbz::open(tmp.path(), ArchiveLimits::default()).expect("open");
         let index = cbz.build_pread_index();
@@ -1726,6 +1818,112 @@ mod tests {
         assert_eq!(pages, vec!["01.png"]);
     }
 
+    /// Production shape (2026-09 scan of a Marvel library): a publisher
+    /// CBZ whose first entry is a `ComicInfo.xml` document saved under a
+    /// `-0001.jpg` name. It must not count as a page, `find` must not
+    /// return it, and it must be reported as skipped with the sniff
+    /// reason so the scanner can raise a health issue.
+    #[test]
+    fn image_named_non_image_entry_is_dropped_and_reported() {
+        let xml = b"<?xml version='1.0' encoding='utf-8'?>\n<ComicInfo xmlns:xsi=\"x\"/>";
+        let png = one_pixel_png();
+        let cbz = build_cbz(&[
+            ("Issue 036/Issue-036-0001.jpg", xml),
+            ("Issue 036/Issue-036-0002.jpg", &png),
+            ("Issue 036/Issue-036-0003.jpg", &png),
+            ("ComicInfo.xml", b"<ComicInfo/>"),
+        ]);
+        let mut a = Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap();
+        let pages: Vec<String> = a.pages().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(
+            pages,
+            vec![
+                "Issue 036/Issue-036-0002.jpg",
+                "Issue 036/Issue-036-0003.jpg"
+            ],
+            "the XML-bodied entry must not be page 0"
+        );
+        assert!(a.find("Issue 036/Issue-036-0001.jpg").is_none());
+        assert!(a.find("Issue-036-0001.jpg").is_none());
+        assert!(
+            a.find("ComicInfo.xml").is_some(),
+            "real sidecar still readable"
+        );
+        assert_eq!(
+            a.read_entry_bytes_by_name("ComicInfo.xml").unwrap(),
+            b"<ComicInfo/>"
+        );
+
+        let skipped = a.entries_skipped();
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].name, "Issue 036/Issue-036-0001.jpg");
+        assert_eq!(skipped[0].uncompressed_size, xml.len() as u64);
+        assert_eq!(skipped[0].reason, image_sniff::SKIP_REASON_NOT_AN_IMAGE);
+
+        // The surviving pages still read back byte-exact — the index
+        // rebuild must not have shifted zip ordinals.
+        let first = a.pages()[0].clone();
+        assert_eq!(a.read_entry_bytes(&first).unwrap(), png);
+    }
+
+    /// Dropping an entry rebuilds `entries` / `entry_layout` /
+    /// `by_canonical` together; the pread index derived from the layout
+    /// must still point every surviving Stored page at its own bytes.
+    #[test]
+    fn sniff_drop_keeps_pread_layout_aligned() {
+        let junk = b"plain text masquerading as a page";
+        let p1 = png_signed((0..300u32).map(|i| (i % 7) as u8));
+        let p2 = png_signed((0..333u32).map(|i| (i % 11) as u8));
+        let tmp = build_cbz_with(&[("00.png", junk), ("01.png", &p1), ("02.png", &p2)], true);
+        let mut cbz = Cbz::open(tmp.path(), ArchiveLimits::default()).unwrap();
+        assert_eq!(cbz.entries_skipped().len(), 1);
+        let pages: Vec<ArchiveEntry> = cbz.pages().iter().map(|e| (*e).clone()).collect();
+        assert_eq!(pages.len(), 2);
+        let index = cbz.build_pread_index();
+        assert_eq!(index.len(), 2);
+
+        use std::io::{Read, Seek, SeekFrom};
+        let mut raw = std::fs::File::open(tmp.path()).unwrap();
+        for entry in &pages {
+            let expected: &[u8] = if entry.name == "01.png" { &p1 } else { &p2 };
+            let extent = index.extent(entry.index).expect("stored extent");
+            raw.seek(SeekFrom::Start(extent.data_start)).unwrap();
+            let mut got = vec![0u8; extent.length as usize];
+            raw.read_exact(&mut got).unwrap();
+            assert_eq!(got, expected, "pread extent for {}", entry.name);
+            assert_eq!(cbz.read_entry_bytes(entry).unwrap(), expected);
+        }
+    }
+
+    /// A zero-length image-named entry can't be an image either.
+    #[test]
+    fn empty_image_named_entry_is_dropped() {
+        let png = one_pixel_png();
+        let cbz = build_cbz(&[("00.jpg", b""), ("01.png", &png)]);
+        let a = Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap();
+        let pages: Vec<String> = a.pages().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(pages, vec!["01.png"]);
+        assert_eq!(a.entries_skipped().len(), 1);
+    }
+
+    /// Every allowlisted container survives the sniff, so a mixed-format
+    /// archive keeps all of its pages.
+    #[test]
+    fn all_image_signatures_survive_the_sniff() {
+        let entries: Vec<(&str, &[u8])> = vec![
+            ("01.jpg", b"\xFF\xD8\xFF\xE0\x00\x10JFIF"),
+            ("02.png", b"\x89PNG\r\n\x1a\n\x00\x00"),
+            ("03.gif", b"GIF89a\x01\x00\x01\x00"),
+            ("04.webp", b"RIFF\x00\x00\x00\x00WEBPVP8 "),
+            ("05.avif", b"\x00\x00\x00\x1cftypavif\x00"),
+            ("06.jxl", b"\xFF\x0A\x00\x00"),
+        ];
+        let cbz = build_cbz(&entries);
+        let a = Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap();
+        assert_eq!(a.pages().len(), 6);
+        assert!(a.entries_skipped().is_empty());
+    }
+
     #[test]
     fn natural_sort_handles_mixed_padding() {
         let png = one_pixel_png();
@@ -1741,14 +1939,15 @@ mod tests {
 
     #[test]
     fn read_entry_range_returns_subrange() {
-        // Use a 256-byte payload of distinct bytes so we can verify offsets.
-        let payload: Vec<u8> = (0u8..=255u8).collect();
+        // PNG signature + 256 distinct bytes so we can verify offsets.
+        let payload = png_signed(0u8..=255u8);
+        let len = payload.len() as u64;
         let cbz = build_cbz(&[("01.png", &payload)]);
         let mut a = Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap();
         let entry = a.pages().first().cloned().cloned().unwrap();
 
         // Full range
-        let full = a.read_entry_range(&entry, 0, 256).unwrap();
+        let full = a.read_entry_range(&entry, 0, len).unwrap();
         assert_eq!(full, payload);
 
         // Mid range [100, 110)
@@ -1756,8 +1955,8 @@ mod tests {
         assert_eq!(mid, payload[100..110]);
 
         // Tail
-        let tail = a.read_entry_range(&entry, 250, 6).unwrap();
-        assert_eq!(tail, payload[250..256]);
+        let tail = a.read_entry_range(&entry, len - 6, 6).unwrap();
+        assert_eq!(tail, payload[payload.len() - 6..]);
 
         // Beyond EOF returns empty
         let past = a.read_entry_range(&entry, 1000, 10).unwrap();
@@ -1766,7 +1965,7 @@ mod tests {
 
     #[test]
     fn read_entry_range_works_on_stored_entries() {
-        let payload: Vec<u8> = (0u8..=255u8).collect();
+        let payload = png_signed(0u8..=255u8);
         let cbz = build_cbz_with(&[("01.png", &payload)], true);
         let mut a = Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap();
         let entry = a.pages().first().cloned().cloned().unwrap();

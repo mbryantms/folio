@@ -537,11 +537,15 @@ async fn non_image_page_returns_415() {
     let admin = register(&app, "ocr-decode-fail@example.com").await;
     let dir = tempfile::tempdir().unwrap();
     let cbz = dir.path().join("garbage.cbz");
-    // The archive crate's `pages()` filter is extension-based — we
-    // need a `.png` name so the entry is enumerated as page 0, but
-    // the bytes themselves must be invalid so the `image` crate's
-    // decode in the handler bails with `decode_failed`.
-    build_cbz(&cbz, "page-001.png", b"this is plainly not an image");
+    // The archive crate content-sniffs page candidates at open, so the
+    // entry needs a real PNG signature to be enumerated as page 0 at
+    // all; the body after it is garbage so the `image` crate's decode
+    // in the handler bails with `decode_failed`.
+    build_cbz(
+        &cbz,
+        "page-001.png",
+        b"\x89PNG\r\n\x1a\nthis is plainly not an image",
+    );
     let (_lib, issue_id) = seed_issue(&app, cbz.to_str().unwrap()).await;
 
     let (status, body) = post_ocr(

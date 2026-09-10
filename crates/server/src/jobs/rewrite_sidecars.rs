@@ -518,6 +518,8 @@ mod tests {
     use std::io::Write;
 
     /// Write a minimal stored-entry CBZ with the given entry names.
+    /// Image-named entries get a real JPEG signature so the archive
+    /// crate's open-time content sniff keeps them as pages.
     fn write_cbz(path: &std::path::Path, names: &[&str]) {
         let f = std::fs::File::create(path).unwrap();
         let mut zw = zip::ZipWriter::new(f);
@@ -525,7 +527,11 @@ mod tests {
             .compression_method(zip::CompressionMethod::Stored);
         for n in names {
             zw.start_file(*n, opts).unwrap();
-            zw.write_all(b"x").unwrap();
+            if archive::image_sniff::has_image_extension(n) {
+                zw.write_all(b"\xFF\xD8\xFFx").unwrap();
+            } else {
+                zw.write_all(b"x").unwrap();
+            }
         }
         zw.finish().unwrap();
     }

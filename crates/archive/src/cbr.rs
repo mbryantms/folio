@@ -13,14 +13,22 @@
 //!     from the front, `skip`-ing (no decompress) until the target entry,
 //!     then `read` it. O(N) skips per read is cheap; only the requested
 //!     entry is ever decompressed.
+//!   - [`Cbr::open`] additionally runs **one** process pass to content-
+//!     sniff every image-named entry ([`crate::image_sniff`]). `unrar`
+//!     has no partial read, so each candidate is decompressed once for
+//!     its leading bytes — a full pass over the page data, comparable to
+//!     what the scanner's dimension probe already costs on this format.
+//!     Entries whose bytes aren't an image are dropped from the index and
+//!     reported via [`ComicArchive::entries_skipped`].
 //!
 //! NOTICE: this file uses the `unrar` crate; its license requires
 //! attribution to rarlab's UnRAR library.
 
 use crate::{
-    ArchiveEntry, ArchiveError, ArchiveLimits, comic_archive::ComicArchive,
-    entry_name::validate as sanitize_entry_name,
+    ArchiveEntry, ArchiveError, ArchiveLimits, SkippedEntry, comic_archive::ComicArchive,
+    entry_name::validate as sanitize_entry_name, image_sniff,
 };
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use unrar::Archive;
 
@@ -31,6 +39,8 @@ pub struct Cbr {
     path: PathBuf,
     entries: Vec<ArchiveEntry>,
     limits: ArchiveLimits,
+    /// Image-named entries whose bytes failed the content sniff at open.
+    skipped: Vec<SkippedEntry>,
 }
 
 impl Cbr {
@@ -80,12 +90,109 @@ impl Cbr {
             }
         }
 
-        Ok(Self {
+        let mut me = Self {
             path: path_buf,
             entries,
             limits,
-        })
+            skipped: Vec::new(),
+        };
+        me.drop_non_image_pages();
+        Ok(me)
     }
+
+    /// Content-sniff every page candidate in a single process pass and
+    /// drop the ones whose leading bytes aren't an image signature. If the
+    /// pass itself fails (damaged volume, unsupported method), every entry
+    /// is kept — the per-entry read will report the real error later.
+    fn drop_non_image_pages(&mut self) {
+        let candidates: HashSet<String> = self
+            .entries
+            .iter()
+            .filter(|e| image_sniff::has_image_extension(&e.name))
+            .map(|e| e.name.to_ascii_lowercase())
+            .collect();
+        if candidates.is_empty() {
+            return;
+        }
+        let non_images = match sniff_candidates(&self.path, &candidates, self.limits) {
+            Ok(set) => set,
+            Err(e) => {
+                tracing::debug!(
+                    path = %self.path.display(),
+                    error = %e,
+                    "cbr: content sniff pass failed; keeping every entry",
+                );
+                return;
+            }
+        };
+        if non_images.is_empty() {
+            return;
+        }
+        let entries = std::mem::take(&mut self.entries);
+        for entry in entries {
+            if !non_images.contains(&entry.name.to_ascii_lowercase()) {
+                self.entries.push(entry);
+                continue;
+            }
+            tracing::warn!(
+                path = %self.path.display(),
+                entry = %entry.name,
+                size = entry.uncompressed_size,
+                "cbr: dropping image-named entry whose bytes aren't an image",
+            );
+            self.skipped.push(SkippedEntry {
+                name: entry.name.clone(),
+                uncompressed_size: entry.uncompressed_size,
+                compressed_size: entry.compressed_size,
+                reason: image_sniff::SKIP_REASON_NOT_AN_IMAGE,
+            });
+        }
+    }
+}
+
+/// One front-to-back process pass: `read` every entry whose canonical name
+/// is in `candidates`, `skip` the rest. Returns the canonical names whose
+/// bytes did **not** sniff as an image.
+fn sniff_candidates(
+    path: &Path,
+    candidates: &HashSet<String>,
+    limits: ArchiveLimits,
+) -> Result<HashSet<String>, ArchiveError> {
+    let mut non_images = HashSet::new();
+    let mut cursor = Archive::new(path)
+        .open_for_processing()
+        .map_err(|e| ArchiveError::Malformed(format!("cbr open: {e}")))?;
+    loop {
+        let Some(open) = cursor
+            .read_header()
+            .map_err(|e| ArchiveError::Malformed(format!("cbr header: {e}")))?
+        else {
+            break;
+        };
+        let header = open.entry();
+        let raw = header.filename.to_string_lossy().into_owned();
+        let canonical = sanitize_entry_name(&raw)
+            .map(|s| s.canonical)
+            .unwrap_or_else(|_| raw.to_ascii_lowercase());
+        let is_candidate = header.is_file()
+            && header.unpacked_size <= limits.max_entry_bytes
+            && candidates.contains(&canonical);
+        if !is_candidate {
+            cursor = open
+                .skip()
+                .map_err(|e| ArchiveError::Malformed(format!("cbr skip: {e}")))?;
+            continue;
+        }
+        let (data, next) = open
+            .read()
+            .map_err(|e| ArchiveError::Malformed(format!("cbr read: {e}")))?;
+        let head = &data[..data.len().min(image_sniff::SNIFF_LEN)];
+        if image_sniff::sniff(head).is_none() {
+            non_images.insert(canonical);
+        }
+        cursor = next;
+    }
+    Ok(non_images)
 }
 
 impl ComicArchive for Cbr {
@@ -93,8 +200,11 @@ impl ComicArchive for Cbr {
         &self.entries
     }
     fn pages(&self) -> Vec<&ArchiveEntry> {
-        let mut imgs: Vec<&ArchiveEntry> =
-            self.entries.iter().filter(|e| is_image(&e.name)).collect();
+        let mut imgs: Vec<&ArchiveEntry> = self
+            .entries
+            .iter()
+            .filter(|e| image_sniff::has_image_extension(&e.name))
+            .collect();
         imgs.sort_by(|a, b| natord::compare(&a.name, &b.name));
         imgs
     }
@@ -103,6 +213,9 @@ impl ComicArchive for Cbr {
         self.entries
             .iter()
             .find(|e| e.name.to_ascii_lowercase() == lower)
+    }
+    fn entries_skipped(&self) -> &[SkippedEntry] {
+        &self.skipped
     }
     fn read_entry_bytes(&mut self, name: &str) -> Result<Vec<u8>, ArchiveError> {
         let want = sanitize_entry_name(name)
@@ -145,15 +258,4 @@ impl ComicArchive for Cbr {
     fn path(&self) -> &Path {
         &self.path
     }
-}
-
-fn is_image(name: &str) -> bool {
-    let ext = std::path::Path::new(name)
-        .extension()
-        .and_then(|s| s.to_str())
-        .map(str::to_ascii_lowercase);
-    matches!(
-        ext.as_deref(),
-        Some("jpg" | "jpeg" | "png" | "webp" | "avif" | "gif" | "jxl")
-    )
 }
