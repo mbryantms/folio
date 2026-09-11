@@ -14,12 +14,16 @@
 //!     then `read` it. O(N) skips per read is cheap; only the requested
 //!     entry is ever decompressed.
 //!   - [`Cbr::open`] additionally runs **one** process pass to content-
-//!     sniff every image-named entry ([`crate::image_sniff`]). `unrar`
-//!     has no partial read, so each candidate is decompressed once for
-//!     its leading bytes — a full pass over the page data, comparable to
-//!     what the scanner's dimension probe already costs on this format.
-//!     Entries whose bytes aren't an image are dropped from the index and
-//!     reported via [`ComicArchive::entries_skipped`].
+//!     sniff image-named entries ([`crate::image_sniff`]). `unrar` has no
+//!     partial read, so a candidate has to be decompressed in full just to
+//!     see its leading bytes; the pass is therefore bounded to entries of
+//!     at most [`CBR_SNIFF_MAX_ENTRY_BYTES`] — the misnamed-sidecar case
+//!     the sniff exists for is a few KB of XML, while real pages are far
+//!     larger and would make every open a whole-archive decompression.
+//!     Bigger image-named entries stay trusted by extension (a large
+//!     non-image still fails at the consumer, exactly as before). Entries
+//!     whose bytes aren't an image are dropped from the index and reported
+//!     via [`ComicArchive::entries_skipped`].
 //!
 //! NOTICE: this file uses the `unrar` crate; its license requires
 //! attribution to rarlab's UnRAR library.
@@ -33,6 +37,13 @@ use std::path::{Path, PathBuf};
 use unrar::Archive;
 
 const IGNORED_NAMES: &[&str] = &["Thumbs.db", "desktop.ini"];
+
+/// Largest unpacked entry the open-time content sniff will decompress.
+/// RAR offers no partial read, so every sniffed candidate costs a full
+/// decompress; capping it keeps `Cbr::open` from turning into a pass over
+/// every page. Comfortably above any plausible text sidecar, comfortably
+/// below a real comic page.
+pub const CBR_SNIFF_MAX_ENTRY_BYTES: u64 = 256 * 1024;
 
 #[derive(Debug)]
 pub struct Cbr {
@@ -100,15 +111,19 @@ impl Cbr {
         Ok(me)
     }
 
-    /// Content-sniff every page candidate in a single process pass and
-    /// drop the ones whose leading bytes aren't an image signature. If the
-    /// pass itself fails (damaged volume, unsupported method), every entry
-    /// is kept — the per-entry read will report the real error later.
+    /// Content-sniff the small page candidates (see
+    /// [`CBR_SNIFF_MAX_ENTRY_BYTES`]) in a single process pass and drop
+    /// the ones whose leading bytes aren't an image signature. If the pass
+    /// itself fails (damaged volume, unsupported method), every entry is
+    /// kept — the per-entry read will report the real error later.
     fn drop_non_image_pages(&mut self) {
         let candidates: HashSet<String> = self
             .entries
             .iter()
-            .filter(|e| image_sniff::has_image_extension(&e.name))
+            .filter(|e| {
+                image_sniff::has_image_extension(&e.name)
+                    && e.uncompressed_size <= CBR_SNIFF_MAX_ENTRY_BYTES
+            })
             .map(|e| e.name.to_ascii_lowercase())
             .collect();
         if candidates.is_empty() {
@@ -151,8 +166,9 @@ impl Cbr {
 }
 
 /// One front-to-back process pass: `read` every entry whose canonical name
-/// is in `candidates`, `skip` the rest. Returns the canonical names whose
-/// bytes did **not** sniff as an image.
+/// is in `candidates` (already size-bounded by the caller), `skip` the
+/// rest. Returns the canonical names whose bytes did **not** sniff as an
+/// image.
 fn sniff_candidates(
     path: &Path,
     candidates: &HashSet<String>,
