@@ -13,6 +13,26 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.15](https://github.com/mbryantms/folio/compare/v0.27.14...v0.27.15) (2026-09-12)
+
+
+### Fixed
+
+* **archive:** bound the CBR open-time sniff to small entries ([#754](https://github.com/mbryantms/folio/issues/754)) ([ea9882b](https://github.com/mbryantms/folio/commit/ea9882b14e99eec7432676d35cfcf2e752496ebb))
+
+
+### Dependencies
+
+* update dependency cronstrue to v3.25.0 ([#759](https://github.com/mbryantms/folio/issues/759)) ([0e25e7a](https://github.com/mbryantms/folio/commit/0e25e7abb20109e34da35436e9a9ca9553ad1c2f))
+* update dependency lucide-react to v1.43.0 ([#757](https://github.com/mbryantms/folio/issues/757)) ([31b3036](https://github.com/mbryantms/folio/commit/31b303610004a61817f27111f73c142157532155))
+* update dependency zod to v4.6.0 ([#766](https://github.com/mbryantms/folio/issues/766)) ([badb57b](https://github.com/mbryantms/folio/commit/badb57baba86e780585b25debaab9e5373a65645))
+* update pnpm to v12.4.0 ([#761](https://github.com/mbryantms/folio/issues/761)) ([f71040b](https://github.com/mbryantms/folio/commit/f71040bd33e84c6279d774c3c93b20819ec44f7d))
+* update react monorepo to v19.3.0 ([#765](https://github.com/mbryantms/folio/issues/765)) ([6b13109](https://github.com/mbryantms/folio/commit/6b131094a9ef9a71bbe876624d6a37a513de4866))
+* update react to v19.3.0 ([#763](https://github.com/mbryantms/folio/issues/763)) ([59ed266](https://github.com/mbryantms/folio/commit/59ed2666adcad0c1960ff73da700f924eecd0f03))
+* update rust crate serde_with to v3.23.0 ([#755](https://github.com/mbryantms/folio/issues/755)) ([b001e41](https://github.com/mbryantms/folio/commit/b001e41526029083a7f0e82f54b734da5ce7c989))
+* update taiki-e/install-action digest to 3f74d7c ([#762](https://github.com/mbryantms/folio/issues/762)) ([3a9bc6c](https://github.com/mbryantms/folio/commit/3a9bc6c2cd285b5ce7f5e8afb9a1d7907a9264da))
+* update taiki-e/install-action digest to 9534c84 ([#758](https://github.com/mbryantms/folio/issues/758)) ([c129697](https://github.com/mbryantms/folio/commit/c129697a8a8c78ca0f0b8aef1329ece9c47e47e4))
+
 ## [0.27.14](https://github.com/mbryantms/folio/compare/v0.27.13...v0.27.14) (2026-09-10)
 
 
