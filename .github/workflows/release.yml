@@ -159,7 +159,24 @@ jobs:
           provenance: true
           sbom: false   # we attach SPDX via anchore below; build-push's sbom=true would duplicate
 
+      # The SBOM action downloads the syft binary from GitHub Releases on
+      # every run. A transient HTTP 500 on that download (v0.27.16,
+      # 2026-09-13) failed the job AFTER the image was pushed but BEFORE it
+      # was signed and before the release was promoted — so one flaky
+      # fetch left a published, unsigned image and a stuck pre-release.
+      # One retry covers the transient case; a second failure still fails
+      # the job (an unsigned release must never be promoted silently).
       - name: Generate SBOM (SPDX)
+        id: sbom
+        continue-on-error: true
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          artifact-name: ${{ matrix.image }}-sbom.spdx.json
+          dependency-snapshot: false
+      - name: Generate SBOM (SPDX) — retry
+        if: steps.sbom.outcome == 'failure'
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
