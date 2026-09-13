@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.17](https://github.com/mbryantms/folio/compare/v0.27.16...v0.27.17) (2026-09-13)
+
+
+### Fixed
+
+* **pwa:** keep the reader's theme-color identical to the app's on dark/system themes ([#779](https://github.com/mbryantms/folio/issues/779)) ([5c71117](https://github.com/mbryantms/folio/commit/5c71117974ffe166685d8c37cfa5ebb3e1833a04))
+
+
+### Build & CI
+
+* **release:** retry the SBOM step once so a flaky syft download can't strand a release ([#780](https://github.com/mbryantms/folio/issues/780)) ([5ccf7f3](https://github.com/mbryantms/folio/commit/5ccf7f3b552af51cc43697b5c7fee4a525ee441b))
+
 ## [0.27.16](https://github.com/mbryantms/folio/compare/v0.27.15...v0.27.16) (2026-09-13)
 
 
