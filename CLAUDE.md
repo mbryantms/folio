@@ -559,5 +559,6 @@ Default admin (first registered user becomes admin):
 - Metadata sidecar writeback (DB-canonical → XML-canonical inversion, per-library opt-in, drift surfacing): [docs/dev/metadata-sidecar-writeback.md](docs/dev/metadata-sidecar-writeback.md)
 - Matching accuracy (ComicTagger-derived heuristics, threshold tuning, fixture-adding playbook): [docs/dev/matching-accuracy.md](docs/dev/matching-accuracy.md)
 - M0 schema restructure (external_ids + junctions + field_provenance + issue_cover): [docs/dev/schema-restructure.md](docs/dev/schema-restructure.md)
+- Dependency policy (what auto-merges, what waits, what alerts; Renovate rules, daily sweep, SBOM): [docs/dev/dependency-management.md](docs/dev/dependency-management.md)
 - Active plans live under `~/.claude/plans/`; check the auto-memory index for
   what's currently in flight vs. shipped.

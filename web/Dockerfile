@@ -5,16 +5,22 @@
 #   1. pnpm install + `next build` (which writes the standalone server.js + .next/static)
 #   2. Distroless nodejs runtime, copy only the standalone bundle + static + public
 #
+# Base images are pinned by digest (tag@sha256:...). Renovate refreshes the
+# digest whenever upstream rebuilds the tag (OS package fixes) and
+# auto-merges once CI boots the result; a TAG change (new Debian/Node/Rust
+# line) still waits for review. See docs/dev/dependency-management.md.
+#
 # Pairs with the Rust `app` image (see root `Dockerfile`). Production runs
 # both as compose services fronted by an operator-owned reverse proxy.
 
 # ───── Stage 1: build the standalone bundle ─────
-FROM node:24-bookworm-slim AS builder
+FROM node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS builder
 WORKDIR /work
 
-# pnpm is fast + matches what the repo uses locally. Pinning the major to
-# match `package.json/packageManager` keeps reproducibility tight.
-RUN npm install -g pnpm@12
+# pnpm is fast + matches what the repo uses locally. The exact version is
+# kept in lockstep with `package.json/packageManager` by Renovate (see the
+# `pnpm` custom manager + group in renovate.json).
+RUN npm install -g pnpm@12.4.0
 
 # Bring in just enough to make pnpm install efficient — workspace manifest,
 # lockfile, and the web package contents. The root `Cargo.toml` etc. live
@@ -39,7 +45,7 @@ RUN cd web && pnpm build
 # `nodejs24-debian12:nonroot` ships a hardened Node with the same posture as
 # the Rust image's `cc-debian12:nonroot`. No shell, no package manager, runs
 # as a non-root user.
-FROM gcr.io/distroless/nodejs24-debian12:nonroot AS runtime
+FROM gcr.io/distroless/nodejs24-debian12:nonroot@sha256:14d42e2511532589a7c7e01a753667a74fcc96266e137e8125006b87b0c32d0a AS runtime
 WORKDIR /app
 
 LABEL org.opencontainers.image.title="Folio Web" \

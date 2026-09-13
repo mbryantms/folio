@@ -36,3 +36,16 @@ slow-timeout = { period = "30s", terminate-after = 20 }
 # 16 logical DBs (per-test isolation via NEXTEST_TEST_GLOBAL_SLOT) and
 # Postgres caps at 100 connections (8 x per-test pool of 6 = 48).
 test-threads = 8
+
+# Dependency-update PRs (renovate/*) run with NO retries. Those PRs auto-merge
+# on green, and a retry can launder an intermittent regression introduced by
+# the bump into a pass (2 retries = 3 attempts; a 50%-flaky failure passes
+# 87% of the time). A real infra flake just leaves the PR open — the daily
+# advisories.yml "stuck updates" check surfaces it, and a rebase (dashboard
+# checkbox) re-runs CI. Everything else mirrors [profile.ci]; nextest profiles
+# only inherit from `default`, hence the duplication.
+[profile.ci-deps]
+fail-fast = false
+retries = 0
+slow-timeout = { period = "30s", terminate-after = 20 }
+test-threads = 8

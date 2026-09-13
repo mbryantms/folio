@@ -1,28 +1,47 @@
-# Daily Rust-advisory check (dependency-pipeline audit 2026-07-02).
+# Daily dependency-health sweep — the ONE scheduled job that is allowed to
+# demand a human's attention (dependency-pipeline audit 2026-07-02; expanded
+# 2026-09-13 for the observe-don't-operate policy in
+# docs/dev/dependency-management.md).
 #
-# Why this exists alongside the weekly security.yml sweep: the per-PR
-# `cargo deny` job only runs when a PR touches dependency files, so a
-# brand-new RUSTSEC advisory on an UNCHANGED tree either waited for
-# Monday's weekly or ambushed the next unrelated dep-touching PR
-# (the RUSTSEC-2026-0194/quick-xml incident). This runs the fast
-# advisories-only check against main every day and maintains a single
-# tracking issue, making new advisories their own workstream instead
-# of collateral damage on feature PRs.
+# Why a scheduled job at all: the per-PR gates in ci.yml only run when a PR
+# touches dependency files, so a brand-new advisory on an UNCHANGED tree
+# either waited for the old Monday sweep or ambushed the next unrelated
+# dep-touching PR (the RUSTSEC-2026-0194/quick-xml incident). This runs every
+# check against `main` every morning and folds the results into ONE tracking
+# issue ("Dependency health: attention needed"):
+#
+#   - created when any check goes red            -> GitHub notifies you
+#   - body edited in place while it stays red    -> no notification spam
+#   - commented when the SET of red checks changes -> notified again
+#   - closed with a comment when everything is green
+#
+# Checks (each independent, all run even if one fails):
+#   rust    cargo deny check advisories + cargo audit --deny unsound
+#   web     pnpm audit --audit-level=high (whole tree, dev deps included)
+#   osv     osv-scanner over Cargo.lock + pnpm-lock.yaml (cross-ecosystem)
+#   images  trivy on the published :latest images (HIGH/CRITICAL, fixed only)
+#   updates open renovate/* PRs whose auto-merge is stuck (red CI, or >7 days
+#           old without a hold label) — the "failed automerge" alert
 name: Advisories (daily)
 
 on:
   schedule:
-    - cron: "17 6 * * *" # daily, before the working day
+    - cron: "17 6 * * *" # daily, before the working day (UTC)
   workflow_dispatch:
 
 permissions:
   contents: read
   issues: write
+  packages: read
+  pull-requests: read
 
 jobs:
-  rust-advisories:
+  rust:
+    name: Rust advisories
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
+    outputs:
+      failed: ${{ steps.summary.outputs.failed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
@@ -30,22 +49,239 @@ jobs:
         continue-on-error: true
         with:
           command: check advisories
-      - name: Open or update the tracking issue
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2
+        with:
+          tool: cargo-audit
+      # --deny unsound: bare `cargo audit` exits 0 on unsound/informational
+      # advisories, so e.g. RUSTSEC-2026-0186 (memmap2) never failed anything.
+      # Accepted-risk unsound advisories live in .cargo/audit.toml with the
+      # same documented-ignore convention as deny.toml.
+      - id: audit
+        continue-on-error: true
+        run: cargo audit --deny unsound
+      - id: summary
+        if: always()
+        run: |
+          f=""
+          if [ "${{ steps.deny.outcome }}" = "failure" ]; then f="$f cargo-deny-advisories"; fi
+          if [ "${{ steps.audit.outcome }}" = "failure" ]; then f="$f cargo-audit-unsound"; fi
+          echo "failed=${f# }" >> "$GITHUB_OUTPUT"
+
+  web:
+    name: Web advisories
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      failed: ${{ steps.summary.outputs.failed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 12.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile --prefer-offline
+      # Whole tree (dev tooling included) — the per-PR gate in ci.yml is
+      # --prod only. Accepted moderates are documented in SECURITY-EXCEPTIONS.md
+      # and sit below this level.
+      - id: audit
+        continue-on-error: true
+        run: pnpm audit --audit-level=high
+      - id: summary
+        if: always()
+        run: |
+          f=""
+          if [ "${{ steps.audit.outcome }}" = "failure" ]; then f="pnpm-audit"; fi
+          echo "failed=$f" >> "$GITHUB_OUTPUT"
+
+  osv:
+    name: OSV scan (both lockfiles)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      failed: ${{ steps.summary.outputs.failed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # NOTE: the scanner lives in the `osv-scanner-action/` SUBDIRECTORY of
+      # the repo. The repo-root `action.yml` is a metadata-only stub with no
+      # top-level `runs:` section, so referencing `google/osv-scanner-action@…`
+      # fails to load the action outright ("Top level 'runs:' section is
+      # required"). Renovate still tracks the digest through the subpath.
+      - uses: google/osv-scanner-action/osv-scanner-action@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1
+        id: scan
+        continue-on-error: true
+        with:
+          scan-args: |-
+            --lockfile=Cargo.lock
+            --lockfile=pnpm-lock.yaml
+      - id: summary
+        if: always()
+        run: |
+          f=""
+          if [ "${{ steps.scan.outcome }}" = "failure" ]; then f="osv-scanner"; fi
+          echo "failed=$f" >> "$GITHUB_OUTPUT"
+
+  images:
+    name: Published image CVEs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      failed: ${{ steps.summary.outputs.failed }}
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The images self-hosters actually pull. HIGH/CRITICAL with an upstream
+      # fix only — an unfixed CVE is not actionable. When this goes red the
+      # usual fix is the base-image digest refresh Renovate opens on its own
+      # (auto-merged), which lands in the next release; if the base image
+      # itself lags, that is the thing to chase.
+      - name: trivy folio
+        id: app
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/${{ github.repository_owner }}/folio:latest
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+      - name: trivy folio-web
+        id: web
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/${{ github.repository_owner }}/folio-web:latest
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+          skip-setup-trivy: true
+      - id: summary
+        if: always()
+        run: |
+          f=""
+          if [ "${{ steps.app.outcome }}" = "failure" ]; then f="$f image-folio"; fi
+          if [ "${{ steps.web.outcome }}" = "failure" ]; then f="$f image-folio-web"; fi
+          echo "failed=${f# }" >> "$GITHUB_OUTPUT"
+
+  updates:
+    name: Stuck dependency updates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      failed: ${{ steps.summary.outputs.failed }}
+      details: ${{ steps.check.outputs.details }}
+    steps:
+      # A Renovate PR that should have auto-merged but did not is the one
+      # automation failure nothing else reports: Renovate has no "automerge
+      # failed" notification, and GitHub does not notify you about your own
+      # PRs (Renovate runs as your account). Flag open renovate/* PRs that
+      # are (a) armed for auto-merge but red, or (b) older than 7 days with
+      # no hold label. Held PRs (majors, coordinated bumps, ...) are expected
+      # to sit; they live on the Dependency Dashboard instead.
+      - id: check
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          OUTCOME: ${{ steps.deny.outcome }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr list --repo "$REPO" --state open --search 'head:renovate/' --limit 100 \
+            --json number,title,createdAt,labels,autoMergeRequest,statusCheckRollup,isDraft > prs.json
+          python3 - <<'EOF'
+          import json, datetime, os
+          HOLD = {"major-review","gated-major","needs-migration-review","coordinated-bump",
+                  "infra-review","zerover-review","render-path-review","low-merge-confidence","security"}
+          BAD = {"FAILURE","CANCELLED","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE","ERROR"}
+          now = datetime.datetime.now(datetime.timezone.utc)
+          stuck = []
+          for pr in json.load(open("prs.json")):
+              labels = {l["name"] for l in pr["labels"]}
+              if labels & HOLD or pr["isDraft"]:
+                  continue
+              age = (now - datetime.datetime.fromisoformat(pr["createdAt"].replace("Z","+00:00"))).days
+              red = any((c.get("conclusion") or c.get("state") or "").upper() in BAD for c in pr["statusCheckRollup"] or [])
+              armed = pr["autoMergeRequest"] is not None
+              if (armed and red) or age > 7:
+                  why = "red CI" if red else f"open {age} days"
+                  stuck.append(f"- #{pr['number']} {pr['title']} — {why}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write("details<<EOD\n" + "\n".join(stuck) + "\nEOD\n")
+          print("\n".join(stuck) or "no stuck updates")
+          raise SystemExit(1 if stuck else 0)
+          EOF
+      - id: summary
+        if: always()
+        run: |
+          f=""
+          if [ "${{ steps.check.outcome }}" = "failure" ]; then f="stuck-updates"; fi
+          echo "failed=$f" >> "$GITHUB_OUTPUT"
+
+  report:
+    name: Tracking issue
+    needs: [rust, web, osv, images, updates]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      FAILED: ${{ needs.rust.outputs.failed }} ${{ needs.web.outputs.failed }} ${{ needs.osv.outputs.failed }} ${{ needs.images.outputs.failed }} ${{ needs.updates.outputs.failed }}
+      STUCK: ${{ needs.updates.outputs.details }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, update, or close the tracking issue
         run: |
           set -euo pipefail
-          TITLE="Rust dependency advisories failing on main"
-          EXISTING=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          if [ "$OUTCOME" = "failure" ]; then
-            BODY="\`cargo deny check advisories\` is failing on main as of $(date -u +%F). See the [run log]($RUN_URL) for the advisory details. Triage: bump the crate if a fixed version co-resolves, otherwise add a documented, dated ignore to deny.toml (unsound advisories: .cargo/audit.toml)."
+          TITLE="Dependency health: attention needed"
+          # Normalise the failing set (sorted, single-spaced) so we can diff it
+          # against the marker stored in the issue body.
+          FAILED=$(echo $FAILED | tr ' ' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ' | sed 's/ $//')
+          EXISTING=$(gh issue list --repo "$REPO" --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')
+          TODAY=$(date -u +%F)
+
+          if [ -z "$FAILED" ]; then
             if [ -n "$EXISTING" ]; then
-              gh issue comment "$EXISTING" --body "$BODY"
-            else
-              gh issue create --title "$TITLE" --body "$BODY" --label security
+              gh issue close --repo "$REPO" "$EXISTING" --comment "All dependency-health checks are green again as of $TODAY ([run]($RUN_URL))."
             fi
-          elif [ -n "$EXISTING" ]; then
-            gh issue close "$EXISTING" --comment "Advisories check is green again ([run]($RUN_URL))."
+            echo "green"; exit 0
+          fi
+
+          {
+            echo "<!-- failing: $FAILED -->"
+            echo "The daily dependency-health sweep is red on \`main\` as of $TODAY ([run log]($RUN_URL)). This issue is rewritten every day it stays red and closed automatically when everything is green again."
+            echo
+            echo "### Failing checks"
+            for c in $FAILED; do
+              case "$c" in
+                cargo-deny-advisories) echo "- **cargo-deny advisories** — a RUSTSEC advisory matches a crate in Cargo.lock. Bump the crate if a fixed version co-resolves; otherwise add a documented, dated ignore to \`deny.toml\`." ;;
+                cargo-audit-unsound)   echo "- **cargo-audit (unsound)** — an unsound/informational RUSTSEC advisory. Accepted-risk entries go in \`.cargo/audit.toml\` with the same documented-ignore convention." ;;
+                pnpm-audit)            echo "- **pnpm audit (high+)** — a high-severity npm advisory in the tree (dev deps included). Fix: wait for/merge the Renovate security PR, add a \`pnpm-workspace.yaml\` override onto the patched line, or document the exception in \`SECURITY-EXCEPTIONS.md\`." ;;
+                osv-scanner)           echo "- **OSV scan** — a cross-ecosystem advisory over Cargo.lock / pnpm-lock.yaml that the native tools did not carry. See the run log for the ID." ;;
+                image-folio)           echo "- **published image \`folio:latest\`** — HIGH/CRITICAL OS-package CVE with an upstream fix. Usually resolved by the base-image digest refresh Renovate opens (auto-merged) + the next release; if distroless itself lags, chase that." ;;
+                image-folio-web)       echo "- **published image \`folio-web:latest\`** — same as above for the Node image." ;;
+                stuck-updates)         echo "- **stuck dependency updates** — Renovate PRs that should have auto-merged but did not:"; echo "$STUCK" | sed 's/^/  /' ;;
+              esac
+            done
+            echo
+            echo "Policy and runbook: \`docs/dev/dependency-management.md\`."
+          } > body.md
+
+          if [ -z "$EXISTING" ]; then
+            gh issue create --repo "$REPO" --title "$TITLE" --body-file body.md --label security
+            exit 0
+          fi
+          PREV=$(gh issue view --repo "$REPO" "$EXISTING" --json body --jq .body | sed -n 's/^<!-- failing: \(.*\) -->$/\1/p' | head -1)
+          gh issue edit --repo "$REPO" "$EXISTING" --body-file body.md
+          if [ "$PREV" != "$FAILED" ]; then
+            gh issue comment --repo "$REPO" "$EXISTING" --body "The set of failing checks changed on $TODAY: now \`$FAILED\` (was \`${PREV:-none}\`). See the updated issue body and the [run log]($RUN_URL)."
           fi

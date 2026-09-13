@@ -6,12 +6,17 @@
 #   2.    Pulls `tini` + `unrar-free` out of a slim Debian intermediate
 #   3.    Distroless final image — only the two binaries + tini + unrar
 #
+# Base images are pinned by digest (tag@sha256:...). Renovate refreshes the
+# digest whenever upstream rebuilds the tag (OS package fixes) and
+# auto-merges once CI boots the result; a TAG change (new Debian/Node/Rust
+# line) still waits for review. See docs/dev/dependency-management.md.
+#
 # The Next.js frontend lives in a separate image — see `web/Dockerfile`.
 # Production runs them as two compose services fronted by an operator-owned
 # reverse proxy. See `docs/install/` for the wiring.
 
 # ───── Stage 1a: cargo-chef recipe ─────
-FROM rust:1.98-slim-bookworm AS planner
+FROM rust:1.98-slim-bookworm@sha256:ebd900bae66fd508b466cef82d64a83a5fb34682e4c8b2797a42908bddc95a57 AS planner
 WORKDIR /work
 RUN cargo install cargo-chef --locked
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
@@ -19,7 +24,7 @@ COPY crates ./crates
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ───── Stage 1b: cargo-chef cook (cached deps) ─────
-FROM rust:1.98-slim-bookworm AS rust-builder
+FROM rust:1.98-slim-bookworm@sha256:ebd900bae66fd508b466cef82d64a83a5fb34682e4c8b2797a42908bddc95a57 AS rust-builder
 WORKDIR /work
 # build-essential / g++ pulled in for cc-rs crates (zstd-sys, image, webp,
 # blake3, etc.) that compile C/C++. pkg-config + libssl-dev cover the
@@ -61,7 +66,7 @@ RUN cargo build --release --bin server --bin migration \
     && strip /work/target/release/server /work/target/release/migration
 
 # ───── Stage 2: tini + unrar from Debian apt ─────
-FROM debian:bookworm-slim AS apt-source
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS apt-source
 RUN apt-get update && apt-get install -y --no-install-recommends \
     unrar-free tini \
     && rm -rf /var/lib/apt/lists/*
@@ -69,7 +74,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ───── Stage 3: distroless runtime ─────
 # distroless/cc carries glibc + libssl; required by the Rust binary (reqwest,
 # argon2, sea-orm Postgres TLS) and by unrar-free.
-FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f AS runtime
 WORKDIR /app
 
 # Re-declare build-time args in the final stage so the LABEL block below

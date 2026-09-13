@@ -16,7 +16,7 @@ allowBuilds:
   vue-demi: false
 
 # Renovate bumps the `packageManager` pin (package.json + the
-# pnpm/action-setup lines in ci.yml / security.yml) but never regenerates
+# pnpm/action-setup lines in ci.yml / advisories.yml) but never regenerates
 # pnpm-lock.yaml. pnpm >= 11.25 records the pin in the lockfile's
 # `packageManagerDependencies` block and `--frozen-lockfile` refuses a
 # lockfile whose record disagrees with the pin, so every Renovate pnpm bump

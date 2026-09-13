@@ -6,7 +6,8 @@
     ":semanticCommits",
     ":semanticCommitTypeAll(deps)",
     ":semanticCommitScopeDisabled",
-    "helpers:pinGitHubActionDigests"
+    "helpers:pinGitHubActionDigests",
+    "docker:pinDigests"
   ],
   "timezone": "America/New_York",
   "prConcurrentLimit": 15,
@@ -18,7 +19,10 @@
     "enabled": true,
     "schedule": [
       "before 6am on monday"
-    ]
+    ],
+    "automerge": true,
+    "automergeType": "pr",
+    "platformAutomerge": true
   },
   "vulnerabilityAlerts": {
     "labels": [
@@ -46,12 +50,30 @@
       "platformAutomerge": true
     },
     {
-      "description": "0.x deps: any bump can break; never auto-merge.",
+      "description": "0.x deps: a 0.x MINOR is the breaking step under cargo/npm caret semantics, so it never auto-merges. (0.x patches are compatible and auto-merge via the rule below.)",
       "matchCurrentVersion": "/^0\\./",
+      "matchUpdateTypes": [
+        "minor",
+        "major"
+      ],
       "automerge": false,
       "addLabels": [
         "zerover-review"
       ]
+    },
+    {
+      "description": "0.x PATCH (0.8.1 -> 0.8.2) is semver-compatible under both cargo and npm caret rules, so it gets the same treatment as a >=1.0 patch: auto-merge once CI is green.",
+      "matchManagers": [
+        "npm",
+        "cargo"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "matchCurrentVersion": "/^0\\./",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
     },
     {
       "description": "Group Radix UI primitives into one PR.",
@@ -89,13 +111,16 @@
       ]
     },
     {
-      "description": "eslint 10 is blocked by eslint-plugin-react, pulled in transitively via eslint-config-next (which depends on eslint-plugin-react ^7.37.0). Its latest release, 7.37.5, peer-supports eslint up to ^9.7 only and calls the rule-context API context.getFilename(), which eslint 10 removed (now context.filename). Flat config is already in use (web/eslint.config.mjs) \u2014 that is NOT the blocker. Clears only when eslint-plugin-react ships an eslint-10-compatible release AND eslint-config-next adopts it.",
+      "description": "eslint 10 is blocked by eslint-plugin-react, pulled in transitively via eslint-config-next (which depends on eslint-plugin-react ^7.37.0). Its latest release, 7.37.5, peer-supports eslint up to ^9.7 only and calls the rule-context API context.getFilename(), which eslint 10 removed (now context.filename). Flat config is already in use (web/eslint.config.mjs) — that is NOT the blocker. Clears only when eslint-plugin-react ships an eslint-10-compatible release AND eslint-config-next adopts it.",
       "matchPackageNames": [
         "eslint"
       ],
       "automerge": false,
       "addLabels": [
         "gated-major"
+      ],
+      "matchUpdateTypes": [
+        "major"
       ]
     },
     {
@@ -112,13 +137,16 @@
       ]
     },
     {
-      "description": "@types/node major must track the Node runtime major, currently 24 (engines.node >=24, .nvmrc, ci.yml node-version, web/Dockerfile node:24). Don't let @types/node run ahead of the runtime; bump both together when Node moves.",
+      "description": "@types/node major must track the Node runtime major, currently 24 (engines.node >=24, .nvmrc, ci.yml node-version, web/Dockerfile node:24). Don't let @types/node run ahead of the runtime; bump both together when Node moves. Minors/patches within 24.x auto-merge.",
       "matchPackageNames": [
         "@types/node"
       ],
       "automerge": false,
       "addLabels": [
         "gated-major"
+      ],
+      "matchUpdateTypes": [
+        "major"
       ]
     },
     {
@@ -151,7 +179,7 @@
       ]
     },
     {
-      "description": "sea-orm pins sqlx (sea-orm 1.1.x \u2192 sqlx 0.8.x). Never bump sqlx standalone \u2014 it won't co-resolve. Move as one PR; sqlx 0.9 waits for sea-orm 2.x.",
+      "description": "sea-orm pins sqlx (sea-orm 1.1.x → sqlx 0.8.x). Never bump sqlx standalone — it won't co-resolve. Move as one PR; sqlx 0.9 waits for sea-orm 2.x.",
       "matchManagers": [
         "cargo"
       ],
@@ -167,7 +195,7 @@
       ]
     },
     {
-      "description": "apalis pins the redis crate (apalis-redis 0.6.x \u2192 redis 0.27.x). The redis crate never bumps standalone \u2014 it moves with apalis/apalis-redis.",
+      "description": "apalis pins the redis crate (apalis-redis 0.6.x → redis 0.27.x). The redis crate never bumps standalone — it moves with apalis/apalis-redis.",
       "matchManagers": [
         "cargo"
       ],
@@ -198,7 +226,7 @@
       ]
     },
     {
-      "description": "RustCrypto digest/rand ecosystem moves in lockstep \u2014 digest 0.11 (sha2 0.11 / hmac 0.13) and rand 0.10 are breaking jumps that the AEAD/signature crates (argon2, rsa, ed25519-dalek, chacha20poly1305) pin transitively. Group so they never surface as conflicting standalone bumps; needs code migration.",
+      "description": "RustCrypto digest/rand ecosystem moves in lockstep — digest 0.11 (sha2 0.11 / hmac 0.13) and rand 0.10 are breaking jumps that the AEAD/signature crates (argon2, rsa, ed25519-dalek, chacha20poly1305) pin transitively. Group so they never surface as conflicting standalone bumps; needs code migration.",
       "matchManagers": [
         "cargo"
       ],
@@ -237,7 +265,7 @@
       "platformAutomerge": true
     },
     {
-      "description": "pnpm security overrides \u2014 matched by FILE (the depType-based match never fired; #378 proved it) are temporary pins onto a patched line \u2014 bumping them to a new MAJOR is meaningless churn (the js-yaml v5 PR case). Patch/minor within the pinned line stays enabled; delete each override outright once dependents' ranges clear the vulnerable versions.",
+      "description": "pnpm security overrides — matched by FILE (the depType-based match never fired; #378 proved it) are temporary pins onto a patched line — bumping them to a new MAJOR is meaningless churn (the js-yaml v5 PR case). Patch/minor within the pinned line stays enabled; delete each override outright once dependents' ranges clear the vulnerable versions.",
       "matchManagers": [
         "npm"
       ],
@@ -250,15 +278,7 @@
       ]
     },
     {
-      "description": "The Rust toolchain moves atomically: rust-toolchain.toml and every dtolnay/rust-toolchain@<version> workflow tag land in one PR, or CI compiles with a different rustc than the repo pins.",
-      "groupName": "rust-toolchain",
-      "matchPackageNames": [
-        "rust",
-        "dtolnay/rust-toolchain"
-      ]
-    },
-    {
-      "description": "Dev/test infrastructure images (postgres/redis/dex in compose files) never auto-merge \u2014 a postgres major needs a data-dir migration plan, and dev must stay on the same major CI tests against.",
+      "description": "Dev/test/prod infrastructure images (postgres/redis/dex/alpine/curl in compose files, and the Dockerfile base images) never auto-merge a TAG change - a postgres major needs a data-dir migration plan, and dev must stay on the same major CI tests against. Digest-only refreshes of the pinned tags are handled by the digest rule below.",
       "matchManagers": [
         "docker-compose",
         "dockerfile"
@@ -269,6 +289,37 @@
       ]
     },
     {
+      "description": "The Rust toolchain moves atomically: rust-toolchain.toml, the Dockerfile `rust:X.Y` builder tag and every dtolnay/rust-toolchain@<version> workflow ref land in one PR, or CI compiles with a different rustc than the repo pins. Minor/patch toolchain bumps auto-merge: clippy runs with -D warnings, the whole suite and the Docker build+smoke run on the new compiler, so a bump that breaks anything simply stays open. NOTE: CI jobs pin dtolnay/rust-toolchain@1.96.0 on purpose - that is the MSRV (Cargo.toml rust-version) and dtolnay publishes those refs as branches, not tags, so Renovate cannot bump them; bumping MSRV is a human decision made in Cargo.toml + ci.yml together.",
+      "groupName": "rust-toolchain",
+      "matchPackageNames": [
+        "rust",
+        "dtolnay/rust-toolchain"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Digest refresh of an already-pinned image tag (e.g. postgres:18-alpine@sha256:...) is the upstream rebuilding the same tag with newer OS packages - exactly what the CVE scan wants us to take. Nothing an operator chose changes, and CI boots the images (smoke test), so auto-merge.",
+      "matchManagers": [
+        "dockerfile",
+        "docker-compose",
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "digest",
+        "pin",
+        "pinDigest"
+      ],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
       "description": "reqwest is held at 0.12 (see the Cargo.toml comment block): oauth2/openidconnect pin 0.12 in their feature graphs and a local bump pulls two reqwest versions side-by-side. A config-level ceiling beats closed-PR memory (branch cleanup wiped that once and the update resurrected as #350). Remove when oauth2 ships reqwest-0.13 support.",
       "matchManagers": [
         "cargo"
@@ -277,7 +328,121 @@
         "reqwest"
       ],
       "allowedVersions": "<0.13"
+    },
+    {
+      "description": "pnpm is pinned in three places (package.json/packageManager, pnpm/action-setup in the workflows, `npm install -g pnpm@` in web/Dockerfile). One PR moves all of them. pmOnFail: ignore in pnpm-workspace.yaml keeps the pin out of pnpm-lock.yaml, so a pin-only bump passes --frozen-lockfile (#768).",
+      "matchDepNames": [
+        "pnpm"
+      ],
+      "groupName": "pnpm",
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Weekly batch of web dev-tooling (vitest/vite, prettier, tailwind, testing-library, playwright, ...) minors+patches: one PR on Monday instead of a trickle. Excludes the packages with their own gate rules and the nextjs monorepo group (eslint-config-next must move with next). 0.x members stay individual so the 0.x rules apply cleanly.",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchDepTypes": [
+        "devDependencies"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "matchCurrentVersion": "!/^0\\./",
+      "matchPackageNames": [
+        "!typescript",
+        "!eslint",
+        "!@types/node",
+        "!openapi-typescript",
+        "!eslint-config-next",
+        "!@next/**"
+      ],
+      "groupName": "web-dev-tooling (weekly)",
+      "schedule": [
+        "before 6am on monday"
+      ],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Web RENDER-PATH minors wait for a human until the Playwright reader-flow gate runs in CI. The vitest suite has no DOM environment (everything is renderToStaticMarkup), nothing renders Reader.tsx / PageImage.tsx / any page.tsx, and the Docker smoke only asserts a sign-in <form> - so a hydration- or event-handler-level regression in these libraries is invisible to CI today. Patches still auto-merge (bugfix-only by convention; the smoke test catches boot breaks like v0.27.5). Delete this rule when the e2e job lands - see docs/dev/dependency-management.md.",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "matchPackageNames": [
+        "react",
+        "react-dom",
+        "next",
+        "next-intl",
+        "next-themes",
+        "zustand",
+        "sonner",
+        "cmdk",
+        "recharts",
+        "serwist",
+        "@serwist/**",
+        "@radix-ui/**",
+        "@tanstack/**",
+        "@dnd-kit/**",
+        "@use-gesture/react"
+      ],
+      "automerge": false,
+      "addLabels": [
+        "render-path-review"
+      ]
+    },
+    {
+      "description": "Mend Merge Confidence \"low\" means other repos reported regressions on this exact release. Hold it for a look even when CI is green - CI cannot see what it does not test.",
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "matchConfidence": [
+        "low"
+      ],
+      "automerge": false,
+      "addLabels": [
+        "low-merge-confidence"
+      ]
+    },
+    {
+      "description": "`folio:dev` / `folio-web:dev` in compose.test.yml are built locally by `just docker-build`, not pulled from a registry - nothing to look up.",
+      "matchManagers": [
+        "docker-compose"
+      ],
+      "matchPackageNames": [
+        "folio",
+        "folio-web"
+      ],
+      "enabled": false
     }
   ],
-  "prHourlyLimit": 0
+  "prHourlyLimit": 0,
+  "osvVulnerabilityAlerts": true,
+  "dependencyDashboardOSVVulnerabilitySummary": "unresolved",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "web/Dockerfile installs pnpm with `npm install -g pnpm@X.Y.Z`; keep it on the same version as package.json/packageManager and the pnpm/action-setup pins (grouped as `pnpm` below).",
+      "managerFilePatterns": [
+        "/(^|/)web/Dockerfile$/"
+      ],
+      "matchStrings": [
+        "npm install -g pnpm@(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "pnpm",
+      "datasourceTemplate": "npm"
+    }
+  ]
 }
