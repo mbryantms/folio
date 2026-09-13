@@ -11,6 +11,7 @@ import { GlobalShortcutsSheet } from "@/components/GlobalShortcutsSheet";
 import { QueryProvider } from "@/components/QueryProvider";
 import { ScanResultListener } from "@/components/ScanResultListener";
 import { ServiceWorkerLoader } from "@/components/ServiceWorkerLoader";
+import { SafeAreaProbe } from "@/components/SafeAreaProbe";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { Toaster } from "@/components/ui/sonner";
 import {
@@ -104,13 +105,19 @@ export const metadata: Metadata = {
   // `<meta name="apple-mobile-web-app-capable" content="yes">`,
   // which is the legacy-iOS opt-in to standalone launch and the
   // signal `usePullToRefresh` reads via `navigator.standalone`.
-  // The `black-translucent` status bar style lets the app paint
-  // under the iOS status bar; the dark `theme_color` in
-  // `manifest.ts` keeps the area readable.
+  // Status bar style: `black` (opaque) rather than `black-translucent`.
+  // Since iOS / iPadOS 26.1 the OS reserves an opaque status bar for
+  // home-screen apps regardless, so translucency no longer buys the
+  // edge-to-edge layout it used to; declaring the opaque bar makes the
+  // layout identical on every OS version instead of depending on which
+  // one the icon was installed from. `SafeAreaProbe` handles the runtime
+  // side (collapsing `--safe-top` when the OS already holds the space).
+  // iOS snapshots this meta at Add-to-Home-Screen time: remove and re-add
+  // the icon after deploying a change here.
   appleWebApp: {
     capable: true,
     title: "Folio",
-    statusBarStyle: "black-translucent",
+    statusBarStyle: "black",
   },
   // Apple touch icon. Required for iOS to use a real branded icon
   // when the app is added to the Home Screen — without it, iOS
@@ -210,6 +217,7 @@ export default async function RootLayout({
                 <ScanResultListener />
                 <GlobalHotkeys />
                 <ServiceWorkerLoader />
+                <SafeAreaProbe />
                 <GlobalShortcutsSheet>{children}</GlobalShortcutsSheet>
               </SearchModalProvider>
             </QueryProvider>
