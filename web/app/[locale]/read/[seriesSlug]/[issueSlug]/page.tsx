@@ -6,14 +6,19 @@ import type { IssueDetailView, MeView, PageInfo } from "@/lib/api/types";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
 import type { FitMode } from "@/lib/reader/store";
 import { readerViewport } from "@/lib/viewport";
+import { cookies } from "next/headers";
+import { THEME_COOKIE, isTheme } from "@/lib/theme";
 
-// The reader is always black regardless of the user's theme, so its
-// declared appearance (status-bar tint + color-scheme) is pinned to
-// dark here — overriding the theme-cookie-driven root
-// `generateViewport`. Without this, a light theme (or a light-mode
-// device on `theme=system`) makes iPadOS paint a white status-bar
-// scrim over the artwork whenever the chrome is hidden.
-export const viewport = readerViewport;
+// The reader is always black regardless of the user's theme. On a
+// light/amber theme its declared appearance (status-bar tint +
+// color-scheme) is pinned to dark; on a dark/system theme it is kept
+// byte-identical to the root layout's so iPadOS never sees a runtime
+// theme-color change (which it latches — see `readerViewport`).
+export async function generateViewport() {
+  const jar = await cookies();
+  const themeCookie = jar.get(THEME_COOKIE)?.value;
+  return readerViewport(isTheme(themeCookie) ? themeCookie : "dark");
+}
 
 type ProgressDelta = {
   records: Array<{
