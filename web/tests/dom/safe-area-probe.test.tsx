@@ -36,20 +36,38 @@ afterEach(() => {
 });
 
 describe("SafeAreaProbe (jsdom)", () => {
-  it("pins --safe-top to 0 when the OS already reserved the status bar, and tracks resizes", async () => {
+  it("pins --safe-top to 0 when the OS already reserved the status bar", () => {
     setGeometry(834, 1194 - 24);
     render(<SafeAreaProbe />);
     expect(document.documentElement.style.getPropertyValue("--safe-top")).toBe(
       "0px",
     );
+  });
 
-    // Viewport grows back to full height (edge to edge again) → hand back to env().
+  it("keeps the pin when a later resize reports stale full-height geometry (iPadOS 26.1 reader)", async () => {
+    setGeometry(834, 1194 - 24);
+    render(<SafeAreaProbe />);
     setGeometry(834, 1194);
     await act(async () => {
       window.dispatchEvent(new Event("resize"));
     });
     expect(document.documentElement.style.getPropertyValue("--safe-top")).toBe(
+      "0px",
+    );
+  });
+
+  it("pins late when the first measurement was edge to edge but a later one shows the reserved bar", async () => {
+    setGeometry(834, 1194);
+    render(<SafeAreaProbe />);
+    expect(document.documentElement.style.getPropertyValue("--safe-top")).toBe(
       "",
+    );
+    setGeometry(834, 1194 - 24);
+    await act(async () => {
+      window.dispatchEvent(new Event("pageshow"));
+    });
+    expect(document.documentElement.style.getPropertyValue("--safe-top")).toBe(
+      "0px",
     );
   });
 
