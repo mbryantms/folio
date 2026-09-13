@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.16](https://github.com/mbryantms/folio/compare/v0.27.15...v0.27.16) (2026-09-13)
+
+
+### Fixed
+
+* **pwa:** collapse the top safe-area pad when the OS already reserves the status bar (iPadOS 26.1+) ([#777](https://github.com/mbryantms/folio/issues/777)) ([c1ec9e1](https://github.com/mbryantms/folio/commit/c1ec9e10e7834081ab685a71d259bfe65d3cdc97))
+
 ## [0.27.15](https://github.com/mbryantms/folio/compare/v0.27.14...v0.27.15) (2026-09-13)
 
 
