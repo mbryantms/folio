@@ -43,20 +43,18 @@ import { MarkerEditor } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/Marke
 import { useReaderStore } from "@/lib/reader/store";
 
 function openNote(body = "") {
-  useReaderStore
-    .getState()
-    .beginMarkerEdit(
-      {
-        kind: "note",
-        page_index: 0,
-        region: null,
-        selection: null,
-        body,
-        is_favorite: false,
-        tags: [],
-      },
-      null,
-    );
+  useReaderStore.getState().beginMarkerEdit(
+    {
+      kind: "note",
+      page_index: 0,
+      region: null,
+      selection: null,
+      body,
+      is_favorite: false,
+      tags: [],
+    },
+    null,
+  );
 }
 
 function renderEditor() {
