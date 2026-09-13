@@ -98,3 +98,6 @@ crates/server/openapi.json.tmp
 .codex/
 .mcp.json
 !.mcp.json.example
+
+# Generated Playwright fixture library (web/tests/e2e/fixtures/make-library.mjs)
+web/tests/e2e/.library/

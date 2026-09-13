@@ -803,11 +803,57 @@ jobs:
       # the web healthcheck is what a boot-crash trips — then `run --rm smoke`
       # supplies the exit code (--abort-on-container-exit can't be used: the
       # app-init chown container is intentionally short-lived).
+      - name: Generate the fixture library
+        if: env.SMOKE == 'true'
+        run: node web/tests/e2e/fixtures/make-library.mjs
       - name: Smoke test (boot both images, assert endpoints)
         if: env.SMOKE == 'true'
         run: |
           docker compose -f compose.test.yml up -d --wait --wait-timeout 120 postgres redis app web
           docker compose -f compose.test.yml run --rm smoke
+      # Browser walk-through against the SAME booted stack, through the Rust
+      # origin on localhost:8080: register → library → scan → reader → page
+      # turn → progress persisted (web/tests/e2e/reader-flow.spec.ts). This is
+      # the gate that lets web render-path minors auto-merge: it exercises
+      # hydration, event handlers, the proxy hop, cookies/CSRF and the scan
+      # pipeline, which no vitest or Rust test reaches.
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        if: env.SMOKE == 'true'
+        with:
+          version: 12.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        if: env.SMOKE == 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install web deps
+        if: env.SMOKE == 'true'
+        run: pnpm install --frozen-lockfile --prefer-offline
+      - name: Cache Playwright browsers
+        if: env.SMOKE == 'true'
+        id: pw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install Chromium
+        if: env.SMOKE == 'true'
+        # --with-deps every time (OS libs are not cached); the browser download
+        # itself is skipped on a cache hit.
+        run: pnpm --filter web exec playwright install --with-deps chromium
+      - name: Playwright reader flow
+        if: env.SMOKE == 'true'
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:8080
+        run: pnpm --filter web exec playwright test
+      - name: Upload Playwright traces
+        if: failure() && env.SMOKE == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report
+          path: web/test-results/
+          retention-days: 7
       - name: Container logs on failure
         if: failure() && env.SMOKE == 'true'
         run: docker compose -f compose.test.yml logs --no-color --tail 200

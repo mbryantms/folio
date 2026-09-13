@@ -373,36 +373,6 @@
       "platformAutomerge": true
     },
     {
-      "description": "Web RENDER-PATH minors wait for a human until the Playwright reader-flow gate runs in CI. The vitest suite has no DOM environment (everything is renderToStaticMarkup), nothing renders Reader.tsx / PageImage.tsx / any page.tsx, and the Docker smoke only asserts a sign-in <form> - so a hydration- or event-handler-level regression in these libraries is invisible to CI today. Patches still auto-merge (bugfix-only by convention; the smoke test catches boot breaks like v0.27.5). Delete this rule when the e2e job lands - see docs/dev/dependency-management.md.",
-      "matchManagers": [
-        "npm"
-      ],
-      "matchUpdateTypes": [
-        "minor"
-      ],
-      "matchPackageNames": [
-        "react",
-        "react-dom",
-        "next",
-        "next-intl",
-        "next-themes",
-        "zustand",
-        "sonner",
-        "cmdk",
-        "recharts",
-        "serwist",
-        "@serwist/**",
-        "@radix-ui/**",
-        "@tanstack/**",
-        "@dnd-kit/**",
-        "@use-gesture/react"
-      ],
-      "automerge": false,
-      "addLabels": [
-        "render-path-review"
-      ]
-    },
-    {
       "description": "Mend Merge Confidence \"low\" means other repos reported regressions on this exact release. Hold it for a look even when CI is green - CI cannot see what it does not test.",
       "matchUpdateTypes": [
         "minor",

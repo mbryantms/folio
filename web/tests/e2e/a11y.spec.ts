@@ -10,7 +10,7 @@ import AxeBuilder from "@axe-core/playwright";
 
 test.describe("Accessibility", () => {
   test("sign-in page has no WCAG 2.2 AA violations", async ({ page }) => {
-    await page.goto("/en/sign-in");
+    await page.goto("/sign-in");
     await page.waitForLoadState("networkidle");
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])

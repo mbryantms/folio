@@ -1,17 +1,22 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /**
- * Playwright config for the web a11y/e2e suite.
+ * Playwright config for the web e2e suite.
  *
- * Phase 2 ships the wiring + a sign-in-page a11y baseline. Authenticated
- * walk-throughs (library → series → issue → reader → search) require a
- * seeded fixture DB and live in a follow-up; tracked under cross-cutting
- * tech debt in docs/dev/phase-status.md.
+ * CI runs it in the `docker-smoke` job against the booted production images
+ * through the Rust origin (PLAYWRIGHT_BASE_URL=http://localhost:8080); the
+ * reader-flow spec needs that origin and skips elsewhere. Locally:
+ * `just docker-build && just docker-e2e`. Without PLAYWRIGHT_BASE_URL the
+ * config starts `next start` itself for the static specs.
+ *
+ * One retry in CI (not two): the suite gates dependency auto-merge, and a
+ * retry can launder an intermittent regression into a pass — but browser-
+ * level flakes are real and the whole run takes seconds.
  */
 export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 30_000,
-  retries: process.env.CI ? 2 : 0,
+  retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? "github" : "list",
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000",

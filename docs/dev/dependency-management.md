@@ -19,7 +19,9 @@ check`, `Rust — audit-log enforcement`, `Docker — image smoke test`) and
 sits for `minimumReleaseAge: 3 days` first so upstream regressions
 surface before we take them. Renovate PRs run the Rust suite with **zero
 test retries** (`.config/nextest.toml` `ci-deps`) so a flaky regression
-cannot be retried into a pass.
+cannot be retried into a pass; the Playwright suite keeps one retry in
+CI (`web/playwright.config.ts`) because browser-level flakes are real
+and the run is short.
 
 | What | Why it is safe |
 | --- | --- |
@@ -32,6 +34,7 @@ cannot be retried into a pass.
 | **Rust toolchain** patch/minor (`rust-toolchain.toml` + Dockerfile `rust:` tag) | clippy `-D warnings`, the suite and the Docker build all run on the new compiler. |
 | **pnpm** patch/minor (package.json + workflows + `web/Dockerfile`, one PR) | The pin is no longer recorded in the lockfile (`pmOnFail: ignore`), so the bump is verifiable by CI. |
 | **Security PRs** from Dependabot/OSV alerts | Skip the 3-day wait; normal automerge rules still apply by update type. |
+| Web **render-path minors** (react, next, Radix, TanStack, …) | Covered since 2026-09-13 by the Playwright reader flow + jsdom suites (see "What the gate actually proves"). |
 
 ### Waits for you (label on the PR, listed on the Dependency Dashboard)
 
@@ -43,7 +46,6 @@ cannot be retried into a pass.
 | `needs-migration-review` | react-hook-form, `@hookform/resolvers`, openapi-typescript, `@tanstack/react-query` | History of breaking-within-minor; codegen shim must move with openapi-typescript. |
 | `coordinated-bump` | reqwest/oauth2/openidconnect, sea-orm/sqlx, apalis/redis, testcontainers, RustCrypto | Must co-resolve; grouped so they never arrive alone. |
 | `infra-review` | A **tag** change of postgres/redis/dex/alpine/curl or a Dockerfile base line | A postgres major needs a data-dir plan; dev and CI must stay on the tested major. |
-| `render-path-review` | **Minor** of react, next, next-intl, next-themes, Radix, TanStack, dnd-kit, zustand, sonner, cmdk, recharts, serwist | See "The blocker" below — CI cannot see a hydration/interaction regression today. Temporary. |
 | `low-merge-confidence` | Anything Mend Merge Confidence marks **low** | Other repos reported regressions on that exact release. |
 
 To merge one: review the PR body (changelog + Age/Confidence columns),
@@ -78,39 +80,42 @@ the release-notes line, and the SBOM artifact.
   GitHub Action is digest-pinned. `git log -p -- Dockerfile compose.*.yml`
   is the image history.
 
-## The blocker: web render-path coverage
+## What the gate actually proves
 
-The Rust side is well covered for this purpose: ~1,800 tests, nearly
-every endpoint exercised against real Postgres 18 + Redis 8, migrations
-applied per test process, wiremock on every outbound HTTP client, a real
-OIDC round-trip. Rust patch/minor automerge is defensible.
+The Rust side: ~1,800 tests, nearly every endpoint exercised against real
+Postgres 18 + Redis 8, migrations applied per test process, wiremock on
+every outbound HTTP client, a real OIDC round-trip, the CBR reader against
+a committed RAR5 fixture (`fixtures/synthetic-3page.cbr`), and
+`tests/job_worker_loop.rs`, which boots the real apalis `Monitor` and
+drives a job through Redis end to end.
 
-The web side is not comparable. `vitest` runs with `environment: "node"`;
-every component test goes through `renderToStaticMarkup` (no hydration,
-no effects, no event handlers); nothing renders `Reader.tsx`,
-`PageImage.tsx`, `PageStrip.tsx` or any `page.tsx`; Playwright is not run
-in CI and its reader-flow spec is `describe.skip`-ed; the Docker smoke
-asserts one server-rendered `<form>`. A minor of React/Next/Radix/TanStack
-that breaks a click handler or a hydration boundary passes CI today.
+The web side, as of 2026-09-13:
 
-That is why `render-path-review` exists. Remove it (one rule in
-`renovate.json`) once these land, in this order:
+* **Playwright reader flow in CI** (`web/tests/e2e/reader-flow.spec.ts`,
+  run by the `docker-smoke` job against the booted production images
+  through the Rust origin): register the first user → create a library
+  over a generated three-page CBZ → scan → series page → reader → page
+  turn → progress persisted (API) → reload resumes on page 2 → series CTA
+  reads "Continue reading". Plus the CSP-nonce and a11y specs on the same
+  stack. This is the only test that exercises hydration, event handlers,
+  the proxy hop, cookies + CSRF and the scan pipeline together, and it is
+  what lets React / Next / Radix / TanStack minors auto-merge.
+* **jsdom render tests** (`web/tests/dom/*`, opt-in per file with
+  `// @vitest-environment jsdom`): sign-in/register form, reader chrome,
+  marker editor — react-hook-form + zod, Radix popover/menu/tabs, zustand
+  wiring, fetch submission, toast contracts.
+* Everything else in `web/tests/` is static-markup or pure-function and
+  proves shape, not behaviour.
 
-1. **Playwright reader flow in CI**, run inside the existing `docker-smoke`
-   job against the booted images: seed one CBZ, register the first user,
-   sign in, open the series, open the reader, page forward, mark read,
-   assert progress. The skipped spec at `web/tests/e2e/reader-flow.spec.ts`
-   already scopes the fixture work (~4–6 h).
-2. **A DOM environment for vitest** (`jsdom`/`happy-dom` per-file pragma)
-   and `@testing-library/react` render tests for the reader chrome, the
-   marker editor and the sign-in form — `@testing-library/react` is
-   already installed and unused.
-3. **Job-worker loop test**: boot the apalis `Monitor` in one integration
-   test and drive a scan job through Redis end to end (13 of 16
-   `jobs/*.rs` have no tests; `apalis`/`redis` stay `coordinated-bump`
-   until then).
-4. **CBR/CB7 fixtures** so the `#[ignore]`-d reader tests run in CI
-   (an `unrar` bump is invisible today).
+What is still unproven, in priority order:
+
+1. Reader **gestures and webtoon/double modes** — the e2e turns one page
+   with the keyboard in single mode.
+2. **Search, collections, saved views, admin forms** — no browser coverage;
+   vitest static-markup only.
+3. **Metadata provider apply** end to end (wiremock covers the clients;
+   the apply job runs only via direct handler calls).
+4. **CB7** — no decoder in the graph (scaffold only); nothing to test yet.
 
 ## Where things are
 

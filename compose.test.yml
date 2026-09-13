@@ -8,6 +8,12 @@
 # It mirrors `compose.prod.yml` topology but with empty volumes + a smoke
 # service so the run doesn't depend on the operator's real library / .env.
 
+# Own project name: compose derives the default from the directory, so this
+# file and compose.dev.yml would otherwise share "folio" — `up` then RECREATES
+# the dev postgres/redis with the smoke config and `down --remove-orphans`
+# deletes dex. (The dev data itself survives: it is a bind mount.)
+name: folio-smoke
+
 services:
   # See `compose.prod.yml` for rationale — distroless nonroot can't write
   # a freshly-created named volume without this fixup.
@@ -33,12 +39,31 @@ services:
     environment:
       COMIC_DATABASE_URL: postgres://comic:smoke@postgres:5432/comic_reader
       COMIC_REDIS_URL: redis://redis:6379
-      COMIC_PUBLIC_URL: http://localhost:8080
+      COMIC_PUBLIC_URL: http://localhost:${SMOKE_APP_PORT:-8080}
       COMIC_AUTH_MODE: local
       COMIC_AUTO_MIGRATE: "true"
       COMIC_TRUSTED_PROXIES: "172.16.0.0/12"
+      # The Rust origin proxies HTML to the Next upstream (rust-public-origin);
+      # without this the default `localhost:3000` points at nothing inside
+      # the container and every page 502s.
+      COMIC_WEB_UPSTREAM_URL: http://web:3000
+      # The Playwright reader-flow spec registers the first user (auto-admin)
+      # through the sign-in page. Defaults to false; a fresh volume seeds the
+      # app_setting overlay from this value, so always `down --volumes`.
+      COMIC_LOCAL_REGISTRATION_OPEN: "true"
+      # 5/min/IP on login+register is hostile to a browser suite that
+      # registers, signs out and signs back in from one source IP.
+      COMIC_RATE_LIMIT_ENABLED: "false"
+    # Published for the Playwright suite (PLAYWRIGHT_BASE_URL=http://localhost:8080).
+    # `__Host-` cookies need a trustworthy origin: localhost/127.0.0.1 only.
+    ports:
+      - "127.0.0.1:${SMOKE_APP_PORT:-8080}:8080"
     volumes:
-      - smoke_library:/library:ro
+      # A generated library (three-page CBZ) so a scan has something to find —
+      # an empty root fails validation before the scan starts. Generate with
+      # `node web/tests/e2e/fixtures/make-library.mjs`; override the path via
+      # SMOKE_LIBRARY_DIR.
+      - ${SMOKE_LIBRARY_DIR:-./web/tests/e2e/.library}:/library:ro
       - smoke_data:/data
     healthcheck:
       test: ["CMD", "/app/server", "--healthcheck"]
@@ -109,9 +134,10 @@ services:
         curl -fsS http://app:8080/readyz  | grep -q '"status":"ready"'
         echo "==> web /sign-in renders HTML"
         curl -fsS -H 'Accept: text/html' http://web:3000/sign-in | grep -q '<form'
+        echo "==> /sign-in through the Rust origin (proxy hop) renders HTML"
+        curl -fsS -H 'Accept: text/html' http://app:8080/sign-in | grep -q '<form'
         echo "==> smoke OK"
     restart: "no"
 
 volumes:
-  smoke_library:
   smoke_data:

@@ -613,8 +613,20 @@ docker-build:
 # because the `app-init` chown container is intentionally short-lived.
 docker-test:
     @echo "==> Smoke-testing folio:dev + folio-web:dev"
+    node web/tests/e2e/fixtures/make-library.mjs
     docker compose -f compose.test.yml up -d --wait --wait-timeout 90 postgres redis app web
     docker compose -f compose.test.yml run --rm smoke
+    docker compose -f compose.test.yml down --volumes --remove-orphans
+
+# Browser walk-through against the same stack (what CI's docker-smoke job
+# runs after the curl smoke): register → library → scan → reader → page turn
+# → progress persisted. Needs `just docker-build` first and a free :8080
+# (override with SMOKE_APP_PORT=18080 while `just dev` is running).
+docker-e2e:
+    @echo "==> Playwright reader flow against folio:dev + folio-web:dev"
+    node web/tests/e2e/fixtures/make-library.mjs
+    docker compose -f compose.test.yml up -d --wait --wait-timeout 90 postgres redis app web
+    PLAYWRIGHT_BASE_URL=http://localhost:${SMOKE_APP_PORT:-8080} pnpm --filter web exec playwright test || (docker compose -f compose.test.yml down --volumes --remove-orphans; exit 1)
     docker compose -f compose.test.yml down --volumes --remove-orphans
 
 # Walk every handler in crates/server/src/api/ and fail if any
