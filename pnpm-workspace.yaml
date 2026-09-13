@@ -15,6 +15,22 @@ allowBuilds:
   unrs-resolver: false
   vue-demi: false
 
+# Renovate bumps the `packageManager` pin (package.json + the
+# pnpm/action-setup lines in ci.yml / security.yml) but never regenerates
+# pnpm-lock.yaml. pnpm >= 11.25 records the pin in the lockfile's
+# `packageManagerDependencies` block and `--frozen-lockfile` refuses a
+# lockfile whose record disagrees with the pin, so every Renovate pnpm bump
+# (#728, #760) died in CI with ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE
+# before running anything and needed a hand-made PR (#761).
+# `pmOnFail: ignore` (pnpm 11+; the successor of
+# `managePackageManagerVersions: false`, which pnpm 12 no longer accepts)
+# skips the running-version check and, per the pnpm 12 changelog, keeps the
+# pin out of the lockfile. The pin still works where it matters: the local
+# pnpm shim auto-switches to the pinned version and CI runs whatever
+# pnpm/action-setup installs. Verified against pnpm 12.4.0/12.4.1 on
+# 2026-09-12: a pin-only bump passes `--frozen-lockfile` unchanged.
+pmOnFail: ignore
+
 # pnpm 11 stopped reading the `pnpm` field in package.json (incl.
 # `pnpm.overrides`); settings now live here. These are security pins —
 # keep them in sync with the renovate.json package rules.
