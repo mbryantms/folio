@@ -1,9 +1,9 @@
 //! Scan-time CBR→CBZ conversion (per-library `auto_convert_cbr_on_scan`).
 //!
 //! Exercises the scanner ingest path for `.cbr` archives end-to-end. RAR
-//! files can't be created in-repo (the `unrar` crate is extract-only), so
-//! these tests are `#[ignore]`d + gated on a local `fixtures/*.cbr`. Run
-//! with `cargo test -p server --test scanner_cbr_convert -- --ignored`.
+//! compression can't be produced in-repo, but a STORED RAR5 can — see
+//! `fixtures/make-cbr-fixture.py` + the committed `synthetic-3page.cbr`. Run
+//! with `cargo test -p server --test scanner_cbr_convert`.
 
 mod common;
 
@@ -15,9 +15,15 @@ use entity::library_health_issue::Entity as HealthEntity;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use server::library::scanner;
 
-/// First `*.cbr` under the workspace `fixtures/` dir, if any.
+/// The committed synthetic `fixtures/synthetic-3page.cbr` (RAR5, stored, three
+/// JFIF-stub pages — see `fixtures/make-cbr-fixture.py`), falling back to any
+/// other `*.cbr` a developer dropped under `fixtures/`.
 fn first_cbr_fixture() -> Option<std::path::PathBuf> {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let synthetic = dir.join("synthetic-3page.cbr");
+    if synthetic.is_file() {
+        return Some(synthetic);
+    }
     std::fs::read_dir(dir)
         .ok()?
         .flatten()
@@ -30,11 +36,9 @@ fn first_cbr_fixture() -> Option<std::path::PathBuf> {
 }
 
 #[tokio::test]
-#[ignore = "needs a local fixtures/*.cbr (not committed); run with --ignored"]
 async fn scan_converts_cbr_to_cbz_when_enabled() {
-    let Some(fixture) = first_cbr_fixture() else {
-        return; // no local fixture — skip
-    };
+    let fixture = first_cbr_fixture()
+        .expect("fixtures/synthetic-3page.cbr is committed — see fixtures/make-cbr-fixture.py");
     let app = TestApp::spawn().await;
     let tmp = tempfile::tempdir().unwrap();
     let folder = tmp.path().join("Thanos (2020)");
@@ -101,11 +105,9 @@ async fn scan_converts_cbr_to_cbz_when_enabled() {
 }
 
 #[tokio::test]
-#[ignore = "needs a local fixtures/*.cbr (not committed); run with --ignored"]
 async fn scan_skips_cbr_when_disabled() {
-    let Some(fixture) = first_cbr_fixture() else {
-        return;
-    };
+    let fixture = first_cbr_fixture()
+        .expect("fixtures/synthetic-3page.cbr is committed — see fixtures/make-cbr-fixture.py");
     let app = TestApp::spawn().await;
     let tmp = tempfile::tempdir().unwrap();
     let folder = tmp.path().join("Thanos (2020)");

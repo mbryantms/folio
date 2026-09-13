@@ -21,13 +21,12 @@ test.describe("Forgot-password page", () => {
   test("renders disabled banner when recovery is not configured", async ({
     page,
   }) => {
-    await page.goto("/en/forgot-password");
+    await page.goto("/forgot-password");
     await page.waitForLoadState("networkidle");
 
-    // The disabled-banner card identifies itself by its heading copy.
-    await expect(
-      page.getByRole("heading", { name: "Email recovery is disabled" }),
-    ).toBeVisible();
+    // The disabled-banner card identifies itself by its title copy
+    // (shadcn CardTitle renders a <div>, not a heading element).
+    await expect(page.getByText("Email recovery is disabled")).toBeVisible();
 
     // Body copy must guide the user toward an admin rather than the
     // form. We don't pin the exact phrasing — only that "administrator"
@@ -51,7 +50,7 @@ test.describe("Forgot-password page", () => {
   test("disabled-state page has no WCAG 2.2 AA violations", async ({
     page,
   }) => {
-    await page.goto("/en/forgot-password");
+    await page.goto("/forgot-password");
     await page.waitForLoadState("networkidle");
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])

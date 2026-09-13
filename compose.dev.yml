@@ -8,7 +8,7 @@ services:
     # requires re-initializing the volume (postgres won't start an 18 binary
     # on an older-initialized data dir): `pg_dumpall` under the old major
     # first, move `.dev-data/postgres` aside, bring the new major up, restore.
-    image: postgres:18-alpine
+    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
     restart: unless-stopped
     environment:
       POSTGRES_USER: comic
@@ -44,7 +44,7 @@ services:
   # on 6379 — the mapping is host:container.
   # `.env` sets COMIC_REDIS_URL=redis://localhost:6380 to match.
   redis:
-    image: redis:8-alpine
+    image: redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
     restart: unless-stopped
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
@@ -58,7 +58,7 @@ services:
   # Mock OIDC issuer so devs don't need Authentik locally.
   # Dex: tiny, single-binary, supports OIDC out of the box.
   dex:
-    image: ghcr.io/dexidp/dex:v2.45.1
+    image: ghcr.io/dexidp/dex:v2.45.1@sha256:8499afd690c437f52301efd2b05b2455da5bd2dfc20332cd697dc9937f808462
     restart: unless-stopped
     command: ["dex", "serve", "/etc/dex/config.yaml"]
     ports:

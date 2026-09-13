@@ -5,16 +5,22 @@
 #   1. pnpm install + `next build` (which writes the standalone server.js + .next/static)
 #   2. Distroless nodejs runtime, copy only the standalone bundle + static + public
 #
+# Base images are pinned by digest (tag@sha256:...). Renovate refreshes the
+# digest whenever upstream rebuilds the tag (OS package fixes) and
+# auto-merges once CI boots the result; a TAG change (new Debian/Node/Rust
+# line) still waits for review. See docs/dev/dependency-management.md.
+#
 # Pairs with the Rust `app` image (see root `Dockerfile`). Production runs
 # both as compose services fronted by an operator-owned reverse proxy.
 
 # ───── Stage 1: build the standalone bundle ─────
-FROM node:24-bookworm-slim AS builder
+FROM node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS builder
 WORKDIR /work
 
-# pnpm is fast + matches what the repo uses locally. Pinning the major to
-# match `package.json/packageManager` keeps reproducibility tight.
-RUN npm install -g pnpm@12
+# pnpm is fast + matches what the repo uses locally. The exact version is
+# kept in lockstep with `package.json/packageManager` by Renovate (see the
+# `pnpm` custom manager + group in renovate.json).
+RUN npm install -g pnpm@12.4.0
 
 # Bring in just enough to make pnpm install efficient — workspace manifest,
 # lockfile, and the web package contents. The root `Cargo.toml` etc. live
@@ -36,10 +42,13 @@ ENV API_PROXY_URL=${API_PROXY_URL}
 RUN cd web && pnpm build
 
 # ───── Stage 2: distroless Node runtime ─────
-# `nodejs24-debian12:nonroot` ships a hardened Node with the same posture as
-# the Rust image's `cc-debian12:nonroot`. No shell, no package manager, runs
-# as a non-root user.
-FROM gcr.io/distroless/nodejs24-debian12:nonroot AS runtime
+# `nodejs24-debian13:nonroot` ships a hardened Node with the same posture as
+# the Rust image's `cc-debian13:nonroot`. No shell, no package manager, runs
+# as a non-root user. debian13 (trixie) rather than debian12: the bookworm
+# tag carried a fixable CRITICAL + 5 HIGH libssl3 CVEs for weeks (2026-09)
+# while the trixie tag was clean. The standalone bundle is JS + prebuilt
+# native modules and runs on the newer glibc unchanged (docker-smoke boots it).
+FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:7781e8b4fccf59240bd539af6738cccf8dad4be303165c3a1fa065c48699b937 AS runtime
 WORKDIR /app
 
 LABEL org.opencontainers.image.title="Folio Web" \

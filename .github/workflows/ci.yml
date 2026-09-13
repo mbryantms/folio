@@ -115,6 +115,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Every `dtolnay/rust-toolchain@1.96.0` in this file is the MSRV
+      # (`rust-version` in Cargo.toml), NOT the dev toolchain in
+      # rust-toolchain.toml (1.98.x, which the Dockerfile and local builds
+      # use). Compiling + testing on the MSRV is what keeps the declared
+      # floor honest. dtolnay publishes version refs as branches, so Renovate
+      # never bumps these: raising the MSRV is a deliberate edit of
+      # Cargo.toml `rust-version` + these refs in one commit.
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
           components: rustfmt
@@ -185,7 +192,7 @@ jobs:
       RUSTC_WRAPPER: sccache
     services:
       postgres:
-        image: postgres:18-alpine
+        image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
         env:
           POSTGRES_USER: comic
           POSTGRES_PASSWORD: comic
@@ -194,7 +201,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U comic" --health-interval 5s --health-timeout 3s --health-retries 10
       redis:
-        image: redis:8-alpine
+        image: redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
         ports: ["6379:6379"]
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
@@ -258,12 +265,16 @@ jobs:
           }
 
           run_timed "cargo nextest" \
-            cargo nextest run --workspace --all-features --profile ci \
+            cargo nextest run --workspace --all-features --profile "$NEXTEST_PROFILE" \
               --status-level slow --final-status-level slow
           run_timed "cargo test --doc" \
             cargo test --workspace --all-features --doc
           exit "$status"
         env:
+          # renovate/* PRs auto-merge on green, so they get the no-retry
+          # profile (.config/nextest.toml `ci-deps`): a retry must never turn
+          # an intermittent regression from a dependency bump into a pass.
+          NEXTEST_PROFILE: ${{ startsWith(github.head_ref, 'renovate/') && 'ci-deps' || 'ci' }}
           COMIC_TEST_PG_URL: postgres://comic:comic@localhost:5432/comic_reader_test
           COMIC_DATABASE_URL: postgres://comic:comic@localhost:5432/comic_reader_test
           COMIC_REDIS_URL: redis://localhost:6379
@@ -309,8 +320,8 @@ jobs:
     timeout-minutes: 20
     # cargo-deny + cargo-audit inspect the dependency tree, so they only need
     # to run when deps change (Cargo.*, deny.toml). The job still RUNS (required
-    # check reports) but skips its steps otherwise. A weekly scheduled sweep
-    # (.github/workflows/security-audit.yml) catches newly-disclosed advisories
+    # check reports) but skips its steps otherwise. The daily sweep
+    # (.github/workflows/advisories.yml) catches newly-disclosed advisories
     # in unchanged deps. `cargo_deps` is true for any merge_group entry.
     needs: [changes]
     env:
@@ -382,8 +393,8 @@ jobs:
           elapsed=$(($(date +%s) - start))
           echo "| install | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
       # Per-PR advisory gate (dependency-pipeline audit 2026-07-02): the
-      # weekly security.yml sweep left a Monday-sized window where a fresh
-      # high-severity npm advisory shipped silently. Prod deps only — dev
+      # then-weekly sweep left a Monday-sized window where a fresh
+      # high-severity npm advisory shipped silently (advisories.yml is daily now). Prod deps only — dev
       # tooling advisories stay a weekly concern.
       - name: Audit (prod deps)
         if: env.WEB == 'true'
@@ -472,7 +483,7 @@ jobs:
       # Accepted moderates are documented in SECURITY-EXCEPTIONS.md and
       # sit below this `--audit-level=high` gate.
       # Only when deps changed (lockfile/manifest) — code-only web PRs don't
-      # alter the dep tree. The weekly security-audit workflow covers advisory
+      # alter the dep tree. The daily advisories.yml sweep covers advisory
       # drift in unchanged deps.
       - name: pnpm audit
         if: needs.changes.outputs.web_deps == 'true'
@@ -612,6 +623,24 @@ jobs:
             echo "| cargo run -p audit-check | ${elapsed}s |"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # Source SBOM on every run (~30s): syft over Cargo.lock + pnpm-lock.yaml,
+  # SPDX JSON, kept 90 days as a workflow artifact. Answers "what exactly was
+  # in the tree at commit X" after the fact without rebuilding anything. The
+  # release workflow separately attaches per-IMAGE SBOMs to published images.
+  sbom:
+    name: SBOM — source (Cargo.lock + pnpm-lock.yaml)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: .
+          format: spdx-json
+          artifact-name: folio-source-sbom-${{ github.sha }}.spdx.json
+          upload-artifact-retention: 90
+          dependency-snapshot: false
+
   docker-build:
     name: Docker — amd64 build
     runs-on: ubuntu-24.04
@@ -729,15 +758,102 @@ jobs:
           load: true
           tags: folio-web:dev
           cache-from: type=gha,scope=folio-web
+      # Image CVE scan — informational on PRs. Both production images were just
+      # loaded into the daemon, so scan them here instead of rebuilding. It
+      # never fails the PR: findings are almost always the distroless/alpine
+      # base lagging an OS-package fix, which no change in this repo can
+      # address — the daily advisories.yml run is the loud alert for that, and
+      # the digest refresh Renovate opens (auto-merged) is the fix. HIGH/
+      # CRITICAL with an upstream fix only; the table lands in the step summary
+      # so the state is visible on every PR without anyone running anything.
+      - name: Image CVE scan (folio:dev)
+        if: env.SMOKE == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: folio:dev
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
+          output: trivy-folio.txt
+      - name: Image CVE scan (folio-web:dev)
+        if: env.SMOKE == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: folio-web:dev
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+          format: table
+          output: trivy-folio-web.txt
+          skip-setup-trivy: true
+      - name: Image CVE scan summary
+        if: env.SMOKE == 'true'
+        run: |
+          {
+            echo "### Image CVE scan (HIGH/CRITICAL with an upstream fix; informational)"
+            echo
+            echo '```'
+            cat trivy-folio.txt trivy-folio-web.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       # Mirrors `just docker-test`. `up --wait` gates on the healthchecks —
       # the web healthcheck is what a boot-crash trips — then `run --rm smoke`
       # supplies the exit code (--abort-on-container-exit can't be used: the
       # app-init chown container is intentionally short-lived).
+      - name: Generate the fixture library
+        if: env.SMOKE == 'true'
+        run: node web/tests/e2e/fixtures/make-library.mjs
       - name: Smoke test (boot both images, assert endpoints)
         if: env.SMOKE == 'true'
         run: |
           docker compose -f compose.test.yml up -d --wait --wait-timeout 120 postgres redis app web
           docker compose -f compose.test.yml run --rm smoke
+      # Browser walk-through against the SAME booted stack, through the Rust
+      # origin on localhost:8080: register → library → scan → reader → page
+      # turn → progress persisted (web/tests/e2e/reader-flow.spec.ts). This is
+      # the gate that lets web render-path minors auto-merge: it exercises
+      # hydration, event handlers, the proxy hop, cookies/CSRF and the scan
+      # pipeline, which no vitest or Rust test reaches.
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        if: env.SMOKE == 'true'
+        with:
+          version: 12.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        if: env.SMOKE == 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install web deps
+        if: env.SMOKE == 'true'
+        run: pnpm install --frozen-lockfile --prefer-offline
+      - name: Cache Playwright browsers
+        if: env.SMOKE == 'true'
+        id: pw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install Chromium
+        if: env.SMOKE == 'true'
+        # --with-deps every time (OS libs are not cached); the browser download
+        # itself is skipped on a cache hit.
+        run: pnpm --filter web exec playwright install --with-deps chromium
+      - name: Playwright reader flow
+        if: env.SMOKE == 'true'
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:8080
+        run: pnpm --filter web exec playwright test
+      - name: Upload Playwright traces
+        if: failure() && env.SMOKE == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report
+          path: web/test-results/
+          retention-days: 7
       - name: Container logs on failure
         if: failure() && env.SMOKE == 'true'
         run: docker compose -f compose.test.yml logs --no-color --tail 200

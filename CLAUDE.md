@@ -100,10 +100,23 @@ Default admin (first registered user becomes admin):
   signature (`\x89PNG\r\n\x1a\n`) or JPEG `FF D8 FF` instead. A
   "corrupt page" fixture (deep-validate `UnreadablePage`) is a real
   signature followed by garbage.
-- Web tests: vitest under `web/tests/`. Tests that touch routing/auth mock
-  `next/navigation` and `@/lib/api/fetch`; see
+- Web tests: vitest under `web/tests/`. Default environment is node
+  (static-markup / pure-function tests). Tests that need a real DOM opt in
+  with `// @vitest-environment jsdom` as the first line and use
+  `@testing-library/react` (`web/tests/dom/*` is the template;
+  `web/tests/setup.ts` stubs ResizeObserver/matchMedia/pointer capture).
+  Tests that touch routing/auth mock `next/navigation` and
+  `@/lib/api/fetch`; see
   [web/tests/admin/layout.test.tsx](web/tests/admin/layout.test.tsx).
-- Playwright is configured but the harness is incomplete; treat it as opt-in.
+- Playwright runs in CI inside the `docker-smoke` job against the booted
+  production images via the Rust origin (`PLAYWRIGHT_BASE_URL=http://localhost:8080`).
+  Locally: `just docker-build && just docker-e2e` (set `SMOKE_APP_PORT=18080`
+  while `just dev` holds :8080). `compose.test.yml` has its own compose
+  project name (`folio-smoke`) so it never recreates the dev services.
+  Specs use unprefixed URLs (`/sign-in`, not `/en/sign-in`).
+- CBR tests run against the committed `fixtures/synthetic-3page.cbr`
+  (RAR5, stored entries, written by `fixtures/make-cbr-fixture.py`);
+  drop any real `.cbr` under `fixtures/` to exercise compressed archives.
 
 ## Conventions to preserve
 
@@ -559,5 +572,6 @@ Default admin (first registered user becomes admin):
 - Metadata sidecar writeback (DB-canonical → XML-canonical inversion, per-library opt-in, drift surfacing): [docs/dev/metadata-sidecar-writeback.md](docs/dev/metadata-sidecar-writeback.md)
 - Matching accuracy (ComicTagger-derived heuristics, threshold tuning, fixture-adding playbook): [docs/dev/matching-accuracy.md](docs/dev/matching-accuracy.md)
 - M0 schema restructure (external_ids + junctions + field_provenance + issue_cover): [docs/dev/schema-restructure.md](docs/dev/schema-restructure.md)
+- Dependency policy (what auto-merges, what waits, what alerts; Renovate rules, daily sweep, SBOM): [docs/dev/dependency-management.md](docs/dev/dependency-management.md)
 - Active plans live under `~/.claude/plans/`; check the auto-memory index for
   what's currently in flight vs. shipped.
