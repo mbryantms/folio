@@ -73,8 +73,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ───── Stage 3: distroless runtime ─────
 # distroless/cc carries glibc + libssl; required by the Rust binary (reqwest,
-# argon2, sea-orm Postgres TLS) and by unrar-free.
-FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f AS runtime
+# argon2, sea-orm Postgres TLS) and by unrar-free. debian13 (trixie) rather
+# than debian12: the bookworm-based tag shipped a fixable HIGH libssl3 CVE for
+# weeks (2026-09) while the trixie tag was clean; a bookworm-built binary runs
+# on the newer glibc unchanged. Verified by the docker-smoke job.
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:c31ff9abcb1910f3ab25c7957bdaf0bfe12a01eb546e8df2282f1c8f682b606c AS runtime
 WORKDIR /app
 
 # Re-declare build-time args in the final stage so the LABEL block below

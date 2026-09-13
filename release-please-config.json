@@ -9,20 +9,56 @@
   "bump-patch-for-minor-pre-major": false,
   "changelog-path": "CHANGELOG.md",
   "pull-request-title-pattern": "chore: release v${version}",
-  "pull-request-header": "Release PR — review the notes, edit CHANGELOG.md here if you want prose, then merge to publish.",
+  "pull-request-header": "Release PR \u2014 review the notes, edit CHANGELOG.md here if you want prose, then merge to publish.",
   "changelog-sections": [
-    { "type": "feat", "section": "Added" },
-    { "type": "fix", "section": "Fixed" },
-    { "type": "perf", "section": "Changed" },
-    { "type": "revert", "section": "Fixed" },
-    { "type": "deps", "section": "Dependencies" },
-    { "type": "chore", "hidden": true },
-    { "type": "ci", "hidden": true },
-    { "type": "docs", "hidden": true },
-    { "type": "style", "hidden": true },
-    { "type": "refactor", "hidden": true },
-    { "type": "test", "hidden": true },
-    { "type": "build", "hidden": true }
+    {
+      "type": "feat",
+      "section": "Added"
+    },
+    {
+      "type": "fix",
+      "section": "Fixed"
+    },
+    {
+      "type": "perf",
+      "section": "Changed"
+    },
+    {
+      "type": "revert",
+      "section": "Fixed"
+    },
+    {
+      "type": "deps",
+      "section": "Dependencies"
+    },
+    {
+      "type": "chore",
+      "hidden": true
+    },
+    {
+      "type": "ci",
+      "section": "Build & CI"
+    },
+    {
+      "type": "docs",
+      "hidden": true
+    },
+    {
+      "type": "style",
+      "hidden": true
+    },
+    {
+      "type": "refactor",
+      "hidden": true
+    },
+    {
+      "type": "test",
+      "hidden": true
+    },
+    {
+      "type": "build",
+      "section": "Build & CI"
+    }
   ],
   "packages": {
     ".": {

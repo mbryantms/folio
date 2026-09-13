@@ -584,11 +584,17 @@ async fn cbt_remove_and_reorder_rewrites_in_place() {
     assert_eq!(row.last_rewrite_kind.as_deref(), Some("edit"));
 }
 
-/// First `*.cbr` under the workspace `fixtures/` dir, if any. The CBR
+/// The committed synthetic `fixtures/synthetic-3page.cbr` (RAR5, stored, three
+/// JFIF-stub pages — see `fixtures/make-cbr-fixture.py`), falling back to any
+/// other `*.cbr` a developer dropped under `fixtures/`. The CBR
 /// path can only be exercised against a real RAR (none can be created
 /// in-repo), so the e2e test below is `#[ignore]`d + fixture-gated.
 fn first_cbr_fixture() -> Option<std::path::PathBuf> {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let synthetic = dir.join("synthetic-3page.cbr");
+    if synthetic.is_file() {
+        return Some(synthetic);
+    }
     std::fs::read_dir(dir)
         .ok()?
         .flatten()
@@ -601,11 +607,9 @@ fn first_cbr_fixture() -> Option<std::path::PathBuf> {
 }
 
 #[tokio::test]
-#[ignore = "needs a local fixtures/*.cbr (not committed); run with --ignored"]
 async fn cbr_edit_converts_to_cbz_and_repoints_issue() {
-    let Some(fixture) = first_cbr_fixture() else {
-        return; // no local fixture — skip
-    };
+    let fixture = first_cbr_fixture()
+        .expect("fixtures/synthetic-3page.cbr is committed — see fixtures/make-cbr-fixture.py");
     let app = TestApp::spawn().await;
     let dir = tempdir().unwrap();
     let bytes = std::fs::read(&fixture).unwrap();

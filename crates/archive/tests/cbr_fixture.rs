@@ -1,12 +1,12 @@
 //! Real-RAR validation for the CBR reader + CBR→CBZ conversion writer
 //! (`archive-rewrite-1.0` M6).
 //!
-//! These tests need an actual `.cbr` (RAR) file, which can't be created
-//! in-repo (no RAR writer exists). They're `#[ignore]`d so CI never
-//! depends on a local fixture, and they skip gracefully when no
-//! `fixtures/*.cbr` is present. Run locally with:
+//! These tests run against `fixtures/synthetic-3page.cbr`, a RAR5 archive
+//! emitted by `fixtures/make-cbr-fixture.py` (stored entries only — no free
+//! RAR compressor exists, but the container format for method 0 is small
+//! enough to write by hand). Any other local `fixtures/*.cbr` also works:
 //!
-//!   cargo test -p archive --test cbr_fixture -- --ignored --nocapture
+//!   cargo test -p archive --test cbr_fixture
 
 use archive::cbr::Cbr;
 use archive::cbz::Cbz;
@@ -15,9 +15,15 @@ use archive::comic_archive::ComicArchive;
 use archive::{ArchiveLimits, open};
 use std::path::PathBuf;
 
-/// First `*.cbr` under the workspace `fixtures/` dir, if any.
+/// The committed synthetic `fixtures/synthetic-3page.cbr` (RAR5, stored, three
+/// JFIF-stub pages — see `fixtures/make-cbr-fixture.py`), falling back to any
+/// other `*.cbr` a developer dropped under `fixtures/`.
 fn first_cbr() -> Option<PathBuf> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let synthetic = dir.join("synthetic-3page.cbr");
+    if synthetic.is_file() {
+        return Some(synthetic);
+    }
     std::fs::read_dir(dir)
         .ok()?
         .flatten()
@@ -30,11 +36,9 @@ fn first_cbr() -> Option<PathBuf> {
 }
 
 #[test]
-#[ignore = "needs a local fixtures/*.cbr (not committed); run with --ignored"]
 fn cbr_reader_lists_and_decodes_pages() {
-    let Some(path) = first_cbr() else {
-        return; // no local fixture — skip
-    };
+    let path = first_cbr()
+        .expect("fixtures/synthetic-3page.cbr is committed — see fixtures/make-cbr-fixture.py");
 
     let mut a = open(&path, ArchiveLimits::default()).expect("open cbr");
     let names: Vec<String> = a.pages().iter().map(|e| e.name.clone()).collect();
@@ -62,11 +66,9 @@ fn cbr_reader_lists_and_decodes_pages() {
 }
 
 #[test]
-#[ignore = "needs a local fixtures/*.cbr (not committed); run with --ignored"]
 fn cbr_to_cbz_roundtrip_preserves_page_bytes() {
-    let Some(path) = first_cbr() else {
-        return; // no local fixture — skip
-    };
+    let path = first_cbr()
+        .expect("fixtures/synthetic-3page.cbr is committed — see fixtures/make-cbr-fixture.py");
 
     // Mimic the job's CBR path: decompress every page into materialized
     // (ext, bytes, store) and write a CBZ via the conversion writer.
@@ -111,11 +113,9 @@ fn cbr_to_cbz_roundtrip_preserves_page_bytes() {
 /// local `fixtures/*.cbr` and tightens the caps below its own shape so
 /// each guard must fire.
 #[test]
-#[ignore = "needs a local fixtures/*.cbr (not committed); run with --ignored"]
 fn cbr_caps_reject_when_tightened() {
-    let Some(path) = first_cbr() else {
-        return; // no local fixture — skip
-    };
+    let path = first_cbr()
+        .expect("fixtures/synthetic-3page.cbr is committed — see fixtures/make-cbr-fixture.py");
 
     // Baseline: opens under default limits; learn its shape.
     let a = open(&path, ArchiveLimits::default()).expect("open cbr");

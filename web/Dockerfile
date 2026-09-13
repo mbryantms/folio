@@ -42,10 +42,13 @@ ENV API_PROXY_URL=${API_PROXY_URL}
 RUN cd web && pnpm build
 
 # ───── Stage 2: distroless Node runtime ─────
-# `nodejs24-debian12:nonroot` ships a hardened Node with the same posture as
-# the Rust image's `cc-debian12:nonroot`. No shell, no package manager, runs
-# as a non-root user.
-FROM gcr.io/distroless/nodejs24-debian12:nonroot@sha256:14d42e2511532589a7c7e01a753667a74fcc96266e137e8125006b87b0c32d0a AS runtime
+# `nodejs24-debian13:nonroot` ships a hardened Node with the same posture as
+# the Rust image's `cc-debian13:nonroot`. No shell, no package manager, runs
+# as a non-root user. debian13 (trixie) rather than debian12: the bookworm
+# tag carried a fixable CRITICAL + 5 HIGH libssl3 CVEs for weeks (2026-09)
+# while the trixie tag was clean. The standalone bundle is JS + prebuilt
+# native modules and runs on the newer glibc unchanged (docker-smoke boots it).
+FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:7781e8b4fccf59240bd539af6738cccf8dad4be303165c3a1fa065c48699b937 AS runtime
 WORKDIR /app
 
 LABEL org.opencontainers.image.title="Folio Web" \
