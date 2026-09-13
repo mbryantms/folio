@@ -82,6 +82,16 @@ overrides:
   # shipped bundle, but the audit gate is severity-based. Holds the
   # transitive copies on the patched line.
   "esbuild@<0.28.1": "0.28.2"
+  # GHSA-866g-f22w-33x8 — @ai-sdk/provider-utils <4.0.33 uncontrolled
+  # resource consumption (CVSS 4.3, low). Reaches us only through the
+  # Scalar API-reference Vue chain (@scalar/api-reference-react → …
+  # → ai → @ai-sdk/provider-utils) on the admin /api-docs page; the `ai`
+  # range (^4) does not float past 4.0.5 on its own. Below pnpm audit's
+  # --audit-level=high gate, but the daily OSV sweep has no threshold and
+  # kept the dependency-health issue red on it (2026-09-13).
+  # Selector stays one patch AHEAD of the pin (see js-yaml note above).
+  # Delete when `pnpm why @ai-sdk/provider-utils` shows no in-range consumers.
+  "@ai-sdk/provider-utils@<4.0.34": "4.0.33"
   # brace-expansion DoS pair — GHSA-mh99-v99m-4gvg (<=5.0.7, unbounded
   # expansion length) and GHSA-rgw5-rvv9-x895 (unbounded intermediate
   # arrays, which bypasses the first one's mitigation). Between them they
