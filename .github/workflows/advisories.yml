@@ -239,6 +239,11 @@ jobs:
       STUCK: ${{ needs.updates.outputs.details }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
+      # `gh issue create --label` fails outright if the label does not exist
+      # (the first real red run did exactly that). Idempotent: --force
+      # updates the colour/description if the label is already there.
+      - name: Ensure the security label exists
+        run: gh label create security --repo "$REPO" --color B60205 --description "Dependency advisory / security-relevant" --force
       - name: Open, update, or close the tracking issue
         run: |
           set -euo pipefail
@@ -268,7 +273,7 @@ jobs:
                 pnpm-audit)            echo "- **pnpm audit (high+)** — a high-severity npm advisory in the tree (dev deps included). Fix: wait for/merge the Renovate security PR, add a \`pnpm-workspace.yaml\` override onto the patched line, or document the exception in \`SECURITY-EXCEPTIONS.md\`." ;;
                 osv-scanner)           echo "- **OSV scan** — a cross-ecosystem advisory over Cargo.lock / pnpm-lock.yaml that the native tools did not carry. See the run log for the ID." ;;
                 image-folio)           echo "- **published image \`folio:latest\`** — HIGH/CRITICAL OS-package CVE with an upstream fix. Usually resolved by the base-image digest refresh Renovate opens (auto-merged) + the next release; if distroless itself lags, chase that." ;;
-                image-folio-web)       echo "- **published image \`folio-web:latest\`** — same as above for the Node image." ;;
+                image-folio-web)       echo "- **published image \`folio-web:latest\`** — HIGH/CRITICAL OS-package CVE with an upstream fix in the Node image. Same remedy: base-image digest refresh (auto-merged) + next release; chase distroless if it lags." ;;
                 stuck-updates)         echo "- **stuck dependency updates** — Renovate PRs that should have auto-merged but did not:"; echo "$STUCK" | sed 's/^/  /' ;;
               esac
             done
