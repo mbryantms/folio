@@ -13,6 +13,39 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.15](https://github.com/mbryantms/folio/compare/v0.27.14...v0.27.15) (2026-09-13)
+
+
+### Fixed
+
+* **archive:** bound the CBR open-time sniff to small entries ([#754](https://github.com/mbryantms/folio/issues/754)) ([ea9882b](https://github.com/mbryantms/folio/commit/ea9882b14e99eec7432676d35cfcf2e752496ebb))
+
+
+### Dependencies
+
+* update dependency @types/node to v24.13.4 ([#764](https://github.com/mbryantms/folio/issues/764)) ([00a6ece](https://github.com/mbryantms/folio/commit/00a6ece3f811a83df1a5eaad52d2e7bba1938804))
+* update dependency cronstrue to v3.25.0 ([#759](https://github.com/mbryantms/folio/issues/759)) ([0e25e7a](https://github.com/mbryantms/folio/commit/0e25e7abb20109e34da35436e9a9ca9553ad1c2f))
+* update dependency lucide-react to v1.43.0 ([#757](https://github.com/mbryantms/folio/issues/757)) ([31b3036](https://github.com/mbryantms/folio/commit/31b303610004a61817f27111f73c142157532155))
+* update dependency lucide-react to v1.44.0 ([#770](https://github.com/mbryantms/folio/issues/770)) ([780ff0b](https://github.com/mbryantms/folio/commit/780ff0b71391cd0f8de1ce054415e87293146c2b))
+* update dependency next-intl to v4.14.3 ([#771](https://github.com/mbryantms/folio/issues/771)) ([12a06c1](https://github.com/mbryantms/folio/commit/12a06c1a49f8526bd18a6d9db58f1b1dc76f3cf2))
+* update dependency vite to v8.3.0 ([#772](https://github.com/mbryantms/folio/issues/772)) ([f0ddb31](https://github.com/mbryantms/folio/commit/f0ddb319df1fd055741ea72eed6804a31665a7b6))
+* update dependency zod to v4.6.0 ([#766](https://github.com/mbryantms/folio/issues/766)) ([badb57b](https://github.com/mbryantms/folio/commit/badb57baba86e780585b25debaab9e5373a65645))
+* update dependency zod to v4.6.1 ([#767](https://github.com/mbryantms/folio/issues/767)) ([22c1691](https://github.com/mbryantms/folio/commit/22c1691991dac5d9e52b29ad51f652ec02b9e291))
+* update pnpm to v12.4.0 ([#761](https://github.com/mbryantms/folio/issues/761)) ([f71040b](https://github.com/mbryantms/folio/commit/f71040bd33e84c6279d774c3c93b20819ec44f7d))
+* update react monorepo to v19.3.0 ([#765](https://github.com/mbryantms/folio/issues/765)) ([6b13109](https://github.com/mbryantms/folio/commit/6b131094a9ef9a71bbe876624d6a37a513de4866))
+* update react to v19.3.0 ([#763](https://github.com/mbryantms/folio/issues/763)) ([59ed266](https://github.com/mbryantms/folio/commit/59ed2666adcad0c1960ff73da700f924eecd0f03))
+* update rust crate serde_with to v3.23.0 ([#755](https://github.com/mbryantms/folio/issues/755)) ([b001e41](https://github.com/mbryantms/folio/commit/b001e41526029083a7f0e82f54b734da5ce7c989))
+* update rust crate uuid to v1.26.1 ([#769](https://github.com/mbryantms/folio/issues/769)) ([3edf8b0](https://github.com/mbryantms/folio/commit/3edf8b016fd2ae0eec683540f4673af34bd36c83))
+* update taiki-e/install-action digest to 3f74d7c ([#762](https://github.com/mbryantms/folio/issues/762)) ([3a9bc6c](https://github.com/mbryantms/folio/commit/3a9bc6c2cd285b5ce7f5e8afb9a1d7907a9264da))
+* update taiki-e/install-action digest to 9534c84 ([#758](https://github.com/mbryantms/folio/issues/758)) ([c129697](https://github.com/mbryantms/folio/commit/c129697a8a8c78ca0f0b8aef1329ece9c47e47e4))
+
+
+### Build & CI
+
+* **advisories:** self-heal the security label; pin @ai-sdk/provider-utils ([#776](https://github.com/mbryantms/folio/issues/776)) ([fe20cf7](https://github.com/mbryantms/folio/commit/fe20cf77f6ab475a6e2aa3c5517bb5c2226e0a4e))
+* dependency automation — observe, don't operate ([#773](https://github.com/mbryantms/folio/issues/773)) ([20104c8](https://github.com/mbryantms/folio/commit/20104c85b0527ae4362ff960e5e4aac4afa9d48b))
+* stop recording the pnpm pin in pnpm-lock.yaml ([#768](https://github.com/mbryantms/folio/issues/768)) ([ea09ef6](https://github.com/mbryantms/folio/commit/ea09ef63f839a90c4a27a999e62c812a04e7993f))
+
 ## [0.27.14](https://github.com/mbryantms/folio/compare/v0.27.13...v0.27.14) (2026-09-10)
 
 
