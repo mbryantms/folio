@@ -11,7 +11,7 @@ overrides:
   nanoid@<3.3.19: 3.3.18
   sharp@<0.35.0: 0.35.4
   esbuild@<0.28.1: 0.28.2
-  '@ai-sdk/provider-utils@<4.0.34': 4.0.33
+  '@ai-sdk/provider-utils@<4.0.34': 4.0.51
   brace-expansion@<1.1.18: 1.1.18
   brace-expansion@>=2.0.0 <2.1.4: 2.1.4
   brace-expansion@>=5.0.0 <5.0.9: 5.0.9
@@ -250,14 +250,14 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/provider-utils@4.0.33':
-    resolution: {integrity: sha512-nJ0bAfegMAIJtrzMJtbzer1cS3nb7c7DsyU1S4nrPm7ZU0Mn6SBBZv5IGZZGTbpWTJwqKTSPeZJTXalbAxt1BA==}
-    engines: {node: '>=18'}
+  '@ai-sdk/provider-utils@4.0.51':
+    resolution: {integrity: sha512-ukLTs9x1Xm6lxSIwbJIxYQxbZHmVeIczNntARZrBcOa6pjdBhqeZnATNnJMHa7M9dZ8Ji5NJbpKpvz7o5XyBtg==}
+    engines: {node: '>=18.17'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/provider@3.0.12':
-    resolution: {integrity: sha512-sj9DWTJ2Ze0WR9qsiOPqoqzNx3OxL6iMxHImbhvoe9qOspekbzxNDMiJ4TIGfYHYh9w4OmBjz3prvqhzTi96+Q==}
+  '@ai-sdk/provider@3.0.16':
+    resolution: {integrity: sha512-9Av6kg0t/IN/dcYAAmEJ4B9OPhcEJqwSR+GfHEA8olRkindXpUHadc3p3cyvgFUQFTVm1G5thtsmgZ9yVb2w3A==}
     engines: {node: '>=18'}
 
   '@ai-sdk/provider@3.0.2':
@@ -5381,6 +5381,10 @@ packages:
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
 
+  undici@6.28.1:
+    resolution: {integrity: sha512-zWpdTVD54H48CIybL0rWQ3ukpb9d23wM7eH5RtfdmeP70cWHNjtfo7P4vZX+5CoDcO53J4Pu5uXp7lNfjc6DRA==}
+    engines: {node: '>=18.17'}
+
   undici@8.10.2:
     resolution: {integrity: sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==}
     engines: {node: '>=22.19.0'}
@@ -5717,18 +5721,19 @@ snapshots:
   '@ai-sdk/gateway@3.0.13(zod@4.6.1)':
     dependencies:
       '@ai-sdk/provider': 3.0.2
-      '@ai-sdk/provider-utils': 4.0.33(zod@4.6.1)
+      '@ai-sdk/provider-utils': 4.0.51(zod@4.6.1)
       '@vercel/oidc': 3.1.0
       zod: 4.6.1
 
-  '@ai-sdk/provider-utils@4.0.33(zod@4.6.1)':
+  '@ai-sdk/provider-utils@4.0.51(zod@4.6.1)':
     dependencies:
-      '@ai-sdk/provider': 3.0.12
+      '@ai-sdk/provider': 3.0.16
       '@standard-schema/spec': 1.1.0
       eventsource-parser: 3.1.1
+      undici: 6.28.1
       zod: 4.6.1
 
-  '@ai-sdk/provider@3.0.12':
+  '@ai-sdk/provider@3.0.16':
     dependencies:
       json-schema: 0.4.0
 
@@ -5738,7 +5743,7 @@ snapshots:
 
   '@ai-sdk/vue@3.0.33(vue@3.5.41(typescript@6.0.3))(zod@4.6.1)':
     dependencies:
-      '@ai-sdk/provider-utils': 4.0.33(zod@4.6.1)
+      '@ai-sdk/provider-utils': 4.0.51(zod@4.6.1)
       ai: 6.0.33(zod@4.6.1)
       swrv: 1.2.0(vue@3.5.41(typescript@6.0.3))
       vue: 3.5.41(typescript@6.0.3)
@@ -8386,7 +8391,7 @@ snapshots:
     dependencies:
       '@ai-sdk/gateway': 3.0.13(zod@4.6.1)
       '@ai-sdk/provider': 3.0.2
-      '@ai-sdk/provider-utils': 4.0.33(zod@4.6.1)
+      '@ai-sdk/provider-utils': 4.0.51(zod@4.6.1)
       '@opentelemetry/api': 1.9.0
       zod: 4.6.1
 
@@ -11277,6 +11282,8 @@ snapshots:
       which-boxed-primitive: 1.1.1
 
   undici-types@7.18.2: {}
+
+  undici@6.28.1: {}
 
   undici@8.10.2: {}
 
