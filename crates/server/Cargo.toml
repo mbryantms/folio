@@ -154,7 +154,6 @@ server-macros = { path = "../server-macros" }
 
 [dev-dependencies]
 testcontainers = { workspace = true }
-testcontainers-modules = { workspace = true }
 # Harness uses a raw Redis connection to FLUSHDB a per-test logical DB and read
 # `CONFIG GET databases` (CI-speed Phase 3 shared-Redis isolation).
 redis = { workspace = true }
@@ -172,7 +171,11 @@ filetime = "0.2"
 # `image` dep isn't visible to the separate integration-test crate).
 image = { workspace = true }
 # OIDC integration test harness (M6) — mock OP via wiremock, RSA keys for
-# id_token signing. Kept dev-only so production builds don't pull rsa.
+# id_token signing. NOTE: this dev-dep does not keep `rsa` out of the
+# production binary — `openidconnect` 4 depends on it unconditionally
+# (RS256 id_token verification) and `jsonwebtoken`'s `rust_crypto`
+# backend pulls it too. It only adds the keygen + PKCS#1 PEM encoding the
+# mock OP needs. RUSTSEC-2023-0071 (Marvin) is accepted in deny.toml.
 wiremock = "0.6"
 rsa = { version = "0.9", features = ["sha2", "pem"] }
 rand = { workspace = true }

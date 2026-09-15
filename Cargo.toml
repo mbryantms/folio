@@ -228,8 +228,13 @@ ipnet = "2.10"
 # Drop worker; the watchdog closes the interrupted-run leak that otherwise
 # orphans every in-flight Postgres/Redis container. (SIGKILL still can't be
 # caught — nothing in-process can.)
-testcontainers = { version = "0.27", features = ["watchdog"] }
-testcontainers-modules = { version = "0.15", features = ["postgres", "redis"] }
+testcontainers = { version = "0.28", features = ["watchdog"] }
+# No `testcontainers-modules`: the harness builds Postgres/Redis from
+# `GenericImage` directly (crates/server/tests/common/mod.rs). The modules
+# crate exact-tracks the testcontainers minor and lagged 0.28 by months
+# (bollard exact-pins bollard-stubs, so the two can't co-resolve), which
+# held every testcontainers bump hostage (#614). Two images with three env
+# vars and a log-line wait each aren't worth a lockstep dependency.
 # Held at 0.12 (blocked on oauth2 / openidconnect). reqwest 0.13
 # renamed the `rustls-tls` feature to `rustls`, but oauth2 5.0 still
 # forwards through `reqwest/rustls-tls` in its own feature graph and
