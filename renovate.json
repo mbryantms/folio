@@ -373,20 +373,6 @@
       "platformAutomerge": true
     },
     {
-      "description": "Mend Merge Confidence \"low\" means other repos reported regressions on this exact release. Hold it for a look even when CI is green - CI cannot see what it does not test.",
-      "matchUpdateTypes": [
-        "minor",
-        "patch"
-      ],
-      "matchConfidence": [
-        "low"
-      ],
-      "automerge": false,
-      "addLabels": [
-        "low-merge-confidence"
-      ]
-    },
-    {
       "description": "`folio:dev` / `folio-web:dev` in compose.test.yml are built locally by `just docker-build`, not pulled from a registry - nothing to look up.",
       "matchManagers": [
         "docker-compose"
