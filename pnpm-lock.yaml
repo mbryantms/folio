@@ -38,7 +38,7 @@ importers:
         version: 3.2.2(react@19.3.0)
       '@hookform/resolvers':
         specifier: 5.9.1
-        version: 5.9.1(@standard-schema/spec@1.1.0)(react-hook-form@7.88.0(react@19.3.0))(zod@4.6.2)
+        version: 5.9.1(@standard-schema/spec@1.1.0)(react-hook-form@7.88.0(react@19.3.0))(zod@4.6.3)
       '@radix-ui/react-accordion':
         specifier: ^1.2.12
         version: 1.2.20(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -98,7 +98,7 @@ importers:
         version: 1.2.16(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@scalar/api-reference-react':
         specifier: ^0.9.42
-        version: 0.9.67(change-case@5.4.4)(react@19.3.0)(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)(zod@4.6.2)
+        version: 0.9.67(change-case@5.4.4)(react@19.3.0)(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)(zod@4.6.3)
       '@serwist/next':
         specifier: 9.5.12
         version: 9.5.12(@serwist/cli@9.5.12(@types/node@24.13.4)(browserslist@4.28.9)(esbuild@0.28.2)(typescript@6.0.3))(next@16.3.5(@babel/core@7.29.7(supports-color@10.2.2))(@opentelemetry/api@1.9.0)(@playwright/test@1.63.0)(@types/node@24.13.4)(babel-plugin-react-compiler@1.0.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)(typescript@6.0.3)
@@ -166,8 +166,8 @@ importers:
         specifier: 3.7.0
         version: 3.7.0
       zod:
-        specifier: 4.6.2
-        version: 4.6.2
+        specifier: 4.6.3
+        version: 4.6.3
       zustand:
         specifier: 5.0.15
         version: 5.0.15(@types/react@19.3.0)(immer@11.1.18)(react@19.3.0)(use-sync-external-store@1.7.0(react@19.3.0))
@@ -5641,6 +5641,9 @@ packages:
   zod@4.6.2:
     resolution: {integrity: sha512-lh5RCAGFa1Cm2hjtNwLQhSs/AsqdWnTQaBER9fEwN/88pSh7KOtJavtBx/0VlkN/uFd61SwYmljLMDAsHlvzBQ==}
 
+  zod@4.6.3:
+    resolution: {integrity: sha512-qTMC0QXIpf4iH+G0rCJl6ZjKiFpqAU9++JDN8tqts3KP58MWeJU/in9tDccsHqlOolCIrBKsiPXR8vCLhe4QhA==}
+
   zustand@5.0.15:
     resolution: {integrity: sha512-MpSEjRiBkA9crSYeOUH32rJC7SVqAbm0Fqcqge/bUi2PPoLcBWKOsG+C8mevmpr8TwXHBVkChbbJiyvkE+i/3A==}
     engines: {node: '>=12.20.0'}
@@ -5664,20 +5667,20 @@ packages:
 
 snapshots:
 
-  '@ai-sdk/gateway@3.0.13(zod@4.6.2)':
+  '@ai-sdk/gateway@3.0.13(zod@4.6.3)':
     dependencies:
       '@ai-sdk/provider': 3.0.2
-      '@ai-sdk/provider-utils': 4.0.51(zod@4.6.2)
+      '@ai-sdk/provider-utils': 4.0.51(zod@4.6.3)
       '@vercel/oidc': 3.1.0
-      zod: 4.6.2
+      zod: 4.6.3
 
-  '@ai-sdk/provider-utils@4.0.51(zod@4.6.2)':
+  '@ai-sdk/provider-utils@4.0.51(zod@4.6.3)':
     dependencies:
       '@ai-sdk/provider': 3.0.16
       '@standard-schema/spec': 1.1.0
       eventsource-parser: 3.1.1
       undici: 6.28.1
-      zod: 4.6.2
+      zod: 4.6.3
 
   '@ai-sdk/provider@3.0.16':
     dependencies:
@@ -5687,10 +5690,10 @@ snapshots:
     dependencies:
       json-schema: 0.4.0
 
-  '@ai-sdk/vue@3.0.33(vue@3.5.42(typescript@6.0.3))(zod@4.6.2)':
+  '@ai-sdk/vue@3.0.33(vue@3.5.42(typescript@6.0.3))(zod@4.6.3)':
     dependencies:
-      '@ai-sdk/provider-utils': 4.0.51(zod@4.6.2)
-      ai: 6.0.33(zod@4.6.2)
+      '@ai-sdk/provider-utils': 4.0.51(zod@4.6.3)
+      ai: 6.0.33(zod@4.6.3)
       swrv: 1.2.0(vue@3.5.42(typescript@6.0.3))
       vue: 3.5.42(typescript@6.0.3)
     transitivePeerDependencies:
@@ -6188,13 +6191,13 @@ snapshots:
       '@tanstack/vue-virtual': 3.13.38(vue@3.5.42(typescript@6.0.3))
       vue: 3.5.42(typescript@6.0.3)
 
-  '@hookform/resolvers@5.9.1(@standard-schema/spec@1.1.0)(react-hook-form@7.88.0(react@19.3.0))(zod@4.6.2)':
+  '@hookform/resolvers@5.9.1(@standard-schema/spec@1.1.0)(react-hook-form@7.88.0(react@19.3.0))(zod@4.6.3)':
     dependencies:
       '@standard-schema/utils': 0.3.0
       react-hook-form: 7.88.0(react@19.3.0)
     optionalDependencies:
       '@standard-schema/spec': 1.1.0
-      zod: 4.6.2
+      zod: 4.6.3
 
   '@humanfs/core@0.19.2':
     dependencies:
@@ -7279,9 +7282,9 @@ snapshots:
 
   '@rtsao/scc@1.1.0': {}
 
-  '@scalar/agent-chat@0.12.30(change-case@5.4.4)(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)(zod@4.6.2)':
+  '@scalar/agent-chat@0.12.30(change-case@5.4.4)(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)(zod@4.6.3)':
     dependencies:
-      '@ai-sdk/vue': 3.0.33(vue@3.5.42(typescript@6.0.3))(zod@4.6.2)
+      '@ai-sdk/vue': 3.0.33(vue@3.5.42(typescript@6.0.3))(zod@4.6.3)
       '@scalar/api-client': 3.18.0(change-case@5.4.4)(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)
       '@scalar/components': 0.29.1(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)
       '@scalar/helpers': 0.11.3
@@ -7295,7 +7298,7 @@ snapshots:
       '@scalar/validation': 0.6.3
       '@scalar/workspace-store': 0.60.0(typescript@6.0.3)
       '@vueuse/core': 13.9.0(vue@3.5.42(typescript@6.0.3))
-      ai: 6.0.33(zod@4.6.2)
+      ai: 6.0.33(zod@4.6.3)
       js-base64: 3.9.3
       neverpanic: 0.0.8
       truncate-json: 3.0.1
@@ -7365,9 +7368,9 @@ snapshots:
       - typescript
       - universal-cookie
 
-  '@scalar/api-reference-react@0.9.67(change-case@5.4.4)(react@19.3.0)(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)(zod@4.6.2)':
+  '@scalar/api-reference-react@0.9.67(change-case@5.4.4)(react@19.3.0)(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)(zod@4.6.3)':
     dependencies:
-      '@scalar/api-reference': 1.68.0(change-case@5.4.4)(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)(zod@4.6.2)
+      '@scalar/api-reference': 1.68.0(change-case@5.4.4)(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)(zod@4.6.3)
       '@scalar/types': 0.19.0
       react: 19.3.0
     transitivePeerDependencies:
@@ -7387,10 +7390,10 @@ snapshots:
       - universal-cookie
       - zod
 
-  '@scalar/api-reference@1.68.0(change-case@5.4.4)(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)(zod@4.6.2)':
+  '@scalar/api-reference@1.68.0(change-case@5.4.4)(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)(zod@4.6.3)':
     dependencies:
       '@headlessui/vue': 1.7.23(vue@3.5.42(typescript@6.0.3))
-      '@scalar/agent-chat': 0.12.30(change-case@5.4.4)(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)(zod@4.6.2)
+      '@scalar/agent-chat': 0.12.30(change-case@5.4.4)(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)(zod@4.6.3)
       '@scalar/api-client': 3.18.0(change-case@5.4.4)(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)
       '@scalar/blocks': 0.1.16(supports-color@10.2.2)(tailwindcss@4.3.3)(typescript@6.0.3)
       '@scalar/code-highlight': 0.4.5(supports-color@10.2.2)
@@ -8292,13 +8295,13 @@ snapshots:
 
   agent-base@7.1.4: {}
 
-  ai@6.0.33(zod@4.6.2):
+  ai@6.0.33(zod@4.6.3):
     dependencies:
-      '@ai-sdk/gateway': 3.0.13(zod@4.6.2)
+      '@ai-sdk/gateway': 3.0.13(zod@4.6.3)
       '@ai-sdk/provider': 3.0.2
-      '@ai-sdk/provider-utils': 4.0.51(zod@4.6.2)
+      '@ai-sdk/provider-utils': 4.0.51(zod@4.6.3)
       '@opentelemetry/api': 1.9.0
-      zod: 4.6.2
+      zod: 4.6.3
 
   ajv@6.15.0:
     dependencies:
@@ -9014,8 +9017,8 @@ snapshots:
       '@babel/parser': 7.29.8
       eslint: 9.39.5(jiti@2.7.0)(supports-color@10.2.2)
       hermes-parser: 0.25.1
-      zod: 4.6.2
-      zod-validation-error: 4.0.2(zod@4.6.2)
+      zod: 4.6.3
+      zod-validation-error: 4.0.2(zod@4.6.3)
     transitivePeerDependencies:
       - supports-color
 
@@ -11515,13 +11518,15 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zod-validation-error@4.0.2(zod@4.6.2):
+  zod-validation-error@4.0.2(zod@4.6.3):
     dependencies:
-      zod: 4.6.2
+      zod: 4.6.3
 
   zod@4.4.3: {}
 
   zod@4.6.2: {}
+
+  zod@4.6.3: {}
 
   zustand@5.0.15(@types/react@19.3.0)(immer@11.1.18)(react@19.3.0)(use-sync-external-store@1.7.0(react@19.3.0)):
     optionalDependencies:
