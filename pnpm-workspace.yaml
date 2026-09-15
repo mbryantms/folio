@@ -91,7 +91,7 @@ overrides:
   # kept the dependency-health issue red on it (2026-09-13).
   # Selector stays one patch AHEAD of the pin (see js-yaml note above).
   # Delete when `pnpm why @ai-sdk/provider-utils` shows no in-range consumers.
-  "@ai-sdk/provider-utils@<4.0.34": "4.0.33"
+  "@ai-sdk/provider-utils@<4.0.34": "4.0.51"
   # brace-expansion DoS pair — GHSA-mh99-v99m-4gvg (<=5.0.7, unbounded
   # expansion length) and GHSA-rgw5-rvv9-x895 (unbounded intermediate
   # arrays, which bypasses the first one's mitigation). Between them they
