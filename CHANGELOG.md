@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.20](https://github.com/mbryantms/folio/compare/v0.27.19...v0.27.20) (2026-09-15)
+
+
+### Dependencies
+
+* update rust crate testcontainers to 0.28, drop testcontainers-modules ([#797](https://github.com/mbryantms/folio/issues/797)) ([6a668f3](https://github.com/mbryantms/folio/commit/6a668f391ce50742d48e595dc87bf22c65fa0da1))
+
 ## [0.27.19](https://github.com/mbryantms/folio/compare/v0.27.18...v0.27.19) (2026-09-15)
 
 
