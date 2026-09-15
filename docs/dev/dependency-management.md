@@ -46,7 +46,14 @@ and the run is short.
 | `needs-migration-review` | react-hook-form, `@hookform/resolvers`, openapi-typescript, `@tanstack/react-query` | History of breaking-within-minor; codegen shim must move with openapi-typescript. |
 | `coordinated-bump` | reqwest/oauth2/openidconnect, sea-orm/sqlx, apalis/redis, testcontainers, RustCrypto | Must co-resolve; grouped so they never arrive alone. |
 | `infra-review` | A **tag** change of postgres/redis/dex/alpine/curl or a Dockerfile base line | A postgres major needs a data-dir plan; dev and CI must stay on the tested major. |
-| `low-merge-confidence` | Anything Mend Merge Confidence marks **low** | Other repos reported regressions on that exact release. |
+
+Mend Merge Confidence is display-only here: the Age/Confidence badges in
+PR bodies render without credentials, but a `matchConfidence` package
+rule needs a Merge Confidence API token the self-hosted runner does not
+have. Without one Renovate aborts every run with
+`missing-api-credentials` before touching a single branch (2026-09-13,
+a ~34-hour outage). Do not reintroduce such a rule without adding the
+`merge-confidence` host rule on the runner first.
 
 To merge one: review the PR body (changelog + Age/Confidence columns),
 merge it. To skip a version: close the PR (Renovate remembers). To
