@@ -17,6 +17,8 @@ ignore = [
     # graph): RUSTSEC-2024-0384 (instant), RUSTSEC-2025-0134
     # (rustls-pemfile), RUSTSEC-2025-0111 (tokio-tar), RUSTSEC-2026-0002
     # (lru 0.12). Re-add if a dep bump reintroduces them.
+    # Pruned 2026-09-15: RUSTSEC-2026-0173 (proc-macro-error2) — left the
+    # graph when sea-orm 2.0.3 dropped sea-bae.
     #
     # `number_prefix` unmaintained — transitive via indicatif (CLI
     # progress bars in scanner). Cosmetic formatter; no security
@@ -40,18 +42,19 @@ ignore = [
     # `advisory-not-detected`. cargo-audit surfaces it as a non-failing warning
     # (bare `cargo audit` exits 0 on unsound/informational). Revisit when
     # candle bumps its memmap2 pin.
-    # `rsa 0.9.10` Marvin Attack timing sidechannel — transitive via
-    # `jsonwebtoken`. Folio signs JWTs with Ed25519 (see
-    # `secrets::Secrets::jwt_signing`); the `rsa` crate ships in the
-    # graph but our code path never exercises RSA primitives.
-    # Advisory has "No safe upgrade available" upstream.
+    # `rsa 0.9.10` Marvin Attack (RUSTSEC-2023-0071 / CVE-2023-49092) —
+    # timing sidechannel in RSA *private-key* operations (decrypt/sign).
+    # Reaches the graph three ways: `openidconnect` 4 (unconditional dep;
+    # RS256 id_token *verification* is a public-key op, not the affected
+    # path), `jsonwebtoken`'s `rust_crypto` backend (Folio signs its own
+    # JWTs with Ed25519 — `secrets::Secrets::jwt_signing` — so the RSA
+    # signer is never invoked), and the `crates/server` dev-dep that
+    # generates the mock OP's throwaway signing key for the OIDC tests
+    # (private-key use, test-only). No fixed version exists: the advisory
+    # range is open-ended and still covers the 0.10 release candidates
+    # (re-checked 2026-09-15), so Renovate's dashboard keeps listing it
+    # until RustCrypto ships a constant-time fix. Revisit on each pass.
     "RUSTSEC-2023-0071",
-    # `proc-macro-error2` unmaintained (RUSTSEC-2026-0173) — build-time
-    # proc-macro pulled transitively via sea-bae ← sea-orm-macros ←
-    # sea-orm. Never ships in the runtime binary; no security surface.
-    # Both it and its parent `proc-macro-error` are unmaintained with no
-    # drop-in replacement at our edge — clears when sea-orm drops sea-bae.
-    "RUSTSEC-2026-0173",
 ]
 
 [licenses]

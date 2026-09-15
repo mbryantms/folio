@@ -28,9 +28,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
-use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::redis::Redis;
+use testcontainers::core::{IntoContainerPort, WaitFor};
+use testcontainers::{ContainerAsync, GenericImage, ImageExt, runners::AsyncRunner};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing_subscriber::{EnvFilter, reload};
 use uuid::Uuid;
@@ -105,7 +104,7 @@ struct SharedPg {
     /// fallback); `None` when pointed at an external shared server (CI / the
     /// `cargo nextest` path). Held for the process lifetime so the container
     /// outlives every test.
-    _container: Option<ContainerAsync<Postgres>>,
+    _container: Option<ContainerAsync<GenericImage>>,
     /// Server base URL without a database path, e.g.
     /// `postgres://comic:comic@localhost:5432`. Maintenance/template/clone URLs
     /// are `{base}/<db>`.
@@ -164,17 +163,28 @@ async fn build_shared_pg() -> Result<SharedPg, String> {
         });
     }
 
-    // Pin to 18-alpine; the testcontainers-modules default of 11-alpine predates
-    // STORED generated columns (Postgres 12+) used by the search migration, and
-    // the prod compose stack is on 18 anyway. Raise max_connections (every
-    // per-test clone shares this one server) and drop durability — pointless for
+    // Pin to 18-alpine: the search migration needs STORED generated columns
+    // (Postgres 12+) and the prod compose stack is on 18 anyway. Built from
+    // `GenericImage` rather than `testcontainers_modules::postgres` so the
+    // harness doesn't depend on that crate tracking the testcontainers minor.
+    // The readiness gate mirrors the module's: the docker-library entrypoint
+    // runs a throwaway init server whose "ready" line reaches stdout via
+    // pg_ctl, then `exec`s the real server, which logs to stderr — waiting on
+    // both means the real server is up. Raise max_connections (every per-test
+    // clone shares this one server) and drop durability — pointless for
     // ephemeral test data, and it speeds migrations + writes.
     let build = || {
-        Postgres::default()
-            .with_db_name("comic_reader_test")
-            .with_user("comic")
-            .with_password("comic")
-            .with_tag("18-alpine")
+        GenericImage::new("postgres", "18-alpine")
+            .with_exposed_port(5432.tcp())
+            .with_wait_for(WaitFor::message_on_stderr(
+                "database system is ready to accept connections",
+            ))
+            .with_wait_for(WaitFor::message_on_stdout(
+                "database system is ready to accept connections",
+            ))
+            .with_env_var("POSTGRES_DB", "comic_reader_test")
+            .with_env_var("POSTGRES_USER", "comic")
+            .with_env_var("POSTGRES_PASSWORD", "comic")
             .with_cmd([
                 "postgres",
                 "-c",
@@ -369,7 +379,7 @@ fn drop_test_db(base: String, db_name: String) {
 /// tests never share an index.
 struct SharedRedis {
     /// `Some` for the per-process testcontainer; `None` for an external server.
-    _container: Option<ContainerAsync<Redis>>,
+    _container: Option<ContainerAsync<GenericImage>>,
     /// `redis://host:port` with no `/<db>` path.
     base: String,
     /// `databases` from `CONFIG GET` (default 16). Bounds the index space.
@@ -440,11 +450,10 @@ async fn build_shared_redis() -> Result<SharedRedis, String> {
         let mut container = None;
         let mut last_err = String::from("no attempts");
         for attempt in 1..=3 {
-            let build = Redis::default().with_tag("8-alpine").with_cmd([
-                "redis-server",
-                "--databases",
-                "256",
-            ]);
+            let build = GenericImage::new("redis", "8-alpine")
+                .with_exposed_port(6379.tcp())
+                .with_wait_for(WaitFor::message_on_stdout("Ready to accept connections"))
+                .with_cmd(["redis-server", "--databases", "256"]);
             match build.start().await {
                 Ok(c) => {
                     container = Some(c);
