@@ -13,6 +13,15 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.21](https://github.com/mbryantms/folio/compare/v0.27.20...v0.27.21) (2026-09-16)
+
+
+### Dependencies
+
+* update dependency tailwind-merge to v3.7.0 ([#799](https://github.com/mbryantms/folio/issues/799)) ([996de14](https://github.com/mbryantms/folio/commit/996de143711bfa22f5574b57b91aa72e081301a9))
+* update dependency zod to v4.6.3 ([#801](https://github.com/mbryantms/folio/issues/801)) ([cbbbd58](https://github.com/mbryantms/folio/commit/cbbbd58b538a4105d8e81552b794029cd905a93d))
+* update dependency zod to v4.6.4 ([#802](https://github.com/mbryantms/folio/issues/802)) ([4881b59](https://github.com/mbryantms/folio/commit/4881b59c6d7112a94b478c86d213422ad325a8d3))
+
 ## [0.27.20](https://github.com/mbryantms/folio/compare/v0.27.19...v0.27.20) (2026-09-15)
 
 
