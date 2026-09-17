@@ -14,7 +14,7 @@ overrides:
   '@ai-sdk/provider-utils@<4.0.34': 4.0.51
   brace-expansion@<1.1.18: 1.1.18
   brace-expansion@>=2.0.0 <2.1.4: 2.1.4
-  brace-expansion@>=5.0.0 <5.0.9: 5.0.9
+  brace-expansion@>=5.0.0 <5.0.9: 5.0.12
   browserslist@<4.28.9: 4.28.9
 
 importers:
@@ -2996,8 +2996,8 @@ packages:
   brace-expansion@2.1.4:
     resolution: {integrity: sha512-hGfVzPxthbf3+2yjg/RBs60cB0FhqBS/zvdV/4wn4/BmN0bNMMHPc4V/BbFieqf1TKAGGAHnY4eSjajCl0f2Xg==}
 
-  brace-expansion@5.0.9:
-    resolution: {integrity: sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==}
+  brace-expansion@5.0.12:
+    resolution: {integrity: sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==}
     engines: {node: 20 || >=22}
 
   braces@3.0.3:
@@ -5641,9 +5641,6 @@ packages:
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
-  zod@4.6.2:
-    resolution: {integrity: sha512-lh5RCAGFa1Cm2hjtNwLQhSs/AsqdWnTQaBER9fEwN/88pSh7KOtJavtBx/0VlkN/uFd61SwYmljLMDAsHlvzBQ==}
-
   zod@4.6.5:
     resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
 
@@ -7354,7 +7351,7 @@ snapshots:
       set-cookie-parser: 3.1.0
       vue: 3.5.42(typescript@6.0.3)
       yaml: 2.9.1
-      zod: 4.6.2
+      zod: 4.6.5
     transitivePeerDependencies:
       - '@vue/composition-api'
       - async-validator
@@ -7574,7 +7571,7 @@ snapshots:
       '@scalar/helpers': 0.11.3
       nanoid: 5.1.16
       type-fest: 5.9.0
-      zod: 4.6.2
+      zod: 4.6.5
 
   '@scalar/use-codemirror@0.14.15(typescript@6.0.3)':
     dependencies:
@@ -8467,7 +8464,7 @@ snapshots:
     dependencies:
       balanced-match: 1.0.2
 
-  brace-expansion@5.0.9:
+  brace-expansion@5.0.12:
     dependencies:
       balanced-match: 4.0.4
 
@@ -10231,7 +10228,7 @@ snapshots:
 
   minimatch@10.2.6:
     dependencies:
-      brace-expansion: 5.0.9
+      brace-expansion: 5.0.12
 
   minimatch@3.1.5:
     dependencies:
@@ -11528,8 +11525,6 @@ snapshots:
       zod: 4.6.5
 
   zod@4.4.3: {}
-
-  zod@4.6.2: {}
 
   zod@4.6.5: {}
 
