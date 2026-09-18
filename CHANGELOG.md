@@ -13,6 +13,31 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.28.0](https://github.com/mbryantms/folio/compare/v0.27.20...v0.28.0) (2026-09-18)
+
+
+### Added
+
+* **pwa:** harden caching and native app experience ([#814](https://github.com/mbryantms/folio/issues/814)) ([174807e](https://github.com/mbryantms/folio/commit/174807e82b07573315f8ab3310a58e230f0180ae))
+
+
+### Dependencies
+
+* update dependency @tanstack/react-virtual to v3.14.13 ([#807](https://github.com/mbryantms/folio/issues/807)) ([560edc3](https://github.com/mbryantms/folio/commit/560edc34d0c059232d3e99598d5e5d4801b18afb))
+* update dependency brace-expansion@&gt;=2.0.0 &lt;2.1.4 to v2.1.6 ([#809](https://github.com/mbryantms/folio/issues/809)) ([e70b67a](https://github.com/mbryantms/folio/commit/e70b67ab6278328e67cd2c7242e9f91227bfb8f8))
+* update dependency brace-expansion@&gt;=5.0.0 &lt;5.0.9 to v5.0.12 ([#810](https://github.com/mbryantms/folio/issues/810)) ([d6f118c](https://github.com/mbryantms/folio/commit/d6f118c20a8dec6024e569ef026832713b6be743))
+* update dependency brace-expansion@&lt;1.1.18 to v1.1.21 ([#808](https://github.com/mbryantms/folio/issues/808)) ([1e28843](https://github.com/mbryantms/folio/commit/1e2884359e5b4e688048ad4d8356833c68725655))
+* update dependency browserslist@&lt;4.28.9 to v4.29.0 ([#813](https://github.com/mbryantms/folio/issues/813)) ([120ff34](https://github.com/mbryantms/folio/commit/120ff348cad99c1ab7bf1f1836dcfd3bb69068bf))
+* update dependency lucide-react to v1.46.0 ([#805](https://github.com/mbryantms/folio/issues/805)) ([e4450c6](https://github.com/mbryantms/folio/commit/e4450c640425b17fbf709ae9056d6f20242932ab))
+* update dependency next-intl to v4.14.5 ([#806](https://github.com/mbryantms/folio/issues/806)) ([dbb9d0e](https://github.com/mbryantms/folio/commit/dbb9d0ed74b1a0ff47135dd75fc8c5f4f9f0ec84))
+* update dependency pnpm to v12.4.2 ([#812](https://github.com/mbryantms/folio/issues/812)) ([7e344e8](https://github.com/mbryantms/folio/commit/7e344e88d55a77889a79239bbfd521af2ec0a4b0))
+* update dependency tailwind-merge to v3.7.0 ([#799](https://github.com/mbryantms/folio/issues/799)) ([996de14](https://github.com/mbryantms/folio/commit/996de143711bfa22f5574b57b91aa72e081301a9))
+* update dependency zod to v4.6.3 ([#801](https://github.com/mbryantms/folio/issues/801)) ([cbbbd58](https://github.com/mbryantms/folio/commit/cbbbd58b538a4105d8e81552b794029cd905a93d))
+* update dependency zod to v4.6.4 ([#802](https://github.com/mbryantms/folio/issues/802)) ([4881b59](https://github.com/mbryantms/folio/commit/4881b59c6d7112a94b478c86d213422ad325a8d3))
+* update dependency zod to v4.6.5 ([#803](https://github.com/mbryantms/folio/issues/803)) ([cbd731d](https://github.com/mbryantms/folio/commit/cbd731df703d5e363b86e58b72944e6bc84183ec))
+* update docker/build-push-action digest to c3c9e26 ([#811](https://github.com/mbryantms/folio/issues/811)) ([dc5cb58](https://github.com/mbryantms/folio/commit/dc5cb58a870541187cc7e46862ba764d7d0755dd))
+* update google/osv-scanner-action action to v2.6.0 ([#804](https://github.com/mbryantms/folio/issues/804)) ([b1d1364](https://github.com/mbryantms/folio/commit/b1d13647cd87348770e6e2297035e78835e403bb))
+
 ## [0.27.20](https://github.com/mbryantms/folio/compare/v0.27.19...v0.27.20) (2026-09-15)
 
 
