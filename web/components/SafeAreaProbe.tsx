@@ -25,8 +25,22 @@ export function SafeAreaProbe() {
   useEffect(() => {
     const root = document.documentElement;
     let pinned = false;
+    let confirmation: ReturnType<typeof setTimeout> | undefined;
+    let previous = "";
     const apply = () => {
       if (pinned) return;
+      const viewport = window.visualViewport;
+      if (
+        viewport &&
+        (viewport.scale !== 1 || window.innerHeight - viewport.height > 100)
+      )
+        return;
+      if (
+        document.activeElement?.matches(
+          "input, textarea, [contenteditable=true]",
+        )
+      )
+        return;
       const override = safeTopOverride(
         {
           innerWidth: window.innerWidth,
@@ -36,6 +50,14 @@ export function SafeAreaProbe() {
         },
         isStandaloneDisplay(),
       );
+      const signature = `${window.innerWidth}:${window.innerHeight}:${override}`;
+      if (override !== null && previous !== signature) {
+        previous = signature;
+        clearTimeout(confirmation);
+        confirmation = setTimeout(apply, 100);
+        return;
+      }
+      previous = signature;
       if (override !== null) {
         root.style.setProperty("--safe-top", override);
         pinned = true;
@@ -49,6 +71,7 @@ export function SafeAreaProbe() {
     window.addEventListener("pageshow", apply);
     document.addEventListener("visibilitychange", apply);
     return () => {
+      clearTimeout(confirmation);
       window.removeEventListener("resize", apply);
       window.removeEventListener("orientationchange", apply);
       window.removeEventListener("pageshow", apply);

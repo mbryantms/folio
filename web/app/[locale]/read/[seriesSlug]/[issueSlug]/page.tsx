@@ -1,3 +1,4 @@
+import { signInUrl } from "@/lib/api/sign-in-url";
 import { notFound, redirect } from "next/navigation";
 import { Reader } from "./Reader";
 import { ReaderHealthToast } from "./ReaderHealthToast";
@@ -95,7 +96,7 @@ export default async function ReadPage({
       if (e.status === 401) {
         // SSR fetch has no session — bounce to sign-in instead of crashing
         // the route. Mirrors the (admin) and (settings) layout pattern.
-        redirect(`/sign-in`);
+        redirect(await signInUrl());
       }
       if (e.status === 404) {
         notFound();

@@ -43,7 +43,7 @@ const DialogContent = React.forwardRef<
         // row off-screen with the keyboard up.
         "border-border bg-background fixed z-50 grid w-full gap-4 border p-6 shadow-lg duration-200",
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-        "max-sm:data-[state=closed]:slide-out-to-bottom max-sm:data-[state=open]:slide-in-from-bottom max-sm:inset-x-0 max-sm:bottom-0 max-sm:max-h-[85dvh] max-sm:overflow-y-auto max-sm:rounded-t-lg max-sm:pb-[max(1.5rem,env(safe-area-inset-bottom))]",
+        "max-sm:data-[state=closed]:slide-out-to-bottom max-sm:data-[state=open]:slide-in-from-bottom max-sm:inset-x-0 max-sm:bottom-[var(--keyboard-inset,0px)] max-sm:max-h-[calc(var(--visual-height,100dvh)*0.85)] max-sm:overflow-y-auto max-sm:rounded-t-lg max-sm:pb-[max(1.5rem,env(safe-area-inset-bottom))]",
         // >= sm: the centered modal, unchanged.
         //
         // Caller overrides for width/position MUST be `sm:`-prefixed
@@ -60,7 +60,7 @@ const DialogContent = React.forwardRef<
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="ring-offset-background focus:ring-ring absolute top-4 right-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-none disabled:pointer-events-none">
+      <DialogPrimitive.Close className="ring-offset-background focus:ring-ring absolute top-2 right-2 flex min-h-11 min-w-11 items-center justify-center rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-none disabled:pointer-events-none">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>

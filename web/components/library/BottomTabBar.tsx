@@ -7,7 +7,7 @@ import { Bookmark, House, Library, Menu, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const TAB_CLASS =
-  "flex flex-1 flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors";
+  "flex flex-1 flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors active:bg-secondary focus-visible:outline-2 focus-visible:outline-ring";
 
 /**
  * Mobile-only bottom tab bar (`md:hidden`). Thumb-reachable shortcuts to the
@@ -29,7 +29,7 @@ export function BottomTabBar({ onMore }: { onMore: () => void }) {
   return (
     <nav
       aria-label="Primary"
-      className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 flex h-[calc(var(--bottom-tab-h)+var(--safe-bottom))] items-stretch border-t pb-(--safe-bottom) backdrop-blur md:hidden"
+      className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 flex h-[calc(var(--bottom-tab-h)+var(--safe-bottom))] items-stretch border-t pr-(--safe-right) pb-(--safe-bottom) pl-(--safe-left) backdrop-blur md:hidden"
     >
       <TabLink
         href="/"

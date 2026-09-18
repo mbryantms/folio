@@ -1,5 +1,6 @@
 "use client";
 
+import { ThemeChromeSync } from "./ThemeChromeSync";
 import { ThemeProvider as NextThemesProvider } from "next-themes";
 
 /**
@@ -28,6 +29,7 @@ export function ThemeProvider({
       disableTransitionOnChange
       {...props}
     >
+      <ThemeChromeSync />
       {children}
     </NextThemesProvider>
   );

@@ -32,10 +32,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
       // 16px floor while expanding as the safe-area inset grows.
       style={
         {
-          "--offset-bottom": "max(16px, var(--safe-bottom))",
+          "--offset-bottom": "var(--overlay-bottom)",
           "--offset-right": "max(16px, var(--safe-right))",
           "--offset-left": "max(16px, var(--safe-left))",
-          "--mobile-offset-bottom": "max(16px, var(--safe-bottom))",
+          "--mobile-offset-bottom": "var(--overlay-bottom)",
           "--mobile-offset-right": "max(16px, var(--safe-right))",
           "--mobile-offset-left": "max(16px, var(--safe-left))",
         } as React.CSSProperties

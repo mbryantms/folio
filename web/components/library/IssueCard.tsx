@@ -107,6 +107,14 @@ function IssueCardImpl({
             label: share.label,
             onSelect: () => void share.shareOrCopy(issueUrl(issue), heading),
           },
+          ...(share.canShare
+            ? [
+                {
+                  label: "Copy link",
+                  onSelect: () => void share.copyLink(issueUrl(issue)),
+                },
+              ]
+            : []),
           ...(extraActions ?? []),
         ]
       : [];

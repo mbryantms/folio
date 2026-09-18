@@ -8,6 +8,7 @@ import "@/styles/globals.css";
 import { useEffect } from "react";
 
 import { StatusScreen, StatusErrorIcon } from "@/components/StatusScreen";
+import { ChunkRecovery } from "@/components/ChunkRecovery";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -36,6 +37,7 @@ export default function GlobalError({
           digest={error.digest}
           actions={
             <>
+              <ChunkRecovery error={error} />
               <Button onClick={reset}>Try again</Button>
               <Button asChild variant="outline">
                 <a href="/">Reload</a>

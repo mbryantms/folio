@@ -12,8 +12,8 @@ import dynamic from "next/dynamic";
  *
  * `next/dynamic({ ssr: false })` puts the updater in its own
  * chunk and defers loading until after first paint. Service-worker
- * registration is non-critical for any visible UI — the SW only
- * matters once a deploy happens and a `waiting` event arrives.
+ * registration is non-critical for first paint; it enables the offline
+ * fallback, static caches, and update notifications.
  *
  * `loading: () => null` keeps the layout's JSX tree quiet during
  * the short async window; the updater returns `null` itself, so

@@ -52,7 +52,10 @@ export function MainShell({
   // route change — a mount-only reset here never re-fired, because this
   // shell persists across client navigations within the group.
   return (
-    <div className="bg-background text-foreground min-h-screen">
+    <div
+      data-library-shell
+      className="bg-background text-foreground min-h-screen"
+    >
       <SkipToContent />
       <PullToRefresh />
       <AddToHomeScreenBanner />

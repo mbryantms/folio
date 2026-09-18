@@ -314,6 +314,16 @@ export function SeriesSettingsMenu({
               <Link2 className="mr-2 h-4 w-4" />
               {share.label}
             </DropdownMenuItem>
+            {share.canShare && (
+              <DropdownMenuItem
+                onSelect={() =>
+                  void share.copyLink(seriesUrl({ slug: seriesSlug }))
+                }
+              >
+                <Link2 className="mr-2 h-4 w-4" />
+                Copy link
+              </DropdownMenuItem>
+            )}
             <DropdownMenuResponsiveSub
               icon={<Sparkles className="mr-2 h-4 w-4" />}
               label="Fetch metadata"

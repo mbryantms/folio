@@ -1,79 +1,119 @@
 "use client";
-
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { Serwist } from "@serwist/window";
-
-import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
-/**
- * Service-worker bootstrap + update notifier.
- *
- * Mounted as a sibling (not a wrapper) inside the root layout so
- * its import chain doesn't get pulled into every route's first-load
- * bundle. Earlier versions wrapped children via
- * `SerwistProvider` from `@serwist/next/react`; that worked but
- * dragged ~100 KB of Serwist's React context layer into the reader
- * route's bundle, which is gated by the §18.1 budget check in
- * `scripts/check-bundle-size.mjs`. This version uses
- * `@serwist/window`'s `Serwist` class directly — same registration
- * + event surface, no React context — and is paired with a
- * `next/dynamic` shim at the import site so the chunk is split out
- * of first-load entirely.
- *
- * Behaviour:
- * - Registers the compiled `/sw.js` on mount (production only;
- *   the `@serwist/next` build is `disable: true` in dev).
- * - When a newer SW is installed but held back from activating
- *   (because the current SW still controls open clients), surfaces
- *   a sonner toast with a "Reload" action.
- * - Clicking Reload posts `SKIP_WAITING` to the waiting worker;
- *   the `controlling` listener reloads the page once the new SW
- *   takes over. `skipWaiting: false` in `app/sw.ts` keeps deploys
- *   from silently swapping the bundle out from under an active
- *   reader.
- */
+/** Updates never reload another open reader. Only the accepting client reloads. */
 export function ServiceWorkerUpdater() {
-  // React strict mode mounts effects twice in dev; the ref guards
-  // against double-binding the listener (and a duplicate
-  // registration call against the navigator).
-  const boundRef = useRef(false);
-
   useEffect(() => {
-    if (boundRef.current) return;
-    if (typeof window === "undefined") return;
     if (!("serviceWorker" in navigator)) return;
-    boundRef.current = true;
-
-    const sw = new Serwist("/sw.js");
-
-    const onWaiting = () => {
+    let disposed = false;
+    if (process.env.NODE_ENV !== "production") {
+      // A previous production build may have controlled this dev origin.
+      void navigator.serviceWorker
+        .getRegistrations()
+        .then(async (registrations) => {
+          const ours = registrations.filter((r) =>
+            [r.active, r.waiting, r.installing].some(
+              (w) => w && new URL(w.scriptURL).pathname === "/sw.js",
+            ),
+          );
+          await Promise.all(ours.map((r) => r.unregister()));
+          if (!disposed && ours.length && navigator.serviceWorker.controller) {
+            toast.message(
+              "Development worker removed. Reload to use the development server.",
+              {
+                action: {
+                  label: "Reload",
+                  onClick: () => window.location.reload(),
+                },
+              },
+            );
+          }
+        })
+        .catch(() => undefined);
+      return () => {
+        disposed = true;
+      };
+    }
+    const sw = new Serwist("/sw.js", { updateViaCache: "none" });
+    let accepted = false;
+    let activated = false;
+    let pending = false;
+    let notification = 0;
+    let toastId: string | undefined;
+    let dirty = false;
+    let lastCheck = Date.now();
+    const markDirty = (event: Event) => {
+      if (
+        (event.target as HTMLElement)?.closest(
+          "form, textarea, input:not([type=search]), [contenteditable=true]",
+        )
+      )
+        dirty = true;
+    };
+    const reload = () => {
+      if (
+        dirty &&
+        !window.confirm("Reload Folio? Unsaved form changes may be lost.")
+      )
+        return;
+      accepted = true;
+      window.dispatchEvent(new Event("folio:before-reload"));
+      if (activated) window.location.reload();
+      else sw.messageSkipWaiting();
+    };
+    const show = () => {
+      if (disposed) return;
+      pending = true;
+      if (toastId) toast.dismiss(toastId);
+      toastId = `service-worker-update-${++notification}`;
       toast.message("A new version of Folio is available.", {
-        id: "service-worker-update",
-        duration: Infinity,
-        action: (
-          <Button
-            size="sm"
-            onClick={() => {
-              // Tell the waiting SW to take over. The `controlling`
-              // listener below reloads when it assumes control.
-              sw.messageSkipWaiting();
-            }}
-          >
-            Reload
-          </Button>
-        ),
+        id: toastId,
+        duration: 10000,
+        action: { label: "Reload", onClick: reload },
+        cancel: { label: "Later", onClick: () => undefined },
       });
     };
-
     const onControlling = () => {
-      window.location.reload();
+      activated = true;
+      if (accepted) window.location.reload();
+      else if (document.visibilityState === "visible") show();
+      else pending = true;
     };
-
-    sw.addEventListener("waiting", onWaiting);
+    const onForeground = () => {
+      if (document.visibilityState !== "visible") return;
+      if (pending) show();
+      if (Date.now() - lastCheck < 60 * 60 * 1000) return;
+      lastCheck = Date.now();
+      void sw.update().catch(() => undefined);
+    };
+    const manualCheck = () => {
+      if (pending) show();
+      else
+        void sw
+          .update()
+          .catch(() => toast.error("Could not check for updates."));
+    };
+    sw.addEventListener("waiting", show);
     sw.addEventListener("controlling", onControlling);
-    sw.register();
+    document.addEventListener("input", markDirty);
+    document.addEventListener("visibilitychange", onForeground);
+    window.addEventListener("online", onForeground);
+    window.addEventListener("folio:check-update", manualCheck);
+    void sw.register().catch(() => {
+      if (!disposed)
+        toast.error("Offline support could not start. Reload to try again.");
+    });
+    return () => {
+      disposed = true;
+      sw.removeEventListener("waiting", show);
+      sw.removeEventListener("controlling", onControlling);
+      document.removeEventListener("input", markDirty);
+      document.removeEventListener("visibilitychange", onForeground);
+      window.removeEventListener("online", onForeground);
+      window.removeEventListener("folio:check-update", manualCheck);
+    };
   }, []);
-
   return null;
 }

@@ -8,6 +8,20 @@ const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 // is not used (§C3) — all routes run in Node.
 const config: NextConfig = {
   output: "standalone",
+  async headers() {
+    return [
+      {
+        source: "/sw.js",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "no-cache, max-age=0, must-revalidate",
+          },
+          { key: "Service-Worker-Allowed", value: "/" },
+        ],
+      },
+    ];
+  },
   // next 16.3.1 bumped @swc/helpers 0.5.15 -> 0.5.23, which added a
   // `module-sync` export condition:
   //   0.5.15  { import: esm/…, default: cjs/….cjs }
@@ -50,21 +64,10 @@ const config: NextConfig = {
     "172.16.0.0/12",
     "*.local",
   ],
-  // As of v0.2 (rust-public-origin plan, M4 follow-up), the Rust binary
-  // is the public origin and reverse-proxies HTML/RSC/`/_next/*` here.
-  // The web app fetches backend paths directly (`fetch("/series/...")`)
-  // — there is no Next-side `/api/*` rewrite alias any more. Security
-  // headers (CSP, COOP, COEP, etc.) are set by the Rust
-  // `security_headers` middleware on every response, including HTML
-  // proxied back from Next.
-  //
-  // DO NOT add rewrites here for backend paths. With Rust as the
-  // public origin, every path the Rust router owns (or that its
-  // fallback proxy forwards back to here) is reachable directly. The
-  // v0.1.15-17 rewrites for `/opds/*`, `/auth/oidc/*`, `/issues/*`,
-  // and the v0.2-transient `/api/:path*` alias are all gone — they
-  // were workarounds for the old Next-as-front topology and no longer
-  // apply.
+  // Rust owns the public origin. JSON endpoints live under /api; binary
+  // page streams and external-client routes keep their bare paths. Next
+  // receives HTML/RSC/static requests through Rust's fallback proxy, which
+  // supplies security headers. Do not add Next-side API rewrites.
 };
 
 // Service-worker compilation is intentionally NOT wired into the Next

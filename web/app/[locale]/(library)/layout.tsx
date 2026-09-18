@@ -1,3 +1,4 @@
+import { signInUrl } from "@/lib/api/sign-in-url";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -40,7 +41,7 @@ export default async function LibraryLayout({
   }
 
   if (!me) {
-    redirect(`/sign-in`);
+    redirect(await signInUrl());
   }
 
   // Best-effort: a failure here just degrades to an empty sidebar; the

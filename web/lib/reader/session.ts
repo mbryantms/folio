@@ -34,6 +34,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 
+import { PRIVATE_RESET } from "@/lib/pwa/private-state";
 import { apiFetch, getCsrfToken } from "@/lib/api/auth-refresh";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -234,6 +235,16 @@ export function useReadingSession(opts: SessionTrackerOptions): void {
     },
     [device, issueId, totalPages, viewMode],
   );
+
+  useEffect(() => {
+    const clear = () => {
+      startedRef.current = false;
+      flushedRef.current = true;
+      clientSessionIdRef.current = null;
+    };
+    window.addEventListener(PRIVATE_RESET, clear);
+    return () => window.removeEventListener(PRIVATE_RESET, clear);
+  }, []);
 
   // 30s heartbeat — only after the user has actually started reading.
   useEffect(() => {

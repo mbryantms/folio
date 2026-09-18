@@ -1,3 +1,4 @@
+import { signInUrl } from "@/lib/api/sign-in-url";
 import { notFound, redirect } from "next/navigation";
 
 import { PageRails } from "@/components/saved-views/PageRails";
@@ -27,7 +28,7 @@ export default async function PageDetailRoute({
     pages = await apiGet<PageListView>("/me/pages");
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
-      redirect("/sign-in");
+      redirect(await signInUrl());
     }
     throw e;
   }

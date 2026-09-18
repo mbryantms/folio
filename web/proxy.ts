@@ -1,3 +1,4 @@
+import { NextRequest } from "next/server";
 import createMiddleware from "next-intl/middleware";
 
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./i18n/request";
@@ -15,11 +16,20 @@ import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./i18n/request";
 // for Next to stamp `nonce="..."` onto every framework-emitted
 // `<script>` tag. See
 // `node_modules/next/dist/server/app-render/get-script-nonce-from-header.js`.
-export default createMiddleware({
+const localeMiddleware = createMiddleware({
   locales: SUPPORTED_LOCALES as unknown as string[],
   defaultLocale: DEFAULT_LOCALE,
   localePrefix: "never",
 });
+
+export default function proxy(request: NextRequest) {
+  const forwarded = new Headers(request.headers);
+  forwarded.set(
+    "x-folio-return-to",
+    request.nextUrl.pathname + request.nextUrl.search,
+  );
+  return localeMiddleware(new NextRequest(request, { headers: forwarded }));
+}
 
 export const config = {
   // With `localePrefix: "never"`, next-intl internally rewrites every

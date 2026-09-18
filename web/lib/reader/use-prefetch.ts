@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import type { ViewMode } from "@/lib/reader/detect";
 import type { SpreadGroup } from "@/lib/reader/spreads";
 import {
@@ -16,6 +16,7 @@ const BEHIND = 2;
 const MAX_CONCURRENT = 4;
 // Cap retained decoded images so memory stays bounded on long issues.
 const MAX_RETAINED = 16;
+const MAX_DECODED_PIXELS = 24_000_000; // approximately 96 MB of RGBA
 
 /**
  * Warm upcoming/previous page bytes **and decode them** so the next/prev
@@ -66,21 +67,33 @@ export function useReaderPrefetch(opts: {
   // Retained decoded images, keyed by URL (insertion-ordered for LRU-ish
   // eviction). In-flight set dedupes concurrent warms of the same URL.
   const retained = useRef<Map<string, HTMLImageElement>>(new Map());
-  const inflight = useRef<Set<string>>(new Set());
-  const queue = useRef<string[]>([]);
-  const active = useRef(0);
+  const width = useSyncExternalStore(
+    (notify) => {
+      window.addEventListener("resize", notify);
+      return () => window.removeEventListener("resize", notify);
+    },
+    () => window.innerWidth,
+    () => 1024,
+  );
+
+  useEffect(() => {
+    retained.current.clear();
+  }, [issueId]);
 
   useEffect(() => {
     // Webtoon relies on the browser lazy-loading its mounted page window
     // (audit C12) — prefetching here just double-decodes. Call the hook
     // unconditionally (rules of hooks); skip the work inside the effect.
     if (viewMode === "webtoon") return;
+    const inflight = new Set<string>();
+    const images = new Set<HTMLImageElement>();
+    let queue: string[] = [];
+    let active = 0;
     // FEP-1: mirror the <img> srcSet pick — `sizes` is 100vw (single) /
     // 50vw (double), so the browser targets slot-css-px × dpr and takes
     // the smallest candidate ≥ that. Same formula here keeps warmed URLs
     // byte-identical to what the real element requests.
-    const slotCssPx =
-      viewMode === "double" ? window.innerWidth / 2 : window.innerWidth;
+    const slotCssPx = viewMode === "double" ? width / 2 : width;
     const targetDevicePx = Math.ceil(
       slotCssPx * Math.max(1, window.devicePixelRatio || 1),
     );
@@ -94,13 +107,20 @@ export function useReaderPrefetch(opts: {
       return tier == null ? bare : pageVariantUrl(bare, tier);
     };
 
+    let cancelled = false;
     const pump = () => {
-      while (active.current < MAX_CONCURRENT && queue.current.length > 0) {
-        const u = queue.current.shift()!;
-        if (retained.current.has(u) || inflight.current.has(u)) continue;
-        inflight.current.add(u);
-        active.current += 1;
+      while (
+        !cancelled &&
+        !document.hidden &&
+        active < MAX_CONCURRENT &&
+        queue.length > 0
+      ) {
+        const u = queue.shift()!;
+        if (retained.current.has(u) || inflight.has(u)) continue;
+        inflight.add(u);
+        active += 1;
         const img = new Image();
+        images.add(img);
         // Hint the browser these are background loads behind the visible page.
         img.fetchPriority = "low";
         img.src = u;
@@ -109,9 +129,16 @@ export function useReaderPrefetch(opts: {
         img
           .decode()
           .then(() => {
+            if (cancelled) return;
             retained.current.set(u, img);
             // Evict oldest beyond the cap (Map preserves insertion order).
-            while (retained.current.size > MAX_RETAINED) {
+            while (
+              retained.current.size > MAX_RETAINED ||
+              [...retained.current.values()].reduce(
+                (n, image) => n + image.naturalWidth * image.naturalHeight,
+                0,
+              ) > MAX_DECODED_PIXELS
+            ) {
               const oldest = retained.current.keys().next().value;
               if (oldest === undefined) break;
               retained.current.delete(oldest);
@@ -122,8 +149,9 @@ export function useReaderPrefetch(opts: {
                the page will simply load normally when displayed. */
           })
           .finally(() => {
-            inflight.current.delete(u);
-            active.current -= 1;
+            images.delete(img);
+            inflight.delete(u);
+            active -= 1;
             pump();
           });
       }
@@ -148,10 +176,21 @@ export function useReaderPrefetch(opts: {
     // Order forward-first so the most-likely next page warms before the
     // behind pages.
     want.sort(
-      (a, b) => Math.sign(a - currentPage) - Math.sign(b - currentPage),
+      (a, b) =>
+        Math.sign(b - currentPage) - Math.sign(a - currentPage) ||
+        Math.abs(a - currentPage) - Math.abs(b - currentPage),
     );
-    queue.current = want.map(url);
+    queue = want.map(url);
     pump();
+    document.addEventListener("visibilitychange", pump);
+    return () => {
+      cancelled = true;
+      queue = [];
+      images.forEach((image) => {
+        image.src = "";
+      });
+      document.removeEventListener("visibilitychange", pump);
+    };
   }, [
     currentPage,
     currentGroupIdx,
@@ -160,5 +199,8 @@ export function useReaderPrefetch(opts: {
     totalPages,
     viewMode,
     urlVersion,
+    pageWidths,
+    variantsEnabled,
+    width,
   ]);
 }

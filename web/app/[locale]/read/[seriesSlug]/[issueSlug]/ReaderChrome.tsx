@@ -39,6 +39,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useReaderWakeLock } from "@/lib/reader/use-wake-lock";
 import { ReaderSettings } from "./ReaderSettings";
 import { ReadingProgress } from "./ReadingProgress";
 
@@ -82,6 +83,7 @@ export function ReaderChrome({
    *  see the read isn't being tracked. */
   incognito?: boolean;
 }) {
+  useReaderWakeLock();
   const router = useRouter();
   const currentPage = useReaderStore((s) => s.currentPage);
   const direction = useReaderStore((s) => s.direction);

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0c0e13" />
+    <title>Connection unavailable · Folio</title>
+    <style>
+      html {
+        font: 100% system-ui;
+        color-scheme: dark light;
+      }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        padding: 0 max(24px, env(safe-area-inset-left));
+      }
+      main {
+        max-width: 32rem;
+        padding: 32px 0;
+      }
+      p {
+        line-height: 1.6;
+      }
+      a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 48px;
+        padding: 0 20px;
+        border: 1px solid currentColor;
+        border-radius: 8px;
+        color: inherit;
+      }
+      a:focus-visible {
+        outline: 3px solid #e5a323;
+        outline-offset: 4px;
+      }
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #0c0e13;
+          color: #f3f5f7;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p>Folio</p>
+      <h1>Connection unavailable</h1>
+      <p>
+        Folio couldn’t reach your server. Check your connection and try again.
+        Reading offline is not available yet.
+      </p>
+      <a href="">Try this page again</a> <a href="/">Open library</a>
+    </main>
+  </body>
+</html>

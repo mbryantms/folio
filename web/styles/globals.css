@@ -517,3 +517,34 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* Shared mobile chrome geometry. Portalled overlays inherit these values. */
+:root {
+  --keyboard-inset: 0px;
+  --overlay-bottom: max(16px, var(--safe-bottom));
+}
+@media (max-width: 767px) {
+  html:has([data-library-shell]) {
+    --overlay-bottom: calc(var(--bottom-tab-h) + var(--safe-bottom) + 16px);
+  }
+}
+@media (pointer: coarse) {
+  .folio-button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+}
+@media (forced-colors: active) {
+  button:focus-visible,
+  a:focus-visible {
+    outline: 2px solid Highlight;
+  }
+  [aria-current="page"] {
+    outline: 2px solid Highlight;
+  }
+}
