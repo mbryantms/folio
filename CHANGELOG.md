@@ -13,6 +13,43 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.27.20](https://github.com/mbryantms/folio/compare/v0.27.19...v0.27.20) (2026-09-15)
+
+
+### Dependencies
+
+* update rust crate testcontainers to 0.28, drop testcontainers-modules ([#797](https://github.com/mbryantms/folio/issues/797)) ([6a668f3](https://github.com/mbryantms/folio/commit/6a668f391ce50742d48e595dc87bf22c65fa0da1))
+
+## [0.27.19](https://github.com/mbryantms/folio/compare/v0.27.18...v0.27.19) (2026-09-15)
+
+
+### Dependencies
+
+* lock file maintenance ([#436](https://github.com/mbryantms/folio/issues/436)) ([6a6db68](https://github.com/mbryantms/folio/commit/6a6db6849b0517b4949bc22cbfa4968ab4d16cba))
+* pin docker/dockerfile docker tag to bde3983 ([#786](https://github.com/mbryantms/folio/issues/786)) ([c4467ac](https://github.com/mbryantms/folio/commit/c4467acf556620faa780375575519237306159d5))
+* update dependency @ai-sdk/provider-utils@&lt;4.0.34 to v4.0.51 ([#787](https://github.com/mbryantms/folio/issues/787)) ([00ce5b2](https://github.com/mbryantms/folio/commit/00ce5b283317407a3ac71be1a0f994d492522468))
+* update dependency @tanstack/react-virtual to v3.14.12 ([#788](https://github.com/mbryantms/folio/issues/788)) ([af85751](https://github.com/mbryantms/folio/commit/af857517dd28c38759c73efa0d1db43d6ed7b1e8))
+* update dependency cronstrue to v3.26.0 ([#794](https://github.com/mbryantms/folio/issues/794)) ([6ccf485](https://github.com/mbryantms/folio/commit/6ccf4856f1e9121f854c06fbabce113d93724d04))
+* update dependency lucide-react to v1.45.0 ([#795](https://github.com/mbryantms/folio/issues/795)) ([65c2894](https://github.com/mbryantms/folio/commit/65c289420c62e1847a6f49d6b4e515dbcb78d65d))
+* update dependency nanoid@&lt;3.3.19 to v3.3.19 ([#789](https://github.com/mbryantms/folio/issues/789)) ([76e9335](https://github.com/mbryantms/folio/commit/76e93353dfacf108de230b9f1473c76de1fd0c93))
+* update dependency next-intl to v4.14.4 ([#790](https://github.com/mbryantms/folio/issues/790)) ([7606a8b](https://github.com/mbryantms/folio/commit/7606a8b550cd7b553011754d1608b7034e2379f4))
+* update dependency pnpm to v12.4.1 ([#791](https://github.com/mbryantms/folio/issues/791)) ([92a7f73](https://github.com/mbryantms/folio/commit/92a7f732beda4bab45ca5c6043b00a8b73907352))
+* update dependency react-hook-form to v7.88.0 ([#796](https://github.com/mbryantms/folio/issues/796)) ([f69bc85](https://github.com/mbryantms/folio/commit/f69bc85daf8b5102fe6760043abf7b7be8ff013d))
+* update dependency zod to v4.6.2 ([#792](https://github.com/mbryantms/folio/issues/792)) ([80a922f](https://github.com/mbryantms/folio/commit/80a922f31de72fa3ed80e9db4f5099b1e248c46b))
+* update nextjs monorepo to v16.3.5 ([#793](https://github.com/mbryantms/folio/issues/793)) ([f5c96ee](https://github.com/mbryantms/folio/commit/f5c96ee25894b80be33913ffc61256f538ec4fea))
+
+
+### Build & CI
+
+* **renovate:** drop the matchConfidence hold — it aborted every self-hosted run ([#784](https://github.com/mbryantms/folio/issues/784)) ([e1acd78](https://github.com/mbryantms/folio/commit/e1acd78dc6fb5556642ed739fc387e6a47e64acf))
+
+## [0.27.18](https://github.com/mbryantms/folio/compare/v0.27.17...v0.27.18) (2026-09-13)
+
+
+### Fixed
+
+* **pwa:** make the safe-area pin sticky — stale reader geometry was un-pinning it ([#782](https://github.com/mbryantms/folio/issues/782)) ([8bd1d04](https://github.com/mbryantms/folio/commit/8bd1d04906422174afa6918e62393ff5ac451fad))
+
 ## [0.27.17](https://github.com/mbryantms/folio/compare/v0.27.16...v0.27.17) (2026-09-13)
 
 

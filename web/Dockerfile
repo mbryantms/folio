@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.27
+# syntax=docker/dockerfile:1.27@sha256:bde3983e9c939224420ddaf6b784cc30e09b035a4dea01f581230c50809f372e
 # Folio web image — Next.js 16 standalone bundle on distroless Node.
 #
 # Multi-stage:
@@ -20,7 +20,7 @@ WORKDIR /work
 # pnpm is fast + matches what the repo uses locally. The exact version is
 # kept in lockstep with `package.json/packageManager` by Renovate (see the
 # `pnpm` custom manager + group in renovate.json).
-RUN npm install -g pnpm@12.4.0
+RUN npm install -g pnpm@12.4.2
 
 # Bring in just enough to make pnpm install efficient — workspace manifest,
 # lockfile, and the web package contents. The root `Cargo.toml` etc. live

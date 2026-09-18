@@ -361,7 +361,7 @@ jobs:
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         if: env.WEB == 'true'
         with:
-          version: 12.4.0
+          version: 12.4.2
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         if: env.WEB == 'true'
         with:
@@ -510,7 +510,7 @@ jobs:
           fetch-depth: 0
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
-          version: 12.4.0
+          version: 12.4.2
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
@@ -687,7 +687,7 @@ jobs:
         if: env.BUILD == 'true'
       - name: Build (no push)
         if: env.BUILD == 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -738,7 +738,7 @@ jobs:
       # populated the gha cache in this same run, so both are cache hits.
       - name: Load folio:dev
         if: env.SMOKE == 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: Dockerfile
@@ -749,7 +749,7 @@ jobs:
           cache-from: type=gha,scope=folio
       - name: Load folio-web:dev
         if: env.SMOKE == 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: web/Dockerfile
@@ -820,7 +820,7 @@ jobs:
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         if: env.SMOKE == 'true'
         with:
-          version: 12.4.0
+          version: 12.4.2
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         if: env.SMOKE == 'true'
         with:

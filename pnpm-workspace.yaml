@@ -70,7 +70,7 @@ overrides:
   # override output) pulled nanoid 3.3.17 straight past the selector and the
   # audit gate went red on every PR.
   # Delete when `pnpm why nanoid` shows no in-range consumers.
-  "nanoid@<3.3.19": "3.3.18"
+  "nanoid@<3.3.19": "3.3.19"
   # GHSA-f88m-g3jw-g9cj — sharp <0.35.0 inherited libvips CVEs
   # (CVE-2026-33327/-33328/-35590/-35591). Prod path: next pins
   # sharp ^0.34.5 so it can't float to the patched line.
@@ -91,7 +91,7 @@ overrides:
   # kept the dependency-health issue red on it (2026-09-13).
   # Selector stays one patch AHEAD of the pin (see js-yaml note above).
   # Delete when `pnpm why @ai-sdk/provider-utils` shows no in-range consumers.
-  "@ai-sdk/provider-utils@<4.0.34": "4.0.33"
+  "@ai-sdk/provider-utils@<4.0.34": "4.0.51"
   # brace-expansion DoS pair — GHSA-mh99-v99m-4gvg (<=5.0.7, unbounded
   # expansion length) and GHSA-rgw5-rvv9-x895 (unbounded intermediate
   # arrays, which bypasses the first one's mitigation). Between them they
@@ -105,9 +105,9 @@ overrides:
   # keeps every consumer inside its original major, so the CJS export-shape
   # break that made 5.0.8 unusable for minimatch v3 does not apply.
   # Delete each when `pnpm why brace-expansion` shows no in-range consumers.
-  "brace-expansion@<1.1.18": "1.1.18"
-  "brace-expansion@>=2.0.0 <2.1.4": "2.1.4"
-  "brace-expansion@>=5.0.0 <5.0.9": "5.0.9"
+  "brace-expansion@<1.1.18": "1.1.21"
+  "brace-expansion@>=2.0.0 <2.1.4": "2.1.7"
+  "brace-expansion@>=5.0.0 <5.0.9": "5.0.12"
   # browserslist high pair — GHSA-73wf-gq98-2v4g (normalizeStats crash /
   # prototype write via untrusted browserslist-stats.json) and
   # GHSA-c83g-rgw3-j3cx (unbounded query-result cache → OOM), both
@@ -118,4 +118,4 @@ overrides:
   # Selector stays one patch AHEAD of the pin (see js-yaml note above).
   # Delete when `pnpm why browserslist` shows no in-range (<4.28.7)
   # consumers, i.e. once the lockfile naturally resolves past 4.28.6.
-  "browserslist@<4.28.9": "4.28.9"
+  "browserslist@<4.28.9": "4.29.0"

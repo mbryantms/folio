@@ -78,7 +78,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
-          version: 12.4.0
+          version: 12.4.2
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
@@ -111,7 +111,7 @@ jobs:
       # top-level `runs:` section, so referencing `google/osv-scanner-action@…`
       # fails to load the action outright ("Top level 'runs:' section is
       # required"). Renovate still tracks the digest through the subpath.
-      - uses: google/osv-scanner-action/osv-scanner-action@6e4298ebc4db23e847df9b2e2de2939d6f066c67 # v2.5.1
+      - uses: google/osv-scanner-action/osv-scanner-action@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
         id: scan
         continue-on-error: true
         with:
