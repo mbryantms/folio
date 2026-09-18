@@ -1,3 +1,4 @@
+import { signInUrl } from "@/lib/api/sign-in-url";
 import {
   BookOpen,
   Building2,
@@ -99,7 +100,7 @@ export default async function SeriesPage({
     ]);
   } catch (e) {
     if (e instanceof ApiError) {
-      if (e.status === 401) redirect(`/sign-in`);
+      if (e.status === 401) redirect(await signInUrl());
       if (e.status === 404) notFound();
     }
     throw e;

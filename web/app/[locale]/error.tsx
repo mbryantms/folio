@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 
 import { StatusScreen, StatusErrorIcon } from "@/components/StatusScreen";
+import { ChunkRecovery } from "@/components/ChunkRecovery";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -34,6 +35,7 @@ export default function LocaleError({
       digest={error.digest}
       actions={
         <>
+          <ChunkRecovery error={error} />
           <Button onClick={reset}>Try again</Button>
           <Button asChild variant="outline">
             {/* Hard nav escapes the broken React subtree. */}

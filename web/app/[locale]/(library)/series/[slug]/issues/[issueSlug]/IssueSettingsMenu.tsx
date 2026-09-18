@@ -363,6 +363,14 @@ export function IssueSettingsMenu({
               <Link2 className="mr-2 h-4 w-4" />
               {share.label}
             </DropdownMenuItem>
+            {share.canShare && (
+              <DropdownMenuItem
+                onSelect={() => void share.copyLink(issueUrl(issue))}
+              >
+                <Link2 className="mr-2 h-4 w-4" />
+                Copy link
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onSelect={() => setMetadataDialogOpen(true)}>
               <Sparkles className="mr-2 h-4 w-4" />
               Fetch metadata…

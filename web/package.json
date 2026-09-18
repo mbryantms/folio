@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev --webpack -p 3000 -H 0.0.0.0",
     "dev:turbo": "next dev --turbopack -p 3000 -H 0.0.0.0",
-    "build": "next build && pnpm run sw:compile",
+    "build": "node scripts/theme-colors.mjs --check && next build && pnpm run sw:compile",
     "sw:compile": "serwist build serwist.config.js",
     "start": "next start -p 3000",
     "lint": "eslint .",
@@ -20,7 +20,9 @@
     "openapi:gen": "openapi-typescript lib/api/openapi.json -o lib/api/types.generated.ts",
     "check-bundle-size": "node scripts/check-bundle-size.mjs",
     "check-query-keys": "node scripts/check-query-keys.mjs",
-    "check-status-colors": "node scripts/check-status-colors.mjs"
+    "check-status-colors": "node scripts/check-status-colors.mjs",
+    "check-pwa-assets": "node scripts/check-pwa-assets.mjs",
+    "check-theme-colors": "node scripts/theme-colors.mjs --check"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

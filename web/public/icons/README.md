@@ -2,7 +2,7 @@
 
 This directory holds the icons referenced from
 [`web/app/manifest.ts`](../../app/manifest.ts) and from the
-`appleWebApp.icons` field in [`web/app/layout.tsx`](../../app/layout.tsx).
+`metadata.icons` field in [`web/app/layout.tsx`](../../app/layout.tsx).
 None of the PNG files are checked into the repo yet because Folio does
 not have a finalised brand mark; the manifest still emits with the
 references in place, and the install UX degrades gracefully (browsers
@@ -27,8 +27,8 @@ companion file:
 | `icon.svg`    | scalable     | Modern browsers prefer the SVG favicon for crisp rendering at any DPI. |
 
 The favicon files belong in the parent `web/public/` directory rather
-than `web/public/icons/`, because Next.js auto-discovers `favicon.ico`
-and `icon.svg` at the root of `public/`.
+than `web/public/icons/`, with explicit metadata links; alternatively use Next’s `app/favicon.ico` and
+`app/icon.svg` file conventions.
 
 ## Generating
 
@@ -38,13 +38,13 @@ or a 1024 × 1024 PNG), `pwa-asset-generator` produces every size at once:
 ```sh
 npx pwa-asset-generator <source.svg> ./web/public/icons \
   --icon-only \
-  --background "#0c1012" \
+  --background "#0c0e13" \
   --padding "10%" \
   --type png \
   --opaque false
 ```
 
-The `--background "#0c1012"` matches the manifest's `theme_color` and
+The `--background "#0c0e13"` matches the manifest's `theme_color` and
 `background_color`, both of which are derived from the dark
 `--background` token in `web/styles/globals.css`. The `--padding "10%"`
 inset keeps the mark inside the 80 % safe zone required for the
@@ -57,7 +57,7 @@ with `--maskable true` so the central safe zone is enforced:
 npx pwa-asset-generator <source.svg> ./web/public/icons \
   --icon-only \
   --maskable true \
-  --background "#0c1012" \
+  --background "#0c0e13" \
   --padding "20%" \
   --type png
 ```
@@ -77,11 +77,12 @@ emit those too:
 ```sh
 npx pwa-asset-generator <source.svg> ./web/public/icons \
   --splash-only \
-  --background "#0c1012" \
+  --background "#0c0e13" \
   --padding "30%" \
   --type png
 ```
 
-Wiring the resulting `<link>` tags is not yet done in
-[`web/app/layout.tsx`](../../app/layout.tsx); see the Tier 2 list in
-the PWA hardening notes.
+Portrait `<link>` tags already exist in
+[`web/app/layout.tsx`](../../app/layout.tsx), but their files are missing.
+Generate both portrait and landscape assets and update the declarations to
+match the supported devices. See [PWA hardening](../../../docs/dev/pwa-hardening.md).

@@ -1,3 +1,4 @@
+import { AppInstallation } from "@/components/settings/AppInstallation";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { ThemePicker } from "@/components/settings/ThemePicker";
 
@@ -9,6 +10,7 @@ export default function ThemeSettingsPage() {
         description="Theme, accent, and density. Changes apply instantly and sync across devices."
       />
       <ThemePicker />
+      <AppInstallation />
     </>
   );
 }

@@ -847,8 +847,13 @@ jobs:
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:8080
         run: pnpm --filter web exec playwright test
-      - name: Upload Playwright traces
-        if: failure() && env.SMOKE == 'true'
+      - name: PWA public-origin assets
+        if: env.SMOKE == 'true'
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:8080
+        run: pnpm --filter web run check-pwa-assets
+      - name: Upload Playwright results
+        if: always() && env.SMOKE == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-report

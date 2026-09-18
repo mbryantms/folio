@@ -1,10 +1,14 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch, getCsrfToken } from "@/lib/api/auth-refresh";
 import { invalidateRails } from "@/lib/api/mutations";
 import { queryKeys } from "@/lib/api/queries";
 import { nextPersistedProgressPage } from "@/lib/reader/webtoon-window";
+
+import { createProgressWriter } from "./progress-writer";
+import type { ProgressBody } from "./progress-writer";
+import { PRIVATE_RESET } from "@/lib/pwa/private-state";
 
 const PROGRESS_DEBOUNCE_MS = 300;
 
@@ -29,9 +33,9 @@ const PROGRESS_DEBOUNCE_MS = 300;
  * - The CSRF token is read inside the write callback, not snapshotted
  *   at mount — a token rotation mid-session (long read across a
  *   re-auth) used to 403 every subsequent write, silently, forever.
- * - A `pagehide` listener flushes the pending debounced write with
- *   `fetch(keepalive)` so the final page flip before closing the tab
- *   isn't dropped ("stopped on page 18, resumed at 17").
+ * - Hidden/pagehide/online events flush the latest pending writes. Every
+ *   request uses keepalive and a failed response stays pending in memory.
+ *   Delivery is serialized; account resets discard pending writes.
  *
  * Cache invalidation: after each successful write we mark the
  * shared `useUserProgress` query stale + invalidate every cached
@@ -76,9 +80,26 @@ export function useReaderProgressWrite(opts: {
   } = opts;
   const qc = useQueryClient();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // The body the debounce timer would send, kept in a ref so the
-  // pagehide flush can post it even though the timer hasn't fired.
-  const pendingBody = useRef<Record<string, unknown> | null>(null);
+  const writer = useMemo(
+    () =>
+      createProgressWriter(async (body) => {
+        const csrf = getCsrfToken();
+        const response = await apiFetch("/progress", {
+          method: "POST",
+          keepalive: true,
+          headers: {
+            "Content-Type": "application/json",
+            ...(csrf ? { "X-CSRF-Token": csrf } : {}),
+          },
+          body: JSON.stringify(body),
+        });
+        if (!response.ok) return false;
+        void qc.invalidateQueries({ queryKey: queryKeys.userProgress });
+        invalidateRails(qc);
+        return true;
+      }),
+    [qc],
+  );
   // High-water mark for the monotonic guard. Seeded from the resume
   // page; reset when the issue changes.
   const highWater = useRef(initialPage);
@@ -102,63 +123,47 @@ export function useReaderProgressWrite(opts: {
       ? nextPersistedProgressPage(highWater.current, currentPage)
       : currentPage;
     if (monotonic) highWater.current = page;
-    const body: Record<string, unknown> = {
+    const body: ProgressBody = {
       issue_id: issueId,
       page,
     };
     if (onLastPage) body.finished = true;
-    pendingBody.current = body;
+    writer.set(body);
     timer.current = setTimeout(() => {
-      pendingBody.current = null;
-      const csrf = getCsrfToken();
-      void apiFetch("/progress", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(csrf ? { "X-CSRF-Token": csrf } : {}),
-        },
-        body: JSON.stringify(body),
-      })
-        .then(() => {
-          // Share the invalidation set with `useUpsertIssueProgress`
-          // / `useBulkMarkProgress`. This raw-apiFetch path used to
-          // skip TanStack entirely, leaving rails + detail pages
-          // stale after a reading session.
-          qc.invalidateQueries({ queryKey: queryKeys.userProgress });
-          invalidateRails(qc);
-        })
-        .catch(() => {
-          /* best-effort; retries on next page change */
-        });
+      void writer.flush();
     }, PROGRESS_DEBOUNCE_MS);
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [currentPage, incognito, issueId, monotonic, qc, totalPages]);
+  }, [currentPage, incognito, issueId, monotonic, writer, totalPages]);
 
-  // Flush the in-flight debounce on tab close / app switch. keepalive
-  // survives the unload and carries the CSRF header. Idempotent with
-  // the timer path — the server upserts by (user, issue).
   useEffect(() => {
-    if (incognito) return;
+    if (incognito) {
+      writer.clear();
+      return;
+    }
     const flush = () => {
-      const body = pendingBody.current;
-      if (!body) return;
-      pendingBody.current = null;
-      const csrf = getCsrfToken();
-      void fetch("/api/progress", {
-        method: "POST",
-        keepalive: true,
-        headers: {
-          "Content-Type": "application/json",
-          ...(csrf ? { "X-CSRF-Token": csrf } : {}),
-        },
-        body: JSON.stringify(body),
-      }).catch(() => {
-        /* unload race — next session's write self-heals */
-      });
+      void writer.flush();
+    };
+    const hidden = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    const clear = () => {
+      if (timer.current) clearTimeout(timer.current);
+      writer.clear();
     };
     window.addEventListener("pagehide", flush);
-    return () => window.removeEventListener("pagehide", flush);
-  }, [incognito]);
+    window.addEventListener("online", flush);
+    window.addEventListener("folio:before-reload", flush);
+    window.addEventListener(PRIVATE_RESET, clear);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      flush();
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("online", flush);
+      window.removeEventListener("folio:before-reload", flush);
+      window.removeEventListener(PRIVATE_RESET, clear);
+      document.removeEventListener("visibilitychange", hidden);
+    };
+  }, [incognito, writer]);
 }

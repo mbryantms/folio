@@ -1,3 +1,4 @@
+import { THEME_COLORS } from "@/lib/pwa/theme-colors";
 import type { MetadataRoute } from "next";
 
 /**
@@ -23,6 +24,7 @@ import type { MetadataRoute } from "next";
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
+    id: "/",
     name: "Folio",
     short_name: "Folio",
     description: "Self-hostable comic reader",
@@ -33,8 +35,8 @@ export default function manifest(): MetadataRoute.Manifest {
     // better in landscape on tablets, and the library grid uses the
     // extra width well.
     orientation: "any",
-    background_color: "#0c1012",
-    theme_color: "#0c1012",
+    background_color: THEME_COLORS.dark,
+    theme_color: THEME_COLORS.dark,
     icons: [
       {
         src: "/icons/icon-192.png",
@@ -54,6 +56,10 @@ export default function manifest(): MetadataRoute.Manifest {
         type: "image/png",
         purpose: "maskable",
       },
+    ],
+    shortcuts: [
+      { name: "Library", url: "/?library=all" },
+      { name: "Bookmarks", url: "/bookmarks" },
     ],
     categories: ["books", "entertainment"],
   };

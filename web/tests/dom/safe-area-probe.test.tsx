@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import * as React from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render } from "@testing-library/react";
 
 const standalone = vi.hoisted(() => ({ value: true }));
@@ -30,7 +30,12 @@ function setGeometry(
   });
 }
 
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
 afterEach(() => {
+  vi.useRealTimers();
   document.documentElement.style.removeProperty("--safe-top");
   standalone.value = true;
 });
@@ -39,6 +44,9 @@ describe("SafeAreaProbe (jsdom)", () => {
   it("pins --safe-top to 0 when the OS already reserved the status bar", () => {
     setGeometry(834, 1194 - 24);
     render(<SafeAreaProbe />);
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
     expect(document.documentElement.style.getPropertyValue("--safe-top")).toBe(
       "0px",
     );
@@ -47,6 +55,9 @@ describe("SafeAreaProbe (jsdom)", () => {
   it("keeps the pin when a later resize reports stale full-height geometry (iPadOS 26.1 reader)", async () => {
     setGeometry(834, 1194 - 24);
     render(<SafeAreaProbe />);
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
     setGeometry(834, 1194);
     await act(async () => {
       window.dispatchEvent(new Event("resize"));
@@ -59,12 +70,16 @@ describe("SafeAreaProbe (jsdom)", () => {
   it("pins late when the first measurement was edge to edge but a later one shows the reserved bar", async () => {
     setGeometry(834, 1194);
     render(<SafeAreaProbe />);
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
     expect(document.documentElement.style.getPropertyValue("--safe-top")).toBe(
       "",
     );
     setGeometry(834, 1194 - 24);
     await act(async () => {
       window.dispatchEvent(new Event("pageshow"));
+      vi.advanceTimersByTime(100);
     });
     expect(document.documentElement.style.getPropertyValue("--safe-top")).toBe(
       "0px",
@@ -75,6 +90,9 @@ describe("SafeAreaProbe (jsdom)", () => {
     standalone.value = false;
     setGeometry(834, 1194 - 24);
     render(<SafeAreaProbe />);
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
     expect(document.documentElement.style.getPropertyValue("--safe-top")).toBe(
       "",
     );
@@ -83,6 +101,9 @@ describe("SafeAreaProbe (jsdom)", () => {
   it("removes its pin on unmount", () => {
     setGeometry(834, 1194 - 24);
     const { unmount } = render(<SafeAreaProbe />);
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
     expect(document.documentElement.style.getPropertyValue("--safe-top")).toBe(
       "0px",
     );

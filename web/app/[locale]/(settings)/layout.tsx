@@ -1,3 +1,4 @@
+import { signInUrl } from "@/lib/api/sign-in-url";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -18,7 +19,7 @@ export default async function SettingsLayout({
     me = await getMe();
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
-      redirect(`/sign-in`);
+      redirect(await signInUrl());
     }
     throw e;
   }

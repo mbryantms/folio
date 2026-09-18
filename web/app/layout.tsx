@@ -11,6 +11,8 @@ import { GlobalShortcutsSheet } from "@/components/GlobalShortcutsSheet";
 import { QueryProvider } from "@/components/QueryProvider";
 import { ScanResultListener } from "@/components/ScanResultListener";
 import { ServiceWorkerLoader } from "@/components/ServiceWorkerLoader";
+import { VisualViewportSync } from "@/components/VisualViewportSync";
+import { InstallEvents } from "@/components/InstallEvents";
 import { SafeAreaProbe } from "@/components/SafeAreaProbe";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { Toaster } from "@/components/ui/sonner";
@@ -211,13 +213,15 @@ export default async function RootLayout({
       <body className="bg-background text-foreground min-h-full antialiased">
         <ThemeProvider defaultTheme={theme} nonce={nonce}>
           <NextIntlClientProvider messages={messages}>
-            <QueryProvider>
+            <QueryProvider key={me?.id ?? "anonymous"} userId={me?.id}>
               {me ? <HydrateAuthCache me={me} /> : null}
               <SearchModalProvider>
                 <ScanResultListener />
                 <GlobalHotkeys />
                 <ServiceWorkerLoader />
                 <SafeAreaProbe />
+                <VisualViewportSync />
+                <InstallEvents />
                 <GlobalShortcutsSheet>{children}</GlobalShortcutsSheet>
               </SearchModalProvider>
             </QueryProvider>

@@ -1,5 +1,10 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  clearPrivateState,
+  broadcastPrivateReset,
+} from "@/lib/pwa/private-state";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
@@ -46,6 +51,7 @@ export function UserFooter({
   libraryHref?: string;
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [pending, start] = useTransition();
   const shortcuts = useShortcutsSheet();
   const isAdmin = user.role === "admin";
@@ -60,7 +66,15 @@ export function UserFooter({
     })
       .then((r) => r.ok)
       .catch(() => false);
-    if (ok) toast.success("Signed out");
+    if (ok) {
+      broadcastPrivateReset();
+      await clearPrivateState(queryClient);
+      // A hard navigation drops private state outside the query cache too.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.assign("/sign-in");
+      return;
+    }
+    toast.error("Could not sign out. Check your connection and try again.");
     // Silent on failure — the next protected request will redirect to
     // /sign-in, which is the real signal. A toast.error here would
     // compete with that redirect.

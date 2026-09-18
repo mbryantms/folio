@@ -27,6 +27,7 @@ vi.mock("next/navigation", () => ({
 // it for the SSR sidebar-state cookie. Stub a no-op cookie store so the
 // layout's `parseSidebarState(undefined)` falls through to the default.
 vi.mock("next/headers", () => ({
+  headers: async () => new Headers(),
   cookies: async () => ({
     get: () => undefined,
   }),

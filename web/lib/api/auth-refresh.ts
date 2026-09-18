@@ -1,4 +1,5 @@
 "use client";
+import { connectionFetch, reportConnectivity } from "@/lib/pwa/connectivity";
 
 /**
  * Client-side `/api/*` fetch wrapper with implicit access-token renewal.
@@ -29,21 +30,25 @@ export function getCsrfToken(): string | null {
   return m ? decodeURIComponent(m[1]!) : null;
 }
 
-let refreshInFlight: Promise<boolean> | null = null;
+let refreshInFlight: Promise<boolean | null> | null = null;
 
-async function attemptRefresh(): Promise<boolean> {
+async function attemptRefresh(): Promise<boolean | null> {
   if (refreshInFlight) return refreshInFlight;
   const p = (async () => {
     try {
       const csrf = getCsrfToken();
-      const res = await fetch("/api/auth/refresh", {
+      const res = await connectionFetch("/api/auth/refresh", {
         method: "POST",
         credentials: "include",
         headers: csrf ? { "X-CSRF-Token": csrf } : undefined,
       });
-      return res.ok;
+      return res.ok
+        ? true
+        : res.status === 401 || res.status === 403
+          ? false
+          : null;
     } catch {
-      return false;
+      return null;
     }
   })();
   refreshInFlight = p;
@@ -65,12 +70,15 @@ export async function apiFetch(
 ): Promise<Response> {
   const url = `/api${path}`;
   const opts: RequestInit = { credentials: "include", ...init };
-  const res = await fetch(url, opts);
+  const res = await connectionFetch(url, opts);
   if (res.status !== 401) return res;
   // Don't try to refresh the refresh endpoint itself — that would loop.
   if (path === "/auth/refresh") return res;
   const refreshed = await attemptRefresh();
-  if (!refreshed) return res;
+  if (!refreshed) {
+    if (refreshed === false) reportConnectivity("authentication");
+    return res;
+  }
   // Re-read the CSRF cookie before the retry. `/api/auth/refresh` and
   // any token_version-bumping mutation (password change, sign-out-
   // everywhere) rotate `__Host-comic_csrf` in its Set-Cookie, so the
@@ -85,5 +93,5 @@ export async function apiFetch(
     headers.set("X-CSRF-Token", csrf);
     retryOpts.headers = headers;
   }
-  return fetch(url, retryOpts);
+  return connectionFetch(url, retryOpts);
 }

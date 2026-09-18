@@ -29,16 +29,7 @@ export const baseViewport: Viewport = {
   viewportFit: "cover",
 };
 
-/**
- * Per-theme browser-chrome colors. Hex mirrors of the `--background`
- * HSL tokens in `web/styles/globals.css` — keep in sync when a theme's
- * background token changes.
- */
-const THEME_COLORS: Record<ReturnType<typeof resolvedDataTheme>, string> = {
-  dark: "#0c1012", // 222 22% 6%
-  light: "#ffffff", // 0 0% 100%
-  amber: "#f3efe7", // 38 35% 93%
-};
+import { THEME_COLORS } from "./pwa/theme-colors";
 
 /**
  * Viewport for the user's actual (cookie-resolved) theme.
@@ -82,7 +73,7 @@ export function themedViewport(theme: Theme): Viewport {
  * theme its declared appearance is pinned to black/dark — otherwise the
  * status-bar region dresses white over the artwork (#541).
  *
- * For a dark or `system` theme the reader returns EXACTLY the root
+ * For a dark theme the reader returns EXACTLY the root
  * viewport instead of `#000000`. Since iOS/iPadOS 26.1 the OS paints its
  * own opaque status bar (plus a short fade below it) from `theme-color`,
  * and it latches the first runtime change: entering the reader turned the
@@ -93,7 +84,17 @@ export function themedViewport(theme: Theme): Viewport {
  * reader dressing (the alternative is a white fade over artwork).
  */
 export function readerViewport(theme: Theme): Viewport {
-  if (theme === "system" || resolvedDataTheme(theme) === "dark") {
+  if (theme === "system") {
+    return {
+      ...themedViewport(theme),
+      themeColor: [
+        { media: "(prefers-color-scheme: dark)", color: THEME_COLORS.dark },
+        { media: "(prefers-color-scheme: light)", color: "#000000" },
+      ],
+      colorScheme: "dark",
+    };
+  }
+  if (resolvedDataTheme(theme) === "dark") {
     return themedViewport(theme);
   }
   return {

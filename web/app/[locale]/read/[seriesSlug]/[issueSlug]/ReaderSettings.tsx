@@ -1,5 +1,6 @@
 "use client";
 
+import { useWakePreference } from "@/lib/reader/use-wake-lock";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Keyboard, RotateCcw } from "lucide-react";
@@ -38,6 +39,7 @@ const DIRECTION_OPTIONS: ReadonlyArray<{ value: Direction; label: string }> = [
  * toggles are per-tab.
  */
 export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
+  const awake = useWakePreference();
   const fitMode = useReaderStore((s) => s.fitMode);
   const viewMode = useReaderStore((s) => s.viewMode);
   const direction = useReaderStore((s) => s.direction);
@@ -60,6 +62,12 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
   return (
     <div className="space-y-4 text-sm">
       <Section title="Display">
+        <SwitchRow
+          label="Keep screen awake"
+          description="While reading, when allowed by your device."
+          checked={awake.enabled}
+          onChange={awake.setEnabled}
+        />
         <Field label="View">
           <SegmentedControl
             value={viewMode}

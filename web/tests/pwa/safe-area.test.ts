@@ -83,3 +83,12 @@ describe("safeTopOverride", () => {
     ).toBeNull();
   });
 });
+
+it("does not classify windowed or keyboard geometry as a status bar", () => {
+  expect(
+    safeTopOverride({ ...IPAD, innerWidth: 600, innerHeight: 900 }, true),
+  ).toBeNull();
+  expect(
+    safeTopOverride({ ...IPAD, innerWidth: 834, innerHeight: 700 }, true),
+  ).toBeNull();
+});

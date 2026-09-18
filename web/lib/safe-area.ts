@@ -70,5 +70,12 @@ export function safeTopOverride(
   standalone: boolean,
 ): string | null {
   if (!standalone) return null;
-  return reservedTopInset(g) >= MIN_RESERVED_STATUS_BAR_PX ? "0px" : null;
+  const inset = reservedTopInset(g);
+  const fullWidth =
+    g.innerWidth > g.innerHeight
+      ? Math.max(g.screenWidth, g.screenHeight)
+      : Math.min(g.screenWidth, g.screenHeight);
+  // Windowed mode and keyboards can shorten the viewport for unrelated reasons.
+  if (Math.abs(fullWidth - g.innerWidth) > 2 || inset > 100) return null;
+  return inset >= MIN_RESERVED_STATUS_BAR_PX ? "0px" : null;
 }

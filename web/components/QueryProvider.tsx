@@ -4,9 +4,17 @@ import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { AccountCacheBoundary } from "./AccountCacheBoundary";
+
 import { HttpError } from "@/lib/api/queries";
 
-export function QueryProvider({ children }: { children: React.ReactNode }) {
+export function QueryProvider({
+  children,
+  userId,
+}: {
+  children: React.ReactNode;
+  userId?: string;
+}) {
   const [client] = useState(
     () =>
       new QueryClient({
@@ -40,11 +48,11 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
     const onOffline = () => {
       toast.warning("You're offline — changes may fail until you reconnect", {
         id: "network-status",
-        duration: Infinity,
+        duration: 5000,
       });
     };
     const onOnline = () => {
-      toast.success("Back online", {
+      toast.message("Connection restored. Retrying failed requests…", {
         id: "network-status",
         duration: 3000,
       });
@@ -65,13 +73,34 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
     // transition.
     if (!navigator.onLine) onOffline();
 
+    const onConnectivity = (event: Event) => {
+      const status = (event as CustomEvent<string>).detail;
+      if (status === "reachable") {
+        toast.dismiss("network-status");
+        return;
+      }
+      const message =
+        status === "authentication"
+          ? "Your session expired. Sign in again to continue."
+          : status === "offline"
+            ? "You’re offline. Changes cannot be saved."
+            : "Folio can’t reach your server. Try again shortly.";
+      toast.warning(message, { id: "network-status", duration: 5000 });
+    };
+    window.addEventListener("folio:connectivity", onConnectivity);
     window.addEventListener("offline", onOffline);
     window.addEventListener("online", onOnline);
     return () => {
+      window.removeEventListener("folio:connectivity", onConnectivity);
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("online", onOnline);
     };
   }, [client]);
 
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={client}>
+      <AccountCacheBoundary userId={userId} />
+      {children}
+    </QueryClientProvider>
+  );
 }

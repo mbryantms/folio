@@ -117,6 +117,14 @@ function SeriesCardImpl({
       label: share.label,
       onSelect: () => void share.shareOrCopy(seriesUrl(series), series.name),
     },
+    ...(share.canShare
+      ? [
+          {
+            label: "Copy link",
+            onSelect: () => void share.copyLink(seriesUrl(series)),
+          },
+        ]
+      : []),
     ...(extraActions ?? []),
   ];
   // Prepend "Select" to the long-press sheet when the parent
