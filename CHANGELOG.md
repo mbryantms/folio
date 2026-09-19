@@ -13,6 +13,15 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.28.1](https://github.com/mbryantms/folio/compare/v0.28.0...v0.28.1) (2026-09-19)
+
+
+### Dependencies
+
+* update dependency @types/node to v24.13.5 ([#815](https://github.com/mbryantms/folio/issues/815)) ([59d1e37](https://github.com/mbryantms/folio/commit/59d1e37d53e54902820a192c4aa35fc454262afa))
+* update dependency cronstrue to v3.27.0 ([#817](https://github.com/mbryantms/folio/issues/817)) ([56c8de2](https://github.com/mbryantms/folio/commit/56c8de219e8923d57be47b773183dd9d7b42add1))
+* update docker/setup-buildx-action digest to f87e599 ([#819](https://github.com/mbryantms/folio/issues/819)) ([d6e5ca4](https://github.com/mbryantms/folio/commit/d6e5ca4a13d41b206a44a16736f92ffff607930e))
+
 ## [0.28.0](https://github.com/mbryantms/folio/compare/v0.27.20...v0.28.0) (2026-09-18)
 
 
