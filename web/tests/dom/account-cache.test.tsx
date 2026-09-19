@@ -44,3 +44,18 @@ it("recognizes an account change while this tab was closed", () => {
   expect(reset.clear).toHaveBeenCalledWith(client);
   expect(reset.broadcast).toHaveBeenCalledOnce();
 });
+it("does not reset when signing in from an anonymous session", () => {
+  // The sign-in page stamps "anonymous"; landing on the library afterwards
+  // is the first identity, not a switch. A reset here reloads the landing
+  // page on every sign-in (and raced the e2e reader-flow navigation).
+  localStorage.setItem("folio:account-id", "anonymous");
+  const client = new QueryClient();
+  render(
+    <QueryClientProvider client={client}>
+      <AccountCacheBoundary userId="a" />
+    </QueryClientProvider>,
+  );
+  expect(reset.clear).not.toHaveBeenCalled();
+  expect(reset.broadcast).not.toHaveBeenCalled();
+  expect(localStorage.getItem("folio:account-id")).toBe("a");
+});

@@ -9,6 +9,8 @@ import {
   clearPrivateState,
 } from "@/lib/pwa/private-state";
 
+const ANONYMOUS = "anonymous";
+
 /** Observe identity without fetching it again or retaining another query cache. */
 export function AccountCacheBoundary({ userId }: { userId?: string }) {
   const client = useQueryClient();
@@ -28,9 +30,15 @@ export function AccountCacheBoundary({ userId }: { userId?: string }) {
     };
     try {
       const stored = localStorage.getItem("folio:account-id");
-      const identity = userId ?? "anonymous";
+      const identity = userId ?? ANONYMOUS;
       localStorage.setItem("folio:account-id", identity);
-      if (stored !== null && stored !== identity) void reset(true);
+      // Only a change *between* identities is an account switch. Signing in
+      // from an anonymous session leaves nothing private behind to clear, and
+      // the sign-in flow already navigates; resetting here forced a full
+      // reload of the landing page on every sign-in, which raced whatever
+      // the user (or the e2e reader-flow spec) did next.
+      if (stored !== null && stored !== ANONYMOUS && stored !== identity)
+        void reset(true);
     } catch {
       /* Storage may be disabled; live identity and logout still clear. */
     }
@@ -53,7 +61,7 @@ export function AccountCacheBoundary({ userId }: { userId?: string }) {
         return;
       const me = event.query.state.data as MeView | undefined;
       try {
-        localStorage.setItem("folio:account-id", me?.id ?? "anonymous");
+        localStorage.setItem("folio:account-id", me?.id ?? ANONYMOUS);
       } catch {
         /* Live identity checks still apply without storage. */
       }
