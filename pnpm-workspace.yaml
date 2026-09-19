@@ -119,3 +119,14 @@ overrides:
   # Delete when `pnpm why browserslist` shows no in-range (<4.28.7)
   # consumers, i.e. once the lockfile naturally resolves past 4.28.6.
   "browserslist@<4.28.9": "4.29.0"
+  # undici high quartet — GHSA-hm92-r4w5-c3mj (SOCKS5 requestTls dropped,
+  # TLS validation bypass), GHSA-4cwx-7wf7-3272 (cross-user disclosure via
+  # degenerate private cache directives), plus the WebSocket fragment-count
+  # DoS and SOCKS5 pool-reuse advisories; all >=7.0.0 <7.29.0. Reaches us
+  # prod-side only through the Scalar API-reference chain
+  # (@scalar/api-reference-react → … → @scalar/json-magic), which
+  # exact-pins undici 7.24.4 so it cannot float. Selector stays one patch
+  # AHEAD of the pin (see js-yaml note above).
+  # Delete when `pnpm why undici` shows no in-range (<7.29.0) consumers,
+  # i.e. once @scalar/json-magic's pin moves past 7.29.0.
+  "undici@>=7.0.0 <7.29.2": "7.29.1"
