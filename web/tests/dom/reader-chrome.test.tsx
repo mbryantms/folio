@@ -151,7 +151,15 @@ describe("ReaderChrome (jsdom)", () => {
     resetStore({ currentPage: 4 });
     renderChrome();
     const trigger = await screen.findByRole("button", { name: "Marker tools" });
+    // A keyboard user can only press Enter on a focused trigger. Firing the
+    // key on an unfocused button used to pass by accident: the previous test
+    // unmounts with focus inside its popover, and jsdom < 30.1 kept a stale
+    // activeElement pointing at that detached node. jsdom 30.1 resolves
+    // activeElement to <body> after the removal (browser behaviour), and
+    // Radix's focus-scope then reads the menu's auto-focus as focus leaving
+    // an outside element and dismisses the menu on open.
     await act(async () => {
+      trigger.focus();
       fireEvent.keyDown(trigger, { key: "Enter" });
     });
     const item = await screen.findByRole("menuitem", { name: /add note/i });
