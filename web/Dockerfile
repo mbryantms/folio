@@ -20,7 +20,7 @@ WORKDIR /work
 # pnpm is fast + matches what the repo uses locally. The exact version is
 # kept in lockstep with `package.json/packageManager` by Renovate (see the
 # `pnpm` custom manager + group in renovate.json).
-RUN npm install -g pnpm@12.5.0
+RUN npm install -g pnpm@12.5.1
 
 # Bring in just enough to make pnpm install efficient — workspace manifest,
 # lockfile, and the web package contents. The root `Cargo.toml` etc. live
