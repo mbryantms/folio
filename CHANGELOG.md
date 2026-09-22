@@ -13,6 +13,35 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.28.1](https://github.com/mbryantms/folio/compare/v0.28.0...v0.28.1) (2026-09-22)
+
+
+### Fixed
+
+* **deps:** pin undici 7.x above the four high advisories (audit gate) ([#824](https://github.com/mbryantms/folio/issues/824)) ([9fb1b73](https://github.com/mbryantms/folio/commit/9fb1b7363e252cf0c7d10b4dbf405118eb5f30d2))
+* **pwa:** stop the account boundary reloading the landing page on every sign-in ([#823](https://github.com/mbryantms/folio/issues/823)) ([089180c](https://github.com/mbryantms/folio/commit/089180c2c10f280fa2143c74f0401f528af9cbe5))
+
+
+### Dependencies
+
+* lock file maintenance ([#829](https://github.com/mbryantms/folio/issues/829)) ([0fc2307](https://github.com/mbryantms/folio/commit/0fc2307d04f573ab8bddc9182425d044acd29e87))
+* update alpine:3 docker digest to 294b683 ([#833](https://github.com/mbryantms/folio/issues/833)) ([9b61ce4](https://github.com/mbryantms/folio/commit/9b61ce40ee58b6981b0a4c00b2eed3606c2f7104))
+* update dependency @scalar/api-reference-react to v0.9.68 ([#821](https://github.com/mbryantms/folio/issues/821)) ([60050dd](https://github.com/mbryantms/folio/commit/60050dddb05f52adfe0c9d5110f38b3ae1d46648))
+* update dependency @tanstack/react-query to v5.103.1 ([#818](https://github.com/mbryantms/folio/issues/818)) ([9a11c20](https://github.com/mbryantms/folio/commit/9a11c20ecd09c7141a537ece4ce9eee93ac6cc1a))
+* update dependency @types/node to v24.13.5 ([#815](https://github.com/mbryantms/folio/issues/815)) ([59d1e37](https://github.com/mbryantms/folio/commit/59d1e37d53e54902820a192c4aa35fc454262afa))
+* update dependency @types/node to v24.13.6 ([#835](https://github.com/mbryantms/folio/issues/835)) ([728d36f](https://github.com/mbryantms/folio/commit/728d36fba8f7c4b6fe64fc4ab92ff75be3b86f68))
+* update dependency cronstrue to v3.27.0 ([#817](https://github.com/mbryantms/folio/issues/817)) ([56c8de2](https://github.com/mbryantms/folio/commit/56c8de219e8923d57be47b773183dd9d7b42add1))
+* update dependency lucide-react to v1.47.0 ([#826](https://github.com/mbryantms/folio/issues/826)) ([11fa213](https://github.com/mbryantms/folio/commit/11fa213c629f978b1a69c6597884f1cef19e3779))
+* update dependency pnpm to v12.5.0 ([#832](https://github.com/mbryantms/folio/issues/832)) ([69b128a](https://github.com/mbryantms/folio/commit/69b128a934535c0858530d142aff26b1b05593fb))
+* update dependency pnpm to v12.5.1 ([#834](https://github.com/mbryantms/folio/issues/834)) ([6ade6f9](https://github.com/mbryantms/folio/commit/6ade6f9d025469fc21154cbb91b5afe999fb5204))
+* update docker/setup-buildx-action digest to f87e599 ([#819](https://github.com/mbryantms/folio/issues/819)) ([d6e5ca4](https://github.com/mbryantms/folio/commit/d6e5ca4a13d41b206a44a16736f92ffff607930e))
+* update node.js to 0e0ff40 ([#836](https://github.com/mbryantms/folio/issues/836)) ([1390693](https://github.com/mbryantms/folio/commit/1390693861574f66cd7d133697ad1cb3b95f1c8a))
+* update redis:8-alpine docker digest to bd999b5 ([#827](https://github.com/mbryantms/folio/issues/827)) ([8a12c25](https://github.com/mbryantms/folio/commit/8a12c2535ca58134d843d4bb2071bf95999c37b2))
+* update rust crate jsonwebtoken to v11.1.0 ([#820](https://github.com/mbryantms/folio/issues/820)) ([5804dad](https://github.com/mbryantms/folio/commit/5804dade4e0bbb03073b1c0a048cf7d27d89af9d))
+* update rust crate syn to v3.0.6 ([#825](https://github.com/mbryantms/folio/issues/825)) ([abccb21](https://github.com/mbryantms/folio/commit/abccb21a9e46949d524b24b7a6916c51e8d2f72d))
+* update rust:1.98-slim-bookworm docker digest to ff52144 ([#837](https://github.com/mbryantms/folio/issues/837)) ([a76e173](https://github.com/mbryantms/folio/commit/a76e173a04e00af406acfda3adf5cb67a37fb6f1))
+* update web-dev-tooling (weekly) ([#828](https://github.com/mbryantms/folio/issues/828)) ([babc3ef](https://github.com/mbryantms/folio/commit/babc3efd3d6382b53326f195215955b8d378cb45))
+
 ## [0.28.0](https://github.com/mbryantms/folio/compare/v0.27.20...v0.28.0) (2026-09-18)
 
 
