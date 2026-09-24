@@ -121,11 +121,16 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
         }
     };
 
-    if row.state != "active" {
+    // Soft-removed rows keep `state = "active"` through the grace window
+    // (only `removed_at` is set — see `library::reconcile`), so check both.
+    // Their file is gone by definition; opening it would just log a
+    // "No such file" failure on every THUMBNAIL_VERSION bump.
+    if row.state != "active" || row.removed_at.is_some() {
         tracing::debug!(
             issue_id = %job.issue_id,
             state = %row.state,
-            "thumbs job: skipping non-active issue",
+            soft_removed = row.removed_at.is_some(),
+            "thumbs job: skipping non-active or soft-removed issue",
         );
         app.unmark_thumb_job_queued(&dedupe_key).await;
         return Ok(());
@@ -368,8 +373,20 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
             Ok(())
         }
         Ok(Err(e)) => {
-            let msg = e.to_string();
-            tracing::warn!(issue_id = %row.id, error = %e, "thumbs job: cover generation failed");
+            // An `io: No such file` from `archive::open` means the file
+            // moved or was deleted after the last scan reconciled this
+            // row (a retag-rename, a manual move). Say so instead of
+            // surfacing a bare OS error — the fix is a rescan, not a
+            // thumbnail retry.
+            let msg = if !std::path::Path::new(&row.file_path).exists() {
+                format!(
+                    "archive file is missing on disk (moved or deleted since the last scan); \
+                     rescan the series to reconcile it: {e}"
+                )
+            } else {
+                e.to_string()
+            };
+            tracing::warn!(issue_id = %row.id, error = %msg, "thumbs job: cover generation failed");
             stamp_error(&app, &row, msg.clone()).await;
             record_thumb_failure(&app, &row, job.kind.as_str(), &msg).await;
             app.events.emit(ScanEvent::ThumbsFailed {
@@ -590,6 +607,7 @@ pub async fn enqueue_pending_for_library(app: &AppState, library_id: Uuid) -> us
     let pending: Vec<String> = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
         .filter(needs_cover_work_filter())
         .select_only()
         .column(issue::Column::Id)
@@ -626,6 +644,7 @@ pub async fn enqueue_pending_for_series(
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::SeriesId.eq(series_id))
         .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
         .filter(needs_cover_work_filter())
         .select_only()
         .column(issue::Column::Id)
@@ -703,6 +722,7 @@ async fn active_issue_rows_for_thumbs(
     let mut query = issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
         .filter(needs_cover_work_filter());
     if let Some(series_id) = series_id {
         query = query.filter(issue::Column::SeriesId.eq(series_id));
@@ -785,6 +805,7 @@ where
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::Id.is_in(ids))
         .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
         .filter(needs_cover_work_filter())
         .select_only()
         .column(issue::Column::Id)
@@ -887,6 +908,7 @@ pub async fn enqueue_strips_for_series(app: &AppState, library_id: Uuid, series_
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::SeriesId.eq(series_id))
         .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
         .select_only()
         .column(issue::Column::Id)
         .column(issue::Column::PageCount)
@@ -945,6 +967,7 @@ pub async fn enqueue_strips_for_library(app: &AppState, library_id: Uuid) -> usi
     let rows: Vec<(String, Option<i32>)> = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
         .select_only()
         .column(issue::Column::Id)
         .column(issue::Column::PageCount)

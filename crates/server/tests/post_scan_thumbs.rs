@@ -1118,3 +1118,90 @@ async fn version_bump_recrops_stale_wraparound_but_leaves_portrait_covers() {
         assert_eq!(row.thumbnail_version, thumbnails::THUMBNAIL_VERSION);
     }
 }
+
+// ───────── Soft-removed and vanished files ─────────
+
+/// A soft-removed issue keeps `state = "active"` during the grace window
+/// (only `removed_at` is set), so the version-bump catch-up used to enqueue
+/// it and then fail on the missing file. Neither the enqueue paths nor the
+/// worker should touch it.
+#[tokio::test]
+async fn soft_removed_issue_is_neither_enqueued_nor_processed() {
+    use server::jobs::post_scan::{enqueue_pending_for_library, enqueue_strips_for_library};
+
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("gone.cbz");
+    build_cbz(&cbz, 3);
+    let id = seed_issue(&app, &cbz, 3).await;
+    let state = app.state();
+    let row = IssueEntity::find_by_id(id.clone())
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let library_id = row.library_id;
+
+    let mut am: IssueAM = row.into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(&state.db).await.unwrap();
+    std::fs::remove_file(&cbz).unwrap();
+
+    assert_eq!(enqueue_pending_for_library(&state, library_id).await, 0);
+    assert_eq!(enqueue_strips_for_library(&state, library_id).await, 0);
+
+    handle_thumbs(
+        ThumbsJob::cover_and_strip(id.clone()),
+        apalis::prelude::Data::new(state.clone()),
+    )
+    .await
+    .unwrap();
+
+    let row = IssueEntity::find_by_id(id.clone())
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        row.thumbnails_generated_at.is_none(),
+        "worker must not stamp a soft-removed row"
+    );
+    assert!(
+        row.thumbnails_error.is_none(),
+        "no failure recorded for a soft-removed row"
+    );
+    assert!(
+        thumbnails::find_existing_cover(&state.cfg().data_path, &id).is_none(),
+        "no cover written"
+    );
+}
+
+/// An *active* row whose file vanished (renamed/deleted after the last
+/// scan) is a real inconsistency worth surfacing, but the message should
+/// say what happened and what fixes it, not a bare `os error 2`.
+#[tokio::test]
+async fn vanished_archive_is_reported_as_missing_with_a_rescan_hint() {
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("renamed-away.cbz");
+    build_cbz(&cbz, 3);
+    let id = seed_issue(&app, &cbz, 3).await;
+    std::fs::remove_file(&cbz).unwrap();
+
+    let state = app.state();
+    handle_thumbs(
+        ThumbsJob::cover(id.clone()),
+        apalis::prelude::Data::new(state.clone()),
+    )
+    .await
+    .unwrap();
+
+    let row = IssueEntity::find_by_id(id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let err = row.thumbnails_error.expect("failure stamped");
+    assert!(err.contains("missing on disk"), "got: {err}");
+    assert!(err.contains("rescan"), "got: {err}");
+}
