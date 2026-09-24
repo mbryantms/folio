@@ -13,6 +13,20 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.28.2](https://github.com/mbryantms/folio/compare/v0.28.1...v0.28.2) (2026-09-24)
+
+
+### Fixed
+
+* **thumbnails:** crop wraparound covers to the front half ([#841](https://github.com/mbryantms/folio/issues/841)) ([50f9cd5](https://github.com/mbryantms/folio/commit/50f9cd5c9c41892b9d195c95e125211b6e37d749))
+
+
+### Dependencies
+
+* update dependency @tanstack/react-query to v5.103.2 ([#840](https://github.com/mbryantms/folio/issues/840)) ([b0b6495](https://github.com/mbryantms/folio/commit/b0b6495ee6e6e85733b937a90c6ac297d1f88277))
+* update dependency next-intl to v4.14.6 ([#842](https://github.com/mbryantms/folio/issues/842)) ([794f292](https://github.com/mbryantms/folio/commit/794f29208daeb0686ecdbb0610e086a54de4ddb3))
+* update postgres:18-alpine docker digest to 77f5851 ([#838](https://github.com/mbryantms/folio/issues/838)) ([09181ba](https://github.com/mbryantms/folio/commit/09181ba946589fd58a76a336742104dec48491ac))
+
 ## [0.28.1](https://github.com/mbryantms/folio/compare/v0.28.0...v0.28.1) (2026-09-22)
 
 
