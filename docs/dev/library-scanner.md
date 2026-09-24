@@ -577,6 +577,22 @@ scanner-side handoff.
   `thumbs.failed`.
 - For per-series and per-issue scans the equivalent narrowing is
   [`enqueue_post_scan_for_series`](../../crates/server/src/jobs/post_scan.rs#L448).
+- **Wraparound covers are cropped to the front half.** A cover page
+  whose aspect is landscape past `SPREAD_ASPECT_RATIO` (1.2 — the same
+  constant the scanner's `double_page` inference and the reader's
+  spread grouping use) is a back+front spread scanned as one image.
+  [`thumbnails::front_cover_crop`](../../crates/server/src/library/thumbnails.rs)
+  keeps the front half for the `cover` / `cover_small` variants and for
+  the archive-extracted pHash (so the matcher compares like with like
+  against provider front covers); page-strip thumbs and the reader keep
+  the whole spread. Which half is "front" follows the issue's resolved
+  reading direction minus the per-user layer — ComicInfo
+  `<Manga>YesAndRightToLeft</Manga>` → `series.reading_direction` →
+  `library.default_reading_direction` → LTR — via
+  `FrontCoverSide::resolve`: right half for LTR, left half for RTL.
+  Flipping a series to RTL (or back) and hitting "Regenerate cover"
+  recrops. On a `THUMBNAIL_VERSION` bump the worker wipes + re-encodes
+  only the covers the crop applies to; portrait covers keep their bytes.
 
 ### Search index
 

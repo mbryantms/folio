@@ -177,6 +177,16 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
     // `ArchiveLimits` is `Copy`; capture before spawn_blocking so the
     // post-scan archive open honors any `COMIC_ARCHIVE_MAX_*` overrides.
     let archive_limits = app.cfg().archive_limits();
+    // Wraparound covers: which half is the front (v5). Resolved from the
+    // issue's `<Manga>` flag → series override → library default, so an
+    // RTL series keeps its left-half front cover.
+    let front_side = thumbnails::resolve_front_cover_side(&app.db, &row).await;
+    // A stale stamp means the on-disk cover pre-dates the current
+    // pipeline. The encoder no-ops on an existing file, so a v5 rollout
+    // over a pre-v5 uncropped wraparound would keep serving the old art
+    // forever — wipe first, but only when the crop actually applies
+    // (portrait covers keep their bytes + ETags across the bump).
+    let stale_stamp = row.thumbnail_version < THUMBNAIL_VERSION;
 
     let outcome = match app.archive_work_semaphore.clone().acquire_owned().await {
         Ok(permit) => {
@@ -195,6 +205,22 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                     if matches!(kind, ThumbsJobKind::Cover | ThumbsJobKind::CoverAndStrip) {
                         match thumbnails::decode_page(&mut *archive, cover_page_index) {
                             Ok(img) => {
+                                // Hash + encode the *front half* of a
+                                // wraparound (see `front_cover_crop`):
+                                // providers host the front cover alone, so
+                                // the matcher's Hamming ladder needs the
+                                // same framing. The encoder would crop
+                                // again, but on a portrait image that's a
+                                // no-op, so hash and thumbnail always agree.
+                                let img = match thumbnails::front_cover_crop(&img, front_side) {
+                                    Some(front) => {
+                                        if stale_stamp {
+                                            thumbnails::wipe_issue_cover(&data_dir, &issue_id);
+                                        }
+                                        front
+                                    }
+                                    None => img,
+                                };
                                 let (p, d, a) = crate::metadata::phash::all_hashes(&img);
                                 cover_hashes = Some(crate::metadata::phash::ArchiveCoverHashes {
                                     hashes: (p, d, a),
@@ -208,6 +234,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                                     &img,
                                     format,
                                     quality,
+                                    front_side,
                                 );
                                 // Emit the small srcset variant from the same
                                 // decode (G9). Best-effort — a missing `@sm`
@@ -215,7 +242,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                                 // for both srcset steps until the next regen.
                                 if cover.is_ok()
                                     && let Err(e) = thumbnails::encode_cover_small_from_image(
-                                        &data_dir, &issue_id, &img, format, quality,
+                                        &data_dir, &issue_id, &img, format, quality, front_side,
                                     )
                                 {
                                     tracing::debug!(

@@ -513,3 +513,61 @@ async fn thumb_etag_changes_when_artifact_regenerates() {
         .expect("etag 2");
     assert_ne!(etag, etag2, "ETag must change with the artifact bytes");
 }
+
+/// Inline (cold-path) cover generation applies the same wraparound crop as
+/// the post-scan worker: page 0 of a 2:1 spread comes back as the front
+/// half, while the strip variant keeps the whole spread.
+#[tokio::test]
+async fn inline_cover_thumb_crops_wraparound_but_strip_keeps_spread() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("wrap.cbz");
+    {
+        let wide: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_fn(128, 64, |x, _| {
+            if x < 64 {
+                Rgba([255, 0, 0, 255])
+            } else {
+                Rgba([0, 0, 255, 255])
+            }
+        });
+        let mut png: Vec<u8> = Vec::new();
+        wide.write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
+            .unwrap();
+        let f = std::fs::File::create(&cbz).unwrap();
+        let mut zw = zip::ZipWriter::new(f);
+        let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("page-000.png", opts).unwrap();
+        zw.write_all(&png).unwrap();
+        zw.start_file("page-001.png", opts).unwrap();
+        zw.write_all(&solid_png([10, 100, 200, 255])).unwrap();
+        zw.finish().unwrap();
+    }
+    let id = seed_issue(&app, &cbz).await;
+
+    let resp = fetch_thumb_response(&app, &session, &id, 0, None, None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let cover = image::load_from_memory(&body).unwrap().to_rgba8();
+    assert_eq!(cover.dimensions(), (64, 64), "cover = front (right) half");
+    let px = cover.get_pixel(32, 32).0;
+    assert!(
+        px[2] > 200 && px[0] < 60,
+        "front half should be blue, got {px:?}"
+    );
+
+    let resp = fetch_thumb_response(&app, &session, &id, 0, Some("strip"), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let strip = image::load_from_memory(&body).unwrap().to_rgba8();
+    assert_eq!(
+        strip.dimensions(),
+        (128, 64),
+        "strip keeps the whole spread"
+    );
+}

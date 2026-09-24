@@ -42,6 +42,7 @@ use image::{
     },
 };
 use rayon::prelude::*;
+use sea_orm::EntityTrait;
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -68,7 +69,128 @@ use std::path::{Path, PathBuf};
 /// is the smallest source that stays crisp at the active scale on common
 /// HiDPI hardware. Bumping forces a one-time strip recompute via the
 /// catchup sweep; cover variant is unchanged.
-pub const THUMBNAIL_VERSION: i32 = 4;
+///
+/// v5: wraparound covers are cropped to the front half before the cover
+/// variants are encoded (see [`front_cover_crop`]). A cover page whose
+/// aspect is landscape past [`SPREAD_ASPECT_RATIO`] is a back+front
+/// spread scanned as one image; the 2:3 cover tile used to `object-cover`
+/// its centre — half back cover, half front, title sliced. The catchup
+/// sweep re-enqueues every issue; the worker only wipes + re-encodes the
+/// covers the crop actually applies to (portrait covers keep their bytes
+/// and ETags), so the bump costs one decode per issue, not a re-encode.
+pub const THUMBNAIL_VERSION: i32 = 5;
+
+/// Width ÷ height at or above which a page is treated as a two-page
+/// spread. One constant, three consumers: the scanner's `double_page`
+/// inference (`scanner::process`), the reader's `SPREAD_ASPECT_RATIO`
+/// in `web/lib/reader/spreads.ts`, and the cover crop below. A single
+/// US-comic page is ≈ 0.65, a spread ≈ 1.30; 1.2 sits safely between
+/// them (validated against the Geiger 004 fixture). Change all three
+/// together.
+pub const SPREAD_ASPECT_RATIO: f32 = 1.2;
+
+/// Which half of a wraparound cover holds the front cover.
+///
+/// A wraparound is one image spanning the back cover, spine and front
+/// cover of the printed book. Western (left-to-right) books put the
+/// front on the **right** half; right-to-left books (manga) put it on
+/// the **left**. The side follows the issue's resolved reading direction
+/// — see [`FrontCoverSide::resolve`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FrontCoverSide {
+    /// Left-to-right books: front cover is the right half.
+    #[default]
+    Right,
+    /// Right-to-left books: front cover is the left half.
+    Left,
+}
+
+impl FrontCoverSide {
+    /// Resolve the front-cover side from the same precedence chain the
+    /// reader uses for reading direction, minus the per-user preference
+    /// (a cover thumbnail is shared by every user):
+    ///
+    /// 1. ComicInfo `<Manga>YesAndRightToLeft</Manga>` on the issue
+    /// 2. `series.reading_direction` (`"rtl"` / `"ltr"`)
+    /// 3. `library.default_reading_direction`
+    /// 4. left-to-right
+    pub fn resolve(
+        issue_manga: Option<&str>,
+        series_direction: Option<&str>,
+        library_default_direction: Option<&str>,
+    ) -> Self {
+        if issue_manga == Some("YesAndRightToLeft") {
+            return Self::Left;
+        }
+        let dir = series_direction
+            .filter(|d| matches!(*d, "rtl" | "ltr"))
+            .or(library_default_direction);
+        match dir {
+            Some("rtl") => Self::Left,
+            _ => Self::Right,
+        }
+    }
+
+    /// Stable string for tracing fields.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Right => "right",
+            Self::Left => "left",
+        }
+    }
+}
+
+/// Which half of a wraparound cover is the front, for `issue`. Reads the
+/// parent series' `reading_direction` and the library's default and
+/// feeds them through [`FrontCoverSide::resolve`]. Lookup failures fall
+/// back to left-to-right (front on the right) — the common case, and a
+/// wrong guess only mis-crops until the next regen.
+pub async fn resolve_front_cover_side<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    issue: &entity::issue::Model,
+) -> FrontCoverSide {
+    let series_dir = entity::series::Entity::find_by_id(issue.series_id)
+        .one(db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| s.reading_direction);
+    let library_dir = entity::library::Entity::find_by_id(issue.library_id)
+        .one(db)
+        .await
+        .ok()
+        .flatten()
+        .map(|l| l.default_reading_direction);
+    FrontCoverSide::resolve(
+        issue.manga.as_deref(),
+        series_dir.as_deref(),
+        library_dir.as_deref(),
+    )
+}
+
+/// Does this page's aspect read as a wraparound / two-page spread?
+pub fn is_spread_dimensions(width: u32, height: u32) -> bool {
+    height > 0 && (width as f32 / height as f32) >= SPREAD_ASPECT_RATIO
+}
+
+/// Crop a wraparound cover down to its front half. Returns `None` when
+/// the page is portrait (nothing to crop) so callers can keep the
+/// original without a copy. The crop is exactly half the width: every
+/// wraparound we've measured (Ignition Press, Image, DC) is two
+/// identical-width pages side by side; a thin spine sliver, when
+/// present, lands on the inner edge and is invisible at thumbnail size.
+pub fn front_cover_crop(img: &DynamicImage, side: FrontCoverSide) -> Option<DynamicImage> {
+    let (w, h) = img.dimensions();
+    if !is_spread_dimensions(w, h) {
+        return None;
+    }
+    let half = w / 2;
+    let x = match side {
+        FrontCoverSide::Right => w - half,
+        FrontCoverSide::Left => 0,
+    };
+    Some(img.crop_imm(x, 0, half, h))
+}
 
 /// Cover variant — used by the issue / series / library card grids. Wide
 /// enough to render at 2× on a typical Retina card without blurring; small
@@ -539,14 +661,24 @@ pub fn wipe_issue_variant_covers(data_dir: &Path, issue_id: &str) {
 }
 
 /// Generate the cover thumbnail. Idempotent — no-op if a file at the
-/// target format already exists.
+/// target format already exists. `front_side` picks the half of a
+/// wraparound cover page to keep (see [`front_cover_crop`]).
 pub fn generate_cover(
     data_dir: &Path,
     archive: &mut dyn ComicArchive,
     issue_id: &str,
     format: ThumbFormat,
+    front_side: FrontCoverSide,
 ) -> Result<PathBuf, ThumbError> {
-    generate(data_dir, archive, issue_id, Variant::Cover, 0, format)
+    generate(
+        data_dir,
+        archive,
+        issue_id,
+        Variant::Cover,
+        0,
+        format,
+        front_side,
+    )
 }
 
 /// Generate a thumbnail for the page at `page_index` (0-based). Idempotent.
@@ -559,13 +691,16 @@ pub fn generate_page_thumb(
     issue_id: &str,
     page_index: usize,
     format: ThumbFormat,
+    front_side: FrontCoverSide,
 ) -> Result<PathBuf, ThumbError> {
     let variant = if page_index == 0 {
         Variant::Cover
     } else {
         Variant::Strip
     };
-    generate(data_dir, archive, issue_id, variant, page_index, format)
+    generate(
+        data_dir, archive, issue_id, variant, page_index, format, front_side,
+    )
 }
 
 /// Generate one (variant, page) thumbnail at the requested format.
@@ -574,6 +709,9 @@ pub fn generate_page_thumb(
 /// satisfy the request, so callers can switch formats by writing the new
 /// extension alongside the old (or wiping first via the admin
 /// force-recreate flow — preferred since old files would otherwise leak).
+///
+/// `front_side` only matters for the cover variants; strips always keep
+/// the whole page (the reader's page-strip shows spreads at double width).
 pub fn generate(
     data_dir: &Path,
     archive: &mut dyn ComicArchive,
@@ -581,6 +719,7 @@ pub fn generate(
     variant: Variant,
     page_index: usize,
     format: ThumbFormat,
+    front_side: FrontCoverSide,
 ) -> Result<PathBuf, ThumbError> {
     generate_with_quality(
         data_dir,
@@ -590,9 +729,11 @@ pub fn generate(
         page_index,
         format,
         ThumbnailQuality::default(),
+        front_side,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate_with_quality(
     data_dir: &Path,
     archive: &mut dyn ComicArchive,
@@ -601,13 +742,14 @@ pub fn generate_with_quality(
     page_index: usize,
     format: ThumbFormat,
     quality: ThumbnailQuality,
+    front_side: FrontCoverSide,
 ) -> Result<PathBuf, ThumbError> {
     let out = variant_path(data_dir, issue_id, variant, page_index, format);
     if out.exists() {
         return Ok(out);
     }
     let img = decode_page(archive, page_index)?;
-    encode_variant_to_disk(&out, &img, variant, format, quality)
+    encode_variant_to_disk(&out, &img, variant, format, quality, Some(front_side))
 }
 
 /// Read a page's bytes from the archive and decode into a `DynamicImage`.
@@ -638,6 +780,11 @@ pub fn decode_page(
 /// for hashing — avoids a second decode of the same archive bytes.
 /// Idempotent: no-op when the target file already exists in the
 /// requested format.
+///
+/// The worker passes the image it already ran through
+/// [`front_cover_crop`] (so the hash and the thumbnail see identical
+/// pixels); the crop inside the encoder is then a no-op. Passing the
+/// full wraparound page works too — it gets cropped here.
 pub fn encode_cover_from_image(
     data_dir: &Path,
     issue_id: &str,
@@ -645,12 +792,13 @@ pub fn encode_cover_from_image(
     img: &DynamicImage,
     format: ThumbFormat,
     quality: ThumbnailQuality,
+    front_side: FrontCoverSide,
 ) -> Result<PathBuf, ThumbError> {
     let out = variant_path(data_dir, issue_id, Variant::Cover, page_index, format);
     if out.exists() {
         return Ok(out);
     }
-    encode_variant_to_disk(&out, img, Variant::Cover, format, quality)
+    encode_variant_to_disk(&out, img, Variant::Cover, format, quality, Some(front_side))
 }
 
 /// Encode the small (`@sm`) cover variant from a *pre-decoded* page image
@@ -663,12 +811,20 @@ pub fn encode_cover_small_from_image(
     img: &DynamicImage,
     format: ThumbFormat,
     quality: ThumbnailQuality,
+    front_side: FrontCoverSide,
 ) -> Result<PathBuf, ThumbError> {
     let out = cover_small_path(data_dir, issue_id, format);
     if out.exists() {
         return Ok(out);
     }
-    encode_variant_to_disk(&out, img, Variant::CoverSmall, format, quality)
+    encode_variant_to_disk(
+        &out,
+        img,
+        Variant::CoverSmall,
+        format,
+        quality,
+        Some(front_side),
+    )
 }
 
 /// Generate the small (`@sm`) cover by downscaling the issue's *existing*
@@ -695,12 +851,17 @@ pub fn generate_cover_small_from_existing(
     let bytes = fs::read(&full)?;
     let img = decode_bytes(&bytes)?;
     let out = cover_small_path(data_dir, issue_id, format);
+    // No crop: the `@sm` must be a pure downscale of whatever the full
+    // cover on disk is. A pre-v5 uncropped wraparound stays consistent
+    // between the two `srcset` steps until the catchup sweep regenerates
+    // both from the archive.
     encode_variant_to_disk(
         &out,
         &img,
         Variant::CoverSmall,
         format,
         ThumbnailQuality::default(),
+        None,
     )
     .map(Some)
 }
@@ -764,14 +925,40 @@ fn resize_rgba(
 
 /// Resize a decoded image to the variant's max width and write it to
 /// `out` in `format` via tmp-then-rename. Returns the final path.
+///
+/// `front_side` = `Some(side)` applies [`front_cover_crop`] first — only
+/// for the cover variants, and only when the page is a wraparound
+/// spread. `None` (strips, the `@sm`-from-existing backfill) encodes the
+/// page as-is.
 fn encode_variant_to_disk(
     out: &Path,
     img: &DynamicImage,
     variant: Variant,
     format: ThumbFormat,
     quality: ThumbnailQuality,
+    front_side: Option<FrontCoverSide>,
 ) -> Result<PathBuf, ThumbError> {
     fs::create_dir_all(out.parent().expect("thumbs dir parent"))?;
+
+    let cropped;
+    let img = match front_side {
+        Some(side) if matches!(variant, Variant::Cover | Variant::CoverSmall) => {
+            match front_cover_crop(img, side) {
+                Some(c) => {
+                    tracing::debug!(
+                        side = side.as_str(),
+                        from_w = img.width(),
+                        to_w = c.width(),
+                        "thumb.cover: wraparound cropped to front half"
+                    );
+                    cropped = c;
+                    &cropped
+                }
+                None => img,
+            }
+        }
+        _ => img,
+    };
 
     let (w, h) = img.dimensions();
     let max_w = variant.max_width();
@@ -871,6 +1058,7 @@ pub fn generate_all(
     archive: &mut dyn ComicArchive,
     issue_id: &str,
     format: ThumbFormat,
+    front_side: FrontCoverSide,
 ) -> Result<GenerateAllOutcome, ThumbError> {
     generate_all_with_quality(
         data_dir,
@@ -878,6 +1066,7 @@ pub fn generate_all(
         issue_id,
         format,
         ThumbnailQuality::default(),
+        front_side,
     )
 }
 
@@ -887,6 +1076,7 @@ pub fn generate_all_with_quality(
     issue_id: &str,
     format: ThumbFormat,
     quality: ThumbnailQuality,
+    front_side: FrontCoverSide,
 ) -> Result<GenerateAllOutcome, ThumbError> {
     let _span = tracing::info_span!(
         "thumb.generate_all",
@@ -907,10 +1097,17 @@ pub fn generate_all_with_quality(
         let page0 = pages.first().ok_or(ThumbError::PageOutOfRange)?;
         let page0 = decode_entry(archive, page0)?;
         if !cover_out.exists() {
-            encode_variant_to_disk(&cover_out, &page0, Variant::Cover, format, quality)?;
+            encode_variant_to_disk(
+                &cover_out,
+                &page0,
+                Variant::Cover,
+                format,
+                quality,
+                Some(front_side),
+            )?;
         }
         if !strip0_out.exists() {
-            encode_variant_to_disk(&strip0_out, &page0, Variant::Strip, format, quality)?;
+            encode_variant_to_disk(&strip0_out, &page0, Variant::Strip, format, quality, None)?;
         }
     }
 
@@ -1039,7 +1236,7 @@ fn parallel_encode_strips(
         .filter_map(|(n, bytes)| {
             let out = variant_path(data_dir, issue_id, Variant::Strip, n, format);
             let result = decode_bytes(&bytes).and_then(|img| {
-                encode_variant_to_disk(&out, &img, Variant::Strip, format, quality)
+                encode_variant_to_disk(&out, &img, Variant::Strip, format, quality, None)
             });
             match result {
                 Ok(_) => None,
@@ -1057,4 +1254,149 @@ pub struct GenerateAllOutcome {
     /// since a missing cover is a real failure; per-page strip misses are
     /// tolerated so a single corrupt page doesn't lose every other thumb.
     pub failed: Vec<(usize, String)>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{ImageBuffer, Rgba};
+
+    /// 2:1 landscape page: left half red, right half blue.
+    fn wraparound(w: u32, h: u32) -> DynamicImage {
+        DynamicImage::ImageRgba8(ImageBuffer::from_fn(w, h, |x, _| {
+            if x < w / 2 {
+                Rgba([255, 0, 0, 255])
+            } else {
+                Rgba([0, 0, 255, 255])
+            }
+        }))
+    }
+
+    fn portrait(w: u32, h: u32) -> DynamicImage {
+        DynamicImage::ImageRgba8(ImageBuffer::from_pixel(w, h, Rgba([0, 255, 0, 255])))
+    }
+
+    #[test]
+    fn ltr_wraparound_keeps_right_half() {
+        let img = wraparound(200, 100);
+        let front = front_cover_crop(&img, FrontCoverSide::Right).expect("landscape crops");
+        assert_eq!(front.dimensions(), (100, 100));
+        let rgba = front.to_rgba8();
+        assert_eq!(
+            rgba.get_pixel(0, 0).0,
+            [0, 0, 255, 255],
+            "left edge is blue"
+        );
+        assert_eq!(rgba.get_pixel(99, 99).0, [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn rtl_wraparound_keeps_left_half() {
+        let img = wraparound(200, 100);
+        let front = front_cover_crop(&img, FrontCoverSide::Left).expect("landscape crops");
+        assert_eq!(front.dimensions(), (100, 100));
+        assert_eq!(front.to_rgba8().get_pixel(99, 0).0, [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn odd_width_crop_rounds_down_and_stays_in_bounds() {
+        let img = wraparound(201, 100);
+        let right = front_cover_crop(&img, FrontCoverSide::Right).unwrap();
+        let left = front_cover_crop(&img, FrontCoverSide::Left).unwrap();
+        assert_eq!(right.dimensions(), (100, 100));
+        assert_eq!(left.dimensions(), (100, 100));
+    }
+
+    #[test]
+    fn portrait_and_near_square_pages_are_not_cropped() {
+        assert!(front_cover_crop(&portrait(65, 100), FrontCoverSide::Right).is_none());
+        // Just under the spread threshold (1.2): a slightly-wide single.
+        assert!(front_cover_crop(&portrait(119, 100), FrontCoverSide::Right).is_none());
+        // At the threshold: treated as a spread.
+        assert!(front_cover_crop(&portrait(120, 100), FrontCoverSide::Right).is_some());
+        assert!(front_cover_crop(&portrait(0, 0), FrontCoverSide::Right).is_none());
+    }
+
+    #[test]
+    fn cover_variants_crop_but_strips_do_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let img = wraparound(400, 200);
+        let q = ThumbnailQuality::default();
+        let cover = encode_variant_to_disk(
+            &dir.path().join("c.png"),
+            &img,
+            Variant::Cover,
+            ThumbFormat::Png,
+            q,
+            Some(FrontCoverSide::Right),
+        )
+        .unwrap();
+        let small = encode_variant_to_disk(
+            &dir.path().join("c@sm.png"),
+            &img,
+            Variant::CoverSmall,
+            ThumbFormat::Png,
+            q,
+            Some(FrontCoverSide::Right),
+        )
+        .unwrap();
+        let strip = encode_variant_to_disk(
+            &dir.path().join("s.png"),
+            &img,
+            Variant::Strip,
+            ThumbFormat::Png,
+            q,
+            Some(FrontCoverSide::Right),
+        )
+        .unwrap();
+        let dims = |p: &Path| image::open(p).unwrap().dimensions();
+        assert_eq!(dims(&cover), (200, 200));
+        assert_eq!(dims(&small), (200, 200));
+        assert_eq!(dims(&strip), (400, 200), "strip keeps the whole spread");
+        // Explicit `None` never crops, even for the cover variant.
+        let raw = encode_variant_to_disk(
+            &dir.path().join("raw.png"),
+            &img,
+            Variant::Cover,
+            ThumbFormat::Png,
+            q,
+            None,
+        )
+        .unwrap();
+        assert_eq!(dims(&raw), (400, 200));
+    }
+
+    #[test]
+    fn front_side_resolution_chain() {
+        use FrontCoverSide::{Left, Right};
+        // 1. Issue-level manga flag wins over everything.
+        assert_eq!(
+            FrontCoverSide::resolve(Some("YesAndRightToLeft"), Some("ltr"), Some("ltr")),
+            Left
+        );
+        // `Yes` (manga, but not RTL) does not flip the side.
+        assert_eq!(
+            FrontCoverSide::resolve(Some("Yes"), None, Some("ltr")),
+            Right
+        );
+        // 2. Series override beats the library default.
+        assert_eq!(
+            FrontCoverSide::resolve(None, Some("rtl"), Some("ltr")),
+            Left
+        );
+        assert_eq!(
+            FrontCoverSide::resolve(None, Some("ltr"), Some("rtl")),
+            Right
+        );
+        // 3. Library default applies when the series has no override
+        //    (or an unknown value).
+        assert_eq!(FrontCoverSide::resolve(None, None, Some("rtl")), Left);
+        assert_eq!(
+            FrontCoverSide::resolve(None, Some("weird"), Some("rtl")),
+            Left
+        );
+        // 4. Left-to-right fallback.
+        assert_eq!(FrontCoverSide::resolve(None, None, None), Right);
+        assert_eq!(FrontCoverSide::default(), Right);
+    }
 }
