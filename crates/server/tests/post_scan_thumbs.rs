@@ -898,3 +898,223 @@ async fn strip_enqueue_skips_issues_with_complete_strips() {
         "two strip-less issues + the unknown-page-count issue enqueue; the complete one is skipped"
     );
 }
+
+// ───────── Wraparound covers (THUMBNAIL_VERSION v5) ─────────
+
+/// 2:1 landscape PNG: left half red, right half blue. Stands in for a
+/// wraparound cover (back cover on the left, front on the right).
+fn wraparound_png() -> Vec<u8> {
+    let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_fn(128, 64, |x, _| {
+        if x < 64 {
+            Rgba([255, 0, 0, 255])
+        } else {
+            Rgba([0, 0, 255, 255])
+        }
+    });
+    let mut buf: Vec<u8> = Vec::new();
+    img.write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
+        .unwrap();
+    buf
+}
+
+/// CBZ whose page 0 is a wraparound and pages 1..2 are portrait singles.
+fn build_wraparound_cbz(path: &Path) {
+    let f = std::fs::File::create(path).unwrap();
+    let mut zw = zip::ZipWriter::new(f);
+    let opts: zip::write::SimpleFileOptions =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    zw.start_file("page-000.png", opts).unwrap();
+    zw.write_all(&wraparound_png()).unwrap();
+    for n in 1..3 {
+        zw.start_file(format!("page-{n:03}.png"), opts).unwrap();
+        zw.write_all(&solid_png([(n * 30) as u8, 100, 200, 255]))
+            .unwrap();
+    }
+    zw.finish().unwrap();
+}
+
+fn decode(path: &Path) -> image::RgbaImage {
+    image::load_from_memory(&std::fs::read(path).unwrap())
+        .unwrap()
+        .to_rgba8()
+}
+
+async fn set_series_direction(state: &server::state::AppState, issue_id: &str, dir: &str) {
+    let row = IssueEntity::find_by_id(issue_id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am = SeriesAM {
+        id: Set(row.series_id),
+        ..Default::default()
+    };
+    am.reading_direction = Set(Some(dir.to_owned()));
+    am.update(&state.db).await.unwrap();
+}
+
+#[tokio::test]
+async fn cover_worker_crops_wraparound_to_front_half_for_ltr() {
+    use entity::issue_cover;
+    use sea_orm::{ColumnTrait, QueryFilter};
+
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("wrap.cbz");
+    build_wraparound_cbz(&cbz);
+    let id = seed_issue(&app, &cbz, 3).await;
+    let state = app.state();
+
+    handle_thumbs(
+        ThumbsJob::cover(id.clone()),
+        apalis::prelude::Data::new(state.clone()),
+    )
+    .await
+    .unwrap();
+
+    let data = state.cfg().data_path.clone();
+    let cover = decode(&thumbnails::cover_path(
+        &data,
+        &id,
+        thumbnails::ThumbFormat::Webp,
+    ));
+    assert_eq!(cover.dimensions(), (64, 64), "cover is the front half only");
+    // Right half of the source = blue (lossy WebP: check the dominant channel).
+    let px = cover.get_pixel(32, 32).0;
+    assert!(
+        px[2] > 200 && px[0] < 60,
+        "front half should be blue, got {px:?}"
+    );
+
+    let small = decode(&thumbnails::cover_small_path(
+        &data,
+        &id,
+        thumbnails::ThumbFormat::Webp,
+    ));
+    assert_eq!(
+        small.dimensions(),
+        (64, 64),
+        "@sm derives from the same crop"
+    );
+
+    // The matcher's hash row describes the cropped front, not the spread.
+    let cover_row = issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(&id))
+        .filter(issue_cover::Column::SourceProvider.eq("archive_extracted"))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((cover_row.width, cover_row.height), (Some(64), Some(64)));
+}
+
+#[tokio::test]
+async fn cover_worker_keeps_left_half_for_rtl_series() {
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("wrap-rtl.cbz");
+    build_wraparound_cbz(&cbz);
+    let id = seed_issue(&app, &cbz, 3).await;
+    let state = app.state();
+    set_series_direction(&state, &id, "rtl").await;
+
+    handle_thumbs(
+        ThumbsJob::cover(id.clone()),
+        apalis::prelude::Data::new(state.clone()),
+    )
+    .await
+    .unwrap();
+
+    let cover = decode(&thumbnails::cover_path(
+        &state.cfg().data_path,
+        &id,
+        thumbnails::ThumbFormat::Webp,
+    ));
+    assert_eq!(cover.dimensions(), (64, 64));
+    let px = cover.get_pixel(32, 32).0;
+    assert!(
+        px[0] > 200 && px[2] < 60,
+        "RTL front half should be red, got {px:?}"
+    );
+}
+
+/// Rollout: an issue stamped at an older `THUMBNAIL_VERSION` whose
+/// on-disk cover is the uncropped spread gets wiped + re-encoded; a
+/// stale-stamped *portrait* cover is left byte-for-byte alone (no
+/// needless ETag churn across the whole library).
+#[tokio::test]
+async fn version_bump_recrops_stale_wraparound_but_leaves_portrait_covers() {
+    let app = TestApp::spawn().await;
+    let state = app.state();
+    let data = state.cfg().data_path.clone();
+    // One tempdir per issue: `seed_issue` creates a library per call and
+    // `libraries.root_path` is unique.
+    let wrap_dir = tempfile::tempdir().unwrap();
+    let flat_dir = tempfile::tempdir().unwrap();
+
+    let wrap = wrap_dir.path().join("wrap.cbz");
+    build_wraparound_cbz(&wrap);
+    let wrap_id = seed_issue(&app, &wrap, 3).await;
+    let flat = flat_dir.path().join("flat.cbz");
+    build_cbz(&flat, 3);
+    let flat_id = seed_issue(&app, &flat, 3).await;
+
+    // Pre-v5 state: a cover file already on disk (the full spread for the
+    // wraparound, a sentinel for the portrait) and a stale stamp.
+    let now = Utc::now().fixed_offset();
+    for (id, bytes) in [
+        (&wrap_id, wraparound_png()),
+        (&flat_id, b"sentinel".to_vec()),
+    ] {
+        let p = thumbnails::cover_path(&data, id, thumbnails::ThumbFormat::Webp);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, bytes).unwrap();
+        let mut am = IssueAM {
+            id: Set(id.clone()),
+            ..Default::default()
+        };
+        am.thumbnails_generated_at = Set(Some(now));
+        am.thumbnail_version = Set(thumbnails::THUMBNAIL_VERSION - 1);
+        am.update(&state.db).await.unwrap();
+    }
+
+    for id in [&wrap_id, &flat_id] {
+        handle_thumbs(
+            ThumbsJob::cover(id.clone()),
+            apalis::prelude::Data::new(state.clone()),
+        )
+        .await
+        .unwrap();
+    }
+
+    let recropped = decode(&thumbnails::cover_path(
+        &data,
+        &wrap_id,
+        thumbnails::ThumbFormat::Webp,
+    ));
+    assert_eq!(
+        recropped.dimensions(),
+        (64, 64),
+        "stale spread was re-encoded cropped"
+    );
+
+    let untouched = std::fs::read(thumbnails::cover_path(
+        &data,
+        &flat_id,
+        thumbnails::ThumbFormat::Webp,
+    ))
+    .unwrap();
+    assert_eq!(
+        untouched, b"sentinel",
+        "portrait cover bytes survive the bump"
+    );
+
+    for id in [&wrap_id, &flat_id] {
+        let row = IssueEntity::find_by_id(id.clone())
+            .one(&state.db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.thumbnail_version, thumbnails::THUMBNAIL_VERSION);
+    }
+}

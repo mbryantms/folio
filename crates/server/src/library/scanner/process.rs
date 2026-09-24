@@ -1518,8 +1518,10 @@ fn comicinfo_needs_dimension_probe(info: &ComicInfo, actual_pages: u32) -> bool 
 /// spread when the publisher didn't declare it. Validated against the
 /// Geiger 004 fixture (singles ≈ 0.65, spreads ≈ 1.30); 1.2 catches every
 /// real spread we've measured (US-comic, manga, A-series European) while
-/// excluding occasional landscape singles.
-const SPREAD_INFER_ASPECT: f32 = 1.2;
+/// excluding occasional landscape singles. Shared with the cover
+/// thumbnail's wraparound crop so "this page is a spread" means the same
+/// thing to the scanner, the cover pipeline and the reader.
+const SPREAD_INFER_ASPECT: f32 = crate::library::thumbnails::SPREAD_ASPECT_RATIO;
 const DIMENSION_PROBE_BYTES: usize = 256 * 1024;
 
 /// Read each archive page just far enough to get its pixel dimensions.

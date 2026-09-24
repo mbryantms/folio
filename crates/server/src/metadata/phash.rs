@@ -45,6 +45,8 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, Set,
 };
 
+use crate::library::thumbnails::{FrontCoverSide, front_cover_crop, resolve_front_cover_side};
+
 const HASH_SIDE: u32 = 8;
 const DHASH_WIDTH: u32 = 9;
 const PHASH_SIDE: u32 = 32;
@@ -277,10 +279,18 @@ pub async fn upsert_archive_cover_hashes_from_parts<C: ConnectionTrait>(
 /// Falls back to page 0 when `cover_page_index` is past the end of
 /// the archive (defensive — the scanner stamps the column from
 /// ComicInfo so a stale value is plausible after a retag).
+///
+/// A wraparound cover page (back + front scanned as one landscape
+/// image) is cropped to its front half before hashing — see
+/// [`crate::library::thumbnails::front_cover_crop`]. Providers host
+/// the front cover alone, so hashing the full spread would put a
+/// genuine match 20+ bits away; ComicTagger does the same crop
+/// (`IssueIdentifier.crop_cover`) before comparing.
 pub fn compute_archive_cover(
     archive_path: &std::path::Path,
     cover_page_index: usize,
     limits: ArchiveLimits,
+    front_side: FrontCoverSide,
 ) -> Result<ArchiveCoverHashes, ArchiveCoverError> {
     let mut a = archive::open(archive_path, limits)?;
     let entry_name = {
@@ -299,6 +309,7 @@ pub fn compute_archive_cover(
     let bytes = a.read_entry_bytes(&entry_name)?;
     let img = crate::util::image_decode::decode_limited(&bytes)
         .map_err(|e| ArchiveCoverError::Decode(e.to_string()))?;
+    let img = front_cover_crop(&img, front_side).unwrap_or(img);
     let hashes = all_hashes(&img);
     Ok(ArchiveCoverHashes {
         hashes,
@@ -343,10 +354,11 @@ pub async fn backfill_row<C: ConnectionTrait>(
     issue_file_path: &std::path::Path,
     cover_page_index: usize,
     archive_limits: ArchiveLimits,
+    front_side: FrontCoverSide,
 ) -> Result<bool, std::io::Error> {
     let path = issue_file_path.to_path_buf();
     let hashed = tokio::task::spawn_blocking(move || {
-        compute_archive_cover(&path, cover_page_index, archive_limits)
+        compute_archive_cover(&path, cover_page_index, archive_limits, front_side)
     })
     .await
     .map_err(|e| std::io::Error::other(format!("phash backfill join: {e}")))?;
@@ -546,7 +558,8 @@ pub async fn run_backfill<C: ConnectionTrait>(
         };
         let cover_idx = usize::try_from(issue.cover_page_index.max(0)).unwrap_or(0);
         let path = std::path::Path::new(&issue.file_path);
-        match backfill_row(db, &cover, path, cover_idx, archive_limits).await {
+        let front_side = resolve_front_cover_side(db, &issue).await;
+        match backfill_row(db, &cover, path, cover_idx, archive_limits, front_side).await {
             Ok(true) => hashed += 1,
             Ok(false) => skipped += 1,
             Err(e) => {

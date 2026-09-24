@@ -176,10 +176,18 @@ pub async fn thumb(
     };
     let data_dir = app.cfg().data_path.clone();
     let id_clone = row.id.clone();
+    // Cover variants crop a wraparound page to its front half; the side
+    // follows the issue's reading direction (same resolver as the
+    // post-scan worker, so inline and background output are identical).
+    let front_side = if matches!(variant, Variant::Cover | Variant::CoverSmall) {
+        thumbnails::resolve_front_cover_side(&app.db, &row).await
+    } else {
+        thumbnails::FrontCoverSide::default()
+    };
     let r = tokio::task::spawn_blocking(move || {
         let mut cbz = arc.lock().expect("cbz mutex");
         thumbnails::generate_with_quality(
-            &data_dir, &mut *cbz, &id_clone, variant, page_index, format, quality,
+            &data_dir, &mut *cbz, &id_clone, variant, page_index, format, quality, front_side,
         )
     })
     .await;

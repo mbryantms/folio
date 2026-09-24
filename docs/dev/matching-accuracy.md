@@ -34,6 +34,13 @@ A search runs in this order:
    - > 16 bits → LOW (cover veto)
    - No phash on either side → fall back to operator text thresholds.
 
+   The local hash is computed on the archive's cover page **after**
+   [`thumbnails::front_cover_crop`](../../crates/server/src/library/thumbnails.rs):
+   a wraparound (back + front scanned as one landscape image) is cut
+   to its front half first, mirroring ComicTagger's
+   `IssueIdentifier.crop_cover`. Providers host the front alone, so
+   hashing the full spread would park a genuine match 20+ bits away.
+
    When the winning cover came from a **variant / alternate** slot
    the MEDIUM ceiling tightens to ≤ 12 (`MIN_ALTERNATE_SCORE_THRESH`)
    — a variant match needs to be tighter to qualify since the
