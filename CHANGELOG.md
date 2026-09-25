@@ -13,6 +13,21 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.28.3](https://github.com/mbryantms/folio/compare/v0.28.2...v0.28.3) (2026-09-25)
+
+
+### Fixed
+
+* **thumbnails:** skip soft-removed issues in the post-scan sweep ([#843](https://github.com/mbryantms/folio/issues/843)) ([56e2fe4](https://github.com/mbryantms/folio/commit/56e2fe459cf8cb3fbfde0b1a9409d8b767c1a7bd))
+
+
+### Dependencies
+
+* update dependency @ai-sdk/provider-utils@&lt;4.0.34 to v4.0.52 ([#847](https://github.com/mbryantms/folio/issues/847)) ([e2360b7](https://github.com/mbryantms/folio/commit/e2360b7d2dcf2d9c97a381054ad78b2f5071548e))
+* update dependency @scalar/api-reference-react to v0.9.71 ([#845](https://github.com/mbryantms/folio/issues/845)) ([1fd43c3](https://github.com/mbryantms/folio/commit/1fd43c3807030e3329b8a86dd17bd5e656e3d8eb))
+* update dependency @scalar/api-reference-react to v0.9.72 ([#848](https://github.com/mbryantms/folio/issues/848)) ([073fb71](https://github.com/mbryantms/folio/commit/073fb713cc63c647ef930c07b97a8fcfe3053ce5))
+* update redis:8-alpine docker digest to ba6e394 ([#844](https://github.com/mbryantms/folio/issues/844)) ([21b7f5c](https://github.com/mbryantms/folio/commit/21b7f5c44d7526f0cd4a4d3e9c903b68206458e0))
+
 ## [0.28.2](https://github.com/mbryantms/folio/compare/v0.28.1...v0.28.2) (2026-09-24)
 
 
