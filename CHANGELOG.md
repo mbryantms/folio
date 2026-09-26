@@ -13,6 +13,16 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.28.4](https://github.com/mbryantms/folio/compare/v0.28.3...v0.28.4) (2026-09-26)
+
+
+### Dependencies
+
+* update dependency @ai-sdk/provider-utils@&lt;4.0.34 to v4.0.53 ([#855](https://github.com/mbryantms/folio/issues/855)) ([f5ee8df](https://github.com/mbryantms/folio/commit/f5ee8dfc9ca2c876eb07524c0b6102e90a2de7b5))
+* update dependency pnpm to v12.6.0 ([#851](https://github.com/mbryantms/folio/issues/851)) ([1d1a407](https://github.com/mbryantms/folio/commit/1d1a407f3956a07fb72dd1643d7eff0984b6de4f))
+* update nextjs monorepo to v16.3.6 ([#849](https://github.com/mbryantms/folio/issues/849)) ([14d4dfe](https://github.com/mbryantms/folio/commit/14d4dfe76442e0c4772d2cff91a58b425b1ee44f))
+* update rust crate lru to v0.18.5 ([#854](https://github.com/mbryantms/folio/issues/854)) ([90c9a5c](https://github.com/mbryantms/folio/commit/90c9a5cdf6d83c8f1ff4827cbdfeb021e368178c))
+
 ## [0.28.3](https://github.com/mbryantms/folio/compare/v0.28.2...v0.28.3) (2026-09-25)
 
 
