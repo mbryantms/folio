@@ -129,4 +129,4 @@ overrides:
   # AHEAD of the pin (see js-yaml note above).
   # Delete when `pnpm why undici` shows no in-range (<7.29.0) consumers,
   # i.e. once @scalar/json-magic's pin moves past 7.29.0.
-  "undici@>=7.0.0 <7.29.2": "7.29.1"
+  "undici@>=7.0.0 <7.29.2": "7.30.0"
