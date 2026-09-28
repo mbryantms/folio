@@ -71,8 +71,8 @@ hyper = { version = "1.5", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 
 # OpenAPI
-utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
-utoipa-axum = "0.2"
+utoipa = { version = "6", features = ["axum_extras", "uuid", "chrono"] }
+utoipa-axum = "0.3"
 
 # DB
 sea-orm = { version = "2.0", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-uuid", "with-chrono", "with-json"] }

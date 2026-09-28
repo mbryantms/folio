@@ -234,6 +234,22 @@
       ]
     },
     {
+      "description": "utoipa + utoipa-axum share one trait surface: utoipa-axum 0.x pins the utoipa major it was built against, so bumping either alone leaves two utoipa versions in Cargo.lock and every OpenApiRouter/HttpMethod call fails to type-check (#852/#853 proved it). Renovate's built-in utoipa monorepo group still splits a utoipa MAJOR from a utoipa-axum 0.x MINOR into separate PRs, so force one branch regardless of update type. Needs human review: the emitted openapi.json changes shape across utoipa majors (regen with `just openapi`).",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchPackageNames": [
+        "utoipa",
+        "utoipa-*"
+      ],
+      "groupName": "utoipa",
+      "separateMajorMinor": false,
+      "automerge": false,
+      "addLabels": [
+        "coordinated-bump"
+      ]
+    },
+    {
       "description": "GitHub Actions: digest pins + patch/minor auto-merge once CI is green. Majors stay behind the major-review rule.",
       "matchManagers": [
         "github-actions"
