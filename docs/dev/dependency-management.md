@@ -44,7 +44,7 @@ and the run is short.
 | `zerover-review` | `0.x` **minor** | The breaking step for 0.x under both ecosystems' semver rules. |
 | `gated-major` | eslint 10, typescript 7, `@types/node` major | Known upstream blockers, documented in the rule description. |
 | `needs-migration-review` | react-hook-form, `@hookform/resolvers`, openapi-typescript, `@tanstack/react-query` | History of breaking-within-minor; codegen shim must move with openapi-typescript. |
-| `coordinated-bump` | reqwest/oauth2/openidconnect, sea-orm/sqlx, apalis/redis, testcontainers, RustCrypto | Must co-resolve; grouped so they never arrive alone. |
+| `coordinated-bump` | reqwest/oauth2/openidconnect, sea-orm/sqlx, apalis/redis, utoipa/utoipa-axum, testcontainers, RustCrypto | Must co-resolve; grouped so they never arrive alone. |
 | `infra-review` | A **tag** change of postgres/redis/dex/alpine/curl or a Dockerfile base line | A postgres major needs a data-dir plan; dev and CI must stay on the tested major. |
 
 Mend Merge Confidence is display-only here: the Age/Confidence badges in

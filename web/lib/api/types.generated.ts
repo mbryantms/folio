@@ -5003,9 +5003,9 @@ export interface components {
             items_matched_medium: number;
             /** Format: int32 */
             items_total: number;
-            match_outcome?: null | components["schemas"]["MatchOutcomeView"];
+            match_outcome?: components["schemas"]["MatchOutcomeView"] | null;
             providers: string[];
-            quota?: null | components["schemas"]["QuotaStateView"];
+            quota?: components["schemas"]["QuotaStateView"] | null;
             /** Format: uuid */
             run_id: string;
             started_at: string;
@@ -5093,7 +5093,7 @@ export interface components {
          *     need a second `/issues` round-trip.
          */
         CblEntryHydratedView: components["schemas"]["CblEntryView"] & {
-            issue?: null | components["schemas"]["IssueSummaryView"];
+            issue?: components["schemas"]["IssueSummaryView"] | null;
         };
         CblEntryListView: {
             items: components["schemas"]["CblEntryHydratedView"][];
@@ -5310,10 +5310,10 @@ export interface components {
             /** @description `'series'` or `'issue'`. */
             entry_kind: string;
             id: string;
-            issue?: null | components["schemas"]["IssueSummaryView"];
+            issue?: components["schemas"]["IssueSummaryView"] | null;
             /** Format: int32 */
             position: number;
-            series?: null | components["schemas"]["SeriesView"];
+            series?: components["schemas"]["SeriesView"] | null;
         };
         /**
          * @description One owned issue's identity + metadata-completeness status, for the
@@ -5666,7 +5666,7 @@ export interface components {
             /** Format: int32 */
             custom_year_start?: number | null;
             description?: string | null;
-            filter?: null | components["schemas"]["FilterDsl"];
+            filter?: components["schemas"]["FilterDsl"] | null;
             /**
              * @description `'filter_series'` or `'cbl'`. Validated server-side; mismatched
              *     kind/body shape returns 422.
@@ -5675,8 +5675,8 @@ export interface components {
             name: string;
             /** Format: int32 */
             result_limit?: number | null;
-            sort_field?: null | components["schemas"]["SortField"];
-            sort_order?: null | components["schemas"]["SortOrder"];
+            sort_field?: components["schemas"]["SortField"] | null;
+            sort_order?: components["schemas"]["SortOrder"] | null;
         };
         /**
          * @description Body for admin create-user (3.8 / audit D9). The server generates the
@@ -5687,7 +5687,7 @@ export interface components {
             /** @description Optional display name. Defaults to the email's local part. */
             display_name?: string | null;
             email: string;
-            role?: null | components["schemas"]["UserRole"];
+            role?: components["schemas"]["UserRole"] | null;
         };
         CreateUserResp: components["schemas"]["AdminUserView"] & {
             /**
@@ -6570,7 +6570,7 @@ export interface components {
          *     first page (cursor absent), mirroring the `CursorPage::total` convention.
          */
         HealthIssuesPage: {
-            counts?: null | components["schemas"]["HealthIssueCounts"];
+            counts?: components["schemas"]["HealthIssueCounts"] | null;
             items: components["schemas"]["HealthIssueView"][];
             next_cursor?: string | null;
         };
@@ -6736,7 +6736,7 @@ export interface components {
             library_id: string;
             locations?: string | null;
             manga?: string | null;
-            metadata_completeness?: null | components["schemas"]["CompletenessReport"];
+            metadata_completeness?: components["schemas"]["CompletenessReport"] | null;
             /**
              * @description RFC3339 time an operator marked this issue "metadata complete" despite
              *     gaps (B4), or `null`. Drives the issue's `accepted` completeness tier +
@@ -7262,7 +7262,7 @@ export interface components {
             kind: string;
         };
         MeResp: {
-            accent_color?: null | components["schemas"]["AccentColor"];
+            accent_color?: components["schemas"]["AccentColor"] | null;
             /** @description M6a: per-user opt-out for reading-activity capture. */
             activity_tracking_enabled: boolean;
             csrf_token: string;
@@ -7271,13 +7271,13 @@ export interface components {
              *     toggle. Per-series localStorage overrides at runtime.
              */
             default_cover_solo: boolean;
-            default_fit_mode?: null | components["schemas"]["FitMode"];
-            default_page_animation?: null | components["schemas"]["PageAnimation"];
+            default_fit_mode?: components["schemas"]["FitMode"] | null;
+            default_page_animation?: components["schemas"]["PageAnimation"] | null;
             /** @description M4: when true the reader opens with the page strip visible. */
             default_page_strip?: boolean;
-            default_reading_direction?: null | components["schemas"]["ReadingDirection"];
-            default_view_mode?: null | components["schemas"]["ViewMode"];
-            density?: null | components["schemas"]["Density"];
+            default_reading_direction?: components["schemas"]["ReadingDirection"] | null;
+            default_view_mode?: components["schemas"]["ViewMode"] | null;
+            density?: components["schemas"]["Density"] | null;
             display_name: string;
             email?: string | null;
             /** @description True when `/me/account` accepts email edits for this user. */
@@ -7329,7 +7329,7 @@ export interface components {
              *     Bookmarks sidebar row. Default false.
              */
             show_marker_count: boolean;
-            theme?: null | components["schemas"]["Theme"];
+            theme?: components["schemas"]["Theme"] | null;
             /** @description M6a: IANA timezone string for daily-bucket aggregations. */
             timezone: string;
         };
@@ -7372,7 +7372,7 @@ export interface components {
              *     with `diverges` flagging the split ones.
              */
             alternate_provider_series: components["schemas"]["AlternateProviderSeries"][];
-            completeness?: null | components["schemas"]["CompletenessReport"];
+            completeness?: components["schemas"]["CompletenessReport"] | null;
             external_ids: components["schemas"]["ExternalIdRow"][];
             last_metadata_sync_at?: string | null;
             last_rewrite_at?: string | null;
@@ -7417,9 +7417,9 @@ export interface components {
              * @description Set when `source == "cbl"`. Total matched entries in the CBL.
              */
             cbl_total?: number | null;
-            fallback_suggestion?: null | components["schemas"]["OnDeckCard"];
+            fallback_suggestion?: components["schemas"]["OnDeckCard"] | null;
             source: components["schemas"]["NextUpSource"];
-            target?: null | components["schemas"]["IssueSummaryView"];
+            target?: components["schemas"]["IssueSummaryView"] | null;
         };
         OcrModelView: {
             /**
@@ -7546,7 +7546,7 @@ export interface components {
              *     golden-fixture authoring when users report junk output.
              */
             raw_text?: string | null;
-            refined_bbox?: null | components["schemas"]["OcrRegion"];
+            refined_bbox?: components["schemas"]["OcrRegion"] | null;
             /**
              * @description Recognized text after the postprocess cleanup pass
              *     ([`crate::ocr::postprocess`]).
@@ -7828,17 +7828,17 @@ export interface components {
          *     `null` (where the type allows).
          */
         PreferencesReq: {
-            accent_color?: null | components["schemas"]["AccentColor"];
+            accent_color?: components["schemas"]["AccentColor"] | null;
             /** @description M6a: opt-out toggle. `false` disables the client tracker hook. */
             activity_tracking_enabled?: boolean | null;
             /** @description Default cover-solo toggle; absent leaves the prior value untouched. */
             default_cover_solo?: boolean | null;
-            default_fit_mode?: null | components["schemas"]["FitMode"];
-            default_page_animation?: null | components["schemas"]["PageAnimation"];
+            default_fit_mode?: components["schemas"]["FitMode"] | null;
+            default_page_animation?: components["schemas"]["PageAnimation"] | null;
             default_page_strip?: boolean | null;
-            default_reading_direction?: null | components["schemas"]["ReadingDirection"];
-            default_view_mode?: null | components["schemas"]["ViewMode"];
-            density?: null | components["schemas"]["Density"];
+            default_reading_direction?: components["schemas"]["ReadingDirection"] | null;
+            default_view_mode?: components["schemas"]["ViewMode"] | null;
+            density?: components["schemas"]["Density"] | null;
             /**
              * @description Stats v2: privacy toggle. When true, admin server-wide aggregates
              *     exclude this user's sessions.
@@ -7879,7 +7879,7 @@ export interface components {
              *     badge. Default false.
              */
             show_marker_count?: boolean | null;
-            theme?: null | components["schemas"]["Theme"];
+            theme?: components["schemas"]["Theme"] | null;
             /**
              * @description M6a: IANA timezone string. Server validates it's parseable; an unknown
              *     zone is rejected so the heatmap can't silently fall back to UTC.
@@ -7887,7 +7887,7 @@ export interface components {
             timezone?: string | null;
         };
         PrevInSeriesView: {
-            item?: null | components["schemas"]["IssueSummaryView"];
+            item?: components["schemas"]["IssueSummaryView"] | null;
         };
         PreviewReq: {
             filter: components["schemas"]["FilterDsl"];
@@ -7981,7 +7981,7 @@ export interface components {
             /** @description Stable identifier — `"comicvine"` | `"metron"` (M2). */
             id: string;
             label: string;
-            quota?: null | components["schemas"]["QuotaView"];
+            quota?: components["schemas"]["QuotaView"] | null;
         };
         ProvidersListResp: {
             providers: components["schemas"]["ProviderView"][];
@@ -8130,7 +8130,7 @@ export interface components {
              *     stays the same shape for clients that don't use the feature.
              */
             is_hidden?: boolean;
-            issue?: null | components["schemas"]["EventIssue"];
+            issue?: components["schemas"]["EventIssue"] | null;
             /**
              * @description One of `issue_finished` / `series_finished` / `session_completed`
              *     / `marker_created`.
@@ -8143,7 +8143,7 @@ export interface components {
              *     `EventPayload` variants.
              */
             payload: components["schemas"]["EventPayload"];
-            series?: null | components["schemas"]["EventSeries"];
+            series?: components["schemas"]["EventSeries"] | null;
         };
         ReadingLogPageView: {
             events: components["schemas"]["ReadingLogEventView"][];
@@ -8901,8 +8901,8 @@ export interface components {
             letterers?: string[];
             library_id: string;
             locations?: string[];
-            metadata_completeness?: null | components["schemas"]["CompletenessReport"];
-            metadata_completeness_summary?: null | components["schemas"]["MetadataCompletenessSummary"];
+            metadata_completeness?: components["schemas"]["CompletenessReport"] | null;
+            metadata_completeness_summary?: components["schemas"]["MetadataCompletenessSummary"] | null;
             /**
              * @description At-a-glance completeness tier (`"complete"` | `"partial"` |
              *     `"needs_metadata"`) rolled up across the series' active issues. The
@@ -8915,7 +8915,7 @@ export interface components {
             metron_id?: number | null;
             name: string;
             pencillers?: string[];
-            progress_summary?: null | components["schemas"]["SeriesProgressSummary"];
+            progress_summary?: components["schemas"]["SeriesProgressSummary"] | null;
             publisher?: string | null;
             /**
              * @description Per-series reading-direction override. `"ltr"` / `"rtl"` /
@@ -9650,12 +9650,12 @@ export interface components {
             /** Format: int32 */
             custom_year_start?: number | null;
             description?: string | null;
-            filter?: null | components["schemas"]["FilterDsl"];
+            filter?: components["schemas"]["FilterDsl"] | null;
             name?: string | null;
             /** Format: int32 */
             result_limit?: number | null;
-            sort_field?: null | components["schemas"]["SortField"];
-            sort_order?: null | components["schemas"]["SortOrder"];
+            sort_field?: components["schemas"]["SortField"] | null;
+            sort_order?: components["schemas"]["SortOrder"] | null;
         };
         /**
          * @description Body for `PATCH /series/{id}`. `match_key` is the §7.4 sticky override
@@ -9714,8 +9714,8 @@ export interface components {
         };
         UpdateUserReq: {
             display_name?: string | null;
-            role?: null | components["schemas"]["UserRole"];
-            state?: null | components["schemas"]["UserState"];
+            role?: components["schemas"]["UserRole"] | null;
+            state?: components["schemas"]["UserState"] | null;
         };
         UploadView: {
             content_type: string;
@@ -12011,8 +12011,8 @@ export interface operations {
             query?: {
                 limit?: number | null;
                 cursor?: string | null;
-                role?: null | components["schemas"]["UserRole"];
-                state?: null | components["schemas"]["UserState"];
+                role?: components["schemas"]["UserRole"] | null;
+                state?: components["schemas"]["UserState"] | null;
                 q?: string | null;
             };
             header?: never;

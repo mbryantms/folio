@@ -53,7 +53,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -147,7 +146,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -167,7 +165,6 @@
         "operationId": "auth_config_get_config",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -197,7 +194,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -233,7 +229,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -259,9 +254,7 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       },
       "patch": {
@@ -288,7 +281,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -305,7 +297,6 @@
         "operationId": "admin_email_status",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -325,7 +316,6 @@
         "operationId": "admin_email_test_send",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -365,7 +355,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -451,7 +440,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -484,7 +472,6 @@
         },
         "responses": {
           "202": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -514,7 +501,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -547,7 +533,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -588,7 +573,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -624,7 +608,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -657,7 +640,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -693,7 +675,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -729,7 +710,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -823,7 +803,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -919,7 +898,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -943,7 +921,6 @@
         "operationId": "metadata_auto_synced",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -983,7 +960,6 @@
         "operationId": "admin_metadata_dashboard",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1003,7 +979,6 @@
         "operationId": "admin_metadata_match_quality",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1043,7 +1018,6 @@
         "operationId": "admin_metadata_providers_list",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1074,7 +1048,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1122,7 +1095,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1205,7 +1177,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1236,7 +1207,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1279,7 +1249,6 @@
         "operationId": "admin_ocr_list",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1299,7 +1268,6 @@
         "operationId": "admin_queue_queue_depth",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1329,7 +1297,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1386,7 +1353,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1419,7 +1385,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1452,7 +1417,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1478,7 +1442,6 @@
         "operationId": "admin_queue_dead_letters",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1508,7 +1471,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1534,9 +1496,7 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       },
       "patch": {
@@ -1563,7 +1523,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1608,7 +1567,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1641,7 +1599,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1716,7 +1673,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1740,7 +1696,6 @@
         "operationId": "admin_scan_runs_latest_per_library",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1782,7 +1737,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1827,7 +1781,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1872,7 +1825,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1909,7 +1861,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1946,7 +1897,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1983,7 +1933,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2009,7 +1958,6 @@
         "operationId": "server_info_info",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2029,7 +1977,6 @@
         "operationId": "server_releases_latest_release",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2054,7 +2001,6 @@
         "operationId": "server_info_restart_pending",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2074,7 +2020,6 @@
         "operationId": "admin_settings_get_all",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2102,7 +2047,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2125,7 +2069,6 @@
         "operationId": "admin_stats_content",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2145,7 +2088,6 @@
         "operationId": "admin_stats_engagement",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2165,7 +2107,6 @@
         "operationId": "admin_stats_overview",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2185,7 +2126,6 @@
         "operationId": "admin_stats_quality",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2205,7 +2145,6 @@
         "operationId": "admin_stats_users_list",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2255,10 +2194,10 @@
             "schema": {
               "oneOf": [
                 {
-                  "type": "null"
+                  "$ref": "#/components/schemas/UserRole"
                 },
                 {
-                  "$ref": "#/components/schemas/UserRole"
+                  "type": "null"
                 }
               ]
             }
@@ -2270,10 +2209,10 @@
             "schema": {
               "oneOf": [
                 {
-                  "type": "null"
+                  "$ref": "#/components/schemas/UserState"
                 },
                 {
-                  "$ref": "#/components/schemas/UserState"
+                  "type": "null"
                 }
               ]
             }
@@ -2292,7 +2231,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2320,7 +2258,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2356,7 +2293,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2397,7 +2333,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2433,7 +2368,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2466,7 +2400,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2509,7 +2442,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2555,7 +2487,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2614,7 +2545,6 @@
         "operationId": "auth_config_get_public_config",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2794,7 +2724,6 @@
         "operationId": "local_me",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2834,7 +2763,6 @@
         "operationId": "ws_ticket_mint",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2857,7 +2785,6 @@
         "operationId": "cbl_lists_list_catalog_sources",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2884,7 +2811,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2911,7 +2837,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2957,7 +2882,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2984,7 +2908,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -2993,9 +2916,7 @@
               }
             }
           },
-          "404": {
-            "description": ""
-          }
+          "404": {}
         }
       }
     },
@@ -3022,7 +2943,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3057,7 +2977,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3100,7 +3019,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3138,7 +3056,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3173,7 +3090,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3208,7 +3124,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3243,7 +3158,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3278,7 +3192,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3313,7 +3226,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3330,7 +3242,6 @@
         "operationId": "issues_list",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3375,7 +3286,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3402,7 +3312,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3530,7 +3439,6 @@
         ],
         "responses": {
           "202": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3569,7 +3477,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3613,7 +3520,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3654,7 +3560,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3674,7 +3579,6 @@
         "operationId": "libraries_list",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3702,7 +3606,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3735,7 +3638,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3763,7 +3665,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3804,7 +3705,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3840,7 +3740,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3915,7 +3814,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4021,7 +3919,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4066,7 +3963,6 @@
         ],
         "responses": {
           "202": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4120,7 +4016,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4165,7 +4060,6 @@
         ],
         "responses": {
           "202": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4198,7 +4092,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4257,7 +4150,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4303,7 +4195,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4341,7 +4232,6 @@
         ],
         "responses": {
           "202": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4374,7 +4264,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4403,7 +4292,6 @@
         "operationId": "app_passwords_list",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4431,7 +4319,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4481,7 +4368,6 @@
         "operationId": "cbl_lists_list",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4506,7 +4392,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4523,7 +4408,6 @@
         "operationId": "cbl_lists_check_all",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4540,7 +4424,6 @@
         "operationId": "cbl_lists_refresh_all",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4557,7 +4440,6 @@
         "operationId": "cbl_lists_upload",
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4585,7 +4467,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4609,9 +4490,7 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       },
       "patch": {
@@ -4638,7 +4517,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4665,7 +4543,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4729,7 +4606,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4755,7 +4631,6 @@
         "operationId": "cbl_lists_clear_match",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4782,7 +4657,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4856,7 +4730,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4882,9 +4755,7 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": ""
-          }
+          "200": {}
         }
       }
     },
@@ -4913,7 +4784,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4962,7 +4832,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5041,7 +4910,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5064,7 +4932,6 @@
         "operationId": "collections_list",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5092,7 +4959,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5118,9 +4984,7 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       },
       "patch": {
@@ -5147,7 +5011,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5192,7 +5055,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5227,7 +5089,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5263,9 +5124,7 @@
           "required": true
         },
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       }
     },
@@ -5291,9 +5150,7 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       }
     },
@@ -5351,7 +5208,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5395,7 +5251,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5420,7 +5275,6 @@
         "operationId": "rails_continue_reading",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5449,7 +5303,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5490,7 +5343,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5538,7 +5390,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5574,7 +5425,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5591,7 +5441,6 @@
         "operationId": "log_widgets_list",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5616,7 +5465,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5646,7 +5494,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5666,7 +5513,6 @@
         "operationId": "log_widgets_reset",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5692,9 +5538,7 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          },
+          "204": {},
           "404": {
             "description": "not found / not yours"
           }
@@ -5724,7 +5568,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5815,7 +5658,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5840,7 +5682,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5867,7 +5708,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5887,7 +5727,6 @@
         "operationId": "markers_count",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5924,7 +5763,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5941,7 +5779,6 @@
         "operationId": "markers_tags_index",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -5967,9 +5804,7 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       },
       "patch": {
@@ -5996,7 +5831,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6014,7 +5848,6 @@
         "operationId": "rails_on_deck",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6031,7 +5864,6 @@
         "operationId": "pages_list",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6056,7 +5888,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6082,9 +5913,7 @@
           "required": true
         },
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       }
     },
@@ -6102,9 +5931,7 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       },
       "patch": {
@@ -6131,7 +5958,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6165,9 +5991,7 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       }
     },
@@ -6187,7 +6011,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6220,7 +6043,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6250,7 +6072,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6279,9 +6100,7 @@
           "required": true
         },
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       }
     },
@@ -6307,9 +6126,7 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       }
     },
@@ -6378,7 +6195,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6557,7 +6373,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6622,7 +6437,6 @@
         "operationId": "reading_sessions_clear_history",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6666,7 +6480,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6688,7 +6501,6 @@
         "operationId": "rails_recent_issues",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6715,7 +6527,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6740,7 +6551,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6767,7 +6577,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6793,9 +6602,7 @@
           "required": true
         },
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       }
     },
@@ -6813,9 +6620,7 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       },
       "patch": {
@@ -6842,7 +6647,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6878,9 +6682,7 @@
           "required": true
         },
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       }
     },
@@ -6909,7 +6711,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6957,7 +6758,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -6991,9 +6791,7 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": ""
-          }
+          "204": {}
         }
       }
     },
@@ -7022,7 +6820,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7039,7 +6836,6 @@
         "operationId": "sessions_list",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7059,7 +6855,6 @@
         "operationId": "sessions_revoke_all",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7103,7 +6898,6 @@
         "operationId": "sidebar_layout_get_layout",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7128,7 +6922,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7159,7 +6952,6 @@
         },
         "responses": {
           "202": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7192,7 +6984,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7237,7 +7028,6 @@
         },
         "responses": {
           "202": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7260,7 +7050,6 @@
         "operationId": "metadata_list_batches",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7296,7 +7085,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7313,7 +7101,6 @@
         "operationId": "series_list",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7340,7 +7127,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7349,9 +7135,7 @@
               }
             }
           },
-          "404": {
-            "description": ""
-          }
+          "404": {}
         }
       }
     },
@@ -7378,7 +7162,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7387,9 +7170,7 @@
               }
             }
           },
-          "404": {
-            "description": ""
-          }
+          "404": {}
         }
       },
       "patch": {
@@ -7424,7 +7205,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7468,7 +7248,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7477,9 +7256,7 @@
               }
             }
           },
-          "404": {
-            "description": ""
-          }
+          "404": {}
         }
       }
     },
@@ -7585,7 +7362,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7626,7 +7402,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7635,9 +7410,7 @@
               }
             }
           },
-          "404": {
-            "description": ""
-          }
+          "404": {}
         }
       }
     },
@@ -7676,7 +7449,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7715,7 +7487,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7763,7 +7534,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7886,7 +7656,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7919,7 +7688,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7928,9 +7696,7 @@
               }
             }
           },
-          "404": {
-            "description": ""
-          }
+          "404": {}
         }
       },
       "patch": {
@@ -7957,7 +7723,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7990,7 +7755,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -7999,9 +7763,7 @@
               }
             }
           },
-          "404": {
-            "description": ""
-          }
+          "404": {}
         }
       }
     },
@@ -8020,7 +7782,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8061,7 +7822,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8134,7 +7894,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8169,7 +7928,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8218,7 +7976,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8307,7 +8064,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8346,7 +8102,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8397,7 +8152,6 @@
         },
         "responses": {
           "202": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8457,7 +8211,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8508,7 +8261,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8585,7 +8337,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8663,7 +8414,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8710,7 +8460,6 @@
         ],
         "responses": {
           "202": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8759,7 +8508,6 @@
         },
         "responses": {
           "202": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8812,7 +8560,6 @@
         ],
         "responses": {
           "202": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8856,7 +8603,6 @@
         },
         "responses": {
           "202": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8902,7 +8648,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -8945,7 +8690,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9014,7 +8758,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9050,7 +8793,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9117,7 +8859,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9156,7 +8897,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9189,7 +8929,6 @@
         ],
         "responses": {
           "202": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9228,7 +8967,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9271,7 +9009,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9311,7 +9048,6 @@
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9341,7 +9077,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9374,7 +9109,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9415,7 +9149,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9454,7 +9187,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9550,7 +9282,6 @@
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9616,7 +9347,6 @@
         },
         "responses": {
           "201": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9642,7 +9372,6 @@
         "operationId": "health_healthz",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -9682,7 +9411,6 @@
         "operationId": "health_readyz",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -11611,11 +11339,11 @@
           "match_outcome": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/MatchOutcomeView",
                 "description": "Match-outcome classification (matching-accuracy-1.0 M8).\n`None` while the run is still searching; populated once it\ncompletes. Drives the MetadataMatchDialog state — one-click\napply on `SingleGoodMatch`, warning copy on `SingleBadCover`,\nflat list on `MultiGood` / `MultiBadCover`, empty state on\n`NoMatches`."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -11628,11 +11356,11 @@
           "quota": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/QuotaStateView",
                 "description": "Live provider-quota snapshot + retry ETA (audit B13). Populated\nonce the run finalizes so the dialog can show remaining budget\nbefore the next batch and a concrete \"retries in …\" while parked\non quota; omitted while still `queued`/`searching`."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -11850,11 +11578,11 @@
               "issue": {
                 "oneOf": [
                   {
-                    "type": "null"
-                  },
-                  {
                     "$ref": "#/components/schemas/IssueSummaryView",
                     "description": "Hydrated matched issue. `None` for unmatched entries, and also\n`None` when the matched issue lives in a library the caller\ncan't access (we still surface the entry — the position label\nis meaningful even without a cover)."
+                  },
+                  {
+                    "type": "null"
                   }
                 ]
               }
@@ -12322,11 +12050,11 @@
           "issue": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/IssueSummaryView",
                 "description": "Populated when `entry_kind = 'issue'`."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -12337,11 +12065,11 @@
           "series": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/SeriesView",
                 "description": "Populated when `entry_kind = 'series'`. `None` when the\nunderlying series was cascade-deleted between the entry insert\nand this read. Hydrated to the full `SeriesView` shape so the\nhome rail + collection detail page can reuse `<SeriesCard>`\nwithout a synthesize-defaults dance."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -13231,10 +12959,10 @@
           "filter": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/FilterDsl"
               },
               {
-                "$ref": "#/components/schemas/FilterDsl"
+                "type": "null"
               }
             ]
           },
@@ -13255,20 +12983,20 @@
           "sort_field": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/SortField"
               },
               {
-                "$ref": "#/components/schemas/SortField"
+                "type": "null"
               }
             ]
           },
           "sort_order": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/SortOrder"
               },
               {
-                "$ref": "#/components/schemas/SortOrder"
+                "type": "null"
               }
             ]
           }
@@ -13294,11 +13022,11 @@
           "role": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/UserRole",
                 "description": "Defaults to `user` when omitted."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -15597,10 +15325,10 @@
           "counts": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/HealthIssueCounts"
               },
               {
-                "$ref": "#/components/schemas/HealthIssueCounts"
+                "type": "null"
               }
             ]
           },
@@ -15955,11 +15683,11 @@
           "metadata_completeness": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/CompletenessReport",
                 "description": "Metadata-completeness assessment (\"does this issue need metadata\npulled?\"). Populated by the issue-detail handler; `None` on list\nendpoints (the cheaper `IssueSummaryView.metadata_completeness_tier`\ncarries the at-a-glance signal there)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -17183,11 +16911,11 @@
           "accent_color": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/AccentColor",
                 "description": "M4: accent palette token."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -17205,22 +16933,22 @@
           "default_fit_mode": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/FitMode",
                 "description": "M4: reader default fit mode."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "default_page_animation": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/PageAnimation",
                 "description": "v0.3.44 / v0.3.45: reader page-turn animation. `null` means\n\"use the reader's built-in default\" (currently `slide`); fresh\nusers start here. Webtoon view ignores this regardless."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -17231,33 +16959,33 @@
           "default_reading_direction": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ReadingDirection",
                 "description": "Phase 3: per-user reader direction preference. `null` means \"auto\"\n(the reader still falls back to ComicInfo `Manga=YesAndRightToLeft`\ndetection per series)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "default_view_mode": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ViewMode",
                 "description": "M4: reader default view mode."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "density": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/Density",
                 "description": "M4: density token."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -17322,11 +17050,11 @@
           "theme": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/Theme",
                 "description": "M4: theme token."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -17412,10 +17140,10 @@
           "completeness": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/CompletenessReport"
               },
               {
-                "$ref": "#/components/schemas/CompletenessReport"
+                "type": "null"
               }
             ]
           },
@@ -17525,11 +17253,11 @@
           "fallback_suggestion": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/OnDeckCard",
                 "description": "Top On Deck card to show as a peek when `source == \"none\"`. M1\nalways returns `None`; populating it remains deferred work since\nthe on_deck composition isn't factored as a reusable helper yet.\nThe web layer falls back to a \"Browse the library\" CTA when this\nfield is absent."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -17539,11 +17267,11 @@
           "target": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/IssueSummaryView",
                 "description": "The next-up issue, denormalized with its parent series slug + name\nso the reader can render the pill / end-card without a follow-up\nfetch. `None` iff `source == \"none\"`."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -17722,11 +17450,11 @@
           "refined_bbox": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/OcrRegion",
                 "description": "Detector's snap-to-bubble rectangle in page-pixel coords.\n`None` when no detector hit overlapped the user's region —\nthe recognizer ran on the user's rect verbatim."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -18373,10 +18101,10 @@
           "accent_color": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/AccentColor"
               },
               {
-                "$ref": "#/components/schemas/AccentColor"
+                "type": "null"
               }
             ]
           },
@@ -18397,21 +18125,21 @@
           "default_fit_mode": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/FitMode"
               },
               {
-                "$ref": "#/components/schemas/FitMode"
+                "type": "null"
               }
             ]
           },
           "default_page_animation": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/PageAnimation",
                 "description": "`null` clears the preference (server falls back to the reader's\nbuilt-in default of `slide`)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -18424,31 +18152,31 @@
           "default_reading_direction": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ReadingDirection",
                 "description": "`null` clears the preference."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "default_view_mode": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/ViewMode"
               },
               {
-                "$ref": "#/components/schemas/ViewMode"
+                "type": "null"
               }
             ]
           },
           "density": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/Density"
               },
               {
-                "$ref": "#/components/schemas/Density"
+                "type": "null"
               }
             ]
           },
@@ -18511,10 +18239,10 @@
           "theme": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/Theme"
               },
               {
-                "$ref": "#/components/schemas/Theme"
+                "type": "null"
               }
             ]
           },
@@ -18533,11 +18261,11 @@
           "item": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/IssueSummaryView",
                 "description": "The issue immediately preceding the current one in `sort_number`\norder, or `null` when the current issue is the first in the series."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -18807,10 +18535,10 @@
           "quota": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/QuotaView"
               },
               {
-                "$ref": "#/components/schemas/QuotaView"
+                "type": "null"
               }
             ]
           }
@@ -19079,11 +18807,11 @@
           "issue": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/EventIssue",
                 "description": "Hydrated issue row (when the event has one). `series_finished`\nis the only kind with `issue = None`; the others always\nresolve."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -19102,11 +18830,11 @@
           "series": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/EventSeries",
                 "description": "Hydrated series row (when the event has one). All four kinds\nhave a series; `None` only on the very rare case where the\nreferenced series was deleted between event capture and the\nhydrate query."
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -21002,22 +20730,22 @@
           "metadata_completeness": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/CompletenessReport",
                 "description": "Metadata-completeness assessment (\"does this need metadata pulled?\").\nDetail-only — populated by `get_one`; `None` on the list endpoint."
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "metadata_completeness_summary": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/MetadataCompletenessSummary",
                 "description": "Per-issue completeness rollup across the series (`complete` of `total`\nactive issues whose metadata is [`CompletenessTier::Complete`]). Drives\nthe Collection tab's \"N of M issues have complete metadata\" line.\nDetail-only."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -21047,11 +20775,11 @@
           "progress_summary": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/SeriesProgressSummary",
                 "description": "Per-user read progress across the entire series — server-computed\nso the UI doesn't have to paginate the issue list to compute \"X of N\nread\". `None` on the list endpoint; populated only on `get_one`."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -22665,10 +22393,10 @@
           "filter": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/FilterDsl"
               },
               {
-                "$ref": "#/components/schemas/FilterDsl"
+                "type": "null"
               }
             ]
           },
@@ -22688,20 +22416,20 @@
           "sort_field": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/SortField"
               },
               {
-                "$ref": "#/components/schemas/SortField"
+                "type": "null"
               }
             ]
           },
           "sort_order": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/SortOrder"
               },
               {
-                "$ref": "#/components/schemas/SortOrder"
+                "type": "null"
               }
             ]
           }
@@ -22819,20 +22547,20 @@
           "role": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/UserRole"
               },
               {
-                "$ref": "#/components/schemas/UserRole"
+                "type": "null"
               }
             ]
           },
           "state": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/UserState"
               },
               {
-                "$ref": "#/components/schemas/UserState"
+                "type": "null"
               }
             ]
           }
