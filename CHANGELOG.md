@@ -13,6 +13,31 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.28.4](https://github.com/mbryantms/folio/compare/v0.28.3...v0.28.4) (2026-09-28)
+
+
+### Dependencies
+
+* bump utoipa to v6 and utoipa-axum to 0.3 together ([#864](https://github.com/mbryantms/folio/issues/864)) ([ccb736f](https://github.com/mbryantms/folio/commit/ccb736f29076a36b10e33110a4eb5d18f890ca94))
+* lock file maintenance ([#866](https://github.com/mbryantms/folio/issues/866)) ([a25f8cd](https://github.com/mbryantms/folio/commit/a25f8cdcfe9ccb58840dc016ffb04855aa80450b))
+* lock file maintenance ([#868](https://github.com/mbryantms/folio/issues/868)) ([30d3117](https://github.com/mbryantms/folio/commit/30d3117b8ea089c1aa0479f2bd3d3b0ce2a41dd3))
+* lock file maintenance ([#870](https://github.com/mbryantms/folio/issues/870)) ([5dc2dcc](https://github.com/mbryantms/folio/commit/5dc2dcc9ab137f493f25ed588b7c062e53d90db1))
+* update dependency @ai-sdk/provider-utils@&lt;4.0.34 to v4.0.53 ([#855](https://github.com/mbryantms/folio/issues/855)) ([f5ee8df](https://github.com/mbryantms/folio/commit/f5ee8dfc9ca2c876eb07524c0b6102e90a2de7b5))
+* update dependency @ai-sdk/provider-utils@&lt;4.0.34 to v4.0.54 ([#857](https://github.com/mbryantms/folio/issues/857)) ([af56746](https://github.com/mbryantms/folio/commit/af567469212a7a91a200ffc4844a4fa5bc762954))
+* update dependency @scalar/api-reference-react to v0.9.73 ([#860](https://github.com/mbryantms/folio/issues/860)) ([9276e1e](https://github.com/mbryantms/folio/commit/9276e1e766f7111786dfbbb9d33d42dc64b6c20a))
+* update dependency browserslist@&lt;4.28.9 to v4.29.1 ([#861](https://github.com/mbryantms/folio/issues/861)) ([9e85538](https://github.com/mbryantms/folio/commit/9e85538afc585a903c4ff3603c5f1f11a036f1dd))
+* update dependency lucide-react to v1.48.0 ([#858](https://github.com/mbryantms/folio/issues/858)) ([9423b70](https://github.com/mbryantms/folio/commit/9423b706c68221fd19847f60ce1e7286f61cf934))
+* update dependency next-intl to v4.14.7 ([#859](https://github.com/mbryantms/folio/issues/859)) ([f5d8ba5](https://github.com/mbryantms/folio/commit/f5d8ba5bb0e18461d3d3cd2e55ed55a8653b02ba))
+* update dependency pnpm to v12.6.0 ([#851](https://github.com/mbryantms/folio/issues/851)) ([1d1a407](https://github.com/mbryantms/folio/commit/1d1a407f3956a07fb72dd1643d7eff0984b6de4f))
+* update dependency undici@&gt;=7.0.0 &lt;7.29.2 to v7.30.0 ([#867](https://github.com/mbryantms/folio/issues/867)) ([687cb83](https://github.com/mbryantms/folio/commit/687cb83a2f90069c7445ea9f67559e72ba2f9f40))
+* update dependency vitest to v5.0.2 ([#869](https://github.com/mbryantms/folio/issues/869)) ([61e3648](https://github.com/mbryantms/folio/commit/61e364827d01d725b901974f3b3381b93cdf636d))
+* update nextjs monorepo to v16.3.6 ([#849](https://github.com/mbryantms/folio/issues/849)) ([14d4dfe](https://github.com/mbryantms/folio/commit/14d4dfe76442e0c4772d2cff91a58b425b1ee44f))
+* update redis:8-alpine docker digest to 3811787 ([#863](https://github.com/mbryantms/folio/issues/863)) ([9fef97a](https://github.com/mbryantms/folio/commit/9fef97a863eef28bb5207d9085aa4b0c957b1e8d))
+* update rust crate hyper-util to v0.1.21 ([#862](https://github.com/mbryantms/folio/issues/862)) ([e473333](https://github.com/mbryantms/folio/commit/e473333f5496a688eef26e8e52a51ccb481cc3f0))
+* update rust crate lru to v0.18.5 ([#854](https://github.com/mbryantms/folio/issues/854)) ([90c9a5c](https://github.com/mbryantms/folio/commit/90c9a5cdf6d83c8f1ff4827cbdfeb021e368178c))
+* update rust crate thiserror to v2.0.21 ([#856](https://github.com/mbryantms/folio/issues/856)) ([a694b3b](https://github.com/mbryantms/folio/commit/a694b3b48d3af6a53919afbf7b5d4bf13f6af406))
+* update web-dev-tooling (weekly) ([#865](https://github.com/mbryantms/folio/issues/865)) ([e145ae1](https://github.com/mbryantms/folio/commit/e145ae19d1feb52fa5b3b63d7b5a34adaa57c6e0))
+
 ## [0.28.3](https://github.com/mbryantms/folio/compare/v0.28.2...v0.28.3) (2026-09-25)
 
 
