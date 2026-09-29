@@ -6,7 +6,7 @@ export default function AccountSettingsPage() {
     <>
       <PageHeader
         title="Account"
-        description="Display name, email, and password."
+        description="Display name, email, password, and a download of your data."
       />
       <AccountForm />
     </>
