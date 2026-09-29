@@ -317,7 +317,9 @@ async fn mid_page_write_preserves_finished_when_finished_omitted() {
         Some(true),
         "finished must remain true when omitted from the write payload"
     );
-    assert_eq!(json["page"].as_i64(), Some(12));
+    // WP-1.3: an implicit write can't regress the furthest page within a
+    // run, so the resume point stays at 19 (it used to follow the jump).
+    assert_eq!(json["page"].as_i64(), Some(19));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1148,5 +1150,251 @@ async fn list_issue_id_filter_is_scoped_to_the_caller() {
         body["records"].as_array().unwrap().len(),
         0,
         "another user's record must not leak through the issue_id filter",
+    );
+}
+
+// ───────── reading runs (WP-1.3): cross-device conflict rule ─────────
+
+async fn get_record(app: &TestApp, auth: &Authed, issue_id: &str) -> serde_json::Value {
+    let (status, json) =
+        get_progress(app, auth, &format!("/api/progress?issue_id={issue_id}")).await;
+    assert_eq!(status, StatusCode::OK, "{json:#?}");
+    json["records"][0].clone()
+}
+
+/// An implicit per-page write (no `finished`) can only move forward
+/// within a run: a stale debounced write from another device can't drag
+/// the position back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn implicit_write_never_regresses_within_a_run() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "u@example.com").await;
+    let issue_id = seed_issue(&app).await;
+
+    let (_, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 12, "run": 0}),
+    )
+    .await;
+    assert_eq!(json["page"].as_i64(), Some(12));
+    assert_eq!(json["run"].as_i64(), Some(0));
+
+    // Phone's stale write from page 4.
+    let (status, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 4, "run": 0}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        json["page"].as_i64(),
+        Some(12),
+        "implicit write must not regress"
+    );
+
+    // Moving forward still works.
+    let (_, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 15, "run": 0}),
+    )
+    .await;
+    assert_eq!(json["page"].as_i64(), Some(15));
+}
+
+/// Explicit writes carry user intent and set the page as given: "Mark
+/// as unread" resets the floor, "Mark as read" lands on the last page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn explicit_writes_bypass_the_floor() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "u@example.com").await;
+    let issue_id = seed_issue(&app).await;
+
+    post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 12}),
+    )
+    .await;
+    let (_, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 0, "finished": false}),
+    )
+    .await;
+    assert_eq!(json["page"].as_i64(), Some(0));
+    assert_eq!(json["finished"].as_bool(), Some(false));
+    assert_eq!(
+        json["run"].as_i64(),
+        Some(0),
+        "mark-unread stays in the run"
+    );
+
+    // The floor is reset: an implicit write at page 3 now lands.
+    let (_, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 3}),
+    )
+    .await;
+    assert_eq!(json["page"].as_i64(), Some(3));
+}
+
+/// `restart` opens the next run at the given page with `finished`
+/// cleared; the reply carries the new run for the client to echo.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restart_opens_a_new_run_and_clears_finished() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "u@example.com").await;
+    let issue_id = seed_issue(&app).await;
+
+    let (_, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 19, "finished": true}),
+    )
+    .await;
+    assert_eq!(json["finished"].as_bool(), Some(true));
+    assert!(json["finished_at"].is_string());
+
+    let (status, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 0, "restart": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{json:#?}");
+    assert_eq!(json["run"].as_i64(), Some(1));
+    assert_eq!(json["page"].as_i64(), Some(0));
+    assert_eq!(json["finished"].as_bool(), Some(false));
+    assert!(json["finished_at"].is_null(), "re-read clears finished_at");
+
+    // Reading the re-read: page turns land and finishing sticks again.
+    let (_, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 5, "run": 1}),
+    )
+    .await;
+    assert_eq!(json["page"].as_i64(), Some(5));
+    let (_, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 19, "run": 1, "finished": true}),
+    )
+    .await;
+    assert_eq!(json["finished"].as_bool(), Some(true));
+    let (_, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 7, "run": 1}),
+    )
+    .await;
+    assert_eq!(
+        json["finished"].as_bool(),
+        Some(true),
+        "finished stays sticky within the run"
+    );
+    assert_eq!(json["page"].as_i64(), Some(19));
+}
+
+/// Two devices: A re-reads from the cover, B is still open on the old
+/// read. B's writes carry the old run and are ignored; on its next open
+/// B reads the record and follows run 1.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stale_run_write_from_another_device_is_ignored() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "u@example.com").await;
+    let issue_id = seed_issue(&app).await;
+
+    // Both devices read to page 12 in run 0.
+    post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 12, "run": 0}),
+    )
+    .await;
+    // Device A restarts and reads to page 3.
+    post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 0, "restart": true}),
+    )
+    .await;
+    let (_, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 3, "run": 1}),
+    )
+    .await;
+    assert_eq!(json["page"].as_i64(), Some(3));
+
+    // Device B (still on run 0) flushes page 14 — ignored, record unchanged.
+    let (status, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 14, "run": 0}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["run"].as_i64(), Some(1));
+    assert_eq!(
+        json["page"].as_i64(),
+        Some(3),
+        "stale-run write must not touch the new run"
+    );
+    let rec = get_record(&app, &auth, &issue_id).await;
+    assert_eq!(rec["page"].as_i64(), Some(3));
+    assert_eq!(rec["run"].as_i64(), Some(1));
+}
+
+/// Shims that don't know about runs (OPDS / KOReader / Komga) write
+/// into the current run and are subject to the same floor.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legacy_client_without_run_writes_into_the_current_run() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "u@example.com").await;
+    let issue_id = seed_issue(&app).await;
+
+    // A first read (run 0), then a restart into run 1. (A `restart` on
+    // an issue with no record yet just creates run 0.)
+    post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 11}),
+    )
+    .await;
+    post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 0, "restart": true}),
+    )
+    .await;
+    post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 6, "run": 1}),
+    )
+    .await;
+    let (_, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 9}),
+    )
+    .await;
+    assert_eq!(json["run"].as_i64(), Some(1));
+    assert_eq!(json["page"].as_i64(), Some(9));
+    let (_, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 2}),
+    )
+    .await;
+    assert_eq!(
+        json["page"].as_i64(),
+        Some(9),
+        "run-less implicit write still can't regress"
     );
 }

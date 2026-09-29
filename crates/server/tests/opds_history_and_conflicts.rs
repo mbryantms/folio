@@ -380,6 +380,7 @@ async fn seed_progress(
         updated_at: Set(when),
         device: Set(None),
         is_backfill: Set(false),
+        run: Set(0),
     }
     .insert(db)
     .await
@@ -551,7 +552,7 @@ async fn history_enforces_library_acl() {
 // ───────────────────────── conflict-resolution ─────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn sequential_writes_from_different_devices_are_last_writer_wins() {
+async fn sequential_writes_from_different_devices_keep_the_furthest_page() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "conflict-lww@example.com").await;
     let db = Database::connect(&app.db_url).await.unwrap();
@@ -579,10 +580,12 @@ async fn sequential_writes_from_different_devices_are_last_writer_wins() {
     .await;
     assert_eq!(r1.status(), StatusCode::OK);
 
-    // Phone then writes page=10 (a backwards bookmark deep-link). The
-    // server accepts the regression intentionally — explicit writes are
-    // last-writer-wins so legitimate backwards moves (rewind, mark-
-    // unread, jump-to-bookmark) work without an override.
+    // Phone then writes page=10 (a stale flush, or a backwards bookmark
+    // deep-link). Since WP-1.3 an implicit write (no `finished`) can
+    // only move forward within a reading run, so the tablet's furthest
+    // page wins; the phone's device tag is still recorded as the most
+    // recent writer. Backwards moves are explicit: mark-unread or a
+    // "start re-read" (`restart`).
     let r2 = put_progress_bearer(
         &app,
         &token,
@@ -601,7 +604,8 @@ async fn sequential_writes_from_different_devices_are_last_writer_wins() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(row.last_page, 10, "second write wins on last_page");
+    assert_eq!(row.last_page, 30, "furthest page wins within a run");
+    assert_eq!(row.run, 0);
     assert_eq!(
         row.device.as_deref(),
         Some("Panels/iPhone"),
@@ -689,7 +693,8 @@ async fn finished_is_sticky_on_subsequent_per_page_writes() {
     assert_eq!(r1.status(), StatusCode::OK);
     // 2) Subsequent mid-issue bookmark deep-link (page=5, no `finished`
     //    field). Sticky-finished semantics MUST preserve the row's
-    //    finished=true — only an explicit `finished: false` clears it.
+    //    finished=true — only an explicit `finished: false` clears it —
+    //    and the within-run floor keeps the furthest page (WP-1.3).
     let r2 = put_progress_bearer(
         &app,
         &token,
@@ -699,7 +704,10 @@ async fn finished_is_sticky_on_subsequent_per_page_writes() {
     .await;
     assert_eq!(r2.status(), StatusCode::OK);
     let body = body_json(r2.into_body()).await;
-    assert_eq!(body["page"], 5, "page advances to 5");
+    assert_eq!(
+        body["page"], 19,
+        "implicit write can't regress the furthest page"
+    );
     assert_eq!(
         body["finished"], true,
         "finished stays true when caller omits the field"

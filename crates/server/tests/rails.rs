@@ -528,6 +528,7 @@ async fn write_progress(
         updated_at: Set(when),
         device: Set(None),
         is_backfill: Set(false),
+        run: Set(0),
     };
     if existing.is_some() {
         am.update(&db).await.unwrap();

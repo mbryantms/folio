@@ -3,9 +3,10 @@ use serde::{Deserialize, Serialize};
 
 /// Authoritative per-(user, issue) reading-progress store. The spec's
 /// original §9 plan to replace this with Automerge CRDT documents was
-/// reconsidered and dropped on 2026-05-15 — server-side
-/// `max(last_page)` resolves every multi-device conflict this table
-/// actually sees. See the decision note at spec §9.
+/// reconsidered and dropped on 2026-05-15 — the server-side reading-run
+/// rule (`run` column below; `api::progress::upsert_for_run`) resolves
+/// every multi-device conflict this table actually sees. See the
+/// decision note at spec §9.
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "progress_records")]
 pub struct Model {
@@ -38,6 +39,13 @@ pub struct Model {
     /// (total read count, completion %, On Deck, badges) ignore the
     /// flag — a backfilled issue is still read.
     pub is_backfill: bool,
+    /// Reading-run counter. Run 0 is the first read; an explicit
+    /// "start re-read" opens the next run at page 0. Within a run the
+    /// server keeps the furthest page reported by implicit per-page
+    /// writes, and a write tagged with an older run is ignored (a
+    /// device left open on the previous read cannot regress the new
+    /// one). Explicit mark-read / mark-unread writes bypass the floor.
+    pub run: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

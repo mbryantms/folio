@@ -1416,6 +1416,7 @@ async fn v2_seed_progress(
         updated_at: Set(now),
         device: Set(None),
         is_backfill: Set(false),
+        run: Set(0),
     }
     .insert(db)
     .await

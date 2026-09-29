@@ -53,3 +53,76 @@ it("flushes on hidden, retains a failed POST, and retries on online", async () =
   expect(api.send).toHaveBeenCalledTimes(2);
   unmount();
 });
+
+it("opens a new run on restart, then echoes the run the server returns", async () => {
+  vi.useFakeTimers();
+  api.send
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ run: 3 }), { status: 200 }),
+    )
+    .mockResolvedValue(
+      new Response(JSON.stringify({ run: 3 }), { status: 200 }),
+    );
+  const client = new QueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  const { rerender, unmount } = renderHook(
+    ({ page }: { page: number }) =>
+      useReaderProgressWrite({
+        issueId: "a",
+        currentPage: page,
+        initialPage: 0,
+        initialRun: 2,
+        restartRun: true,
+        totalPages: 20,
+        incognito: false,
+      }),
+    { wrapper, initialProps: { page: 1 } },
+  );
+  await act(async () => {
+    vi.advanceTimersByTime(400);
+  });
+  expect(api.send).toHaveBeenCalledTimes(1);
+  const first = JSON.parse(api.send.mock.calls[0]![1].body as string);
+  expect(first).toMatchObject({ issue_id: "a", page: 1, restart: true });
+  expect(first.run).toBeUndefined();
+
+  rerender({ page: 2 });
+  await act(async () => {
+    vi.advanceTimersByTime(400);
+  });
+  expect(api.send).toHaveBeenCalledTimes(2);
+  const second = JSON.parse(api.send.mock.calls[1]![1].body as string);
+  expect(second).toMatchObject({ issue_id: "a", page: 2, run: 3 });
+  expect(second.restart).toBeUndefined();
+  unmount();
+});
+
+it("tags per-page writes with the saved run when not restarting", async () => {
+  vi.useFakeTimers();
+  api.send.mockResolvedValue(new Response(null, { status: 204 }));
+  const client = new QueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  const { unmount } = renderHook(
+    () =>
+      useReaderProgressWrite({
+        issueId: "a",
+        currentPage: 5,
+        initialPage: 3,
+        initialRun: 1,
+        totalPages: 20,
+        incognito: false,
+      }),
+    { wrapper },
+  );
+  await act(async () => {
+    vi.advanceTimersByTime(400);
+  });
+  const body = JSON.parse(api.send.mock.calls[0]![1].body as string);
+  expect(body).toMatchObject({ page: 5, run: 1 });
+  expect(body.restart).toBeUndefined();
+  unmount();
+});

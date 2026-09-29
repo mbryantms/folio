@@ -26,6 +26,8 @@ type ProgressDelta = {
     issue_id: string;
     page: number;
     finished: boolean;
+    /** Reading run (WP-1.3); absent on records written before the column existed. */
+    run?: number;
     updated_at: string;
   }>;
 };
@@ -125,6 +127,12 @@ export default async function ReadPage({
   const totalPages = Math.max(1, issue.page_count ?? 1);
 
   let initialPage = 0;
+  // Reading run of the saved record, and whether this open starts a new
+  // one. "Read from beginning" always does; so does reopening a finished
+  // issue from the cover — without a restart the server's within-run
+  // floor (furthest page wins) would swallow the re-read's page turns.
+  let initialRun = 0;
+  let restartRun = startFresh;
   if (explicitPage !== null) {
     initialPage = explicitPage;
   } else if (delta) {
@@ -137,6 +145,8 @@ export default async function ReadPage({
     if (mine) {
       const parkedAtEnd = mine.finished && mine.page >= totalPages - 1;
       initialPage = parkedAtEnd ? 0 : mine.page;
+      initialRun = mine.run ?? 0;
+      if (parkedAtEnd) restartRun = true;
     }
   }
 
@@ -216,6 +226,8 @@ export default async function ReadPage({
         exitUrl={`/series/${seriesSlug}/issues/${issueSlug}`}
         totalPages={totalPages}
         initialPage={initialPage}
+        initialRun={initialRun}
+        restartRun={restartRun}
         pages={(issue.pages as PageInfo[] | null | undefined) ?? []}
         pageUrlVersion={issue.last_rewrite_at ?? null}
         manga={issue.manga ?? null}
