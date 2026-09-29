@@ -77,6 +77,32 @@ docker run --rm \
 docker compose -f /opt/folio/compose.prod.yml up -d app
 ```
 
+## `just backup` / `just restore`
+
+The two commands above are wrapped as `just` recipes for anyone running
+the stack from a checkout (or with `just` installed next to
+`compose.prod.yml`):
+
+```bash
+# pg_dump -Fc + comic_data tar, both timestamped, into $BACKUP_DIR
+# (default ./backups). Safe while the app is running.
+just backup
+BACKUP_DIR=/var/backups/folio just backup
+
+# Restore a dump from `just backup` into the running compose postgres.
+# Stops `app` for the duration, asks you to type `restore` to confirm,
+# runs `pg_restore --clean --if-exists`, then starts `app` again.
+just restore ./backups/postgres-20260929T031500Z.dump
+```
+
+Both take an optional `compose=<file>` (default `compose.prod.yml`) and
+locate the `comic_data` volume from the running `postgres` container's
+compose project label, so they work whatever project name compose chose.
+`just restore` refuses a `.tgz` — the data-volume restore stays the
+manual `docker run … tar xzf` sequence above because it has to run with
+`app` down and replaces `secrets/` (see
+[`secrets-backup.md`](./secrets-backup.md) before restoring one).
+
 ## A backup script
 
 A reference `scripts/backup.sh` lives in the repo at

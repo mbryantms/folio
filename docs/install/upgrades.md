@@ -44,6 +44,25 @@ docker compose -f compose.prod.yml logs -f app
 - Tail `app` logs until you see `comic-reader starting` — that's the cue
   that migrations finished and the listener is bound.
 
+## Postgres version requirement
+
+Folio requires **Postgres 17 or newer**. The search migration depends on
+17+ behaviour, so the server checks `SHOW server_version_num` right
+after it connects and — on an older server — refuses to boot *before*
+running any migration, with a log line like:
+
+```
+refusing to boot: Postgres 16.9 is too old; Folio requires Postgres 17.0 or newer (server_version_num 160009 < 170000) …
+```
+
+There is no override. If you run Folio against your own Postgres (not
+the one in `compose.prod.yml`, which ships `postgres:18`), upgrade the
+server first. Moving an existing volume across a Postgres major is a
+`pg_dump` → new server → `pg_restore` operation — `just backup` /
+`just restore` wrap that (see [`backup.md`](./backup.md)); the Postgres
+image's entrypoint refuses to start on a data directory from a different
+major rather than corrupt it.
+
 ## Major version bump
 
 Before pinning `TAG=v(X+1)…`:

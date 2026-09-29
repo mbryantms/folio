@@ -11,6 +11,7 @@
 pub mod app;
 pub mod config;
 pub mod observability;
+pub mod pg_version;
 pub mod secrets;
 
 pub mod api;

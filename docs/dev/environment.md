@@ -27,6 +27,17 @@ need to Ctrl-C and re-run after every server-side change.
 
 **Rule:** native `just` for the things you're editing; Docker for stateful deps.
 
+### Postgres version
+
+`compose.dev.yml` runs `postgres:18-alpine`, matching CI and the
+integration-test harness. The server **requires Postgres 17+**: the search
+migration depends on 17+ behaviour, so `app::serve` runs
+`SHOW server_version_num` after connecting and refuses to boot (before any
+migration) when it sees < `170000`. The guard lives in
+[`crates/server/src/pg_version.rs`](../../crates/server/src/pg_version.rs);
+there is no env override. If you point `COMIC_DATABASE_URL` at a
+self-managed Postgres, make sure it's 17 or newer.
+
 ### Port note
 
 Comic's dev redis is published on host port **6380**, not the usual 6379. This

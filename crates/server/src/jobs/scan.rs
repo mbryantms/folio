@@ -24,9 +24,10 @@ pub struct Job {
 /// Worker handler. A scan failure is recorded durably by the scanner's finalize
 /// (the `scan_runs` row's `state='failed'` + `error`, a `ScanEvent::Failed` WS
 /// event, and a `library_event` manifest row), so the handler returns `Ok` even
-/// on failure: returning `Err` would only drive apalis's immediate 5× retry of
-/// an expensive full-library scan, which rarely helps a deterministic failure
-/// (missing mount, bad config) at the millisecond timescale of those retries.
+/// on failure: returning `Err` would only drive apalis's retry of an expensive
+/// full-library scan ([`crate::jobs::JOB_MAX_ATTEMPTS`] attempts, re-queued on
+/// the next poll), which rarely helps a deterministic failure (missing mount,
+/// bad config) at the timescale of those retries.
 /// The operator — or the next scheduled / file-watch trigger — re-runs it
 /// deliberately. (OPS-3 follow-up.)
 pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), Error> {
