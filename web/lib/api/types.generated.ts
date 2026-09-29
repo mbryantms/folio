@@ -3780,6 +3780,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/issues/{issue_slug}/metadata/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_lookup_issue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/issues/{issue_slug}/metadata/proposed-diff": {
         parameters: {
             query?: never;
@@ -3911,6 +3927,22 @@ export interface paths {
         get: operations["metadata_composite_diff_series"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/metadata/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_lookup_series"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5021,6 +5053,7 @@ export interface components {
             items_total: number;
             match_outcome?: components["schemas"]["MatchOutcomeView"] | null;
             providers: string[];
+            query?: components["schemas"]["SearchQueryView"] | null;
             quota?: components["schemas"]["QuotaStateView"] | null;
             /** Format: uuid */
             run_id: string;
@@ -7360,6 +7393,36 @@ export interface components {
              */
             watermark: number;
         };
+        /**
+         * @description Body for `POST …/metadata/lookup` (WP-2.8). Either paste a provider
+         *     page / API URL, or name the provider + its native id explicitly. The
+         *     URL wins when both are present.
+         */
+        LookupReq: {
+            /**
+             * @description Provider-native numeric id (a `4050-` / `4000-` prefix is
+             *     tolerated and stripped).
+             */
+            external_id?: string | null;
+            /** @description `comicvine` | `metron`. */
+            source?: string | null;
+            /**
+             * @description ComicVine (`…/4050-<id>/`, `…/4000-<id>/`) or Metron
+             *     (`metron.cloud/series/<id>/`, `…/api/issue/<id>/`) URL.
+             */
+            url?: string | null;
+        };
+        /**
+         * @description `POST …/metadata/lookup` response. The run is already `completed`
+         *     with a single HIGH candidate at ordinal 0, so the client polls
+         *     `…/metadata/candidates?run_id=` once and goes straight to preview.
+         */
+        LookupResp: {
+            external_id: string;
+            /** Format: uuid */
+            run_id: string;
+            source: string;
+        };
         /** @description The integer-numbered backbone of a series and its inferred gaps. */
         MainRunReport: {
             /** Format: double */
@@ -9032,6 +9095,50 @@ export interface components {
             started_at: string;
             state: string;
             stats: unknown;
+        };
+        /**
+         * @description Optional per-run query overrides for `POST …/metadata/search`
+         *     (WP-2.8). Each supplied field replaces the corresponding fact read
+         *     from the local series / issue row **for this run only** — the rows
+         *     themselves are never mutated. Absent body ⇒ every field `None` ⇒
+         *     the pre-existing behaviour.
+         */
+        SearchOverrides: {
+            /**
+             * @description Issue-scope only; ignored on a series search. Lets an issue with
+             *     no parsed `number_raw` be searched at all.
+             */
+            issue_number?: string | null;
+            /** @description Series name to search instead of the local one. */
+            name?: string | null;
+            publisher?: string | null;
+            /**
+             * Format: int32
+             * @description Series start year. Supplying it also pins the hard year gate —
+             *     the orchestrator won't relax to the cover-aware gate for a year
+             *     the user asserted.
+             */
+            year?: number | null;
+        };
+        /**
+         * @description Effective query + provenance flags for one run (WP-2.8). See
+         *     [`CandidatesResp::query`].
+         */
+        SearchQueryView: {
+            /** @description Issue-scope only. */
+            issue_number?: string | null;
+            /** @description `"series"` | `"issue"`. */
+            kind: string;
+            /** @description Human label, e.g. `Saga` / `Saga #12`. */
+            label: string;
+            lookup: boolean;
+            /** @description Series name searched (the override when one was supplied). */
+            name: string;
+            overridden: boolean;
+            publisher?: string | null;
+            /** Format: int32 */
+            year?: number | null;
+            year_gate_relaxed: boolean;
         };
         SearchStartedResp: {
             /**
@@ -17937,6 +18044,67 @@ export interface operations {
             };
         };
     };
+    metadata_lookup_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LookupReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LookupResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found / provider has no such record */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description bad URL / id, or provider not configured */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description provider error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description provider quota exhausted */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     metadata_proposed_diff_issue: {
         parameters: {
             query: {
@@ -18002,7 +18170,12 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        /** @description Optional query overrides (WP-2.8); omit the body for the local facts */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SearchOverrides"] | null;
+            };
+        };
         responses: {
             202: {
                 headers: {
@@ -18028,6 +18201,13 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description override validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -18299,6 +18479,66 @@ export interface operations {
             };
         };
     };
+    metadata_lookup_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LookupReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LookupResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found / provider has no such record */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description bad URL / id, or provider not configured */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description provider error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description provider quota exhausted */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     metadata_pause_series: {
         parameters: {
             query?: never;
@@ -18432,7 +18672,12 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        /** @description Optional query overrides (WP-2.8); omit the body for the local facts */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SearchOverrides"] | null;
+            };
+        };
         responses: {
             202: {
                 headers: {
@@ -18458,6 +18703,13 @@ export interface operations {
             };
             /** @description series not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description override validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

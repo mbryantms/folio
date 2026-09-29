@@ -91,11 +91,10 @@ pub fn build_providers(cfg: &Config, redis: ConnectionManager) -> Vec<Arc<dyn Me
     if cfg.metron_enabled && metron_user_set && metron_pass_set {
         let username = cfg.metron_username.clone().unwrap_or_default();
         let password = cfg.metron_password.clone().unwrap_or_default();
-        out.push(Arc::new(MetronClient::new(
-            &username,
-            &password,
-            redis.clone(),
-        )));
+        out.push(Arc::new(match cfg.metron_base_url.clone() {
+            Some(base) => MetronClient::with_base_url(&username, &password, base, redis.clone()),
+            None => MetronClient::new(&username, &password, redis.clone()),
+        }));
     }
 
     let cv_key_set = cfg
@@ -105,7 +104,10 @@ pub fn build_providers(cfg: &Config, redis: ConnectionManager) -> Vec<Arc<dyn Me
         .unwrap_or(false);
     if cfg.comicvine_enabled && cv_key_set {
         let key = cfg.comicvine_api_key.clone().unwrap_or_default();
-        out.push(Arc::new(ComicVineClient::new(key, redis.clone())));
+        out.push(Arc::new(match cfg.comicvine_base_url.clone() {
+            Some(base) => ComicVineClient::with_base_url(key, base, redis.clone()),
+            None => ComicVineClient::new(key, redis.clone()),
+        }));
     }
 
     out
@@ -222,6 +224,85 @@ pub async fn mark_awaiting_quota<C: ConnectionTrait>(
     am.resume_after = Set(Some(resume_after.into()));
     am.update(db).await?;
     Ok(())
+}
+
+/// Merge `patch`'s top-level keys into `metadata_run.query`. The
+/// stored query starts life as the serialized [`StoredQuery`]
+/// (`{"kind": "series", "name": …}`); the WP-2.8 surfaces layer small
+/// notes on top of it so the Review queue / run detail can say what was
+/// actually searched:
+///
+/// - `overrides: {name?, year?, publisher?, issue_number?}` — the
+///   user-supplied query overrides (the facts themselves already hold
+///   the effective values; this records *which* were overridden).
+/// - `year_gate_relaxed: true` — the hard year gate emptied the list
+///   and the orchestrator re-scored under the cover-pHash-aware gate.
+/// - `lookup: {source, external_id, url?}` — the run was produced by a
+///   direct provider lookup rather than a search.
+///
+/// A non-object stored query (legacy NULL) is replaced by `patch`.
+pub async fn annotate_query<C: ConnectionTrait>(
+    db: &C,
+    run_id: Uuid,
+    patch: serde_json::Value,
+) -> Result<(), sea_orm::DbErr> {
+    let Some(row) = metadata_run::Entity::find_by_id(run_id).one(db).await? else {
+        return Ok(());
+    };
+    let mut merged = match row.query.clone() {
+        Some(serde_json::Value::Object(m)) => m,
+        _ => serde_json::Map::new(),
+    };
+    if let serde_json::Value::Object(extra) = patch {
+        merged.extend(extra);
+    }
+    let mut am: metadata_run::ActiveModel = row.into();
+    am.query = Set(Some(serde_json::Value::Object(merged)));
+    am.update(db).await?;
+    Ok(())
+}
+
+/// Cover-hash resolver: candidate cover URL → 64-bit pHash (`None` on
+/// any failure). Production resolves over the network through the
+/// SSRF-guarded fetcher ([`crate::metadata::phash::fetch_and_hash_cover`]);
+/// tests inject a lookup table so the cover-aware paths (M4 bucketing,
+/// M5 alternates, the WP-2.8 relaxed year gate) are exercisable without
+/// a publicly-routable image host.
+pub type CoverHasher =
+    Arc<dyn Fn(String) -> futures::future::BoxFuture<'static, Option<i64>> + Send + Sync>;
+
+/// Per-run search policy knobs that aren't matcher thresholds.
+#[derive(Clone)]
+pub struct SearchOpts {
+    /// When the hard year gate leaves **zero** candidates, re-score the
+    /// same provider results under [`YearGate::PhashAware`] (no extra
+    /// provider call) and annotate the run with `year_gate_relaxed`.
+    /// `false` when the user asserted the year via a query override —
+    /// they told us the year, so a mismatch is a real mismatch.
+    pub relax_year_gate: bool,
+    /// `None` ⇒ fetch + hash candidate covers over the network.
+    pub cover_hasher: Option<CoverHasher>,
+}
+
+impl Default for SearchOpts {
+    fn default() -> Self {
+        Self {
+            relax_year_gate: true,
+            cover_hasher: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for SearchOpts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SearchOpts")
+            .field("relax_year_gate", &self.relax_year_gate)
+            .field(
+                "cover_hasher",
+                &self.cover_hasher.as_ref().map(|_| "<injected>"),
+            )
+            .finish()
+    }
 }
 
 // ───────── ranked candidate ─────────
@@ -383,6 +464,55 @@ pub async fn finalize_run(
     Ok(())
 }
 
+/// Finalize a **lookup** run (WP-2.8): persist exactly one candidate
+/// that bypassed scoring — the record the user pointed at by URL / id —
+/// as `bucket=high`, score 100, with `score_breakdown.lookup = true` so
+/// the dialog tooltip can explain the score. Deliberately does **not**
+/// write a `metadata_match_outcome` row: the matcher didn't run, so a
+/// `single_good` outcome here would inflate the dashboard's accuracy
+/// distribution.
+pub async fn finalize_lookup_run(
+    db: &DatabaseConnection,
+    run_id: Uuid,
+    candidate: &RankedCandidate,
+) -> Result<(), sea_orm::DbErr> {
+    let tx = db.begin().await?;
+    let Some(row) = metadata_run::Entity::find_by_id(run_id).one(&tx).await? else {
+        tx.rollback().await?;
+        return Ok(());
+    };
+    let payload_json = serde_json::to_value(&candidate.payload)
+        .map_err(|e| sea_orm::DbErr::Custom(format!("serialize candidate: {e}")))?;
+    let mut breakdown = candidate.score_breakdown_json();
+    if let serde_json::Value::Object(m) = &mut breakdown {
+        m.insert("lookup".into(), serde_json::Value::Bool(true));
+    }
+    metadata_run_candidate::ActiveModel {
+        run_id: Set(run_id),
+        ordinal: Set(0),
+        source: Set(candidate.source.as_str().to_owned()),
+        external_id: Set(candidate.external_id.clone()),
+        bucket: Set(Confidence::High.as_str().to_owned()),
+        score: Set(candidate.score.total),
+        score_breakdown: Set(breakdown),
+        candidate: Set(payload_json),
+        applied_at: Set(None),
+    }
+    .insert(&tx)
+    .await?;
+    let mut am: metadata_run::ActiveModel = row.into();
+    am.status = Set(status::COMPLETED.to_owned());
+    am.finished_at = Set(Some(Utc::now().into()));
+    am.items_total = Set(1);
+    am.items_matched_high = Set(1);
+    am.items_matched_medium = Set(0);
+    am.items_matched_low = Set(0);
+    am.items_no_match = Set(0);
+    am.update(&tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 // ───────── pre-filter (matching-accuracy-1.0 M3) ─────────
 
 /// Per-search filter that drops provider candidates **before** they
@@ -437,6 +567,20 @@ pub(crate) fn pre_filter_series(
     facts: &SeriesQueryFacts,
     filter: &PreFilter,
 ) -> Vec<SeriesCandidate> {
+    pre_filter_series_with_gate(candidates, facts.year, filter, true)
+}
+
+/// [`pre_filter_series`] with the year gate switchable. The publisher
+/// blacklist always applies — it's operator policy, not a heuristic —
+/// but the WP-2.8 relaxed retry re-runs the filter with `year_gate =
+/// false` and lets [`score_series_candidates`] decide per candidate
+/// whether the cover vouches for the year mismatch.
+fn pre_filter_series_with_gate(
+    candidates: Vec<SeriesCandidate>,
+    local_year: Option<i32>,
+    filter: &PreFilter,
+    year_gate: bool,
+) -> Vec<SeriesCandidate> {
     let blacklist_keys: Vec<String> = filter
         .publisher_blacklist
         .iter()
@@ -446,9 +590,7 @@ pub(crate) fn pre_filter_series(
     candidates
         .into_iter()
         .filter(|c| {
-            if let (Some(local), Some(cand)) = (facts.year, c.year)
-                && cand > local + 1
-            {
+            if year_gate && !year_ok(local_year, c.year) {
                 return false;
             }
             if let Some(pub_name) = c.publisher.as_deref() {
@@ -479,14 +621,15 @@ pub(crate) fn pre_filter_issue(
 ) -> Vec<IssueCandidate> {
     candidates
         .into_iter()
-        .filter(|c| issue_year_ok(local_year, c.series_year))
+        .filter(|c| year_ok(local_year, c.series_year))
         .collect()
 }
 
-/// The keep predicate behind the issue-search year gate: a candidate
-/// survives unless its series year runs more than one year past the
-/// local baseline. Missing on either side ⇒ keep (no signal to gate on).
-fn issue_year_ok(local_year: Option<i32>, candidate_year: Option<i32>) -> bool {
+/// The keep predicate behind the year gate (series + issue): a
+/// candidate survives unless its (series) start year runs more than one
+/// year past the local baseline. Missing on either side ⇒ keep (no
+/// signal to gate on).
+fn year_ok(local_year: Option<i32>, candidate_year: Option<i32>) -> bool {
     match (local_year, candidate_year) {
         (Some(local), Some(cand)) => cand <= local + 1,
         _ => true,
@@ -507,12 +650,84 @@ enum YearGate {
     PhashAware(Option<i32>),
 }
 
+/// Series-shape sibling of [`score_issue_candidates`]: apply the
+/// operator pre-filter (+ the hard year gate when `gate` is
+/// [`YearGate::Hard`]), fetch cover pHashes, score, and — under
+/// [`YearGate::PhashAware`] — keep a year-mismatched candidate only when
+/// its cover confirms the match. Shared by the primary pass and the
+/// WP-2.8 relaxed retry so the two can't drift.
+#[allow(clippy::too_many_arguments)]
+async fn score_series_candidates(
+    http: &reqwest::Client,
+    hasher: Option<&CoverHasher>,
+    facts: &SeriesQueryFacts,
+    candidates: Vec<SeriesCandidate>,
+    pre_filter: &PreFilter,
+    local_phash: Option<i64>,
+    alternate_cover_fetch_cap: u32,
+    thresholds: Thresholds,
+    gate: YearGate,
+) -> Vec<RankedCandidate> {
+    let (year, hard) = match gate {
+        YearGate::Hard(y) => (y, true),
+        YearGate::PhashAware(y) => (y, false),
+    };
+    let candidates = if hard {
+        pre_filter_series(candidates, facts, pre_filter)
+    } else {
+        pre_filter_series_with_gate(candidates, year, pre_filter, false)
+    };
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    // M5: build the [primary, alternates...] URL slice per candidate so
+    // the matcher can pick the min Hamming across variants. When
+    // local_phash is None we skip the network entirely.
+    let candidate_phashes: Vec<Vec<Option<i64>>> = if local_phash.is_some() {
+        let urls_per_candidate: Vec<Vec<Option<&str>>> = candidates
+            .iter()
+            .map(|c| {
+                cover_urls_for_candidate(
+                    c.cover_image_url.as_deref(),
+                    &c.alternate_cover_urls,
+                    alternate_cover_fetch_cap,
+                )
+            })
+            .collect();
+        fetch_phashes_per_candidate(http, hasher, &urls_per_candidate).await
+    } else {
+        candidates.iter().map(|_| Vec::new()).collect()
+    };
+    let mut out = Vec::new();
+    for (c, cand_phashes) in candidates.into_iter().zip(candidate_phashes) {
+        let score = matcher::score_series_with_phash(facts, &c, local_phash, &cand_phashes);
+        let bucket = score.bucket(thresholds);
+        if !hard && !year_ok(year, c.year) {
+            let cover_confirmed =
+                score.cover_hamming.is_some() && !matches!(bucket, Confidence::Low);
+            if !cover_confirmed {
+                continue;
+            }
+        }
+        out.push(RankedCandidate {
+            source: c.source,
+            external_id: c.external_id.clone(),
+            score,
+            bucket,
+            payload: CandidatePayload::Series(c),
+        });
+    }
+    out
+}
+
 /// Fetch candidate cover pHashes, score each issue candidate against the
 /// local facts, apply the year gate per `gate`, and return ranked rows.
 /// Shared by the narrowed primary search and the broad fallback so the
 /// phash-fetch + scoring logic lives in one place.
+#[allow(clippy::too_many_arguments)]
 async fn score_issue_candidates(
     http: &reqwest::Client,
+    hasher: Option<&CoverHasher>,
     facts: &IssueQueryFacts,
     candidates: Vec<IssueCandidate>,
     local_phash: Option<i64>,
@@ -539,7 +754,7 @@ async fn score_issue_candidates(
                 )
             })
             .collect();
-        fetch_phashes_per_candidate(http, &urls_per_candidate).await
+        fetch_phashes_per_candidate(http, hasher, &urls_per_candidate).await
     } else {
         candidates.iter().map(|_| Vec::new()).collect()
     };
@@ -552,7 +767,7 @@ async fn score_issue_candidates(
         // when the cover confirms it. Reusing `bucket` means the M5
         // alternate-cover ceiling is honoured for free.
         if let YearGate::PhashAware(year) = gate
-            && !issue_year_ok(year, c.series_year)
+            && !year_ok(year, c.series_year)
         {
             let cover_confirmed =
                 score.cover_hamming.is_some() && !matches!(bucket, Confidence::Low);
@@ -620,6 +835,34 @@ pub async fn run_series_search(
     alternate_cover_fetch_cap: u32,
     local_series_id: Option<Uuid>,
 ) -> Result<Vec<RankedCandidate>, ProviderError> {
+    run_series_search_with(
+        db,
+        run_id,
+        providers,
+        facts,
+        thresholds,
+        pre_filter,
+        alternate_cover_fetch_cap,
+        local_series_id,
+        SearchOpts::default(),
+    )
+    .await
+}
+
+/// [`run_series_search`] with explicit [`SearchOpts`]. The job handlers
+/// call this so a user-asserted year override can pin the hard gate.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_series_search_with(
+    db: &DatabaseConnection,
+    run_id: Uuid,
+    providers: &[Arc<dyn MetadataProvider>],
+    facts: &SeriesQueryFacts,
+    thresholds: Thresholds,
+    pre_filter: &PreFilter,
+    alternate_cover_fetch_cap: u32,
+    local_series_id: Option<Uuid>,
+    opts: SearchOpts,
+) -> Result<Vec<RankedCandidate>, ProviderError> {
     if let Err(e) = mark_searching(db, run_id).await {
         return Err(ProviderError::Transport(format!("db: {e}")));
     }
@@ -636,6 +879,7 @@ pub async fn run_series_search(
     let mut ranked = Vec::new();
     let mut surfaced_quota: Option<u64> = None;
     let mut last_error: Option<ProviderError> = None;
+    let mut year_gate_relaxed = false;
     let http = cover_http_client();
     for p in providers {
         let q = SeriesQuery {
@@ -649,38 +893,52 @@ pub async fn run_series_search(
                 // M3 pre-filter: drop candidates the operator's
                 // library settings + the hard year gate would reject
                 // before any phash fetching or scoring runs.
-                let candidates = pre_filter_series(candidates, facts, pre_filter);
-                // M5: build the [primary, alternates...] URL slice
-                // per candidate so the matcher can pick the min
-                // Hamming across variants. When local_phash is None
-                // we skip the network entirely.
-                let candidate_phashes: Vec<Vec<Option<i64>>> = if local_phash.is_some() {
-                    let urls_per_candidate: Vec<Vec<Option<&str>>> = candidates
-                        .iter()
-                        .map(|c| {
-                            cover_urls_for_candidate(
-                                c.cover_image_url.as_deref(),
-                                &c.alternate_cover_urls,
-                                alternate_cover_fetch_cap,
-                            )
-                        })
-                        .collect();
-                    fetch_phashes_per_candidate(&http, &urls_per_candidate).await
-                } else {
-                    candidates.iter().map(|_| Vec::new()).collect()
-                };
-                for (c, cand_phashes) in candidates.into_iter().zip(candidate_phashes) {
-                    let score =
-                        matcher::score_series_with_phash(facts, &c, local_phash, &cand_phashes);
-                    let bucket = score.bucket(thresholds);
-                    ranked.push(RankedCandidate {
-                        source: c.source,
-                        external_id: c.external_id.clone(),
-                        score,
-                        bucket,
-                        payload: CandidatePayload::Series(c),
-                    });
+                let raw = candidates;
+                let mut produced = score_series_candidates(
+                    &http,
+                    opts.cover_hasher.as_ref(),
+                    facts,
+                    raw.clone(),
+                    pre_filter,
+                    local_phash,
+                    alternate_cover_fetch_cap,
+                    thresholds,
+                    YearGate::Hard(facts.year),
+                )
+                .await;
+                // WP-2.8 year-gate escape: the provider *did* return
+                // candidates but the hard gate dropped every one (the
+                // classic "folder year is ahead of the real volume"
+                // case). Re-score the same results under the
+                // cover-aware gate — no extra provider call — so a
+                // cover-confirmed candidate survives. Only meaningful
+                // when a local cover hash exists; without one nothing
+                // could confirm anything, so we don't claim to have
+                // relaxed. Skipped entirely when the user asserted the
+                // year via an override.
+                if produced.is_empty()
+                    && opts.relax_year_gate
+                    && local_phash.is_some()
+                    && facts.year.is_some()
+                    && !raw.is_empty()
+                {
+                    produced = score_series_candidates(
+                        &http,
+                        opts.cover_hasher.as_ref(),
+                        facts,
+                        raw,
+                        pre_filter,
+                        local_phash,
+                        alternate_cover_fetch_cap,
+                        thresholds,
+                        YearGate::PhashAware(facts.year),
+                    )
+                    .await;
+                    if !produced.is_empty() {
+                        year_gate_relaxed = true;
+                    }
                 }
+                ranked.extend(produced);
             }
             Err(ProviderError::QuotaExceeded { retry_after_secs }) => {
                 surfaced_quota = Some(retry_after_secs);
@@ -702,6 +960,9 @@ pub async fn run_series_search(
     }
 
     finalize_ranking(&mut ranked);
+    if year_gate_relaxed {
+        note_year_gate_relaxed(db, run_id).await;
+    }
 
     // If *every* enabled provider was quota-exhausted, surface that
     // as `awaiting_quota` instead of `completed-with-no-results` so
@@ -752,6 +1013,33 @@ pub async fn run_issue_search(
     alternate_cover_fetch_cap: u32,
     local_issue_id: Option<&str>,
 ) -> Result<Vec<RankedCandidate>, ProviderError> {
+    run_issue_search_with(
+        db,
+        run_id,
+        providers,
+        facts,
+        series_targets,
+        thresholds,
+        alternate_cover_fetch_cap,
+        local_issue_id,
+        SearchOpts::default(),
+    )
+    .await
+}
+
+/// [`run_issue_search`] with explicit [`SearchOpts`].
+#[allow(clippy::too_many_arguments)]
+pub async fn run_issue_search_with(
+    db: &DatabaseConnection,
+    run_id: Uuid,
+    providers: &[Arc<dyn MetadataProvider>],
+    facts: &IssueQueryFacts,
+    series_targets: &[EffectiveTarget],
+    thresholds: Thresholds,
+    alternate_cover_fetch_cap: u32,
+    local_issue_id: Option<&str>,
+    opts: SearchOpts,
+) -> Result<Vec<RankedCandidate>, ProviderError> {
     if let Err(e) = mark_searching(db, run_id).await {
         return Err(ProviderError::Transport(format!("db: {e}")));
     }
@@ -780,6 +1068,7 @@ pub async fn run_issue_search(
     let mut ranked = Vec::new();
     let mut surfaced_quota: Option<u64> = None;
     let mut last_error: Option<ProviderError> = None;
+    let mut year_gate_relaxed = false;
     let http = cover_http_client();
     for p in providers {
         // Effective provider target for this issue: a covering
@@ -808,16 +1097,49 @@ pub async fn run_issue_search(
         // ── primary search (narrowed to the provider series when known) ──
         let primary = match p.search_issue(&issue_query(narrow_id.clone())).await {
             Ok(candidates) => {
-                score_issue_candidates(
+                let raw = candidates;
+                let mut scored = score_issue_candidates(
                     &http,
+                    opts.cover_hasher.as_ref(),
                     facts,
-                    candidates,
+                    raw.clone(),
                     local_phash,
                     alternate_cover_fetch_cap,
                     thresholds,
                     primary_gate,
                 )
-                .await
+                .await;
+                // WP-2.8 year-gate escape on the *narrowed* pass: the
+                // user pinned this provider series, the provider
+                // returned issues for it, and the hard gate threw them
+                // all away — almost always a wrong local year rather
+                // than a wrong series. Re-score the same results under
+                // the cover-aware gate before falling through to the
+                // broad search. See `run_series_search_with` for the
+                // guard rationale.
+                if scored.is_empty()
+                    && matches!(primary_gate, YearGate::Hard(_))
+                    && opts.relax_year_gate
+                    && local_phash.is_some()
+                    && gate_year.is_some()
+                    && !raw.is_empty()
+                {
+                    scored = score_issue_candidates(
+                        &http,
+                        opts.cover_hasher.as_ref(),
+                        facts,
+                        raw,
+                        local_phash,
+                        alternate_cover_fetch_cap,
+                        thresholds,
+                        YearGate::PhashAware(gate_year),
+                    )
+                    .await;
+                    if !scored.is_empty() {
+                        year_gate_relaxed = true;
+                    }
+                }
+                scored
             }
             Err(ProviderError::QuotaExceeded { retry_after_secs }) => {
                 surfaced_quota = Some(retry_after_secs);
@@ -852,6 +1174,7 @@ pub async fn run_issue_search(
                 Ok(candidates) => {
                     produced = score_issue_candidates(
                         &http,
+                        opts.cover_hasher.as_ref(),
                         facts,
                         candidates,
                         local_phash,
@@ -893,6 +1216,9 @@ pub async fn run_issue_search(
     }
 
     finalize_ranking(&mut ranked);
+    if year_gate_relaxed {
+        note_year_gate_relaxed(db, run_id).await;
+    }
 
     if ranked.is_empty() && surfaced_quota.is_some() {
         let resume = Utc::now() + chrono::Duration::seconds(surfaced_quota.unwrap_or(60) as i64);
@@ -916,6 +1242,15 @@ pub async fn run_issue_search(
         return Err(ProviderError::Transport(format!("db: {e}")));
     }
     Ok(ranked)
+}
+
+/// Record on the run that the year gate was relaxed (WP-2.8). Soft-fails
+/// — the annotation is advisory UI copy, never worth failing a search.
+async fn note_year_gate_relaxed(db: &DatabaseConnection, run_id: Uuid) {
+    if let Err(e) = annotate_query(db, run_id, serde_json::json!({"year_gate_relaxed": true})).await
+    {
+        tracing::warn!(run_id = %run_id, error = %e, "metadata search: year_gate_relaxed annotation failed");
+    }
 }
 
 // ───────── read API for the polling endpoint ─────────
@@ -971,6 +1306,7 @@ fn cover_urls_for_candidate<'a>(
 /// replaces that helper.
 async fn fetch_phashes_per_candidate(
     http: &reqwest::Client,
+    hasher: Option<&CoverHasher>,
     urls_per_candidate: &[Vec<Option<&str>>],
 ) -> Vec<Vec<Option<i64>>> {
     use futures::stream::StreamExt;
@@ -986,8 +1322,9 @@ async fn fetch_phashes_per_candidate(
     let futures: Vec<_> = flat
         .iter()
         .map(|maybe_url| async move {
-            match maybe_url {
-                Some(url) => {
+            match (maybe_url, hasher) {
+                (Some(url), Some(h)) => h((*url).to_owned()).await,
+                (Some(url), None) => {
                     crate::metadata::phash::fetch_and_hash_cover(
                         http,
                         url,
@@ -995,7 +1332,7 @@ async fn fetch_phashes_per_candidate(
                     )
                     .await
                 }
-                None => None,
+                (None, _) => None,
             }
         })
         .collect();

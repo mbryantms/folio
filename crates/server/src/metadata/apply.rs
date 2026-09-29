@@ -428,11 +428,21 @@ pub(crate) async fn write_series_fields(
     let mut outcome = ApplyOutcome::default();
     let entity_id_str = series_uuid.to_string();
 
+    // Only the identifiers that point at *this* series: the provider
+    // mappers also list related ids (CV's publisher) and `external_ids`
+    // holds one row per (entity, source), so an unfiltered write would
+    // replace the series' own id with the publisher's.
+    let own_identifiers: Vec<Identifier> = detail
+        .identifiers
+        .iter()
+        .filter(|i| i.is_for_entity("series"))
+        .cloned()
+        .collect();
     apply_external_ids(
         &state.db,
         "series",
         &entity_id_str,
-        &detail.identifiers,
+        &own_identifiers,
         resolver.primary().set_by,
         &args,
         &mut outcome,
@@ -1163,11 +1173,20 @@ pub(crate) async fn write_issue_fields(
     let entity_id_str = row.id.clone();
     let provenance = fetch_field_provenance_map(&state.db, "issue", &entity_id_str).await?;
 
+    // See `write_series_fields`: drop the parent-volume / series ids the
+    // mappers tuck into the issue detail so they can't overwrite the
+    // issue's own row for that source.
+    let own_identifiers: Vec<Identifier> = detail
+        .identifiers
+        .iter()
+        .filter(|i| i.is_for_entity("issue"))
+        .cloned()
+        .collect();
     apply_external_ids(
         &state.db,
         "issue",
         &entity_id_str,
-        &detail.identifiers,
+        &own_identifiers,
         resolver.primary().set_by,
         &args,
         &mut outcome,
@@ -1859,10 +1878,10 @@ pub(crate) fn build_provider(
             if !cfg.comicvine_enabled {
                 return None;
             }
-            Some(Arc::new(ComicVineClient::new(
-                key,
-                state.jobs.redis.clone(),
-            )))
+            Some(Arc::new(match cfg.comicvine_base_url.clone() {
+                Some(base) => ComicVineClient::with_base_url(key, base, state.jobs.redis.clone()),
+                None => ComicVineClient::new(key, state.jobs.redis.clone()),
+            }))
         }
         Source::Metron => {
             let username = cfg
@@ -1876,11 +1895,15 @@ pub(crate) fn build_provider(
             if !cfg.metron_enabled {
                 return None;
             }
-            Some(Arc::new(MetronClient::new(
-                &username,
-                &password,
-                state.jobs.redis.clone(),
-            )))
+            Some(Arc::new(match cfg.metron_base_url.clone() {
+                Some(base) => MetronClient::with_base_url(
+                    &username,
+                    &password,
+                    base,
+                    state.jobs.redis.clone(),
+                ),
+                None => MetronClient::new(&username, &password, state.jobs.redis.clone()),
+            }))
         }
         _ => None,
     }

@@ -214,9 +214,41 @@ is required.
 
 ### Search returns zero candidates for a series you know exists upstream
 
-Series name normalization is aggressive (drops articles, common
-prefixes, year-suffixes). Try editing the series name on the
-series page to match the provider's exact title, then re-search.
+Three escape hatches live in the Fetch metadata dialog (WP-2.8); none
+of them edit the series or issue row.
+
+1. **Adjust query.** Expand *Adjust query* under the candidate list,
+   change the name / start year / publisher (issue number on the
+   issue dialog) and *Search with this query*. The overrides replace
+   the local facts **for that run only** and are recorded on the run
+   (`metadata_run.query.overrides`), so the Review queue and the
+   dialog say "Searched as …". Series name normalization is
+   aggressive (drops articles, common prefixes, year-suffixes), so
+   typing the provider's exact title is usually enough. Setting a
+   year also *pins* it: the orchestrator will not relax the year
+   gate for a year you asserted.
+2. **Paste provider URL.** Paste the ComicVine volume / issue page
+   (`…/4050-<id>/` or `…/4000-<id>/`) or a Metron series / issue URL
+   carrying the numeric id (`metron.cloud/series/<id>/` or the API
+   form `metron.cloud/api/series/<id>/`) and click *Lookup*. The
+   server fetches that exact record — through the same cache and
+   rate bucket a search uses — and returns a completed run with it as
+   the single HIGH candidate, so preview and apply work unchanged.
+   Metron's public page links use slugs (`/series/saga-2012/`), which
+   the API can't resolve; the dialog tells you to use the numeric id.
+   URLs for providers that aren't configured + enabled are rejected
+   with a 422 before any network call.
+3. **Relaxed year gate (automatic).** The pre-filter drops any
+   candidate whose start year is more than one year past the local
+   year. When that gate empties the list — the classic "folder says
+   2010, the real volume started 2015" case — the orchestrator
+   re-scores the same provider results under the cover-aware gate
+   (no extra provider call): a year-mismatched candidate survives
+   only if its cover pHash confirms the match. The run is annotated
+   (`query.year_gate_relaxed`) and the dialog shows *Year gate
+   relaxed — candidates may be from a different volume*. The fallback
+   needs a local cover hash (`issue_cover.phash`) and never fires
+   when the year was supplied as an override.
 
 If the provider's title differs significantly from yours (e.g.
 yours says "The X-Men" and Metron has "Uncanny X-Men"), the

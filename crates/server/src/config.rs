@@ -231,6 +231,17 @@ pub struct Config {
     /// Master toggle for Metron integration.
     #[serde(default)]
     pub metron_enabled: bool,
+    /// Override the ComicVine API base URL (`COMIC_COMICVINE_BASE_URL`).
+    /// Test / staging hook only — production leaves it unset and the
+    /// client uses `https://comicvine.gamespot.com/api`. Lets the
+    /// integration suite point the *real* provider factory at a
+    /// wiremock instance instead of pre-seeding the metadata cache.
+    #[serde(default)]
+    pub comicvine_base_url: Option<String>,
+    /// Override the Metron base URL (`COMIC_METRON_BASE_URL`); same
+    /// intent as [`Self::comicvine_base_url`]. Default `https://metron.cloud`.
+    #[serde(default)]
+    pub metron_base_url: Option<String>,
 
     // Weekly metadata refresh (metadata-providers-1.0 M7)
     /// Master toggle for the weekly metadata-refresh cron. **Off by
@@ -383,6 +394,8 @@ impl std::fmt::Debug for Config {
             .field("metron_username", &redact_opt(&self.metron_username))
             .field("metron_password", &redact_opt(&self.metron_password))
             .field("metron_enabled", &self.metron_enabled)
+            .field("comicvine_base_url", &self.comicvine_base_url)
+            .field("metron_base_url", &self.metron_base_url)
             .finish()
     }
 }
@@ -1295,6 +1308,8 @@ mod tests {
             metron_username: None,
             metron_password: None,
             metron_enabled: false,
+            comicvine_base_url: None,
+            metron_base_url: None,
             metadata_weekly_refresh_enabled: false,
             metadata_weekly_refresh_cron: default_weekly_refresh_cron(),
             metadata_weekly_refresh_window_days: default_weekly_refresh_window_days(),
