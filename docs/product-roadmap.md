@@ -143,12 +143,14 @@ Exit: every promise in `docs/features.md` and `docs/install/*.md` is true or rem
 
 ### M2 — Ownership and safety (target: 4–5 weeks of sessions)
 
-Exit: any scanner mistake is fixable in-app; hand edits reach the archive safely when writeback is on and never touch files when it is off; kids' caps are enforced everywhere; a full rebuild restores all user data; provider calls are budget-aware.
+Exit: any scanner mistake is fixable in-app; hand edits reach the archive safely when writeback is on and never touch files when it is off; kids' caps are enforced everywhere; user data can be exported in one file; provider calls are budget-aware.
+
+**Status (2026-09-29): started.** Order chosen around the unmerged M1 PRs: 2.1, 2.4, 2.7, 2.8, 2.9 first (independent of M1); 2.3 (needs #877), 2.5 (touches the scanner hook from #880), 2.6 (touches `archive_rewrite` from #883) and 2.10 (needs 2.3 + 2.6) after M1 merges.
 
 | WP | Title | Effort | Audit | Scope | Files | Done when |
 |---|---|---|---|---|---|---|
-| 2.1 | User-data export | M | R6 | `GET /me/export` streams JSON: progress (with run), markers, collections + entries, ratings, saved views, custom pages, sidebar layout, reading log, keybinds; every issue reference carries `content_hash`, `issue_id`, and `(series name, year, number)`; versioned envelope | new `api/account_export.rs`, `app.rs` | Export of the dev library round-trips through WP-2.2 with zero loss; documented shape in `docs/dev/export-format.md` |
-| 2.2 | User-data import (+ admin progress import) | M | R6 | `POST /me/import?dry_run=1` reports matches by hash, by series+number fallback, and unmatched; real import is idempotent; `POST /admin/import/progress` accepts the same shape plus a Komga progress export adapter | `api/account_export.rs`, `docs/install/migration.md` | Dry-run report test; idempotency test; Komga sample fixture imports |
+| 2.1 | User-data export | M | R6 | `GET /me/export` streams JSON: progress (with run), markers, collections + entries, ratings, saved views, custom pages, sidebar layout, reading log, keybinds; every issue reference carries `content_hash`, `issue_id`, and `(series name, year, number)`; versioned envelope; "Export my data" button on the account settings page | new `api/account_export.rs`, `app.rs`, account settings page | Export of a seeded library contains every row the user owns (test compares counts per section); documented shape in `docs/dev/export-format.md` |
+| ~~2.2~~ | ~~User-data import~~ | — | — | **Removed 2026-09-29 (owner decision: no import feature).** The export (2.1) stays as the durable dump and the base for the notes export (5.1); restoring is `pg_restore` per `docs/install/backup.md`. | — | — |
 | 2.3 | Series identity edits | M | R7, UX-6 → 1.1 | `UpdateSeriesReq` gains name, year, volume, publisher, imprint, age_rating, total_issues, language; each write pins `SetBy::User`; scanner and apply honour series pins (`fetch_user_pinned_fields` for series); `SeriesEditDrawer` gains the fields with `applyServerErrors` | `api/series.rs`, `metadata/writers.rs`, `scanner/process.rs`, `web/components/library/SeriesEditDrawer.tsx` | Edited year survives force rescan and weekly refresh; identity resolver does not re-home the series on rename |
 | 2.4 | "Files stay clean" gate audit | S | D4 rule 1 | Every archive writer (CBR auto-convert, page editor, bulk ops, `.bak`) checks `allow_archive_writeback`; UI hides the affordances when off | `scanner/cbr_convert.rs`, `api/archive_edit.rs`, web archive-edit dialogs | Test: each writer returns 409 `archive.writeback_disabled` when the flag is off |
 | 2.5 | Rescan honours provider tier | M | D4 rule 2, DI-6, DI-7, DI-8 | Scanner writes file values only where provenance is file-tier or unset; junction rebuild diffs against provider-written rows and preserves `person_id`/ordinal; `scan_information`/`community_rating`/`review` join the gated set; edit endpoints write provenance inside the row transaction; retire the nine `user_edited` reads in the scanner (rest of `user_edited` in WP-3.7) | `scanner/process.rs`, `scanner/metadata_rollup.rs`, `api/issues.rs` | Test: provider-applied credits and summary survive a content-changed rescan on a non-writeback library; provenance stays `provider` |
@@ -234,7 +236,6 @@ Exit: series carry typed, traversable relationships (manual and suggested), the 
 1.1 ──► 2.3 ──► 2.10
 1.2 ──► 6.2
 1.3 ──► 4.5 ──► 4.6
-2.1 ──► 2.2
 2.1 ──► 5.1
 2.6 ──► 2.10
 2.9 ──► 6.1
@@ -268,4 +269,5 @@ None. Every audit item is now either scheduled (§5) or confirmed excluded (§2)
 ## 9. Decision history
 
 - 2026-09-29: D1–D10 answered; D3, D4, D5 settled per §3.1–§3.3 (reading-run model with silent follow; both clean-files rules; `curator` removed).
+- 2026-09-29: M2 started; WP-2.2 (user-data import) removed at the owner's request.
 - 2026-09-29: exclusion list ruled on. Pulled back in and planned: relationship suggestion engine (M7), similar series (WP-7.4), GCD provider (WP-6.1), page-hash marker anchoring (WP-6.2). All other proposed exclusions confirmed excluded. An earlier edit the same day had these four backwards; corrected.
