@@ -211,6 +211,8 @@ async fn seed_issue_with_count(
         comicinfo_count: Set(comicinfo_count),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        last_sidecar_rewrite_at: Set(None),
+        metron_info_raw: Set(None),
         cover_page_index: Set(0),
         metadata_review_accepted_at: Set(None),
         metadata_review_accepted_by: Set(None),

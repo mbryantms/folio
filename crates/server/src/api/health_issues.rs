@@ -1059,6 +1059,10 @@ async fn enqueue_drift_flush_for_series(app: &AppState, series_ids: &[Uuid]) -> 
                     // partial fan-out failure shouldn't strand the
                     // succeeding issues.
                     skip_rescan: false,
+                    attempt: 0,
+                    // No provider decisions to record: the flush only
+                    // pushes existing DB truth (user pins) into the XML.
+                    post_apply: None,
                 })
                 .await;
             match push {

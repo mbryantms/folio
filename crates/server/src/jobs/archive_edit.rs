@@ -21,9 +21,11 @@
 //! recompress). Rotated / replaced pages are decoded, transformed, and
 //! re-encoded — JPEG at the per-library `archive_writeback_jpeg_quality`,
 //! everything else losslessly as PNG (the `image` crate can't encode
-//! WebP). Existing `ComicInfo.xml` / `MetronInfo.xml` sidecars are
-//! preserved verbatim; other non-page trash is dropped on rewrite, the
-//! same as the sidecar path.
+//! WebP). Every non-page entry the rewrite policy keeps — the root
+//! `ComicInfo.xml` / `MetronInfo.xml` pair and any foreign sidecar
+//! (`CoMet.xml`, notes, `.json`) — is preserved verbatim; junk is dropped
+//! on rewrite, the same as the sidecar path
+//! ([`archive::rewrite_policy`]).
 
 use crate::archive_rewrite::{self, RewriteError, mutex};
 use crate::audit::{self, AuditEntry};
@@ -296,12 +298,23 @@ pub async fn handle(job: ArchiveEditJob, state: Data<AppState>) -> Result<(), Er
             return Ok(());
         }
         Err(e) => {
-            tracing::error!(issue_id = %job.issue_id, error = %e, "archive edit: mutex claim failed");
-            return Ok(()); // soft-fail; operator can retry
+            // Redis failed: hand the job back to apalis for a retry rather
+            // than dropping the operator's edit (same policy as the sidecar
+            // job — WP-2.6 (e)).
+            tracing::error!(issue_id = %job.issue_id, error = %e, "archive edit: mutex claim failed; returning Err for apalis retry");
+            return Err(Error::Failed(std::sync::Arc::new(Box::new(e))));
         }
     };
+    // Keep the lock alive across a long re-encode (WP-2.6 (h)).
+    let heartbeat = mutex::Heartbeat::start(
+        state.jobs.redis.clone(),
+        job.issue_id.clone(),
+        token.clone(),
+        mutex::EDIT_TTL_SECS,
+    );
 
     let outcome = edit_one_issue(&state, &job).await;
+    drop(heartbeat);
     let mut redis = state.jobs.redis.clone();
     mutex::release(&mut redis, &job.issue_id, &token).await;
 
@@ -747,21 +760,17 @@ fn needs_encode(w: &Work) -> bool {
     w.replacement.is_some() || !w.rotation.is_multiple_of(360) || !w.transforms.is_empty()
 }
 
-/// Read `ComicInfo.xml` / `MetronInfo.xml` from the source so a page edit
-/// preserves them verbatim. Other non-page entries (Thumbs.db, dotfiles)
-/// are intentionally dropped, mirroring the sidecar-rewrite path. Generic
-/// over the reader so CBZ/CBT/CBR all preserve sidecars on edit.
+/// Read every non-page entry the rewrite policy keeps — the root
+/// `ComicInfo.xml` / `MetronInfo.xml` pair **and** any foreign sidecar
+/// (`CoMet.xml`, `notes.txt`, an embedded `.json`) — so a page edit
+/// carries them through verbatim. Junk (Thumbs.db, dotfiles, `__MACOSX`)
+/// and stale nested Folio sidecars are dropped, exactly as the sidecar
+/// rewrite does ([`archive::rewrite_policy`], WP-2.6 (b)). Generic over
+/// the reader so CBZ/CBT/CBR all agree.
 fn read_preserved_sidecars(
     src: &mut dyn ComicArchive,
 ) -> Result<Vec<(String, Vec<u8>, i64)>, EditError> {
-    let mut extras = Vec::new();
-    for name in ["ComicInfo.xml", "MetronInfo.xml"] {
-        if src.find(name).is_some() {
-            let bytes = src.read_entry_bytes(name)?;
-            extras.push((name.to_string(), bytes, 6));
-        }
-    }
-    Ok(extras)
+    Ok(archive::rewrite_policy::preserved_extras(src, true)?)
 }
 
 /// Lowercase extension (no dot) of an entry name, defaulting to `jpg`.

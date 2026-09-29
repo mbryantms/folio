@@ -22,6 +22,15 @@
 //! file is *never* mutated — the worst case is an orphan `.tmp` sibling,
 //! which [`startup_cleanup`] will reap on the next boot.
 //!
+//! **`target` is never missing.** The backup slot is filled by
+//! hard-linking (or, when the filesystem refuses links, copying) the
+//! original into `<target>.bak` *while it still lives at `target`*, and
+//! the staging file is then `rename(2)`d over it in one atomic replace.
+//! A crash at any point leaves the old or the new bytes at `target`;
+//! there is no window where only the `.bak` + a `.tmp` survive (WP-2.6
+//! (a), audit OP-8). [`rewrite_atomic_with_faults`] exposes the step
+//! boundaries so tests can prove it.
+//!
 //! ## Backup retention
 //!
 //! v1 keeps a single `.bak` per archive (overwritten on each rewrite).
@@ -82,15 +91,24 @@ pub enum RewriteError {
 ///
 /// Steps:
 ///
-///   1. Pick `<target>.tmp` as the staging path (same directory ⇒ rename
-///      is atomic on the same filesystem).
+///   1. Pick `<target>.<random>.tmp` as the staging path (same directory ⇒
+///      rename is atomic on the same filesystem).
 ///   2. Caller writes the new bytes into the tmp path via the closure.
 ///   3. fsync the tmp file + the parent dir so the new bytes are durable
-///      before we rotate the `.bak`.
+///      before we touch the backup slots.
 ///   4. If `target` exists and `retain_count > 0`, shift any existing
 ///      `.bak.N` siblings forward (`.bak` → `.bak.1`, `.bak.1` → `.bak.2`,
-///      …) up to the retain cap, then rename `target` → `<target>.bak`.
-///   5. Rename `<target>.tmp` → `target`.
+///      …) up to the retain cap, then **hard-link** `target` into the
+///      `<target>.bak` slot (falling back to a byte copy when the
+///      filesystem refuses hard links — some NAS / FAT / SMB mounts). The
+///      original inode is now reachable from both names.
+///   5. Rename `<target>.tmp` → `target`. `rename(2)` replaces the
+///      destination atomically, so there is **no instant at which
+///      `target` is missing** — a crash anywhere in this sequence leaves
+///      either the old bytes or the new bytes at `target` (WP-2.6 (a),
+///      audit OP-8). Pre-fix the order was `rename(target, .bak)` then
+///      `rename(tmp, target)`, and a crash between the two left only the
+///      `.bak` + a `.tmp` that [`startup_cleanup`] would later delete.
 ///   6. fsync the parent dir.
 ///
 /// `retain_count` is capped at 5. Pass `1` for the common case (one
@@ -112,6 +130,41 @@ pub fn rewrite_atomic<F>(
 where
     F: FnOnce(&Path) -> Result<(), RewriteError>,
 {
+    rewrite_atomic_with_faults(target, retain_count, write_into, |_| Ok(()))
+}
+
+/// Points between the steps of [`rewrite_atomic`] at which a crash can
+/// happen. The fault hook receives each one in order; returning `Err`
+/// simulates the process dying right there (nothing after the point
+/// runs). Used by the crash-window tests to prove `target` is readable
+/// at every point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RewriteStep {
+    /// New bytes written to the staging file and fsynced.
+    Staged,
+    /// Older `.bak.N` slots shifted forward (slot 0 is free).
+    Rotated,
+    /// `target` linked/copied into `<target>.bak`; `target` still holds
+    /// the old bytes.
+    BackedUp,
+    /// `<target>.tmp` renamed over `target`; the parent dir is not yet
+    /// fsynced.
+    Swapped,
+}
+
+/// [`rewrite_atomic`] with a fault-injection hook between every step.
+/// Production callers use [`rewrite_atomic`] (no-op hook); this is
+/// `pub` only so integration tests can simulate a crash mid-sequence.
+pub fn rewrite_atomic_with_faults<F, H>(
+    target: &Path,
+    retain_count: i32,
+    write_into: F,
+    mut fault: H,
+) -> Result<RewriteOutcome, RewriteError>
+where
+    F: FnOnce(&Path) -> Result<(), RewriteError>,
+    H: FnMut(RewriteStep) -> Result<(), RewriteError>,
+{
     if !(0..=5).contains(&retain_count) {
         return Err(RewriteError::InvalidRetainCount(retain_count));
     }
@@ -124,20 +177,58 @@ where
     write_into(&tmp)?;
     fsync_file(&tmp)?;
     fsync_dir(parent)?;
+    fault(RewriteStep::Staged)?;
 
     let backup = if retain_count > 0 && target.exists() {
-        Some(rotate_backups(target, retain_count)?)
+        rotate_backups(target, retain_count)?;
+        fault(RewriteStep::Rotated)?;
+        let slot0 = backup_slot_path(target, 0);
+        link_or_copy(target, &slot0)?;
+        fault(RewriteStep::BackedUp)?;
+        Some(slot0)
     } else {
         None
     };
-    // If retain=0 and target exists, rename will overwrite atomically.
+    // `rename(2)` replaces `target` atomically — the old inode stays
+    // reachable through `.bak` (hard link) and the new one appears under
+    // `target` in the same instant. If retain=0 and target exists, the
+    // rename overwrites it in place.
     fs::rename(&tmp, target)?;
+    fault(RewriteStep::Swapped)?;
     fsync_dir(parent)?;
 
     Ok(RewriteOutcome {
         target: target.to_path_buf(),
         backup,
     })
+}
+
+/// Make `dst` a second name for `src`'s bytes without ever removing
+/// `src`: a hard link when the filesystem supports one (same inode,
+/// zero extra bytes, instant), else a full byte copy (cross-device
+/// layouts, NAS / SMB / FAT mounts, or filesystems that refuse links on
+/// the file — `EXDEV`, `EPERM`, `ENOTSUP`, `EMLINK`). Either way `src`
+/// is untouched, which is what keeps the target readable through the
+/// whole swap. `dst` must not exist (the rotation freed the slot).
+fn link_or_copy(src: &Path, dst: &Path) -> Result<(), RewriteError> {
+    match fs::hard_link(src, dst) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            tracing::debug!(
+                src = %src.display(),
+                dst = %dst.display(),
+                error = %e,
+                "archive_rewrite: hard_link refused; copying the backup instead",
+            );
+            // A failed link attempt can't leave a half-file, but be
+            // defensive: clear anything at `dst` before copying so a
+            // stale slot never masquerades as the backup.
+            let _ = fs::remove_file(dst);
+            fs::copy(src, dst)?;
+            fsync_file(dst)?;
+            Ok(())
+        }
+    }
 }
 
 /// A fresh, unpredictable staging path for `target`: `<target>.<random>.tmp`
@@ -179,10 +270,12 @@ fn backup_slot_path(target: &Path, slot: i32) -> PathBuf {
     PathBuf::from(s)
 }
 
-/// Shift existing `.bak.{N-1..0}` slots forward by one, then move
-/// `target` into slot 0. Slots past `retain_count - 1` are dropped on
-/// the floor. Returns the path of the freshly-written slot 0.
-fn rotate_backups(target: &Path, retain_count: i32) -> Result<PathBuf, RewriteError> {
+/// Shift existing `.bak.{N-1..0}` slots forward by one so slot 0 is
+/// free for the caller to fill. Slots past `retain_count - 1` are
+/// dropped on the floor. Never touches `target` itself — the caller
+/// links/copies it into slot 0 *without* removing it (see
+/// [`rewrite_atomic`] step 4).
+fn rotate_backups(target: &Path, retain_count: i32) -> Result<(), RewriteError> {
     // Walk high→low so we never clobber a higher-numbered slot that
     // hasn't been moved yet.
     for slot in (0..retain_count).rev() {
@@ -199,9 +292,7 @@ fn rotate_backups(target: &Path, retain_count: i32) -> Result<PathBuf, RewriteEr
             }
         }
     }
-    let slot0 = backup_slot_path(target, 0);
-    fs::rename(target, &slot0)?;
-    Ok(slot0)
+    Ok(())
 }
 
 fn fsync_file(path: &Path) -> Result<(), RewriteError> {
@@ -521,6 +612,123 @@ mod tests {
         assert_eq!(fs::read(bak0).unwrap(), b"v3");
         assert_eq!(fs::read(bak1).unwrap(), b"v2");
         assert_eq!(fs::read(bak2).unwrap(), b"v1");
+    }
+
+    /// WP-2.6 (a) / audit OP-8: simulate a crash at every step boundary
+    /// of the swap and prove `target` is readable — holding either the
+    /// old or the new bytes — at each one. The pre-fix order
+    /// (`rename(target, .bak)` then `rename(tmp, target)`) had a window
+    /// after the first rename where `target` did not exist at all.
+    #[test]
+    fn crash_at_every_step_leaves_target_readable() {
+        for step in [
+            RewriteStep::Staged,
+            RewriteStep::Rotated,
+            RewriteStep::BackedUp,
+            RewriteStep::Swapped,
+        ] {
+            let dir = TempDir::new().unwrap();
+            let target = dir.path().join("issue.cbz");
+            fs::write(&target, b"old-bytes").unwrap();
+            // A pre-existing `.bak` so the rotation step has real work.
+            fs::write(target.with_extension("cbz.bak"), b"older-bytes").unwrap();
+
+            let res = rewrite_atomic_with_faults(
+                &target,
+                2,
+                |tmp| Ok(fs::write(tmp, b"new-bytes")?),
+                |at| {
+                    if at == step {
+                        Err(RewriteError::Io(io::Error::other(format!(
+                            "crash at {at:?}"
+                        ))))
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            assert!(res.is_err(), "fault at {step:?} must surface");
+
+            let bytes = fs::read(&target)
+                .unwrap_or_else(|e| panic!("target missing after crash at {step:?}: {e}"));
+            let expected: &[u8] = if step == RewriteStep::Swapped {
+                b"new-bytes"
+            } else {
+                b"old-bytes"
+            };
+            assert_eq!(bytes, expected, "target bytes after crash at {step:?}");
+
+            // Once the backup slot has been filled, the old bytes are also
+            // reachable through `.bak` — a crash never strands the only copy.
+            if matches!(step, RewriteStep::BackedUp | RewriteStep::Swapped) {
+                assert_eq!(
+                    fs::read(target.with_extension("cbz.bak")).unwrap(),
+                    b"old-bytes",
+                    "slot 0 after crash at {step:?}",
+                );
+                assert_eq!(
+                    fs::read(target.with_extension("cbz.bak.1")).unwrap(),
+                    b"older-bytes",
+                    "rotated slot 1 after crash at {step:?}",
+                );
+            }
+        }
+    }
+
+    /// The backup slot is a hard link of the original (same inode) on
+    /// filesystems that support it, so filling it never removes
+    /// `target`. After the swap the two names point at different inodes.
+    #[cfg(unix)]
+    #[test]
+    fn backup_slot_is_hard_linked_then_swapped() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("issue.cbz");
+        fs::write(&target, b"v1").unwrap();
+        let old_ino = fs::metadata(&target).unwrap().ino();
+
+        let mut linked_ino = None;
+        rewrite_atomic_with_faults(
+            &target,
+            1,
+            |tmp| Ok(fs::write(tmp, b"v2")?),
+            |at| {
+                if at == RewriteStep::BackedUp {
+                    // Both names resolve to the original inode right now.
+                    let bak = target.with_extension("cbz.bak");
+                    linked_ino = Some(fs::metadata(&bak).unwrap().ino());
+                    assert_eq!(fs::metadata(&target).unwrap().ino(), old_ino);
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(linked_ino, Some(old_ino), "slot 0 was a hard link");
+        assert_eq!(fs::read(&target).unwrap(), b"v2");
+        assert_eq!(fs::read(target.with_extension("cbz.bak")).unwrap(), b"v1");
+        assert_ne!(
+            fs::metadata(&target).unwrap().ino(),
+            old_ino,
+            "rename replaced the target inode"
+        );
+    }
+
+    /// When hard links are refused the slot is filled by a byte copy —
+    /// same contract, slower. Simulated by pointing the copy at a
+    /// directory-crossing layout isn't portable, so exercise the helper
+    /// directly against a pre-existing stale slot.
+    #[test]
+    fn link_or_copy_falls_back_and_clears_stale_slot() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("issue.cbz");
+        fs::write(&src, b"payload").unwrap();
+        let dst = dir.path().join("issue.cbz.bak");
+        // A stale slot makes `hard_link` fail with EEXIST → copy path.
+        fs::write(&dst, b"stale").unwrap();
+        link_or_copy(&src, &dst).unwrap();
+        assert_eq!(fs::read(&src).unwrap(), b"payload", "source untouched");
+        assert_eq!(fs::read(&dst).unwrap(), b"payload", "slot holds the copy");
     }
 
     #[test]

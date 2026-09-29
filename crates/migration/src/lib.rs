@@ -99,6 +99,7 @@ mod m20270120_000001_audit_log_created_at_idx;
 mod m20270121_000001_backfill_event_batch_id;
 mod m20270122_000001_new_issues_rail;
 mod m20270201_000001_progress_run;
+mod m20270202_000001_writeback_hardening;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -206,6 +207,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270121_000001_backfill_event_batch_id::Migration),
             Box::new(m20270122_000001_new_issues_rail::Migration),
             Box::new(m20270201_000001_progress_run::Migration),
+            Box::new(m20270202_000001_writeback_hardening::Migration),
         ]
     }
 }

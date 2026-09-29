@@ -268,6 +268,13 @@ struct ParsedArchive {
     /// attribution on the ingest's `field_provenance` writes. Empty when
     /// no MetronInfo.xml was present.
     metron_fields: std::collections::HashSet<String>,
+    /// The parsed `MetronInfo` as JSON (`serde_json::to_value`), captured
+    /// *before* the destructive merge so its `raw` map still lists every
+    /// top-level element Folio doesn't model. Persisted to
+    /// `issues.metron_info_raw` so the sidecar composer can pass those
+    /// elements through on the next rewrite (WP-2.6 (c)). `None` when no
+    /// MetronInfo.xml was present.
+    metron_info_raw: Option<serde_json::Value>,
 }
 
 /// Outcome of the by-content-hash dedupe check, when no row was found
@@ -427,6 +434,11 @@ async fn parse_archive_for_ingest(
 
     let metron_ids = metron_opt.as_ref().map(|m| m.ids.clone());
     let metroninfo_present = metron_opt.is_some();
+    // `merge_metron_into_comicinfo` only reads `m`, so the struct (and its
+    // `raw` passthrough map) is still intact here.
+    let metron_info_raw = metron_opt
+        .as_ref()
+        .and_then(|m| serde_json::to_value(m).ok());
 
     Ok(Some(ParsedArchive {
         hash,
@@ -436,6 +448,7 @@ async fn parse_archive_for_ingest(
         metron_ids,
         metroninfo_present,
         metron_fields,
+        metron_info_raw,
     }))
 }
 
@@ -732,6 +745,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         metron_ids,
         metroninfo_present,
         metron_fields,
+        metron_info_raw,
     }) = parse_archive_for_ingest(state, lib, path, size, stats, health, verify_dims).await?
     else {
         return Ok(());
@@ -893,6 +907,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         am.content_hash = Set(hash);
         am.special_type = Set(special_type.clone());
         am.metroninfo_present = Set(Some(metroninfo_present));
+        am.metron_info_raw = Set(metron_info_raw.clone());
         if !pinned(F::Title) {
             am.title = Set(info.title.clone());
         }
@@ -1223,6 +1238,8 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             // rewritten the bytes of.
             last_rewrite_at: Set(None),
             last_rewrite_kind: Set(None),
+            last_sidecar_rewrite_at: Set(None),
+            metron_info_raw: Set(metron_info_raw),
             // A freshly-scanned issue is never pre-accepted (B4); the operator
             // sets this later from the worklist.
             metadata_review_accepted_at: Set(None),

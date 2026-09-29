@@ -335,12 +335,19 @@ Default admin (first registered user becomes admin):
   library has both `allow_archive_writeback = true` AND
   `metadata_writeback_enabled = true`, the apply path inverts: instead
   of writing DB rows directly, it composes ComicInfo + MetronInfo
-  XML, rewrites both into the archive (atomic temp → fsync → .bak
-  rotate → rename → fsync-parent), and enqueues a scoped rescan so
-  the scanner re-ingests the freshly-written XML. The archive becomes
-  the canonical source; the DB is downstream cache. Legacy DB-direct
-  path stays for libraries with either flag off (dispatch lives in
-  `apply_issue` / `apply_series`).
+  XML, rewrites both into the archive (atomic temp → fsync → rotate
+  older `.bak.N` → hard-link original to `.bak` → rename over →
+  fsync-parent; the target is never missing), and enqueues a scoped
+  rescan so the scanner re-ingests the freshly-written XML. The archive
+  becomes the canonical source; the DB is downstream cache. Legacy
+  DB-direct path stays for libraries with either flag off, and for an
+  archive the sidecar path refuses (`rewrite_sidecars::sidecar_refusal`:
+  CBR without `auto_convert_cbr_on_scan`, CB7) — the refusal is
+  surfaced in `ApplyOutcome.sidecar_skip_reasons` (dispatch lives in
+  `apply_issue` / `apply_series` / `composite`). What a rewrite keeps
+  is one policy for every writer, `archive::rewrite_policy`: only junk
+  and the Folio-managed sidecars are dropped; `CoMet.xml` / `.txt` /
+  `.json` and any other foreign entry stream through byte-for-byte.
 
   **When adding a new metadata field**, the changeset must touch:
   1. The Rust struct in `crates/parsers/src/comicinfo.rs` (and/or
@@ -368,10 +375,13 @@ Default admin (first registered user becomes admin):
     scanner ingest is the canonical path; direct writers from the
     sidecar apply path are reserved for **metadata-only** rows the
     XML schemas don't carry (today: variant covers via
-    `set_issue_variants`, and per-field provenance via
-    `write_field_provenance` over `SIDECAR_ISSUE_PROVENANCE_FIELDS` —
-    the XML can't say "ComicVine set this on date X", so the apply
-    records it; the scanner's file-tier provenance writes
+    `set_issue_variants`, per-field provenance via
+    `write_field_provenance` over `SIDECAR_ISSUE_PROVENANCE_FIELDS`,
+    and the `last_metadata_sync_at` stamp — the XML can't say
+    "ComicVine set this on date X", so the apply *decides* it and hands
+    the decisions to the rewrite job as `PostRewriteWrites`, which
+    records them only after the rewrite succeeded (WP-2.6 f); a failed
+    rewrite writes none of them. The scanner's file-tier provenance writes
     (`writers::write_file_field_provenance`, `ON CONFLICT … WHERE`
     guard) refresh `comicinfo`/`metroninfo`/`series_json` rows freely
     but never downgrade `user` or provider rows — attribution

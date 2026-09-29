@@ -804,9 +804,17 @@ pub(crate) async fn apply_series_via_sidecar(
             }
         };
 
+        // Keep the lock alive across the blocking rewrite (WP-2.6 (h)).
+        let heartbeat = crate::archive_rewrite::mutex::Heartbeat::start(
+            state.jobs.redis.clone(),
+            issue_row.id.clone(),
+            token.clone(),
+            crate::archive_rewrite::mutex::SIDECAR_TTL_SECS,
+        );
         let result =
             crate::jobs::rewrite_sidecars::rewrite_one_issue(state, &issue_row.id, ci_xml, mi_xml)
                 .await;
+        drop(heartbeat);
         crate::archive_rewrite::mutex::release(&mut redis, &issue_row.id, &token).await;
 
         match result {
@@ -964,6 +972,80 @@ pub(crate) async fn apply_issue_via_sidecar(
     let comic_info_xml = parsers::comicinfo::serialize(&comic_info);
     let metron_info_xml = parsers::metroninfo::serialize(&metron_info);
 
+    // Metadata-only rows the XML can't carry — decided here, **written by
+    // the rewrite job only after the XML is in the archive** (WP-2.6 (f),
+    // audit DI-10). Pre-fix they were written at enqueue time, so a
+    // rewrite that failed at open left provenance, variant rows and
+    // `last_metadata_sync_at` describing provider values that never
+    // reached the file. The CLAUDE.md invariant still holds: nothing
+    // below touches an entity row; it only builds the deferred payload.
+    //
+    // Variant covers — same gate as the legacy path. Neither ComicInfo
+    // nor MetronInfo carries variants, so they land in `issue_cover`
+    // straight from the job; the scoped rescan never touches those rows.
+    let variants_selected = args
+        .selected_fields
+        .as_ref()
+        .map(|s| s.contains(&MetadataField::CoverVariants.key()))
+        .unwrap_or(true);
+    let variants: Vec<_> = if variants_selected {
+        detail.variants.clone()
+    } else {
+        Vec::new()
+    };
+    // Rows the writer will insert: it skips candidates with no image URL.
+    let variants_written = variants.iter().filter(|v| v.image_url.is_some()).count() as u32;
+
+    // Field provenance: the XML schemas can't carry "ComicVine set this
+    // on date X", and the scoped rescan's file-level attribution is
+    // guarded from *overwriting* provider rows — so the apply itself is
+    // the only place the true source is known. Skips mirror the
+    // composer's decisions: provider-empty fields kept their DB value,
+    // `selected_fields` is the per-field opt-in gate, and a user pin
+    // means the composer suppressed the provider's value (unless
+    // `override_user_edits` collapsed the pins — then the unconditional
+    // upsert in the job is also what retires the stale `user` row,
+    // letting the follow-up rescan ingest the overridden value).
+    let mut provenance = Vec::new();
+    for &field in SIDECAR_ISSUE_PROVENANCE_FIELDS {
+        if crate::metadata::merge::field_richness(
+            &detail,
+            field,
+            crate::metadata::merge::MergeScope::Issue,
+        ) == 0
+        {
+            continue;
+        }
+        if let Some(sel) = &args.selected_fields
+            && !sel.contains(&field.key())
+        {
+            continue;
+        }
+        if !args.override_user_edits && sidecar_pin_matches(&issue_user_pins, field) {
+            continue;
+        }
+        let prov = resolver.resolve(&field.key());
+        // The apply path always attributes to a provider; anything else
+        // would be a resolver bug, and there's no sensible row to write.
+        let SetBy::Provider(prov_source) = prov.set_by else {
+            continue;
+        };
+        provenance.push(crate::jobs::rewrite_sidecars::ProvenanceWrite {
+            field: field.key(),
+            source: prov_source,
+            source_external_id: prov.source_ext,
+        });
+    }
+    let post_apply = crate::jobs::rewrite_sidecars::PostRewriteWrites {
+        provenance,
+        variants,
+        variants_source: Some(source),
+        // `last_metadata_sync_at` is bookkeeping the XML doesn't carry, so
+        // the scoped rescan can't set it — the job stamps it on success
+        // (the DB-direct `apply_issue` does this via `bump_issue_sync`).
+        bump_sync: true,
+    };
+
     use apalis::prelude::Storage;
     let mut storage = state.jobs.rewrite_issue_sidecars_storage.clone();
     storage
@@ -985,102 +1067,13 @@ pub(crate) async fn apply_issue_via_sidecar(
             // Issue-scope apply path: let the apalis worker enqueue the
             // per-issue scoped rescan when it completes.
             skip_rescan: false,
+            attempt: 0,
+            post_apply: Some(post_apply),
         })
         .await
         .map_err(|e| ApplyError::InvalidScope(format!("rewrite_sidecars push failed: {e}")))?;
 
-    // Variant covers: metadata-only persistence — these don't live in
-    // the sidecar XML (neither ComicInfo nor MetronInfo carries them),
-    // they're presentational DB rows that drive the `<CoverGallery>`
-    // surface. Write them regardless of the sidecar XML path; the next
-    // scoped rescan won't touch `issue_cover` rows since the XML
-    // doesn't carry them, and that's intentional.
-    // Variant covers — same gate as the legacy path. The XML doesn't
-    // carry variants (neither ComicInfo nor MetronInfo schema does),
-    // so we still write them straight to the `issue_cover` table
-    // even on the XML-first path.
-    let variants_selected = args
-        .selected_fields
-        .as_ref()
-        .map(|s| s.contains(&MetadataField::CoverVariants.key()))
-        .unwrap_or(true);
-    let mut variants_written = 0u32;
-    if variants_selected && !detail.variants.is_empty() {
-        match crate::metadata::writers::set_issue_variants(
-            &state.db,
-            &state.cfg().data_path,
-            &row.id,
-            &detail.variants,
-            crate::metadata::writers::SetBy::Provider(source),
-        )
-        .await
-        {
-            Ok(n) => variants_written = n as u32,
-            Err(e) => tracing::warn!(
-                issue_id = row.id,
-                error = %e,
-                "apply_issue_via_sidecar: variant covers write failed",
-            ),
-        }
-    }
-
     flip_candidate_applied(&state.db, args.run_id, args.ordinal).await?;
-
-    // `last_metadata_sync_at` is bookkeeping the XML doesn't carry, so the
-    // scoped rescan can't set it from the rewritten sidecar — stamp it here on
-    // the writeback path too (the DB-direct `apply_issue` does this via
-    // `bump_issue_sync` at the end of its flow). Same metadata-only exception
-    // as the variant-cover write above.
-    bump_issue_sync(&state.db, &row.id).await?;
-
-    // Field provenance: the XML schemas can't carry "ComicVine set this
-    // on date X", and the scoped rescan's file-level attribution is
-    // guarded from *overwriting* provider rows — so the apply itself is
-    // the only place the true source is known. Same metadata-only
-    // exception class as the variant-cover write above. Skips mirror
-    // the composer's decisions: provider-empty fields kept their DB
-    // value, `selected_fields` is the per-field opt-in gate, and a
-    // user pin means the composer suppressed the provider's value
-    // (unless `override_user_edits` collapsed the pins — then the
-    // unconditional upsert below is also what retires the stale `user`
-    // row, letting the follow-up rescan ingest the overridden value).
-    // Best-effort: a provenance failure never fails the apply.
-    for &field in SIDECAR_ISSUE_PROVENANCE_FIELDS {
-        if crate::metadata::merge::field_richness(
-            &detail,
-            field,
-            crate::metadata::merge::MergeScope::Issue,
-        ) == 0
-        {
-            continue;
-        }
-        if let Some(sel) = &args.selected_fields
-            && !sel.contains(&field.key())
-        {
-            continue;
-        }
-        if !args.override_user_edits && sidecar_pin_matches(&issue_user_pins, field) {
-            continue;
-        }
-        let prov = resolver.resolve(&field.key());
-        if let Err(e) = writers::write_field_provenance(
-            &state.db,
-            "issue",
-            &row.id,
-            field,
-            prov.set_by,
-            prov.source_ext,
-        )
-        .await
-        {
-            tracing::warn!(
-                issue_id = row.id,
-                field = %field.key(),
-                error = %e,
-                "apply_issue_via_sidecar: field_provenance write failed",
-            );
-        }
-    }
 
     let outcome = ApplyOutcome {
         enqueued_rewrite: true,
@@ -1125,17 +1118,38 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
         set_by: SetBy::Provider(source),
         source_ext: detail.source_external_id.clone(),
     });
+    // WP-2.6 (f): an archive the sidecar path can't rewrite (CBR without
+    // conversion enabled, CB7, unknown extension) falls back to the
+    // DB-direct apply with the reason surfaced on the outcome, instead of
+    // enqueueing a job that fails at open after the run was marked
+    // applied (audit DI-10).
+    let mut sidecar_refused: Option<String> = None;
     if let Some(lib) = lib
         && lib.metadata_writeback_enabled
         && lib.allow_archive_writeback
     {
-        return apply_issue_via_sidecar(state, &args, &row, source, detail, &resolver).await;
+        match crate::jobs::rewrite_sidecars::sidecar_refusal(&lib, &row.file_path) {
+            None => {
+                return apply_issue_via_sidecar(state, &args, &row, source, detail, &resolver)
+                    .await;
+            }
+            Some(reason) => {
+                tracing::warn!(
+                    issue_id = %row.id,
+                    path = %row.file_path,
+                    reason,
+                    "apply_issue: sidecar writeback refused; applying DB-direct",
+                );
+                sidecar_refused = Some(format!("{}: {reason}; applied DB-direct", row.id));
+            }
+        }
     }
 
     let run_id = args.run_id;
     let ordinal = args.ordinal;
-    let outcome =
+    let mut outcome =
         write_issue_fields(state, &row, &detail, args, &resolver, &*provider, source).await?;
+    outcome.sidecar_skip_reasons.extend(sidecar_refused);
     flip_candidate_applied(&state.db, run_id, ordinal).await?;
     bump_run_counts(&state.db, run_id, &outcome).await?;
     // DB-direct path: rows (covers, fields, notes) are current now. Signal
