@@ -17,14 +17,17 @@
 mod common;
 
 use common::TestApp;
+use sea_orm::sea_query::Expr;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde_json::json;
+use server::metadata::budget::{self, BudgetWindow};
 use server::metadata::cache;
 use server::metadata::identifier::Source;
-use server::metadata::metron::MetronClient;
+use server::metadata::metron::{MetronAuth, MetronClient};
 use server::metadata::provider::{IssueQuery, MetadataProvider, ProviderError, SeriesQuery};
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{basic_auth, method, path, query_param},
+    matchers::{basic_auth, header, header_exists, method, path, query_param},
 };
 
 // ────────────────────── fixtures ──────────────────────
@@ -364,4 +367,277 @@ async fn search_issue_filters_by_series_id() {
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].external_id, "456");
     assert_eq!(out[0].series_name.as_deref(), Some("Saga"));
+}
+
+// ────────────────────── WP-2.9: token auth + budget + conditional ──────────────────────
+
+#[tokio::test]
+async fn token_auth_sends_bearer_header_and_skips_basic() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/series/"))
+        .and(header("authorization", "Bearer tok-123"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(paged(json!([]))))
+        .expect(1)
+        .mount(&mock)
+        .await;
+
+    let app = TestApp::spawn_with_metron_token(" tok-123\n", true).await;
+    // `from_config` trims the pasted token and prefers it over Basic.
+    let auth = MetronAuth::from_config(&app.state().cfg()).expect("configured");
+    assert!(auth.is_token());
+    let client = MetronClient::with_auth(auth, mock.uri(), app.state().jobs.redis.clone());
+    // The health check is what the admin "Test" button runs — it must
+    // exercise the token path.
+    let snap = client.health_check().await.expect("token accepted");
+    assert_eq!(snap.provider, Source::Metron);
+}
+
+#[tokio::test]
+async fn metron_auth_falls_back_to_basic_and_none() {
+    let basic = TestApp::spawn_with_metron("u", "p", true).await;
+    let auth = MetronAuth::from_config(&basic.state().cfg()).expect("basic configured");
+    assert!(!auth.is_token());
+    assert!(matches!(auth, MetronAuth::Basic { .. }));
+
+    let none = TestApp::spawn().await;
+    assert!(MetronAuth::from_config(&none.state().cfg()).is_none());
+    assert!(
+        MetronClient::from_config(&none.state().cfg(), none.state().jobs.redis.clone()).is_none()
+    );
+}
+
+#[tokio::test]
+async fn rate_limit_headers_are_recorded_as_budget() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/series/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("X-RateLimit-Burst-Limit", "20")
+                .insert_header("X-RateLimit-Burst-Remaining", "17")
+                .insert_header("X-RateLimit-Burst-Reset", "1700000060")
+                .insert_header("X-RateLimit-Sustained-Limit", "5000")
+                .insert_header("X-RateLimit-Sustained-Remaining", "4982")
+                .insert_header("X-RateLimit-Sustained-Reset", "1700003600")
+                .set_body_json(paged(json!([]))),
+        )
+        .mount(&mock)
+        .await;
+
+    let app = TestApp::spawn_with_metron("u", "p", true).await;
+    let redis = app.state().jobs.redis.clone();
+    // Before any response: the budget falls back to the local day bucket.
+    let pre = budget::for_provider(&redis, Source::Metron)
+        .await
+        .expect("bucket-derived");
+    assert_eq!(pre.window, BudgetWindow::Day);
+    assert_eq!(pre.limit, 5000);
+
+    let client = MetronClient::with_base_url("u", "p", mock.uri(), redis.clone());
+    client
+        .search_series(&SeriesQuery {
+            name: "x".into(),
+            year: None,
+            publisher: None,
+            limit: 1,
+        })
+        .await
+        .expect("search");
+
+    let state = budget::load(&redis, Source::Metron).await.expect("stored");
+    assert_eq!(state.windows.len(), 2);
+    let headline = state.headline().expect("headline");
+    assert_eq!(headline.window, BudgetWindow::Day);
+    assert_eq!(headline.limit, 5000);
+    assert_eq!(headline.remaining, 4982);
+    assert_eq!(headline.reset_at.timestamp(), 1_700_003_600);
+    // `for_provider` now prefers the upstream figure.
+    let post = budget::for_provider(&redis, Source::Metron).await.unwrap();
+    assert_eq!(post.remaining, 4982);
+}
+
+#[tokio::test]
+async fn expired_detail_row_is_revalidated_with_if_modified_since() {
+    let mock = MockServer::start().await;
+    let last_modified = "Wed, 12 Feb 2026 10:30:00 GMT";
+    // First fetch: unconditional → 200 + Last-Modified.
+    // `header_exists` rather than an exact match: wiremock's exact header
+    // matcher splits values on commas, which an HTTP-date contains. The
+    // sent value is asserted through the cached row below instead.
+    Mock::given(method("GET"))
+        .and(path("/api/series/123/"))
+        .and(header_exists("if-modified-since"))
+        .respond_with(ResponseTemplate::new(304))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/series/123/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Last-Modified", last_modified)
+                .set_body_json(series_detail_fixture()),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+
+    let app = TestApp::spawn_with_metron("u", "p", true).await;
+    let db = &app.state().db;
+    let client = MetronClient::with_base_url("u", "p", mock.uri(), app.state().jobs.redis.clone());
+
+    let first = client
+        .fetch_series_cached(db, "123")
+        .await
+        .expect("first fetch");
+    assert_eq!(first.series_name.as_deref(), Some("Saga"));
+    let row = entity::metadata_cache::Entity::find_by_id((
+        "metron".to_owned(),
+        "series".to_owned(),
+        "123".to_owned(),
+    ))
+    .one(db)
+    .await
+    .unwrap()
+    .expect("cached row");
+    assert_eq!(row.last_modified.as_deref(), Some(last_modified));
+    assert!(row.etag.is_none());
+
+    // Inside the TTL the cache answers alone (no HTTP at all).
+    let hit = client
+        .fetch_series_cached(db, "123")
+        .await
+        .expect("cache hit");
+    assert_eq!(hit.series_name.as_deref(), Some("Saga"));
+
+    // Age the row past the 168h series TTL; the next fetch must send
+    // If-Modified-Since, get the 304, and serve the stored body.
+    entity::metadata_cache::Entity::update_many()
+        .col_expr(
+            entity::metadata_cache::Column::FetchedAt,
+            Expr::value(chrono::Utc::now() - chrono::Duration::days(10)),
+        )
+        .filter(entity::metadata_cache::Column::ExternalId.eq("123"))
+        .exec(db)
+        .await
+        .unwrap();
+    let revalidated = client
+        .fetch_series_cached(db, "123")
+        .await
+        .expect("304 path");
+    assert_eq!(revalidated.series_name.as_deref(), Some("Saga"));
+    assert_eq!(revalidated.year_began, Some(2012));
+
+    // The 304 refreshed `fetched_at`: a plain TTL read is a hit again.
+    let fresh = cache::get(
+        db,
+        Source::Metron,
+        cache::CacheEntity::Series,
+        "123",
+        chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    assert!(fresh.is_some(), "fetched_at refreshed by the 304");
+}
+
+#[tokio::test]
+async fn changed_detail_row_is_refetched_when_upstream_sends_200() {
+    let mock = MockServer::start().await;
+    // The upstream answers a conditional request with a new body + a
+    // newer validator; the cache must store the new payload.
+    Mock::given(method("GET"))
+        .and(path("/api/series/123/"))
+        .and(header_exists("if-modified-since"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Last-Modified", "Thu, 13 Feb 2026 10:30:00 GMT")
+                .set_body_json({
+                    let mut v = series_detail_fixture();
+                    v["name"] = json!("Saga (Deluxe)");
+                    v
+                }),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/series/123/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Last-Modified", "Wed, 12 Feb 2026 10:30:00 GMT")
+                .set_body_json(series_detail_fixture()),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+
+    let app = TestApp::spawn_with_metron("u", "p", true).await;
+    let db = &app.state().db;
+    let client = MetronClient::with_base_url("u", "p", mock.uri(), app.state().jobs.redis.clone());
+    client.fetch_series_cached(db, "123").await.expect("first");
+    entity::metadata_cache::Entity::update_many()
+        .col_expr(
+            entity::metadata_cache::Column::FetchedAt,
+            Expr::value(chrono::Utc::now() - chrono::Duration::days(10)),
+        )
+        .exec(db)
+        .await
+        .unwrap();
+    let second = client
+        .fetch_series_cached(db, "123")
+        .await
+        .expect("refetch");
+    assert_eq!(second.series_name.as_deref(), Some("Saga (Deluxe)"));
+    let row = entity::metadata_cache::Entity::find_by_id((
+        "metron".to_owned(),
+        "series".to_owned(),
+        "123".to_owned(),
+    ))
+    .one(db)
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        row.last_modified.as_deref(),
+        Some("Thu, 13 Feb 2026 10:30:00 GMT")
+    );
+}
+
+#[tokio::test]
+async fn last_error_is_recorded_then_cleared_on_success() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("bad token"))
+        .up_to_n_times(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(paged(json!([]))))
+        .mount(&mock)
+        .await;
+
+    let app = TestApp::spawn_with_metron("u", "p", true).await;
+    let redis = app.state().jobs.redis.clone();
+    let client = MetronClient::with_base_url("u", "p", mock.uri(), redis.clone());
+    let q = SeriesQuery {
+        name: "x".into(),
+        year: None,
+        publisher: None,
+        limit: 1,
+    };
+    let err = client.search_series(&q).await.expect_err("401");
+    assert!(matches!(err, ProviderError::Unauthorized(_)));
+    let last = budget::load_last_error(&redis, Source::Metron)
+        .await
+        .expect("recorded");
+    assert!(last.message.contains("credentials"), "{}", last.message);
+
+    client.search_series(&q).await.expect("second call ok");
+    assert!(
+        budget::load_last_error(&redis, Source::Metron)
+            .await
+            .is_none()
+    );
 }

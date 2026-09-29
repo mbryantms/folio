@@ -93,11 +93,51 @@ user click → [METADATA_FETCH governor: per-IP] → enqueue job
   user-triggered API endpoints. A single misbehaving client can't
   fill the job queue.
 - **Per-provider Redis token bucket** — Lua-script atomic decrement +
-  TTL refresh. Keys: `metadata:bucket:comicvine`, `metadata:bucket:metron`.
-  Survives restarts (the bucket state lives in Redis, not in-process).
+  TTL refresh. Keys: `metadata:bucket:comicvine:hour`,
+  `metadata:bucket:metron:min` (20), `metadata:bucket:metron:day`
+  (5,000). Survives restarts (the bucket state lives in Redis, not
+  in-process); shared across replicas.
 
 Workers reserve N tokens before each HTTP call. Token-bucket deny
 requeues the job with `backoff = quota_resets_at - now + jitter`.
+
+### HTTP resilience (WP-2.9)
+
+Both clients send through
+[`metadata::http::send_with_retry`](../../crates/server/src/metadata/http.rs):
+
+| Concern | Behaviour |
+|---|---|
+| Client build | `build_client`: `connect_timeout(10s)`, total `timeout(30s)`, `redirect(Policy::limited(2))`, provider user-agent. |
+| Retry | Transport errors + 5xx retried up to 3× (4 attempts) with jittered exponential backoff — 200 ms base, 5 s cap, ×0.5–1.0 jitter. **4xx is never retried.** A retry whose backoff would end after the per-call deadline (75 s) is skipped. |
+| Body cap | 8 MiB, enforced on `Content-Length` *and* on streamed bytes → `InvalidResponse`, not retried. |
+| `Retry-After` | Parsed on 429 (delta-seconds or HTTP-date) into `QuotaExceeded { retry_after_secs }`; fallback 60 s (CV `status_code=107`: 3600 s). |
+| Budget | Metron's `X-RateLimit-{Burst,Sustained}-{Limit,Remaining,Reset}` → [`metadata::budget`](../../crates/server/src/metadata/budget.rs), stored in Redis `metadata:budget:<provider>` after every response; `metadata:last_error:<provider>` records the last failure (cleared on success). ComicVine's budget is derived from the local hourly bucket. |
+| Auth (Metron) | `MetronAuth::from_config`: `Authorization: Bearer <token>` when `metadata.metron.api_token` is set, else Basic. |
+
+The bucket reservation happens **once**, before the retry loop —
+retried requests count against the same upstream window either way.
+
+### Cache tables
+
+| Table | Key | Payload | TTL |
+|---|---|---|---|
+| `metadata_cache` | `(provider, entity, external_id)` | normalized `GenericMetadata` JSON + `schema_version` + `etag` / `last_modified` validators | 24 h issue / 168 h series (settings) |
+| `metadata_cover_hash` | provider image `url` | `phash` / `dhash` / `ahash` | 30 days |
+
+`cache::get_or_revalidate` is the single-flight read path for detail
+fetches: an expired row with validators is sent as
+`If-None-Match` / `If-Modified-Since` via
+`MetadataProvider::fetch_*_conditional`; a `304` refreshes `fetched_at`
+and serves the stored body. Providers without conditional support
+(ComicVine) use the trait default, which never yields a 304. Metron
+supports `Last-Modified` on *detail* endpoints only — list endpoints
+are always full fetches upstream.
+
+`phash::fetch_and_hash_cover` reads `metadata_cover_hash` first and
+fetches through one pooled `ssrf::shared_public_client` (DNS answers
+vetted by the client's resolver, redirect hops by its policy) — the
+per-fetch client + re-download per search are gone.
 When *every* enabled provider is quota-exhausted, the orchestrator
 marks the run `awaiting_quota` + sets `resume_after`; the dialog
 UI renders a "providers are out of quota" state instead of "failed".

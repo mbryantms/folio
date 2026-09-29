@@ -68,7 +68,11 @@ import {
 import { MetadataQueryTools } from "@/components/library/MetadataQueryTools";
 import { useMetadataApplyWait } from "@/components/library/useMetadataApplyWait";
 import { useMetadataCandidateSearch } from "@/components/library/useMetadataCandidateSearch";
-import { formatRetryEta, summarizeProviderQuota } from "@/lib/metadata/quota";
+import {
+  budgetNote,
+  formatRetryEta,
+  summarizeProviderQuota,
+} from "@/lib/metadata/quota";
 import type { MetadataMatchScope } from "@/components/library/metadata-match-scope";
 
 export type { MetadataMatchScope } from "@/components/library/metadata-match-scope";
@@ -345,6 +349,9 @@ export function MetadataMatchForm({
   // even exists.
   const quota = candidates.data?.quota;
   const quotaLines = (quota?.providers ?? []).map(summarizeProviderQuota);
+  const lowBudgetNotes = (quota?.providers ?? [])
+    .map(budgetNote)
+    .filter((n): n is string => n !== null);
   const retryEta = formatRetryEta(quota?.retry_after_seconds);
   const noProvidersConfigured = searchErrorCode === "metadata.no_providers";
 
@@ -763,6 +770,16 @@ export function MetadataMatchForm({
                 // see remaining provider quota before kicking another batch.
                 <p className="text-muted-foreground border-border/60 mt-1 border-t pt-2 text-xs">
                   Provider budget: {quotaLines.join(" · ")}
+                </p>
+              )}
+              {lowBudgetNotes.length > 0 && (
+                // WP-2.9: the upstream-reported budget is running low —
+                // say so in plain numbers before the next batch burns it.
+                <p
+                  className="text-muted-foreground mt-1 text-xs"
+                  data-testid="low-budget-note"
+                >
+                  {lowBudgetNotes.join(" · ")}
                 </p>
               )}
             </>

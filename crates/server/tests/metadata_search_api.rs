@@ -361,6 +361,10 @@ async fn candidates_completed_run_includes_provider_quota() {
         cv["remaining_hour"].is_number(),
         "remaining_hour snapshot present: {cv}"
     );
+    // WP-2.9: the headline budget rides along so the dialog can show
+    // "N of M requests left" — ComicVine's is bucket-derived, hourly.
+    assert_eq!(cv["budget"]["window"], "hour", "budget present: {cv}");
+    assert_eq!(cv["budget"]["limit"], 200);
     // No quota-park, so no retry ETA.
     assert!(body["quota"]["retry_after_seconds"].is_null());
 }

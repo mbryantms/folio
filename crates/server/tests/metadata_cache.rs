@@ -169,3 +169,167 @@ async fn purge_provider_removes_only_matching_rows() {
     .expect("hit");
     assert!(metron.series_name.is_none());
 }
+
+// ───────── WP-2.9: validators + revalidation ─────────
+
+#[tokio::test]
+async fn get_or_revalidate_304_keeps_body_and_refreshes_ttl() {
+    use server::metadata::cache::Validators;
+    use server::metadata::provider::ConditionalFetch;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let app = TestApp::spawn().await;
+    let db = &app.state().db;
+    let validators = Validators {
+        etag: Some("\"v1\"".into()),
+        last_modified: None,
+    };
+    cache::put_with_validators(
+        db,
+        Source::Metron,
+        CacheEntity::Issue,
+        "77",
+        &GenericMetadata {
+            title: Some("Chapter One".into()),
+            ..Default::default()
+        },
+        &validators,
+    )
+    .await
+    .unwrap();
+    // Stale by TTL, but still readable with its validators.
+    let (stale, v) = cache::get_stale(db, Source::Metron, CacheEntity::Issue, "77")
+        .await
+        .unwrap()
+        .expect("stale row");
+    assert_eq!(stale.title.as_deref(), Some("Chapter One"));
+    assert_eq!(v, validators);
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen: Arc<std::sync::Mutex<Option<Validators>>> = Arc::new(std::sync::Mutex::new(None));
+    let got = cache::get_or_revalidate(
+        db,
+        Source::Metron,
+        CacheEntity::Issue,
+        "77",
+        chrono::Duration::zero(),
+        |sent| {
+            let calls = calls.clone();
+            let seen = seen.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                *seen.lock().unwrap() = sent;
+                Ok::<_, ()>(ConditionalFetch::NotModified)
+            }
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(got.title.as_deref(), Some("Chapter One"));
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "one conditional fetch");
+    assert_eq!(seen.lock().unwrap().as_ref(), Some(&validators));
+    // `fetched_at` was touched: a normal TTL read is a hit now.
+    assert!(
+        cache::get(
+            db,
+            Source::Metron,
+            CacheEntity::Issue,
+            "77",
+            chrono::Duration::minutes(5)
+        )
+        .await
+        .unwrap()
+        .is_some()
+    );
+}
+
+#[tokio::test]
+async fn get_or_revalidate_fresh_body_replaces_payload_and_validators() {
+    use server::metadata::cache::Validators;
+    use server::metadata::provider::ConditionalFetch;
+
+    let app = TestApp::spawn().await;
+    let db = &app.state().db;
+    cache::put_with_validators(
+        db,
+        Source::Metron,
+        CacheEntity::Series,
+        "5",
+        &GenericMetadata {
+            series_name: Some("Old".into()),
+            ..Default::default()
+        },
+        &Validators {
+            etag: None,
+            last_modified: Some("Mon, 01 Jan 2024 00:00:00 GMT".into()),
+        },
+    )
+    .await
+    .unwrap();
+    let got = cache::get_or_revalidate(
+        db,
+        Source::Metron,
+        CacheEntity::Series,
+        "5",
+        chrono::Duration::zero(),
+        |_sent| async move {
+            Ok::<_, ()>(ConditionalFetch::Fresh {
+                payload: Box::new(GenericMetadata {
+                    series_name: Some("New".into()),
+                    ..Default::default()
+                }),
+                validators: Validators {
+                    etag: Some("\"v2\"".into()),
+                    last_modified: None,
+                },
+            })
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(got.series_name.as_deref(), Some("New"));
+    let (row, v) = cache::get_stale(db, Source::Metron, CacheEntity::Series, "5")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.series_name.as_deref(), Some("New"));
+    assert_eq!(v.etag.as_deref(), Some("\"v2\""));
+    assert!(v.last_modified.is_none());
+}
+
+#[tokio::test]
+async fn get_or_revalidate_without_row_fetches_unconditionally() {
+    use server::metadata::cache::Validators;
+    use server::metadata::provider::ConditionalFetch;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    let app = TestApp::spawn().await;
+    let db = &app.state().db;
+    let seen: Arc<Mutex<Vec<Option<Validators>>>> = Arc::new(Mutex::new(Vec::new()));
+    let got = cache::get_or_revalidate(
+        db,
+        Source::ComicVine,
+        CacheEntity::Issue,
+        "none",
+        chrono::Duration::hours(1),
+        |sent| {
+            let seen = seen.clone();
+            async move {
+                seen.lock().unwrap().push(sent);
+                Ok::<_, ()>(ConditionalFetch::Fresh {
+                    payload: Box::new(GenericMetadata {
+                        title: Some("Fresh".into()),
+                        ..Default::default()
+                    }),
+                    validators: Validators::default(),
+                })
+            }
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(got.title.as_deref(), Some("Fresh"));
+    assert_eq!(seen.lock().unwrap().as_slice(), &[None]);
+}

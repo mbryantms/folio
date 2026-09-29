@@ -1,7 +1,9 @@
 //! Redis-backed token bucket for provider HTTP quota gating.
 //!
 //! ComicVine: 200 req / resource / hour + ~1 req/sec velocity cap.
-//! Metron: 30 req/min + 5,000 req/day.
+//! Metron: 20 req/min (burst) + 5,000 req/day (sustained) — the
+//! March 2026 limits; supporters get a higher sustained cap, which the
+//! upstream reports via `X-RateLimit-*` headers (see `metadata::budget`).
 //!
 //! Both providers need quota state that:
 //!   - **survives restarts** — restarting the server shouldn't reset
@@ -81,12 +83,19 @@ pub const COMICVINE_HOUR: BucketDef = BucketDef {
 
 // ───────── Metron ─────────
 
+/// Metron's burst window. 20/min since March 2026 (was 30). The
+/// upstream enforces this per account and returns the live figure in
+/// `X-RateLimit-Burst-*`; this bucket is the local pre-flight so a
+/// worker never fires a request it knows will 429.
 pub const METRON_MIN: BucketDef = BucketDef {
     key: "metron:min",
-    capacity: 30,
+    capacity: 20,
     window: Duration::from_secs(60),
 };
 
+/// Metron's sustained window. 5,000/day is the base tier; donors get
+/// more, but the local bucket stays at the base so a shared account
+/// never over-commits.
 pub const METRON_DAY: BucketDef = BucketDef {
     key: "metron:day",
     capacity: 5000,

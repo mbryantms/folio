@@ -30,7 +30,9 @@
 //! velocity cap and the per-resource hour budget without coordinating
 //! across instances.
 
+use crate::metadata::budget;
 use crate::metadata::cache;
+use crate::metadata::http;
 use crate::metadata::identifier::{Identifier, Source};
 use crate::metadata::matcher::canonical_issue_number;
 use crate::metadata::provider::{
@@ -58,6 +60,10 @@ const USER_AGENT: &str = crate::build_info::USER_AGENT_METADATA;
 const VELOCITY_FLOOR: Duration = Duration::from_millis(1100);
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Wall-clock budget for one logical API call *including* the shared
+/// layer's retries (see [`crate::metadata::http`]).
+const REQUEST_DEADLINE: Duration = Duration::from_secs(75);
 
 const SERIES_FIELDS: &str = "id,name,start_year,publisher,deck,description,image,count_of_issues,site_detail_url,date_last_updated,aliases";
 const ISSUE_FIELDS: &str = "id,name,issue_number,cover_date,store_date,deck,description,image,associated_images,person_credits,character_credits,team_credits,location_credits,concept_credits,object_credits,story_arc_credits,first_appearance_characters,first_appearance_teams,first_appearance_locations,first_appearance_concepts,first_appearance_objects,first_appearance_storyarcs,characters_died_in,teams_disbanded_in,volume,site_detail_url,date_last_updated,aliases";
@@ -99,11 +105,7 @@ impl ComicVineClient {
         // written before that fix shipped (or any non-overlay caller)
         // shouldn't reach CV with a `?api_key=...%0A` URL.
         let api_key = api_key.trim().to_owned();
-        let http = reqwest::Client::builder()
-            .user_agent(USER_AGENT)
-            .timeout(DEFAULT_TIMEOUT)
-            .build()
-            .expect("reqwest client init");
+        let http = http::build_client(USER_AGENT, DEFAULT_TIMEOUT);
         Self {
             inner: Arc::new(Inner {
                 api_key,
@@ -187,44 +189,58 @@ impl ComicVineClient {
         extra_query: &[(&str, String)],
     ) -> ProviderResult<T> {
         self.reserve_slot().await?;
-        let url = format!("{}{}", self.inner.base_url, path);
-        let mut req = self.inner.http.get(&url).query(&[
-            ("api_key", &self.inner.api_key),
-            ("format", &"json".to_owned()),
-        ]);
-        if !extra_query.is_empty() {
-            req = req.query(extra_query);
+        let result = self.request_inner(path, extra_query).await;
+        match &result {
+            Ok(_) => budget::clear_error(&self.inner.redis, Source::ComicVine).await,
+            Err(e) => {
+                budget::record_error(&self.inner.redis, Source::ComicVine, &e.to_string()).await;
+            }
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| ProviderError::Transport(redact_api_key(&e.to_string())))?;
-        let status = resp.status();
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| ProviderError::Transport(redact_api_key(&e.to_string())))?;
-        if !status.is_success() {
-            // CV occasionally returns non-200 for 5xx; surface those
-            // distinctly. 4xx (other than 429) we still try to parse
-            // since the body usually carries a status_code envelope.
-            if status.as_u16() == 429 {
-                return Err(ProviderError::QuotaExceeded {
-                    retry_after_secs: 60,
-                });
+        result
+    }
+
+    async fn request_inner<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        extra_query: &[(&str, String)],
+    ) -> ProviderResult<T> {
+        let url = format!("{}{}", self.inner.base_url, path);
+        let opts = http::RequestOpts {
+            deadline: Some(Instant::now() + REQUEST_DEADLINE),
+            ..Default::default()
+        };
+        let build = || {
+            let mut req = self.inner.http.get(&url).query(&[
+                ("api_key", &self.inner.api_key),
+                ("format", &"json".to_owned()),
+            ]);
+            if !extra_query.is_empty() {
+                req = req.query(extra_query);
             }
-            if status.is_server_error() {
-                return Err(ProviderError::Upstream(format!("HTTP {status}: {body}")));
-            }
+            req
+        };
+        // The shared layer already retried transport errors + 5xx; what
+        // comes back is a 2xx/3xx/4xx to classify. 4xx (other than 429)
+        // is still parsed since CV puts its real status in the envelope.
+        let resp = http::send_with_retry(build, &opts, &redact_api_key).await?;
+        let status = resp.status;
+        if status.as_u16() == 429 {
+            return Err(ProviderError::QuotaExceeded {
+                retry_after_secs: http::retry_after_secs(
+                    &resp.headers,
+                    http::DEFAULT_RETRY_AFTER_SECS,
+                ),
+            });
         }
         // Parse the standard envelope first so we can map status_code
         // before the typed deserialize.
-        let envelope: CvEnvelope<serde_json::Value> = serde_json::from_str(&body).map_err(|e| {
-            ProviderError::InvalidResponse(format!(
-                "envelope parse: {e}; body={}",
-                truncate(&body, 256)
-            ))
-        })?;
+        let envelope: CvEnvelope<serde_json::Value> =
+            serde_json::from_slice(&resp.body).map_err(|e| {
+                ProviderError::InvalidResponse(format!(
+                    "envelope parse: {e}; body={}",
+                    resp.snippet(256)
+                ))
+            })?;
         match envelope.status_code.unwrap_or(1) {
             1 => {}
             100 => {
@@ -234,8 +250,11 @@ impl ComicVineClient {
             }
             101 => return Err(ProviderError::NotFound(envelope.error.unwrap_or_default())),
             107 => {
+                // CV's "rate limit exceeded" envelope. It rarely carries a
+                // `Retry-After`; the hourly window is the documented
+                // fallback.
                 return Err(ProviderError::QuotaExceeded {
-                    retry_after_secs: 3600,
+                    retry_after_secs: http::retry_after_secs(&resp.headers, 3600),
                 });
             }
             other => {
@@ -245,13 +264,9 @@ impl ComicVineClient {
                 )));
             }
         }
-        serde_json::from_str::<T>(&body)
+        serde_json::from_slice::<T>(&resp.body)
             .map_err(|e| ProviderError::InvalidResponse(format!("typed parse: {e}")))
     }
-}
-
-fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max { s } else { &s[..max] }
 }
 
 // ───────── CV envelope shapes ─────────

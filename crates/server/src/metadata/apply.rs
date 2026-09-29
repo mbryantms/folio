@@ -1898,26 +1898,11 @@ pub(crate) fn build_provider(
             }))
         }
         Source::Metron => {
-            let username = cfg
-                .metron_username
-                .clone()
-                .filter(|s| !s.trim().is_empty())?;
-            let password = cfg
-                .metron_password
-                .clone()
-                .filter(|s| !s.trim().is_empty())?;
+            let client = MetronClient::from_config(&cfg, state.jobs.redis.clone())?;
             if !cfg.metron_enabled {
                 return None;
             }
-            Some(Arc::new(match cfg.metron_base_url.clone() {
-                Some(base) => MetronClient::with_base_url(
-                    &username,
-                    &password,
-                    base,
-                    state.jobs.redis.clone(),
-                ),
-                None => MetronClient::new(&username, &password, state.jobs.redis.clone()),
-            }))
+            Some(Arc::new(client))
         }
         _ => None,
     }
@@ -1932,27 +1917,23 @@ pub(crate) async fn fetch_series_detail(
     let ttl =
         chrono::Duration::from_std(cache::CacheEntity::Series.default_ttl().to_std().unwrap())
             .unwrap_or(chrono::Duration::hours(168));
-    if let Ok(Some(hit)) = cache::get(
+    // Conditional single-flight (WP-2.9): an expired row is revalidated
+    // with its stored `ETag` / `Last-Modified` and a 304 keeps the
+    // cached body. Providers without conditional support fall through
+    // to a plain fetch via the trait default.
+    cache::get_or_revalidate(
         &state.db,
         source,
         cache::CacheEntity::Series,
         external_id,
         ttl,
+        |validators| async move {
+            provider
+                .fetch_series_conditional(external_id, validators.as_ref())
+                .await
+        },
     )
     .await
-    {
-        return Ok(hit);
-    }
-    let fresh = provider.fetch_series(external_id).await?;
-    let _ = cache::put(
-        &state.db,
-        source,
-        cache::CacheEntity::Series,
-        external_id,
-        &fresh,
-    )
-    .await;
-    Ok(fresh)
 }
 
 pub(crate) async fn fetch_issue_detail(
@@ -1963,27 +1944,19 @@ pub(crate) async fn fetch_issue_detail(
     let source = provider.id();
     let ttl = chrono::Duration::from_std(cache::CacheEntity::Issue.default_ttl().to_std().unwrap())
         .unwrap_or(chrono::Duration::hours(24));
-    if let Ok(Some(hit)) = cache::get(
+    cache::get_or_revalidate(
         &state.db,
         source,
         cache::CacheEntity::Issue,
         external_id,
         ttl,
+        |validators| async move {
+            provider
+                .fetch_issue_conditional(external_id, validators.as_ref())
+                .await
+        },
     )
     .await
-    {
-        return Ok(hit);
-    }
-    let fresh = provider.fetch_issue(external_id).await?;
-    let _ = cache::put(
-        &state.db,
-        source,
-        cache::CacheEntity::Issue,
-        external_id,
-        &fresh,
-    )
-    .await;
-    Ok(fresh)
 }
 
 pub(crate) async fn fetch_field_provenance_map(
