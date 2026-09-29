@@ -898,44 +898,18 @@ pub async fn update(
     am.user_edited = Set(serde_json::json!(edited_arr));
     am.updated_at = Set(chrono::Utc::now().fixed_offset());
 
-    let updated = match am.update(&app.db).await {
+    // The row update and its `field_provenance` user pins commit
+    // together (roadmap WP-2.5): a pin that failed to land used to leave
+    // the edit exposed to the next rescan. The legacy user_edited JSON
+    // column stays in place for columns without a MetadataField slot.
+    let keys: Vec<&str> = edited_arr.iter().map(String::as_str).collect();
+    let updated = match update_issue_with_user_pins(&app.db, am, &keys).await {
         Ok(m) => m,
         Err(e) => {
             tracing::error!(issue_id = %id, error = %e, "update issue failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-
-    // Dual-write to field_provenance for every touched scalar that
-    // maps to a typed MetadataField. The legacy user_edited JSON
-    // column stays in place as the scanner's user-precedence source
-    // — this is the de-risking work for the upcoming metadata-
-    // sidecar-writeback plan, whose composer reads field_provenance
-    // to preserve user pins across provider applies.
-    //
-    // Failures here are logged but don't fail the PATCH — the row
-    // already updated, and the next provider apply will overwrite
-    // the field_provenance row anyway. Don't double-roll-back.
-    for key in &edited_arr {
-        if let Some(field) = patch_field_key_to_metadata_field(key)
-            && let Err(e) = crate::metadata::writers::write_field_provenance(
-                &app.db,
-                "issue",
-                &updated.id,
-                field,
-                crate::metadata::writers::SetBy::User,
-                None,
-            )
-            .await
-        {
-            tracing::warn!(
-                issue_id = %updated.id,
-                field = %key,
-                error = %e,
-                "issue PATCH: field_provenance dual-write failed (non-fatal)"
-            );
-        }
-    }
 
     // Apply external-ID edits the user touched. Set-to-value writes
     // route through writers::set_external_id (set_by='user');
@@ -1725,32 +1699,11 @@ pub async fn bulk_metadata(
         ));
         am.updated_at = Set(chrono::Utc::now().fixed_offset());
 
-        let row_id = row.id.clone();
-        match am.update(&app.db).await {
+        // Row update + user pins commit together (WP-2.5), same as the
+        // per-issue PATCH handler.
+        match update_issue_with_user_pins(&app.db, am, &touched_names).await {
             Ok(_) => {
                 updated += 1;
-                // Dual-write to field_provenance — same de-risking
-                // as the per-issue PATCH handler. Failures non-fatal.
-                for name in &touched_names {
-                    if let Some(field) = patch_field_key_to_metadata_field(name)
-                        && let Err(e) = crate::metadata::writers::write_field_provenance(
-                            &app.db,
-                            "issue",
-                            &row_id,
-                            field,
-                            crate::metadata::writers::SetBy::User,
-                            None,
-                        )
-                        .await
-                    {
-                        tracing::warn!(
-                            issue_id = %row_id,
-                            field = %name,
-                            error = %e,
-                            "bulk-metadata: field_provenance dual-write failed (non-fatal)"
-                        );
-                    }
-                }
             }
             Err(e) => {
                 tracing::warn!(error = %e, issue_id = %row.id, "bulk-metadata update failed");
@@ -2757,6 +2710,36 @@ async fn fetch_issue_snippets(
 }
 
 // ───── helpers ─────
+
+/// Persist an issue edit and pin every touched field that maps to a
+/// [`crate::metadata::MetadataField`] as `set_by='user'`, in ONE
+/// transaction. Roadmap WP-2.5: the pins used to be written after the
+/// row update, outside any transaction, with failures ignored — a lost
+/// pin meant the next rescan silently undid the edit.
+async fn update_issue_with_user_pins(
+    db: &sea_orm::DatabaseConnection,
+    am: entity::issue::ActiveModel,
+    touched_keys: &[&str],
+) -> Result<entity::issue::Model, sea_orm::DbErr> {
+    use sea_orm::TransactionTrait;
+    let txn = db.begin().await?;
+    let updated = am.update(&txn).await?;
+    for key in touched_keys {
+        if let Some(field) = patch_field_key_to_metadata_field(key) {
+            crate::metadata::writers::write_field_provenance(
+                &txn,
+                "issue",
+                &updated.id,
+                field,
+                crate::metadata::writers::SetBy::User,
+                None,
+            )
+            .await?;
+        }
+    }
+    txn.commit().await?;
+    Ok(updated)
+}
 
 /// Map a string key from `issue.user_edited` JSON to its
 /// corresponding [`MetadataField`] variant. Returns `None` for keys

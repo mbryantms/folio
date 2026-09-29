@@ -325,6 +325,11 @@ Default admin (first registered user becomes admin):
   - Read provider data from `issue.user_edited` JSON. That column
     is being retired; consult `field_provenance` via
     `fetch_field_provenance_map` instead.
+  - Add a scanner write that overwrites a column or junction whose
+    `field_provenance` is user- or provider-set (WP-2.5: `protected()`
+    in `scanner/process.rs`, the `skip` set on
+    `metadata_rollup::replace_issue_metadata_skipping`). On rescan of a
+    non-writeback library, file values refresh only file-tier columns.
 
   See [`docs/dev/metadata-providers.md`](docs/dev/metadata-providers.md)
   for the architecture, [`metadata-operator-guide.md`](docs/dev/metadata-operator-guide.md)

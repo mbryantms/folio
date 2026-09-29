@@ -1419,7 +1419,7 @@ async fn ingest_writes_file_provenance_with_per_file_attribution() {
 }
 
 #[tokio::test]
-async fn rescan_preserves_user_and_provider_provenance_and_user_values() {
+async fn rescan_preserves_user_and_provider_provenance_and_values() {
     let app = TestApp::spawn().await;
     let tmp = tempfile::tempdir().unwrap();
     let folder = tmp.path().join("Series Sticky (2024)");
@@ -1492,10 +1492,13 @@ async fn rescan_preserves_user_and_provider_provenance_and_user_values() {
         Some("My Hand-Picked Title"),
         "user-pinned title must survive the rescan"
     );
+    // Decision D4 / roadmap WP-2.5: the provider tier protects the VALUE
+    // as well as the attribution row — on a non-writeback library the
+    // file never replaces what a provider (or the user) set.
     assert_eq!(
         after.characters.as_deref(),
-        Some("New Cast"),
-        "provider provenance guards the attribution row, not the value — the file still refreshes it"
+        Some("Old Cast"),
+        "provider-set value must survive the rescan"
     );
 
     let prov = issue_prov_map(&state.db, &issue.id).await;

@@ -709,3 +709,74 @@ async fn set_external_id_with_override_replaces_user_row() {
     assert_eq!(row.external_id, "9999");
     assert_eq!(row.set_by, SetBy::Provider(Source::ComicVine).as_str());
 }
+
+/// Decision D4 (roadmap WP-2.5): a file-tier re-ingest (ComicInfo) never
+/// replaces a provider-set external id; a matching write only refreshes
+/// `last_synced_at`. Provider and user writes still replace it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_external_id_file_tier_does_not_replace_provider_value() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let series_id = Uuid::now_v7().to_string();
+
+    writers::set_external_id(
+        &db,
+        "series",
+        &series_id,
+        &Identifier::new(Source::ComicVine, "1234"),
+        SetBy::Provider(Source::ComicVine),
+    )
+    .await
+    .unwrap();
+
+    // ComicInfo carries a different id → kept.
+    let outcome = writers::set_external_id(
+        &db,
+        "series",
+        &series_id,
+        &Identifier::new(Source::ComicVine, "9999"),
+        SetBy::ComicInfo,
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(
+            outcome,
+            SetExternalIdOutcome::KeptProviderValue { same_value: false }
+        ),
+        "got {outcome:?}"
+    );
+    let row = cv_row(&db, &series_id).await;
+    assert_eq!(row.external_id, "1234");
+    assert_eq!(row.set_by, "comicvine");
+
+    // ComicInfo carries the same id → claim kept, sync time refreshed.
+    let outcome = writers::set_external_id(
+        &db,
+        "series",
+        &series_id,
+        &Identifier::new(Source::ComicVine, "1234"),
+        SetBy::ComicInfo,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        outcome,
+        SetExternalIdOutcome::KeptProviderValue { same_value: true }
+    ));
+    assert_eq!(cv_row(&db, &series_id).await.set_by, "comicvine");
+
+    // A user write still replaces it.
+    writers::set_external_id(
+        &db,
+        "series",
+        &series_id,
+        &Identifier::new(Source::ComicVine, "5555"),
+        SetBy::User,
+    )
+    .await
+    .unwrap();
+    let row = cv_row(&db, &series_id).await;
+    assert_eq!(row.external_id, "5555");
+    assert_eq!(row.set_by, "user");
+}

@@ -104,6 +104,29 @@ const FILE_SOURCED_SET_BY: [&str; 5] = [
     "scanner_folder_tag",
 ];
 
+/// True when a stored `set_by` code is a file-tier source (the weakest
+/// attribution tier: **user > provider > file**). Anything else — `user`
+/// or a provider name — protects its column against a re-ingest.
+pub fn is_file_tier_set_by(set_by: &str) -> bool {
+    FILE_SOURCED_SET_BY.contains(&set_by)
+}
+
+/// `field key → set_by` for every provenance row on an entity. Generic
+/// over the connection so the scanner can call it inside its ingest
+/// transaction (the apply path has its own `DatabaseConnection` copy).
+pub async fn fetch_field_provenance_tiers<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: &str,
+) -> Result<std::collections::HashMap<String, String>, DbErr> {
+    let rows = field_provenance::Entity::find()
+        .filter(field_provenance::Column::EntityType.eq(entity_type))
+        .filter(field_provenance::Column::EntityId.eq(entity_id))
+        .all(db)
+        .await?;
+    Ok(rows.into_iter().map(|r| (r.field, r.set_by)).collect())
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Cover overwrite policy.
 // ─────────────────────────────────────────────────────────────────
@@ -202,6 +225,11 @@ pub enum SetExternalIdOutcome {
     /// the incoming id already matched (only `last_synced_at` was
     /// refreshed), false when the caller's differing value was dropped.
     KeptUserValue { same_value: bool },
+    /// A provider-set row exists and the caller is a file-tier source
+    /// (ComicInfo / MetronInfo re-ingest): the provider's value was kept
+    /// (decision D4 — file values never replace provider values on
+    /// rescan). Same `same_value` semantics as [`Self::KeptUserValue`].
+    KeptProviderValue { same_value: bool },
 }
 
 /// One provider ID that [`set_legacy_id_trio`] /
@@ -270,30 +298,44 @@ async fn put_external_id<C: ConnectionTrait>(
     // `set_by='user'`. (A matching write used to fall through to the
     // upsert and rewrite `set_by`, silently demoting the user's claim;
     // audit DI-2.)
+    //
+    // The same shape protects a provider-set row from a file-tier
+    // re-ingest (decision D4, roadmap WP-2.5): attribution strength is
+    // user > provider > file, and a weaker tier never replaces a
+    // stronger one.
     if !override_user
-        && set_by != SetBy::User
         && let Some(existing) = external_id::Entity::find()
             .filter(external_id::Column::EntityType.eq(entity_type))
             .filter(external_id::Column::EntityId.eq(entity_id))
             .filter(external_id::Column::Source.eq(identifier.source.as_str()))
             .one(db)
             .await?
-        && existing.set_by == SetBy::User.as_str()
     {
-        let same_value = existing.external_id == identifier.id;
-        if same_value {
-            let mut am: external_id::ActiveModel = existing.into();
-            am.last_synced_at = Set(now);
-            am.update(db).await?;
-        } else {
-            tracing::debug!(
-                entity_type = entity_type,
-                entity_id = entity_id,
-                source = identifier.source.as_str(),
-                "skipping external_id write: user-set value differs"
-            );
+        let existing_is_user = existing.set_by == SetBy::User.as_str();
+        let existing_is_provider = !existing_is_user && !is_file_tier_set_by(&existing.set_by);
+        let kept_by_user = existing_is_user && set_by != SetBy::User;
+        let kept_by_provider = existing_is_provider && set_by.is_file_sourced();
+        if kept_by_user || kept_by_provider {
+            let same_value = existing.external_id == identifier.id;
+            if same_value {
+                let mut am: external_id::ActiveModel = existing.into();
+                am.last_synced_at = Set(now);
+                am.update(db).await?;
+            } else {
+                tracing::debug!(
+                    entity_type = entity_type,
+                    entity_id = entity_id,
+                    source = identifier.source.as_str(),
+                    kept_tier = if kept_by_user { "user" } else { "provider" },
+                    "skipping external_id write: a stronger tier owns this row"
+                );
+            }
+            return Ok(if kept_by_user {
+                SetExternalIdOutcome::KeptUserValue { same_value }
+            } else {
+                SetExternalIdOutcome::KeptProviderValue { same_value }
+            });
         }
-        return Ok(SetExternalIdOutcome::KeptUserValue { same_value });
     }
 
     // Cross-entity unique: does a *different* entity already own this

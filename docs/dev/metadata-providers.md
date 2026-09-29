@@ -454,3 +454,30 @@ Renaming never re-homes a folder: the scanner resolves a folder to its
 series by `match_key`, then `folder_path` (identity.rs tiers 1–2), so the
 name / year change only affects display and provider matching. The
 `normalized_name` column is refreshed with the new name.
+
+## Rescan precedence (roadmap WP-2.5, decision D4)
+
+For a library **without** archive writeback the database is the record
+and the archive is a source. On every rescan the scanner applies the same
+attribution ladder the provenance writer already enforced — **user >
+provider > file** — to the columns themselves:
+
+- a scalar whose `field_provenance` row is `user` or a provider name is
+  left alone (`process.rs` `protected()`); only file-tier or unattributed
+  columns are refreshed from ComicInfo / MetronInfo;
+- junction tables owned by a user edit or a provider apply (credits,
+  characters, teams, locations, genres, tags) are skipped by the rollup
+  (`metadata_rollup::replace_issue_metadata_skipping`), so the provider's
+  person ids and ordinals survive and nothing churns on each scan;
+- a file-tier external id (`set_by=comicinfo|metroninfo`) never replaces a
+  provider-set row (`writers::put_external_id` → `KeptProviderValue`);
+- `review` has no provenance slot and no provider writes it, so it stays
+  file-owned.
+
+Edit endpoints write their user pins in the same transaction as the row
+update (`api/issues.rs::update_issue_with_user_pins`), so a pin can no
+longer be lost while the edit lands.
+
+Libraries **with** writeback are the inverse model: the archive is
+canonical and the rescan re-ingests what the composer wrote (see
+[metadata-sidecar-writeback.md](metadata-sidecar-writeback.md)).
