@@ -8886,6 +8886,7 @@ export interface components {
             earliest_year?: number | null;
             genres?: string[];
             id: string;
+            imprint?: string | null;
             inkers?: string[];
             /** Format: int64 */
             issue_count?: number | null;
@@ -9666,12 +9667,23 @@ export interface components {
          *     continuing/ended state and database links without leaving the issue page.
          */
         UpdateSeriesReq: {
+            /** @description ComicInfo `AgeRating` vocabulary (free text, ≤ 40 chars) or `null`. */
+            age_rating?: string | null;
             /** Format: int64 */
             comicvine_id?: number | null;
+            imprint?: string | null;
+            /**
+             * @description ISO 639-1 language code (`en`, `ja`). The column is NOT NULL, so
+             *     there is no clear.
+             */
+            language_code?: string | null;
             /** @description `null` clears the override; an empty/whitespace string is treated as null. */
             match_key?: string | null;
             /** Format: int64 */
             metron_id?: number | null;
+            /** @description Display name. Non-empty; also refreshes `normalized_name`. */
+            name?: string | null;
+            publisher?: string | null;
             /**
              * @description Per-series reading-direction override. `"ltr"` / `"rtl"` /
              *     `"ttb"` (future-compat) or `null` for "Auto, inherit". Empty or
@@ -9700,6 +9712,21 @@ export interface components {
              *     rework 1.0.
              */
             text_language?: string | null;
+            /**
+             * Format: int32
+             * @description Number of issues in the run (0..=10000) or `null` when unknown.
+             */
+            total_issues?: number | null;
+            /**
+             * Format: int32
+             * @description Volume number (1..=9999) or `null` to clear.
+             */
+            volume?: number | null;
+            /**
+             * Format: int32
+             * @description Start year (1900..=2100) or `null` to clear.
+             */
+            year?: number | null;
         };
         UpdateSettingsReq: {
             [key: string]: unknown;

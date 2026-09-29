@@ -225,6 +225,188 @@ pub struct UpdateSeriesReq {
     /// rework 1.0.
     #[serde(default, deserialize_with = "deserialize_some_string")]
     pub text_language: Option<Option<String>>,
+    // ── Identity fields (roadmap WP-2.3) ──
+    // Each is validated and, when present, written and pinned as a user
+    // edit so the scanner's reconcile and provider applies leave it
+    // alone afterwards. Folder→series resolution is by folder path
+    // (identity.rs tier 2), so renaming never re-homes a folder.
+    /// Display name. Non-empty; also refreshes `normalized_name`.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Start year (1900..=2100) or `null` to clear.
+    #[serde(default, deserialize_with = "deserialize_some_i32")]
+    pub year: Option<Option<i32>>,
+    /// Volume number (1..=9999) or `null` to clear.
+    #[serde(default, deserialize_with = "deserialize_some_i32")]
+    pub volume: Option<Option<i32>>,
+    #[serde(default, deserialize_with = "deserialize_some_string")]
+    pub publisher: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_some_string")]
+    pub imprint: Option<Option<String>>,
+    /// ComicInfo `AgeRating` vocabulary (free text, ≤ 40 chars) or `null`.
+    #[serde(default, deserialize_with = "deserialize_some_string")]
+    pub age_rating: Option<Option<String>>,
+    /// Number of issues in the run (0..=10000) or `null` when unknown.
+    #[serde(default, deserialize_with = "deserialize_some_i32")]
+    pub total_issues: Option<Option<i32>>,
+    /// ISO 639-1 language code (`en`, `ja`). The column is NOT NULL, so
+    /// there is no clear.
+    #[serde(default)]
+    pub language_code: Option<String>,
+}
+
+/// Validated identity edits from an [`UpdateSeriesReq`]. `Some(None)`
+/// clears a nullable column; `None` leaves the column alone.
+#[derive(Default)]
+struct IdentityEdits {
+    name: Option<String>,
+    year: Option<Option<i32>>,
+    volume: Option<Option<i32>>,
+    publisher: Option<Option<String>>,
+    imprint: Option<Option<String>>,
+    age_rating: Option<Option<String>>,
+    total_issues: Option<Option<i32>>,
+    language_code: Option<String>,
+}
+
+impl IdentityEdits {
+    /// Which `field_provenance` rows this edit pins as `user`.
+    fn pinned_fields(&self) -> Vec<crate::metadata::MetadataField> {
+        use crate::metadata::MetadataField as F;
+        let mut out = Vec::new();
+        if self.name.is_some() {
+            out.push(F::Title);
+        }
+        if self.year.is_some() {
+            out.push(F::YearBegan);
+        }
+        if self.volume.is_some() {
+            out.push(F::Volume);
+        }
+        if self.publisher.is_some() {
+            out.push(F::Publisher);
+        }
+        if self.imprint.is_some() {
+            out.push(F::Imprint);
+        }
+        if self.age_rating.is_some() {
+            out.push(F::AgeRating);
+        }
+        if self.total_issues.is_some() {
+            out.push(F::TotalIssues);
+        }
+        if self.language_code.is_some() {
+            out.push(F::LanguageCode);
+        }
+        out
+    }
+}
+
+fn validate_identity_fields(
+    req: &UpdateSeriesReq,
+) -> Result<IdentityEdits, axum::response::Response> {
+    fn trimmed(v: &Option<String>) -> Option<Option<String>> {
+        v.as_ref().map(|s| {
+            let t = s.trim().to_owned();
+            if t.is_empty() { None } else { Some(t) }
+        })
+    }
+    fn bounded_str(
+        v: &Option<Option<String>>,
+        max: usize,
+        field: &'static str,
+    ) -> Result<Option<Option<String>>, axum::response::Response> {
+        match v {
+            None => Ok(None),
+            Some(inner) => {
+                let t = trimmed(inner).flatten();
+                if t.as_deref().is_some_and(|s| s.chars().count() > max) {
+                    return Err(error(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "validation",
+                        &format!("{field} must be at most {max} characters"),
+                    ));
+                }
+                Ok(Some(t))
+            }
+        }
+    }
+    fn bounded_i32(
+        v: &Option<Option<i32>>,
+        range: std::ops::RangeInclusive<i32>,
+        field: &'static str,
+    ) -> Result<Option<Option<i32>>, axum::response::Response> {
+        match v {
+            Some(Some(n)) if !range.contains(n) => Err(error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation",
+                &format!(
+                    "{field} must be between {} and {}",
+                    range.start(),
+                    range.end()
+                ),
+            )),
+            other => Ok(*other),
+        }
+    }
+    let name = match trimmed(&req.name) {
+        None => None,
+        Some(None) => {
+            return Err(error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation",
+                "name must not be empty",
+            ));
+        }
+        Some(Some(n)) if n.chars().count() > 300 => {
+            return Err(error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation",
+                "name must be at most 300 characters",
+            ));
+        }
+        Some(Some(n)) => Some(n),
+    };
+    let language_code = match trimmed(&req.language_code) {
+        None => None,
+        Some(None) => {
+            return Err(error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation",
+                "language_code must not be empty",
+            ));
+        }
+        Some(Some(l)) => {
+            let l = l.to_ascii_lowercase();
+            let ok = (2..=8).contains(&l.len())
+                && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+            if !ok {
+                return Err(error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "validation",
+                    "language_code must be an ISO 639-1 code such as en or ja",
+                ));
+            }
+            Some(l)
+        }
+    };
+    Ok(IdentityEdits {
+        name,
+        year: bounded_i32(&req.year, 1900..=2100, "year")?,
+        volume: bounded_i32(&req.volume, 1..=9999, "volume")?,
+        publisher: bounded_str(&req.publisher, 200, "publisher")?,
+        imprint: bounded_str(&req.imprint, 200, "imprint")?,
+        age_rating: bounded_str(&req.age_rating, 40, "age_rating")?,
+        total_issues: bounded_i32(&req.total_issues, 0..=10000, "total_issues")?,
+        language_code,
+    })
+}
+
+fn deserialize_some_i32<'de, D>(d: D) -> Result<Option<Option<i32>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<i32>::deserialize(d).map(Some)
 }
 
 fn deserialize_some_i64<'de, D>(d: D) -> Result<Option<Option<i64>>, D::Error>
@@ -265,6 +447,12 @@ pub async fn update_series(
         Err(resp) => return resp,
     };
     let uuid = row.id;
+
+    // Identity fields are validated before any field of `req` is moved.
+    let identity = match validate_identity_fields(&req) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
 
     let normalized_key = req.match_key.and_then(|s| {
         let t = s.trim();
@@ -363,6 +551,31 @@ pub async fn update_series(
 
     let mut am: series::ActiveModel = row.into();
     am.match_key = Set(normalized_key);
+    if let Some(n) = identity.name.clone() {
+        am.normalized_name = Set(entity::series::normalize_name(&n));
+        am.name = Set(n);
+    }
+    if let Some(v) = identity.year {
+        am.year = Set(v);
+    }
+    if let Some(v) = identity.volume {
+        am.volume = Set(v);
+    }
+    if let Some(v) = identity.publisher.clone() {
+        am.publisher = Set(v);
+    }
+    if let Some(v) = identity.imprint.clone() {
+        am.imprint = Set(v);
+    }
+    if let Some(v) = identity.age_rating.clone() {
+        am.age_rating = Set(v);
+    }
+    if let Some(v) = identity.total_issues {
+        am.total_issues = Set(v);
+    }
+    if let Some(v) = identity.language_code.clone() {
+        am.language_code = Set(v);
+    }
     if let Some(s) = new_slug.clone() {
         am.slug = Set(s);
     }
@@ -409,7 +622,7 @@ pub async fn update_series(
             {
                 use crate::metadata::MetadataField;
                 use crate::metadata::writers::{SetBy, write_field_provenance};
-                let mut pinned: Vec<MetadataField> = Vec::new();
+                let mut pinned: Vec<MetadataField> = identity.pinned_fields();
                 if normalized_summary.is_some() {
                     pinned.push(MetadataField::Summary);
                 }
@@ -562,6 +775,7 @@ pub struct SeriesView {
     pub year: Option<i32>,
     pub volume: Option<i32>,
     pub publisher: Option<String>,
+    pub imprint: Option<String>,
     pub status: String,
     pub total_issues: Option<i32>,
     pub age_rating: Option<String>,
@@ -711,6 +925,7 @@ impl From<series::Model> for SeriesView {
             year: m.year,
             volume: m.volume,
             publisher: m.publisher,
+            imprint: m.imprint,
             status: m.status,
             total_issues: m.total_issues,
             age_rating: m.age_rating,

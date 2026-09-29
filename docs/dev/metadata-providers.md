@@ -418,3 +418,26 @@ issues by phash similarity.
 [provider]: ../../crates/server/src/metadata/provider.rs
 [source-fromstr]: ../../crates/server/src/metadata/identifier.rs
 [build-providers]: ../../crates/server/src/metadata/orchestrator.rs
+
+## Series identity edits (roadmap WP-2.3)
+
+`PATCH /series/{slug}` accepts the identity fields — `name`, `year`,
+`volume`, `publisher`, `imprint`, `age_rating`, `total_issues`,
+`language_code` — alongside the older `status` / `summary` / direction
+fields. Each touched field is written and pinned with a
+`field_provenance` row (`set_by='user'`): `Title`, `YearBegan`, `Volume`,
+`Publisher`, `Imprint`, `AgeRating`, `TotalIssues`, `LanguageCode`.
+
+Three readers honour those pins:
+
+- the provider apply (`should_apply` / `user_pinned`) skips pinned
+  fields unless an admin forces the apply;
+- the scanner's series reconcile (`reconcile_status::apply_reconciled_status`)
+  leaves a pinned name / publisher / volume / issue count alone even when
+  a `series.json` sidecar carries another value;
+- the scanner's ingest already keeps issue-level pins.
+
+Renaming never re-homes a folder: the scanner resolves a folder to its
+series by `match_key`, then `folder_path` (identity.rs tiers 1–2), so the
+name / year change only affects display and provider matching. The
+`normalized_name` column is refreshed with the new name.
