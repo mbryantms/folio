@@ -123,6 +123,19 @@ ranked list without re-fetching. Per-entity Redis coalesce keys
 `SET NX EX 60s`) collapse rapid re-clicks while one run is in
 flight.
 
+`metadata_run.query` starts as the serialized `StoredQuery` (the
+*effective* facts the run searched with) and gains small notes via
+`orchestrator::annotate_query` (WP-2.8): `overrides` (which fields
+the user replaced for that run), `year_gate_relaxed` (the hard year
+gate emptied the list and the cover-aware re-score ran), and `lookup`
+(`{source, external_id, url?}` — the run came from
+`POST …/metadata/lookup`, which fetches one provider record through
+`apply::fetch_*_detail` and persists it via
+`orchestrator::finalize_lookup_run` as a single HIGH candidate with
+`score_breakdown.lookup = true`, deliberately without a
+`metadata_match_outcome` row). `GET …/metadata/candidates` surfaces
+all of it as `query: SearchQueryView`.
+
 ## Matching engine
 
 The matcher's architecture inverted in `matching-accuracy-1.0` M4 —
