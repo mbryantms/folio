@@ -96,7 +96,16 @@ export function RailIconPicker({
         // when wrapped, which was what clipped the right column.
         // `overscroll-contain` prevents the page from scrolling once
         // we've hit the picker's top/bottom.
-        className="flex max-h-[28rem] w-[22rem] flex-col gap-3 overflow-hidden p-3"
+        //
+        // Height: `min(28rem, available-height)`. A bare `max-h-[28rem]`
+        // would replace the base `max-h-(--radix-popover-content-
+        // available-height)` (tailwind-merge dedupes the utility), so
+        // the popover could run past the viewport bottom on short
+        // screens. The `min()` keeps both caps. Width gets the same
+        // treatment against `available-width`: a fixed 22rem is wider
+        // than a 320px phone minus the collision gutter, and Radix
+        // can only shift content, not shrink it.
+        className="flex max-h-[min(28rem,var(--radix-popover-content-available-height))] w-[min(22rem,var(--radix-popover-content-available-width))] flex-col gap-3 overflow-hidden p-3"
       >
         <div className="flex items-start justify-between gap-2">
           <div>
@@ -117,7 +126,19 @@ export function RailIconPicker({
             <span className="ml-1 text-xs">Reset</span>
           </Button>
         </div>
-        <div className="space-y-3 overflow-y-auto overscroll-contain pr-1">
+        {/* `min-h-0` is load-bearing: a flex child defaults to
+            `min-height: auto` (its content height), so without it this
+            region never shrinks below the full grid and the parent's
+            `overflow-hidden` silently clips the bottom categories
+            instead of letting this div scroll.
+            `-mx-1 px-1 pb-px`: the active tile's `ring-1` is a
+            box-shadow drawn outside its box, and a scroll container
+            clips at its padding edge. Pulling the edges out by the
+            same amount we pad back in keeps the grid width identical
+            while leaving room for the ring on the left/right/bottom
+            (the right padding also keeps tiles clear of the
+            scrollbar). */}
+        <div className="-mx-1 min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-1 pb-px">
           {grouped.map(([category, entries]) => (
             <section key={category}>
               <h4 className="text-muted-foreground mb-1.5 text-[10px] font-semibold tracking-wider uppercase">
