@@ -198,6 +198,14 @@ pub enum OpError {
 /// the dry-run/validation path in the API handler and the worker. Does
 /// not touch bytes.
 pub fn simulate_ops(page_count: usize, ops: &[PageOp]) -> Result<usize, OpError> {
+    simulate_slots(page_count, ops).map(|slots| slots.len())
+}
+
+/// [`simulate_ops`], but returns the surviving pages as a slot list where
+/// `slots[new_ordinal] == original_ordinal`. This is the old→new page map
+/// the worker feeds to `reading::page_remap` so markers and reading
+/// progress follow the pages they were anchored on.
+pub fn simulate_slots(page_count: usize, ops: &[PageOp]) -> Result<Vec<usize>, OpError> {
     // Track only the count + identity of surviving positions; the byte
     // resolution happens later. We model the working list as a Vec of
     // opaque slots.
@@ -239,7 +247,7 @@ pub fn simulate_ops(page_count: usize, ops: &[PageOp]) -> Result<usize, OpError>
     if slots.is_empty() {
         return Err(OpError::EmptyResult);
     }
-    Ok(slots.len())
+    Ok(slots)
 }
 
 fn is_permutation(order: &[u32], len: usize) -> bool {
@@ -321,6 +329,10 @@ pub struct EditResult {
     /// Set when the edit changed the file path (CBR→CBZ conversion), so
     /// the caller can update `issue.file_path`. `None` for in-place edits.
     pub moved_to: Option<PathBuf>,
+    /// How many per-user anchors (markers, reading progress) followed
+    /// their pages through a structural edit. All zero for non-structural
+    /// edits (rotate / replace / transform keep every ordinal).
+    pub anchors: crate::reading::page_remap::RemapOutcome,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -521,7 +533,36 @@ pub async fn edit_one_issue(
     if let Some(ref new_path) = moved {
         am.file_path = Set(new_path.to_string_lossy().into_owned());
     }
-    am.update(&state.db).await?;
+
+    // Structural edits move pages, so every per-user anchor (markers,
+    // reading progress) after an edited ordinal would otherwise point at
+    // different pixels. Re-run the op simulation to get the old→new map
+    // and apply it in the same transaction as the edit stamp. Rotate /
+    // replace / transform keep every ordinal and skip this.
+    use sea_orm::TransactionTrait;
+    let txn = state.db.begin().await?;
+    let anchors = if structural {
+        let final_ops = match job.bulk_op {
+            Some(b) => b.lower(before),
+            None => job.ops.clone(),
+        };
+        match simulate_slots(before, &final_ops) {
+            Ok(slots) => {
+                let map = crate::reading::page_remap::PageMap::from_slots(before, &slots);
+                crate::reading::page_remap::remap_issue_anchors(&txn, &row.id, &map).await?
+            }
+            Err(e) => {
+                // The rewrite already succeeded with these ops, so this
+                // cannot fail on bounds; log rather than abort the stamp.
+                tracing::error!(issue_id = %row.id, error = %e, "archive edit: anchor remap simulation failed");
+                Default::default()
+            }
+        }
+    } else {
+        Default::default()
+    };
+    am.update(&txn).await?;
+    txn.commit().await?;
 
     // First CBR conversion in a library stamps `cbr_convert_confirmed_at`
     // so the UI stops prompting for the format change on later edits.
@@ -545,6 +586,7 @@ pub async fn edit_one_issue(
         page_count_after: after,
         backup_path: backup,
         moved_to: moved,
+        anchors,
     })
 }
 
@@ -878,6 +920,7 @@ async fn audit_edit(
             "backup_path": r.backup_path.as_ref().map(|p| p.to_string_lossy().to_string()),
             "page_count_before": r.page_count_before,
             "page_count_after": r.page_count_after,
+            "anchors": r.anchors,
             "ops": job.ops,
             "bulk_op": job.bulk_op,
         }),
