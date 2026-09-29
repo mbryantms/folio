@@ -7,8 +7,16 @@
 //! - `If-Range` honored against ETag (`{issue_id}-{page_index}`).
 //! - `Cache-Control: private, max-age=3600` (per-user — ACL).
 //!
-//! The handler uses a synchronous `spawn_blocking` boundary because `Cbz`
-//! reads through the `zip` crate's blocking I/O.
+//! The handler uses a synchronous `spawn_blocking` boundary because the
+//! archive readers use blocking file I/O.
+//!
+//! Format dispatch lives in [`crate::library::zip_lru::CachedReader`]:
+//! CBZ and CBT both come back as the same reader + [`PreadIndex`] pair, so
+//! everything below — ETag / 304 / Range / the zero-lock stream path — is
+//! format-agnostic. Tar entries are contiguous on disk, so a CBT page
+//! streams from its precomputed offset exactly like a Stored CBZ entry.
+//!
+//! [`PreadIndex`]: archive::cbz::PreadIndex
 
 use axum::{
     Router,
@@ -482,7 +490,7 @@ struct PageBytes {
     total: u64,
     mime: &'static str,
     ext: &'static str,
-    cbz_arc: std::sync::Arc<std::sync::Mutex<archive::cbz::Cbz>>,
+    cbz_arc: std::sync::Arc<std::sync::Mutex<crate::library::zip_lru::CachedReader>>,
 }
 
 #[derive(Debug)]

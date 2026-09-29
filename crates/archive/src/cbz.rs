@@ -135,6 +135,13 @@ impl PreadIndex {
     pub fn len(&self) -> usize {
         self.extents.len()
     }
+
+    /// Build an index from precomputed extents. Used by readers whose
+    /// entries are stored verbatim and contiguously on disk (tar / CBT),
+    /// so the page server's zero-lock stream path is format-agnostic.
+    pub fn from_extents(extents: HashMap<usize, StoredExtent>) -> Self {
+        Self { extents }
+    }
 }
 
 /// Backing reader for the inner `ZipArchive`. Two flavors share Cbz so the

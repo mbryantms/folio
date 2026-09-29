@@ -808,8 +808,15 @@ markers, a saved-view CBL slot). Two recovery paths:
 - **Live-reload of cron / library config** without a restart.
 - **Per-user library-access filtering** on `GET /ws/scan-events` —
   currently admin-only.
-- **Page-byte streaming for non-CBZ formats** (the reader UI today
-  handles `.cbz` only via the existing `cbz` random-access API).
+- **Page-byte streaming for `.cb7` and unconverted `.cbr`.** `.cbz`
+  and `.cbt` both stream through the page-bytes path:
+  `zip_lru::CachedReader` dispatches on extension and each reader
+  exposes `read_entry_range` / `pipe_entry` / `build_pread_index`, so
+  Range, ETag / 304, and the zero-lock precomputed-offset stream are
+  identical for both (tar entries are contiguous, so every CBT page has
+  a pread extent). `.cbr` streams only once a library opting into
+  `auto_convert_cbr_on_scan` has rewritten it to `.cbz`
+  (`scanner::cbr_convert`); `.cb7` is scaffolded only.
 - **Hard-purge of confirmed-removed rows.** Today rows live in `issues`
   and `series` forever once `removal_confirmed_at` is set —
   `auto_confirm_sweep` is the only reaper and it only flips that

@@ -852,3 +852,167 @@ async fn variant_dimension_bomb_dies_at_decode() {
     let resp = get_page(&app.router, &session, &id, 0, None).await;
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+// ---------------------------------------------------------------------------
+// CBT (tar) — roadmap WP-1.4. The scanner has accepted `.cbt` since Scanner
+// v1 M12, but the page-bytes path opened `Cbz` unconditionally and every
+// CBT page request 500'd `archive_unreadable`. `zip_lru::CachedReader`
+// now dispatches on extension; these pin the full-res / Range / 304 /
+// variant contracts to the CBZ ones.
+// ---------------------------------------------------------------------------
+
+/// Build a CBT with the given entries, appended in the order given (so a
+/// test can check the page list is name-sorted, not tar-ordered).
+fn build_cbt(path: &std::path::Path, pages: &[(&str, &[u8])]) {
+    let f = std::fs::File::create(path).unwrap();
+    let mut tw = tar::Builder::new(f);
+    for (name, bytes) in pages {
+        let mut header = tar::Header::new_ustar();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        tw.append_data(&mut header, *name, *bytes).unwrap();
+    }
+    tw.finish().unwrap();
+}
+
+#[tokio::test]
+async fn cbt_full_body_streams_page_bytes_with_cbz_headers() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let cbt = dir.path().join("issue.cbt");
+    let p1 = distinct_payload(700, 1);
+    let p2 = distinct_payload(1300, 2);
+    // Reverse tar order + a sidecar: the page list must still be
+    // name-sorted and the XML must not count as a page.
+    build_cbt(
+        &cbt,
+        &[
+            ("page-002.png", p2.as_slice()),
+            ("ComicInfo.xml", b"<ComicInfo/>"),
+            ("page-001.png", p1.as_slice()),
+        ],
+    );
+    let size = std::fs::metadata(&cbt).unwrap().len() as i64;
+    let id = seed_issue(&app, &cbt, size).await;
+
+    for (n, expected) in [(0u32, &p1), (1u32, &p2)] {
+        let resp = get_page(&app.router, &session, &id, n, None).await;
+        assert_eq!(resp.status(), StatusCode::OK, "page {n}");
+        let h = resp.headers();
+        assert_eq!(h.get(header::CONTENT_TYPE).unwrap(), "image/png");
+        assert_eq!(h.get(header::ACCEPT_RANGES).unwrap(), "bytes");
+        assert_eq!(
+            h.get(header::CACHE_CONTROL).unwrap(),
+            "private, max-age=3600"
+        );
+        assert_eq!(
+            h.get(header::CONTENT_LENGTH).unwrap(),
+            expected.len().to_string().as_str()
+        );
+        let etag = h.get(header::ETAG).unwrap().to_str().unwrap();
+        assert!(etag.ends_with(&format!("-{n}\"")), "etag {etag}");
+        let body = body_bytes(resp.into_body()).await;
+        assert_eq!(body, *expected, "page {n} bytes");
+    }
+
+    // Page 2 doesn't exist (the sidecar isn't a page).
+    let resp = get_page(&app.router, &session, &id, 2, None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn cbt_range_request_returns_206_and_etag_revalidates() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let cbt = dir.path().join("range.cbt");
+    let payload = page_payload();
+    build_cbt(&cbt, &[("page-001.png", payload.as_slice())]);
+    let size = std::fs::metadata(&cbt).unwrap().len() as i64;
+    let id = seed_issue(&app, &cbt, size).await;
+
+    // Mid-range.
+    let resp = get_page(&app.router, &session, &id, 0, Some("bytes=100-109")).await;
+    assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        resp.headers().get(header::CONTENT_RANGE).unwrap(),
+        format!("bytes 100-109/{}", payload.len()).as_str()
+    );
+    assert_eq!(resp.headers().get(header::CONTENT_LENGTH).unwrap(), "10");
+    let etag = resp
+        .headers()
+        .get(header::ETAG)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let body = body_bytes(resp.into_body()).await;
+    assert_eq!(body, payload[100..110]);
+
+    // Suffix range.
+    let resp = get_page(&app.router, &session, &id, 0, Some("bytes=-16")).await;
+    assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+    let body = body_bytes(resp.into_body()).await;
+    assert_eq!(body, payload[payload.len() - 16..]);
+
+    // Unsatisfiable.
+    let resp = get_page(&app.router, &session, &id, 0, Some("bytes=9999-")).await;
+    assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+
+    // If-None-Match revalidation → 304, no body.
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/issues/{id}/pages/0"))
+                .header(header::COOKIE, format!("__Host-comic_session={session}"))
+                .header(header::IF_NONE_MATCH, &etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+    assert!(body_bytes(resp.into_body()).await.is_empty());
+}
+
+#[tokio::test]
+async fn cbt_variant_renders_webp() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let cbt = dir.path().join("variant.cbt");
+    let png = real_png(800, 600);
+    build_cbt(&cbt, &[("page-001.png", png.as_slice())]);
+    let size = std::fs::metadata(&cbt).unwrap().len() as i64;
+    let id = seed_issue(&app, &cbt, size).await;
+
+    let resp = get_variant(&app.router, &session, &id, 0, 480, None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get(header::CONTENT_TYPE).unwrap(),
+        "image/webp"
+    );
+    let etag = resp
+        .headers()
+        .get(header::ETAG)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(etag.ends_with("-w480\""), "variant etag {etag}");
+    let body = body_bytes(resp.into_body()).await;
+    assert_eq!(&body[0..4], b"RIFF");
+    assert_eq!(&body[8..12], b"WEBP");
+
+    // Second hit is served from the variant cache with the same ETag.
+    let resp = get_variant(&app.router, &session, &id, 0, 480, Some(&etag)).await;
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+}

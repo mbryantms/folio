@@ -12,11 +12,18 @@
 //! size). Tar has no compression — ratio guard reduces to total-bytes
 //! enforcement.
 //!
+//! Because every tar entry is stored verbatim and contiguously, the reader
+//! also offers the random-access surface the page server uses for CBZ
+//! ([`Cbt::read_entry_range`], [`Cbt::pipe_entry`]) and a
+//! [`PreadIndex`] over every page ([`Cbt::build_pread_index`]), so CBT
+//! pages stream through the same zero-lock path as Stored CBZ entries.
+//!
 //! Page candidates are content-sniffed at open ([`crate::image_sniff`]):
 //! one seek + short read per image-named entry, then the ones whose bytes
 //! aren't an image are dropped from the index and reported via
 //! [`ComicArchive::entries_skipped`].
 
+use crate::cbz::{PreadIndex, StoredExtent};
 use crate::{
     ArchiveEntry, ArchiveError, ArchiveLimits, SkippedEntry, comic_archive::ComicArchive,
     entry_name::validate as sanitize_entry_name, image_sniff,
@@ -169,6 +176,85 @@ impl Cbt {
             self.entries.retain(|e| !dropped.contains(&e.name));
         }
     }
+
+    /// Data offset recorded at open for `entry` (keyed by sanitized name).
+    fn data_offset(&self, entry: &ArchiveEntry) -> Result<u64, ArchiveError> {
+        self.offsets
+            .get(&entry.name)
+            .copied()
+            .ok_or_else(|| ArchiveError::Malformed(format!("entry offset missing: {}", entry.name)))
+    }
+
+    /// Read `[start, start + len)` of an entry. Same contract as
+    /// [`crate::cbz::Cbz::read_entry_range`]: the slice is clamped to the
+    /// entry's size (a start at or past EOF yields an empty `Vec`) and the
+    /// per-entry cap is enforced. One seek + one read on a private handle.
+    pub fn read_entry_range(
+        &mut self,
+        entry: &ArchiveEntry,
+        start: u64,
+        len: u64,
+    ) -> Result<Vec<u8>, ArchiveError> {
+        if start.saturating_add(len) > self.limits.max_entry_bytes {
+            return Err(ArchiveError::CapExceeded("range exceeds entry cap"));
+        }
+        let offset = self.data_offset(entry)?;
+        let size = entry.uncompressed_size;
+        if start >= size {
+            return Ok(Vec::new());
+        }
+        let take = len.min(size - start);
+        let mut f = File::open(&self.path)?;
+        f.seek(SeekFrom::Start(offset + start))?;
+        let mut buf = vec![0u8; take as usize];
+        f.read_exact(&mut buf)?;
+        Ok(buf)
+    }
+
+    /// Stream an entry into a writer, caps enforced. Mirrors
+    /// [`crate::cbz::Cbz::pipe_entry`].
+    pub fn pipe_entry<W: std::io::Write>(
+        &mut self,
+        entry: &ArchiveEntry,
+        sink: &mut W,
+    ) -> Result<u64, ArchiveError> {
+        if entry.uncompressed_size > self.limits.max_entry_bytes {
+            return Err(ArchiveError::CapExceeded("entry size"));
+        }
+        let offset = self.data_offset(entry)?;
+        let mut f = File::open(&self.path)?;
+        f.seek(SeekFrom::Start(offset))?;
+        let mut src = f.take(entry.uncompressed_size);
+        Ok(std::io::copy(&mut src, sink)?)
+    }
+
+    /// Build the lock-free [`PreadIndex`] for this archive. Tar stores every
+    /// entry verbatim at a known offset, so — unlike CBZ, where only
+    /// `Stored` entries qualify — every surviving entry gets an extent. An
+    /// entry whose recorded extent would run past the end of the file is
+    /// omitted so the caller falls back to the locked read path (which
+    /// then reports the short read instead of streaming garbage).
+    pub fn build_pread_index(&self) -> PreadIndex {
+        let file_len = std::fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0);
+        let mut extents: HashMap<usize, StoredExtent> = HashMap::new();
+        for e in &self.entries {
+            let Some(&data_start) = self.offsets.get(&e.name) else {
+                continue;
+            };
+            match data_start.checked_add(e.uncompressed_size) {
+                Some(end) if end <= file_len => {}
+                _ => continue,
+            }
+            extents.insert(
+                e.index,
+                StoredExtent {
+                    data_start,
+                    length: e.uncompressed_size,
+                },
+            );
+        }
+        PreadIndex::from_extents(extents)
+    }
 }
 
 impl ComicArchive for Cbt {
@@ -295,5 +381,57 @@ mod tests {
         let a = Cbt::open(tmp.path(), ArchiveLimits::default()).expect("open");
         assert_eq!(a.pages().len(), 2);
         assert!(a.entries_skipped().is_empty());
+    }
+
+    /// The page server streams CBT pages from the pread extents on its own
+    /// file handle; those bytes must equal what the locked readers yield.
+    #[test]
+    fn pread_index_matches_locked_reads() {
+        let mut png_a = PNG_SIG.to_vec();
+        png_a.extend((0..600u32).map(|i| (i % 251) as u8));
+        let mut png_b = PNG_SIG.to_vec();
+        png_b.extend((0..1100u32).map(|i| ((i * 7) % 251) as u8));
+        let tmp = build_cbt(&[
+            ("02.png", &png_b),
+            ("ComicInfo.xml", b"<ComicInfo/>"),
+            ("01.png", &png_a),
+        ]);
+        let mut a = Cbt::open(tmp.path(), ArchiveLimits::default()).expect("open");
+        let index = a.build_pread_index();
+        let pages: Vec<ArchiveEntry> = a.pages().into_iter().cloned().collect();
+        assert_eq!(pages[0].name, "01.png", "natural sort, not tar order");
+        assert_eq!(index.len(), 3, "every entry is a stored extent");
+
+        let mut raw = File::open(tmp.path()).unwrap();
+        for entry in &pages {
+            let extent = index.extent(entry.index).expect("extent");
+            assert_eq!(extent.length, entry.uncompressed_size);
+
+            let mut via_pread = vec![0u8; extent.length as usize];
+            raw.seek(SeekFrom::Start(extent.data_start)).unwrap();
+            raw.read_exact(&mut via_pread).unwrap();
+
+            let via_bytes = a.read_entry_bytes(&entry.name).unwrap();
+            let via_range = a
+                .read_entry_range(entry, 0, entry.uncompressed_size)
+                .unwrap();
+            let mut via_pipe = Vec::new();
+            let piped = a.pipe_entry(entry, &mut via_pipe).unwrap();
+
+            assert_eq!(via_pread, via_bytes);
+            assert_eq!(via_range, via_bytes);
+            assert_eq!(via_pipe, via_bytes);
+            assert_eq!(piped, entry.uncompressed_size);
+        }
+
+        // Sub-range + clamping semantics match `Cbz::read_entry_range`.
+        let e = &pages[1];
+        assert_eq!(a.read_entry_range(e, 100, 10).unwrap(), png_b[100..110]);
+        assert_eq!(
+            a.read_entry_range(e, 1000, 5000).unwrap(),
+            png_b[1000..],
+            "clamped to the entry"
+        );
+        assert!(a.read_entry_range(e, 9999, 1).unwrap().is_empty());
     }
 }

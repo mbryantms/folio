@@ -4,13 +4,17 @@
 //! Library Scanner v1, Milestone 12.
 //!
 //! Not part of the trait (intentionally):
-//!   - `read_entry_range` (HTTP Range support) — only Cbz natively supports
-//!     random access. Other formats would have to fully decompress per
-//!     request, which is acceptable but lives in format-specific code.
-//!   - `pipe_entry` — same reasoning.
+//!   - `read_entry_range` (HTTP Range support) — only the formats with
+//!     native random access ([`crate::cbz::Cbz`], [`crate::cbt::Cbt`])
+//!     offer it, as inherent methods. Other formats would have to fully
+//!     decompress per request, which is acceptable but lives in
+//!     format-specific code.
+//!   - `pipe_entry` / `build_pread_index` — same reasoning.
 //!
-//! Page-byte streaming for `.cbr`/`.cb7`/`.cbt` is therefore deferred; the
-//! reader UI today handles `.cbz` only via [`crate::cbz::Cbz`]'s richer API.
+//! Page-byte streaming is therefore wired for `.cbz` and `.cbt` (the
+//! server's `zip_lru::CachedReader` dispatches on extension); `.cbr` can
+//! be converted to `.cbz` at scan time (per-library opt-in) and `.cb7` is
+//! not implemented.
 
 use crate::{ArchiveEntry, ArchiveError, SkippedEntry};
 use std::path::Path;
