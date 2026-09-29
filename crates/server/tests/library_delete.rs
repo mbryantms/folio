@@ -432,7 +432,6 @@ async fn delete_library_cascades_and_wipes_thumbs() {
     AccessAM {
         library_id: Set(lib_id),
         user_id: Set(actor_user_id),
-        role: Set("reader".into()),
         age_rating_max: Set(None),
         created_at: Set(Utc::now().fixed_offset()),
         updated_at: Set(Utc::now().fixed_offset()),

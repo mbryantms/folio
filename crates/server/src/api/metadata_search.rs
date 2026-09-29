@@ -490,7 +490,7 @@ pub async fn search_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -629,7 +629,7 @@ pub async fn candidates_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -712,7 +712,7 @@ pub async fn sync_status_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -785,7 +785,7 @@ async fn toggle_metadata_sync_paused(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(app, user, s.library_id).await {
+    if !crate::library::access::series_visible(app, user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -860,7 +860,7 @@ pub async fn search_issue(
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1346,7 +1346,7 @@ pub async fn candidates_issue(
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1413,7 +1413,7 @@ async fn set_issue_metadata_accepted(
     let Some((s, i)) = find_series_issue(app, slug, issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(app, user, s.library_id).await {
+    if !crate::library::access::series_visible(app, user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1577,7 +1577,7 @@ pub async fn proposed_diff_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1638,7 +1638,7 @@ pub async fn apply_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1763,7 +1763,7 @@ pub async fn proposed_diff_issue(
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1849,7 +1849,7 @@ pub async fn composite_diff_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1912,7 +1912,7 @@ pub async fn composite_diff_issue(
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1979,7 +1979,7 @@ pub async fn apply_issue(
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -2307,7 +2307,7 @@ pub async fn composite_apply_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -2384,7 +2384,7 @@ pub async fn composite_apply_issue(
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -2539,7 +2539,7 @@ pub async fn create_series_batch(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -2646,7 +2646,7 @@ pub async fn create_series_selection_batch(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",

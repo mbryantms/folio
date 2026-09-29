@@ -323,7 +323,6 @@ async fn grant_library(app: &TestApp, user_id: Uuid, library_id: Uuid) {
     entity::library_user_access::ActiveModel {
         user_id: Set(user_id),
         library_id: Set(library_id),
-        role: Set("reader".into()),
         age_rating_max: Set(None),
         created_at: Set(now),
         updated_at: Set(now),

@@ -686,7 +686,6 @@ async fn apply_series_403_when_override_user_edits_requested_by_non_admin() {
     library_user_access::ActiveModel {
         user_id: Set(user_row.id),
         library_id: Set(lib_id),
-        role: Set("reader".into()),
         age_rating_max: Set(None),
         created_at: Set(now),
         updated_at: Set(now),

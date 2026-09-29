@@ -203,6 +203,15 @@ pub async fn list(
         // branches, so `s.library_id` resolves cleanly everywhere.
         format!(" AND s.library_id IN ({})", placeholders.join(","))
     };
+    // WP-2.7: age-rating cap per UNION branch — series-level credits
+    // check the series rating, issue-level credits the issue's own
+    // rating with the series as fallback.
+    let series_cap = visible.raw_cap_clause("s.library_id", "s.age_rating", &mut lib_params);
+    let issue_cap = visible.raw_cap_clause(
+        "s.library_id",
+        "COALESCE(i.age_rating, s.age_rating)",
+        &mut lib_params,
+    );
 
     // Keyset cursor = the last creator name of the prior page.
     let after = match q.cursor.as_deref() {
@@ -218,7 +227,7 @@ pub async fn list(
            SELECT sc.person AS person, sc.role AS role, \
                   'series:' || sc.series_id::text AS ref_id, s.library_id AS library_id \
              FROM series_credits sc JOIN series s ON s.id = sc.series_id \
-            WHERE s.removed_at IS NULL{library_filter} \
+            WHERE s.removed_at IS NULL{library_filter}{series_cap} \
            UNION ALL \
            SELECT ic.person AS person, ic.role AS role, \
                   'issue:' || ic.issue_id AS ref_id, s.library_id AS library_id \
@@ -226,7 +235,7 @@ pub async fn list(
              JOIN issues i ON i.id = ic.issue_id \
              JOIN series s ON s.id = i.series_id \
             WHERE s.removed_at IS NULL AND i.removed_at IS NULL \
-              AND i.state = 'active'{library_filter} \
+              AND i.state = 'active'{library_filter}{issue_cap} \
          ), \
          agg AS ( \
            SELECT person, ARRAY_AGG(DISTINCT role ORDER BY role) AS roles, \
@@ -385,6 +394,13 @@ pub async fn get_one(
             .collect();
         format!(" AND s.library_id IN ({})", placeholders.join(","))
     };
+    // WP-2.7: age-rating cap per UNION branch (see `list`).
+    let series_cap = visible.raw_cap_clause("s.library_id", "s.age_rating", &mut params);
+    let issue_cap = visible.raw_cap_clause(
+        "s.library_id",
+        "COALESCE(i.age_rating, s.age_rating)",
+        &mut params,
+    );
 
     // Distinct (series_id, role) pairs across BOTH credit tables.
     // Series-level credits already key on series_id; issue-level
@@ -397,7 +413,7 @@ pub async fn get_one(
              FROM series_credits sc \
              JOIN series s ON s.id = sc.series_id \
             WHERE s.removed_at IS NULL \
-              AND btrim(lower(sc.person)) = $1{library_filter} \
+              AND btrim(lower(sc.person)) = $1{library_filter}{series_cap} \
            UNION \
            SELECT s.id AS series_id, ic.role AS role \
              FROM issue_credits ic \
@@ -406,7 +422,7 @@ pub async fn get_one(
             WHERE s.removed_at IS NULL \
               AND i.removed_at IS NULL \
               AND i.state = 'active' \
-              AND btrim(lower(ic.person)) = $1{library_filter} \
+              AND btrim(lower(ic.person)) = $1{library_filter}{issue_cap} \
          ) \
          SELECT series_id, role FROM credits",
     );

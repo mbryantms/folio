@@ -7187,11 +7187,27 @@ export interface components {
             tag: string;
         };
         LibraryAccessGrantView: {
+            /**
+             * @description ComicInfo `AgeRating` cap for this grant (a rung of the ladder in
+             *     `library::age_rating::LADDER`), or `null` for unrestricted.
+             *     Series / issues rated above the cap are hidden from the user on
+             *     every read surface; unrated rows are shown (WP-2.7, D6).
+             */
+            age_rating_max?: string | null;
             library_id: string;
             library_name: string;
-            role: string;
         };
         LibraryAccessReq: {
+            /**
+             * @description Per-library age-rating caps, keyed by library id (WP-2.7). A
+             *     library listed in `library_ids` but absent here is uncapped.
+             *     Values must be a rung of the ComicInfo `AgeRating` ladder
+             *     (`Early Childhood` … `X18+`); keys for libraries not in
+             *     `library_ids` are ignored.
+             */
+            age_rating_caps?: {
+                [key: string]: string;
+            };
             /**
              * @description Final set of library ids the user should be granted access to. The
              *     server replaces the user's `library_user_access` rows with this list.
@@ -10055,7 +10071,7 @@ export interface components {
          * @description Body for `PATCH /series/{id}`. `match_key` is the §7.4 sticky override
          *     the scanner won't touch; `slug` is the admin-rename hook for the URL
          *     segment (validated unique across all series). `status` and the external
-         *     IDs are surfaced in the issue drawer so curators can correct
+         *     IDs are surfaced in the issue drawer so editors can correct
          *     continuing/ended state and database links without leaving the issue page.
          */
         UpdateSeriesReq: {

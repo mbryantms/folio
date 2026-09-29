@@ -316,6 +316,12 @@ async fn fetch_distinct_issue_csv(
             placeholders.join(",")
         ));
     }
+    // WP-2.7: age-rating cap (issue rating, series fallback).
+    sql.push_str(&visible.raw_cap_clause(
+        "s.library_id",
+        "COALESCE(i.age_rating, s.age_rating)",
+        &mut params,
+    ));
 
     if let Some(prefix) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         params.push(Value::from(format!("{}%", prefix.to_lowercase())));
@@ -403,6 +409,8 @@ async fn fetch_distinct_series_column(
             .collect();
         sql.push_str(&format!(" AND library_id IN ({})", placeholders.join(",")));
     }
+    // WP-2.7: age-rating cap on the series rating.
+    sql.push_str(&visible.raw_cap_clause("library_id", "age_rating", &mut params));
 
     if let Some(prefix) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         params.push(Value::from(format!("{}%", prefix.to_lowercase())));
@@ -507,6 +515,8 @@ async fn fetch_distinct(
             placeholders.join(",")
         ));
     }
+    // WP-2.7: age-rating cap on the series rating.
+    sql.push_str(&visible.raw_cap_clause("s.library_id", "s.age_rating", &mut params));
 
     if let Some(prefix) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         params.push(Value::from(format!("{}%", prefix.to_lowercase())));

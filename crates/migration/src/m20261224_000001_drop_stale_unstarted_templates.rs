@@ -4,7 +4,7 @@
 //! [`m20261207_000001_built_in_templates`] but never gained user
 //! traction — Unstarted is awkward next to the per-user "Want to Read"
 //! collection (`kind='collection'`, `system_key='want_to_read'`) that
-//! every account auto-seeds, and Stale is a curator tool that belongs
+//! every account auto-seeds, and Stale is a list-maintenance tool that belongs
 //! in admin tooling, not a user-facing rail. Removing them cleans up
 //! the `/settings/views` catalog.
 //!

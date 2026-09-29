@@ -516,7 +516,7 @@ async fn fetch_visible_issue(
         ));
     };
     let visible = access::for_user(app, user).await;
-    if !visible.contains(row.library_id) {
+    if !access::issue_allowed(app, &visible, &row).await {
         return Err(MarkerError::new(
             StatusCode::FORBIDDEN,
             "forbidden",

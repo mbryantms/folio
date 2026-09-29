@@ -14,7 +14,7 @@
 //!   - **Want to Read** — `read_progress = 0`, sorted by `created_at`
 //!     desc. Series sitting in the library waiting for a first session.
 //!   - **Stale** — no filter; sorted by `updated_at` asc, limit 12.
-//!     Surfaces the bottom of the activity barrel so curators can find
+//!     Surfaces the bottom of the activity barrel so list owners can find
 //!     series the scanner hasn't touched in a while. (The DSL has no
 //!     "older than N days" op today; sort+limit is the closest stable
 //!     interpretation without a new op.)

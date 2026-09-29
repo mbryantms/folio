@@ -4,7 +4,7 @@
 //! Every route under `/opds/v2/*` mirrors its `/opds/v1/*` counterpart's
 //! data exactly; only the wire format differs. Data fetching, library
 //! ACL, audit, and rate-limiting reuse the v1 helpers (`allowed_libraries`,
-//! `visible`, `fetch_series_slugs`, `fetch_visible_issues_preserving_order`,
+//! `fetch_series_slugs`, `fetch_visible_issues_preserving_order`,
 //! `dsl_from_view`, `ensure_want_to_read_seeded`) so the two protocols
 //! can't drift in business logic.
 //!
@@ -126,7 +126,6 @@ async fn root(State(app): State<AppState>, user: CurrentUser) -> Response {
         issue_id: String,
         library_id: Uuid,
     }
-    let allowed = opds::allowed_libraries(&app, &user).await.ok().flatten();
     let visible = access::for_user(&app, &user).await;
     let continue_rows = ProgressRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -149,14 +148,11 @@ async fn root(State(app): State<AppState>, user: CurrentUser) -> Response {
     .all(&app.db)
     .await
     .unwrap_or_default();
-    let continue_ids: Vec<String> = match allowed.as_ref() {
-        None => continue_rows.into_iter().map(|r| r.issue_id).collect(),
-        Some(ids) => continue_rows
-            .into_iter()
-            .filter(|r| ids.contains(&r.library_id))
-            .map(|r| r.issue_id)
-            .collect(),
-    };
+    let continue_ids: Vec<String> = continue_rows
+        .into_iter()
+        .filter(|r| visible.contains(r.library_id))
+        .map(|r| r.issue_id)
+        .collect();
     let continue_issues =
         opds::fetch_visible_issues_preserving_order(&app, &continue_ids, &visible).await;
     let continue_pubs = build_publications(&app, &user, &continue_issues).await;
@@ -265,8 +261,8 @@ async fn series_list(
         Err(e) => return server_error(e),
     };
     let mut count_sel = series::Entity::find();
-    if let Some(ids) = allowed.as_ref() {
-        count_sel = count_sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        count_sel = count_sel.filter(cond);
     }
     let total = match count_sel.count(&app.db).await {
         Ok(n) => n,
@@ -275,8 +271,8 @@ async fn series_list(
     let total_pages = total.div_ceil(opds::PAGE_SIZE).max(1);
 
     let mut sel = series::Entity::find().order_by_asc(series::Column::Name);
-    if let Some(ids) = allowed.as_ref() {
-        sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        sel = sel.filter(cond);
     }
     let rows = match sel.offset(offset).limit(opds::PAGE_SIZE).all(&app.db).await {
         Ok(r) => r,
@@ -339,11 +335,10 @@ async fn browse(
         Ok(v) => v,
         Err(e) => return server_error(e),
     };
-    let allowed_vec = allowed.clone();
 
     let mut count_sel = series::Entity::find();
-    if let Some(ids) = allowed.as_ref() {
-        count_sel = count_sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        count_sel = count_sel.filter(cond);
     }
     if let Some(s) = status_filter {
         count_sel = count_sel.filter(series::Column::Status.eq(s.to_owned()));
@@ -358,8 +353,8 @@ async fn browse(
     let total_pages = total.div_ceil(opds::PAGE_SIZE).max(1);
 
     let mut sel = series::Entity::find().order_by_asc(series::Column::Name);
-    if let Some(ids) = allowed.as_ref() {
-        sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        sel = sel.filter(cond);
     }
     if let Some(s) = status_filter {
         sel = sel.filter(series::Column::Status.eq(s.to_owned()));
@@ -379,8 +374,8 @@ async fn browse(
         .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
         .collect();
 
-    let status_counts = opds::compute_status_facets(&app, allowed_vec.as_ref()).await;
-    let publisher_counts = opds::compute_publisher_facets(&app, allowed_vec.as_ref()).await;
+    let status_counts = opds::compute_status_facets(&app, &allowed).await;
+    let publisher_counts = opds::compute_publisher_facets(&app, &allowed).await;
     let v2_facets = build_v2_facets(&q, &status_counts, &publisher_counts);
 
     let self_href = browse_href_v2(status_filter, q.publisher.as_deref(), Some(page));
@@ -528,22 +523,23 @@ async fn series_one(
         Ok(None) => return not_found(),
         Err(e) => return server_error(e.to_string()),
     };
-    if !opds::visible(&app, &user, s.library_id).await {
+    let acl = access::for_library(&app, &user, s.library_id).await;
+    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
         return not_found();
     }
-    let total = match issue::Entity::find()
-        .filter(issue::Column::SeriesId.eq(id))
-        .count(&app.db)
-        .await
-    {
+    // WP-2.7: issues carrying their own rating above the cap are hidden.
+    let mut issues_base = issue::Entity::find().filter(issue::Column::SeriesId.eq(id));
+    if let Some(cond) = acl.issue_cap_condition() {
+        issues_base = issues_base.filter(cond);
+    }
+    let total = match issues_base.clone().count(&app.db).await {
         Ok(n) => n,
         Err(e) => return server_error(e.to_string()),
     };
     let total_pages = total.div_ceil(opds::PAGE_SIZE).max(1);
     let page = q.page.unwrap_or(1).max(1);
     let offset = (page - 1) * opds::PAGE_SIZE;
-    let mut issues = match issue::Entity::find()
-        .filter(issue::Column::SeriesId.eq(id))
+    let mut issues = match issues_base
         .order_by_asc(issue::Column::SortNumber)
         .offset(offset)
         .limit(opds::PAGE_SIZE)
@@ -557,7 +553,7 @@ async fn series_one(
     // M2.3: feed-level up-next rel pointing at the first unfinished
     // issue in this series. Shares the helper with the v1 surface and
     // the web app's On Deck rail so resolution can't drift.
-    let up_next_issue = crate::api::next_up::pick_next_in_series(&app, user.id, s.id)
+    let up_next_issue = crate::api::next_up::pick_next_in_series(&app, user.id, s.id, &acl)
         .await
         .ok()
         .flatten();
@@ -657,8 +653,8 @@ async fn recent(State(app): State<AppState>, user: CurrentUser) -> Response {
     let mut sel = issue::Entity::find()
         .order_by_desc(issue::Column::CreatedAt)
         .limit(50);
-    if let Some(ids) = allowed.as_ref() {
-        sel = sel.filter(issue::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.issue_filter() {
+        sel = sel.filter(cond);
     }
     let rows = match sel.all(&app.db).await {
         Ok(r) => r,
@@ -719,14 +715,11 @@ async fn continue_reading(State(app): State<AppState>, user: CurrentUser) -> Res
         Ok(r) => r,
         Err(e) => return server_error(e.to_string()),
     };
-    let filtered_ids: Vec<String> = match allowed.as_ref() {
-        None => rows.into_iter().map(|r| r.issue_id).collect(),
-        Some(visible) => rows
-            .into_iter()
-            .filter(|r| visible.contains(&r.library_id))
-            .map(|r| r.issue_id)
-            .collect(),
-    };
+    let filtered_ids: Vec<String> = rows
+        .into_iter()
+        .filter(|r| allowed.contains(r.library_id))
+        .map(|r| r.issue_id)
+        .collect();
     let visible = access::for_user(&app, &user).await;
     let issues = opds::fetch_visible_issues_preserving_order(&app, &filtered_ids, &visible).await;
     let publications = build_publications(&app, &user, &issues).await;
@@ -834,14 +827,11 @@ async fn history(
         Ok(r) => r,
         Err(e) => return server_error(e.to_string()),
     };
-    let filtered_ids: Vec<String> = match allowed.as_ref() {
-        None => rows.into_iter().map(|r| r.issue_id).collect(),
-        Some(visible) => rows
-            .into_iter()
-            .filter(|r| visible.contains(&r.library_id))
-            .map(|r| r.issue_id)
-            .collect(),
-    };
+    let filtered_ids: Vec<String> = rows
+        .into_iter()
+        .filter(|r| allowed.contains(r.library_id))
+        .map(|r| r.issue_id)
+        .collect();
     let visible = access::for_user(&app, &user).await;
     let issues = opds::fetch_visible_issues_preserving_order(&app, &filtered_ids, &visible).await;
     let publications = build_publications(&app, &user, &issues).await;
@@ -884,8 +874,8 @@ async fn new_this_month(State(app): State<AppState>, user: CurrentUser) -> Respo
         .filter(issue::Column::CreatedAt.gte(cutoff.fixed_offset()))
         .order_by_desc(issue::Column::CreatedAt)
         .limit(50);
-    if let Some(ids) = allowed.as_ref() {
-        sel = sel.filter(issue::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.issue_filter() {
+        sel = sel.filter(cond);
     }
     let rows = match sel.all(&app.db).await {
         Ok(r) => r,
@@ -954,8 +944,8 @@ async fn by_creator(
     }
 
     let mut count_sel = series::Entity::find().filter(series::Column::Id.is_in(series_ids.clone()));
-    if let Some(ids) = allowed.as_ref() {
-        count_sel = count_sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        count_sel = count_sel.filter(cond);
     }
     let total = match count_sel.count(&app.db).await {
         Ok(n) => n,
@@ -966,8 +956,8 @@ async fn by_creator(
     let mut sel = series::Entity::find()
         .filter(series::Column::Id.is_in(series_ids))
         .order_by_asc(series::Column::Name);
-    if let Some(ids) = allowed.as_ref() {
-        sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        sel = sel.filter(cond);
     }
     let rows = match sel.offset(offset).limit(opds::PAGE_SIZE).all(&app.db).await {
         Ok(r) => r,
@@ -1038,8 +1028,8 @@ async fn search(
     for token in needle.split_whitespace() {
         sel = sel.filter(col_ilike(series::Column::Name, &ilike_pattern(token)));
     }
-    if let Some(ids) = allowed.as_ref() {
-        sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        sel = sel.filter(cond);
     }
     let rows = match sel.all(&app.db).await {
         Ok(r) => r,
@@ -2045,21 +2035,19 @@ async fn render_collection_acq_v2(
             .await
             .unwrap_or_default()
             .into_iter()
-            .filter(|s| visible.contains(s.library_id))
+            .filter(|s| visible.series_ok(s.library_id, s.age_rating.as_deref()))
             .map(|s| (s.id, s))
             .collect()
     };
     let issue_models: Vec<issue::Model> = if issue_ids.is_empty() {
         Vec::new()
     } else {
-        issue::Entity::find()
+        let rows = issue::Entity::find()
             .filter(issue::Column::Id.is_in(issue_ids))
             .all(&app.db)
             .await
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|i| visible.contains(i.library_id))
-            .collect()
+            .unwrap_or_default();
+        access::filter_issues(app, &visible, rows).await
     };
     let issue_by_id: HashMap<String, issue::Model> = issue_models
         .iter()

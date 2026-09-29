@@ -39,7 +39,7 @@ use axum::{
 };
 use chrono::Utc;
 use entity::{
-    issue, library_user_access,
+    issue,
     progress_record::{self, ActiveModel as ProgressAM, Entity as ProgressEntity},
 };
 use sea_orm::{
@@ -52,6 +52,7 @@ use utoipa_axum::routes;
 
 use super::error;
 use crate::auth::CurrentUser;
+use crate::library::access;
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -198,7 +199,7 @@ pub async fn upsert(
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "issue not found"),
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    if !visible(&app, &user, issue_row.library_id).await {
+    if !access::issue_visible(&app, &user, &issue_row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -426,7 +427,7 @@ pub async fn upsert_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible(&app, &user, srow.library_id).await {
+    if !access::series_visible(&app, &user, &srow).await {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
@@ -561,7 +562,7 @@ pub async fn upsert_series_matching(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible(&app, &user, srow.library_id).await {
+    if !access::series_visible(&app, &user, &srow).await {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
@@ -789,24 +790,10 @@ pub async fn upsert_bulk(
         .filter(|id| !found_ids.contains(id.as_str()))
         .count() as u32;
 
-    // Pre-fetch the library-access set for non-admin users in one
-    // query, so the per-issue ACL check is a HashSet hit rather than
-    // a SELECT per row.
-    let allowed_libraries: Option<std::collections::HashSet<uuid::Uuid>> = if user.role == "admin" {
-        None
-    } else {
-        match library_user_access::Entity::find()
-            .filter(library_user_access::Column::UserId.eq(user.id))
-            .all(&app.db)
-            .await
-        {
-            Ok(v) => Some(v.into_iter().map(|r| r.library_id).collect()),
-            Err(e) => {
-                tracing::warn!(error = %e, "bulk-progress acl lookup failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        }
-    };
+    // Pre-fetch the library-access set (membership + WP-2.7 age-rating
+    // caps) in one query, so the per-issue ACL check is a HashSet hit
+    // rather than a SELECT per row.
+    let acl = access::for_user(&app, &user).await;
 
     let now = Utc::now().fixed_offset();
     let mut updated: u32 = 0;
@@ -814,9 +801,7 @@ pub async fn upsert_bulk(
     let mut forbidden: u32 = 0;
 
     for iss in rows {
-        if let Some(allowed) = &allowed_libraries
-            && !allowed.contains(&iss.library_id)
-        {
+        if !access::issue_allowed(&app, &acl, &iss).await {
             forbidden += 1;
             continue;
         }
@@ -998,22 +983,8 @@ pub async fn upsert_series_bulk(
         .filter(|id| !found_ids.contains(id))
         .count() as u32;
 
-    // Pre-fetch library-access set for non-admins.
-    let allowed_libraries: Option<std::collections::HashSet<uuid::Uuid>> = if user.role == "admin" {
-        None
-    } else {
-        match library_user_access::Entity::find()
-            .filter(library_user_access::Column::UserId.eq(user.id))
-            .all(&app.db)
-            .await
-        {
-            Ok(v) => Some(v.into_iter().map(|r| r.library_id).collect()),
-            Err(e) => {
-                tracing::warn!(error = %e, "series-bulk-progress acl lookup failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        }
-    };
+    // Pre-fetch the library-access set (membership + WP-2.7 caps).
+    let acl = access::for_user(&app, &user).await;
 
     let now = chrono::Utc::now().fixed_offset();
     let mut updated: u32 = 0;
@@ -1021,9 +992,7 @@ pub async fn upsert_series_bulk(
     let mut forbidden_series: u32 = 0;
 
     for srow in series_rows {
-        if let Some(allowed) = &allowed_libraries
-            && !allowed.contains(&srow.library_id)
-        {
+        if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
             forbidden_series += 1;
             continue;
         }
@@ -1117,18 +1086,4 @@ pub async fn upsert_series_bulk(
         }),
     )
         .into_response()
-}
-
-async fn visible(app: &AppState, user: &CurrentUser, lib_id: uuid::Uuid) -> bool {
-    if user.role == "admin" {
-        return true;
-    }
-    library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .filter(library_user_access::Column::LibraryId.eq(lib_id))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
 }
