@@ -7190,8 +7190,9 @@ export interface components {
             issue_slug?: string | null;
             issue_title?: string | null;
             /**
-             * @description `'bookmark' | 'note' | 'highlight'`. Favorite is no longer a
-             *     kind — see `is_favorite`.
+             * @description `'bookmark' | 'note' | 'highlight' | 'favorite'`. Favorite is
+             *     both a kind (re-introduced 2026-05-20) and, for any marker, a
+             *     flag — see `is_favorite`.
              */
             kind: string;
             /** Format: int32 */

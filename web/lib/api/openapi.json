@@ -16763,7 +16763,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`'bookmark' | 'note' | 'highlight'`. Favorite is no longer a\nkind — see `is_favorite`."
+            "description": "`'bookmark' | 'note' | 'highlight' | 'favorite'`. Favorite is\nboth a kind (re-introduced 2026-05-20) and, for any marker, a\nflag — see `is_favorite`."
           },
           "page_index": {
             "type": "integer",
