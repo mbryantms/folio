@@ -42,6 +42,11 @@ sheet, scanner-derived defaults all flow through one path.
 
 ## Per-library opt-in
 
+> **Invariant.** With `allow_archive_writeback` off, Folio never writes a
+> file under the library root — see
+> [archive-writes.md](archive-writes.md) for every writer, its gate, and
+> the test that proves it.
+
 Writeback is **per-library** behind two flags on the `libraries` row:
 
 | Flag                          | Purpose                                                                                  |
