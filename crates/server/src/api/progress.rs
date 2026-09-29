@@ -1,10 +1,29 @@
 //! `POST /progress` (upsert), `GET /progress?since=…` (sync delta).
 //!
 //! Authoritative storage layer for reading progress, backed by the
-//! `progress_records` table. Multi-device conflicts are resolved by
-//! `max(last_page)` on the server. The spec's original §9 plan to
-//! swap this for Automerge CRDT sync was reconsidered and dropped on
-//! 2026-05-15 (see spec §9 decision note).
+//! `progress_records` table.
+//!
+//! **Cross-device conflict rule (the "reading run" model, WP-1.3).**
+//! Every record carries a `run` counter (0 = first read). Within a run:
+//!
+//! - an *implicit* per-page write (`finished` omitted — what the reader
+//!   sends as you turn pages) can only move `last_page` forward:
+//!   `max(prev, page)`. A stale debounced write from another device can
+//!   never drag the position backwards;
+//! - an *explicit* write (`finished: true|false` — mark read / unread /
+//!   the last-page auto-finish) stores `page` as given; the user said so;
+//! - `finished` stays sticky on implicit writes (a bookmark jump never
+//!   un-finishes an issue).
+//!
+//! `restart: true` opens run `n+1` at `page` (normally 0) with
+//! `finished = false` — "Read from beginning", or reopening a finished
+//! issue from the cover. A write tagged with a `run` older than the
+//! server's is ignored: that device is still on the previous read and
+//! silently follows the new run on its next open. Clients that don't
+//! send `run` (OPDS / KOReader / Komga shims) write into the current run.
+//!
+//! The spec's original §9 plan to swap this for Automerge CRDT sync was
+//! reconsidered and dropped on 2026-05-15 (see spec §9 decision note).
 //!
 //! Error envelope: every error response flows through the shared
 //! `crate::api::error` helper. The `X-Progress-Api` header that used to
@@ -24,7 +43,8 @@ use entity::{
     progress_record::{self, ActiveModel as ProgressAM, Entity as ProgressEntity},
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, Set, Unchanged,
+    ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, Condition, EntityTrait, QueryFilter,
+    QueryOrder, Set, Unchanged,
 };
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
@@ -65,6 +85,17 @@ pub struct UpsertReq {
     pub finished: Option<bool>,
     #[serde(default)]
     pub device: Option<String>,
+    /// The reading run this write belongs to (from the record the
+    /// client last read). A write tagged with a run older than the
+    /// server's is ignored — that device is still on a previous read.
+    /// Omitted by legacy clients: treated as the current run.
+    #[serde(default)]
+    pub run: Option<i32>,
+    /// Open a new reading run at `page` (normally 0): bumps `run` and
+    /// clears `finished`. The reader sends it on "Read from beginning"
+    /// and when a finished issue is reopened from the cover.
+    #[serde(default)]
+    pub restart: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -73,6 +104,9 @@ pub struct ProgressView {
     pub page: i32,
     pub percent: f64,
     pub finished: bool,
+    /// Reading run this position belongs to. Clients echo it back on
+    /// per-page writes; see the module doc for the conflict rule.
+    pub run: i32,
     pub updated_at: String,
     /// Authoritative timestamp the issue was flipped to finished;
     /// `None` for in-progress / unread rows.
@@ -86,6 +120,7 @@ impl From<progress_record::Model> for ProgressView {
             page: m.last_page,
             percent: m.percent,
             finished: m.finished,
+            run: m.run,
             updated_at: m.updated_at.to_rfc3339(),
             finished_at: m.finished_at.map(|t| t.to_rfc3339()),
         }
@@ -167,13 +202,15 @@ pub async fn upsert(
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
-    let result = upsert_for(
+    let result = upsert_for_run(
         &app,
         user.id,
         &issue_row,
         req.page,
         req.finished,
         req.device,
+        req.run,
+        req.restart,
     )
     .await;
     match result {
@@ -189,6 +226,9 @@ pub async fn upsert(
 /// progress endpoints. The caller is responsible for ACL: this fn
 /// trusts that `issue_row` is one the `user_id` is allowed to read.
 /// Keeps the `finished`-is-sticky semantics intact across all callers.
+///
+/// Writes into the current reading run without a run tag (the shims
+/// that call this don't know about runs). See [`upsert_for_run`].
 pub(crate) async fn upsert_for(
     app: &AppState,
     user_id: uuid::Uuid,
@@ -197,8 +237,31 @@ pub(crate) async fn upsert_for(
     finished: Option<bool>,
     device: Option<String>,
 ) -> Result<progress_record::Model, sea_orm::DbErr> {
-    let percent = match issue_row.page_count.unwrap_or(0) {
-        n if n > 0 => (page as f64 / n as f64).clamp(0.0, 1.0),
+    upsert_for_run(app, user_id, issue_row, page, finished, device, None, false).await
+}
+
+/// [`upsert_for`] with the reading-run inputs. The conflict rule (module
+/// doc):
+///
+/// - `restart`: open run `prev.run + 1` at `page`, `finished` cleared
+///   unless explicitly set;
+/// - `run` older than the stored run: the write is ignored and the
+///   stored record returned unchanged;
+/// - implicit write (`finished == None`): `last_page = max(prev, page)`;
+/// - explicit write: `last_page = page`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn upsert_for_run(
+    app: &AppState,
+    user_id: uuid::Uuid,
+    issue_row: &issue::Model,
+    page: i32,
+    finished: Option<bool>,
+    device: Option<String>,
+    run: Option<i32>,
+    restart: bool,
+) -> Result<progress_record::Model, sea_orm::DbErr> {
+    let percent_of = |p: i32| match issue_row.page_count.unwrap_or(0) {
+        n if n > 0 => (p as f64 / n as f64).clamp(0.0, 1.0),
         _ => 0.0,
     };
     let now = Utc::now().fixed_offset();
@@ -207,19 +270,38 @@ pub(crate) async fn upsert_for(
         .await?;
     match existing {
         Some(prev) => {
-            // `finished` is sticky on per-page writes: when the caller
-            // omits it, we keep whatever was there. Mark-as-read /
-            // mark-as-unread / last-page-auto-finish all send an
-            // explicit value, so user-intended toggles still flow
-            // through.
-            let next_finished = finished.unwrap_or(prev.finished);
+            if !restart && run.is_some_and(|r| r < prev.run) {
+                tracing::debug!(
+                    issue_id = %issue_row.id,
+                    client_run = run,
+                    server_run = prev.run,
+                    "progress write ignored: client is on an older reading run"
+                );
+                return Ok(prev);
+            }
+            let (next_run, next_page, next_finished) = if restart {
+                (prev.run + 1, page, finished.unwrap_or(false))
+            } else {
+                // `finished` is sticky on per-page writes: when the caller
+                // omits it, we keep whatever was there. Mark-as-read /
+                // mark-as-unread / last-page-auto-finish all send an
+                // explicit value, so user-intended toggles still flow
+                // through — and those explicit writes also set the page
+                // as given, while implicit ones only move forward.
+                let next_page = if finished.is_none() {
+                    prev.last_page.max(page)
+                } else {
+                    page
+                };
+                (prev.run, next_page, finished.unwrap_or(prev.finished))
+            };
             let next_finished_at =
                 resolve_finished_at(prev.finished, next_finished, prev.finished_at, now);
             let am = ProgressAM {
                 user_id: Unchanged(user_id),
                 issue_id: Unchanged(issue_row.id.clone()),
-                last_page: Set(page),
-                percent: Set(percent),
+                last_page: Set(next_page),
+                percent: Set(percent_of(next_page)),
                 finished: Set(next_finished),
                 finished_at: Set(next_finished_at),
                 updated_at: Set(now),
@@ -227,6 +309,7 @@ pub(crate) async fn upsert_for(
                 // Per-issue reader writes are always active reading
                 // — clear any previously-set backfill flag.
                 is_backfill: Set(false),
+                run: Set(next_run),
             };
             am.update(&app.db).await
         }
@@ -236,12 +319,13 @@ pub(crate) async fn upsert_for(
                 user_id: Set(user_id),
                 issue_id: Set(issue_row.id.clone()),
                 last_page: Set(page),
-                percent: Set(percent),
+                percent: Set(percent_of(page)),
                 finished: Set(next_finished),
                 finished_at: Set(if next_finished { Some(now) } else { None }),
                 updated_at: Set(now),
                 device: Set(device),
                 is_backfill: Set(false),
+                run: Set(0),
             };
             am.insert(&app.db).await
         }
@@ -406,6 +490,7 @@ pub async fn upsert_series(
                     updated_at: Set(now),
                     device: Set(req.device.clone()),
                     is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
+                    run: NotSet,
                 };
                 if let Err(e) = am.update(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "series-progress update failed");
@@ -424,6 +509,7 @@ pub async fn upsert_series(
                     updated_at: Set(now),
                     device: Set(req.device.clone()),
                     is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
+                    run: Set(0),
                 };
                 if let Err(e) = am.insert(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "series-progress insert failed");
@@ -548,6 +634,7 @@ pub async fn upsert_series_matching(
                     updated_at: Set(now),
                     device: Set(req.device.clone()),
                     is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
+                    run: NotSet,
                 };
                 if let Err(e) = am.update(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress update failed");
@@ -566,6 +653,7 @@ pub async fn upsert_series_matching(
                     updated_at: Set(now),
                     device: Set(req.device.clone()),
                     is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
+                    run: Set(0),
                 };
                 if let Err(e) = am.insert(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress insert failed");
@@ -767,6 +855,7 @@ pub async fn upsert_bulk(
                     updated_at: Set(now),
                     device: Set(req.device.clone()),
                     is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
+                    run: NotSet,
                 };
                 if let Err(e) = am.update(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress update failed");
@@ -785,6 +874,7 @@ pub async fn upsert_bulk(
                     updated_at: Set(now),
                     device: Set(req.device.clone()),
                     is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
+                    run: Set(0),
                 };
                 if let Err(e) = am.insert(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress insert failed");
@@ -986,6 +1076,7 @@ pub async fn upsert_series_bulk(
                         updated_at: Set(now),
                         device: Set(req.device.clone()),
                         is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
+                        run: NotSet,
                     };
                     if let Err(e) = am.update(&app.db).await {
                         tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk update failed");
@@ -1004,6 +1095,7 @@ pub async fn upsert_series_bulk(
                         updated_at: Set(now),
                         device: Set(req.device.clone()),
                         is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
+                        run: Set(0),
                     };
                     if let Err(e) = am.insert(&app.db).await {
                         tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk insert failed");

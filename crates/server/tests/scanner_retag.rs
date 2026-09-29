@@ -234,6 +234,7 @@ async fn retag_preserves_id_and_fks() {
         updated_at: Set(Utc::now().fixed_offset()),
         device: Set(Some("phone".into())),
         is_backfill: Set(false),
+        run: Set(0),
     }
     .insert(&state.db)
     .await

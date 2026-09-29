@@ -95,6 +95,8 @@ export function Reader({
   exitUrl,
   totalPages,
   initialPage,
+  initialRun,
+  restartRun,
   pages,
   pageUrlVersion,
   manga,
@@ -126,6 +128,10 @@ export function Reader({
   exitUrl: string;
   totalPages: number;
   initialPage: number;
+  /** Reading run of the saved record; see `useReaderProgressWrite`. */
+  initialRun?: number;
+  /** Open a new reading run with the first progress write. */
+  restartRun?: boolean;
   pages: PageInfo[];
   /** Archive-content stamp (`issue.last_rewrite_at`) appended as `?v=` to
    *  every page/thumb URL, so a page edit changes the URLs and bypasses
@@ -712,6 +718,8 @@ export function Reader({
     issueId,
     currentPage,
     initialPage,
+    initialRun,
+    restartRun,
     totalPages,
     incognito: suppressWrites,
     // Webtoon scroll-tracking drives `currentPage` both ways; persist a

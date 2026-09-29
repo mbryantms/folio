@@ -979,6 +979,7 @@ async fn series_view_includes_progress_summary_and_year_range() {
         updated_at: Set(now),
         device: Set(None),
         is_backfill: Set(false),
+        run: Set(0),
     }
     .insert(&db)
     .await
@@ -993,6 +994,7 @@ async fn series_view_includes_progress_summary_and_year_range() {
         updated_at: Set(now),
         device: Set(None),
         is_backfill: Set(false),
+        run: Set(0),
     }
     .insert(&db)
     .await

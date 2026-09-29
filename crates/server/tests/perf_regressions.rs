@@ -545,6 +545,7 @@ async fn seed_progress(app: &TestApp, user_id: Uuid, issue_ids: &[String]) {
             updated_at: Set(now - chrono::Duration::seconds(i as i64)),
             device: Set(None),
             is_backfill: Set(false),
+            run: Set(0),
         }
         .insert(&db)
         .await
@@ -571,6 +572,7 @@ async fn seed_all_finished(app: &TestApp, user_id: Uuid, issue_ids: &[String]) {
             updated_at: Set(now - chrono::Duration::seconds(i as i64)),
             device: Set(None),
             is_backfill: Set(false),
+            run: Set(0),
         }
         .insert(&db)
         .await

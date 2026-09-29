@@ -346,6 +346,7 @@ async fn mark_finished_at_inner(
         updated_at: Set(at),
         device: Set(None),
         is_backfill: Set(is_backfill),
+        run: Set(0),
     }
     .insert(&db)
     .await

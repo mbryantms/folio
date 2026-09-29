@@ -378,6 +378,10 @@ export type ProgressView = {
   page: number;
   percent: number;
   finished: boolean;
+  /** Reading run this position belongs to (0 = first read). Echoed back
+   *  on per-page writes so a device left on an older read can't regress
+   *  the current one. */
+  run: number;
   updated_at: string;
 };
 

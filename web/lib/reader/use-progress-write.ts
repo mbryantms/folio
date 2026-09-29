@@ -25,6 +25,16 @@ const PROGRESS_DEBOUNCE_MS = 300;
  * Explicit "Mark as unread" goes through the mutation hook with its
  * own `finished: false`.
  *
+ * Reading runs (WP-1.3): every write carries the `run` the reader is
+ * in, seeded from the saved record and refreshed from each server
+ * reply. The server keeps the furthest page within a run for these
+ * implicit writes (so a stale write from another device can't move
+ * the position backwards) and ignores writes tagged with an older
+ * run. When the page was opened with `restartRun` ("Read from
+ * beginning", or a finished issue reopened from the cover) the first
+ * write sends `restart: true` instead of a run, which opens the next
+ * run at that page; later writes use the run the server returns.
+ *
  * Incognito short-circuits the write entirely. The reading-session
  * tracker is also gated separately by `activityTrackingEnabled` in
  * `useReadingSession`.
@@ -59,6 +69,11 @@ export function useReaderProgressWrite(opts: {
    *  flips, and seeding from it clamped the new issue's progress to the
    *  old issue's page (CQ-TS-3 stale-closure audit). */
   initialPage: number;
+  /** Reading run of the saved record (0 when there is none). */
+  initialRun?: number;
+  /** Open a new reading run with the first write instead of writing
+   *  into `initialRun`. */
+  restartRun?: boolean;
   totalPages: number;
   incognito: boolean;
   /**
@@ -74,6 +89,8 @@ export function useReaderProgressWrite(opts: {
     issueId,
     currentPage,
     initialPage,
+    initialRun = 0,
+    restartRun = false,
     totalPages,
     incognito,
     monotonic = false,
@@ -96,7 +113,16 @@ export function useReaderProgressWrite(opts: {
         if (!response.ok) return false;
         void qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
-        return true;
+        // Hand the reply's run back to the writer, which adopts it for
+        // the next write (after a `restart` it is the new run; a newer
+        // run than ours means another device restarted — follow it).
+        try {
+          const reply = (await response.json()) as { run?: unknown };
+          return typeof reply.run === "number" ? { run: reply.run } : true;
+        } catch {
+          /* keepalive replies may be unreadable after unload */
+          return true;
+        }
       }),
     [qc],
   );
@@ -105,10 +131,11 @@ export function useReaderProgressWrite(opts: {
   const highWater = useRef(initialPage);
   useEffect(() => {
     highWater.current = initialPage;
-    // Only reset on issue change — seeding the new issue's resume page.
-    // `initialPage` is a property of the issue, so it rides along with
-    // the `issueId` flip; re-running on other dep changes would defeat
-    // the ratchet.
+    writer.seedRun(initialRun, restartRun);
+    // Only reset on issue change — seeding the new issue's resume page
+    // and run. `initialPage` / `initialRun` / `restartRun` are
+    // properties of the issue, so they ride along with the `issueId`
+    // flip; re-running on other dep changes would defeat the ratchet.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [issueId]);
 
