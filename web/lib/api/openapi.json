@@ -15272,6 +15272,7 @@
         "type": "object",
         "required": [
           "issue",
+          "run",
           "last_page",
           "percent",
           "finished",
@@ -15307,6 +15308,11 @@
           "percent": {
             "type": "number",
             "format": "double"
+          },
+          "run": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Reading-run counter: 0 is the first read, each explicit re-read\nopens the next run (`docs/dev/reading-progress.md`)."
           },
           "updated_at": {
             "type": "string"

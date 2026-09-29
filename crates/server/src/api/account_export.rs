@@ -143,6 +143,9 @@ pub struct SeriesRef {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ExportProgress {
     pub issue: IssueRef,
+    /// Reading-run counter: 0 is the first read, each explicit re-read
+    /// opens the next run (`docs/dev/reading-progress.md`).
+    pub run: i32,
     pub last_page: i32,
     pub percent: f64,
     pub finished: bool,
@@ -509,6 +512,7 @@ async fn build_export(
         .into_iter()
         .map(|p| ExportProgress {
             issue: refs.issue(&p.issue_id),
+            run: p.run,
             last_page: p.last_page,
             percent: p.percent,
             finished: p.finished,

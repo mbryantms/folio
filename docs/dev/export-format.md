@@ -89,7 +89,8 @@ One row per issue the user has opened or marked.
 | Field | Type |
 |---|---|
 | `issue` | `IssueRef` |
-| `last_page` | int (0-based) |
+| `run` | int — reading-run counter; 0 is the first read, each explicit re-read opens the next run (see [`reading-progress.md`](reading-progress.md)) |
+| `last_page` | int (0-based) within the current run |
 | `percent` | float 0..1 |
 | `finished` | bool |
 | `finished_at` | timestamp \| null |

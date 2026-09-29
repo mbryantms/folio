@@ -6523,6 +6523,12 @@ export interface components {
             last_page: number;
             /** Format: double */
             percent: number;
+            /**
+             * Format: int32
+             * @description Reading-run counter: 0 is the first read, each explicit re-read
+             *     opens the next run (`docs/dev/reading-progress.md`).
+             */
+            run: number;
             updated_at: string;
         };
         ExportRailDismissal: {

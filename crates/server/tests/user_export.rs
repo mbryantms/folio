@@ -18,8 +18,8 @@ use common::seed::{
     seed_series,
 };
 use entity::{
-    marker, rail_dismissal, reading_session, saved_view, user, user_page, user_rating,
-    user_sidebar_entry, user_view_pin,
+    marker, progress_record, rail_dismissal, reading_session, saved_view, user, user_page,
+    user_rating, user_sidebar_entry, user_view_pin,
 };
 use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, Set};
 use serde_json::{Value, json};
@@ -127,8 +127,17 @@ async fn seed_user_a(db: &DatabaseConnection, tmp: &std::path::Path, user_id: Uu
         .unwrap()
         .content_hash;
 
-    // progress
+    // progress — bump the run so the export's `run` is visibly non-default
     seed_progress(db, user_id, &issue_id, 7, 0.35, false).await;
+    let mut progress_am: progress_record::ActiveModel =
+        progress_record::Entity::find_by_id((user_id, issue_id.clone()))
+            .one(db)
+            .await
+            .unwrap()
+            .unwrap()
+            .into();
+    progress_am.run = Set(1);
+    progress_am.update(db).await.unwrap();
 
     // marker (a note with region + tags)
     let marker_id = Uuid::now_v7();
@@ -396,6 +405,11 @@ async fn export_contains_every_section_the_user_owns() {
     let progress = s["progress"].as_array().unwrap();
     assert_eq!(progress.len(), 1);
     assert_issue_ref(&progress[0]["issue"], &seeded);
+    assert_eq!(
+        progress[0]["run"], 1,
+        "reading-run counter: {}",
+        progress[0]
+    );
     assert_eq!(progress[0]["last_page"], 7);
     assert_eq!(progress[0]["finished"], false);
     assert_eq!(progress[0]["is_backfill"], false);
