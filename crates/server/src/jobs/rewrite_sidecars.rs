@@ -289,15 +289,15 @@ pub(crate) async fn rewrite_one_issue(
                 let mut src =
                     Cbz::open(&src_path, arch_limits).map_err(RewriteError::ArchiveErr)?;
                 // Snapshot the source entries the rebuild is contractually
-                // required to preserve verbatim — i.e. the real pages. The
-                // reader surfaces sidecars + trash (`.xml`/`.json`/`.txt`,
-                // dotfiles, `Thumbs.db`, `__MACOSX`) through `entries()` too,
-                // but `rebuild` intentionally drops every such entry and
-                // re-adds the canonical ComicInfo/MetronInfo, so a nested or
-                // duplicate sidecar legitimately won't survive. Excluding them
-                // here keeps the post-write validation from a false "dropped
-                // entry" abort on those (the two sidecars' presence is checked
-                // separately in `validate_rewrite`).
+                // required to preserve verbatim: the pages AND every foreign
+                // non-page entry (`CoMet.xml`, notes, `.json` — WP-2.6 (b)).
+                // Only junk (dotfiles, `Thumbs.db`, `__MACOSX`) and the two
+                // Folio-managed sidecars are excluded: `rebuild` drops those
+                // and re-adds the freshly composed root ComicInfo/MetronInfo,
+                // so a nested or duplicate sidecar legitimately won't survive.
+                // Excluding them here keeps the post-write validation from a
+                // false "dropped entry" abort (the two sidecars' presence is
+                // checked separately in `validate_rewrite`).
                 let source_names: Vec<String> = src
                     .entries()
                     .iter()
@@ -657,5 +657,78 @@ mod tests {
             !names.contains("Sub Folder/ComicInfo.xml"),
             "stale nested sidecar should be dropped, not preserved"
         );
+    }
+
+    /// WP-2.6 (b) / audit DI-11: a sidecar rewrite must carry every
+    /// foreign non-page entry through — `CoMet.xml`, `notes.txt`, an
+    /// embedded `.json` — and the validator must *require* them to
+    /// survive (they're in the must-keep snapshot now, not filtered out).
+    /// Junk is still dropped; a nested image is a page and streams
+    /// through like any other.
+    #[test]
+    fn rewrite_preserves_foreign_sidecars_and_nested_pages() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_path = dir.path().join("src.cbz");
+        write_cbz(
+            &src_path,
+            &[
+                "page-001.jpg",
+                "extras/cover-alt.jpg",
+                "CoMet.xml",
+                "notes.txt",
+                "meta.json",
+                "Thumbs.db",
+                "ComicInfo.xml",
+            ],
+        );
+
+        let limits = ArchiveLimits::default();
+        let mut src = Cbz::open(&src_path, limits).unwrap();
+        let source_names: Vec<String> = src
+            .entries()
+            .iter()
+            .filter(|e| !archive::cbz::is_rewrite_skipped(&e.name))
+            .map(|e| e.name.clone())
+            .collect();
+        for must_keep in [
+            "CoMet.xml",
+            "notes.txt",
+            "meta.json",
+            "extras/cover-alt.jpg",
+        ] {
+            assert!(
+                source_names.iter().any(|n| n == must_keep),
+                "{must_keep} must be in the must-survive snapshot: {source_names:?}"
+            );
+        }
+        assert!(!source_names.iter().any(|n| n == "Thumbs.db"));
+        assert!(!source_names.iter().any(|n| n == "ComicInfo.xml"));
+
+        let tmp = dir.path().join("out.cbz.tmp");
+        let mut plan = RebuildPlan::new();
+        plan.set_entry("ComicInfo.xml", b"<ComicInfo/>".to_vec());
+        plan.set_entry("MetronInfo.xml", b"<MetronInfo/>".to_vec());
+        rebuild(&mut src, plan, &tmp, limits).unwrap();
+        drop(src);
+
+        validate_rewrite(&tmp, &source_names, limits).expect("foreign sidecars survive");
+
+        let mut out = Cbz::open(&tmp, limits).unwrap();
+        let names: std::collections::HashSet<String> =
+            out.entries().iter().map(|e| e.name.clone()).collect();
+        for kept in [
+            "CoMet.xml",
+            "notes.txt",
+            "meta.json",
+            "extras/cover-alt.jpg",
+        ] {
+            assert!(names.contains(kept), "{kept} lost on rewrite: {names:?}");
+        }
+        assert!(!names.contains("Thumbs.db"), "junk must be dropped");
+        // Byte-for-byte: `write_cbz` writes `x` for non-image entries.
+        assert_eq!(out.read_entry_bytes_by_name("CoMet.xml").unwrap(), b"x");
+        // The nested image is still a page after the rewrite.
+        let pages: Vec<&str> = out.pages().iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(pages, vec!["extras/cover-alt.jpg", "page-001.jpg"]);
     }
 }

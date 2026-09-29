@@ -700,3 +700,61 @@ async fn cbt_rotate_swaps_dimensions() {
     let img = image::load_from_memory(&bytes).unwrap();
     assert_eq!((img.width(), img.height()), (20, 10));
 }
+
+/// WP-2.6 (b) / audit DI-11: a page edit carries every foreign non-page
+/// entry (`CoMet.xml`, `notes.txt`, an embedded `.json`) and the existing
+/// root `ComicInfo.xml` through byte-for-byte; junk is dropped. Same policy
+/// as the sidecar rewrite (`archive::rewrite_policy`), for both CBZ and CBT.
+#[tokio::test]
+async fn page_edit_preserves_foreign_sidecars_cbz_and_cbt() {
+    let app = TestApp::spawn().await;
+    let state = app.state();
+    let comet = b"<comet><title>Kept</title></comet>".to_vec();
+    let notes = b"scanner notes".to_vec();
+    let meta = b"{\"kept\":true}".to_vec();
+    let comicinfo = b"<ComicInfo><Title>Old</Title></ComicInfo>".to_vec();
+    let entries: Vec<(&str, Vec<u8>)> = vec![
+        ("p1.png", png_bytes(4, 4, [1, 0, 0])),
+        ("p2.png", png_bytes(4, 4, [0, 1, 0])),
+        ("CoMet.xml", comet.clone()),
+        ("notes.txt", notes.clone()),
+        ("meta.json", meta.clone()),
+        ("ComicInfo.xml", comicinfo.clone()),
+        ("Thumbs.db", b"junk".to_vec()),
+    ];
+
+    for (file_name, bytes) in [
+        ("issue.cbz", build_cbz(&entries)),
+        ("issue.cbt", build_cbt(&entries)),
+    ] {
+        let dir = tempdir().unwrap();
+        let (issue_id, path) = seed_issue_with_archive(&app, bytes, dir.path(), file_name).await;
+        edit_one_issue(&state, &job(&issue_id, vec![PageOp::Remove { ordinal: 0 }]))
+            .await
+            .unwrap();
+
+        let mut a = archive::open(&path, ArchiveLimits::default()).unwrap();
+        assert_eq!(open_page_names(&path), vec!["p0001.png"], "{file_name}");
+        assert_eq!(
+            a.read_entry_bytes("CoMet.xml").unwrap(),
+            comet,
+            "{file_name}"
+        );
+        assert_eq!(
+            a.read_entry_bytes("notes.txt").unwrap(),
+            notes,
+            "{file_name}"
+        );
+        assert_eq!(
+            a.read_entry_bytes("meta.json").unwrap(),
+            meta,
+            "{file_name}"
+        );
+        assert_eq!(
+            a.read_entry_bytes("ComicInfo.xml").unwrap(),
+            comicinfo,
+            "{file_name}"
+        );
+        assert!(a.find("Thumbs.db").is_none(), "{file_name}: junk dropped");
+    }
+}

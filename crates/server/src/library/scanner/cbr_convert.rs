@@ -100,18 +100,12 @@ pub fn convert_cbr_to_cbz(src: &Path, limits: ArchiveLimits) -> Result<PathBuf, 
                         .map_err(RewriteError::ArchiveErr)?;
                     pages.push((ext_of(name), bytes, 0));
                 }
-                // Preserve ComicInfo.xml / MetronInfo.xml verbatim (deflate
-                // level 6), mirroring the page-edit rewrite. Other non-page
-                // trash is dropped.
-                let mut extras: Vec<(String, Vec<u8>, i64)> = Vec::new();
-                for sidecar in ["ComicInfo.xml", "MetronInfo.xml"] {
-                    if cbr.find(sidecar).is_some() {
-                        let bytes = cbr
-                            .read_entry_bytes(sidecar)
-                            .map_err(RewriteError::ArchiveErr)?;
-                        extras.push((sidecar.to_string(), bytes, 6));
-                    }
-                }
+                // Preserve every non-page entry the rewrite policy keeps
+                // (root ComicInfo/MetronInfo pair + foreign sidecars such
+                // as CoMet.xml / notes.txt) verbatim, mirroring the page
+                // editor and the sidecar rewrite. Junk is dropped.
+                let extras = archive::rewrite_policy::preserved_extras(&mut cbr, true)
+                    .map_err(RewriteError::ArchiveErr)?;
                 cbz_write::write_pages(pages, extras, tmp, limits)
                     .map_err(RewriteError::ArchiveErr)?;
                 Ok(())

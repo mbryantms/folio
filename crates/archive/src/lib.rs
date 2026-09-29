@@ -17,6 +17,7 @@ pub mod cbz_write;
 pub mod comic_archive;
 pub mod entry_name;
 pub mod image_sniff;
+pub mod rewrite_policy;
 
 pub use comic_archive::ComicArchive;
 
