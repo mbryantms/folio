@@ -2467,6 +2467,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["account_export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/issues/bulk-metadata": {
         parameters: {
             query?: never;
@@ -6411,6 +6427,242 @@ export interface components {
             /** Format: int32 */
             year?: number | null;
         };
+        ExportCollection: {
+            created_at: string;
+            custom_tags: string[];
+            description?: string | null;
+            /** @description Entries in `position` order. */
+            entries: components["schemas"]["ExportCollectionEntry"][];
+            /** Format: uuid */
+            id: string;
+            name: string;
+            preserve_canonical_order: boolean;
+            /** @description `"want_to_read"` for the system collection, `null` otherwise. */
+            system_key?: string | null;
+            updated_at: string;
+        };
+        ExportCollectionEntry: {
+            added_at: string;
+            /** @description `"issue"` or `"series"` — exactly one of the refs below is set. */
+            entry_kind: string;
+            issue?: components["schemas"]["IssueRef"] | null;
+            /** Format: int32 */
+            position: number;
+            series?: components["schemas"]["SeriesRef"] | null;
+        };
+        ExportMarker: {
+            body?: string | null;
+            color?: string | null;
+            created_at: string;
+            hidden_from_log: boolean;
+            /** Format: uuid */
+            id: string;
+            is_favorite: boolean;
+            issue: components["schemas"]["IssueRef"];
+            kind: string;
+            /** Format: int32 */
+            page_index: number;
+            region?: Record<string, never> | null;
+            selection?: Record<string, never> | null;
+            tags: string[];
+            updated_at: string;
+        };
+        ExportPage: {
+            created_at: string;
+            description?: string | null;
+            /** Format: uuid */
+            id: string;
+            is_system: boolean;
+            name: string;
+            /** @description Pinned rails on this page in `position` order. */
+            pins: components["schemas"]["ExportViewPin"][];
+            /** Format: int32 */
+            position: number;
+            slug: string;
+            updated_at: string;
+        };
+        /**
+         * @description Raw preference columns off the `users` row. Token columns are exported
+         *     as stored (`null` = "no preference").
+         */
+        ExportPreferences: {
+            accent_color?: string | null;
+            activity_tracking_enabled: boolean;
+            default_cover_solo: boolean;
+            default_fit_mode?: string | null;
+            default_page_animation?: string | null;
+            default_page_strip: boolean;
+            default_reading_direction?: string | null;
+            default_view_mode?: string | null;
+            density?: string | null;
+            exclude_from_aggregates: boolean;
+            /** @description Reader key overrides — `{ action_name: key_string }`. */
+            keybinds: Record<string, never>;
+            language: string;
+            /** Format: int32 */
+            max_rails_per_page: number;
+            opds_progress_glyphs: boolean;
+            opds_wtr_reorder: boolean;
+            /** Format: int32 */
+            reading_idle_ms: number;
+            /** Format: int32 */
+            reading_min_active_ms: number;
+            /** Format: int32 */
+            reading_min_pages: number;
+            show_marker_count: boolean;
+            theme?: string | null;
+            timezone: string;
+        };
+        ExportProgress: {
+            device?: string | null;
+            finished: boolean;
+            finished_at?: string | null;
+            is_backfill: boolean;
+            issue: components["schemas"]["IssueRef"];
+            /** Format: int32 */
+            last_page: number;
+            /** Format: double */
+            percent: number;
+            updated_at: string;
+        };
+        ExportRailDismissal: {
+            dismissed_at: string;
+            target_id: string;
+            /** @description `issue` / `series` / `cbl`. */
+            target_kind: string;
+        };
+        ExportRating: {
+            created_at: string;
+            issue?: components["schemas"]["IssueRef"] | null;
+            /** Format: double */
+            rating: number;
+            series?: components["schemas"]["SeriesRef"] | null;
+            /** @description `"issue"` or `"series"` — exactly one of the refs below is set. */
+            target_type: string;
+            updated_at: string;
+        };
+        ExportReadingSession: {
+            /** Format: int64 */
+            active_ms: number;
+            client_meta: Record<string, never>;
+            client_session_id: string;
+            device?: string | null;
+            /** Format: int32 */
+            distinct_pages_read: number;
+            /** Format: int32 */
+            end_page: number;
+            ended_at?: string | null;
+            /** Format: int32 */
+            furthest_page: number;
+            hidden_from_log: boolean;
+            /** Format: uuid */
+            id: string;
+            issue: components["schemas"]["IssueRef"];
+            last_heartbeat_at: string;
+            /** Format: int32 */
+            page_turns: number;
+            /** Format: int32 */
+            start_page: number;
+            started_at: string;
+            view_mode?: string | null;
+        };
+        ExportSavedView: {
+            /**
+             * Format: uuid
+             * @description For `kind = "cbl"`: the backing `cbl_lists` row. CBL lists have
+             *     their own XML export (`GET /me/cbl-lists/{id}/export`).
+             */
+            cbl_list_id?: string | null;
+            /** @description Filter DSL — a JSON array of `{group_id, field, op, value}`. */
+            conditions?: Record<string, never> | null;
+            created_at: string;
+            custom_tags: string[];
+            /** Format: int32 */
+            custom_year_end?: number | null;
+            /** Format: int32 */
+            custom_year_start?: number | null;
+            description?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** @description `"filter_series"` or `"cbl"`. */
+            kind: string;
+            match_mode?: string | null;
+            name: string;
+            /** Format: int32 */
+            result_limit?: number | null;
+            sort_field?: string | null;
+            sort_order?: string | null;
+            updated_at: string;
+        };
+        ExportSections: {
+            /**
+             * @description User-authored collections (`saved_views.kind = 'collection'`,
+             *     no `system_key`). Want to Read is split out below.
+             */
+            collections: components["schemas"]["ExportCollection"][];
+            /**
+             * @description Every `user_page` row including the system Home page, each with
+             *     its pinned rails.
+             */
+            custom_pages: components["schemas"]["ExportPage"][];
+            markers: components["schemas"]["ExportMarker"][];
+            /**
+             * @description Per-user preferences from the `users` row, including reader
+             *     `keybinds`.
+             */
+            preferences: components["schemas"]["ExportPreferences"];
+            progress: components["schemas"]["ExportProgress"][];
+            rail_dismissals: components["schemas"]["ExportRailDismissal"][];
+            ratings: components["schemas"]["ExportRating"][];
+            /**
+             * @description `reading_sessions` rows. Hidden sessions are included with
+             *     `hidden_from_log = true` so the flag survives a restore.
+             */
+            reading_log: components["schemas"]["ExportReadingSession"][];
+            /**
+             * @description Filter and CBL-backed saved views (every user-owned `saved_views`
+             *     row whose `kind != 'collection'`).
+             */
+            saved_views: components["schemas"]["ExportSavedView"][];
+            sidebar: components["schemas"]["ExportSidebarEntry"][];
+            want_to_read?: components["schemas"]["ExportCollection"] | null;
+        };
+        ExportSidebarEntry: {
+            /** @description `builtin` / `library` / `view` / `header` / `spacer`. */
+            kind: string;
+            label?: string | null;
+            /** Format: int32 */
+            position: number;
+            ref_id: string;
+            visible: boolean;
+        };
+        ExportUser: {
+            display_name: string;
+            email?: string | null;
+            /** Format: uuid */
+            id: string;
+        };
+        ExportViewPin: {
+            icon?: string | null;
+            pinned: boolean;
+            /** Format: int32 */
+            position: number;
+            show_in_sidebar: boolean;
+            /** Format: uuid */
+            view_id: string;
+            /**
+             * @description The pinned view's `kind` (`filter_series` / `cbl` / `system` /
+             *     `collection`), hydrated so a system rail is recognisable after a
+             *     rebuild. `null` when the view no longer exists.
+             */
+            view_kind?: string | null;
+            view_name?: string | null;
+            /**
+             * @description `system_key` of the pinned view (e.g. `continue_reading`), when it
+             *     is a built-in rail or the Want to Read collection.
+             */
+            view_system_key?: string | null;
+        };
         /**
          * @description External-ID conflict row — surfaces in the preview pane as an
          *     amber row with a Keep mine / Use theirs control.
@@ -6823,6 +7075,24 @@ export interface components {
              *     pages. The reader overlay slices client-side by `page_index`.
              */
             items: components["schemas"]["MarkerView"][];
+        };
+        /**
+         * @description Portable identity for an issue. `issue_id` is Folio's BLAKE3 id;
+         *     `content_hash` plus `(series_name, series_year, issue_number)` are
+         *     the keys that survive a rebuild. The hydrated fields are `null` only
+         *     when the referenced row no longer exists.
+         */
+        IssueRef: {
+            content_hash?: string | null;
+            issue_id: string;
+            /** @description `issues.number_raw` — the number exactly as tagged. */
+            issue_number?: string | null;
+            library_slug?: string | null;
+            /** Format: uuid */
+            series_id?: string | null;
+            series_name?: string | null;
+            /** Format: int32 */
+            series_year?: number | null;
         };
         IssueSearchHit: components["schemas"]["IssueSummaryView"] & {
             series_name: string;
@@ -8808,6 +9078,15 @@ export interface components {
              */
             total: number;
         };
+        /** @description Portable identity for a series. */
+        SeriesRef: {
+            library_slug?: string | null;
+            /** Format: uuid */
+            series_id: string;
+            series_name?: string | null;
+            /** Format: int32 */
+            series_year?: number | null;
+        };
         /**
          * @description Response for `GET /series/{slug}/resume` — the issue (and page) the user
          *     should land on when they hit "Read" without picking a specific issue.
@@ -9897,6 +10176,20 @@ export interface components {
              * @description Issue rows that received a new or updated progress record.
              */
             updated: number;
+        };
+        /** @description Top-level export envelope. */
+        UserExport: {
+            /** @description RFC 3339 timestamp of when the document was produced. */
+            exported_at: string;
+            /** @description Always `"folio-user-export"`. */
+            format: string;
+            sections: components["schemas"]["ExportSections"];
+            user: components["schemas"]["ExportUser"];
+            /**
+             * Format: int32
+             * @description Envelope version. See `docs/dev/export-format.md` for the changelog.
+             */
+            version: number;
         };
         /**
          * @description Audit-remediation M9.4 typed enums for the `?role=` / `?state=` query
@@ -14855,6 +15148,38 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ContinueReadingView"];
                 };
+            };
+        };
+    };
+    account_export: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attachment; `Content-Disposition: attachment; filename="folio-export-<date>.json"` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserExport"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

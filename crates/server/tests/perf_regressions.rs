@@ -620,6 +620,10 @@ const MAX_QUERIES_ISSUE_DETAIL: u64 = 20; // observed ≈ 10 (parallel try_join 
 // Must stay flat in the member count: the pre-PERF-1 shape cost ~2 queries
 // per member (~200 for the 100-member batch below).
 const MAX_QUERIES_BULK_ADD: u64 = 15;
+// WP-2.1: the export is 10 section reads + 1 pinned-view hydrate + 3
+// identity batches (issues / series / libraries) + the user row + auth.
+// A per-row hydrate over the 100-entry collection would add ~100.
+const MAX_QUERIES_USER_EXPORT: u64 = 25; // observed ≈ 16
 
 #[tokio::test]
 async fn realistic_dataset_endpoints_respond_correctly() {
@@ -771,6 +775,37 @@ async fn realistic_dataset_endpoints_respond_correctly() {
         MAX_QUERIES_BULK_ADD,
         "/api/me/collections/{id}/members/bulk-add (100 members)",
     );
+
+    // ── /me/export — one query per section plus IN-batched identity
+    // hydration (issues → series → libraries). The 100-member collection
+    // from the bulk-add above plus the seeded progress rows all resolve
+    // through the same three batches, so the bound is row-count-independent.
+    let snap = QueryCount::snapshot(&counter);
+    let (status, body, elapsed) = get(&app, &user, "/api/me/export").await;
+    assert_eq!(status, StatusCode::OK, "export: {body}");
+    assert_eq!(body["format"], "folio-user-export");
+    assert_eq!(
+        body["sections"]["collections"][0]["entries"]
+            .as_array()
+            .map(Vec::len),
+        Some(100),
+        "export should carry the 100 bulk-added entries"
+    );
+    let exported_progress = body["sections"]["progress"]
+        .as_array()
+        .expect("progress section");
+    assert!(
+        !exported_progress.is_empty(),
+        "export should carry progress"
+    );
+    assert!(
+        exported_progress
+            .iter()
+            .all(|p| p["issue"]["content_hash"].is_string()),
+        "every progress row must hydrate its content_hash: {exported_progress:?}"
+    );
+    assert_quick(elapsed, "/api/me/export");
+    assert_query_count(snap.taken(), MAX_QUERIES_USER_EXPORT, "/api/me/export");
 
     // ── /me/on-deck at scale — the regression guard for the batched
     // rewrite. A *second* user with 30 started series (each with a

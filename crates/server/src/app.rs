@@ -102,6 +102,7 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(auth::local::routes())
         .merge(auth::ws_ticket::routes())
         .merge(api::account::routes())
+        .merge(api::account_export::routes())
         .merge(api::libraries::routes())
         .merge(api::health_issues::routes())
         .merge(api::reconcile::routes())

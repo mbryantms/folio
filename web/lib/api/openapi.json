@@ -5286,6 +5286,25 @@
         }
       }
     },
+    "/api/me/export": {
+      "get": {
+        "operationId": "account_export",
+        "responses": {
+          "200": {
+            "description": "Attachment; `Content-Disposition: attachment; filename=\"folio-export-<date>.json\"`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserExport"
+                }
+              }
+            }
+          },
+          "401": {},
+          "429": {}
+        }
+      }
+    },
     "/api/me/issues/bulk-metadata": {
       "patch": {
         "summary": "Bulk-update a per-field patch across a list of issue ids.",
@@ -14918,6 +14937,821 @@
           }
         }
       },
+      "ExportCollection": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "custom_tags",
+          "preserve_canonical_order",
+          "created_at",
+          "updated_at",
+          "entries"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "custom_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportCollectionEntry"
+            },
+            "description": "Entries in `position` order."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "preserve_canonical_order": {
+            "type": "boolean"
+          },
+          "system_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`\"want_to_read\"` for the system collection, `null` otherwise."
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ExportCollectionEntry": {
+        "type": "object",
+        "required": [
+          "position",
+          "entry_kind",
+          "added_at"
+        ],
+        "properties": {
+          "added_at": {
+            "type": "string"
+          },
+          "entry_kind": {
+            "type": "string",
+            "description": "`\"issue\"` or `\"series\"` — exactly one of the refs below is set."
+          },
+          "issue": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssueRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "series": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SeriesRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ExportMarker": {
+        "type": "object",
+        "required": [
+          "id",
+          "issue",
+          "page_index",
+          "kind",
+          "is_favorite",
+          "tags",
+          "hidden_from_log",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "hidden_from_log": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_favorite": {
+            "type": "boolean"
+          },
+          "issue": {
+            "$ref": "#/components/schemas/IssueRef"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "page_index": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "region": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "selection": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ExportPage": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "is_system",
+          "position",
+          "created_at",
+          "updated_at",
+          "pins"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_system": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportViewPin"
+            },
+            "description": "Pinned rails on this page in `position` order."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ExportPreferences": {
+        "type": "object",
+        "description": "Raw preference columns off the `users` row. Token columns are exported\nas stored (`null` = \"no preference\").",
+        "required": [
+          "default_page_strip",
+          "default_cover_solo",
+          "keybinds",
+          "activity_tracking_enabled",
+          "timezone",
+          "reading_min_active_ms",
+          "reading_min_pages",
+          "reading_idle_ms",
+          "language",
+          "exclude_from_aggregates",
+          "show_marker_count",
+          "opds_wtr_reorder",
+          "opds_progress_glyphs",
+          "max_rails_per_page"
+        ],
+        "properties": {
+          "accent_color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "activity_tracking_enabled": {
+            "type": "boolean"
+          },
+          "default_cover_solo": {
+            "type": "boolean"
+          },
+          "default_fit_mode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default_page_animation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default_page_strip": {
+            "type": "boolean"
+          },
+          "default_reading_direction": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default_view_mode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "density": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exclude_from_aggregates": {
+            "type": "boolean"
+          },
+          "keybinds": {
+            "type": "object",
+            "description": "Reader key overrides — `{ action_name: key_string }`."
+          },
+          "language": {
+            "type": "string"
+          },
+          "max_rails_per_page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "opds_progress_glyphs": {
+            "type": "boolean"
+          },
+          "opds_wtr_reorder": {
+            "type": "boolean"
+          },
+          "reading_idle_ms": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reading_min_active_ms": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reading_min_pages": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "show_marker_count": {
+            "type": "boolean"
+          },
+          "theme": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": "string"
+          }
+        }
+      },
+      "ExportProgress": {
+        "type": "object",
+        "required": [
+          "issue",
+          "last_page",
+          "percent",
+          "finished",
+          "is_backfill",
+          "updated_at"
+        ],
+        "properties": {
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished": {
+            "type": "boolean"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_backfill": {
+            "type": "boolean"
+          },
+          "issue": {
+            "$ref": "#/components/schemas/IssueRef"
+          },
+          "last_page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "percent": {
+            "type": "number",
+            "format": "double"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ExportRailDismissal": {
+        "type": "object",
+        "required": [
+          "target_kind",
+          "target_id",
+          "dismissed_at"
+        ],
+        "properties": {
+          "dismissed_at": {
+            "type": "string"
+          },
+          "target_id": {
+            "type": "string"
+          },
+          "target_kind": {
+            "type": "string",
+            "description": "`issue` / `series` / `cbl`."
+          }
+        }
+      },
+      "ExportRating": {
+        "type": "object",
+        "required": [
+          "target_type",
+          "rating",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "issue": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssueRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rating": {
+            "type": "number",
+            "format": "double"
+          },
+          "series": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SeriesRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_type": {
+            "type": "string",
+            "description": "`\"issue\"` or `\"series\"` — exactly one of the refs below is set."
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ExportReadingSession": {
+        "type": "object",
+        "required": [
+          "id",
+          "issue",
+          "client_session_id",
+          "started_at",
+          "last_heartbeat_at",
+          "active_ms",
+          "distinct_pages_read",
+          "page_turns",
+          "start_page",
+          "end_page",
+          "furthest_page",
+          "client_meta",
+          "hidden_from_log"
+        ],
+        "properties": {
+          "active_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "client_meta": {
+            "type": "object"
+          },
+          "client_session_id": {
+            "type": "string"
+          },
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "distinct_pages_read": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "end_page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "furthest_page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "hidden_from_log": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "issue": {
+            "$ref": "#/components/schemas/IssueRef"
+          },
+          "last_heartbeat_at": {
+            "type": "string"
+          },
+          "page_turns": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "start_page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "view_mode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ExportSavedView": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "custom_tags",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "cbl_list_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "For `kind = \"cbl\"`: the backing `cbl_lists` row. CBL lists have\ntheir own XML export (`GET /me/cbl-lists/{id}/export`)."
+          },
+          "conditions": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Filter DSL — a JSON array of `{group_id, field, op, value}`."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "custom_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "custom_year_end": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "custom_year_start": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`\"filter_series\"` or `\"cbl\"`."
+          },
+          "match_mode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "result_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "sort_field": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort_order": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ExportSections": {
+        "type": "object",
+        "required": [
+          "progress",
+          "markers",
+          "collections",
+          "saved_views",
+          "ratings",
+          "custom_pages",
+          "sidebar",
+          "rail_dismissals",
+          "reading_log",
+          "preferences"
+        ],
+        "properties": {
+          "collections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportCollection"
+            },
+            "description": "User-authored collections (`saved_views.kind = 'collection'`,\nno `system_key`). Want to Read is split out below."
+          },
+          "custom_pages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportPage"
+            },
+            "description": "Every `user_page` row including the system Home page, each with\nits pinned rails."
+          },
+          "markers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportMarker"
+            }
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/ExportPreferences",
+            "description": "Per-user preferences from the `users` row, including reader\n`keybinds`."
+          },
+          "progress": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportProgress"
+            }
+          },
+          "rail_dismissals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportRailDismissal"
+            }
+          },
+          "ratings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportRating"
+            }
+          },
+          "reading_log": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportReadingSession"
+            },
+            "description": "`reading_sessions` rows. Hidden sessions are included with\n`hidden_from_log = true` so the flag survives a restore."
+          },
+          "saved_views": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportSavedView"
+            },
+            "description": "Filter and CBL-backed saved views (every user-owned `saved_views`\nrow whose `kind != 'collection'`)."
+          },
+          "sidebar": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportSidebarEntry"
+            }
+          },
+          "want_to_read": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExportCollection",
+                "description": "The per-user Want to Read system collection, or `null` when the\nuser has never touched a surface that seeds it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ExportSidebarEntry": {
+        "type": "object",
+        "required": [
+          "kind",
+          "ref_id",
+          "visible",
+          "position"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`builtin` / `library` / `view` / `header` / `spacer`."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ref_id": {
+            "type": "string"
+          },
+          "visible": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ExportUser": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ExportViewPin": {
+        "type": "object",
+        "required": [
+          "view_id",
+          "position",
+          "pinned",
+          "show_in_sidebar"
+        ],
+        "properties": {
+          "icon": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "show_in_sidebar": {
+            "type": "boolean"
+          },
+          "view_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "view_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pinned view's `kind` (`filter_series` / `cbl` / `system` /\n`collection`), hydrated so a system rail is recognisable after a\nrebuild. `null` when the view no longer exists."
+          },
+          "view_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "view_system_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`system_key` of the pinned view (e.g. `continue_reading`), when it\nis a built-in rail or the Want to Read collection."
+          }
+        }
+      },
       "ExternalIdConflictRow": {
         "type": "object",
         "description": "External-ID conflict row — surfaces in the preview pane as an\namber row with a Keep mine / Use theirs control.",
@@ -15922,6 +16756,57 @@
               "$ref": "#/components/schemas/MarkerView"
             },
             "description": "Every marker the calling user has on this issue, across all\npages. The reader overlay slices client-side by `page_index`."
+          }
+        }
+      },
+      "IssueRef": {
+        "type": "object",
+        "description": "Portable identity for an issue. `issue_id` is Folio's BLAKE3 id;\n`content_hash` plus `(series_name, series_year, issue_number)` are\nthe keys that survive a rebuild. The hydrated fields are `null` only\nwhen the referenced row no longer exists.",
+        "required": [
+          "issue_id"
+        ],
+        "properties": {
+          "content_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issue_id": {
+            "type": "string"
+          },
+          "issue_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`issues.number_raw` — the number exactly as tagged."
+          },
+          "library_slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "series_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
           }
         }
       },
@@ -20542,6 +21427,38 @@
           }
         }
       },
+      "SeriesRef": {
+        "type": "object",
+        "description": "Portable identity for a series.",
+        "required": [
+          "series_id"
+        ],
+        "properties": {
+          "library_slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "series_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
       "SeriesResumeView": {
         "type": "object",
         "description": "Response for `GET /series/{slug}/resume` — the issue (and page) the user\nshould land on when they hit \"Read\" without picking a specific issue.\nMirrors the client-side `pickNextIssue` algorithm in\n[`web/lib/reading-state.ts`]: prefer the most-recently-updated in-progress\nissue; else the first unfinished issue in sort order; else (everything\nread) restart from issue #1. `state` lets clients label the action\n(Continue reading / Read / Read again).",
@@ -22844,6 +23761,39 @@
             "type": "integer",
             "format": "int32",
             "description": "Issue rows that received a new or updated progress record.",
+            "minimum": 0
+          }
+        }
+      },
+      "UserExport": {
+        "type": "object",
+        "description": "Top-level export envelope.",
+        "required": [
+          "format",
+          "version",
+          "exported_at",
+          "user",
+          "sections"
+        ],
+        "properties": {
+          "exported_at": {
+            "type": "string",
+            "description": "RFC 3339 timestamp of when the document was produced."
+          },
+          "format": {
+            "type": "string",
+            "description": "Always `\"folio-user-export\"`."
+          },
+          "sections": {
+            "$ref": "#/components/schemas/ExportSections"
+          },
+          "user": {
+            "$ref": "#/components/schemas/ExportUser"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Envelope version. See `docs/dev/export-format.md` for the changelog.",
             "minimum": 0
           }
         }

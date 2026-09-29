@@ -174,6 +174,18 @@ pub const OCR_DETECT: Bucket = Bucket {
     burst: 10,
 };
 
+/// `GET /me/export` — 6/min/IP + burst 6. The export walks every
+/// user-owned table and hydrates identity in IN-batches; a single call
+/// is cheap, but it is also the one endpoint whose response size scales
+/// with a user's whole history, so a runaway retry loop should trip
+/// early. Six per minute is far above any human "download my data"
+/// cadence.
+pub const USER_EXPORT: Bucket = Bucket {
+    name: "user_export",
+    period: Duration::from_secs(10),
+    burst: 6,
+};
+
 // ───────── error handler ─────────
 
 fn handle_governor_error(bucket: &'static str, err: GovernorError) -> Response<Body> {
