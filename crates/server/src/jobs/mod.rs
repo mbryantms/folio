@@ -1,6 +1,14 @@
-//! Background job runtime — apalis 0.6 over Redis.
+//! Background job runtime — apalis 0.7 over Redis.
 //!
 //! Library Scanner v1, Milestone 2 (spec §3, §3.2, §4.8).
+//!
+//! **Retry / orphan policy** (WP-1.6 ops hygiene) is explicit, not
+//! inherited from library defaults: every queue is built by [`storage`]
+//! from [`storage_config`], which pins `reenqueue_orphaned_after` to
+//! [`JOB_REENQUEUE_ORPHANED_AFTER_SECS`] and keeps the namespace apalis
+//! derives from the job type (so queued jobs survive an upgrade). The
+//! per-job attempt budget is [`JOB_MAX_ATTEMPTS`]; see its doc for why it
+//! is a mirrored constant rather than a setter.
 //!
 //! Two responsibilities:
 //!   1. Own the [`apalis_redis::RedisStorage`] for each typed queue.
@@ -18,7 +26,7 @@
 //! separate worker binary; this matches the single-binary deploy story.
 
 use crate::state::AppState;
-use apalis_redis::{RedisStorage, connect};
+use apalis_redis::{Config as RedisConfig, RedisStorage, connect};
 use entity::scan_run::{ActiveModel as ScanRunAM, Entity as ScanRunEntity};
 use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
@@ -67,24 +75,21 @@ impl JobRuntime {
     /// unreachable — the spec treats Redis as a hard dependency post-Milestone-2.
     pub async fn new(redis_url: &str, db: DatabaseConnection) -> anyhow::Result<Self> {
         let conn = connect(redis_url).await?;
-        let scan_storage = RedisStorage::<scan::Job>::new(conn.clone());
-        let scan_series_storage = RedisStorage::<scan_series::Job>::new(conn.clone());
-        let post_scan_thumbs_storage = RedisStorage::<post_scan::ThumbsJob>::new(conn.clone());
-        let post_scan_search_storage = RedisStorage::<post_scan::SearchJob>::new(conn.clone());
-        let post_scan_dictionary_storage =
-            RedisStorage::<post_scan::DictionaryJob>::new(conn.clone());
+        let scan_storage = storage::<scan::Job>(conn.clone());
+        let scan_series_storage = storage::<scan_series::Job>(conn.clone());
+        let post_scan_thumbs_storage = storage::<post_scan::ThumbsJob>(conn.clone());
+        let post_scan_search_storage = storage::<post_scan::SearchJob>(conn.clone());
+        let post_scan_dictionary_storage = storage::<post_scan::DictionaryJob>(conn.clone());
         let metadata_search_series_storage =
-            RedisStorage::<metadata_search::SearchSeriesJob>::new(conn.clone());
+            storage::<metadata_search::SearchSeriesJob>(conn.clone());
         let metadata_search_issue_storage =
-            RedisStorage::<metadata_search::SearchIssueJob>::new(conn.clone());
-        let metadata_apply_series_storage =
-            RedisStorage::<metadata_apply::ApplySeriesJob>::new(conn.clone());
-        let metadata_apply_issue_storage =
-            RedisStorage::<metadata_apply::ApplyIssueJob>::new(conn.clone());
+            storage::<metadata_search::SearchIssueJob>(conn.clone());
+        let metadata_apply_series_storage = storage::<metadata_apply::ApplySeriesJob>(conn.clone());
+        let metadata_apply_issue_storage = storage::<metadata_apply::ApplyIssueJob>(conn.clone());
         let rewrite_issue_sidecars_storage =
-            RedisStorage::<rewrite_sidecars::RewriteIssueSidecarsJob>::new(conn.clone());
-        let archive_edit_storage = RedisStorage::<archive_edit::ArchiveEditJob>::new(conn.clone());
-        let backfill_storage = RedisStorage::<backfill::BackfillJob>::new(conn.clone());
+            storage::<rewrite_sidecars::RewriteIssueSidecarsJob>(conn.clone());
+        let archive_edit_storage = storage::<archive_edit::ArchiveEditJob>(conn.clone());
+        let backfill_storage = storage::<backfill::BackfillJob>(conn.clone());
         Ok(Self {
             db,
             scan_storage,
@@ -421,7 +426,7 @@ impl JobRuntime {
             // 30-minute scan wouldn't return until the scan finished — past the
             // container's grace period, which then SIGKILLs. Cap the wait so the
             // process exits cleanly; an abandoned job is re-enqueued by apalis's
-            // orphan recovery (reenqueue_orphaned_after, 300s) on the next boot.
+            // orphan recovery ([`JOB_REENQUEUE_ORPHANED_AFTER_SECS`]) on the next boot.
             .shutdown_timeout(std::time::Duration::from_secs(JOB_SHUTDOWN_TIMEOUT_SECS))
             .run_with_signal(shutdown_fut)
             .await
@@ -576,6 +581,51 @@ impl CoalesceOutcome {
 /// worst case is a redundant, idempotent re-scan, not data loss.
 const SCAN_COALESCE_TTL_SECS: u64 = 6 * 60 * 60;
 
+/// Attempts apalis-redis makes on a job whose handler returns `Err` before
+/// moving it to the queue's `{namespace}:dead` set (surfaced by
+/// [`JobRuntime::dead_letter_counts`]). Handlers that return `Ok` on a
+/// recorded failure (the scan handlers, most soft-fails) never consume this
+/// budget — see `jobs::scan::handle`.
+///
+/// apalis-redis 0.7 stores the budget in the per-job [`apalis_redis::RedisContext`]
+/// stamped at push time (`max_attempts`, default 5) and exposes no setter —
+/// it is *not* part of [`apalis_redis::Config`]. This constant mirrors that
+/// default so call sites and comments have one name to point at; the
+/// `job_retry_budget_matches_apalis_default` test fails the build if an
+/// apalis bump changes the library value, at which point the choice is
+/// deliberate: either update this constant or stamp the context by hand.
+pub const JOB_MAX_ATTEMPTS: usize = 5;
+
+/// Seconds a job may sit in a worker's in-flight set without a heartbeat
+/// before apalis's orphan sweep re-enqueues it. Covers a process that died
+/// mid-job (SIGKILL past the [`JOB_SHUTDOWN_TIMEOUT_SECS`] drain, OOM, host
+/// crash): the sweep — run at worker start and then on an interval — sees
+/// the stale lock and hands the job to a live worker. Must comfortably
+/// exceed the worker `keep_alive` heartbeat (30s default) so a
+/// slow-but-alive worker is never mistaken for a dead one.
+pub const JOB_REENQUEUE_ORPHANED_AFTER_SECS: u64 = 300;
+
+/// The [`RedisConfig`] every queue is built with. Namespace is the job's
+/// `type_name` — identical to what `RedisStorage::new` derives, so the Redis
+/// keys (`{namespace}:active`, `:dead`, …) of jobs queued by an older build
+/// are still the keys the new build polls. Changing the namespace would
+/// silently orphan every queued job across an upgrade.
+pub fn storage_config<T>() -> RedisConfig {
+    RedisConfig::default()
+        .set_namespace(std::any::type_name::<T>())
+        .set_reenqueue_orphaned_after(std::time::Duration::from_secs(
+            JOB_REENQUEUE_ORPHANED_AFTER_SECS,
+        ))
+}
+
+/// Build one typed queue on a shared connection with [`storage_config`].
+fn storage<T>(conn: ConnectionManager) -> RedisStorage<T>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned,
+{
+    RedisStorage::new_with_config(conn, storage_config::<T>())
+}
+
 /// Max seconds the apalis monitor waits for in-flight jobs to drain on shutdown
 /// before exiting anyway (OPS-3). Kept under a typical container stop grace
 /// period (~30s) so the process exits on its own rather than being SIGKILLed
@@ -658,7 +708,7 @@ impl JobRuntime {
     }
 
     /// Count dead-lettered jobs per queue (OPS-3 follow-up). apalis moves a job
-    /// to its `{namespace}:dead` set after it exhausts its attempts; nothing
+    /// to its `{namespace}:dead` set after it exhausts [`JOB_MAX_ATTEMPTS`]; nothing
     /// surfaced these before, so a permanently-failing job vanished silently.
     ///
     /// The dead set is a Redis ZSET, so each is counted with `ZCARD`. The key is
@@ -765,4 +815,59 @@ async fn delete_matching_scan_keys(
         deleted += n;
     }
     Ok(deleted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The namespace must stay exactly what `RedisStorage::new` derives
+    /// (`type_name::<T>()`): it is the Redis key prefix for every queue, so a
+    /// drift here would orphan jobs queued by the previous build on upgrade.
+    #[test]
+    fn storage_config_keeps_type_name_namespace() {
+        let cfg = storage_config::<scan::Job>();
+        assert_eq!(
+            cfg.get_namespace(),
+            std::any::type_name::<scan::Job>(),
+            "namespace must match apalis-redis's RedisStorage::new derivation"
+        );
+        assert!(
+            cfg.get_namespace().ends_with("jobs::scan::Job"),
+            "type_name shape changed: {}",
+            cfg.get_namespace()
+        );
+    }
+
+    #[test]
+    fn storage_config_pins_reenqueue_orphaned_after() {
+        let cfg = storage_config::<post_scan::ThumbsJob>();
+        assert_eq!(
+            cfg.reenqueue_orphaned_after(),
+            std::time::Duration::from_secs(JOB_REENQUEUE_ORPHANED_AFTER_SECS)
+        );
+        // Must exceed the keep-alive heartbeat or a live-but-slow worker's
+        // job gets re-enqueued underneath it.
+        assert!(cfg.reenqueue_orphaned_after() > *cfg.get_keep_alive());
+    }
+
+    /// `JOB_MAX_ATTEMPTS` mirrors the private `RedisContext::max_attempts`
+    /// default apalis-redis stamps on every pushed job (no public setter in
+    /// 0.7). Read it back through serde so a dependency bump that changes
+    /// the library default fails here instead of silently changing the
+    /// retry budget in production.
+    #[test]
+    fn job_retry_budget_matches_apalis_default() {
+        let ctx = serde_json::to_value(apalis_redis::RedisContext::default())
+            .expect("RedisContext serializes");
+        let max_attempts = ctx
+            .get("max_attempts")
+            .and_then(serde_json::Value::as_u64)
+            .expect("RedisContext carries max_attempts");
+        assert_eq!(
+            usize::try_from(max_attempts).expect("fits usize"),
+            JOB_MAX_ATTEMPTS,
+            "apalis-redis changed its default attempt budget; update JOB_MAX_ATTEMPTS deliberately"
+        );
+    }
 }
