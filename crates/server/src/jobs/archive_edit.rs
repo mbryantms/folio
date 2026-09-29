@@ -298,12 +298,23 @@ pub async fn handle(job: ArchiveEditJob, state: Data<AppState>) -> Result<(), Er
             return Ok(());
         }
         Err(e) => {
-            tracing::error!(issue_id = %job.issue_id, error = %e, "archive edit: mutex claim failed");
-            return Ok(()); // soft-fail; operator can retry
+            // Redis failed: hand the job back to apalis for a retry rather
+            // than dropping the operator's edit (same policy as the sidecar
+            // job — WP-2.6 (e)).
+            tracing::error!(issue_id = %job.issue_id, error = %e, "archive edit: mutex claim failed; returning Err for apalis retry");
+            return Err(Error::Failed(std::sync::Arc::new(Box::new(e))));
         }
     };
+    // Keep the lock alive across a long re-encode (WP-2.6 (h)).
+    let heartbeat = mutex::Heartbeat::start(
+        state.jobs.redis.clone(),
+        job.issue_id.clone(),
+        token.clone(),
+        mutex::EDIT_TTL_SECS,
+    );
 
     let outcome = edit_one_issue(&state, &job).await;
+    drop(heartbeat);
     let mut redis = state.jobs.redis.clone();
     mutex::release(&mut redis, &job.issue_id, &token).await;
 

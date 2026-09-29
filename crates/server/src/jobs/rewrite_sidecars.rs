@@ -92,6 +92,49 @@ pub struct RewriteIssueSidecarsJob {
     /// with the legacy "always rescan" behaviour.
     #[serde(default)]
     pub skip_rescan: bool,
+    /// Busy-mutex requeue counter (see [`requeue_busy`]). New enqueues
+    /// leave it 0; the worker bumps it on each rewrite-lock collision.
+    #[serde(default)]
+    pub attempt: u32,
+    /// Metadata-only DB writes the apply decided on but that must land
+    /// **only after the XML is actually in the archive** — per-field
+    /// provenance, variant covers, `last_metadata_sync_at` (WP-2.6 (f),
+    /// audit DI-10). Pre-fix `apply_issue_via_sidecar` wrote them at
+    /// enqueue time, so a rewrite that failed at open (CBR/CBT, malformed
+    /// zip) left the DB attributing provider values that never reached
+    /// the file. `None` for jobs from the drift-flush endpoint and
+    /// pre-upgrade payloads.
+    #[serde(default)]
+    pub post_apply: Option<PostRewriteWrites>,
+}
+
+/// One `field_provenance` upsert deferred until the rewrite succeeds.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProvenanceWrite {
+    /// [`crate::metadata::MetadataField::key`].
+    pub field: String,
+    /// The provider that supplied the value (`SetBy::Provider`).
+    pub source: crate::metadata::identifier::Source,
+    pub source_external_id: Option<String>,
+}
+
+/// The apply-time decisions that become DB rows once the archive holds
+/// the new XML. Carried on [`RewriteIssueSidecarsJob::post_apply`] and
+/// applied by [`apply_post_rewrite_writes`].
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PostRewriteWrites {
+    #[serde(default)]
+    pub provenance: Vec<ProvenanceWrite>,
+    /// Variant covers to persist via `writers::set_issue_variants`
+    /// (presentational rows the XML can't carry). Empty = leave the
+    /// existing set alone.
+    #[serde(default)]
+    pub variants: Vec<crate::metadata::provider::VariantCoverCandidate>,
+    /// Provider the variant rows are attributed to.
+    pub variants_source: Option<crate::metadata::identifier::Source>,
+    /// Stamp `issue.last_metadata_sync_at = now` after the rewrite.
+    #[serde(default)]
+    pub bump_sync: bool,
 }
 
 pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Result<(), Error> {
@@ -101,21 +144,34 @@ pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Resu
     let token = match mutex::try_claim(&mut redis, &job.issue_id, mutex::SIDECAR_TTL_SECS).await {
         Ok(Some(t)) => t,
         Ok(None) => {
-            tracing::info!(
-                issue_id = %job.issue_id,
-                "sidecar writeback: mutex busy; skipping (caller will re-enqueue if needed)",
-            );
+            // Another rewrite of this issue is in flight (page edit or a
+            // sibling sidecar job). Pre-fix this returned `Ok` with a log
+            // line claiming "the caller will re-enqueue" — nothing did, so
+            // the write was silently dropped (audit DI-13). Requeue with
+            // backoff, same as the page editor.
+            requeue_busy(&state, &job).await;
             return Ok(());
         }
         Err(e) => {
+            // Redis itself failed. Surface it to apalis so the job is
+            // retried (`JOB_MAX_ATTEMPTS`) and dead-lettered if Redis stays
+            // down — a requeue push would fail the same way.
             tracing::error!(
                 issue_id = %job.issue_id,
                 error = %e,
-                "sidecar writeback: mutex claim failed",
+                "sidecar writeback: mutex claim failed; returning Err for apalis retry",
             );
-            return Ok(()); // soft fail; caller can retry
+            return Err(Error::Failed(std::sync::Arc::new(Box::new(e))));
         }
     };
+    // Keep the lock alive for as long as the blocking rewrite runs (a
+    // NAS-hosted omnibus can outlive the 120s TTL). Dropped before release.
+    let heartbeat = mutex::Heartbeat::start(
+        state.jobs.redis.clone(),
+        job.issue_id.clone(),
+        token.clone(),
+        mutex::SIDECAR_TTL_SECS,
+    );
 
     let outcome = rewrite_one_issue(
         &state,
@@ -124,20 +180,24 @@ pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Resu
         job.metron_info_xml.clone(),
     )
     .await;
+    drop(heartbeat);
     let mut redis = state.jobs.redis.clone();
     mutex::release(&mut redis, &job.issue_id, &token).await;
 
     audit_writeback(&state, &job, &outcome).await;
 
-    // Best-effort scan enqueue after success — gated on the outcome
-    // so failed rewrites don't trigger a rescan that would just
-    // re-ingest the original file. The series-scope apply path sets
-    // `skip_rescan=true` because it already enqueued a single
+    let Ok(ref result) = outcome else {
+        // Failed rewrite: no rescan (it would just re-ingest the original
+        // file) and — crucially — none of the deferred metadata writes.
+        // The DB keeps describing the file as it actually is.
+        return Ok(());
+    };
+
+    // Best-effort scan enqueue after success. The series-scope apply
+    // path sets `skip_rescan=true` because it already enqueued a single
     // series-scoped rescan after the iteration. Errors here only log;
-    // the rewrite already landed and operators can re-trigger
-    // manually.
+    // the rewrite already landed and operators can re-trigger manually.
     if !job.skip_rescan
-        && let Ok(ref result) = outcome
         && let Err(e) =
             enqueue_scoped_rescan(&state, &result.library_id, &result.series_id, &job.issue_id)
                 .await
@@ -149,13 +209,134 @@ pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Resu
         );
     }
 
+    // The XML is in the archive and the rescan is queued: now record
+    // what the apply decided (provenance, variants, sync stamp).
+    if let Some(post) = &job.post_apply {
+        apply_post_rewrite_writes(&state, &job.issue_id, post).await;
+    }
+
     Ok(())
+}
+
+/// The rewrite mutex is shared with the page editor, so a sidecar job can
+/// land while an edit of the same issue is in flight. Requeue with a
+/// short pacing delay and give up loudly (library event) only after the
+/// retry budget comfortably outlasts the longest mutex TTL. Mirrors
+/// `archive_edit::requeue_busy`.
+const BUSY_MAX_ATTEMPTS: u32 = 40;
+const BUSY_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
+
+async fn requeue_busy(state: &AppState, job: &RewriteIssueSidecarsJob) {
+    use apalis::prelude::Storage;
+    if job.attempt >= BUSY_MAX_ATTEMPTS {
+        tracing::error!(
+            issue_id = %job.issue_id,
+            attempts = job.attempt,
+            "sidecar writeback: rewrite lock still busy after retry budget; dropping write",
+        );
+        if let Ok(Some(row)) = issue::Entity::find_by_id(job.issue_id.clone())
+            .one(&state.db)
+            .await
+        {
+            event_log::record(
+                &state.db,
+                NewEvent::new(
+                    row.library_id,
+                    Category::Archive,
+                    Action::Errored,
+                    Severity::Error,
+                    format!(
+                        "Sidecar writeback dropped for {}: rewrite lock busy",
+                        row.slug
+                    ),
+                )
+                .entity("issue", row.id.clone(), Some(row.slug.clone()))
+                .detail(serde_json::json!({
+                    "attempts": job.attempt,
+                    "triggering_run_id": job.triggering_run_id,
+                })),
+            )
+            .await;
+        }
+        return;
+    }
+    // Pace the retry so a held lock isn't hammered.
+    tokio::time::sleep(BUSY_RETRY_DELAY).await;
+    let mut next = job.clone();
+    next.attempt += 1;
+    let mut storage = state.jobs.rewrite_issue_sidecars_storage.clone();
+    if let Err(e) = storage.push(next).await {
+        tracing::error!(
+            issue_id = %job.issue_id,
+            error = %e,
+            "sidecar writeback: busy requeue push failed; write lost",
+        );
+    } else {
+        tracing::info!(
+            issue_id = %job.issue_id,
+            attempt = job.attempt + 1,
+            "sidecar writeback: mutex busy; requeued",
+        );
+    }
+}
+
+/// Land the apply's deferred metadata-only writes now that the XML is in
+/// the archive: per-field provenance (the XML can't say "ComicVine set
+/// this on date X"), variant-cover rows (neither schema carries them) and
+/// the `last_metadata_sync_at` stamp. Best-effort — a failure here never
+/// fails the job; each is logged. Exposed for the inline series path and
+/// the integration tests.
+pub async fn apply_post_rewrite_writes(state: &AppState, issue_id: &str, post: &PostRewriteWrites) {
+    use crate::metadata::writers::{self, SetBy};
+    for p in &post.provenance {
+        let Ok(field) = <crate::metadata::MetadataField as std::str::FromStr>::from_str(&p.field)
+        else {
+            continue;
+        };
+        if let Err(e) = writers::write_field_provenance(
+            &state.db,
+            "issue",
+            issue_id,
+            field,
+            SetBy::Provider(p.source),
+            p.source_external_id.clone(),
+        )
+        .await
+        {
+            tracing::warn!(issue_id, field = %p.field, error = %e, "sidecar writeback: field_provenance write failed");
+        }
+    }
+    if let (false, Some(source)) = (post.variants.is_empty(), post.variants_source)
+        && let Err(e) = writers::set_issue_variants(
+            &state.db,
+            &state.cfg().data_path,
+            issue_id,
+            &post.variants,
+            SetBy::Provider(source),
+        )
+        .await
+    {
+        tracing::warn!(issue_id, error = %e, "sidecar writeback: variant covers write failed");
+    }
+    if post.bump_sync {
+        let am = issue::ActiveModel {
+            id: Set(issue_id.to_owned()),
+            last_metadata_sync_at: Set(Some(Utc::now().fixed_offset())),
+            updated_at: Set(Utc::now().fixed_offset()),
+            ..Default::default()
+        };
+        if let Err(e) = am.update(&state.db).await {
+            tracing::warn!(issue_id, error = %e, "sidecar writeback: last_metadata_sync_at stamp failed");
+        }
+    }
 }
 
 /// Inner result captured for audit + post-job rescan trigger.
 pub(crate) struct RewriteResult {
     pub library_id: Uuid,
     pub series_id: Uuid,
+    /// The archive path *after* the rewrite — the new `.cbz` when a CBR
+    /// was converted first, else the source path.
     pub archive_path: PathBuf,
     #[allow(dead_code)]
     pub summary: RebuildSummary,
@@ -168,12 +349,46 @@ pub(crate) enum WritebackError {
     IssueGone(String),
     #[error("library {0} writeback disabled (allow_archive_writeback=false)")]
     WritebackDisabled(Uuid),
+    /// The archive can't take a sidecar rewrite: CB7 (no writer), an
+    /// unknown extension, or a CBR in a library that hasn't allowed
+    /// CBR→CBZ conversion (`auto_convert_cbr_on_scan=false`).
+    #[error("{0}")]
+    UnsupportedFormat(String),
+    #[error("cbr conversion: {0}")]
+    Convert(#[from] crate::library::scanner::cbr_convert::CbrConvertError),
     #[error("rewrite: {0}")]
     Rewrite(#[from] RewriteError),
     #[error("db: {0}")]
     Db(#[from] sea_orm::DbErr),
     #[error("archive: {0}")]
     Archive(#[from] archive::ArchiveError),
+}
+
+/// Why the sidecar path can't take `file_path` in `lib`, or `None` when it
+/// can. The apply dispatch consults this **before** choosing the XML-first
+/// path so a refused archive falls back to the DB-direct apply with the
+/// reason in `ApplyOutcome.sidecar_skip_reasons`, instead of enqueueing a
+/// job that fails at open after the run was already marked applied
+/// (WP-2.6 (f), audit DI-10). The same rule is re-checked inside
+/// [`rewrite_one_issue`] for the series fan-out and drift-flush paths.
+pub fn sidecar_refusal(lib: &entity::library::Model, file_path: &str) -> Option<String> {
+    let ext = std::path::Path::new(file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    match ext.as_str() {
+        "cbz" | "cbt" => None,
+        "cbr" if lib.auto_convert_cbr_on_scan => None,
+        "cbr" => Some(
+            "archive is CBR and the library does not allow CBR→CBZ conversion \
+             (enable auto_convert_cbr_on_scan to write sidecars into RAR archives)"
+                .to_owned(),
+        ),
+        other => Some(format!(
+            "unsupported archive format for sidecar writeback: .{other} (CBZ/CBT, or CBR with conversion enabled)"
+        )),
+    }
 }
 
 /// Re-open the freshly-rebuilt archive at `tmp` and confirm it's a sound
@@ -261,9 +476,82 @@ pub(crate) async fn rewrite_one_issue(
         return Err(WritebackError::WritebackDisabled(lib.id));
     }
 
-    let archive_path = PathBuf::from(&row.file_path);
+    // Format gate — CBZ/CBT rewrite in place; CBR converts to a sibling
+    // `.cbz` first when the library allows it; anything else is refused
+    // here with a clear reason instead of failing at `Cbz::open` below
+    // (WP-2.6 (f), audit DI-10).
+    if let Some(reason) = sidecar_refusal(&lib, &row.file_path) {
+        return Err(WritebackError::UnsupportedFormat(reason));
+    }
+
+    let source_path = PathBuf::from(&row.file_path);
     let cfg = state.cfg();
     let limits = cfg.archive_limits();
+    let arch_limits = ArchiveLimits {
+        max_entries: limits.max_entries,
+        max_total_bytes: limits.max_total_bytes,
+        max_entry_bytes: limits.max_entry_bytes,
+        max_compression_ratio: limits.max_compression_ratio,
+        max_nesting_depth: limits.max_nesting_depth,
+        subprocess_wall_timeout: limits.subprocess_wall_timeout,
+        subprocess_rss_bytes: limits.subprocess_rss_bytes,
+    };
+    let is_cbr = source_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cbr"));
+
+    // CBR: RAR has no writer, so convert to CBZ first (same converter the
+    // scanner's `auto_convert_cbr_on_scan` uses — the library opted into
+    // that conversion, which `sidecar_refusal` verified). The `.cbr` is
+    // kept as `<name>.cbr.bak`; the row is repointed at the `.cbz` before
+    // the sidecar rewrite runs against it, so a failure in the second
+    // step still leaves a readable, correctly-pointed archive.
+    let archive_path = if is_cbr {
+        let src = source_path.clone();
+        let converted = tokio::task::spawn_blocking(move || {
+            crate::library::scanner::cbr_convert::convert_cbr_to_cbz(&src, arch_limits)
+        })
+        .await
+        .map_err(|join_err| {
+            WritebackError::Db(sea_orm::DbErr::Custom(format!("join: {join_err}")))
+        })??;
+        state.zip_lru.invalidate(&row.id);
+        let am = issue::ActiveModel {
+            id: Set(row.id.clone()),
+            file_path: Set(converted.to_string_lossy().into_owned()),
+            updated_at: Set(Utc::now().fixed_offset()),
+            ..Default::default()
+        };
+        am.update(&state.db).await?;
+        // First conversion in a library stamps `cbr_convert_confirmed_at`
+        // so the page editor stops prompting for the format change.
+        if lib.cbr_convert_confirmed_at.is_none() {
+            let lib_am = entity::library::ActiveModel {
+                id: Set(lib.id),
+                cbr_convert_confirmed_at: Set(Some(Utc::now().fixed_offset())),
+                updated_at: Set(Utc::now().fixed_offset()),
+                ..Default::default()
+            };
+            if let Err(e) = lib_am.update(&state.db).await {
+                tracing::warn!(library_id = %lib.id, error = %e, "sidecar writeback: cbr_convert_confirmed_at stamp failed");
+            }
+        }
+        tracing::info!(
+            issue_id = %row.id,
+            from = %source_path.display(),
+            to = %converted.display(),
+            "sidecar writeback: converted CBR to CBZ before rewrite",
+        );
+        converted
+    } else {
+        source_path
+    };
+
+    let is_cbt = archive_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cbt"));
 
     // `comic_info_xml` / `metron_info_xml` are already owned (function
     // takes them by value) — the spawn_blocking move closure consumes
@@ -273,57 +561,12 @@ pub(crate) async fn rewrite_one_issue(
 
     let result = tokio::task::spawn_blocking(
         move || -> Result<(RebuildSummary, Option<PathBuf>), WritebackError> {
-            let arch_limits = ArchiveLimits {
-                max_entries: limits.max_entries,
-                max_total_bytes: limits.max_total_bytes,
-                max_entry_bytes: limits.max_entry_bytes,
-                max_compression_ratio: limits.max_compression_ratio,
-                max_nesting_depth: limits.max_nesting_depth,
-                subprocess_wall_timeout: limits.subprocess_wall_timeout,
-                subprocess_rss_bytes: limits.subprocess_rss_bytes,
-            };
             let outcome = archive_rewrite::rewrite_atomic(&src_path, retain_count, |tmp| {
-                // Open the source inside the closure so the Cbz handle is
-                // dropped before the rename swaps the file out from under
-                // it.
-                let mut src =
-                    Cbz::open(&src_path, arch_limits).map_err(RewriteError::ArchiveErr)?;
-                // Snapshot the source entries the rebuild is contractually
-                // required to preserve verbatim: the pages AND every foreign
-                // non-page entry (`CoMet.xml`, notes, `.json` — WP-2.6 (b)).
-                // Only junk (dotfiles, `Thumbs.db`, `__MACOSX`) and the two
-                // Folio-managed sidecars are excluded: `rebuild` drops those
-                // and re-adds the freshly composed root ComicInfo/MetronInfo,
-                // so a nested or duplicate sidecar legitimately won't survive.
-                // Excluding them here keeps the post-write validation from a
-                // false "dropped entry" abort (the two sidecars' presence is
-                // checked separately in `validate_rewrite`).
-                let source_names: Vec<String> = src
-                    .entries()
-                    .iter()
-                    .filter(|e| !archive::cbz::is_rewrite_skipped(&e.name))
-                    .map(|e| e.name.clone())
-                    .collect();
-                let mut plan = RebuildPlan::new();
-                plan.set_entry("ComicInfo.xml", comic_info_xml.into_bytes());
-                plan.set_entry("MetronInfo.xml", metron_info_xml.into_bytes());
-                // `rebuild` returns RebuildSummary on success; we need it
-                // outside the closure. Stash it in a captured slot via the
-                // outer `Result` channel — but `rewrite_atomic`'s closure
-                // returns Result<(), RewriteError>, so we use a side
-                // channel.
-                let _summary =
-                    rebuild(&mut src, plan, tmp, arch_limits).map_err(RewriteError::ArchiveErr)?;
-                // Drop the source handle before validation re-opens files.
-                drop(src);
-                // Validate-before-swap: confirm the freshly-built archive is a
-                // sound replacement BEFORE rewrite_atomic renames it over the
-                // original. A failure here aborts the rewrite with the
-                // original untouched — the safety net that lets retain_count=0
-                // (no `.bak`) run without risking image-byte loss to a writer
-                // bug.
-                validate_rewrite(tmp, &source_names, arch_limits)?;
-                Ok(())
+                if is_cbt {
+                    rewrite_cbt_into(&src_path, tmp, comic_info_xml, metron_info_xml, arch_limits)
+                } else {
+                    rewrite_cbz_into(&src_path, tmp, comic_info_xml, metron_info_xml, arch_limits)
+                }
             })?;
             // We don't propagate the per-call RebuildSummary out (the
             // atomic-rewrite closure already swallowed it); reconstruct a
@@ -344,15 +587,20 @@ pub(crate) async fn rewrite_one_issue(
     state.zip_lru.invalidate(&row.id);
 
     // Bookkeeping. Clear thumbnail stamps so the post-scan pipeline
-    // re-derives them on the upcoming rescan.
+    // re-derives them on the upcoming rescan. `last_sidecar_rewrite_at`
+    // is the drift-detection stamp (only this path sets it);
+    // `last_rewrite_at` is the UI's "last touched" stamp shared with
+    // page edits.
+    let now = Utc::now().fixed_offset();
     let am = issue::ActiveModel {
         id: Set(row.id.clone()),
-        last_rewrite_at: Set(Some(Utc::now().fixed_offset())),
+        last_rewrite_at: Set(Some(now)),
         last_rewrite_kind: Set(Some("sidecar".to_owned())),
+        last_sidecar_rewrite_at: Set(Some(now)),
         thumbnails_generated_at: Set(None),
         thumbnail_version: Set(0),
         thumbnails_error: Set(None),
-        updated_at: Set(Utc::now().fixed_offset()),
+        updated_at: Set(now),
         ..Default::default()
     };
     am.update(&state.db).await?;
@@ -364,6 +612,108 @@ pub(crate) async fn rewrite_one_issue(
         summary,
         backup_path: backup,
     })
+}
+
+/// CBZ sidecar rewrite body, run inside the `rewrite_atomic` closure:
+/// stream-copy every kept entry, swap in the fresh sidecars, then
+/// validate the staged archive before the swap.
+fn rewrite_cbz_into(
+    src_path: &std::path::Path,
+    tmp: &std::path::Path,
+    comic_info_xml: String,
+    metron_info_xml: String,
+    arch_limits: ArchiveLimits,
+) -> Result<(), RewriteError> {
+    // Open the source inside the closure so the Cbz handle is dropped
+    // before the rename swaps the file out from under it.
+    let mut src = Cbz::open(src_path, arch_limits).map_err(RewriteError::ArchiveErr)?;
+    // Snapshot the source entries the rebuild is contractually required
+    // to preserve verbatim: the pages AND every foreign non-page entry
+    // (`CoMet.xml`, notes, `.json` — WP-2.6 (b)). Only junk (dotfiles,
+    // `Thumbs.db`, `__MACOSX`) and the two Folio-managed sidecars are
+    // excluded: `rebuild` drops those and re-adds the freshly composed
+    // root ComicInfo/MetronInfo, so a nested or duplicate sidecar
+    // legitimately won't survive. Excluding them here keeps the
+    // post-write validation from a false "dropped entry" abort (the two
+    // sidecars' presence is checked separately in `validate_rewrite`).
+    let source_names: Vec<String> = src
+        .entries()
+        .iter()
+        .filter(|e| !archive::cbz::is_rewrite_skipped(&e.name))
+        .map(|e| e.name.clone())
+        .collect();
+    let mut plan = RebuildPlan::new();
+    plan.set_entry("ComicInfo.xml", comic_info_xml.into_bytes());
+    plan.set_entry("MetronInfo.xml", metron_info_xml.into_bytes());
+    let _summary = rebuild(&mut src, plan, tmp, arch_limits).map_err(RewriteError::ArchiveErr)?;
+    // Drop the source handle before validation re-opens files.
+    drop(src);
+    // Validate-before-swap: confirm the freshly-built archive is a sound
+    // replacement BEFORE rewrite_atomic renames it over the original. A
+    // failure here aborts the rewrite with the original untouched — the
+    // safety net that lets retain_count=0 (no `.bak`) run without risking
+    // image-byte loss to a writer bug.
+    validate_rewrite(tmp, &source_names, arch_limits)
+}
+
+/// CBT sidecar rewrite body (WP-2.6 (f)): tar has no stream-copy path, so
+/// every kept entry is read and written back under its **original name**
+/// (`cbt_write::write_entries`) — pages keep their names, so the reader's
+/// natural sort and every page ordinal are unchanged. Kept = pages in
+/// source order + every preserved extra (`rewrite_policy::preserved_extras`
+/// minus the Folio pair) + the two fresh sidecars. Validated by re-opening
+/// the staged tar before the swap, same contract as the CBZ path.
+fn rewrite_cbt_into(
+    src_path: &std::path::Path,
+    tmp: &std::path::Path,
+    comic_info_xml: String,
+    metron_info_xml: String,
+    arch_limits: ArchiveLimits,
+) -> Result<(), RewriteError> {
+    use archive::comic_archive::ComicArchive;
+    let mut src =
+        archive::cbt::Cbt::open(src_path, arch_limits).map_err(RewriteError::ArchiveErr)?;
+    let page_names: Vec<String> = src.pages().iter().map(|e| e.name.clone()).collect();
+    let mut entries: Vec<(String, Vec<u8>)> = Vec::with_capacity(page_names.len() + 4);
+    for name in &page_names {
+        let bytes = src
+            .read_entry_bytes(name)
+            .map_err(RewriteError::ArchiveErr)?;
+        entries.push((name.clone(), bytes));
+    }
+    let extras = archive::rewrite_policy::preserved_extras(&mut src, false)
+        .map_err(RewriteError::ArchiveErr)?;
+    let mut must_survive: Vec<String> = page_names;
+    for (name, bytes, _level) in extras {
+        must_survive.push(name.clone());
+        entries.push((name, bytes));
+    }
+    entries.push(("ComicInfo.xml".to_owned(), comic_info_xml.into_bytes()));
+    entries.push(("MetronInfo.xml".to_owned(), metron_info_xml.into_bytes()));
+    drop(src);
+    archive::cbt_write::write_entries(entries, tmp, arch_limits)
+        .map_err(RewriteError::ArchiveErr)?;
+
+    let new = archive::cbt::Cbt::open(tmp, arch_limits).map_err(|e| {
+        RewriteError::ValidationFailed(format!("rewritten archive won't re-open: {e}"))
+    })?;
+    let new_names: std::collections::HashSet<&str> =
+        new.entries().iter().map(|e| e.name.as_str()).collect();
+    for name in &must_survive {
+        if !new_names.contains(name.as_str()) {
+            return Err(RewriteError::ValidationFailed(format!(
+                "rewritten archive dropped entry {name:?}"
+            )));
+        }
+    }
+    for sidecar in ["ComicInfo.xml", "MetronInfo.xml"] {
+        if !new_names.iter().any(|n| n.eq_ignore_ascii_case(sidecar)) {
+            return Err(RewriteError::ValidationFailed(format!(
+                "{sidecar} missing from rewritten archive"
+            )));
+        }
+    }
+    Ok(())
 }
 
 async fn enqueue_scoped_rescan(
