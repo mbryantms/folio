@@ -84,6 +84,71 @@ pub fn from_garde(report: &garde::Report) -> Response {
     )
 }
 
+/// Like [`Validated<T>`] but tolerates an **absent** body: a request
+/// with no `Content-Type: application/json` (or an empty body) yields
+/// `T::default()` instead of a 400. Once a JSON body is present it is
+/// parsed + validated exactly like `Validated<T>`.
+///
+/// Use for POST endpoints whose body is an optional refinement — the
+/// metadata search endpoints (`{ name?, year?, … }` query overrides)
+/// are the canonical case: every pre-existing client posts with no
+/// body at all, and that must keep working.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OptionalValidated<T>(pub T);
+
+impl<S, T> FromRequest<S> for OptionalValidated<T>
+where
+    S: Send + Sync,
+    T: DeserializeOwned + Default + garde::Validate<Context = ()> + 'static,
+    Json<T>: FromRequest<S, Rejection = JsonRejection>,
+{
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let has_json_content_type = req
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|ct| {
+                let essence = ct
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
+                essence == "application/json" || essence.ends_with("+json")
+            })
+            .unwrap_or(false);
+        if !has_json_content_type {
+            return Ok(OptionalValidated(T::default()));
+        }
+        let bytes = axum::body::Bytes::from_request(req, state)
+            .await
+            .map_err(|e| {
+                respond(
+                    StatusCode::BAD_REQUEST,
+                    ApiErrorCode::Validation,
+                    e.to_string(),
+                )
+            })?;
+        if bytes.iter().all(u8::is_ascii_whitespace) {
+            return Ok(OptionalValidated(T::default()));
+        }
+        let payload: T = serde_json::from_slice(&bytes).map_err(|e| {
+            let status = if e.is_data() {
+                StatusCode::UNPROCESSABLE_ENTITY
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            respond(status, ApiErrorCode::Validation, e.to_string())
+        })?;
+        if let Err(report) = payload.validate() {
+            return Err(from_garde(&report));
+        }
+        Ok(OptionalValidated(payload))
+    }
+}
+
 fn json_rejection_to_response(rej: JsonRejection) -> Response {
     let (status, message) = match &rej {
         JsonRejection::JsonDataError(e) => (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),

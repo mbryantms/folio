@@ -150,6 +150,24 @@ impl Identifier {
         let url = canonical_url(source, entity_type, &id);
         Self { source, id, url }
     }
+
+    /// Does this identifier point at an `entity_type` record (as opposed
+    /// to a related entity the provider mapper tucked into the same
+    /// list — ComicVine's volume detail carries the *publisher* id, its
+    /// issue detail the parent *volume* id)? Decided from the canonical
+    /// URL the mapper stamped via [`Self::with_canonical_url`]; an
+    /// identifier with no URL (ISBN / UPC / legacy trio) is assumed to
+    /// be about the entity itself.
+    ///
+    /// `external_ids` holds one row per `(entity, source)`, so writing
+    /// a related entity's id under the entity would silently replace
+    /// the entity's own id — the apply path filters with this first.
+    pub fn is_for_entity(&self, entity_type: &str) -> bool {
+        match self.url.as_deref() {
+            None => true,
+            Some(url) => canonical_url(self.source, entity_type, &self.id).as_deref() == Some(url),
+        }
+    }
 }
 
 /// Canonical link back to the source's page for `(source, entity_type,
@@ -329,5 +347,25 @@ mod tests {
     fn identifier_with_canonical_url_leaves_url_none_when_template_unknown() {
         let id = Identifier::with_canonical_url(Source::Isbn, "9780123456789", "issue");
         assert!(id.url.is_none());
+    }
+}
+
+#[cfg(test)]
+mod entity_filter_tests {
+    use super::*;
+
+    #[test]
+    fn is_for_entity_keys_off_the_canonical_url() {
+        let series = Identifier::with_canonical_url(Source::ComicVine, "12345", "series");
+        let publisher = Identifier::with_canonical_url(Source::ComicVine, "99", "publisher");
+        let issue = Identifier::with_canonical_url(Source::Metron, "7", "issue");
+        assert!(series.is_for_entity("series"));
+        assert!(!series.is_for_entity("issue"));
+        assert!(!publisher.is_for_entity("series"));
+        assert!(issue.is_for_entity("issue"));
+        assert!(!issue.is_for_entity("series"));
+        // No URL ⇒ assumed to be about the entity (ISBN / legacy trio).
+        assert!(Identifier::new(Source::Isbn, "9781607066019").is_for_entity("series"));
+        assert!(Identifier::new(Source::ComicVine, "1").is_for_entity("issue"));
     }
 }

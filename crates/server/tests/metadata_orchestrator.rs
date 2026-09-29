@@ -535,3 +535,391 @@ async fn run_issue_search_range_target_rescues_relaunch_from_year_gate() {
     );
     assert_eq!(with[0].external_id, "600123");
 }
+
+// ───────── WP-2.8: year-gate escape ─────────
+
+/// A distinct, decodable PNG of the given size + fill colour (same
+/// helper as `tests/archive_edit.rs`).
+fn png_bytes(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
+    let img = image::RgbImage::from_pixel(w, h, image::Rgb(rgb));
+    let dynimg = image::DynamicImage::ImageRgb8(img);
+    let mut buf = std::io::Cursor::new(Vec::new());
+    dynimg.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+    buf.into_inner()
+}
+
+/// Seed a library → series → one active issue → an `issue_cover`
+/// primary row carrying the pHash of `cover_png`, so both
+/// `series_representative_phash` and `issue_phash` resolve. Returns
+/// `(series_id, issue_id)`.
+async fn seed_series_with_cover_phash(
+    app: &TestApp,
+    dir: &std::path::Path,
+    cover_png: &[u8],
+) -> (Uuid, String) {
+    use common::seed::{IssueSeed, LibrarySeed, SeriesSeed};
+    use sea_orm::{ActiveModelTrait, Set};
+    let db = &app.state().db;
+    let lib_id = LibrarySeed::new(dir).insert(db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga").insert(db).await;
+    let cbz = dir.join("saga-1.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy", 1.0)
+        .insert(db)
+        .await;
+    let img = image::load_from_memory(cover_png).unwrap();
+    let phash = server::metadata::phash::phash(&img);
+    entity::issue_cover::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        issue_id: Set(issue_id.clone()),
+        kind: Set("primary".into()),
+        ordinal: Set(0),
+        source_provider: Set(Some("archive_extracted".into())),
+        source_external_id: Set(None),
+        source_url: Set(None),
+        variant_label: Set(None),
+        variant_artist_person_id: Set(None),
+        local_path: Set(format!("covers/{issue_id}.png")),
+        width: Set(Some(4)),
+        height: Set(Some(4)),
+        phash: Set(Some(phash)),
+        dhash: Set(None),
+        ahash: Set(None),
+        fetched_at: Set(chrono::Utc::now().fixed_offset()),
+        is_active: Set(true),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    (series_id, issue_id)
+}
+
+/// Cover URL every WP-2.8 fixture candidate advertises. Never fetched:
+/// the tests inject a [`orchestrator::CoverHasher`] that answers it
+/// from memory (the SSRF guard rightly refuses loopback hosts, so a
+/// wiremock-served image can't be hashed end-to-end).
+const CANDIDATE_COVER_URL: &str = "https://cdn.example/candidate-cover.png";
+
+/// Build [`SearchOpts`] whose cover hasher answers `CANDIDATE_COVER_URL`
+/// with the pHash of `cover_png` (so the candidate cover "is" the local
+/// cover) and `None` for anything else.
+fn opts_with_cover(cover_png: &[u8], relax_year_gate: bool) -> orchestrator::SearchOpts {
+    let img = image::load_from_memory(cover_png).unwrap();
+    let hash = server::metadata::phash::phash(&img);
+    orchestrator::SearchOpts {
+        relax_year_gate,
+        cover_hasher: Some(Arc::new(move |url: String| {
+            Box::pin(async move { (url == CANDIDATE_COVER_URL).then_some(hash) })
+        })),
+    }
+}
+
+/// Mount a ComicVine `/volumes` answer holding one volume whose start
+/// year (2015) is well past the local 2010 baseline.
+async fn mount_cv_late_volume(cv_mock: &MockServer) {
+    Mock::given(method("GET"))
+        .and(path("/volumes"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope_cv(json!([{
+                "id": 900,
+                "name": "Saga",
+                "start_year": "2015",
+                "publisher": {"id": 1, "name": "Image Comics"},
+                "deck": null,
+                "description": null,
+                "image": {
+                    "super_url": CANDIDATE_COVER_URL,
+                    "original_url": null,
+                    "icon_url": null,
+                    "medium_url": null,
+                    "screen_url": null,
+                    "thumb_url": null
+                },
+                "count_of_issues": null,
+                "site_detail_url": null,
+                "date_last_updated": null,
+                "aliases": null,
+            }]))),
+        )
+        .mount(cv_mock)
+        .await;
+}
+
+fn cv_provider(app: &TestApp, cv_mock: &MockServer) -> Vec<Arc<dyn MetadataProvider>> {
+    vec![Arc::new(ComicVineClient::with_base_url(
+        "k".into(),
+        cv_mock.uri(),
+        app.state().jobs.redis.clone(),
+    ))]
+}
+
+fn late_series_facts() -> SeriesQueryFacts {
+    SeriesQueryFacts {
+        name: "Saga".into(),
+        year: Some(2010),
+        publisher: Some("Image Comics".into()),
+        volume: None,
+    }
+}
+
+#[tokio::test]
+async fn run_series_search_relaxes_year_gate_when_cover_confirms_the_only_candidate() {
+    let cv_mock = MockServer::start().await;
+    let cover = png_bytes(8, 8, [200, 30, 30]);
+    mount_cv_late_volume(&cv_mock).await;
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (series_id, _issue_id) = seed_series_with_cover_phash(&app, dir.path(), &cover).await;
+    let facts = late_series_facts();
+    let run_id = start_series_run(&app, &facts).await;
+
+    let ranked = orchestrator::run_series_search_with(
+        &app.state().db,
+        run_id,
+        &cv_provider(&app, &cv_mock),
+        &facts,
+        Thresholds::new(80.0, 60.0),
+        &PreFilter::default(),
+        3,
+        Some(series_id),
+        opts_with_cover(&cover, true),
+    )
+    .await
+    .expect("search");
+
+    // The hard gate (2015 > 2010 + 1) emptied the list; the relaxed
+    // pass kept the candidate because its cover is a 0-bit match.
+    assert_eq!(
+        ranked.len(),
+        1,
+        "cover-confirmed candidate survives the relaxed gate"
+    );
+    assert_eq!(ranked[0].external_id, "900");
+    assert_eq!(ranked[0].score.cover_hamming, Some(0));
+    assert_eq!(
+        ranked[0].bucket,
+        server::metadata::matcher::Confidence::High
+    );
+
+    let run = entity::metadata_run::Entity::find_by_id(run_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, status::COMPLETED);
+    assert_eq!(run.items_total, 1);
+    let q = run.query.expect("stored query");
+    assert_eq!(q["year_gate_relaxed"], true, "run annotated: {q}");
+    // The original facts are preserved alongside the note.
+    assert_eq!(q["name"], "Saga");
+    assert_eq!(q["year"], 2010);
+}
+
+#[tokio::test]
+async fn run_series_search_never_relaxes_when_the_user_asserted_the_year() {
+    let cv_mock = MockServer::start().await;
+    let cover = png_bytes(8, 8, [200, 30, 30]);
+    mount_cv_late_volume(&cv_mock).await;
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (series_id, _issue_id) = seed_series_with_cover_phash(&app, dir.path(), &cover).await;
+    let facts = late_series_facts();
+    let run_id = start_series_run(&app, &facts).await;
+
+    let ranked = orchestrator::run_series_search_with(
+        &app.state().db,
+        run_id,
+        &cv_provider(&app, &cv_mock),
+        &facts,
+        Thresholds::new(80.0, 60.0),
+        &PreFilter::default(),
+        3,
+        Some(series_id),
+        opts_with_cover(&cover, false),
+    )
+    .await
+    .expect("search");
+    assert!(
+        ranked.is_empty(),
+        "asserted year keeps the hard gate: {ranked:?}"
+    );
+
+    let run = entity::metadata_run::Entity::find_by_id(run_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, status::COMPLETED);
+    assert_eq!(run.items_total, 0);
+    let q = run.query.expect("stored query");
+    assert!(q.get("year_gate_relaxed").is_none(), "no relax note: {q}");
+}
+
+#[tokio::test]
+async fn run_series_search_does_not_claim_a_relax_without_a_local_cover_hash() {
+    let cv_mock = MockServer::start().await;
+    let cover = png_bytes(8, 8, [200, 30, 30]);
+    mount_cv_late_volume(&cv_mock).await;
+    let app = TestApp::spawn().await;
+    let facts = late_series_facts();
+    let run_id = start_series_run(&app, &facts).await;
+
+    // No `local_series_id` ⇒ no local phash ⇒ nothing could confirm a
+    // year-mismatched candidate, so the gate stays hard and the run is
+    // not annotated (the dialog would otherwise promise a relax that
+    // can't produce anything).
+    let ranked = orchestrator::run_series_search_with(
+        &app.state().db,
+        run_id,
+        &cv_provider(&app, &cv_mock),
+        &facts,
+        Thresholds::new(80.0, 60.0),
+        &PreFilter::default(),
+        3,
+        None,
+        opts_with_cover(&cover, true),
+    )
+    .await
+    .expect("search");
+    assert!(ranked.is_empty());
+    let run = entity::metadata_run::Entity::find_by_id(run_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(run.query.unwrap().get("year_gate_relaxed").is_none());
+}
+
+#[tokio::test]
+async fn run_issue_search_relaxes_the_narrowed_year_gate_when_cover_confirms() {
+    let metron_mock = MockServer::start().await;
+    let cover = png_bytes(8, 8, [20, 200, 60]);
+    // Narrowed to Metron series 62349 (declared 2001) but the provider's
+    // issue rows say the series began in 2012 → hard gate drops them.
+    Mock::given(method("GET"))
+        .and(path("/api/issue/"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(paged_metron(json!([{
+                "id": 7001,
+                "series": {
+                    "id": 62349,
+                    "name": "Fantastic Four",
+                    "sort_name": "Fantastic Four",
+                    "volume": 1,
+                    "year_began": 2012,
+                    "series_type": null,
+                    "genres": []
+                },
+                "number": "600",
+                "name": ["The Lost Adventure"],
+                "cover_date": "2012-11-14",
+                "image": CANDIDATE_COVER_URL,
+                "modified": "2024-01-15T12:34:56Z"
+            }]))),
+        )
+        .mount(&metron_mock)
+        .await;
+
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_series_id, issue_id) = seed_series_with_cover_phash(&app, dir.path(), &cover).await;
+    let providers: Vec<Arc<dyn MetadataProvider>> = vec![Arc::new(MetronClient::with_base_url(
+        "u",
+        "p",
+        metron_mock.uri(),
+        app.state().jobs.redis.clone(),
+    ))];
+    let facts = IssueQueryFacts {
+        series_name: "Fantastic Four".into(),
+        series_year: Some(2001),
+        publisher: None,
+        volume: Some(1),
+        issue_number: "600".into(),
+        issue_year: Some(2012),
+    };
+    let targets = vec![EffectiveTarget {
+        source: Source::Metron,
+        provider_series_id: "62349".into(),
+        // The mapping (wrongly) declares 2001 — the gate baseline the
+        // relaunch would fail without the escape.
+        declared_year: Some(2001),
+        provider_series_name: Some("Fantastic Four".into()),
+        provider_series_url: None,
+        via_range: false,
+    }];
+    let start = || {
+        let facts = facts.clone();
+        let issue_id = issue_id.clone();
+        let app = &app;
+        async move {
+            orchestrator::start_run(
+                &app.state().db,
+                StartRunArgs {
+                    scope: orchestrator::scope::ISSUE,
+                    scope_entity_id: Some(issue_id),
+                    library_id: None,
+                    triggered_by: None,
+                    trigger_kind: orchestrator::trigger_kind::MANUAL,
+                    providers: &[Source::Metron],
+                    query: StoredQuery::Issue(facts),
+                    batch_id: None,
+                },
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    // Relaxed (default): the narrowed results are re-scored under the
+    // cover-aware gate and the 0-bit cover match survives.
+    let run_id = start().await;
+    let ranked = orchestrator::run_issue_search_with(
+        &app.state().db,
+        run_id,
+        &providers,
+        &facts,
+        &targets,
+        Thresholds::new(80.0, 60.0),
+        3,
+        Some(issue_id.as_str()),
+        opts_with_cover(&cover, true),
+    )
+    .await
+    .expect("search");
+    assert_eq!(ranked.len(), 1, "{ranked:?}");
+    assert_eq!(ranked[0].external_id, "7001");
+    assert_eq!(ranked[0].score.cover_hamming, Some(0));
+    let run = entity::metadata_run::Entity::find_by_id(run_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.query.unwrap()["year_gate_relaxed"], true);
+
+    // Year asserted by the user: hard gate stays, and the broad fallback
+    // (PhashAware by design) is what would rescue it — but with the same
+    // year-mismatched rows it still requires the cover, which it has.
+    // What we pin here is only the *narrowed* relax note: absent.
+    let run_id = start().await;
+    let _ = orchestrator::run_issue_search_with(
+        &app.state().db,
+        run_id,
+        &providers,
+        &facts,
+        &targets,
+        Thresholds::new(80.0, 60.0),
+        3,
+        Some(issue_id.as_str()),
+        opts_with_cover(&cover, false),
+    )
+    .await
+    .expect("search");
+    let run = entity::metadata_run::Entity::find_by_id(run_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        run.query.unwrap().get("year_gate_relaxed").is_none(),
+        "no relax note when the year was asserted"
+    );
+}

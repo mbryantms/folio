@@ -25,6 +25,7 @@ pub mod diff;
 pub mod drift;
 pub mod field;
 pub mod identifier;
+pub mod lookup;
 pub mod match_outcome;
 pub mod matcher;
 pub mod merge;

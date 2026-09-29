@@ -16,7 +16,7 @@
 //! exhaustion.
 
 use crate::metadata::matcher::{IssueQueryFacts, SeriesQueryFacts};
-use crate::metadata::orchestrator::{self, StoredQuery};
+use crate::metadata::orchestrator::{self, SearchOpts, StoredQuery};
 use crate::metadata::range_map::EffectiveTarget;
 use crate::state::AppState;
 use apalis::prelude::*;
@@ -109,6 +109,12 @@ pub struct SearchSeriesJob {
     pub series_id: Uuid,
     pub library_id: Option<Uuid>,
     pub facts: SeriesQueryFacts,
+    /// WP-2.8: the user supplied `facts.year` as a query override. Pins
+    /// the hard year gate — no cover-aware relaxation when the user
+    /// asserted the year. `#[serde(default)]` so jobs queued before
+    /// this field existed still deserialize.
+    #[serde(default)]
+    pub year_asserted: bool,
 }
 
 pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Result<(), Error> {
@@ -118,6 +124,7 @@ pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Resul
         series_id,
         library_id,
         facts,
+        year_asserted,
     } = job;
     tracing::info!(
         run_id = %run_id,
@@ -136,7 +143,7 @@ pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Resul
     let thresholds = thresholds(&state);
     let pre_filter = pre_filter_for_library(&state, library_id).await;
     let alt_cap = state.cfg().metadata_alternate_cover_fetch_cap;
-    match orchestrator::run_series_search(
+    match orchestrator::run_series_search_with(
         &state.db,
         run_id,
         &providers,
@@ -145,6 +152,10 @@ pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Resul
         &pre_filter,
         alt_cap,
         Some(series_id),
+        SearchOpts {
+            relax_year_gate: !year_asserted,
+            cover_hasher: None,
+        },
     )
     .await
     {
@@ -186,6 +197,9 @@ pub struct SearchIssueJob {
     /// the per-provider issue search narrow to the right volume even
     /// when this issue diverges from the rest of the series.
     pub series_targets: Vec<EffectiveTarget>,
+    /// WP-2.8: see [`SearchSeriesJob::year_asserted`].
+    #[serde(default)]
+    pub year_asserted: bool,
 }
 
 pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<(), Error> {
@@ -196,6 +210,7 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
         library_id,
         facts,
         series_targets,
+        year_asserted,
     } = job;
     tracing::info!(
         run_id = %run_id,
@@ -214,7 +229,7 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
     }
     let thresholds = thresholds(&state);
     let alt_cap = state.cfg().metadata_alternate_cover_fetch_cap;
-    match orchestrator::run_issue_search(
+    match orchestrator::run_issue_search_with(
         &state.db,
         run_id,
         &providers,
@@ -223,6 +238,10 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
         thresholds,
         alt_cap,
         Some(issue_id.as_str()),
+        SearchOpts {
+            relax_year_gate: !year_asserted,
+            cover_hasher: None,
+        },
     )
     .await
     {
@@ -434,6 +453,7 @@ pub async fn enqueue_series_search(
             series_id: row.id,
             library_id: Some(row.library_id),
             facts,
+            year_asserted: false,
         })
         .await
     {
@@ -538,6 +558,7 @@ pub async fn enqueue_issue_search(
             library_id: Some(s.library_id),
             facts,
             series_targets,
+            year_asserted: false,
         })
         .await
     {
