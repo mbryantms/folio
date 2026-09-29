@@ -159,7 +159,15 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
                             &mut current_creator_role,
                             &mut current_id_source,
                         );
-                        info.raw.insert(name.clone(), value);
+                        // Only direct children of <MetronInfo> go into the
+                        // passthrough map — mirrors `comicinfo::parse`. A
+                        // nested leaf (`<Credit><Creator><Name>`, `<URLs>
+                        // <URL>`) has no valid top-level home, so
+                        // re-emitting it from `raw` would corrupt the
+                        // document; the typed lists carry those.
+                        if path.len() == 2 {
+                            info.raw.insert(name.clone(), value);
+                        }
                     }
                 }
                 path.pop();
@@ -656,6 +664,37 @@ mod tests {
         assert_eq!(
             reparsed.raw.get("X-Custom-Vendor").map(String::as_str),
             Some("vendor-specific-payload"),
+        );
+    }
+
+    /// WP-2.6 (c): `raw` holds top-level elements only. A nested leaf
+    /// (`<Credits><Credit><Creator><Name>`, `<URLs><URL>`) never lands in
+    /// the passthrough map, so serializing can't hoist it to the root and
+    /// corrupt the document; the typed lists / credits carry those.
+    #[test]
+    fn raw_map_holds_top_level_elements_only() {
+        let xml = r#"<?xml version="1.0"?>
+<MetronInfo>
+  <Title>X</Title>
+  <MangaVolume>3</MangaVolume>
+  <URLs><URL primary="true">https://example.com/1</URL></URLs>
+  <Credits>
+    <Credit role="Writer"><Creator><Name>Someone</Name></Creator></Credit>
+  </Credits>
+</MetronInfo>"#;
+        let parsed = parse(xml.as_bytes()).expect("parse");
+        assert_eq!(parsed.raw.get("MangaVolume").map(String::as_str), Some("3"));
+        assert_eq!(parsed.raw.get("Title").map(String::as_str), Some("X"));
+        assert!(!parsed.raw.contains_key("URL"), "{:?}", parsed.raw);
+        assert!(!parsed.raw.contains_key("Name"), "{:?}", parsed.raw);
+        assert_eq!(parsed.writer().as_deref(), Some("Someone"));
+
+        let out = serialize(&parsed);
+        assert!(out.contains("<MangaVolume>3</MangaVolume>"), "{out}");
+        assert!(!out.contains("<URL>"), "nested leaf hoisted to root: {out}");
+        assert!(
+            !out.contains("  <Name>"),
+            "nested leaf hoisted to root: {out}"
         );
     }
 

@@ -222,7 +222,16 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
             ctx.issue.community_rating,
             ctx.provider.community_rating.map(f64::from),
         ),
-        main_character_or_team: None,
+        // Not modelled by GenericMetadata or any issue column, but the
+        // serializer treats the name as typed (so it is NOT re-emitted
+        // from `raw`) — carry the archive's existing value through from
+        // `comic_info_raw` or a hand edit is deleted on apply (WP-2.6 (d),
+        // audit DI-11).
+        main_character_or_team: comic_info_raw_str(
+            &ctx.issue.comic_info_raw,
+            "main_character_or_team",
+            "MainCharacterOrTeam",
+        ),
         review: ctx.issue.review.clone(),
         gtin: prefer_external_id_str(
             ctx.is_issue_pinned("external_id.gtin"),
@@ -322,9 +331,19 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
         // working. The internal `double_page_inferred` field is
         // stripped by the M1 serializer.
         pages: extract_pages(&ctx.issue.pages),
-        // Defaults; not exposed by GenericMetadata today.
-        alternate_number: None,
-        alternate_count: None,
+        // Not exposed by GenericMetadata; same carry-through as
+        // `main_character_or_team` above — these are typed names on the
+        // serializer, so a `None` here deletes the archive's value.
+        alternate_number: comic_info_raw_str(
+            &ctx.issue.comic_info_raw,
+            "alternate_number",
+            "AlternateNumber",
+        ),
+        alternate_count: comic_info_raw_i32(
+            &ctx.issue.comic_info_raw,
+            "alternate_count",
+            "AlternateCount",
+        ),
         // Raw passthrough — preserves vendor-custom elements across the
         // round-trip. See module-level doc.
         raw: preserve_raw_from_issue(&ctx.issue.comic_info_raw),
@@ -486,12 +505,14 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
         ),
         ids,
         credits,
-        // MetronInfo doesn't share `comic_info_raw` semantics — vendor
-        // custom elements that appeared in the source MetronInfo file
-        // are stored separately at parse time. We leave this empty for
-        // freshly-composed sidecars; vendor-custom passthrough lives
-        // on the ComicInfo composer where most archives carry it.
-        raw: BTreeMap::new(),
+        // Raw passthrough, symmetrical to ComicInfo's: the scanner stores
+        // the parsed MetronInfo (with its `raw` map of top-level elements
+        // Folio doesn't model) in `issue.metron_info_raw`; forwarding it
+        // here means a `<MangaVolume>` or vendor `<X-…>` element survives
+        // the rewrite instead of being deleted (WP-2.6 (c), audit DI-11).
+        // The serializer skips any key with a typed slot, so each element
+        // appears exactly once.
+        raw: preserve_raw_from_issue(ctx.issue.metron_info_raw.as_ref().unwrap_or(&NULL_JSON)),
     };
 
     let _ = &mut info; // silence unused-mut if all conditional branches stay constant
@@ -777,6 +798,44 @@ fn preserve_raw_from_issue(json: &serde_json::Value) -> BTreeMap<String, String>
     BTreeMap::new()
 }
 
+/// Stand-in for a NULL `metron_info_raw` column so the raw-map reader
+/// can take a `&Value` uniformly (a NULL / non-object yields no entries).
+const NULL_JSON: serde_json::Value = serde_json::Value::Null;
+
+/// A string-valued ComicInfo element the composer has no column or
+/// provider source for, read back from the scanner-stored
+/// `issue.comic_info_raw` JSON. Prefers the typed struct key (`typed`,
+/// e.g. `main_character_or_team`) the parser populated; falls back to
+/// the element name in the `raw` map (`raw_key`, e.g.
+/// `MainCharacterOrTeam`) for rows written before the typed field
+/// existed. Empty strings count as absent.
+fn comic_info_raw_str(json: &serde_json::Value, typed: &str, raw_key: &str) -> Option<String> {
+    json.get(typed)
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            json.get("raw")
+                .and_then(|r| r.get(raw_key))
+                .and_then(|v| v.as_str())
+        })
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
+/// Integer sibling of [`comic_info_raw_str`]: the typed key holds a
+/// number, the `raw` fallback holds the element's text.
+fn comic_info_raw_i32(json: &serde_json::Value, typed: &str, raw_key: &str) -> Option<i32> {
+    json.get(typed)
+        .and_then(|v| v.as_i64())
+        .and_then(|n| i32::try_from(n).ok())
+        .or_else(|| {
+            json.get("raw")
+                .and_then(|r| r.get(raw_key))
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.trim().parse::<i32>().ok())
+        })
+}
+
 // ───────── DB loaders ─────────
 //
 // These helpers assemble the inputs the composer needs from the live
@@ -1005,6 +1064,8 @@ mod tests {
             comicinfo_count: Some(12),
             last_rewrite_at: None,
             last_rewrite_kind: None,
+            last_sidecar_rewrite_at: None,
+            metron_info_raw: None,
             cover_page_index: 0,
             metadata_review_accepted_at: None,
             metadata_review_accepted_by: None,
@@ -1366,6 +1427,121 @@ mod tests {
             ci.raw.get("MainCharacterOrTeam").map(String::as_str),
             Some("Alana"),
         );
+    }
+
+    /// WP-2.6 (d) / audit DI-11: `MainCharacterOrTeam`, `AlternateNumber`
+    /// and `AlternateCount` are typed names on the serializer (so they are
+    /// never re-emitted from `raw`) but have no column or provider source.
+    /// Pre-fix the composer set them to `None`, which deleted the
+    /// archive's hand-edited values on every apply. They must carry
+    /// through from `comic_info_raw` — the typed struct keys the parser
+    /// writes, or the `raw` element names for older rows — and land in
+    /// the serialized XML exactly once.
+    #[test]
+    fn compose_carries_unmodelled_comicinfo_fields_through() {
+        let series = make_series("Saga");
+        let mut issue = make_issue("X");
+        // Shape written by the scanner: `serde_json::to_value(&ComicInfo)`.
+        issue.comic_info_raw = serde_json::json!({
+            "main_character_or_team": "Alana",
+            "alternate_number": "12A",
+            "alternate_count": 24,
+            "raw": {
+                "MainCharacterOrTeam": "Alana",
+                "AlternateNumber": "12A",
+                "AlternateCount": "24"
+            }
+        });
+        let provider = make_provider();
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &empty_ids(),
+            series_external_ids: &empty_ids(),
+            issue_user_pins: &empty_pins(),
+            series_user_pins: &empty_pins(),
+        };
+        let ci = compose_comicinfo(&ctx);
+        assert_eq!(ci.main_character_or_team.as_deref(), Some("Alana"));
+        assert_eq!(ci.alternate_number.as_deref(), Some("12A"));
+        assert_eq!(ci.alternate_count, Some(24));
+
+        let xml = parsers::comicinfo::serialize(&ci);
+        assert_eq!(xml.matches("<MainCharacterOrTeam>").count(), 1, "{xml}");
+        assert!(
+            xml.contains("<AlternateNumber>12A</AlternateNumber>"),
+            "{xml}"
+        );
+        assert!(xml.contains("<AlternateCount>24</AlternateCount>"), "{xml}");
+
+        // Older rows: only the `raw` map carries them (typed keys absent).
+        let mut older = make_issue("X");
+        older.comic_info_raw = serde_json::json!({
+            "raw": { "MainCharacterOrTeam": "Marko", "AlternateCount": "7" }
+        });
+        let ctx = ComposeContext {
+            issue: &older,
+            ..ctx
+        };
+        let ci = compose_comicinfo(&ctx);
+        assert_eq!(ci.main_character_or_team.as_deref(), Some("Marko"));
+        assert_eq!(ci.alternate_number, None);
+        assert_eq!(ci.alternate_count, Some(7));
+    }
+
+    /// WP-2.6 (c) / audit DI-11: top-level MetronInfo elements Folio
+    /// doesn't model round-trip through `issue.metron_info_raw` into the
+    /// composed XML instead of being deleted. Typed names are not
+    /// duplicated; a NULL column composes as before.
+    #[test]
+    fn compose_metroninfo_passes_unknown_elements_through() {
+        let series = make_series("Saga");
+        let mut issue = make_issue("X");
+        let parsed = parsers::metroninfo::parse(
+            br#"<?xml version="1.0"?>
+<MetronInfo>
+  <Title>Old title</Title>
+  <MangaVolume>3</MangaVolume>
+  <X-Vendor-Custom>keep me</X-Vendor-Custom>
+</MetronInfo>"#,
+        )
+        .unwrap();
+        issue.metron_info_raw = Some(serde_json::to_value(&parsed).unwrap());
+        let provider = make_provider();
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &empty_ids(),
+            series_external_ids: &empty_ids(),
+            issue_user_pins: &empty_pins(),
+            series_user_pins: &empty_pins(),
+        };
+        let mi = compose_metroninfo(&ctx);
+        assert_eq!(mi.raw.get("MangaVolume").map(String::as_str), Some("3"));
+        assert_eq!(
+            mi.raw.get("X-Vendor-Custom").map(String::as_str),
+            Some("keep me")
+        );
+        let xml = parsers::metroninfo::serialize(&mi);
+        assert!(xml.contains("<MangaVolume>3</MangaVolume>"), "{xml}");
+        assert!(
+            xml.contains("<X-Vendor-Custom>keep me</X-Vendor-Custom>"),
+            "{xml}"
+        );
+        // The typed `<Title>` comes from the composer, not the stale raw copy.
+        assert_eq!(xml.matches("<Title>").count(), 1, "{xml}");
+        assert!(!xml.contains("Old title"), "{xml}");
+
+        // NULL column → no passthrough, no panic.
+        let bare = make_issue("X");
+        assert!(bare.metron_info_raw.is_none());
+        let ctx = ComposeContext {
+            issue: &bare,
+            ..ctx
+        };
+        assert!(compose_metroninfo(&ctx).raw.is_empty());
     }
 
     #[test]

@@ -501,6 +501,55 @@ async fn metroninfo_overrides_comicinfo() {
     );
 }
 
+/// WP-2.6 (c) / audit DI-11: the scanner persists the parsed MetronInfo
+/// (with its `raw` map of top-level elements Folio doesn't model) to
+/// `issues.metron_info_raw`, so the sidecar composer can pass a
+/// `<MangaVolume>` through on the next rewrite instead of deleting it.
+/// An archive without MetronInfo.xml leaves the column NULL.
+#[tokio::test]
+async fn scan_persists_metron_info_raw_with_unmodelled_elements() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Tau (2024)");
+    std::fs::create_dir_all(&folder).unwrap();
+
+    let metron_info = r#"<?xml version="1.0"?>
+        <MetronInfo>
+            <Series>Tau</Series>
+            <Number>1</Number>
+            <MangaVolume>3</MangaVolume>
+            <X-Vendor-Custom>keep me</X-Vendor-Custom>
+        </MetronInfo>"#;
+    write_cbz_with_xml(&folder.join("Tau 001.cbz"), 1, 2, None, Some(metron_info));
+    write_cbz_with_xml(&folder.join("Tau 002.cbz"), 2, 2, None, None);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issues = IssueEntity::find().all(&state.db).await.unwrap();
+    let with = issues
+        .iter()
+        .find(|i| i.file_path.ends_with("Tau 001.cbz"))
+        .expect("issue 1");
+    let without = issues
+        .iter()
+        .find(|i| i.file_path.ends_with("Tau 002.cbz"))
+        .expect("issue 2");
+
+    let raw = with
+        .metron_info_raw
+        .as_ref()
+        .expect("metron_info_raw stamped when MetronInfo.xml present");
+    assert_eq!(raw["raw"]["MangaVolume"], "3", "{raw}");
+    assert_eq!(raw["raw"]["X-Vendor-Custom"], "keep me", "{raw}");
+    assert_eq!(raw["series"], "Tau", "typed fields persisted too: {raw}");
+    assert!(
+        without.metron_info_raw.is_none(),
+        "no MetronInfo.xml → NULL column"
+    );
+}
+
 #[tokio::test]
 async fn series_json_fills_series_metadata() {
     let app = TestApp::spawn().await;
