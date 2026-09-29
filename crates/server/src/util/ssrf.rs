@@ -263,10 +263,124 @@ pub async fn check_host_resolves_public(host: &str, port: u16) -> Result<(), Ssr
     resolve_pinned_addr(host, port).await.map(|_| ())
 }
 
+// ───────── pooled client (WP-2.9) ─────────
+
+/// DNS resolver that vets every answer before hyper connects to it —
+/// the pooled-client counterpart of [`resolve_pinned_addr`]. Because
+/// hyper connects to exactly the addresses this returns, a rebinding
+/// answer can't slip a private IP past the check (SEC-3 holds without
+/// a per-request `.resolve()` pin, so connections pool across calls).
+/// IP-literal hosts never reach a resolver; the URL validators and the
+/// redirect policy gate those.
+struct PublicOnlyResolver;
+
+impl reqwest::dns::Resolve for PublicOnlyResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_owned();
+        Box::pin(async move {
+            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
+                .await
+                .map_err(|e| Box::new(SsrfError::Unresolvable(e.to_string())) as BoxError)?
+                .collect();
+            if addrs.is_empty() {
+                return Err(
+                    Box::new(SsrfError::Unresolvable(format!("no addresses for {host}")))
+                        as BoxError,
+                );
+            }
+            for addr in &addrs {
+                if is_internal_ip(&addr.ip()) {
+                    return Err(Box::new(SsrfError::PrivateAddress(addr.ip())) as BoxError);
+                }
+            }
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+/// Build a long-lived, connection-pooling client that is safe for
+/// user- or provider-supplied URLs: every DNS answer is vetted by
+/// [`PublicOnlyResolver`], every redirect hop by
+/// [`outbound_redirect_policy`]. Pair with [`fetch_public_bytes_pooled`],
+/// which validates the initial URL. Used for the search-time cover
+/// hashing fan-out, where a fresh client per fetch threw away the
+/// pooled connection on every one of ~100 URLs per search.
+pub fn shared_public_client(
+    user_agent: &'static str,
+    timeout: std::time::Duration,
+    max_redirects: usize,
+) -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent(user_agent)
+        .timeout(timeout)
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .redirect(outbound_redirect_policy(max_redirects))
+        .dns_resolver(std::sync::Arc::new(PublicOnlyResolver))
+        .build()
+        .expect("reqwest client init")
+}
+
+/// [`fetch_public_bytes`] over a [`shared_public_client`]: same URL
+/// validation and body cap, but the DNS vetting happens inside the
+/// client's resolver and redirects are followed by the client's policy,
+/// so the connection pool survives across calls. `timeout` bounds the
+/// whole fetch including the body.
+pub async fn fetch_public_bytes_pooled(
+    client: &reqwest::Client,
+    url: &str,
+    max_bytes: usize,
+    timeout: std::time::Duration,
+    require_https: bool,
+) -> Result<FetchedBytes, FetchBytesError> {
+    let parsed = if require_https {
+        validate_outbound_url(url)?
+    } else {
+        validate_public_http_url(url)?
+    };
+    let fut = async {
+        let resp = client
+            .get(parsed)
+            .send()
+            .await
+            .map_err(|e| FetchBytesError::Transport(e.to_string()))?;
+        if !resp.status().is_success() {
+            return Err(FetchBytesError::HttpStatus(resp.status()));
+        }
+        if resp
+            .content_length()
+            .is_some_and(|len| len > max_bytes as u64)
+        {
+            return Err(FetchBytesError::TooLarge { max_bytes });
+        }
+        let final_url = resp.url().clone();
+        let headers = resp.headers().clone();
+        let mut stream = resp.bytes_stream();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| FetchBytesError::Transport(e.to_string()))?;
+            if bytes.len().saturating_add(chunk.len()) > max_bytes {
+                return Err(FetchBytesError::TooLarge { max_bytes });
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(FetchedBytes {
+            final_url,
+            headers,
+            bytes,
+        })
+    };
+    tokio::time::timeout(timeout, fut)
+        .await
+        .map_err(|_| FetchBytesError::Timeout)?
+}
+
 /// Build a redirect policy that limits hops to `max_hops` and rejects
 /// any hop whose URL host is a private-range IP literal. Hostname
 /// targets are *not* re-resolved here (sync callback, no async DNS);
-/// the per-request pre-flight covers that.
+/// the per-request pre-flight — or, on a [`shared_public_client`], the
+/// vetting resolver — covers that.
 pub fn outbound_redirect_policy(max_hops: usize) -> Policy {
     Policy::custom(move |attempt| {
         if attempt.previous().len() >= max_hops {
@@ -442,6 +556,53 @@ mod tests {
             err,
             FetchBytesError::Ssrf(SsrfError::PrivateAddress(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn pooled_fetch_rejects_internal_ip_literal_before_fetch() {
+        let client = shared_public_client("folio-test", std::time::Duration::from_secs(1), 2);
+        let err = fetch_public_bytes_pooled(
+            &client,
+            "http://127.0.0.1/cover.jpg",
+            MAX_IMAGE_BYTES,
+            std::time::Duration::from_secs(1),
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            FetchBytesError::Ssrf(SsrfError::PrivateAddress(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn pooled_client_resolver_rejects_hosts_that_resolve_internally() {
+        // `localhost` passes the syntactic check (it's a domain) but the
+        // vetting resolver refuses the loopback answer, so the request
+        // never reaches the (loopback-bound) mock server: `.expect(0)`
+        // is verified when the server drops.
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_bytes(vec![0u8; 8]))
+            .expect(0)
+            .mount(&mock)
+            .await;
+        let client = shared_public_client("folio-test", std::time::Duration::from_secs(2), 2);
+        let url = format!("http://localhost:{}/cover.jpg", mock.address().port());
+        let err = fetch_public_bytes_pooled(
+            &client,
+            &url,
+            MAX_IMAGE_BYTES,
+            std::time::Duration::from_secs(2),
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, FetchBytesError::Transport(_)),
+            "expected the resolver to fail the connect, got {err:?}"
+        );
     }
 
     #[tokio::test]

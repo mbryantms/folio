@@ -18,6 +18,13 @@ pub struct Model {
     /// so payloads written before a `GenericMetadata` mapping change are
     /// re-fetched instead of serving stale defaults.
     pub schema_version: i32,
+    /// `ETag` the upstream attached to the cached response, sent back as
+    /// `If-None-Match` on revalidation (WP-2.9). NULL when none was sent.
+    pub etag: Option<String>,
+    /// `Last-Modified` the upstream attached, sent back as
+    /// `If-Modified-Since` on revalidation. Metron's detail endpoints
+    /// use this form.
+    pub last_modified: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

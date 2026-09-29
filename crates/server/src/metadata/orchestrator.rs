@@ -78,23 +78,12 @@ pub mod scope {
 pub fn build_providers(cfg: &Config, redis: ConnectionManager) -> Vec<Arc<dyn MetadataProvider>> {
     let mut out: Vec<Arc<dyn MetadataProvider>> = Vec::new();
 
-    let metron_user_set = cfg
-        .metron_username
-        .as_deref()
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false);
-    let metron_pass_set = cfg
-        .metron_password
-        .as_deref()
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false);
-    if cfg.metron_enabled && metron_user_set && metron_pass_set {
-        let username = cfg.metron_username.clone().unwrap_or_default();
-        let password = cfg.metron_password.clone().unwrap_or_default();
-        out.push(Arc::new(match cfg.metron_base_url.clone() {
-            Some(base) => MetronClient::with_base_url(&username, &password, base, redis.clone()),
-            None => MetronClient::new(&username, &password, redis.clone()),
-        }));
+    // Token auth is preferred; username + password is the fallback
+    // (`MetronAuth::from_config`). Either counts as "configured".
+    if cfg.metron_enabled
+        && let Some(client) = MetronClient::from_config(cfg, redis.clone())
+    {
+        out.push(Arc::new(client));
     }
 
     let cv_key_set = cfg
@@ -658,6 +647,7 @@ enum YearGate {
 /// WP-2.8 relaxed retry so the two can't drift.
 #[allow(clippy::too_many_arguments)]
 async fn score_series_candidates(
+    db: &DatabaseConnection,
     http: &reqwest::Client,
     hasher: Option<&CoverHasher>,
     facts: &SeriesQueryFacts,
@@ -694,7 +684,7 @@ async fn score_series_candidates(
                 )
             })
             .collect();
-        fetch_phashes_per_candidate(http, hasher, &urls_per_candidate).await
+        fetch_phashes_per_candidate(db, http, hasher, &urls_per_candidate).await
     } else {
         candidates.iter().map(|_| Vec::new()).collect()
     };
@@ -726,6 +716,7 @@ async fn score_series_candidates(
 /// phash-fetch + scoring logic lives in one place.
 #[allow(clippy::too_many_arguments)]
 async fn score_issue_candidates(
+    db: &DatabaseConnection,
     http: &reqwest::Client,
     hasher: Option<&CoverHasher>,
     facts: &IssueQueryFacts,
@@ -754,7 +745,7 @@ async fn score_issue_candidates(
                 )
             })
             .collect();
-        fetch_phashes_per_candidate(http, hasher, &urls_per_candidate).await
+        fetch_phashes_per_candidate(db, http, hasher, &urls_per_candidate).await
     } else {
         candidates.iter().map(|_| Vec::new()).collect()
     };
@@ -802,10 +793,21 @@ const COVER_FETCH_CONCURRENCY: usize = 16;
 
 /// Shared `reqwest::Client` for cover fetches, built once so connection pooling
 /// is reused across search runs instead of discarded with a per-run client
-/// (PERF-9). `reqwest::Client` is `Arc` inside, so cloning is cheap.
+/// (PERF-9). SSRF-safe by construction — DNS answers and redirect hops are
+/// vetted inside the client (WP-2.9) — and the phash fetch consults the
+/// `metadata_cover_hash` cache before touching it. `reqwest::Client` is
+/// `Arc` inside, so cloning is cheap.
 fn cover_http_client() -> reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    CLIENT.get_or_init(reqwest::Client::new).clone()
+    CLIENT
+        .get_or_init(|| {
+            crate::util::ssrf::shared_public_client(
+                crate::build_info::USER_AGENT_COVER,
+                COVER_PHASH_FETCH_TIMEOUT,
+                2,
+            )
+        })
+        .clone()
 }
 
 /// Run a series search across `providers`, score with the matcher,
@@ -895,6 +897,7 @@ pub async fn run_series_search_with(
                 // before any phash fetching or scoring runs.
                 let raw = candidates;
                 let mut produced = score_series_candidates(
+                    db,
                     &http,
                     opts.cover_hasher.as_ref(),
                     facts,
@@ -923,6 +926,7 @@ pub async fn run_series_search_with(
                     && !raw.is_empty()
                 {
                     produced = score_series_candidates(
+                        db,
                         &http,
                         opts.cover_hasher.as_ref(),
                         facts,
@@ -1099,6 +1103,7 @@ pub async fn run_issue_search_with(
             Ok(candidates) => {
                 let raw = candidates;
                 let mut scored = score_issue_candidates(
+                    db,
                     &http,
                     opts.cover_hasher.as_ref(),
                     facts,
@@ -1125,6 +1130,7 @@ pub async fn run_issue_search_with(
                     && !raw.is_empty()
                 {
                     scored = score_issue_candidates(
+                        db,
                         &http,
                         opts.cover_hasher.as_ref(),
                         facts,
@@ -1173,6 +1179,7 @@ pub async fn run_issue_search_with(
             match p.search_issue(&issue_query(None)).await {
                 Ok(candidates) => {
                     produced = score_issue_candidates(
+                        db,
                         &http,
                         opts.cover_hasher.as_ref(),
                         facts,
@@ -1305,6 +1312,7 @@ fn cover_urls_for_candidate<'a>(
 /// single phash per candidate via `fetch_candidate_phashes`; this
 /// replaces that helper.
 async fn fetch_phashes_per_candidate(
+    db: &DatabaseConnection,
     http: &reqwest::Client,
     hasher: Option<&CoverHasher>,
     urls_per_candidate: &[Vec<Option<&str>>],
@@ -1326,6 +1334,7 @@ async fn fetch_phashes_per_candidate(
                 (Some(url), Some(h)) => h((*url).to_owned()).await,
                 (Some(url), None) => {
                     crate::metadata::phash::fetch_and_hash_cover(
+                        db,
                         http,
                         url,
                         COVER_PHASH_FETCH_TIMEOUT,

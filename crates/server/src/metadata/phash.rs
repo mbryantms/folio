@@ -462,23 +462,35 @@ pub async fn issue_phash<C: ConnectionTrait>(
     Ok(Row::find_by_statement(stmt).one(db).await?.map(|r| r.phash))
 }
 
-/// Fetch + decode + hash a remote cover image. Failure soft-returns
-/// `None` so a slow CDN / decode error never blocks the search-side
-/// scoring. Bounded by an aggressive timeout — covers are tiny and a
-/// search shouldn't stall waiting on one.
+/// Fetch + decode + hash a remote cover image, through the
+/// [`crate::metadata::cover_hash_cache`] first (WP-2.9): a URL hashed in
+/// the last 30 days costs one indexed read and no network. Failure
+/// soft-returns `None` so a slow CDN / decode error never blocks the
+/// search-side scoring, and writes nothing to the cache. Bounded by an
+/// aggressive timeout — covers are tiny and a search shouldn't stall
+/// waiting on one.
 ///
-/// metadata-providers-1.0 M9.5.
-pub async fn fetch_and_hash_cover(
-    _client: &reqwest::Client,
+/// `client` must come from [`crate::util::ssrf::shared_public_client`]:
+/// the SSRF vetting lives in its resolver + redirect policy, and one
+/// pooled client across the ~100 URLs of a search is the whole point.
+///
+/// metadata-providers-1.0 M9.5; cache + pooled client WP-2.9.
+pub async fn fetch_and_hash_cover<C: ConnectionTrait>(
+    db: &C,
+    client: &reqwest::Client,
     url: &str,
     timeout: std::time::Duration,
 ) -> Option<i64> {
-    let fetched = match crate::util::ssrf::fetch_public_bytes(
+    match crate::metadata::cover_hash_cache::get(db, url).await {
+        Ok(Some(hit)) => return Some(hit.phash),
+        Ok(None) => {}
+        Err(e) => tracing::debug!(url, error = %e, "phash fetch: cache read failed"),
+    }
+    let fetched = match crate::util::ssrf::fetch_public_bytes_pooled(
+        client,
         url,
         crate::util::ssrf::MAX_IMAGE_BYTES,
         timeout,
-        crate::build_info::USER_AGENT_COVER,
-        2,
         false,
     )
     .await
@@ -492,13 +504,26 @@ pub async fn fetch_and_hash_cover(
     // Decoding can be CPU-intensive on large covers; punt to a
     // blocking task so the async runtime stays free.
     let bytes_for_blocking = fetched.bytes;
-    let img = tokio::task::spawn_blocking(move || {
-        crate::util::image_decode::decode_limited(&bytes_for_blocking)
+    let (p, d, a) = tokio::task::spawn_blocking(move || {
+        crate::util::image_decode::decode_limited(&bytes_for_blocking).map(|img| all_hashes(&img))
     })
     .await
     .ok()?
     .ok()?;
-    Some(phash(&img))
+    if let Err(e) = crate::metadata::cover_hash_cache::put(
+        db,
+        url,
+        crate::metadata::cover_hash_cache::CoverHashes {
+            phash: p,
+            dhash: d,
+            ahash: a,
+        },
+    )
+    .await
+    {
+        tracing::debug!(url, error = %e, "phash fetch: cache write failed");
+    }
+    Some(p)
 }
 
 /// Outcome of a phash backfill sweep — exposed via the admin

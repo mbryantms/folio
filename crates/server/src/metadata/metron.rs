@@ -1,9 +1,22 @@
 //! Metron API client (`metron.cloud/api/`).
 //!
-//! Auth: HTTP Basic (free `metron.cloud` account; credentials are the
-//! user's username + password, no API token in v1).
-//! Rate: 30 req/min + 5,000 req/day (separate buckets, both gate every
-//! outbound call — exhaustion of *either* denies).
+//! Auth: an API token (`Authorization: Bearer <token>`, generated in the
+//! account page's *API Tokens* section) is preferred; HTTP Basic with
+//! the account's username + password is the fallback and is on a
+//! phased deprecation path upstream (blog post "Introducing Token-Based
+//! API Authentication", 2026-07-26). [`MetronAuth::from_config`] picks.
+//! Rate: 20 req/min (burst) + 5,000 req/day (sustained) per account
+//! since the March 2026 limit change; supporters get a higher sustained
+//! limit, which is why the client also records the
+//! `X-RateLimit-*` headers the API returns on every response
+//! ([`crate::metadata::budget`]). The local buckets gate every outbound
+//! call — exhaustion of *either* denies.
+//! HTTP resilience (connect timeout, bounded retry on 5xx/transport,
+//! body cap, `Retry-After`) is shared with ComicVine via
+//! [`crate::metadata::http`]. Detail endpoints support
+//! `Last-Modified` / `If-Modified-Since` (and ETags where the API sends
+//! one); `fetch_*_conditional` re-validates a cached row for free
+//! instead of re-downloading it.
 //! License: CC-BY-NC-SA 4.0 (attribution required, non-commercial,
 //! share-alike on derivatives — we never re-expose Metron data through
 //! a public API).
@@ -30,12 +43,15 @@
 //! of the main reasons Metron is the preferred provider in the priority
 //! list.
 
-use crate::metadata::cache;
+use crate::config::Config;
+use crate::metadata::budget;
+use crate::metadata::cache::{self, Validators};
+use crate::metadata::http;
 use crate::metadata::identifier::{Identifier, Source};
 use crate::metadata::matcher::canonical_issue_number;
 use crate::metadata::provider::{
-    CreditCandidate, EntityCandidate, GenericMetadata, IssueCandidate, IssueQuery,
-    MetadataProvider, ProviderError, ProviderResult, QuotaSnapshot, ReprintCandidate,
+    ConditionalFetch, CreditCandidate, EntityCandidate, GenericMetadata, IssueCandidate,
+    IssueQuery, MetadataProvider, ProviderError, ProviderResult, QuotaSnapshot, ReprintCandidate,
     SeriesCandidate, SeriesQuery, VariantCoverCandidate,
 };
 use crate::metadata::rate_limit::{self, BucketDef, Reservation};
@@ -43,14 +59,83 @@ use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use chrono::{DateTime, NaiveDate, Utc};
 use redis::aio::ConnectionManager;
+use reqwest::header::{ACCEPT, AUTHORIZATION, IF_MODIFIED_SINCE, IF_NONE_MATCH};
 use sea_orm::DatabaseConnection;
 use serde::Deserialize;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const USER_AGENT: &str = crate::build_info::USER_AGENT_METADATA;
 
+const DEFAULT_BASE_URL: &str = "https://metron.cloud";
+
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Wall-clock budget for one logical API call *including* retries. The
+/// per-attempt timeout is 30 s; this stops a flapping upstream from
+/// holding a search worker for four full attempts plus backoff.
+const REQUEST_DEADLINE: Duration = Duration::from_secs(75);
+
+/// How the client authenticates to Metron. Token is preferred (the
+/// upstream is deprecating Basic in phases); Basic stays as the
+/// fallback for accounts that haven't minted a token yet.
+#[derive(Clone, Debug)]
+pub enum MetronAuth {
+    /// `Authorization: Bearer <token>` — verified against Metron's
+    /// `api/README.md` + `tests/api/test_token_authentication.py`.
+    Token(String),
+    /// `Authorization: Basic base64(username:password)`.
+    Basic { username: String, password: String },
+}
+
+impl MetronAuth {
+    /// Pick the credential the operator configured: token when set,
+    /// else username + password when both are set, else `None`
+    /// (provider unconfigured). Every value is trimmed — a pasted token
+    /// commonly drags a trailing newline that Metron rejects with 401.
+    pub fn from_config(cfg: &Config) -> Option<Self> {
+        if let Some(token) = cfg
+            .metron_api_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return Some(MetronAuth::Token(token.to_owned()));
+        }
+        let username = cfg
+            .metron_username
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
+        let password = cfg
+            .metron_password
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
+        Some(MetronAuth::Basic {
+            username: username.to_owned(),
+            password: password.to_owned(),
+        })
+    }
+
+    pub fn is_token(&self) -> bool {
+        matches!(self, MetronAuth::Token(_))
+    }
+
+    fn header_value(&self) -> String {
+        match self {
+            MetronAuth::Token(token) => format!("Bearer {}", token.trim()),
+            MetronAuth::Basic { username, password } => {
+                // Defense-in-depth trim — same paste-leak fix as the CV
+                // client. Whitespace inside HTTP Basic credentials is
+                // base64-encoded straight through and Metron rejects
+                // with 401.
+                let creds = B64.encode(format!("{}:{}", username.trim(), password.trim()));
+                format!("Basic {creds}")
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct MetronClient {
@@ -67,8 +152,10 @@ struct Inner {
 }
 
 impl MetronClient {
+    /// Basic-auth constructor — kept for the many call sites + tests
+    /// that predate token auth. Prefer [`MetronClient::from_config`].
     pub fn new(username: &str, password: &str, redis: ConnectionManager) -> Self {
-        Self::with_base_url(username, password, "https://metron.cloud".to_owned(), redis)
+        Self::with_base_url(username, password, DEFAULT_BASE_URL.to_owned(), redis)
     }
 
     pub fn with_base_url(
@@ -77,18 +164,35 @@ impl MetronClient {
         base_url: String,
         redis: ConnectionManager,
     ) -> Self {
-        // Defense-in-depth trim — same paste-leak fix as the CV
-        // client. Whitespace inside HTTP Basic credentials is base64-
-        // encoded straight through and Metron rejects with 401.
-        let username = username.trim();
-        let password = password.trim();
-        let creds = B64.encode(format!("{username}:{password}"));
-        let auth_header = format!("Basic {creds}");
-        let http = reqwest::Client::builder()
-            .user_agent(USER_AGENT)
-            .timeout(DEFAULT_TIMEOUT)
-            .build()
-            .expect("reqwest client init");
+        Self::with_auth(
+            MetronAuth::Basic {
+                username: username.to_owned(),
+                password: password.to_owned(),
+            },
+            base_url,
+            redis,
+        )
+    }
+
+    /// Build from the runtime config, preferring the API token. `None`
+    /// when no usable credential is set (the caller treats the provider
+    /// as unconfigured). Doesn't consult `metron_enabled` — that gate
+    /// belongs to the caller so the admin "Test" button can exercise a
+    /// disabled-but-configured provider's credentials.
+    pub fn from_config(cfg: &Config, redis: ConnectionManager) -> Option<Self> {
+        let auth = MetronAuth::from_config(cfg)?;
+        // `metron_base_url` is the test/staging hook added by WP-2.8
+        // (`COMIC_METRON_BASE_URL`); production leaves it unset.
+        let base_url = cfg
+            .metron_base_url
+            .clone()
+            .unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
+        Some(Self::with_auth(auth, base_url, redis))
+    }
+
+    pub fn with_auth(auth: MetronAuth, base_url: String, redis: ConnectionManager) -> Self {
+        let auth_header = auth.header_value();
+        let http = http::build_client(USER_AGENT, DEFAULT_TIMEOUT);
         Self {
             inner: Arc::new(Inner {
                 auth_header,
@@ -109,13 +213,13 @@ impl MetronClient {
         let ttl =
             chrono::Duration::from_std(cache::CacheEntity::Series.default_ttl().to_std().unwrap())
                 .unwrap_or(chrono::Duration::hours(168));
-        cache::get_or_fetch(
+        cache::get_or_revalidate(
             db,
             Source::Metron,
             cache::CacheEntity::Series,
             external_id,
             ttl,
-            || self.fetch_series(external_id),
+            |validators| self.fetch_series_conditional_owned(external_id, validators),
         )
         .await
     }
@@ -128,15 +232,35 @@ impl MetronClient {
         let ttl =
             chrono::Duration::from_std(cache::CacheEntity::Issue.default_ttl().to_std().unwrap())
                 .unwrap_or(chrono::Duration::hours(24));
-        cache::get_or_fetch(
+        cache::get_or_revalidate(
             db,
             Source::Metron,
             cache::CacheEntity::Issue,
             external_id,
             ttl,
-            || self.fetch_issue(external_id),
+            |validators| self.fetch_issue_conditional_owned(external_id, validators),
         )
         .await
+    }
+
+    // Owned-argument shims so the `get_or_revalidate` closure can be
+    // `Fn` without borrowing a `Validators` that outlives the call.
+    async fn fetch_series_conditional_owned(
+        &self,
+        external_id: &str,
+        validators: Option<Validators>,
+    ) -> ProviderResult<ConditionalFetch> {
+        self.fetch_series_conditional(external_id, validators.as_ref())
+            .await
+    }
+
+    async fn fetch_issue_conditional_owned(
+        &self,
+        external_id: &str,
+        validators: Option<Validators>,
+    ) -> ProviderResult<ConditionalFetch> {
+        self.fetch_issue_conditional(external_id, validators.as_ref())
+            .await
     }
 
     /// Reserve both rate-limit buckets atomically. Either denial floors
@@ -159,49 +283,108 @@ impl MetronClient {
         Ok(())
     }
 
+    /// One authenticated GET: bucket reservation → retrying send →
+    /// budget-header capture → status classification. Returns the raw
+    /// response for `2xx`, and for `304` when `validators` were sent
+    /// (the caller maps that to a cache hit); every other status is an
+    /// error. The last error / clear is recorded in Redis for the admin
+    /// card as a side effect.
+    async fn send(
+        &self,
+        path: &str,
+        extra_query: &[(&str, String)],
+        validators: Option<&Validators>,
+    ) -> ProviderResult<http::Response> {
+        self.reserve_slot().await?;
+        let url = format!("{}{}", self.inner.base_url, path);
+        let opts = http::RequestOpts {
+            deadline: Some(Instant::now() + REQUEST_DEADLINE),
+            ..Default::default()
+        };
+        let build = || {
+            let mut req = self
+                .inner
+                .http
+                .get(&url)
+                .header(AUTHORIZATION, &self.inner.auth_header)
+                .header(ACCEPT, "application/json");
+            if !extra_query.is_empty() {
+                req = req.query(extra_query);
+            }
+            if let Some(v) = validators {
+                if let Some(etag) = v.etag.as_deref() {
+                    req = req.header(IF_NONE_MATCH, etag);
+                }
+                if let Some(lm) = v.last_modified.as_deref() {
+                    req = req.header(IF_MODIFIED_SINCE, lm);
+                }
+            }
+            req
+        };
+        let resp = match http::send_with_retry(build, &opts, &|s| s.to_owned()).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                budget::record_error(&self.inner.redis, Source::Metron, &e.to_string()).await;
+                return Err(e);
+            }
+        };
+        budget::store(
+            &self.inner.redis,
+            Source::Metron,
+            budget::parse_metron_headers(&resp.headers),
+        )
+        .await;
+        let status = resp.status;
+        let not_modified = status == reqwest::StatusCode::NOT_MODIFIED && validators.is_some();
+        if status.is_success() || not_modified {
+            budget::clear_error(&self.inner.redis, Source::Metron).await;
+            return Ok(resp);
+        }
+        let err = match status.as_u16() {
+            401 | 403 => ProviderError::Unauthorized(resp.snippet(256)),
+            404 => ProviderError::NotFound(resp.snippet(256)),
+            429 => ProviderError::QuotaExceeded {
+                retry_after_secs: http::retry_after_secs(
+                    &resp.headers,
+                    http::DEFAULT_RETRY_AFTER_SECS,
+                ),
+            },
+            _ => ProviderError::Upstream(format!("HTTP {status}: {}", resp.snippet(256))),
+        };
+        budget::record_error(&self.inner.redis, Source::Metron, &err.to_string()).await;
+        Err(err)
+    }
+
     async fn request<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
         extra_query: &[(&str, String)],
     ) -> ProviderResult<T> {
-        self.reserve_slot().await?;
-        let url = format!("{}{}", self.inner.base_url, path);
-        let mut req = self
-            .inner
-            .http
-            .get(&url)
-            .header(reqwest::header::AUTHORIZATION, &self.inner.auth_header)
-            .header(reqwest::header::ACCEPT, "application/json");
-        if !extra_query.is_empty() {
-            req = req.query(extra_query);
+        let resp = self.send(path, extra_query, None).await?;
+        parse_body(&resp)
+    }
+
+    /// Conditional detail GET: sends the cached validators and maps a
+    /// `304` to [`ConditionalFetch::NotModified`]. A fresh body comes
+    /// back with the validators the upstream attached so the cache can
+    /// store them for next time.
+    async fn request_conditional<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        validators: Option<&Validators>,
+    ) -> ProviderResult<Option<(T, Validators)>> {
+        let resp = self.send(path, &[], validators).await?;
+        if resp.status == reqwest::StatusCode::NOT_MODIFIED {
+            return Ok(None);
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
-        let status = resp.status();
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
-        if !status.is_success() {
-            return Err(match status.as_u16() {
-                401 | 403 => ProviderError::Unauthorized(truncate(&body, 256).to_owned()),
-                404 => ProviderError::NotFound(truncate(&body, 256).to_owned()),
-                429 => ProviderError::QuotaExceeded {
-                    retry_after_secs: 60,
-                },
-                500..=599 => ProviderError::Upstream(format!("HTTP {status}")),
-                _ => ProviderError::Upstream(format!("HTTP {status}: {}", truncate(&body, 256))),
-            });
-        }
-        serde_json::from_str::<T>(&body)
-            .map_err(|e| ProviderError::InvalidResponse(format!("typed parse: {e}")))
+        let parsed = parse_body(&resp)?;
+        Ok(Some((parsed, Validators::from_headers(&resp.headers))))
     }
 }
 
-fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max { s } else { &s[..max] }
+fn parse_body<T: serde::de::DeserializeOwned>(resp: &http::Response) -> ProviderResult<T> {
+    serde_json::from_slice::<T>(&resp.body)
+        .map_err(|e| ProviderError::InvalidResponse(format!("typed parse: {e}")))
 }
 
 // ───────── Metron envelope shapes ─────────
@@ -819,6 +1002,40 @@ impl MetadataProvider for MetronClient {
             .request(&format!("/api/issue/{external_id}/"), &[])
             .await?;
         Ok(issue_detail_to_metadata(detail))
+    }
+
+    async fn fetch_series_conditional(
+        &self,
+        external_id: &str,
+        validators: Option<&Validators>,
+    ) -> ProviderResult<ConditionalFetch> {
+        let fetched: Option<(MSeriesDetail, Validators)> = self
+            .request_conditional(&format!("/api/series/{external_id}/"), validators)
+            .await?;
+        Ok(match fetched {
+            None => ConditionalFetch::NotModified,
+            Some((detail, validators)) => ConditionalFetch::Fresh {
+                payload: Box::new(series_detail_to_metadata(detail)),
+                validators,
+            },
+        })
+    }
+
+    async fn fetch_issue_conditional(
+        &self,
+        external_id: &str,
+        validators: Option<&Validators>,
+    ) -> ProviderResult<ConditionalFetch> {
+        let fetched: Option<(MIssueDetail, Validators)> = self
+            .request_conditional(&format!("/api/issue/{external_id}/"), validators)
+            .await?;
+        Ok(match fetched {
+            None => ConditionalFetch::NotModified,
+            Some((detail, validators)) => ConditionalFetch::Fresh {
+                payload: Box::new(issue_detail_to_metadata(detail)),
+                validators,
+            },
+        })
     }
 
     async fn list_series_issue_numbers(

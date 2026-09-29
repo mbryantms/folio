@@ -228,6 +228,12 @@ pub struct Config {
     /// the `app_setting` table.
     #[serde(default)]
     pub metron_password: Option<String>,
+    /// Metron API token (`Authorization: Bearer <token>`), generated in
+    /// the account page's *API Tokens* section. Preferred over the
+    /// username + password pair when set (WP-2.9); AEAD-sealed in
+    /// `app_setting`. `COMIC_METRON_API_TOKEN` is the env bootstrap.
+    #[serde(default)]
+    pub metron_api_token: Option<String>,
     /// Master toggle for Metron integration.
     #[serde(default)]
     pub metron_enabled: bool,
@@ -393,6 +399,7 @@ impl std::fmt::Debug for Config {
             .field("comicvine_enabled", &self.comicvine_enabled)
             .field("metron_username", &redact_opt(&self.metron_username))
             .field("metron_password", &redact_opt(&self.metron_password))
+            .field("metron_api_token", &redact_opt(&self.metron_api_token))
             .field("metron_enabled", &self.metron_enabled)
             .field("comicvine_base_url", &self.comicvine_base_url)
             .field("metron_base_url", &self.metron_base_url)
@@ -1107,6 +1114,26 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             }
             None => bad_type(&row.key, "string", &row.value),
         },
+        "metadata.metron.api_token" => match row.value.as_str() {
+            Some(s) => {
+                // Trim — same paste-leak fix as the CV API key.
+                let trimmed = s.trim();
+                if let Some(env_v) = cfg.metron_api_token.as_deref().filter(|p| !p.is_empty())
+                    && env_v != trimmed
+                {
+                    tracing::warn!(
+                        key = "metadata.metron.api_token",
+                        "app_setting collision: env and DB disagree on this key; DB value wins"
+                    );
+                }
+                cfg.metron_api_token = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_owned())
+                };
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
         "metadata.metron.enabled" => match row.value.as_bool() {
             Some(b) => cfg.metron_enabled = b,
             None => bad_type(&row.key, "bool", &row.value),
@@ -1307,6 +1334,7 @@ mod tests {
             comicvine_enabled: false,
             metron_username: None,
             metron_password: None,
+            metron_api_token: None,
             metron_enabled: false,
             comicvine_base_url: None,
             metron_base_url: None,

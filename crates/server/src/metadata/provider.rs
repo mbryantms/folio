@@ -20,6 +20,7 @@
 //! variants so the orchestrator can react sensibly (back off on
 //! `QuotaExceeded`, fail loud on `Unauthorized`, retry on `Transport`).
 
+use crate::metadata::cache::Validators;
 use crate::metadata::identifier::Source;
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -72,6 +73,11 @@ impl ProviderError {
 }
 
 pub type ProviderResult<T> = Result<T, ProviderError>;
+
+/// Shared retrying HTTP send every provider client routes through
+/// (WP-2.9). Lives in [`crate::metadata::http`]; re-exported here so
+/// the provider surface is discoverable from one module.
+pub use crate::metadata::http::send_with_retry;
 
 // ───────── query inputs ─────────
 
@@ -338,6 +344,25 @@ pub struct VariantCoverCandidate {
     pub image_url: Option<String>,
 }
 
+// ───────── conditional fetch ─────────
+
+/// Result of a validator-carrying detail fetch. See
+/// [`MetadataProvider::fetch_series_conditional`].
+#[derive(Clone, Debug)]
+pub enum ConditionalFetch {
+    /// Upstream sent a body; `validators` are what it attached for the
+    /// next conditional request (empty when it sent none).
+    Fresh {
+        /// Boxed: `GenericMetadata` is ~1 KiB and the enum is passed by
+        /// value through the cache's single-flight path.
+        payload: Box<GenericMetadata>,
+        validators: Validators,
+    },
+    /// Upstream answered `304 Not Modified` — the cached copy is still
+    /// current.
+    NotModified,
+}
+
 // ───────── quota gauge ─────────
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -369,6 +394,42 @@ pub trait MetadataProvider: Send + Sync + 'static {
     async fn fetch_series(&self, external_id: &str) -> ProviderResult<GenericMetadata>;
 
     async fn fetch_issue(&self, external_id: &str) -> ProviderResult<GenericMetadata>;
+
+    /// Conditional detail fetch (WP-2.9). `validators` are the
+    /// `ETag` / `Last-Modified` values stored with the cached copy; a
+    /// provider that supports `If-None-Match` / `If-Modified-Since`
+    /// returns [`ConditionalFetch::NotModified`] on a 304 so the cache
+    /// can extend the row's TTL without re-downloading the payload.
+    ///
+    /// The default ignores `validators` and wraps [`fetch_series`] —
+    /// correct for providers without conditional support (ComicVine),
+    /// which then simply never see a 304.
+    ///
+    /// [`fetch_series`]: MetadataProvider::fetch_series
+    async fn fetch_series_conditional(
+        &self,
+        external_id: &str,
+        _validators: Option<&Validators>,
+    ) -> ProviderResult<ConditionalFetch> {
+        Ok(ConditionalFetch::Fresh {
+            payload: Box::new(self.fetch_series(external_id).await?),
+            validators: Validators::default(),
+        })
+    }
+
+    /// Issue-detail twin of [`fetch_series_conditional`].
+    ///
+    /// [`fetch_series_conditional`]: MetadataProvider::fetch_series_conditional
+    async fn fetch_issue_conditional(
+        &self,
+        external_id: &str,
+        _validators: Option<&Validators>,
+    ) -> ProviderResult<ConditionalFetch> {
+        Ok(ConditionalFetch::Fresh {
+            payload: Box::new(self.fetch_issue(external_id).await?),
+            validators: Validators::default(),
+        })
+    }
 
     /// List the **canonical** issue numbers a provider series contains.
     /// Used by [`crate::metadata::auto_split`] to find local issues a

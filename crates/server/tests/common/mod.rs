@@ -596,6 +596,9 @@ pub struct SpawnOpts {
     /// for the client to construct.
     pub metron_username: Option<String>,
     pub metron_password: Option<String>,
+    /// Metron API token (WP-2.9). When set, the client prefers it over
+    /// the username/password pair.
+    pub metron_api_token: Option<String>,
     pub metron_enabled: bool,
     /// Point the production provider factory (`orchestrator::build_providers`
     /// and `apply::build_provider`) at a wiremock base URL so HTTP-level
@@ -660,6 +663,7 @@ impl TestApp {
             comicvine_enabled: false,
             metron_username: None,
             metron_password: None,
+            metron_api_token: None,
             metron_enabled: false,
             metrics_token: None,
             ..SpawnOpts::default()
@@ -725,6 +729,17 @@ impl TestApp {
         Self::spawn_inner(SpawnOpts {
             metron_username: Some(username.into()),
             metron_password: Some(password.into()),
+            metron_enabled: enabled,
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
+    /// Spawn with a Metron API token only (WP-2.9) — exercises the
+    /// token-preferred auth path with no username/password set.
+    pub async fn spawn_with_metron_token(token: impl Into<String>, enabled: bool) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            metron_api_token: Some(token.into()),
             metron_enabled: enabled,
             ..SpawnOpts::default()
         })
@@ -856,6 +871,7 @@ impl TestApp {
             comicvine_enabled: opts.comicvine_enabled,
             metron_username: opts.metron_username.clone(),
             metron_password: opts.metron_password.clone(),
+            metron_api_token: opts.metron_api_token.clone(),
             metron_enabled: opts.metron_enabled,
             comicvine_base_url: opts.comicvine_base_url.clone(),
             metron_base_url: opts.metron_base_url.clone(),
