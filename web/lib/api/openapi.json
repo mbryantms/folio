@@ -20676,6 +20676,12 @@
           "id": {
             "type": "string"
           },
+          "imprint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "inkers": {
             "type": "array",
             "items": {
@@ -22439,12 +22445,32 @@
         "type": "object",
         "description": "Body for `PATCH /series/{id}`. `match_key` is the §7.4 sticky override\nthe scanner won't touch; `slug` is the admin-rename hook for the URL\nsegment (validated unique across all series). `status` and the external\nIDs are surfaced in the issue drawer so curators can correct\ncontinuing/ended state and database links without leaving the issue page.",
         "properties": {
+          "age_rating": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ComicInfo `AgeRating` vocabulary (free text, ≤ 40 chars) or `null`."
+          },
           "comicvine_id": {
             "type": [
               "integer",
               "null"
             ],
             "format": "int64"
+          },
+          "imprint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "language_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO 639-1 language code (`en`, `ja`). The column is NOT NULL, so\nthere is no clear."
           },
           "match_key": {
             "type": [
@@ -22459,6 +22485,19 @@
               "null"
             ],
             "format": "int64"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Display name. Non-empty; also refreshes `normalized_name`."
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "reading_direction": {
             "type": [
@@ -22494,6 +22533,30 @@
               "null"
             ],
             "description": "Per-series OCR language override. `\"western\"` / `\"manga\"` or\n`null` for \"Auto — infer from reading direction\". See OCR\nrework 1.0."
+          },
+          "total_issues": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Number of issues in the run (0..=10000) or `null` when unknown."
+          },
+          "volume": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Volume number (1..=9999) or `null` to clear."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Start year (1900..=2100) or `null` to clear."
           }
         }
       },

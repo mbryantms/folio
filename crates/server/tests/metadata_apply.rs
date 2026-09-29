@@ -1655,3 +1655,172 @@ async fn patch_series_pins_summary_and_status_so_apply_keeps_them() {
     assert_eq!(row.summary.as_deref(), Some("Mine, hand-written"));
     assert_eq!(row.status, "ended");
 }
+
+// ───────── series identity edits (roadmap WP-2.3) ─────────
+
+/// `PATCH /series/{slug}` accepts the identity fields, writes them, pins
+/// each as a user edit, and a `replace_all` provider apply leaves them
+/// alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn patch_series_identity_fields_are_pinned_against_apply() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .with_publisher("Wrong Publisher")
+        .insert(&app.state().db)
+        .await;
+    let slug = series::Entity::find_by_id(series_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+        .slug;
+
+    let (status, body) = patch_series(
+        &app,
+        &auth,
+        &slug,
+        json!({
+            "name": "Saga (Image)",
+            "year": 2012,
+            "volume": 1,
+            "publisher": "Image Comics",
+            "imprint": "Skybound",
+            "age_rating": "Mature 17+",
+            "total_issues": 66,
+            "language_code": "EN",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let row = series::Entity::find_by_id(series_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.name, "Saga (Image)");
+    assert_eq!(
+        row.normalized_name,
+        entity::series::normalize_name("Saga (Image)")
+    );
+    assert_eq!(row.year, Some(2012));
+    assert_eq!(row.volume, Some(1));
+    assert_eq!(row.publisher.as_deref(), Some("Image Comics"));
+    assert_eq!(row.imprint.as_deref(), Some("Skybound"));
+    assert_eq!(row.age_rating.as_deref(), Some("Mature 17+"));
+    assert_eq!(row.total_issues, Some(66));
+    assert_eq!(row.language_code, "en", "language code is lower-cased");
+
+    for field in [
+        "title",
+        "year_began",
+        "volume",
+        "publisher",
+        "imprint",
+        "age_rating",
+        "total_issues",
+        "language_code",
+    ] {
+        let prov = field_provenance::Entity::find()
+            .filter(field_provenance::Column::EntityType.eq("series"))
+            .filter(field_provenance::Column::EntityId.eq(series_id.to_string()))
+            .filter(field_provenance::Column::Field.eq(field))
+            .one(&app.state().db)
+            .await
+            .unwrap()
+            .unwrap_or_else(|| panic!("series PATCH must pin {field}"));
+        assert_eq!(prov.set_by, "user", "{field}");
+    }
+
+    // A replace_all provider apply must not touch the pinned identity.
+    let prefilled = server::metadata::provider::GenericMetadata {
+        series_name: Some("Provider Name".into()),
+        year_began: Some(1999),
+        volume: Some(7),
+        publisher: Some("Provider Publisher".into()),
+        imprint: Some("Provider Imprint".into()),
+        deck: Some("Provider deck".into()),
+        identifiers: vec![],
+        source_provider: Some(server::metadata::identifier::Source::ComicVine),
+        source_external_id: Some("12345".into()),
+        ..Default::default()
+    };
+    server::metadata::cache::put(
+        &app.state().db,
+        server::metadata::identifier::Source::ComicVine,
+        server::metadata::cache::CacheEntity::Series,
+        "12345",
+        &prefilled,
+    )
+    .await
+    .unwrap();
+    let (run_id, ordinal) = seed_run_with_candidate(&app, series_id, "12345", "comicvine").await;
+    let outcome = apply_series_inline(
+        &app.state(),
+        series_id,
+        args(run_id, ordinal, ApplyMode::ReplaceAll, false),
+    )
+    .await
+    .unwrap();
+    for key in ["title", "year_began", "volume", "publisher", "imprint"] {
+        assert!(
+            outcome.skipped_fields.contains(&key.to_owned()),
+            "{key} must be skipped; outcome: {outcome:?}"
+        );
+    }
+    assert!(
+        outcome.applied_fields.contains(&"deck".to_owned()),
+        "unpinned deck still applies"
+    );
+    let row = series::Entity::find_by_id(series_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.name, "Saga (Image)");
+    assert_eq!(row.year, Some(2012));
+    assert_eq!(row.publisher.as_deref(), Some("Image Comics"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn patch_series_identity_fields_are_validated() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let slug = series::Entity::find_by_id(series_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+        .slug;
+
+    for (body, what) in [
+        (json!({"name": "   "}), "empty name"),
+        (json!({"year": 1800}), "year out of range"),
+        (json!({"volume": 0}), "volume out of range"),
+        (json!({"total_issues": -1}), "negative issue count"),
+        (json!({"language_code": "english!"}), "bad language code"),
+    ] {
+        let (status, resp) = patch_series(&app, &auth, &slug, body).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{what}: {resp}");
+        assert_eq!(resp["error"]["code"], "validation", "{what}");
+    }
+    // Clearing a nullable field is fine.
+    let (status, _) =
+        patch_series(&app, &auth, &slug, json!({"year": null, "publisher": null})).await;
+    assert_eq!(status, StatusCode::OK);
+    let row = series::Entity::find_by_id(series_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.year, None);
+    assert_eq!(row.publisher, None);
+}
