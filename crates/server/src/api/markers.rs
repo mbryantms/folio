@@ -110,8 +110,9 @@ pub struct MarkerView {
     pub series_id: String,
     pub issue_id: String,
     pub page_index: i32,
-    /// `'bookmark' | 'note' | 'highlight'`. Favorite is no longer a
-    /// kind — see `is_favorite`.
+    /// `'bookmark' | 'note' | 'highlight' | 'favorite'`. Favorite is
+    /// both a kind (re-introduced 2026-05-20) and, for any marker, a
+    /// flag — see `is_favorite`.
     pub kind: String,
     /// Star flag. Any marker can be favorited; the /bookmarks
     /// "Favorites" chip filters on this rather than on kind.

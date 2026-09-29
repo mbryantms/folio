@@ -291,8 +291,10 @@ async fn set_external_id_user_precedence_blocks_provider_overwrite() {
     .await
     .unwrap();
 
-    // Provider tries to overwrite with a different id.
-    writers::set_external_id(
+    // Provider tries to overwrite with a different id. The outcome must
+    // say the user's value was kept — it used to report `Set`, which the
+    // apply path then listed under "external ids added".
+    let outcome = writers::set_external_id(
         &db,
         "series",
         &series_id,
@@ -301,6 +303,13 @@ async fn set_external_id_user_precedence_blocks_provider_overwrite() {
     )
     .await
     .unwrap();
+    assert!(
+        matches!(
+            outcome,
+            SetExternalIdOutcome::KeptUserValue { same_value: false }
+        ),
+        "expected KeptUserValue, got {outcome:?}"
+    );
 
     // User value wins.
     let row = ExternalId::find()
@@ -581,4 +590,120 @@ async fn set_external_id_reclaims_from_a_removed_owner() {
     assert_eq!(o, SetExternalIdOutcome::Reclaimed { from: issue_a });
     // Exactly one owner now — B.
     assert_eq!(cv_owner(&db, "200").await, vec![issue_b]);
+}
+
+async fn cv_row(db: &sea_orm::DatabaseConnection, entity_id: &str) -> entity::external_id::Model {
+    ExternalId::find()
+        .filter(entity::external_id::Column::EntityType.eq("series"))
+        .filter(entity::external_id::Column::EntityId.eq(entity_id))
+        .filter(entity::external_id::Column::Source.eq("comicvine"))
+        .one(db)
+        .await
+        .unwrap()
+        .expect("comicvine external_id row")
+}
+
+/// Audit DI-2 (B1): a non-user write carrying the *same* id as the
+/// user's row used to fall through to the upsert and rewrite `set_by`,
+/// silently demoting the user's claim so that a later differing write
+/// could replace it. The claim must survive a matching write.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_external_id_matching_provider_write_keeps_user_claim() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let series_id = Uuid::now_v7().to_string();
+
+    writers::set_external_id(
+        &db,
+        "series",
+        &series_id,
+        &Identifier::new(Source::ComicVine, "1234"),
+        SetBy::User,
+    )
+    .await
+    .unwrap();
+    let before = cv_row(&db, &series_id).await;
+
+    // Same id from a provider (a ComicInfo re-ingest behaves the same).
+    let outcome = writers::set_external_id(
+        &db,
+        "series",
+        &series_id,
+        &Identifier::new(Source::ComicVine, "1234"),
+        SetBy::Provider(Source::ComicVine),
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(
+            outcome,
+            SetExternalIdOutcome::KeptUserValue { same_value: true }
+        ),
+        "got {outcome:?}"
+    );
+    let row = cv_row(&db, &series_id).await;
+    assert_eq!(
+        row.set_by, "user",
+        "matching write must not demote the user claim"
+    );
+    assert_eq!(row.external_id, "1234");
+    assert!(
+        row.last_synced_at >= before.last_synced_at,
+        "matching write refreshes last_synced_at"
+    );
+
+    // The claim still blocks a later differing provider write.
+    let outcome = writers::set_external_id(
+        &db,
+        "series",
+        &series_id,
+        &Identifier::new(Source::ComicVine, "9999"),
+        SetBy::Provider(Source::ComicVine),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        outcome,
+        SetExternalIdOutcome::KeptUserValue { same_value: false }
+    ));
+    let row = cv_row(&db, &series_id).await;
+    assert_eq!(row.external_id, "1234");
+    assert_eq!(row.set_by, "user");
+}
+
+/// Audit DI-4 (B5): the explicit override ("Use theirs" / admin force)
+/// is the one path that may replace a user-set row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_external_id_with_override_replaces_user_row() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let series_id = Uuid::now_v7().to_string();
+
+    writers::set_external_id(
+        &db,
+        "series",
+        &series_id,
+        &Identifier::new(Source::ComicVine, "1234"),
+        SetBy::User,
+    )
+    .await
+    .unwrap();
+
+    let outcome = writers::set_external_id_with_override(
+        &db,
+        "series",
+        &series_id,
+        &Identifier::new(Source::ComicVine, "9999"),
+        SetBy::Provider(Source::ComicVine),
+        true,
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(outcome, SetExternalIdOutcome::Set),
+        "got {outcome:?}"
+    );
+    let row = cv_row(&db, &series_id).await;
+    assert_eq!(row.external_id, "9999");
+    assert_eq!(row.set_by, SetBy::Provider(Source::ComicVine).as_str());
 }

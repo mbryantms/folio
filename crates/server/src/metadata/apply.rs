@@ -171,6 +171,26 @@ pub enum ApplyError {
 
 // ───────── decision matrix ─────────
 
+/// Whether `field` carries a `set_by='user'` provenance row.
+///
+/// `summary` / `description` alias the same column on both series and
+/// issues: the PATCH endpoints pin under `summary` (their request key)
+/// while provider applies key the column as `description`. A pin under
+/// either key must protect the field — otherwise a direct-to-DB apply
+/// silently overwrites a hand-written summary (audit DI-1). Mirrors
+/// `sidecar_pin_matches` and the scanner's alias.
+pub(crate) fn user_pinned(provenance: &HashMap<String, String>, field: MetadataField) -> bool {
+    let is_user = |k: &str| provenance.get(k).map(|s| s.as_str()) == Some("user");
+    if is_user(&field.key()) {
+        return true;
+    }
+    match field {
+        MetadataField::Description => is_user("summary"),
+        MetadataField::Summary => is_user("description"),
+        _ => false,
+    }
+}
+
 /// Single source of truth for the apply decision. See module-level
 /// matrix doc. Visible to siblings so the M5 diff module can mirror
 /// the live Apply logic without re-implementing the matrix.
@@ -189,7 +209,7 @@ pub(crate) fn should_apply(
     {
         return false;
     }
-    let user_set = provenance.get(&field.key()).map(|s| s.as_str()) == Some("user");
+    let user_set = user_pinned(provenance, field);
     if user_set && !args.override_user_edits {
         return false;
     }
@@ -259,7 +279,7 @@ pub(crate) fn classify_field(
         return DiffDecision::NoIncomingValue;
     }
     let has_current = current_value.is_some_and(|s| !s.trim().is_empty());
-    let user_set = provenance.get(&field.key()).map(|s| s.as_str()) == Some("user");
+    let user_set = user_pinned(provenance, field);
     if user_set && !args.override_user_edits {
         return DiffDecision::BlockedByUser;
     }
@@ -414,6 +434,7 @@ pub(crate) async fn write_series_fields(
         &entity_id_str,
         &detail.identifiers,
         resolver.primary().set_by,
+        &args,
         &mut outcome,
     )
     .await?;
@@ -1148,6 +1169,7 @@ pub(crate) async fn write_issue_fields(
         &entity_id_str,
         &detail.identifiers,
         resolver.primary().set_by,
+        &args,
         &mut outcome,
     )
     .await?;
@@ -1166,7 +1188,7 @@ pub(crate) async fn write_issue_fields(
     decide_str(
         &row.number_raw,
         &detail.issue_number,
-        MetadataField::Format,
+        MetadataField::Number,
         &provenance,
         &args,
         &mut outcome,
@@ -1957,21 +1979,51 @@ pub(crate) async fn fetch_field_provenance_rows(
         .await
 }
 
+/// Write the candidate's identifiers, honouring user precedence per
+/// source. A `set_by='user'` row is replaced only when the source is in
+/// `args.override_external_id_sources` (the M5 conflict pane's "Use
+/// theirs") or the admin `override_user_edits` force flag is set; a
+/// kept user value is reported under `external_ids_skipped`, never as
+/// added (audit DI-2, DI-4).
 async fn apply_external_ids(
     db: &DatabaseConnection,
     entity_type: &str,
     entity_id: &str,
     identifiers: &[Identifier],
     set_by: SetBy,
+    args: &ApplyArgs,
     outcome: &mut ApplyOutcome,
 ) -> Result<(), ApplyError> {
     for id in identifiers {
-        match writers::set_external_id(db, entity_type, entity_id, id, set_by).await {
+        let override_user = args.override_user_edits
+            || args
+                .override_external_id_sources
+                .contains(id.source.as_str());
+        match writers::set_external_id_with_override(
+            db,
+            entity_type,
+            entity_id,
+            id,
+            set_by,
+            override_user,
+        )
+        .await
+        {
             Ok(writers::SetExternalIdOutcome::SkippedConflict { owner }) => {
                 outcome.external_ids_skipped.push(ExternalIdSkipped {
                     source: id.source.as_str().into(),
                     external_id: id.id.clone(),
                     reason: format!("already assigned to another item ({owner})"),
+                })
+            }
+            // Already in sync with the user's own value — nothing to
+            // report either way.
+            Ok(writers::SetExternalIdOutcome::KeptUserValue { same_value: true }) => {}
+            Ok(writers::SetExternalIdOutcome::KeptUserValue { same_value: false }) => {
+                outcome.external_ids_skipped.push(ExternalIdSkipped {
+                    source: id.source.as_str().into(),
+                    external_id: id.id.clone(),
+                    reason: "kept the user-set value".into(),
                 })
             }
             Ok(_) => outcome.external_ids_added.push(ExternalIdAdded {

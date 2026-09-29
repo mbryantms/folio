@@ -400,6 +400,42 @@ pub async fn update_series(
     am.updated_at = Set(chrono::Utc::now().fixed_offset());
     match am.update(&app.db).await {
         Ok(updated) => {
+            // Pin the scalars the user just touched so a later provider
+            // apply treats them as user-set. The per-issue PATCH does
+            // the same through `patch_field_key_to_metadata_field`;
+            // series edits used to write no provenance at all, so a
+            // `replace_all` apply overwrote a hand-written summary
+            // (audit DI-3). Non-fatal: the row already updated.
+            {
+                use crate::metadata::MetadataField;
+                use crate::metadata::writers::{SetBy, write_field_provenance};
+                let mut pinned: Vec<MetadataField> = Vec::new();
+                if normalized_summary.is_some() {
+                    pinned.push(MetadataField::Summary);
+                }
+                if normalized_status.is_some() {
+                    pinned.push(MetadataField::Status);
+                }
+                for field in pinned {
+                    if let Err(e) = write_field_provenance(
+                        &app.db,
+                        "series",
+                        &updated.id.to_string(),
+                        field,
+                        SetBy::User,
+                        None,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            series_id = %updated.id,
+                            field = %field,
+                            error = %e,
+                            "series PATCH: field_provenance write failed (non-fatal)"
+                        );
+                    }
+                }
+            }
             // Apply external-ID edits the user touched. Mirrors the
             // per-issue PATCH flow in api/issues.rs.
             use crate::metadata::writers::{self as writers, SetBy};

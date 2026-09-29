@@ -2792,6 +2792,7 @@ fn patch_field_key_to_metadata_field(key: &str) -> Option<crate::metadata::Metad
         "format" => Some(MetadataField::Format),
         "manga" => Some(MetadataField::Manga),
         "volume" => Some(MetadataField::Volume),
+        "number_raw" => Some(MetadataField::Number),
         // The user edits credit roles + character/team/location CSV
         // strings directly today; the composer reads the junction-
         // shaped MetadataField variants. Map each to its junction.
@@ -2818,8 +2819,8 @@ fn patch_field_key_to_metadata_field(key: &str) -> Option<crate::metadata::Metad
         // provider apply.
         "year" | "month" | "day" => Some(MetadataField::CoverDate),
         // Fields with no MetadataField slot: web_url, additional_links,
-        // alternate_series, black_and_white, sort_number, number_raw.
-        // Stay in user_edited only.
+        // alternate_series, black_and_white, sort_number. Stay in
+        // user_edited only.
         _ => None,
     }
 }

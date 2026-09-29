@@ -19,6 +19,10 @@
 
 mod common;
 
+use axum::{
+    body::{Body, to_bytes},
+    http::{Method, Request, StatusCode, header},
+};
 use chrono::Utc;
 use common::TestApp;
 use common::seed::{LibrarySeed, SeriesSeed};
@@ -31,6 +35,7 @@ use server::jobs::metadata_apply::apply_series_inline;
 use server::metadata::apply::{ApplyArgs, ApplyMode};
 use server::metadata::writers::CoverOverwritePolicy;
 use tempfile::tempdir;
+use tower::ServiceExt;
 use uuid::Uuid;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
@@ -1247,4 +1252,406 @@ async fn apply_issue_respects_variants_toggled_off_in_selected_fields() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 0, "no variant rows written");
+}
+
+fn issue_args(run_id: Uuid, ordinal: i32, mode: ApplyMode) -> ApplyArgs {
+    ApplyArgs {
+        run_id,
+        ordinal,
+        mode,
+        apply_cover: false,
+        cover_overwrite_policy: CoverOverwritePolicy::WhenMissing,
+        override_user_edits: false,
+        actor_id: None,
+        selected_fields: None,
+        override_external_id_sources: std::collections::HashSet::new(),
+    }
+}
+
+async fn pin_user(app: &TestApp, entity_type: &str, entity_id: &str, field: &str) {
+    field_provenance::ActiveModel {
+        entity_type: Set(entity_type.into()),
+        entity_id: Set(entity_id.into()),
+        field: Set(field.into()),
+        set_by: Set("user".into()),
+        set_at: Set(Utc::now().fixed_offset()),
+        source_external_id: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+}
+
+async fn issue_row(app: &TestApp, issue_id: &str) -> issue::Model {
+    issue::Entity::find_by_id(issue_id.to_owned())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+/// Audit DI-1 (B3): the issue PATCH pins a hand-written summary under
+/// its request key `summary`, while the apply path keys the same column
+/// as `description`. The pin must protect the column under either key.
+#[tokio::test]
+async fn apply_issue_honours_summary_pin_written_by_patch() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let (issue_id, run_id, ordinal) = seed_issue_with_junction_candidate(&app, dir.path()).await;
+
+    let mut am: issue::ActiveModel = issue_row(&app, &issue_id).await.into();
+    am.summary = Set(Some("Mine, hand-written".into()));
+    am.update(&app.state().db).await.unwrap();
+    pin_user(&app, "issue", &issue_id, "summary").await;
+
+    let outcome = server::jobs::metadata_apply::apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        issue_args(run_id, ordinal, ApplyMode::ReplaceAll),
+    )
+    .await
+    .expect("apply_issue");
+
+    assert!(
+        outcome.skipped_fields.contains(&"description".to_owned()),
+        "summary pin must block the description write; outcome: {outcome:?}"
+    );
+    assert!(!outcome.applied_fields.contains(&"description".to_owned()));
+    let row = issue_row(&app, &issue_id).await;
+    assert_eq!(row.summary.as_deref(), Some("Mine, hand-written"));
+}
+
+/// Audit DI-5 (B6): the issue number used to be gated on the *format*
+/// pin. A format pin must not block the number, and a number pin
+/// (written by PATCH on `number_raw`) must.
+#[tokio::test]
+async fn apply_issue_number_is_gated_by_its_own_pin_not_format() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let (issue_id, run_id, ordinal) = seed_issue_with_junction_candidate(&app, dir.path()).await;
+
+    let mut am: issue::ActiveModel = issue_row(&app, &issue_id).await.into();
+    am.number_raw = Set(Some("1A".into()));
+    am.update(&app.state().db).await.unwrap();
+    pin_user(&app, "issue", &issue_id, "format").await;
+
+    let outcome = server::jobs::metadata_apply::apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        issue_args(run_id, ordinal, ApplyMode::ReplaceAll),
+    )
+    .await
+    .expect("apply_issue");
+
+    assert!(
+        outcome.applied_fields.contains(&"number".to_owned()),
+        "format pin must not gate the issue number; outcome: {outcome:?}"
+    );
+    assert!(
+        !outcome.applied_fields.contains(&"format".to_owned()),
+        "no spurious format write"
+    );
+    let row = issue_row(&app, &issue_id).await;
+    assert_eq!(row.number_raw.as_deref(), Some("1"));
+    let prov = field_provenance::Entity::find()
+        .filter(field_provenance::Column::EntityType.eq("issue"))
+        .filter(field_provenance::Column::EntityId.eq(&issue_id))
+        .filter(field_provenance::Column::Field.eq("number"))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("number provenance row");
+    assert_eq!(prov.set_by, "comicvine");
+}
+
+#[tokio::test]
+async fn apply_issue_number_pin_blocks_provider_number() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let (issue_id, run_id, ordinal) = seed_issue_with_junction_candidate(&app, dir.path()).await;
+
+    let mut am: issue::ActiveModel = issue_row(&app, &issue_id).await.into();
+    am.number_raw = Set(Some("1A".into()));
+    am.update(&app.state().db).await.unwrap();
+    pin_user(&app, "issue", &issue_id, "number").await;
+
+    let outcome = server::jobs::metadata_apply::apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        issue_args(run_id, ordinal, ApplyMode::ReplaceAll),
+    )
+    .await
+    .expect("apply_issue");
+
+    assert!(outcome.skipped_fields.contains(&"number".to_owned()));
+    let row = issue_row(&app, &issue_id).await;
+    assert_eq!(row.number_raw.as_deref(), Some("1A"));
+}
+
+/// Audit DI-4 (B5): `override_external_id_sources` ("Use theirs" on the
+/// conflict pane) was plumbed through every layer but never read, so a
+/// user-set external id could not be replaced; and a kept user value
+/// was reported as "added".
+#[tokio::test]
+async fn apply_series_use_theirs_replaces_user_external_id() {
+    use server::metadata::identifier::Source;
+    use server::metadata::writers::{self, SetBy};
+
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let sid = series_id.to_string();
+
+    writers::set_external_id(
+        &app.state().db,
+        "series",
+        &sid,
+        &server::metadata::Identifier::new(Source::ComicVine, "1111"),
+        SetBy::User,
+    )
+    .await
+    .unwrap();
+
+    let prefilled = server::metadata::provider::GenericMetadata {
+        publisher: Some("Image Comics".into()),
+        identifiers: vec![server::metadata::Identifier::new(
+            Source::ComicVine,
+            "12345",
+        )],
+        source_provider: Some(Source::ComicVine),
+        source_external_id: Some("12345".into()),
+        ..Default::default()
+    };
+    server::metadata::cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        server::metadata::cache::CacheEntity::Series,
+        "12345",
+        &prefilled,
+    )
+    .await
+    .unwrap();
+
+    let cv_row = || async {
+        external_id::Entity::find()
+            .filter(external_id::Column::EntityType.eq("series"))
+            .filter(external_id::Column::EntityId.eq(&sid))
+            .filter(external_id::Column::Source.eq("comicvine"))
+            .one(&app.state().db)
+            .await
+            .unwrap()
+            .unwrap()
+    };
+
+    // Keep mine (default): the user's id stays and is reported as kept.
+    let (run_id, ordinal) = seed_run_with_candidate(&app, series_id, "12345", "comicvine").await;
+    let outcome = apply_series_inline(
+        &app.state(),
+        series_id,
+        args(run_id, ordinal, ApplyMode::FillMissing, false),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !outcome
+            .external_ids_added
+            .iter()
+            .any(|a| a.source == "comicvine"),
+        "kept user value must not be reported as added: {outcome:?}"
+    );
+    assert!(
+        outcome
+            .external_ids_skipped
+            .iter()
+            .any(|s| s.source == "comicvine" && s.reason.contains("user-set")),
+        "kept user value must be reported as skipped: {outcome:?}"
+    );
+    let row = cv_row().await;
+    assert_eq!(row.external_id, "1111");
+    assert_eq!(row.set_by, "user");
+
+    // Use theirs: the provider's id replaces the user row.
+    let (run2, ord2) = seed_run_with_candidate(&app, series_id, "12345", "comicvine").await;
+    let mut a = args(run2, ord2, ApplyMode::FillMissing, false);
+    a.override_external_id_sources.insert("comicvine".into());
+    let outcome2 = apply_series_inline(&app.state(), series_id, a)
+        .await
+        .unwrap();
+    assert!(
+        outcome2
+            .external_ids_added
+            .iter()
+            .any(|x| x.source == "comicvine" && x.external_id == "12345"),
+        "{outcome2:?}"
+    );
+    let row = cv_row().await;
+    assert_eq!(row.external_id, "12345");
+    assert_eq!(row.set_by, "comicvine");
+}
+
+// ───────── series PATCH provenance (audit DI-3 / B4) ─────────
+
+struct Authed {
+    session: String,
+    csrf: String,
+}
+
+async fn register_admin(app: &TestApp) -> Authed {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"email":"admin@example.com","password":"correctly-horse-battery-staple"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let cookies: Vec<String> = resp
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .map(str::to_owned)
+        .collect();
+    let extract = |prefix: &str| {
+        cookies
+            .iter()
+            .find(|c| c.starts_with(prefix))
+            .map(|c| {
+                c.split(';')
+                    .next()
+                    .unwrap()
+                    .trim_start_matches(prefix)
+                    .to_owned()
+            })
+            .expect(prefix)
+    };
+    Authed {
+        session: extract("__Host-comic_session="),
+        csrf: extract("__Host-comic_csrf="),
+    }
+}
+
+async fn patch_series(
+    app: &TestApp,
+    auth: &Authed,
+    slug: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri(format!("/api/series/{slug}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={}; __Host-comic_csrf={}",
+                        auth.session, auth.csrf
+                    ),
+                )
+                .header("X-CSRF-Token", auth.csrf.clone())
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+/// Series summary/status edits wrote no `field_provenance` row, so a
+/// `replace_all` provider apply overwrote a hand-written series summary.
+/// The PATCH must pin what it touched, and the apply must honour it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn patch_series_pins_summary_and_status_so_apply_keeps_them() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let slug = series::Entity::find_by_id(series_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+        .slug;
+
+    let (status, body) = patch_series(
+        &app,
+        &auth,
+        &slug,
+        json!({ "summary": "Mine, hand-written", "status": "ended" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    for field in ["summary", "status"] {
+        let prov = field_provenance::Entity::find()
+            .filter(field_provenance::Column::EntityType.eq("series"))
+            .filter(field_provenance::Column::EntityId.eq(series_id.to_string()))
+            .filter(field_provenance::Column::Field.eq(field))
+            .one(&app.state().db)
+            .await
+            .unwrap()
+            .unwrap_or_else(|| panic!("series PATCH must pin {field}"));
+        assert_eq!(prov.set_by, "user");
+    }
+
+    // A provider apply in replace_all mode must leave the summary alone
+    // (the apply keys the column as `description`; the pin is `summary`).
+    let prefilled = server::metadata::provider::GenericMetadata {
+        description: Some("Provider blurb".into()),
+        publisher: Some("Image Comics".into()),
+        identifiers: vec![],
+        source_provider: Some(server::metadata::identifier::Source::ComicVine),
+        source_external_id: Some("12345".into()),
+        ..Default::default()
+    };
+    server::metadata::cache::put(
+        &app.state().db,
+        server::metadata::identifier::Source::ComicVine,
+        server::metadata::cache::CacheEntity::Series,
+        "12345",
+        &prefilled,
+    )
+    .await
+    .unwrap();
+    let (run_id, ordinal) = seed_run_with_candidate(&app, series_id, "12345", "comicvine").await;
+    let outcome = apply_series_inline(
+        &app.state(),
+        series_id,
+        args(run_id, ordinal, ApplyMode::ReplaceAll, false),
+    )
+    .await
+    .unwrap();
+    assert!(
+        outcome.skipped_fields.contains(&"description".to_owned()),
+        "{outcome:?}"
+    );
+    assert!(outcome.applied_fields.contains(&"publisher".to_owned()));
+    let row = series::Entity::find_by_id(series_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.summary.as_deref(), Some("Mine, hand-written"));
+    assert_eq!(row.status, "ended");
 }

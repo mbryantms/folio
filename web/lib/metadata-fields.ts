@@ -13,6 +13,7 @@ const METADATA_FIELD_LABELS: Record<string, string> = {
   year_began: "Year began",
   year_end: "Year ended",
   volume: "Volume",
+  number: "Issue number",
   deck: "Deck",
   description: "Description",
   summary: "Summary",
