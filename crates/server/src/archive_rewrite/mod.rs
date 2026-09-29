@@ -141,15 +141,15 @@ where
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RewriteStep {
     /// New bytes written to the staging file and fsynced.
-    AfterStage,
+    Staged,
     /// Older `.bak.N` slots shifted forward (slot 0 is free).
-    AfterRotate,
+    Rotated,
     /// `target` linked/copied into `<target>.bak`; `target` still holds
     /// the old bytes.
-    AfterBackup,
+    BackedUp,
     /// `<target>.tmp` renamed over `target`; the parent dir is not yet
     /// fsynced.
-    AfterSwap,
+    Swapped,
 }
 
 /// [`rewrite_atomic`] with a fault-injection hook between every step.
@@ -177,14 +177,14 @@ where
     write_into(&tmp)?;
     fsync_file(&tmp)?;
     fsync_dir(parent)?;
-    fault(RewriteStep::AfterStage)?;
+    fault(RewriteStep::Staged)?;
 
     let backup = if retain_count > 0 && target.exists() {
         rotate_backups(target, retain_count)?;
-        fault(RewriteStep::AfterRotate)?;
+        fault(RewriteStep::Rotated)?;
         let slot0 = backup_slot_path(target, 0);
         link_or_copy(target, &slot0)?;
-        fault(RewriteStep::AfterBackup)?;
+        fault(RewriteStep::BackedUp)?;
         Some(slot0)
     } else {
         None
@@ -194,7 +194,7 @@ where
     // `target` in the same instant. If retain=0 and target exists, the
     // rename overwrites it in place.
     fs::rename(&tmp, target)?;
-    fault(RewriteStep::AfterSwap)?;
+    fault(RewriteStep::Swapped)?;
     fsync_dir(parent)?;
 
     Ok(RewriteOutcome {
@@ -622,10 +622,10 @@ mod tests {
     #[test]
     fn crash_at_every_step_leaves_target_readable() {
         for step in [
-            RewriteStep::AfterStage,
-            RewriteStep::AfterRotate,
-            RewriteStep::AfterBackup,
-            RewriteStep::AfterSwap,
+            RewriteStep::Staged,
+            RewriteStep::Rotated,
+            RewriteStep::BackedUp,
+            RewriteStep::Swapped,
         ] {
             let dir = TempDir::new().unwrap();
             let target = dir.path().join("issue.cbz");
@@ -651,7 +651,7 @@ mod tests {
 
             let bytes = fs::read(&target)
                 .unwrap_or_else(|e| panic!("target missing after crash at {step:?}: {e}"));
-            let expected: &[u8] = if step == RewriteStep::AfterSwap {
+            let expected: &[u8] = if step == RewriteStep::Swapped {
                 b"new-bytes"
             } else {
                 b"old-bytes"
@@ -660,7 +660,7 @@ mod tests {
 
             // Once the backup slot has been filled, the old bytes are also
             // reachable through `.bak` — a crash never strands the only copy.
-            if matches!(step, RewriteStep::AfterBackup | RewriteStep::AfterSwap) {
+            if matches!(step, RewriteStep::BackedUp | RewriteStep::Swapped) {
                 assert_eq!(
                     fs::read(target.with_extension("cbz.bak")).unwrap(),
                     b"old-bytes",
@@ -693,7 +693,7 @@ mod tests {
             1,
             |tmp| Ok(fs::write(tmp, b"v2")?),
             |at| {
-                if at == RewriteStep::AfterBackup {
+                if at == RewriteStep::BackedUp {
                     // Both names resolve to the original inode right now.
                     let bak = target.with_extension("cbz.bak");
                     linked_ino = Some(fs::metadata(&bak).unwrap().ino());
