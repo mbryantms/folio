@@ -29,6 +29,8 @@ pub enum MetadataField {
     YearBegan,
     YearEnd,
     Volume,
+    /// Issue number as printed (`issues.number_raw`). Issue-only.
+    Number,
     Deck,
     Description,
     Summary,
@@ -87,6 +89,7 @@ const SCALAR_FIELDS: &[MetadataField] = &[
     MetadataField::YearBegan,
     MetadataField::YearEnd,
     MetadataField::Volume,
+    MetadataField::Number,
     MetadataField::Deck,
     MetadataField::Description,
     MetadataField::Summary,
@@ -150,6 +153,7 @@ impl MetadataField {
             MetadataField::YearBegan => "year_began".into(),
             MetadataField::YearEnd => "year_end".into(),
             MetadataField::Volume => "volume".into(),
+            MetadataField::Number => "number".into(),
             MetadataField::Deck => "deck".into(),
             MetadataField::Description => "description".into(),
             MetadataField::Summary => "summary".into(),
@@ -282,7 +286,7 @@ mod tests {
         let all: Vec<MetadataField> = MetadataField::iter().collect();
         let unique: HashSet<String> = all.iter().map(MetadataField::key).collect();
         assert_eq!(all.len(), unique.len(), "duplicate keys in iter()");
-        // Sanity: 39 scalar + 12 external_id sources = 51 keys today.
+        // Sanity: 40 scalar + 13 external_id sources = 53 keys today.
         assert_eq!(all.len(), SCALAR_FIELDS.len() + ALL_SOURCES.len());
     }
 

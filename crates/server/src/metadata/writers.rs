@@ -197,6 +197,11 @@ pub enum SetExternalIdOutcome {
     /// is that entity's id. Callers decide how to surface it (the
     /// scanner raises a health finding; a user add returns 409).
     SkippedConflict { owner: String },
+    /// A `set_by='user'` row exists and the caller did not override:
+    /// the user's value and claim were kept. `same_value` is true when
+    /// the incoming id already matched (only `last_synced_at` was
+    /// refreshed), false when the caller's differing value was dropped.
+    KeptUserValue { same_value: bool },
 }
 
 /// One provider ID that [`set_legacy_id_trio`] /
@@ -251,32 +256,44 @@ async fn put_external_id<C: ConnectionTrait>(
     entity_id: &str,
     identifier: &Identifier,
     set_by: SetBy,
+    override_user: bool,
 ) -> Result<SetExternalIdOutcome, DbErr> {
     let url = identifier.url.clone().or_else(|| {
         crate::metadata::identifier::canonical_url(identifier.source, entity_type, &identifier.id)
     });
     let now = chrono::Utc::now().fixed_offset();
 
-    // If a row exists with set_by='user' and the value disagrees,
-    // skip (user wins). Same-value writes always pass through to
-    // refresh last_synced_at.
-    if let Some(existing) = external_id::Entity::find()
-        .filter(external_id::Column::EntityType.eq(entity_type))
-        .filter(external_id::Column::EntityId.eq(entity_id))
-        .filter(external_id::Column::Source.eq(identifier.source.as_str()))
-        .one(db)
-        .await?
-        && existing.set_by == SetBy::User.as_str()
-        && existing.external_id != identifier.id
+    // A `set_by='user'` row is never replaced by a non-user write
+    // unless the caller explicitly overrides (the conflict pane's "Use
+    // theirs" or an admin force-apply). When the incoming value already
+    // matches, only `last_synced_at` is refreshed — the row keeps
+    // `set_by='user'`. (A matching write used to fall through to the
+    // upsert and rewrite `set_by`, silently demoting the user's claim;
+    // audit DI-2.)
+    if !override_user
         && set_by != SetBy::User
+        && let Some(existing) = external_id::Entity::find()
+            .filter(external_id::Column::EntityType.eq(entity_type))
+            .filter(external_id::Column::EntityId.eq(entity_id))
+            .filter(external_id::Column::Source.eq(identifier.source.as_str()))
+            .one(db)
+            .await?
+        && existing.set_by == SetBy::User.as_str()
     {
-        tracing::debug!(
-            entity_type = entity_type,
-            entity_id = entity_id,
-            source = identifier.source.as_str(),
-            "skipping external_id write: user-set value differs"
-        );
-        return Ok(SetExternalIdOutcome::Set);
+        let same_value = existing.external_id == identifier.id;
+        if same_value {
+            let mut am: external_id::ActiveModel = existing.into();
+            am.last_synced_at = Set(now);
+            am.update(db).await?;
+        } else {
+            tracing::debug!(
+                entity_type = entity_type,
+                entity_id = entity_id,
+                source = identifier.source.as_str(),
+                "skipping external_id write: user-set value differs"
+            );
+        }
+        return Ok(SetExternalIdOutcome::KeptUserValue { same_value });
     }
 
     // Cross-entity unique: does a *different* entity already own this
@@ -348,7 +365,30 @@ pub async fn set_external_id<C: ConnectionTrait>(
     identifier: &Identifier,
     set_by: SetBy,
 ) -> Result<SetExternalIdOutcome, DbErr> {
-    put_external_id(db, entity_type, entity_id, identifier, set_by).await
+    put_external_id(db, entity_type, entity_id, identifier, set_by, false).await
+}
+
+/// [`set_external_id`] with an explicit user-precedence override.
+/// `override_user = true` lets a non-user write replace a
+/// `set_by='user'` row — reserved for the apply path when the user
+/// chose "Use theirs" on a conflict or an admin forced the apply.
+pub async fn set_external_id_with_override<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: &str,
+    identifier: &Identifier,
+    set_by: SetBy,
+    override_user: bool,
+) -> Result<SetExternalIdOutcome, DbErr> {
+    put_external_id(
+        db,
+        entity_type,
+        entity_id,
+        identifier,
+        set_by,
+        override_user,
+    )
+    .await
 }
 
 /// Convenience for the legacy `comicvine_id` + `metron_id` + `gtin`
@@ -671,7 +711,8 @@ macro_rules! upsert_entity_helper {
                     })?;
                     // Refresh / add identifiers we may not have seen.
                     for ident in identifiers {
-                        put_external_id(db, $entity_type, &existing_id, ident, set_by).await?;
+                        put_external_id(db, $entity_type, &existing_id, ident, set_by, false)
+                            .await?;
                     }
                     return Ok(uuid);
                 }
@@ -685,7 +726,7 @@ macro_rules! upsert_entity_helper {
             {
                 let entity_id_str = row.id.to_string();
                 for ident in identifiers {
-                    put_external_id(db, $entity_type, &entity_id_str, ident, set_by).await?;
+                    put_external_id(db, $entity_type, &entity_id_str, ident, set_by, false).await?;
                 }
                 return Ok(row.id);
             }
@@ -707,7 +748,7 @@ macro_rules! upsert_entity_helper {
             };
             am.insert(db).await?;
             for ident in identifiers {
-                put_external_id(db, $entity_type, &id.to_string(), ident, set_by).await?;
+                put_external_id(db, $entity_type, &id.to_string(), ident, set_by, false).await?;
             }
             Ok(id)
         }
@@ -783,7 +824,7 @@ pub async fn upsert_imprint<C: ConnectionTrait>(
                 DbErr::Custom(format!("imprint external_ids.entity_id not a UUID: {e}"))
             })?;
             for ident in identifiers {
-                put_external_id(db, "imprint", &existing_id, ident, set_by).await?;
+                put_external_id(db, "imprint", &existing_id, ident, set_by, false).await?;
             }
             return Ok(uuid);
         }
@@ -796,7 +837,7 @@ pub async fn upsert_imprint<C: ConnectionTrait>(
     {
         let entity_id_str = row.id.to_string();
         for ident in identifiers {
-            put_external_id(db, "imprint", &entity_id_str, ident, set_by).await?;
+            put_external_id(db, "imprint", &entity_id_str, ident, set_by, false).await?;
         }
         return Ok(row.id);
     }
@@ -818,7 +859,7 @@ pub async fn upsert_imprint<C: ConnectionTrait>(
     .insert(db)
     .await?;
     for ident in identifiers {
-        put_external_id(db, "imprint", &id.to_string(), ident, set_by).await?;
+        put_external_id(db, "imprint", &id.to_string(), ident, set_by, false).await?;
     }
     Ok(id)
 }
