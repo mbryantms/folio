@@ -694,7 +694,7 @@ export function useTriggerDeepValidate(libraryId: string) {
 export function useTriggerSeriesScan(seriesId: string, libraryId?: string) {
   const qc = useQueryClient();
   // Defaults to force=true; "Scan series" is an explicit user action and
-  // skipping unchanged files is rarely what curators want when they click
+  // skipping unchanged files is rarely what editors want when they click
   // the menu item. The endpoint accepts ?force=false for cron-style
   // callers that explicitly want the cheap path.
   return useApiMutation<ScanResp, void>(

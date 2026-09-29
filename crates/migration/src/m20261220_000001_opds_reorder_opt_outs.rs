@@ -4,7 +4,7 @@
 //! M2 of `opds-sync-cleanup-1.0` makes "up-next moves to position 0"
 //! the default for every reading-sequence feed (series, CBL, WTR,
 //! collections). Three new `preserve_canonical_order` boolean columns
-//! let curators opt their lists out and keep strict canonical order
+//! let list owners opt their lists out and keep strict canonical order
 //! regardless of the caller's progress. WTR is system-owned (single
 //! per user), so its toggle lives on `users` instead.
 //!

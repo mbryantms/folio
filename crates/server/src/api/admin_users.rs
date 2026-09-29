@@ -84,7 +84,8 @@ pub struct AdminUserListView {
 pub struct LibraryAccessGrantView {
     pub library_id: String,
     pub library_name: String,
-    pub role: String,
+    /// ComicInfo `AgeRating` cap for this grant, or `null` for unrestricted.
+    pub age_rating_max: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -877,7 +878,6 @@ pub async fn set_library_access(
         let am = library_user_access::ActiveModel {
             library_id: Set(*lib_id),
             user_id: Set(uuid),
-            role: Set("reader".into()),
             age_rating_max: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
@@ -985,7 +985,7 @@ async fn library_access_grants(
             by_id.get(&g.library_id).map(|lib| LibraryAccessGrantView {
                 library_id: g.library_id.to_string(),
                 library_name: lib.name.clone(),
-                role: g.role,
+                age_rating_max: g.age_rating_max,
             })
         })
         .collect())

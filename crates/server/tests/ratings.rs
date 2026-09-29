@@ -153,7 +153,6 @@ async fn seed_user_visible_issue(
     library_user_access::ActiveModel {
         user_id: Set(auth.user_id),
         library_id: Set(lib_id),
-        role: Set("reader".into()),
         age_rating_max: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
