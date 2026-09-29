@@ -84,7 +84,10 @@ pub struct AdminUserListView {
 pub struct LibraryAccessGrantView {
     pub library_id: String,
     pub library_name: String,
-    /// ComicInfo `AgeRating` cap for this grant, or `null` for unrestricted.
+    /// ComicInfo `AgeRating` cap for this grant (a rung of the ladder in
+    /// `library::age_rating::LADDER`), or `null` for unrestricted.
+    /// Series / issues rated above the cap are hidden from the user on
+    /// every read surface; unrated rows are shown (WP-2.7, D6).
     pub age_rating_max: Option<String>,
 }
 
@@ -170,6 +173,25 @@ pub struct LibraryAccessReq {
     /// server replaces the user's `library_user_access` rows with this list.
     #[garde(skip)]
     pub library_ids: Vec<String>,
+    /// Per-library age-rating caps, keyed by library id (WP-2.7). A
+    /// library listed in `library_ids` but absent here is uncapped.
+    /// Values must be a rung of the ComicInfo `AgeRating` ladder
+    /// (`Early Childhood` … `X18+`); keys for libraries not in
+    /// `library_ids` are ignored.
+    #[serde(default)]
+    #[garde(custom(valid_age_rating_caps))]
+    pub age_rating_caps: HashMap<String, String>,
+}
+
+fn valid_age_rating_caps(caps: &HashMap<String, String>, _: &()) -> garde::Result {
+    for (lib, cap) in caps {
+        if !crate::library::age_rating::is_valid_cap(cap) {
+            return Err(garde::Error::new(format!(
+                "age_rating_caps[{lib}]: `{cap}` is not a ComicInfo AgeRating value"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Body for admin create-user (3.8 / audit D9). The server generates the
@@ -874,11 +896,25 @@ pub async fn set_library_access(
     }
 
     let now = chrono::Utc::now().fixed_offset();
+    // Caps are stored in the ladder's canonical spelling so the SQL
+    // predicate and the admin UI agree on the value.
+    let caps: HashMap<Uuid, String> = req
+        .age_rating_caps
+        .iter()
+        .filter_map(|(lib, cap)| {
+            let lib = Uuid::parse_str(lib).ok()?;
+            let rank = crate::library::age_rating::rank(cap)?;
+            Some((
+                lib,
+                crate::library::age_rating::LADDER[rank as usize].to_owned(),
+            ))
+        })
+        .collect();
     for lib_id in &wanted {
         let am = library_user_access::ActiveModel {
             library_id: Set(*lib_id),
             user_id: Set(uuid),
-            age_rating_max: Set(None),
+            age_rating_max: Set(caps.get(lib_id).cloned()),
             created_at: Set(now),
             updated_at: Set(now),
         };
@@ -903,6 +939,10 @@ pub async fn set_library_access(
             target_id: Some(uuid.to_string()),
             payload: serde_json::json!({
                 "library_ids": wanted.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "age_rating_caps": wanted
+                    .iter()
+                    .filter_map(|id| caps.get(id).map(|c| (id.to_string(), c.clone())))
+                    .collect::<HashMap<String, String>>(),
             }),
             ip: ctx.ip_string(),
             user_agent: ctx.user_agent.clone(),

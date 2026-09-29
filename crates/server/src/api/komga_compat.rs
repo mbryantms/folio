@@ -280,7 +280,7 @@ async fn patch_read_progress(
         }
     };
     let visible = access::for_user(&app, &user.0).await;
-    if !visible.contains(issue_row.library_id) {
+    if !access::issue_allowed(&app, &visible, &issue_row).await {
         tracing::info!(
             book_id = %book_id,
             user_id = %user.0.id,
@@ -358,7 +358,7 @@ async fn get_book(
         }
     };
     let visible = access::for_user(&app, &user).await;
-    if !visible.contains(issue_row.library_id) {
+    if !access::issue_allowed(&app, &visible, &issue_row).await {
         return not_found();
     }
     let pr = progress_record::Entity::find_by_id((user.id, book_id.clone()))

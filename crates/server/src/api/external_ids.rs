@@ -93,7 +93,7 @@ pub async fn list_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -133,7 +133,7 @@ pub async fn add_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -165,7 +165,7 @@ pub async fn delete_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -196,7 +196,7 @@ pub async fn list_issue(
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -235,7 +235,7 @@ pub async fn add_issue(
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -266,7 +266,7 @@ pub async fn delete_issue(
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -445,21 +445,6 @@ async fn delete_identifier(
     )
     .await;
     StatusCode::NO_CONTENT.into_response()
-}
-
-async fn user_can_see_library(app: &AppState, user: &CurrentUser, lib_id: uuid::Uuid) -> bool {
-    if user.role == "admin" {
-        return true;
-    }
-    use entity::library_user_access;
-    library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .filter(library_user_access::Column::LibraryId.eq(lib_id))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
 }
 
 async fn find_series_issue(

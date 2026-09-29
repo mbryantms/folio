@@ -16078,17 +16078,20 @@
         "type": "object",
         "required": [
           "library_id",
-          "library_name",
-          "role"
+          "library_name"
         ],
         "properties": {
+          "age_rating_max": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ComicInfo `AgeRating` cap for this grant (a rung of the ladder in\n`library::age_rating::LADDER`), or `null` for unrestricted.\nSeries / issues rated above the cap are hidden from the user on\nevery read surface; unrated rows are shown (WP-2.7, D6)."
+          },
           "library_id": {
             "type": "string"
           },
           "library_name": {
-            "type": "string"
-          },
-          "role": {
             "type": "string"
           }
         }
@@ -16099,6 +16102,16 @@
           "library_ids"
         ],
         "properties": {
+          "age_rating_caps": {
+            "type": "object",
+            "description": "Per-library age-rating caps, keyed by library id (WP-2.7). A\nlibrary listed in `library_ids` but absent here is uncapped.\nValues must be a rung of the ComicInfo `AgeRating` ladder\n(`Early Childhood` … `X18+`); keys for libraries not in\n`library_ids` are ignored.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "library_ids": {
             "type": "array",
             "items": {
@@ -22437,7 +22450,7 @@
       },
       "UpdateSeriesReq": {
         "type": "object",
-        "description": "Body for `PATCH /series/{id}`. `match_key` is the §7.4 sticky override\nthe scanner won't touch; `slug` is the admin-rename hook for the URL\nsegment (validated unique across all series). `status` and the external\nIDs are surfaced in the issue drawer so curators can correct\ncontinuing/ended state and database links without leaving the issue page.",
+        "description": "Body for `PATCH /series/{id}`. `match_key` is the §7.4 sticky override\nthe scanner won't touch; `slug` is the admin-rename hook for the URL\nsegment (validated unique across all series). `status` and the external\nIDs are surfaced in the issue drawer so editors can correct\ncontinuing/ended state and database links without leaving the issue page.",
         "properties": {
           "comicvine_id": {
             "type": [

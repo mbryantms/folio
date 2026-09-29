@@ -27,8 +27,8 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use entity::{issue, library_user_access, series};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use entity::{issue, series};
+use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -251,7 +251,7 @@ pub async fn serve(
     let Ok(Some(row)) = issue::Entity::find_by_id(id.clone()).one(&app.db).await else {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     };
-    if !visible(&app, &user, row.library_id).await {
+    if !crate::library::access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -389,7 +389,7 @@ pub async fn text_regions(
     let Ok(Some(row)) = issue::Entity::find_by_id(id.clone()).one(&app.db).await else {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     };
-    if !visible(&app, &user, row.library_id).await {
+    if !crate::library::access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -529,18 +529,4 @@ async fn resolve_series_language(app: &AppState, series_id: uuid::Uuid) -> Langu
             }
         }
     }
-}
-
-async fn visible(app: &AppState, user: &CurrentUser, lib_id: uuid::Uuid) -> bool {
-    if user.role == "admin" {
-        return true;
-    }
-    library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .filter(library_user_access::Column::LibraryId.eq(lib_id))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
 }

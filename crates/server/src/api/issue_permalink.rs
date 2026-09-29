@@ -13,8 +13,8 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
 };
-use entity::{issue, library_user_access, series};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use entity::{issue, series};
+use sea_orm::EntityTrait;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -45,7 +45,7 @@ pub async fn redirect_to_canonical(
     let Ok(Some(row)) = issue::Entity::find_by_id(id).one(&app.db).await else {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     };
-    if !visible(&app, &user, row.library_id).await {
+    if !crate::library::access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
     let Ok(Some(parent)) = series::Entity::find_by_id(row.series_id).one(&app.db).await else {
@@ -53,18 +53,4 @@ pub async fn redirect_to_canonical(
     };
     // Slugs are URL-safe by construction (`entity::slug::allocate_slug`).
     Redirect::to(&format!("/series/{}/issues/{}", parent.slug, row.slug)).into_response()
-}
-
-async fn visible(app: &AppState, user: &CurrentUser, lib_id: uuid::Uuid) -> bool {
-    if user.role == "admin" {
-        return true;
-    }
-    library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .filter(library_user_access::Column::LibraryId.eq(lib_id))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
 }

@@ -29,8 +29,8 @@ use axum::{
     routing::get,
 };
 use entity::{
-    cbl_entry, cbl_list, collection_entry, issue, library_user_access, progress_record, saved_view,
-    series, series_credit, series_genre, user as user_entity, user_page, user_view_pin,
+    cbl_entry, cbl_list, collection_entry, issue, progress_record, saved_view, series,
+    series_credit, series_genre, user as user_entity, user_page, user_view_pin,
 };
 use sea_orm::{
     ColumnTrait, Condition, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder,
@@ -394,8 +394,8 @@ async fn series_list(
         Err(e) => return server_error(e),
     };
     let mut count_sel = series::Entity::find();
-    if let Some(ids) = allowed.as_ref() {
-        count_sel = count_sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        count_sel = count_sel.filter(cond);
     }
     let total = match count_sel.count(&app.db).await {
         Ok(n) => n,
@@ -404,8 +404,8 @@ async fn series_list(
     let total_pages = total.div_ceil(PAGE_SIZE).max(1);
 
     let mut sel = series::Entity::find().order_by_asc(series::Column::Name);
-    if let Some(ids) = allowed.as_ref() {
-        sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        sel = sel.filter(cond);
     }
     let rows = match sel.offset(offset).limit(PAGE_SIZE).all(&app.db).await {
         Ok(r) => r,
@@ -453,37 +453,35 @@ async fn series_list(
 /// with hundreds of publishers.
 pub(crate) async fn compute_publisher_facets(
     app: &AppState,
-    allowed: Option<&Vec<Uuid>>,
+    visible: &access::VisibleLibraries,
 ) -> Vec<(String, u64)> {
     #[derive(FromQueryResult)]
     struct Row {
         publisher: String,
         n: i64,
     }
-    let (sql, params) = if let Some(ids) = allowed {
-        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("${i}")).collect();
-        (
-            format!(
-                "SELECT publisher, COUNT(*)::bigint AS n FROM series \
-                 WHERE publisher IS NOT NULL AND publisher <> '' \
-                   AND library_id IN ({}) \
-                 GROUP BY publisher ORDER BY n DESC LIMIT {}",
-                placeholders.join(","),
-                BROWSE_PUBLISHER_FACET_LIMIT
-            ),
-            ids.iter().map(|id| (*id).into()).collect::<Vec<_>>(),
-        )
-    } else {
-        (
-            format!(
-                "SELECT publisher, COUNT(*)::bigint AS n FROM series \
-                 WHERE publisher IS NOT NULL AND publisher <> '' \
-                 GROUP BY publisher ORDER BY n DESC LIMIT {}",
-                BROWSE_PUBLISHER_FACET_LIMIT
-            ),
-            Vec::new(),
-        )
-    };
+    let mut params: Vec<sea_orm::Value> = Vec::new();
+    let mut acl_sql = String::new();
+    if !visible.unrestricted {
+        if visible.allowed.is_empty() {
+            return Vec::new();
+        }
+        let placeholders: Vec<String> = visible
+            .allowed
+            .iter()
+            .map(|id| {
+                params.push((*id).into());
+                format!("${}", params.len())
+            })
+            .collect();
+        acl_sql.push_str(&format!(" AND library_id IN ({})", placeholders.join(",")));
+        acl_sql.push_str(&visible.raw_cap_clause("library_id", "age_rating", &mut params));
+    }
+    let sql = format!(
+        "SELECT publisher, COUNT(*)::bigint AS n FROM series \
+         WHERE publisher IS NOT NULL AND publisher <> ''{acl_sql} \
+         GROUP BY publisher ORDER BY n DESC LIMIT {BROWSE_PUBLISHER_FACET_LIMIT}"
+    );
     let stmt = Statement::from_sql_and_values(sea_orm::DatabaseBackend::Postgres, sql, params);
     let rows = match Row::find_by_statement(stmt).all(&app.db).await {
         Ok(r) => r,
@@ -508,13 +506,13 @@ pub(crate) async fn compute_publisher_facets(
 /// either hide zero-count facets or render them disabled.
 pub(crate) async fn compute_status_facets(
     app: &AppState,
-    allowed: Option<&Vec<Uuid>>,
+    visible: &access::VisibleLibraries,
 ) -> Vec<(&'static str, u64)> {
     let mut out: Vec<(&'static str, u64)> = Vec::with_capacity(BROWSE_STATUSES.len());
     for status in BROWSE_STATUSES {
         let mut sel = series::Entity::find().filter(series::Column::Status.eq(*status));
-        if let Some(ids) = allowed {
-            sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+        if let Some(cond) = visible.series_filter() {
+            sel = sel.filter(cond);
         }
         let n = sel.count(&app.db).await.unwrap_or(0);
         out.push((*status, n));
@@ -620,13 +618,12 @@ async fn browse(
         Ok(v) => v,
         Err(e) => return server_error(e),
     };
-    let allowed_vec = allowed.clone();
 
     // Count + fetch the filtered series. Mirrors series_list's two-
     // pass shape so total_pages / pagination linkery is identical.
     let mut count_sel = series::Entity::find();
-    if let Some(ids) = allowed.as_ref() {
-        count_sel = count_sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        count_sel = count_sel.filter(cond);
     }
     if let Some(s) = status_filter {
         count_sel = count_sel.filter(series::Column::Status.eq(s.to_owned()));
@@ -641,8 +638,8 @@ async fn browse(
     let total_pages = total.div_ceil(PAGE_SIZE).max(1);
 
     let mut sel = series::Entity::find().order_by_asc(series::Column::Name);
-    if let Some(ids) = allowed.as_ref() {
-        sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        sel = sel.filter(cond);
     }
     if let Some(s) = status_filter {
         sel = sel.filter(series::Column::Status.eq(s.to_owned()));
@@ -668,8 +665,8 @@ async fn browse(
     // FULL library scope (not the post-filter slice) so users can
     // expand back out from a narrow filter without re-navigating to
     // /opds/v1/browse.
-    let status_counts = compute_status_facets(&app, allowed_vec.as_ref()).await;
-    let publisher_counts = compute_publisher_facets(&app, allowed_vec.as_ref()).await;
+    let status_counts = compute_status_facets(&app, &allowed).await;
+    let publisher_counts = compute_publisher_facets(&app, &allowed).await;
     let facet_links = render_browse_facets(&q, &status_counts, &publisher_counts);
 
     // Self / pagination href reflects the current facet state so
@@ -724,22 +721,23 @@ async fn series_one(
         Ok(None) => return not_found(),
         Err(e) => return server_error(e.to_string()),
     };
-    if !visible(&app, &user, s.library_id).await {
+    let acl = access::for_library(&app, &user, s.library_id).await;
+    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
         return not_found();
     }
-    let total = match issue::Entity::find()
-        .filter(issue::Column::SeriesId.eq(id))
-        .count(&app.db)
-        .await
-    {
+    // WP-2.7: issues carrying their own rating above the cap are hidden.
+    let mut issues_base = issue::Entity::find().filter(issue::Column::SeriesId.eq(id));
+    if let Some(cond) = acl.issue_cap_condition() {
+        issues_base = issues_base.filter(cond);
+    }
+    let total = match issues_base.clone().count(&app.db).await {
         Ok(n) => n,
         Err(e) => return server_error(e.to_string()),
     };
     let total_pages = total.div_ceil(PAGE_SIZE).max(1);
     let page = q.page.unwrap_or(1).max(1);
     let offset = (page - 1) * PAGE_SIZE;
-    let mut issues = match issue::Entity::find()
-        .filter(issue::Column::SeriesId.eq(id))
+    let mut issues = match issues_base
         .order_by_asc(issue::Column::SortNumber)
         .offset(offset)
         .limit(PAGE_SIZE)
@@ -771,7 +769,7 @@ async fn series_one(
     // On Deck rail + reader end-card so OPDS clients see identical
     // resolution. Lookup failures fall through silently (the rel is
     // optional; we'd rather render a feed without the hint than 500).
-    let up_next_issue = crate::api::next_up::pick_next_in_series(&app, user.id, s.id)
+    let up_next_issue = crate::api::next_up::pick_next_in_series(&app, user.id, s.id, &acl)
         .await
         .ok()
         .flatten();
@@ -848,8 +846,8 @@ async fn recent(State(app): State<AppState>, user: CurrentUser) -> Response {
     let mut sel = issue::Entity::find()
         .order_by_desc(issue::Column::CreatedAt)
         .limit(50);
-    if let Some(ids) = allowed.as_ref() {
-        sel = sel.filter(issue::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.issue_filter() {
+        sel = sel.filter(cond);
     }
     let rows = match sel.all(&app.db).await {
         Ok(r) => r,
@@ -932,14 +930,11 @@ async fn continue_reading(State(app): State<AppState>, user: CurrentUser) -> Res
     };
 
     // Apply library ACL in Rust (same pattern as the rail handler).
-    let filtered_ids: Vec<String> = match allowed.as_ref() {
-        None => rows.into_iter().map(|r| r.issue_id).collect(),
-        Some(visible) => rows
-            .into_iter()
-            .filter(|r| visible.contains(&r.library_id))
-            .map(|r| r.issue_id)
-            .collect(),
-    };
+    let filtered_ids: Vec<String> = rows
+        .into_iter()
+        .filter(|r| allowed.contains(r.library_id))
+        .map(|r| r.issue_id)
+        .collect();
 
     // Hydrate full issue::Model rows preserving the
     // most-recent-progress-first order from the SQL above. Otherwise
@@ -1067,14 +1062,11 @@ async fn history(
     };
     // ACL in Rust mirrors the rail handlers — keeps the SQL simple while
     // still excluding rows in libraries the caller can't see.
-    let filtered_ids: Vec<String> = match allowed.as_ref() {
-        None => rows.into_iter().map(|r| r.issue_id).collect(),
-        Some(visible) => rows
-            .into_iter()
-            .filter(|r| visible.contains(&r.library_id))
-            .map(|r| r.issue_id)
-            .collect(),
-    };
+    let filtered_ids: Vec<String> = rows
+        .into_iter()
+        .filter(|r| allowed.contains(r.library_id))
+        .map(|r| r.issue_id)
+        .collect();
     let visible = access::for_user(&app, &user).await;
     let issues = fetch_visible_issues_preserving_order(&app, &filtered_ids, &visible).await;
     // Pagination link rels mirror series_list / other paged feeds. The
@@ -1128,8 +1120,8 @@ async fn new_this_month(State(app): State<AppState>, user: CurrentUser) -> Respo
         .filter(issue::Column::CreatedAt.gte(cutoff.fixed_offset()))
         .order_by_desc(issue::Column::CreatedAt)
         .limit(50);
-    if let Some(ids) = allowed.as_ref() {
-        sel = sel.filter(issue::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.issue_filter() {
+        sel = sel.filter(cond);
     }
     let rows = match sel.all(&app.db).await {
         Ok(r) => r,
@@ -1215,8 +1207,8 @@ async fn by_creator(
     }
 
     let mut count_sel = series::Entity::find().filter(series::Column::Id.is_in(series_ids.clone()));
-    if let Some(ids) = allowed.as_ref() {
-        count_sel = count_sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        count_sel = count_sel.filter(cond);
     }
     let total = match count_sel.count(&app.db).await {
         Ok(n) => n,
@@ -1227,8 +1219,8 @@ async fn by_creator(
     let mut sel = series::Entity::find()
         .filter(series::Column::Id.is_in(series_ids))
         .order_by_asc(series::Column::Name);
-    if let Some(ids) = allowed.as_ref() {
-        sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        sel = sel.filter(cond);
     }
     let rows = match sel.offset(offset).limit(PAGE_SIZE).all(&app.db).await {
         Ok(r) => r,
@@ -1327,8 +1319,8 @@ async fn search(
     for token in needle.split_whitespace() {
         count_sel = count_sel.filter(col_ilike(series::Column::Name, &ilike_pattern(token)));
     }
-    if let Some(ids) = allowed.as_ref() {
-        count_sel = count_sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        count_sel = count_sel.filter(cond);
     }
     let total = match count_sel.count(&app.db).await {
         Ok(n) => n,
@@ -1340,8 +1332,8 @@ async fn search(
     for token in needle.split_whitespace() {
         sel = sel.filter(col_ilike(series::Column::Name, &ilike_pattern(token)));
     }
-    if let Some(ids) = allowed.as_ref() {
-        sel = sel.filter(series::Column::LibraryId.is_in(ids.clone()));
+    if let Some(cond) = allowed.series_filter() {
+        sel = sel.filter(cond);
     }
     let rows = match sel.offset(offset).limit(PAGE_SIZE).all(&app.db).await {
         Ok(r) => r,
@@ -1445,7 +1437,7 @@ pub(crate) async fn download(
         Ok(Some(r)) => r,
         _ => return not_found(),
     };
-    if !visible(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return not_found();
     }
     let mut f = match tokio::fs::File::open(&row.file_path).await {
@@ -2360,23 +2352,32 @@ pub(crate) async fn compute_cbl_progress_summary(
         finished: Option<bool>,
         updated_at: Option<chrono::DateTime<chrono::FixedOffset>>,
     }
+    let mut params: Vec<sea_orm::Value> = vec![cbl_list_id.into(), user_id.into()];
+    let cap_sql = visible.raw_cap_clause(
+        "i.library_id",
+        "COALESCE(i.age_rating, s.age_rating)",
+        &mut params,
+    );
     let rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        r#"
+        format!(
+            r#"
         SELECT i.library_id  AS library_id,
                p.last_page   AS last_page,
                p.finished    AS finished,
                p.updated_at  AS updated_at
         FROM cbl_entries e
         JOIN issues i ON i.id = e.matched_issue_id
+        JOIN series s ON s.id = i.series_id
         LEFT JOIN progress_records p
           ON p.user_id = $2 AND p.issue_id = i.id
         WHERE e.cbl_list_id = $1
           AND e.matched_issue_id IS NOT NULL
           AND i.state = 'active'
-          AND i.removed_at IS NULL
-        "#,
-        [cbl_list_id.into(), user_id.into()],
+          AND i.removed_at IS NULL{cap_sql}
+        "#
+        ),
+        params,
     ))
     .all(db)
     .await
@@ -2643,36 +2644,15 @@ fn paginate_links(base_href: &str, page: u64, total_pages: u64) -> String {
     out
 }
 
-/// Returns the libraries the user is allowed to read. `None` for admins
-/// (no filter applied). Shared with `opds_v2` so the two surfaces apply
+/// The caller's library ACL (membership + WP-2.7 age-rating caps).
+/// `series_filter()` / `issue_filter()` yield `None` for admins (no
+/// filter applied). Shared with `opds_v2` so the two surfaces apply
 /// identical ACLs without duplication.
 pub(crate) async fn allowed_libraries(
     app: &AppState,
     user: &CurrentUser,
-) -> Result<Option<Vec<Uuid>>, String> {
-    if user.role == "admin" {
-        return Ok(None);
-    }
-    let rows = library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .all(&app.db)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(Some(rows.into_iter().map(|r| r.library_id).collect()))
-}
-
-pub(crate) async fn visible(app: &AppState, user: &CurrentUser, lib_id: Uuid) -> bool {
-    if user.role == "admin" {
-        return true;
-    }
-    library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .filter(library_user_access::Column::LibraryId.eq(lib_id))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
+) -> Result<access::VisibleLibraries, String> {
+    Ok(access::for_user(app, user).await)
 }
 
 fn atom(body: String) -> Response {
@@ -3333,20 +3313,21 @@ async fn render_collection_acq(
             .await
             .unwrap_or_default()
             .into_iter()
-            .filter(|s| visible.contains(s.library_id))
+            .filter(|s| visible.series_ok(s.library_id, s.age_rating.as_deref()))
             .map(|s| (s.id, s))
             .collect()
     };
     let issue_by_id: HashMap<String, issue::Model> = if issue_ids.is_empty() {
         HashMap::new()
     } else {
-        issue::Entity::find()
+        let rows = issue::Entity::find()
             .filter(issue::Column::Id.is_in(issue_ids))
             .all(&app.db)
             .await
-            .unwrap_or_default()
+            .unwrap_or_default();
+        access::filter_issues(app, &visible, rows)
+            .await
             .into_iter()
-            .filter(|i| visible.contains(i.library_id))
             .map(|i| (i.id.clone(), i))
             .collect()
     };
@@ -3440,9 +3421,9 @@ pub(crate) async fn fetch_visible_issues_preserving_order(
         .all(&app.db)
         .await
         .unwrap_or_default();
-    let by_id: HashMap<String, issue::Model> = rows
+    let by_id: HashMap<String, issue::Model> = access::filter_issues(app, visible, rows)
+        .await
         .into_iter()
-        .filter(|i| visible.contains(i.library_id))
         .map(|i| (i.id.clone(), i))
         .collect();
     ids.iter().filter_map(|id| by_id.get(id).cloned()).collect()
@@ -3585,7 +3566,7 @@ pub(crate) async fn progress_put(
         Ok(None) => return not_found(),
         Err(e) => return server_error(e.to_string()),
     };
-    if !visible(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return not_found();
     }
     // M4: normalize `page` / `position` into the integer `last_page`
@@ -3745,7 +3726,7 @@ async fn koreader_sync_put(
         }
         Err(e) => return server_error(e.to_string()),
     };
-    if !visible(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(
             StatusCode::UNAUTHORIZED,
             "document_unknown",

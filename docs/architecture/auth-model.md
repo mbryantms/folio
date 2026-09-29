@@ -138,6 +138,79 @@ If the lookup misses (token reuse, race, replay), all sessions for that user are
 
 - `POST /auth/logout` revokes the current refresh row (`UPDATE … SET revoked_at = now()`), bumps `users.token_version` if "log out everywhere" was requested, clears all three cookies.
 
+## Library ACL and the age-rating cap
+
+Non-admin users see a library only through a `library_user_access` row
+(admins are unrestricted). Each grant may carry an **age-rating cap**
+(`age_rating_max`), set per library from `/admin/users/{id}` → *Library
+access*. The cap is enforced server-side on every read surface; the web
+app never filters client-side.
+
+### Ladder
+
+The cap is a rung of the ComicInfo `AgeRating` vocabulary, ordered
+youngest-audience-first (`crates/server/src/library/age_rating.rs`):
+
+```
+Early Childhood < Everyone < G < Everyone 10+ < PG < Kids to Adults < Teen
+  < MA15+ < Mature 17+ < M < R18+ < Adults Only 18+ < X18+
+```
+
+Comparison is case-insensitive and ignores surrounding whitespace. The
+admin API validates a cap against the ladder (422 otherwise) and stores
+the canonical spelling.
+
+### What a capped user sees
+
+- A **series** is visible when `series.age_rating` ranks at or below the
+  cap.
+- An **issue** is visible when `COALESCE(issue.age_rating,
+  series.age_rating)` ranks at or below the cap — an issue may carry its
+  own rating above its series' and is then hidden on its own.
+- **Unrated content is shown** (decision D6, 2026-09-29): `NULL`, empty,
+  `Unknown`, `Rating Pending` and any string not on the ladder all pass.
+  Only rows whose rating is a known rung *above* the cap are hidden, so
+  the SQL predicate is `rating IS NULL OR lower(btrim(rating)) NOT IN
+  (<rungs above the cap>)`, never an allow-list.
+
+Denied lookups return the same `404 not_found` an ACL miss returns —
+nothing about the hidden row leaks (not its existence, cover, or page
+bytes).
+
+### Surfaces enforced
+
+The predicate is carried on `library::access::VisibleLibraries` (built
+once per request by `access::for_user`) and applied in three shapes —
+`series_filter()` / `issue_filter()` for sea-orm queries,
+`raw_cap_clause()` for hand-written SQL, and `series_ok()` /
+`issue_ok()` / `access::issue_visible()` for single rows. Every surface
+that consults the library ACL applies it:
+
+| Surface | Where |
+|---|---|
+| Series list + search, series detail, per-series issue list, resume | `api/series.rs` |
+| Cross-library issue list, issue search, issue detail + sub-resources | `api/issues.rs` |
+| Page bytes, page/cover thumbnails, variant covers, permalinks | `api/page_bytes.rs`, `api/thumbnails.rs`, `api/covers.rs`, `api/issue_permalink.rs` |
+| Saved views / smart-filter compiler (home rails, `/views`) | `views/compile.rs` |
+| Continue reading, On Deck, New issues, rail dismissals | `api/rails.rs` |
+| Reader Up Next / Prev Up (series + CBL walks) | `api/next_up.rs` |
+| Creators, people search, filter-option pickers (UNION arms) | `api/creators.rs`, `api/people.rs`, `api/filter_options.rs` |
+| CBL entries, markers, ratings, progress writes, reading sessions, OCR | `api/cbl_lists.rs`, `api/markers.rs`, `api/ratings.rs`, `api/progress.rs`, `api/reading_sessions.rs`, `api/issue_ocr.rs` |
+| OPDS 1.2 + 2.0 feeds, facets, downloads, PSE page streaming, progression + KOReader sync | `api/opds.rs`, `api/opds_v2.rs`, `api/opds_pse.rs`, `api/opds_progression.rs` |
+| Komga-compatible progress shim | `api/komga_compat.rs` |
+| Metadata search / external ids / provider ranges (series gates) | `api/metadata_search.rs`, `api/external_ids.rs`, `api/provider_ranges.rs` |
+
+Regression suite: `crates/server/tests/age_rating_cap.rs` (a `Teen`-capped
+user against `Teen` / `Mature 17+` / unrated series, plus an issue-level
+override) and the unit tests in `library/age_rating.rs` / `library/access.rs`.
+
+### The removed `role` column
+
+`library_user_access.role` (`reader | curator`) existed from Phase 1 but
+was never read; WP-2.7 dropped it (`m20270123_000001_drop_library_access_role`)
+and removed the field from the admin users API. A per-library editor role
+can be re-introduced with real semantics later.
+
 ## Failure modes
 
 | Symptom | Likely cause |

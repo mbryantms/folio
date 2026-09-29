@@ -115,8 +115,17 @@ pub async fn list(
                 format!("${}", params.len())
             })
             .collect();
-        format!(" AND library_id IN ({})", placeholders.join(","))
+        // Qualified: the issue-credits branch joins both `issues` and
+        // `series`, each of which exposes `library_id`.
+        format!(" AND s.library_id IN ({})", placeholders.join(","))
     };
+    // WP-2.7: age-rating cap per UNION branch (mirrors `creators`).
+    let series_cap = visible.raw_cap_clause("s.library_id", "s.age_rating", &mut params);
+    let issue_cap = visible.raw_cap_clause(
+        "s.library_id",
+        "COALESCE(i.age_rating, s.age_rating)",
+        &mut params,
+    );
 
     // Aggregate (UNION over both credit tables → distinct names with
     // role + count rollup) inside the `agg` CTE so the outer SELECT
@@ -131,7 +140,7 @@ pub async fn list(
                   s.library_id AS library_id \
              FROM series_credits sc \
              JOIN series s ON s.id = sc.series_id \
-            WHERE s.removed_at IS NULL{library_filter} \
+            WHERE s.removed_at IS NULL{library_filter}{series_cap} \
            UNION ALL \
            SELECT ic.person AS person, ic.role AS role, \
                   'issue:' || ic.issue_id AS ref_id, \
@@ -141,7 +150,7 @@ pub async fn list(
              JOIN series s ON s.id = i.series_id \
             WHERE s.removed_at IS NULL \
               AND i.removed_at IS NULL \
-              AND i.state = 'active'{library_filter} \
+              AND i.state = 'active'{library_filter}{issue_cap} \
          ), \
          agg AS ( \
            SELECT person, \

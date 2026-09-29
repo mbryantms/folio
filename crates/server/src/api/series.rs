@@ -7,7 +7,7 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::Utc;
-use entity::{issue, library_user_access, series};
+use entity::{issue, series};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, FromQueryResult,
     PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, Value,
@@ -25,6 +25,7 @@ const MAX_QUERY_LEN: usize = 200;
 use super::error;
 use crate::api::libraries::{ScanMode, ScanResp};
 use crate::auth::{CurrentUser, RequireAdmin};
+use crate::library::access;
 use crate::middleware::RequestContext;
 use crate::state::AppState;
 
@@ -191,7 +192,7 @@ pub async fn scan_series(
 /// Body for `PATCH /series/{id}`. `match_key` is the §7.4 sticky override
 /// the scanner won't touch; `slug` is the admin-rename hook for the URL
 /// segment (validated unique across all series). `status` and the external
-/// IDs are surfaced in the issue drawer so curators can correct
+/// IDs are surfaced in the issue drawer so editors can correct
 /// continuing/ended state and database links without leaving the issue page.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateSeriesReq {
@@ -1357,11 +1358,11 @@ fn validate_list_series_query_params(q: &ListSeriesQuery) -> Result<(), &'static
 
 fn apply_series_visibility(
     mut select: sea_orm::Select<series::Entity>,
-    visible: &VisibleLibs,
+    visible: &access::VisibleLibraries,
     library: Option<Uuid>,
 ) -> Option<sea_orm::Select<series::Entity>> {
     if let Some(lib) = library {
-        if !visible.unrestricted && !visible.allowed.contains(&lib) {
+        if !visible.contains(lib) {
             return None;
         }
         select = select.filter(series::Column::LibraryId.eq(lib));
@@ -1372,6 +1373,11 @@ fn apply_series_visibility(
         select = select.filter(
             series::Column::LibraryId.is_in(visible.allowed.iter().copied().collect::<Vec<_>>()),
         );
+    }
+    // WP-2.7: age-rating cap — hide series rated above the grant's cap
+    // (unrated rows pass, see `library::age_rating`).
+    if let Some(cap) = visible.series_cap_condition() {
+        select = select.filter(cap);
     }
     Some(select)
 }
@@ -1809,7 +1815,7 @@ pub async fn list(
         return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", msg);
     }
 
-    let visible_libs = visible_libraries(&app, &user).await;
+    let visible_libs = access::for_user(&app, &user).await;
     let empty = || {
         Json(SeriesListView {
             items: Vec::new(),
@@ -2821,7 +2827,7 @@ pub async fn collection_report(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::series_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     // No `.limit()` — the whole run must be visible for gap detection. The
@@ -2872,7 +2878,7 @@ pub async fn get_one(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::series_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     // `RemovedAt.is_null()` keeps soft-deleted and confirmed-removed issues
@@ -3615,7 +3621,8 @@ pub async fn list_issues(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, s.library_id).await {
+    let acl = access::for_library(&app, &user, s.library_id).await;
+    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
@@ -3628,6 +3635,10 @@ pub async fn list_issues(
     let mut select = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(s.id))
         .filter(issue::Column::RemovedAt.is_null());
+    // WP-2.7: an issue may carry its own rating above the series' — hide it.
+    if let Some(cap) = acl.issue_cap_condition() {
+        select = select.filter(cap);
+    }
 
     // Search mode: rank by ts_rank_cd and paginate with opaque offset
     // cursors so filtered issue searches can continue past the first page.
@@ -3868,38 +3879,6 @@ pub async fn list_issues(
     .into_response()
 }
 
-// ───────── ACL helpers ─────────
-
-struct VisibleLibs {
-    /// Admin users see all libraries — bypass any filtering.
-    unrestricted: bool,
-    /// Library IDs the user has explicit access to (only used when not admin).
-    allowed: std::collections::HashSet<Uuid>,
-}
-
-async fn visible_libraries(app: &AppState, user: &CurrentUser) -> VisibleLibs {
-    if user.role == "admin" {
-        return VisibleLibs {
-            unrestricted: true,
-            allowed: Default::default(),
-        };
-    }
-    let granted: Vec<library_user_access::Model> = library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .all(&app.db)
-        .await
-        .unwrap_or_default();
-    VisibleLibs {
-        unrestricted: false,
-        allowed: granted.into_iter().map(|g| g.library_id).collect(),
-    }
-}
-
-async fn visible_in_library(app: &AppState, user: &CurrentUser, lib_id: Uuid) -> bool {
-    let v = visible_libraries(app, user).await;
-    v.unrestricted || v.allowed.contains(&lib_id)
-}
-
 /// Response for `GET /series/{slug}/resume` — the issue (and page) the user
 /// should land on when they hit "Read" without picking a specific issue.
 /// Mirrors the client-side `pickNextIssue` algorithm in
@@ -3942,15 +3921,20 @@ pub async fn resume(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, srow.library_id).await {
+    let acl = access::for_library(&app, &user, srow.library_id).await;
+    if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     // Active, non-removed issues in canonical sort order. Empty series →
     // 200 with null issue (clients should disable the play CTA).
-    let issues: Vec<issue::Model> = match issue::Entity::find()
+    let mut issues_sel = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(srow.id))
         .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::RemovedAt.is_null());
+    if let Some(cap) = acl.issue_cap_condition() {
+        issues_sel = issues_sel.filter(cap);
+    }
+    let issues: Vec<issue::Model> = match issues_sel
         .order_by_asc(Expr::cust("sort_number IS NULL"))
         .order_by_asc(issue::Column::SortNumber)
         .order_by_asc(issue::Column::Id)

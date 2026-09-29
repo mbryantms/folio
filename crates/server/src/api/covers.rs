@@ -18,7 +18,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use entity::{issue, issue_cover, library_user_access};
+use entity::{issue, issue_cover};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 use serde::Serialize;
 use utoipa_axum::router::OpenApiRouter;
@@ -94,7 +94,7 @@ pub async fn list_issue_covers(
     else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, issue_row.library_id).await {
+    if !crate::library::access::issue_visible(&app, &user, &issue_row).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -148,20 +148,6 @@ pub async fn list_issue_covers(
         fallback_primary_url: format!("/issues/{}/pages/0/thumb", urlencode(&id)),
     })
     .into_response()
-}
-
-async fn user_can_see_library(app: &AppState, user: &CurrentUser, lib_id: Uuid) -> bool {
-    if user.role == "admin" {
-        return true;
-    }
-    library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .filter(library_user_access::Column::LibraryId.eq(lib_id))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
 }
 
 fn urlencode(s: &str) -> String {

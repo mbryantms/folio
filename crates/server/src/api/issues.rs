@@ -11,7 +11,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use entity::{issue, library, library_health_issue, library_user_access, series};
+use entity::{issue, library, library_health_issue, series};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DbBackend, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, Set, Statement, Value, sea_query::Expr,
@@ -122,7 +122,7 @@ pub async fn get_one(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
     // PERF-8: the rating, parent-series direction, library row, and
@@ -290,7 +290,7 @@ pub async fn metadata_overview(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -665,7 +665,7 @@ pub async fn update(
         Err(resp) => return resp,
     };
     let id = row.id.clone();
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -1064,7 +1064,7 @@ pub async fn clear_field_pin(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
     // Also drop the field from `issue.user_edited` — the JSON list the
@@ -1250,7 +1250,7 @@ pub async fn next_in_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
     let limit = q.limit.unwrap_or(5).clamp(1, 20);
@@ -1337,7 +1337,7 @@ pub async fn prev_in_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -1416,7 +1416,7 @@ pub async fn list_issue_health(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -1673,7 +1673,7 @@ pub async fn bulk_metadata(
     let mode_skip_if_set = matches!(req.mode, BulkMode::SkipIfSet);
 
     for row in rows {
-        if !visible_in_library(&app, &user, row.library_id).await {
+        if !access::issue_visible(&app, &user, &row).await {
             forbidden += 1;
             continue;
         }
@@ -2033,6 +2033,11 @@ fn apply_issue_visibility(
         select = select.filter(
             issue::Column::LibraryId.is_in(visible.allowed.iter().copied().collect::<Vec<_>>()),
         );
+    }
+    // WP-2.7: age-rating cap — the issue's own rating, falling back to the
+    // series rating (unrated rows pass, see `library::age_rating`).
+    if let Some(cap) = visible.issue_cap_condition() {
+        select = select.filter(cap);
     }
     Some(select)
 }
@@ -2640,6 +2645,9 @@ pub async fn search(
         let ids: Vec<Uuid> = visible.allowed.iter().copied().collect();
         sel = sel.filter(issue::Column::LibraryId.is_in(ids));
     }
+    if let Some(cap) = visible.issue_cap_condition() {
+        sel = sel.filter(cap);
+    }
     let rows = match sel.all(&app.db).await {
         Ok(v) => v,
         Err(e) => {
@@ -2749,20 +2757,6 @@ async fn fetch_issue_snippets(
 }
 
 // ───── helpers ─────
-
-async fn visible_in_library(app: &AppState, user: &CurrentUser, lib_id: Uuid) -> bool {
-    if user.role == "admin" {
-        return true;
-    }
-    library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .filter(library_user_access::Column::LibraryId.eq(lib_id))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
-}
 
 /// Map a string key from `issue.user_edited` JSON to its
 /// corresponding [`MetadataField`] variant. Returns `None` for keys
