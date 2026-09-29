@@ -46,6 +46,7 @@ config.
 | `observability.log_level` | `/admin/server` → Diagnostics | Live via `tracing_subscriber::reload::Handle`. |
 | `cache.zip_lru_capacity` | `/admin/server` → Caching | **Applies on next restart** (LRU sized at boot). |
 | `workers.{scan_count,post_scan_count,scan_batch_size,scan_hash_buffer_kb,archive_work_parallel,thumb_inline_parallel}` | `/admin/server` → Workers | **Applies on next restart** (apalis pool size fixed at startup). |
+| `metadata.comicvine.{api_key,enabled}`, `metadata.metron.{api_token,username,password,enabled}` | `/admin/metadata` → Providers | Live — provider clients are built per job/request from the current `Config`. `api_token` (secret, `Bearer`) is preferred over the username/password pair when set (WP-2.9). Env bootstrap: `COMIC_COMICVINE_API_KEY`, `COMIC_METRON_API_TOKEN`, `COMIC_METRON_USERNAME`, `COMIC_METRON_PASSWORD`. |
 
 ### Precedence (D1)
 

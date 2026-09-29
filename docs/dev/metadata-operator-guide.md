@@ -12,9 +12,13 @@ things misbehave.
      from your profile. Rate limit: 200 requests/hour, max 1
      request/second (Folio honors both via the per-provider token
      bucket).
-   - **Metron**: free; create an account at <https://metron.cloud/>
-     and use your username + password (HTTP Basic). Rate limit:
-     30 requests/minute, 5000 requests/day.
+   - **Metron**: free; create an account at <https://metron.cloud/>,
+     then generate a token under **API Tokens** on your account page
+     and paste it as the *API token*. Username + password (HTTP
+     Basic) still work as a fallback but Metron is phasing Basic auth
+     out (see [Metron token auth](#metron-token-auth-limits-and-the-budget-bar)).
+     Rate limit: 20 requests/minute (burst) + 5,000 requests/day
+     (sustained; higher for OpenCollective supporters).
 
 2. **Plug them in.** `/admin/metadata` → **Providers** tab. Paste
    the credentials + flip the master toggle on. The "Test" button
@@ -43,8 +47,9 @@ through `/admin/metadata` → **Settings** tab (or via
 |---|---|---|---|
 | `metadata.comicvine.api_key` | secret | — | AEAD-sealed at rest. Trim whitespace on paste (CV rejects keys with trailing newlines as "Invalid API Key"). |
 | `metadata.comicvine.enabled` | bool | false | Master toggle. Search + apply skip CV when off. |
-| `metadata.metron.username` | string | — | HTTP Basic username. |
-| `metadata.metron.password` | secret | — | AEAD-sealed at rest. |
+| `metadata.metron.api_token` | secret | — | **Preferred.** `Authorization: Bearer <token>`; generated under *API Tokens* on the metron.cloud account page. AEAD-sealed at rest; trimmed on save. When set, the username/password pair is ignored. |
+| `metadata.metron.username` | string | — | HTTP Basic username — fallback when no token is set. |
+| `metadata.metron.password` | secret | — | AEAD-sealed at rest. Fallback with the username. |
 | `metadata.metron.enabled` | bool | false | Master toggle. |
 
 ### Weekly refresh + staleness (`/admin/metadata` → Settings)
@@ -100,10 +105,52 @@ queue.
 UI: series page → Actions → Pause auto-sync.
 API: `POST /api/series/{slug}/metadata/pause`.
 
+### Metron token auth, limits, and the budget bar
+
+Verified against Metron's own docs on 2026-09-29
+(`api/README.md` + `api/RATELIMIT.md` in
+<https://github.com/Metron-Project/metron>, the
+[March 2026 update](https://metron-project.github.io/blog/march-2026-update)
+and the
+[token-auth announcement](https://metron-project.github.io/blog/token-authentication)):
+
+- **Auth.** `Authorization: Bearer <token>`, token generated under
+  *API Tokens* on the account page. Basic auth still works but is on
+  a phased deprecation path upstream. Folio sends the token when
+  `metadata.metron.api_token` is set and falls back to Basic only when
+  it isn't. The **Test** button exercises whichever one is configured.
+- **Limits.** 20 requests/minute (burst) + 5,000 requests/day
+  (sustained) per account; supporters get a higher sustained limit.
+  Folio's local buckets sit at the base figures as a pre-flight; the
+  *real* remaining budget comes from the `X-RateLimit-{Burst,Sustained}-
+  {Limit,Remaining,Reset}` headers Metron returns on every response
+  (`Reset` is a Unix timestamp), which Folio stores after each call.
+- **Budget bar.** `/admin/metadata` → Providers shows, per provider,
+  a bar for the headline window — Metron's daily budget as last
+  reported upstream (or the local day bucket before the first call),
+  ComicVine's local 200/h bucket (CV sends no budget headers) — plus
+  the reset countdown and the last provider error. The Fetch-metadata
+  dialog adds a one-line "Metron: 812 of 5,000 requests left today"
+  note once a provider is under 20%.
+- **429s** honour the upstream `Retry-After` (seconds or HTTP-date)
+  instead of a fixed 60 s; 5xx and transport errors are retried up to
+  3 times with jittered backoff (200 ms → 5 s) before the run parks.
+- **Conditional requests.** Metron's *detail* endpoints send
+  `Last-Modified` (some also `ETag`); Folio stores the validator with
+  the cached payload and re-validates an expired row with
+  `If-Modified-Since` / `If-None-Match`, so an unchanged series or
+  issue costs a `304` (still one request against the budget) instead
+  of a download. General list endpoints don't support conditional
+  requests upstream, so searches are always full fetches.
+- **Cover hashes are cached.** Candidate cover pHashes are kept for 30
+  days per image URL (`metadata_cover_hash`), so re-running a search
+  doesn't re-download the same covers.
+
 ### Quota exhaustion
 
-When a provider hits its hour or day limit, the orchestrator marks
-the run `awaiting_quota` + records `resume_after`. The dialog renders
+When a provider hits its minute, hour or day limit, the orchestrator
+marks the run `awaiting_quota` + records `resume_after` from the
+upstream `Retry-After` when one was sent. The dialog renders
 "Providers are out of quota — try again shortly" instead of
 "failed". The token bucket refills on the provider's own schedule
 (CV: hourly window; Metron: minute + day windows). No operator
@@ -112,8 +159,8 @@ action needed.
 If you're hitting quota constantly:
 1. **Disable the lower-priority provider.** ComicVine has the
    tighter rate cap (200/hr) and richer dataset; Metron is faster
-   (30/min × 60 = 1800/hr) but has narrower coverage. If you don't
-   need both, turn one off.
+   (20/min × 60 = 1200/hr, 5,000/day) but has narrower coverage. If
+   you don't need both, turn one off.
 2. **Reduce weekly_refresh_window_days** so fewer series fall into
    the "recent" scope each weekly run.
 3. **Bump stale_after_days higher** so the long-tail catch-up sweep
@@ -276,6 +323,16 @@ fan-out counts) — grep server logs for `metadata weekly refresh`.
 Cron-string changes need a server restart; the enable toggle is
 live. If you flipped the cron-string and the new schedule isn't
 firing, restart the server.
+
+### "provider rejected credentials" from Metron
+
+- Token: re-check it under *API Tokens* on metron.cloud — revoked
+  tokens 401 immediately. Paste again; Folio trims whitespace.
+- Basic fallback: only used when the token field is empty. If you set
+  a token, the username/password pair is ignored entirely, so a stale
+  password can't be the cause.
+- The Providers card shows the last error with its timestamp, cleared
+  by the next successful call.
 
 ### Covers won't load in the MetadataMatchDialog
 
