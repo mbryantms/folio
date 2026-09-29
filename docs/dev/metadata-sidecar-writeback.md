@@ -117,7 +117,12 @@ takes pre-serialized XML strings and performs the atomic swap:
    validate-before-swap step is the safety net, so the original is never
    replaced by a corrupt rewrite, and the library doesn't transiently
    double in size from full-size backups. `1..=5` keep that many
-   rollback slots (pruned after `archive_backup_retain_days`).
+   rollback slots. A daily sweep
+   ([`jobs/backup_prune.rs`](../../crates/server/src/jobs/backup_prune.rs),
+   04:45 UTC) walks every library with `allow_archive_writeback = true`
+   and deletes `.bak` / `.bak.N` files whose mtime is older than
+   `archive_backup_retain_days` (default 30; `0` = keep forever), then
+   records one `archive.removed` library event per swept library.
 5. **Invalidate caches**: zip-LRU drops the entry; thumbnail stamps
    (`thumbnails_generated_at = NULL`, `thumbnail_version = 0`) clear
    so the catch-up sweep regenerates them on the next post-scan pass.

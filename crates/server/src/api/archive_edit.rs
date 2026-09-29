@@ -6,8 +6,10 @@
 //! work or perform the swap directly; the actual byte rewrite runs in
 //! [`crate::jobs::archive_edit`].
 //!
-//! v1 supports **CBZ only**. CBT lands in M4, CBR (via convert-to-CBZ) in
-//! M6; until then non-CBZ issues get a friendly 422.
+//! Supported containers: **CBZ**, **CBT** (rewritten in place as tar) and
+//! **CBR** (converted to a sibling `.cbz`; the original is kept as
+//! `.cbr.bak`) — see `EditFormat` in [`crate::jobs::archive_edit`]. Any
+//! other extension gets a friendly 422.
 
 use axum::{
     Extension, Json,

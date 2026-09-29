@@ -27,8 +27,11 @@
 //! v1 keeps a single `.bak` per archive (overwritten on each rewrite).
 //! Per-library `archive_backup_retain_count` controls how many older
 //! slots (`.bak.1`, `.bak.2`, …) are also retained — capped at 5. The
-//! daily prune cron (sister plan M8) walks `.bak*` files older than
-//! `library.archive_backup_retain_days` and removes them.
+//! daily backup sweep ([`crate::jobs::backup_prune`], 04:45 UTC) walks
+//! each writeback-enabled library root for `.bak` / `.bak.N` files
+//! (see [`is_backup_name`]) whose mtime is older than
+//! `library.archive_backup_retain_days` and removes them; `0` keeps
+//! backups forever.
 
 pub mod mutex;
 
@@ -280,6 +283,21 @@ where
 /// re-deriving the naming scheme.
 pub fn backup_slot(target: &Path, slot: i32) -> PathBuf {
     backup_slot_path(target, slot)
+}
+
+/// Whether `name` is a backup file this module produces: `<original>.bak`
+/// (slot 0) or `<original>.bak.<n>` (slots 1+, numeric suffix only). The
+/// inverse of [`backup_slot`] — shared by the backup-storage rollup card
+/// and the retention sweep so both agree on what counts as a backup.
+pub fn is_backup_name(name: &str) -> bool {
+    if name.ends_with(".bak") {
+        return true;
+    }
+    if let Some(idx) = name.rfind(".bak.") {
+        let suffix = &name[idx + 5..];
+        return !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit());
+    }
+    false
 }
 
 /// Restore the most recent backup (`<target>.bak`) over `target` — the
