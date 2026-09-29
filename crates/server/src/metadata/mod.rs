@@ -35,6 +35,7 @@ pub mod field;
 pub mod http;
 pub mod identifier;
 pub mod lookup;
+pub mod manual_writeback;
 pub mod match_outcome;
 pub mod matcher;
 pub mod merge;

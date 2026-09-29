@@ -201,6 +201,32 @@ Steps 2–5 cover the two failure classes that used to be silent: a
 refused format never reaches the job, and a failed rewrite is audited
 (`archive.errored` library event) without any of step 10.
 
+## Manual edits (roadmap WP-2.10)
+
+Hand edits take the same path as provider applies. When a library has both
+writeback flags on, `PATCH /series/{slug}/issues/{issue_slug}`, the bulk
+metadata endpoint, and `PATCH /series/{slug}` (identity fields only: name,
+year, volume, publisher, imprint, age rating, issue count, language) call
+[`metadata::manual_writeback`](../../crates/server/src/metadata/manual_writeback.rs)
+after their row + provenance transaction commits:
+
+- the sidecars are composed from the **database alone** (empty provider
+  payload — the composer's DB-wins path, shared with the drift flush);
+- one `RewriteIssueSidecarsJob` is queued per issue with `post_apply =
+  None` (the handler already wrote the user pins) and the editor as the
+  audit actor; the series edit fans out one job per active issue with
+  `skip_rescan = true` and then coalesces a single series-scoped rescan,
+  exactly like `apply_series_via_sidecar`;
+- `sidecar_refusal` (CBR without conversion, unsupported formats) skips the
+  file; the database keeps the edit and drift surfacing covers the gap;
+- the handler never fails on an enqueue error — the outcome lands on the
+  audit row as `sidecar_rewrite` (`enqueued`, `not_writeback`, `refused: …`).
+
+The scoped rescan re-ingests the XML; the user's `field_provenance` pins
+(and the WP-2.5 tier gate) keep the values through it. Quick successive
+edits queue one job each; the per-issue rewrite mutex serialises them and
+the last one carries the final state.
+
 ## Series-scope fan-out
 
 Series-scope apply ([`apply_series_via_sidecar`](../../crates/server/src/metadata/apply.rs))
