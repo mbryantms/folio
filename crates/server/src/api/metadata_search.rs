@@ -212,6 +212,10 @@ pub struct ProviderQuotaView {
     pub remaining_day: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seconds_until_reset: Option<u64>,
+    /// Headline upstream budget (WP-2.9) — the dialog shows a
+    /// "N of M requests left today" note when it drops under 20%.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget: Option<crate::metadata::budget::RequestBudget>,
 }
 
 /// Quota state attached to a finalized run (audit B13).
@@ -3690,12 +3694,14 @@ async fn build_quota_state(app: &AppState, run: &metadata_run::Model) -> Option<
     let providers = orchestrator::build_providers(&app.cfg(), app.jobs.redis.clone());
     let mut views = Vec::with_capacity(providers.len());
     for p in &providers {
+        let budget = crate::metadata::budget::for_provider(&app.jobs.redis, p.id()).await;
         match p.quota().await {
             Ok(snap) => views.push(ProviderQuotaView {
                 provider: snap.provider.as_str().to_owned(),
                 remaining_hour: snap.remaining_hour,
                 remaining_day: snap.remaining_day,
                 seconds_until_reset: snap.seconds_until_reset,
+                budget,
             }),
             // A Redis hiccup shouldn't drop the provider — report it with
             // no numbers so the dialog still knows it's configured.
@@ -3704,6 +3710,7 @@ async fn build_quota_state(app: &AppState, run: &metadata_run::Model) -> Option<
                 remaining_hour: None,
                 remaining_day: None,
                 seconds_until_reset: None,
+                budget,
             }),
         }
     }

@@ -784,6 +784,10 @@ export type MatchQualityResp = Schemas["MatchQualityResp"];
 export type MatchQualityWindow = Schemas["MatchQualityWindow"];
 export type ProviderView = Schemas["ProviderView"];
 export type QuotaView = Schemas["QuotaView"];
+// WP-2.9 provider budget bar
+export type RequestBudget = Schemas["RequestBudget"];
+export type BudgetWindow = Schemas["BudgetWindow"];
+export type ProviderLastError = Schemas["ProviderLastError"];
 export type RunsListResp = Schemas["RunsListResp"];
 export type RunRow = Schemas["RunRow"];
 export type RunDetailResp = Schemas["RunDetailResp"];

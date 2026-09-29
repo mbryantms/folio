@@ -467,3 +467,73 @@ async fn auto_synced_lists_only_unpaused_active_series() {
     assert_eq!(series[0]["name"], "Saga");
     assert!(series[0]["library_name"].as_str().is_some());
 }
+
+// ───────── WP-2.9: token auth + budget bar ─────────
+
+#[tokio::test]
+async fn list_providers_token_only_metron_is_configured_with_budget() {
+    let app = TestApp::spawn_with_metron_token("tok", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let resp = get(&app, &admin, "/api/admin/metadata/providers").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let providers = body["providers"].as_array().expect("providers");
+    let metron = providers
+        .iter()
+        .find(|p| p["id"] == "metron")
+        .expect("metron row");
+    assert_eq!(metron["configured"], true);
+    assert_eq!(metron["enabled"], true);
+    // Budget falls back to the local day bucket until Metron has
+    // reported its headers.
+    assert_eq!(metron["budget"]["window"], "day");
+    assert_eq!(metron["budget"]["limit"], 5000);
+    assert!(metron["budget"]["remaining"].is_number());
+    assert!(metron["budget"]["reset_at"].is_string());
+    assert!(metron["last_error"].is_null());
+
+    // ComicVine unconfigured here: no budget, no error.
+    let cv = providers
+        .iter()
+        .find(|p| p["id"] == "comicvine")
+        .expect("cv row");
+    assert!(cv["budget"].is_null());
+}
+
+#[tokio::test]
+async fn list_providers_budget_reflects_upstream_headers_and_last_error() {
+    use server::metadata::budget::{self, BudgetWindow, RequestBudget};
+    let app = TestApp::spawn_with_providers("k", "u", "p").await;
+    let redis = app.state().jobs.redis.clone();
+    budget::store(
+        &redis,
+        server::metadata::identifier::Source::Metron,
+        vec![RequestBudget {
+            limit: 5000,
+            remaining: 812,
+            reset_at: chrono::Utc::now() + chrono::Duration::hours(3),
+            window: BudgetWindow::Day,
+        }],
+    )
+    .await;
+    budget::record_error(
+        &redis,
+        server::metadata::identifier::Source::ComicVine,
+        "provider error: HTTP 503",
+    )
+    .await;
+
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let resp = get(&app, &admin, "/api/admin/metadata/providers").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let providers = body["providers"].as_array().expect("providers");
+    let metron = providers.iter().find(|p| p["id"] == "metron").unwrap();
+    assert_eq!(metron["budget"]["remaining"], 812);
+    assert_eq!(metron["budget"]["window"], "day");
+    let cv = providers.iter().find(|p| p["id"] == "comicvine").unwrap();
+    assert_eq!(cv["budget"]["window"], "hour");
+    assert_eq!(cv["budget"]["limit"], 200);
+    assert_eq!(cv["last_error"]["message"], "provider error: HTTP 503");
+    assert!(cv["last_error"]["at"].is_string());
+}

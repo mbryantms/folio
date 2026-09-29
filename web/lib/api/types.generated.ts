@@ -4807,6 +4807,11 @@ export interface components {
             series_created: number;
         };
         /**
+         * @description Refill window a budget figure applies to.
+         * @enum {string}
+         */
+        BudgetWindow: "minute" | "hour" | "day";
+        /**
          * @description Body for `POST /me/collections/{id}/members/bulk-add`. Each
          *     member follows the same `(entry_kind, ref_id)` shape as the
          *     single-add endpoint. Multi-select toolbar (`<SelectionToolbar>`'s
@@ -8283,6 +8288,12 @@ export interface components {
         ProviderCoverageResp: {
             providers: components["schemas"]["ProviderCoverage"][];
         };
+        /** @description The most recent provider error, for the admin card. */
+        ProviderLastError: {
+            /** Format: date-time */
+            at: string;
+            message: string;
+        };
         /**
          * @description Per-provider remaining-quota view for the match dialog (audit B13).
          *     Mirrors `crate::metadata::provider::QuotaSnapshot`; ComicVine carries
@@ -8290,6 +8301,7 @@ export interface components {
          *     and day buckets.
          */
         ProviderQuotaView: {
+            budget?: components["schemas"]["RequestBudget"] | null;
             /** @description `"comicvine"` | `"metron"`. */
             provider: string;
             /** Format: int32 */
@@ -8324,6 +8336,7 @@ export interface components {
             series_id: string;
         };
         ProviderView: {
+            budget?: components["schemas"]["RequestBudget"] | null;
             /**
              * @description `true` when the credential is set but the master toggle is off
              *     — UI surfaces a "Enable to test" hint in that state.
@@ -8337,6 +8350,7 @@ export interface components {
             /** @description Stable identifier — `"comicvine"` | `"metron"` (M2). */
             id: string;
             label: string;
+            last_error?: components["schemas"]["ProviderLastError"] | null;
             quota?: components["schemas"]["QuotaView"] | null;
         };
         ProvidersListResp: {
@@ -8745,6 +8759,19 @@ export interface components {
              *     reorders would leave gaps in `position`.
              */
             ids: string[];
+        };
+        /**
+         * @description One window's budget: how many requests the provider allows, how many
+         *     are left, and when the counter resets.
+         */
+        RequestBudget: {
+            /** Format: int32 */
+            limit: number;
+            /** Format: int32 */
+            remaining: number;
+            /** Format: date-time */
+            reset_at: string;
+            window: components["schemas"]["BudgetWindow"];
         };
         RequestPasswordResetReq: {
             email: string;

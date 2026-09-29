@@ -10991,6 +10991,15 @@
           }
         }
       },
+      "BudgetWindow": {
+        "type": "string",
+        "description": "Refill window a budget figure applies to.",
+        "enum": [
+          "minute",
+          "hour",
+          "day"
+        ]
+      },
       "BulkAddMembersReq": {
         "type": "object",
         "description": "Body for `POST /me/collections/{id}/members/bulk-add`. Each\nmember follows the same `(entry_kind, ref_id)` shape as the\nsingle-add endpoint. Multi-select toolbar (`<SelectionToolbar>`'s\n\"Add to collection…\" action) builds this from the user's\n`selectedIds` set.\n\nPlan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M3).",
@@ -19497,6 +19506,23 @@
           }
         }
       },
+      "ProviderLastError": {
+        "type": "object",
+        "description": "The most recent provider error, for the admin card.",
+        "required": [
+          "message",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
       "ProviderQuotaView": {
         "type": "object",
         "description": "Per-provider remaining-quota view for the match dialog (audit B13).\nMirrors `crate::metadata::provider::QuotaSnapshot`; ComicVine carries\nonly the hour bucket, Metron carries both the minute (`remaining_hour`)\nand day buckets.",
@@ -19504,6 +19530,17 @@
           "provider"
         ],
         "properties": {
+          "budget": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RequestBudget",
+                "description": "Headline upstream budget (WP-2.9) — the dialog shows a\n\"N of M requests left today\" note when it drops under 20%."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "provider": {
             "type": "string",
             "description": "`\"comicvine\"` | `\"metron\"`."
@@ -19630,6 +19667,17 @@
           "configured"
         ],
         "properties": {
+          "budget": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RequestBudget",
+                "description": "Headline request budget (WP-2.9): what the upstream reported on\nits last response (Metron's daily window) or, for ComicVine, the\nlocal hourly bucket. `None` when unconfigured or unknown."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "configured": {
             "type": "boolean",
             "description": "`true` when the credential is set but the master toggle is off\n— UI surfaces a \"Enable to test\" hint in that state."
@@ -19644,6 +19692,17 @@
           },
           "label": {
             "type": "string"
+          },
+          "last_error": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProviderLastError",
+                "description": "Most recent provider error, cleared on the next successful call."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "quota": {
             "oneOf": [
@@ -20632,6 +20691,35 @@
               "type": "string"
             },
             "description": "Full set of widget ids in the new order. Server rejects when\nthe set doesn't match the user's owned ids exactly — partial\nreorders would leave gaps in `position`."
+          }
+        }
+      },
+      "RequestBudget": {
+        "type": "object",
+        "description": "One window's budget: how many requests the provider allows, how many\nare left, and when the counter resets.",
+        "required": [
+          "limit",
+          "remaining",
+          "reset_at",
+          "window"
+        ],
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "remaining": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "reset_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "window": {
+            "$ref": "#/components/schemas/BudgetWindow"
           }
         }
       },
