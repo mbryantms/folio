@@ -31,6 +31,17 @@ let candidatesState = {
           top_hamming?: number;
           matched_via_alternate: boolean;
         };
+        query?: {
+          kind: string;
+          name: string;
+          year?: number;
+          publisher?: string;
+          issue_number?: string;
+          label: string;
+          overridden: boolean;
+          year_gate_relaxed: boolean;
+          lookup: boolean;
+        };
       },
 };
 
@@ -47,6 +58,32 @@ let candidatesState = {
 // asserts the polling state, not the resolution).
 vi.mock("@/lib/api/mutations", () => ({
   apiMutate: () => new Promise(() => {}),
+  // WP-2.8 query tools (override search + provider-URL lookup) — click
+  // driven, never fired during a static render.
+  useSearchMetadataForSeries: () => ({
+    mutateAsync: async () => ({ run_id: "r-override", coalesced: false }),
+    isPending: false,
+  }),
+  useSearchMetadataForIssue: () => ({
+    mutateAsync: async () => ({ run_id: "r-override", coalesced: false }),
+    isPending: false,
+  }),
+  useLookupMetadataForSeries: () => ({
+    mutateAsync: async () => ({
+      run_id: "r-lookup",
+      source: "comicvine",
+      external_id: "1",
+    }),
+    isPending: false,
+  }),
+  useLookupMetadataForIssue: () => ({
+    mutateAsync: async () => ({
+      run_id: "r-lookup",
+      source: "comicvine",
+      external_id: "1",
+    }),
+    isPending: false,
+  }),
   useApplyMetadataForSeries: () => ({
     mutate: () => undefined,
     isPending: false,
@@ -519,6 +556,111 @@ describe("<MetadataMatchForm>", () => {
     expect(html).not.toContain("Multiple strong matches");
     expect(html).not.toContain("One plausible match");
     expect(html).toContain("No matches");
+    // WP-2.8: the dead end offers the escape hatches instead of
+    // "edit the series".
+    expect(html).toContain("Adjust the query below");
+    expect(html).toContain("Adjust query");
+    expect(html).toContain("Paste provider URL");
+    expect(html).not.toContain("editing the series name");
+  });
+
+  it("explains a relaxed year gate and the overridden query (WP-2.8)", () => {
+    candidatesState = {
+      data: {
+        status: "completed",
+        providers: ["comicvine"],
+        error_summary: null,
+        candidates: [
+          {
+            source: "comicvine",
+            external_id: "900",
+            bucket: "high",
+            score: 88,
+            candidate: {
+              kind: "series",
+              name: "Saga",
+              year: 2015,
+              publisher: "Image Comics",
+            },
+          },
+        ],
+        match_outcome: {
+          kind: "single_good",
+          top_hamming: 0,
+          matched_via_alternate: false,
+        },
+        query: {
+          kind: "series",
+          name: "Saga Deluxe",
+          year: 2010,
+          publisher: "Image Comics",
+          label: "Saga Deluxe",
+          overridden: true,
+          year_gate_relaxed: true,
+          lookup: false,
+        },
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(MetadataMatchForm, {
+        scope: {
+          kind: "series" as const,
+          seriesSlug: "saga",
+          libraryId: "lib-fixture",
+        },
+        onClose: () => undefined,
+        open: true,
+      }),
+    );
+    expect(html).toContain("Year gate relaxed");
+    expect(html).toContain("different volume");
+    expect(html).toContain("Searched as");
+    expect(html).toContain("Saga Deluxe");
+    expect(html).toContain("(2010)");
+    expect(html).not.toContain("Fetched directly from");
+  });
+
+  it("labels a lookup run as fetched directly (WP-2.8)", () => {
+    candidatesState = {
+      data: {
+        status: "completed",
+        providers: ["metron"],
+        error_summary: null,
+        candidates: [
+          {
+            source: "metron",
+            external_id: "1234",
+            bucket: "high",
+            score: 100,
+            candidate: { kind: "series", name: "Saga", year: 2012 },
+          },
+        ],
+        match_outcome: { kind: "single_good", matched_via_alternate: false },
+        query: {
+          kind: "series",
+          name: "Saga",
+          label: "Saga",
+          overridden: false,
+          year_gate_relaxed: false,
+          lookup: true,
+        },
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(MetadataMatchForm, {
+        scope: {
+          kind: "series" as const,
+          seriesSlug: "saga",
+          libraryId: "lib-fixture",
+        },
+        onClose: () => undefined,
+        open: true,
+      }),
+    );
+    expect(html).toContain("Fetched directly from");
+    expect(html).toContain("metron");
+    expect(html).not.toContain("Year gate relaxed");
+    expect(html).not.toContain("Searched as");
   });
 
   it("surfaces the admin-only override toggle", () => {

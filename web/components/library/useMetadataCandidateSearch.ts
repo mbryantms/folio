@@ -55,6 +55,10 @@ export interface MetadataCandidateSearch {
    *  responsible for resetting its own form state (compare/preview/seed)
    *  around this call. */
   researchFromScratch: () => void;
+  /** Adopt a run created elsewhere (WP-2.8: an override search or a
+   *  provider-URL lookup fired from `<MetadataQueryTools>`). Points the
+   *  candidate query at it and clears any prior search error. */
+  adoptRun: (runId: string) => void;
 }
 
 export function useMetadataCandidateSearch({
@@ -212,6 +216,17 @@ export function useMetadataCandidateSearch({
     runSearch();
   }, [runSearch]);
 
+  const adoptRun = React.useCallback(
+    (id: string) => {
+      setSearchError(null);
+      setSearchErrorCode(null);
+      setReused(false);
+      setRunId(id);
+      qc.invalidateQueries({ queryKey: candidatesInvalidateKey });
+    },
+    [qc, candidatesInvalidateKey],
+  );
+
   return {
     runId,
     searchPending,
@@ -219,5 +234,6 @@ export function useMetadataCandidateSearch({
     searchErrorCode,
     reused,
     researchFromScratch,
+    adoptRun,
   };
 }
