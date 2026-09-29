@@ -145,7 +145,7 @@ Exit: every promise in `docs/features.md` and `docs/install/*.md` is true or rem
 
 Exit: any scanner mistake is fixable in-app; hand edits reach the archive safely when writeback is on and never touch files when it is off; kids' caps are enforced everywhere; user data can be exported in one file; provider calls are budget-aware.
 
-**Status (2026-09-29): started.** Order chosen around the unmerged M1 PRs: 2.1, 2.4, 2.7, 2.8, 2.9 first (independent of M1); 2.3 (needs #877), 2.5 (touches the scanner hook from #880), 2.6 (touches `archive_rewrite` from #883) and 2.10 (needs 2.3 + 2.6) after M1 merges.
+**Status (2026-09-29): eight of nine WPs implemented, in review.** PRs: 2.1 #887 · 2.3 #886 · 2.4 #885 · 2.5 #888 · 2.6 #892 · 2.7 #890 (`breaking-change`: the grant view loses `role`) · 2.8 #891 · 2.9 #889. **2.10 waits** for #886 and #892 to merge (it changes the same handler and job files). Merge notes: #889 and #890 both add a migration under the `m20270123_000001` prefix and both append to `crates/migration/src/lib.rs`, so the second to merge needs a rebase; #892 also adds `m20270202_000001` and touches 44 test files' issue literals. Findings from implementation: #891 fixed a pre-existing bug where the direct apply wrote a publisher's ComicVine id onto the series; #890 fixed a 500 in `/api/people` for restricted users; Metron token auth is `Authorization: Bearer` and conditional requests exist only on detail endpoints (#889); the export carries `run` (#887).
 
 | WP | Title | Effort | Audit | Scope | Files | Done when |
 |---|---|---|---|---|---|---|
@@ -269,5 +269,5 @@ None. Every audit item is now either scheduled (§5) or confirmed excluded (§2)
 ## 9. Decision history
 
 - 2026-09-29: D1–D10 answered; D3, D4, D5 settled per §3.1–§3.3 (reading-run model with silent follow; both clean-files rules; `curator` removed).
-- 2026-09-29: M2 started; WP-2.2 (user-data import) removed at the owner's request.
+- 2026-09-29: M2 started; WP-2.2 (user-data import) removed at the owner's request. Eight of nine M2 WPs opened as #885–#892 the same day; 2.10 pending merges.
 - 2026-09-29: exclusion list ruled on. Pulled back in and planned: relationship suggestion engine (M7), similar series (WP-7.4), GCD provider (WP-6.1), page-hash marker anchoring (WP-6.2). All other proposed exclusions confirmed excluded. An earlier edit the same day had these four backwards; corrected.
