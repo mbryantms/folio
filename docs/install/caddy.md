@@ -34,6 +34,11 @@ restart Caddy.
 }
 
 comics.example.com {
+    # Optional. The Rust origin already gzip/zstd-encodes `/api/*` JSON
+    # itself (tower-http CompressionLayer; page bytes, thumbnails, OPDS
+    # streams and WebSockets are never encoded). Caddy passes an already
+    # encoded response through untouched, so this only adds compression
+    # for the HTML / `_next` assets proxied from Next.js.
     encode zstd gzip
 
     # HSTS is the proxy's job; the rest of the security-header surface is

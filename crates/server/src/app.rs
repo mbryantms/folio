@@ -13,7 +13,9 @@ use axum::response::IntoResponse;
 use sea_orm::{ColumnTrait, ConnectOptions, Database, EntityTrait, PaginatorTrait, QueryFilter};
 use std::sync::Arc;
 use std::time::Duration;
+use tower_http::compression::CompressionLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::Level;
 use utoipa::OpenApi;
@@ -59,6 +61,17 @@ pub struct ApiDoc;
 /// `OpenApiRouter::from(axum::Router::from(...))` so its routes are live
 /// but its spec contribution is dropped; the `api`-group registration is
 /// the canonical spec entry.
+///
+/// **Per-group layers (WP-1.6 ops hygiene):** the `api` group is wrapped
+/// by [`with_json_layers`] — a [`TimeoutLayer`] ([`JSON_ROUTE_TIMEOUT`])
+/// and a [`CompressionLayer`] — *before* it is nested under `/api`. The
+/// `bare` group is deliberately left unwrapped: it carries the
+/// page-byte / thumbnail / OPDS-PSE / archive-download streams (which a
+/// handler-latency timeout must never cut short and which compression
+/// must never re-encode — Range + `Content-Length` semantics depend on
+/// the bytes going out verbatim) and the `/ws/*` upgrades. The
+/// `Router::fallback` proxy in [`router`] sits outside both groups, so
+/// its WebSocket passthrough is untouched too.
 pub fn build_openapi_router() -> OpenApiRouter<AppState> {
     let bare = OpenApiRouter::<AppState>::new()
         .merge(api::health::routes())
@@ -138,7 +151,49 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(api::provider_ranges::routes())
         .merge(api::covers::routes());
 
-    bare.nest("/api", api)
+    bare.nest("/api", with_json_layers(api, JSON_ROUTE_TIMEOUT))
+}
+
+/// Handler-latency budget for the JSON `api` group. tower-http's
+/// [`TimeoutLayer`] bounds the time until the response *head* is
+/// produced (not body streaming), so it caps a handler that is stuck on
+/// a lock / a slow query / an unresponsive metadata provider, and
+/// answers `408 Request Timeout` instead of holding the connection open
+/// indefinitely. Long-running work in this group is already dispatched
+/// to apalis jobs and returns `202` immediately (scans, deep-validate,
+/// metadata search/apply, archive edits), so 60 s is a ceiling nothing
+/// healthy approaches.
+pub const JSON_ROUTE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Wrap a JSON route group with the WP-1.6 tower layers.
+///
+/// Order: `.layer(A).layer(B)` makes `B` the outer layer, so requests
+/// pass **timeout → compression → handler**. The timeout is outermost so
+/// a `408` is produced by the layer that owns the deadline and never
+/// waits on compression; compression sits directly on the handler so
+/// it sees the handler's own headers.
+///
+/// Compression uses tower-http's `DefaultPredicate`: responses under
+/// 32 bytes, `image/*` (except SVG), gRPC and `text/event-stream` are
+/// never encoded, and a compressed response gets `Vary:
+/// Accept-Encoding` appended. A `304 Not Modified` has an empty body,
+/// so it passes through untouched and the handler-computed `ETag`
+/// round-trips unchanged — conditional GETs on JSON keep working.
+/// `Accept-Encoding` is honoured as sent (gzip / zstd per the enabled
+/// tower-http features); a client that sends none gets identity.
+///
+/// Generic over the state so the unit test can exercise the exact layer
+/// stack on a stateless router with a tiny timeout.
+pub fn with_json_layers<S>(router: OpenApiRouter<S>, timeout: Duration) -> OpenApiRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    router
+        .layer(CompressionLayer::new())
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            timeout,
+        ))
 }
 
 pub fn openapi_spec() -> utoipa::openapi::OpenApi {
@@ -604,5 +659,45 @@ mod tests {
             .unwrap();
         let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(v["error"]["code"], "internal");
+    }
+
+    /// WP-1.6: the exact layer stack `build_openapi_router` puts on the
+    /// `api` group, driven with a tiny deadline so the test stays cheap. A
+    /// handler that overruns gets `408`; one that finishes in time passes
+    /// through (and is compressible — the gzip path is covered end-to-end
+    /// in `tests/http_layers.rs` against the real router).
+    #[tokio::test]
+    async fn json_layers_time_out_slow_handlers() {
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        async fn slow() -> &'static str {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            "late"
+        }
+        async fn fast() -> &'static str {
+            "ok"
+        }
+        let inner = OpenApiRouter::<()>::from(
+            axum::Router::new()
+                .route("/slow", get(slow))
+                .route("/fast", get(fast)),
+        );
+        let (router, _) = with_json_layers(inner, Duration::from_millis(50)).split_for_parts();
+
+        let req = |path: &str| {
+            axum::http::Request::builder()
+                .uri(path)
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        let slow_resp = router.clone().oneshot(req("/slow")).await.unwrap();
+        assert_eq!(
+            slow_resp.status(),
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            "handler overrunning the deadline must be cut off with 408"
+        );
+        let fast_resp = router.oneshot(req("/fast")).await.unwrap();
+        assert_eq!(fast_resp.status(), axum::http::StatusCode::OK);
     }
 }

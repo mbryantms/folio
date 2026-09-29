@@ -133,7 +133,14 @@ Default admin (first registered user becomes admin):
     `Router::nest("/api", api)`. The `/api/` prefix is back as of
     v0.2.1 because many JSON endpoints share path shapes with Next
     pages (`/admin/users`, `/series/{slug}`, `/audit`, …) and would
-    otherwise collide with HTML routes.
+    otherwise collide with HTML routes. The `api` group alone is
+    wrapped by `app::with_json_layers` — `TimeoutLayer` (60 s,
+    `JSON_ROUTE_TIMEOUT`, 408 on overrun) + `CompressionLayer`
+    (gzip/zstd, skips `image/*` and <32-byte bodies). `bare` is
+    deliberately unwrapped so page-byte / thumbnail / OPDS-PSE /
+    archive-download streams and `/ws/*` upgrades are never timed
+    out or re-encoded; regression guards in
+    `crates/server/tests/http_layers.rs`.
   - Anything no explicit route claimed falls through
     `Router::fallback(crate::upstream::proxy)`, which streams the
     request to the Next.js SSR upstream at `cfg.web_upstream_url`
