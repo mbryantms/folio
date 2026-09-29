@@ -32,7 +32,7 @@ flowchart TD
     UI["Admin UI<br/><b>POST /libraries/:slug/scan</b>"]:::trig
     SR["UI<br/><b>POST /series/:id/scan</b>"]:::trig
     IR["UI<br/><b>POST /issues/:id/scan</b>"]:::trig
-    FW["File-watch<br/><i>notify, 30s debounce</i>"]:::trig
+    FW["File-watch<br/><i>planned — roadmap WP-3.1, not wired</i>"]:::trig
     SCH["Scheduler<br/><i>scan_schedule_cron</i>"]:::trig
     BOOT["Boot<br/><i>COMIC_SCAN_ON_STARTUP</i>"]:::trig
 
@@ -41,7 +41,7 @@ flowchart TD
     BOOT --> COAL
     SR --> SS["jobs/scan_series.rs<br/><b>JobKind::Series</b>"]
     IR --> SS2["jobs/scan_series.rs<br/><b>JobKind::Issue</b>"]
-    FW --> SS
+    FW -.->|not implemented| SS
 
     COAL --> SCAN["jobs/scan.rs::handle"]
     SS --> NARROW["scan_series_folder<br/>scanner/mod.rs:295"]:::phase
@@ -102,11 +102,11 @@ reconcile so unscanned siblings stay untouched.
 
 | Trigger | Endpoint / source | Notes |
 |---|---|---|
-| Manual library scan | `POST /libraries/{slug}/scan` ([api/libraries.rs:480](../../crates/server/src/api/libraries.rs#L480)) | 202 + `{ scan_id, state, coalesced, mode, coalesced_into, queued_followup, reason }`. `mode=normal | metadata_refresh | content_verify`; `?force=true` remains a content-verify alias. Coalesces on an existing in-flight scan. |
+| Manual library scan | `POST /libraries/{slug}/scan` ([api/libraries.rs:480](../../crates/server/src/api/libraries.rs#L480)) | 202 + `{ scan_id, state, coalesced, mode, coalesced_into, queued_followup, reason }`. `mode=normal | content_verify` (the `ScanMode` enum at [api/libraries.rs:392](../../crates/server/src/api/libraries.rs#L392) has only these two arms — there is no `metadata_refresh` mode); `?force=true` remains a content-verify alias. Coalesces on an existing in-flight scan. |
 | Manual series scan | `POST /series/{slug}/scan` | Per-folder rescan via [`jobs/scan_series.rs`](../../crates/server/src/jobs/scan_series.rs) with `JobKind::Series`. Manual clicks set `force=true`. |
 | Manual issue scan | `POST /series/{series_slug}/issues/{issue_slug}/scan` | Same job type, `JobKind::Issue` — runs [`scan_issue_file`](../../crates/server/src/library/scanner/mod.rs#L376). |
 | Scheduled scan | `library.scan_schedule_cron` per-library | [`jobs/scheduler.rs:224`](../../crates/server/src/jobs/scheduler.rs#L224) — `coalesce_scan(.., false)`. 5- or 6-field cron via `tokio_cron_scheduler`. |
-| File-watch | `notify-debouncer-full` (30 s window) | Per-library, only when `library.file_watch_enabled=true`. Enqueues `scan_series` jobs with `force=false`. |
+| File-watch | **Not implemented** (planned — roadmap WP-3.1) | There is no filesystem watcher: no `notify` dependency in any `Cargo.toml`, and nothing enqueues work on file events. `library.file_watch_enabled` is stored by [api/libraries.rs](../../crates/server/src/api/libraries.rs) but inert — it is only counted into `watchers_enabled` on `/admin/server/info` ([api/server_info.rs:74](../../crates/server/src/api/server_info.rs#L74)) and echoed by `scan-preview` as `watcher_status = enabled_unverified`. New files are picked up by the scheduled, startup, or manual triggers above. |
 | Startup scan | `COMIC_SCAN_ON_STARTUP=true` | Enqueues a full scan of every library at boot. |
 
 ## Phase walkthrough
@@ -260,9 +260,15 @@ without per-library configuration.
      batch still commits. Per-archive ingest is
      [`ingest_one_with_fingerprint`](../../crates/server/src/library/scanner/process.rs#L129),
      which handles:
-     - extension-based skip for `.cbr` / `.cb7` →
-       `UnsupportedArchiveFormat`
-       ([process.rs:185–192](../../crates/server/src/library/scanner/process.rs#L185-L192))
+     - extension dispatch for `.cbr` / `.cb7`
+       ([process.rs](../../crates/server/src/library/scanner/process.rs),
+       the `Some("cbr")` / `Some("cb7")` arms): `.cb7` is always
+       skipped with `UnsupportedArchiveFormat`; `.cbr` is converted
+       in place to a sibling `.cbz` (original kept as `.cbr.bak`) and
+       the `.cbz` ingested when the library has
+       `auto_convert_cbr_on_scan=true`
+       ([scanner/cbr_convert.rs](../../crates/server/src/library/scanner/cbr_convert.rs)),
+       otherwise skipped with the same health issue
      - blocking BLAKE3 hash + ComicInfo + MetronInfo parse on a
        semaphore-protected pool
        ([process.rs:197–210](../../crates/server/src/library/scanner/process.rs#L197-L210))
@@ -435,7 +441,7 @@ the DB:
 | # | Mechanism | Where | Skip predicate | Bypass |
 |---|---|---|---|---|
 | 1 | Folder mtime fast-path | [build_library_scan_plan mod.rs:707–744](../../crates/server/src/library/scanner/mod.rs#L707-L744), [enumerate.rs:123–161](../../crates/server/src/library/scanner/enumerate.rs#L123-L161) | `force=false` ∧ recursive max mtime ≤ `series.last_scanned_at` → mark folder `skipped_unchanged`, call `health.touch_folder`, return `processed=false`. | `?force=true` on `POST /libraries/:slug/scan`. |
-| 2 | Per-file size+mtime fingerprint | [process.rs:164–175](../../crates/server/src/library/scanner/process.rs#L164-L175), [mod.rs:1543–1554](../../crates/server/src/library/scanner/mod.rs#L1543-L1554) | `force=false` ∧ existing row's `(file_size, file_mtime)` match disk ∧ no `comicinfo_count` backfill needed → `files_unchanged++`, `health.touch_file`, skip hash + parse. | Same `force=true` from any tier; default `true` for manual series/issue scans, `false` for file-watch jobs. |
+| 2 | Per-file size+mtime fingerprint | [process.rs:164–175](../../crates/server/src/library/scanner/process.rs#L164-L175), [mod.rs:1543–1554](../../crates/server/src/library/scanner/mod.rs#L1543-L1554) | `force=false` ∧ existing row's `(file_size, file_mtime)` match disk ∧ no `comicinfo_count` backfill needed → `files_unchanged++`, `health.touch_file`, skip hash + parse. | Same `force=true` from any tier; default `true` for manual series/issue scans, `false` for scheduled / startup library scans. |
 | 3 | `comicinfo_count` backfill override | [process.rs:540–556](../../crates/server/src/library/scanner/process.rs#L540-L556) | When a row lacks both `comicinfo_count` and a raw `count` in `comic_info_raw`, treat the row as stale and force a re-ingest *even when* size+mtime match. | Inverts (1) — there is no bypass; the override fires automatically. |
 | 4 | Thumbnail invalidation skip | [process.rs:339, 411–428](../../crates/server/src/library/scanner/process.rs#L339) | On the update path, when `row_matches_file(row, size, mtime)` is true, skip clearing `thumbnails_generated_at` and skip wiping the strip dir. | None — this is always desired. |
 | 5 | Batch-rollback isolation | [mod.rs:1564–1616](../../crates/server/src/library/scanner/mod.rs#L1564-L1616) | One ingest failure rolls back its `scan_batch_size` chunk (default 100) and continues; the rest of the folder still commits. | None. |
@@ -443,7 +449,7 @@ the DB:
 | 7 | Health touch-on-skip | [mod.rs:1445](../../crates/server/src/library/scanner/mod.rs#L1445), [process.rs:173](../../crates/server/src/library/scanner/process.rs#L173) | Skipped files / folders call `health.touch_file` / `touch_folder` so the auto-resolve sweep does not close issues whose root cause is still on disk but wasn't re-emitted. | None. |
 | 8 | Per-scan series identity cache | [known_series_by_folder mod.rs:664–679](../../crates/server/src/library/scanner/mod.rs#L664-L679) | One `SELECT folder_path, id, last_scanned_at FROM series WHERE library_id = ?` at planning time; reused across every folder. Avoids N folder-by-folder lookups. | `force=true` still uses this cache; it only bypasses the mtime/content fast paths. |
 | 9 | In-memory live-progress tracker | [LiveProgressTracker mod.rs:182–274](../../crates/server/src/library/scanner/mod.rs#L182-L274), 750 ms heartbeat at [mod.rs:1216–1287](../../crates/server/src/library/scanner/mod.rs#L1216-L1287) | Atomic counters in memory; `scan_runs.stats` JSON is written only on actual progress changes or every 750 ms. Prevents per-file DB churn during a scan. | None. |
-| 10 | Force-rescan tiers | [api/libraries.rs:464](../../crates/server/src/api/libraries.rs#L464), [jobs/scan_series.rs:60](../../crates/server/src/jobs/scan_series.rs#L60), [process.rs:129–146, 164](../../crates/server/src/library/scanner/process.rs#L129-L146) | `force` propagates from the trigger through the job into `process_planned_folder` and `ingest_one_with_fingerprint`, disabling (1), (2), and the `defer_status_reconcile` short-circuit. | The `force` param itself is the bypass. Library default `false`; manual series/issue clicks default `true`; file-watch defaults `false` (don't burn CPU on every save). |
+| 10 | Force-rescan tiers | [api/libraries.rs:464](../../crates/server/src/api/libraries.rs#L464), [jobs/scan_series.rs:60](../../crates/server/src/jobs/scan_series.rs#L60), [process.rs:129–146, 164](../../crates/server/src/library/scanner/process.rs#L129-L146) | `force` propagates from the trigger through the job into `process_planned_folder` and `ingest_one_with_fingerprint`, disabling (1), (2), and the `defer_status_reconcile` short-circuit. | The `force` param itself is the bypass. Library default `false`; manual series/issue clicks default `true`. |
 | 11 | Move/dedupe shortcut | [process.rs:311–327](../../crates/server/src/library/scanner/process.rs#L311-L327) | Before `INSERT`ing a new issue row, check whether an existing row already has this content hash as its id. If the old path is missing, update the issue path and maintain `issue_paths`; if the old path still exists, emit `DuplicateContent` and `files_duplicate++`. Without this, the insert would PK-violate and roll back the entire batch. | None — the scanner always checks. |
 
 All entries are production-ready against current `master`.
@@ -489,7 +495,7 @@ opaque JSON so adding variants doesn't need a migration.
 | `MissingComicInfo` | info | Archive has no `ComicInfo.xml`. **Gated** on `library.report_missing_comicinfo=true` — loose libraries don't get spammed by default. | [process.rs:222](../../crates/server/src/library/scanner/process.rs#L222) | `{ path }` | Tag with ComicTagger / Mylar, or flip the per-library setting off. |
 | `MalformedComicInfo` | error | `ComicInfo.xml` exists but XML parse failed. | [process.rs:235](../../crates/server/src/library/scanner/process.rs#L235) | `{ path, error }` | Re-tag. |
 | `DuplicateContent` | warning | A new file's BLAKE3 hash matches an existing issue's id and the existing path is still present (fast-path #11). | [process.rs:314](../../crates/server/src/library/scanner/process.rs#L314) | `{ path_a, path_b }` (paths sorted alphabetically — fingerprint is order-stable). | Decide which copy to keep; renamed files whose old path is gone are handled as moves. |
-| `UnsupportedArchiveFormat` | warning | File extension is `.cbr` or `.cb7`. Recognized but the readers aren't shipped — see [crates/archive/src/cbr.rs](../../crates/archive/src/cbr.rs), [cb7.rs](../../crates/archive/src/cb7.rs). | [process.rs:187](../../crates/server/src/library/scanner/process.rs#L187) | `{ path, ext }` | Convert to CBZ for now. |
+| `UnsupportedArchiveFormat` | warning | `.cb7`: always — the [cb7.rs](../../crates/archive/src/cb7.rs) reader is a stub. `.cbr`: only when the library has `auto_convert_cbr_on_scan=false` **or** the conversion failed (not RAR/ZIP by magic bytes, encrypted, I/O error). With the flag on, the scanner converts the file to a sibling `.cbz` via [scanner/cbr_convert.rs](../../crates/server/src/library/scanner/cbr_convert.rs) and ingests that instead — no health row. | [process.rs](../../crates/server/src/library/scanner/process.rs) (`Some("cbr")` / `Some("cb7")` arms) | `{ path, ext }` | Enable `auto_convert_cbr_on_scan` on the library (needs `allow_archive_writeback`), or convert to CBZ by hand. CB7: convert to CBZ. |
 | `SkippedArchiveEntries` | warning | The archive opened, but one or more entries were dropped from the page index by a soft defense in the archive crate. One row per `reason`: `compression ratio cap` (CBZ entry claiming >200× expansion) or `image extension but non-image content` (an image-named entry whose leading bytes carry no image signature — the "`ComicInfo.xml` saved as `-0001.jpg`" publisher bug; every reader content-sniffs page candidates at open via [`archive::image_sniff`](../../crates/archive/src/image_sniff.rs)). The issue ingests with the surviving pages, so cover thumbnails, the reader and OCR all agree on page 0. | [process.rs](../../crates/server/src/library/scanner/process.rs) (translates `entries_skipped()`) | `{ path, dropped, total, reason }` | Repack the archive without the offending entry, or leave it — nothing downstream reads it. |
 
 ### Defined but not emitted (4 stub variants)
@@ -640,7 +646,7 @@ waiting for the scheduled refresh window.
 |---|---|---|---|
 | `ignore_globs` | string[] | `[]` | `globset` syntax. Validated at PATCH time — invalid patterns return 400. |
 | `report_missing_comicinfo` | bool | `false` | When true, files without `ComicInfo.xml` emit `MissingComicInfo` info-level health issues. |
-| `file_watch_enabled` | bool | `true` | Disable for NFS / SMB / rclone roots where `notify` is unreliable. |
+| `file_watch_enabled` | bool | `false` | **Inert.** Stored and returned by the API, counted on `/admin/server/info`, but no watcher consumes it (see Triggers). Reserved for roadmap WP-3.1. |
 | `soft_delete_days` | int | `30` | Days a removed issue stays in pending state before auto-confirmation. |
 | `scan_schedule_cron` | string | `null` | 5- or 6-field cron. `null` disables scheduled scans. |
 
@@ -661,7 +667,9 @@ waiting for the scheduled refresh window.
 
 - `GET /libraries/{slug}/scan-preview` — admin-only preflight for the
   scan button: estimated mode, dirty-folder count, known issue count,
-  cover backlog, last scan duration/state, watcher status, and reason.
+  cover backlog, last scan duration/state, watcher status
+  (`enabled_unverified` | `disabled` — echoes the flag only, there is no
+  live watcher to verify), and reason.
 - `GET /libraries/{slug}/removed` — list pending removals
 - `POST /series/{series_slug}/issues/{issue_slug}/restore` — reverse the soft-delete (file must be back)
 - `POST /series/{series_slug}/issues/{issue_slug}/confirm-removal` — admin confirmation now (skip the wait)
@@ -672,13 +680,17 @@ waiting for the scheduled refresh window.
   auto-restored by the next scan
   ([reconcile.rs:62–68, 198–204](../../crates/server/src/library/reconcile.rs#L62-L68)).
 
-### File-watch caveats
+### File-watch (not implemented)
 
-- `notify` works reliably on local filesystems (ext4, btrfs, APFS, NTFS).
-- NFS / SMB / rclone often don't deliver events. There's no automatic
-  detection — set `file_watch_enabled=false` and rely on the schedule.
-- 30-second debounce coalesces bursts of writes (copying a large folder
-  fires one scan, not hundreds).
+There is no filesystem watcher today. New or changed files are picked
+up by the per-library cron (`scan_schedule_cron`), the optional boot
+scan (`COMIC_SCAN_ON_STARTUP`), or a manual scan. The
+`file_watch_enabled` flag exists in the schema and API but nothing
+reads it beyond the `/admin/server/info` count and the `scan-preview`
+`watcher_status` echo. A debounced `notify`-based watcher is roadmap
+item WP-3.1; when it lands, expect the usual caveats (NFS / SMB /
+rclone roots don't deliver events reliably) and a debounce window so a
+bulk copy fires one scan rather than hundreds.
 
 ### Prometheus metrics
 
@@ -744,10 +756,12 @@ markers, a saved-view CBL slot). Two recovery paths:
   [health.rs:28–78](../../crates/server/src/library/health.rs#L28-L78).
   They show up as unused enum arms in any future code search and the
   fingerprint logic carries dead branches for each.
-- **CBR / CB7 readers** — extension recognized + dispatch wired;
-  readers return a clear "format not implemented" so the scanner emits
-  `UnsupportedArchiveFormat`. Add a real CBR implementation using `unrar`
-  (dep already present). CB7 needs a 7z decoder added first — use
+- **CB7 reader** — extension recognized + dispatch wired; the
+  [cb7.rs](../../crates/archive/src/cb7.rs) stub returns `Malformed`
+  so the scanner emits `UnsupportedArchiveFormat`. (CBR is done: the
+  `unrar`-backed reader in [cbr.rs](../../crates/archive/src/cbr.rs)
+  serves the page editor, and the scanner converts `.cbr` → `.cbz` in
+  place when `auto_convert_cbr_on_scan` is set.) CB7 needs a 7z decoder added first — use
   `sevenz-rust2`; the original `sevenz-rust` pin was dropped because it is
   abandoned and carries an unfixable extraction path-traversal advisory
   (RUSTSEC-2026-0245 / RUSTSEC-2026-0246).
@@ -804,7 +818,9 @@ markers, a saved-view CBL slot). Two recovery paths:
   `duplicate_content_is_skipped_and_reported`.
 - **LocalizedSeries matching + mixed-series merging** (spec §7.1.2,
   §7.2).
-- **Mount-type detection sentinel** for the file-watcher (spec §3.1).
+- **File-watcher** (roadmap WP-3.1) — debounced `notify` watcher per
+  library root, plus the mount-type detection sentinel (spec §3.1) so
+  NFS / SMB roots fall back to schedule-only.
 - **Live-reload of cron / library config** without a restart.
 - **Per-user library-access filtering** on `GET /ws/scan-events` —
   currently admin-only.

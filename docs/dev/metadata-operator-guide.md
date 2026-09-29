@@ -220,7 +220,8 @@ series page to match the provider's exact title, then re-search.
 
 If the provider's title differs significantly from yours (e.g.
 yours says "The X-Men" and Metron has "Uncanny X-Men"), the
-matcher's HIGH threshold (default 95) won't fire — but the
+matcher's HIGH threshold (`metadata.auto_apply_threshold`, default 80)
+won't fire — but the
 candidate WILL appear in the dialog with a MEDIUM badge. Preview
 + apply still works.
 

@@ -94,7 +94,7 @@ user click → [METADATA_FETCH governor: per-IP] → enqueue job
   fill the job queue.
 - **Per-provider Redis token bucket** — Lua-script atomic decrement +
   TTL refresh. Keys: `metadata:bucket:comicvine`, `metadata:bucket:metron`.
-  Survives restarts; shared across replicas.
+  Survives restarts (the bucket state lives in Redis, not in-process).
 
 Workers reserve N tokens before each HTTP call. Token-bucket deny
 requeues the job with `backoff = quota_resets_at - now + jitter`.

@@ -75,7 +75,7 @@ For backups, scaling, and the rest of the operator lifecycle, see [`docs/install
 - [Upgrades & rollbacks](./docs/install/upgrades.md)
 - [Backups](./docs/install/backup.md)
 - [Secrets management](./docs/install/secrets-backup.md)
-- [Multi-replica scaling](./docs/install/scaling.md)
+- [Scaling (single instance)](./docs/install/scaling.md)
 - [Kubernetes (community)](./docs/install/kubernetes.md)
 
 ## Repository layout
