@@ -5,4 +5,5 @@
 //! `user_series_progress` SQL view (defined by migration
 //! `m20261204_000001_user_series_progress_view`).
 
+pub mod page_remap;
 pub mod series_progress;

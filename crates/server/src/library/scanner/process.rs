@@ -882,6 +882,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         // ComicTagger, etc.) the UPDATE's WHERE clause still matches.
         // `content_hash` carries the live fingerprint instead.
         let row_id = row.id.clone();
+        let prev_page_count = row.page_count;
         let mut am: IssueAM = row.into();
         am.library_id = Set(lib.id);
         am.series_id = Set(series_id);
@@ -1031,6 +1032,34 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             .await;
         }
         let updated = am.update(db).await?;
+
+        // A rescan that finds *fewer* pages than before — an external
+        // replacement, not an edit Folio performed (those remap in
+        // `jobs::archive_edit`) — leaves per-user anchors past the new
+        // end dangling: the reader clamps them silently and the Bookmarks
+        // page keeps listing them. Pull them onto the last page and tag
+        // the markers so the change is visible. DB-only; never touches
+        // the archive.
+        if content_changed
+            && let (Some(prev), Some(now_pages)) = (prev_page_count, resolved_page_count)
+            && prev > 0
+            && now_pages < prev
+        {
+            let map =
+                crate::reading::page_remap::PageMap::truncation(prev as usize, now_pages as usize);
+            let o = crate::reading::page_remap::remap_issue_anchors(db, &row_id, &map).await?;
+            if o.markers_moved + o.progress_moved > 0 {
+                tracing::info!(
+                    issue_id = %row_id,
+                    prev_page_count = prev,
+                    page_count = now_pages,
+                    markers_moved = o.markers_moved,
+                    markers_orphaned = o.markers_orphaned,
+                    progress_moved = o.progress_moved,
+                    "scan: page count shrank; anchors pulled onto the last page"
+                );
+            }
+        }
         remember_primary_issue_path(db, &row_id, &path_str).await?;
         // Persist CV / Metron / GTIN from ComicInfo into external_ids.
         // User-pinned values (set_by='user') are skipped automatically.
