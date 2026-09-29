@@ -570,6 +570,7 @@ Default admin (first registered user becomes admin):
 - Metadata providers architecture: [docs/dev/metadata-providers.md](docs/dev/metadata-providers.md)
 - Metadata providers operator guide (API keys, weekly refresh, troubleshooting): [docs/dev/metadata-operator-guide.md](docs/dev/metadata-operator-guide.md)
 - Metadata sidecar writeback (DB-canonical → XML-canonical inversion, per-library opt-in, drift surfacing): [docs/dev/metadata-sidecar-writeback.md](docs/dev/metadata-sidecar-writeback.md)
+- Archive writes and the "files stay clean" invariant (every writer, its `allow_archive_writeback` gate, its test): [docs/dev/archive-writes.md](docs/dev/archive-writes.md)
 - Matching accuracy (ComicTagger-derived heuristics, threshold tuning, fixture-adding playbook): [docs/dev/matching-accuracy.md](docs/dev/matching-accuracy.md)
 - M0 schema restructure (external_ids + junctions + field_provenance + issue_cover): [docs/dev/schema-restructure.md](docs/dev/schema-restructure.md)
 - Dependency policy (what auto-merges, what waits, what alerts; Renovate rules, daily sweep, SBOM): [docs/dev/dependency-management.md](docs/dev/dependency-management.md)
