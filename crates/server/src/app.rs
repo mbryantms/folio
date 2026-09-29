@@ -167,6 +167,13 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
         .sqlx_slow_statements_logging_settings(log::LevelFilter::Warn, Duration::from_millis(500));
     let db = Database::connect(db_opts).await?;
 
+    // Refuse to boot on a Postgres older than 17 *before* migrations run:
+    // the search migration needs 17+ and would otherwise fail part-way
+    // through, leaving a half-applied schema behind an opaque SQL error.
+    // The check names the found version and the minimum so the operator
+    // knows exactly what to upgrade. See `crate::pg_version`.
+    crate::pg_version::assert_supported(&db).await?;
+
     if cfg.auto_migrate {
         use migration::MigratorTrait;
         tracing::info!("running migrations");
