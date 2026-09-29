@@ -8,7 +8,29 @@ one is intentionally ephemeral.
 | **Postgres** — users, libraries, series, issues, progress, markers, sessions, audit log | `comic_postgres` volume | **Yes**, nightly |
 | **App data** — secrets, generated thumbnails, search indices | `comic_data` volume (mounted at `/data` in the app container) | **Yes**, weekly (secrets are critical) |
 | **Library** — your comic files | host bind mount at `COMIC_LIBRARY_HOST_PATH` | Operator-owned; use whatever backup tool you already use for media |
-| **Redis** — job queues, rate-limit counters, ephemeral state | `comic_redis` volume | **No** — restored state would be stale; on Redis loss the app re-enqueues scans on next boot |
+| **Redis** — job queues, rate-limit counters, ephemeral state | `comic_redis` volume | **No** — restored state would be stale. Losing Redis loses whatever was queued (scans, thumbnails, metadata jobs); the app does **not** re-enqueue that work at boot. See [Redis loss](#redis-loss) below. |
+
+## Redis loss
+
+Redis holds the apalis job queues and nothing durable. If the volume is
+lost or wiped:
+
+- **Queued and in-flight jobs are gone.** Boot only reaps orphan
+  `.tmp` files left by interrupted archive rewrites and sweeps stale
+  scan-coalescing keys; it does not reconstruct or re-enqueue lost
+  scan, thumbnail, or metadata jobs
+  ([`app.rs`](../../crates/server/src/app.rs), the startup-cleanup block).
+- **Scheduled scans resume on their own** at the next
+  `scan_schedule_cron` tick for each library — the schedule lives in
+  Postgres, not Redis.
+- **Trigger a manual scan** of each library from `/admin/libraries`
+  (or `POST /api/libraries/{slug}/scan`) after restoring Redis if you
+  don't want to wait for the cron. A scan re-enqueues the post-scan
+  thumbnail and search work for anything it finds changed; for
+  thumbnails on unchanged issues use the "Generate missing" action on
+  the admin thumbnails page.
+- Rate-limit counters and auth WebSocket tickets simply reset; users
+  may need to reload an open reader tab.
 
 ## Postgres — nightly
 

@@ -220,7 +220,8 @@ series page to match the provider's exact title, then re-search.
 
 If the provider's title differs significantly from yours (e.g.
 yours says "The X-Men" and Metron has "Uncanny X-Men"), the
-matcher's HIGH threshold (default 95) won't fire — but the
+matcher's HIGH threshold (`metadata.auto_apply_threshold`, default 80)
+won't fire — but the
 candidate WILL appear in the dialog with a MEDIUM badge. Preview
 + apply still works.
 
@@ -365,8 +366,15 @@ drop the legacy DB-direct apply branch — flag a maintainer.
 - **Apply succeeded but archive bytes didn't change**: check
   `archive_backup_retain_count` on the library (defaults to 1). The
   rewrite rotates `.bak` slots; the original is preserved at
-  `<filename>.bak1.cbz` until rotated out. The rewrite worker logs
-  every successful swap with the source + tmp + final paths.
+  `<filename>.cbz.bak` (older slots at `.cbz.bak.1`, `.cbz.bak.2`, …)
+  until rotated out. The rewrite worker logs every successful swap
+  with the source + tmp + final paths.
+- **Backups piling up on disk**: the daily 04:45 UTC sweep deletes
+  `.bak` files older than the library's `archive_backup_retain_days`
+  (default 30). Set it to `0` to keep backups forever; lower it, or
+  lower `archive_backup_retain_count`, to reclaim space sooner. The
+  library health page's backup-storage card shows the current
+  footprint.
 - **`MetadataDriftFromXml` row appeared unexpectedly**: any user PATCH
   through the Edit sheet creates drift until the next apply. The
   Flush button is the operator-side resolution; the next provider

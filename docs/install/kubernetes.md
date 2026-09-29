@@ -21,7 +21,7 @@ Ingress (your choice)
   └── (all paths)  → Service "folio-app" :8080      [the public origin]
 
 Deployment "folio-app"
-  └── 1+ replicas; readinessProbe on /readyz; livenessProbe on /healthz
+  └── exactly 1 replica (strategy: Recreate); readinessProbe on /readyz; livenessProbe on /healthz
       Env: COMIC_WEB_UPSTREAM_URL=http://folio-web:3000
       Mounts: PVC "folio-data" at /data, PV/PVC for library at /library (ro)
 
@@ -41,11 +41,26 @@ You should NOT route any Ingress path to `folio-web` directly — earlier
 versions of these docs documented a split (`/api,/auth,...` to app, `/`
 to web); that's no longer the supported topology.
 
+## One app replica
+
+Folio is single-instance: the scan-event WebSocket broadcaster, the
+cron scheduler, and the archive/thumbnail concurrency semaphores are
+all process-local with no leader election or cross-replica fan-out
+(see [`scaling.md`](./scaling.md) for the component list). Run the
+`folio-app` Deployment with `replicas: 1` **and** `strategy: Recreate`
+— the default `RollingUpdate` strategy briefly runs the old and new
+pod side by side during an image rollout, which is exactly the
+two-instances situation to avoid (and the `folio-data` PVC is
+ReadWriteOnce anyway). The `folio-web` Deployment (Next.js SSR) is
+stateless and may run more than one replica if you like; the app
+reaches it through the `folio-web` Service.
+
 ## Migrations
 
-For >1 app replica, **do not** rely on `COMIC_AUTO_MIGRATE=true` —
-multiple replicas racing through `Migrator::up()` will trip the
-`seaql_migrations` advisory lock. Run migrations as a one-shot Job:
+With one replica, `COMIC_AUTO_MIGRATE=true` (the default) is safe: the
+pod migrates at boot before it passes readiness. If you'd rather run
+migrations as an explicit step in CI/CD — or just to see the output —
+a one-shot Job works and is still a good pattern:
 
 ```yaml
 apiVersion: batch/v1
@@ -66,10 +81,9 @@ spec:
 ```
 
 Configure your CI/CD to apply this Job before rolling out the app
-Deployment.
-
-In the Deployment, set `COMIC_AUTO_MIGRATE=false` so the app doesn't
-also try.
+Deployment, and set `COMIC_AUTO_MIGRATE=false` in the Deployment so the
+app doesn't also try. If you skip the Job, drop that env var (or set it
+to `true`) and let the single pod migrate itself.
 
 ## Probes
 
@@ -101,7 +115,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata: { name: folio-app }
 spec:
-  replicas: 2
+  replicas: 1
+  strategy: { type: Recreate }   # never two app pods at once — see above
   selector: { matchLabels: { app: folio-app } }
   template:
     metadata: { labels: { app: folio-app } }
@@ -116,6 +131,8 @@ spec:
           imagePullPolicy: IfNotPresent
           ports: [{ name: http, containerPort: 8080 }]
           env:
+            # "false" only if you run the migration Job above; otherwise
+            # omit and let the single pod auto-migrate at boot.
             - name: COMIC_AUTO_MIGRATE
               value: "false"
             - name: COMIC_DATABASE_URL
@@ -148,18 +165,17 @@ spec:
 
 ## Storage notes
 
-- `folio-data` PVC: ReadWriteOnce is fine (only one replica at a time
-  writes thumbs). 5–20 GB is plenty for most libraries.
+- `folio-data` PVC: ReadWriteOnce (the single app pod is the only
+  writer). 5–20 GB is plenty for most libraries; add the
+  `COMIC_PAGE_VARIANT_CACHE_BYTES` budget (default 2 GiB) on top.
 - `folio-library` PVC: this is your comic archive. Most clusters mount
   it via NFS / CephFS / a CSI driver pointing at object storage.
   ReadOnlyMany works since the app only reads from it.
 - **Secrets** live under `/data/secrets/`. They're auto-generated on
-  first boot. For multi-replica deploys this is a problem (each replica
-  would generate its own). Two options:
-  1. Pre-seed the PVC with secrets via an init container that runs
-     before the first app boot (vault-injector pattern).
-  2. Run a single-replica `app` Deployment; only the web tier scales out.
-     For most homelab Kubernetes installs this is the realistic answer.
+  first boot and persist on the `folio-data` PVC; with one app replica
+  nothing else is needed. If you'd rather manage them yourself,
+  pre-seed the PVC via an init container before the first boot
+  (vault-injector pattern) — see [`secrets-backup.md`](./secrets-backup.md).
 
 ## Ingress + cookies
 
@@ -183,7 +199,8 @@ metadata:
 ## Not covered here
 
 - Helm chart (none ships; community welcome to contribute one).
-- HPA + cluster autoscaler tuning.
+- HPA / autoscaling of the app tier — not applicable; it is one pod
+  by design (only `folio-web` can scale).
 - Multi-region active-active deploys.
 - HA Postgres + Redis topologies.
 

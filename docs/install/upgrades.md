@@ -123,17 +123,18 @@ back the **image** (set the old `TAG`, `docker compose up -d`) and
 attempt the next boot with `COMIC_AUTO_MIGRATE=false` — the old binary
 may run fine against the migrated schema for a while, but no guarantee.
 
-## Multi-replica deployments
+## Running migrations as a separate step
 
-When you scale `app` past one replica, set `COMIC_AUTO_MIGRATE=false` and
-run migrations as a one-shot before rolling out the new image:
+Folio is single-instance (see [`scaling.md`](./scaling.md)), so the
+default `COMIC_AUTO_MIGRATE=true` is safe: the one app container
+migrates at boot. If you'd rather migrate explicitly — to see the
+output, or to gate the rollout in CI — set `COMIC_AUTO_MIGRATE=false`
+and run the migrator as a one-shot before starting the new image:
 
 ```bash
 docker compose -f compose.prod.yml run --rm app /app/migration up
 docker compose -f compose.prod.yml up -d --no-deps app
 ```
-
-See [`scaling.md`](./scaling.md) for the full multi-replica posture.
 
 ## Breaking changes by version
 

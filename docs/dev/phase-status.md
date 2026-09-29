@@ -160,8 +160,9 @@ Shipped:
   (MetronInfo wins on overlapping fields per §4.4); specials/annuals/one-shot
   detection populates `special_type`; ComicInfo `<PageCount>` is stored as
   metadata but no longer treated as a health signal
-- **File-watch + scheduling** — `notify-debouncer-full` per library root
-  (30 s debounce). `tokio-cron-scheduler` for `library.scan_schedule_cron`,
+- **Scheduling** — `tokio-cron-scheduler` for `library.scan_schedule_cron`
+  (a `notify`-based file-watcher was planned here but never wired; the
+  `file_watch_enabled` flag is stored but inert — roadmap WP-3.1),
   daily reconcile sweep, daily scan_runs prune. `POST /series/{id}/scan` for
   per-folder rescan. Optional `COMIC_SCAN_ON_STARTUP=true`
 - **WebSocket scan events** — `GET /ws/scan-events` (admin-only) emits

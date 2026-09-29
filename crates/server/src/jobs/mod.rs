@@ -36,6 +36,7 @@ use uuid::Uuid;
 pub mod archive_edit;
 pub mod archive_transforms;
 pub mod backfill;
+pub mod backup_prune;
 pub mod close_dangling_sessions;
 pub mod metadata_apply;
 pub mod metadata_resume;

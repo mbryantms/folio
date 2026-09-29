@@ -28,6 +28,7 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     register_scan_runs_prune(&scheduler, &state).await;
     register_library_events_prune(&scheduler, &state).await;
     register_thumbnail_orphan_sweep(&scheduler, &state).await;
+    register_backup_prune(&scheduler, &state).await;
     // No thumbnail/phash catchup sweep: queued work is user-directed
     // only (a scan, or an explicit admin "Generate missing" / backfill
     // action). See the catchup note in `app::serve`.
@@ -414,6 +415,44 @@ async fn register_thumbnail_orphan_sweep(scheduler: &JobScheduler, state: &AppSt
             }
         }
         Err(e) => tracing::error!(error = %e, "scheduler: build thumbnail_orphan_sweep failed"),
+    }
+}
+
+/// Daily `.bak` retention sweep (archive-rewrite M8 / roadmap WP-1.5):
+/// for every library with `allow_archive_writeback = true` and a non-zero
+/// `archive_backup_retain_days`, remove `.bak` / `.bak.N` siblings whose
+/// mtime is older than that many days. Runs at 04:45 UTC, after the
+/// thumbnail orphan sweep, so the two disk walks don't overlap.
+async fn register_backup_prune(scheduler: &JobScheduler, state: &AppState) {
+    let state = state.clone();
+    let job_result = Job::new_async("0 45 4 * * *", move |_uuid, _l| {
+        let state = state.clone();
+        Box::pin(async move {
+            match crate::jobs::backup_prune::run(&state).await {
+                Ok(stats) => {
+                    if stats.removed > 0 || stats.errors > 0 {
+                        tracing::info!(
+                            removed = stats.removed,
+                            bytes = stats.bytes,
+                            errors = stats.errors,
+                            libraries = stats.libraries,
+                            "archive backup prune"
+                        );
+                    }
+                }
+                Err(e) => tracing::error!(error = %e, "archive backup prune failed"),
+            }
+        })
+    });
+    match job_result {
+        Ok(job) => {
+            if let Err(e) = scheduler.add(job).await {
+                tracing::error!(error = %e, "scheduler: add backup_prune failed");
+            } else {
+                tracing::info!("archive backup prune registered (daily at 04:45 UTC)");
+            }
+        }
+        Err(e) => tracing::error!(error = %e, "scheduler: build backup_prune failed"),
     }
 }
 

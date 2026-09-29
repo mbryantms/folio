@@ -52,19 +52,6 @@ pub struct BackupStorageView {
     pub newest_modified_at: Option<String>,
 }
 
-/// `<original>.bak` (slot 0) or `<original>.bak.<n>` (slots 1+) — the naming
-/// produced by [`crate::archive_rewrite`].
-fn is_backup_name(name: &str) -> bool {
-    if name.ends_with(".bak") {
-        return true;
-    }
-    if let Some(idx) = name.rfind(".bak.") {
-        let suffix = &name[idx + 5..];
-        return !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit());
-    }
-    false
-}
-
 fn scan_backup_files(root: &std::path::Path) -> BackupStorageView {
     use std::time::SystemTime;
     let mut file_count = 0u64;
@@ -79,7 +66,7 @@ fn scan_backup_files(root: &std::path::Path) -> BackupStorageView {
         if !entry.file_type().is_file() {
             continue;
         }
-        if !is_backup_name(&entry.file_name().to_string_lossy()) {
+        if !crate::archive_rewrite::is_backup_name(&entry.file_name().to_string_lossy()) {
             continue;
         }
         let Ok(meta) = entry.metadata() else { continue };
