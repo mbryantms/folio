@@ -637,6 +637,103 @@ docker-e2e:
 audit-check:
     cargo run -p audit-check --release
 
+# ───── backup / restore (production compose stack) ─────
+
+# Wraps the commands in docs/install/backup.md: a `pg_dump -Fc` of the
+# `postgres` service's comic_reader DB plus a tar of the `comic_data` volume
+# (/data: secrets/, thumbs/, search/). Both are timestamped and written via
+# tmp+rename so a half-written file never masquerades as a backup. Safe to
+# run while the app is up; Postgres writes a consistent snapshot. Pass
+# `compose=<file>` to target another stack (never compose.dev.yml — the dev
+# DB is not what you want to restore into production).
+#
+# Snapshot the running compose.prod.yml stack (pg_dump + data-volume tar) into $BACKUP_DIR (default ./backups).
+backup compose='compose.prod.yml':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    COMPOSE='{{compose}}'
+    BACKUP_DIR="${BACKUP_DIR:-./backups}"
+    [ -f "$COMPOSE" ] || { echo "==> compose file not found: $COMPOSE" >&2; exit 1; }
+    PG_CID=$(docker compose -f "$COMPOSE" ps -q postgres)
+    if [ -z "$PG_CID" ]; then
+        echo "==> postgres service is not running under $COMPOSE" >&2
+        echo "    start the stack first: docker compose -f $COMPOSE up -d postgres" >&2
+        exit 1
+    fi
+    # The compose project name prefixes every named volume; read it off the
+    # running container rather than guessing from the directory name.
+    PROJECT=$(docker inspect -f '{{{{ index .Config.Labels "com.docker.compose.project" }}' "$PG_CID")
+    DATA_VOL="${PROJECT}_comic_data"
+    docker volume inspect "$DATA_VOL" >/dev/null 2>&1 || {
+        echo "==> data volume $DATA_VOL not found (is this the folio stack?)" >&2; exit 1; }
+    TS=$(date -u +%Y%m%dT%H%M%SZ)
+    mkdir -p "$BACKUP_DIR"
+    PG_OUT="$BACKUP_DIR/postgres-$TS.dump"
+    DATA_OUT="$BACKUP_DIR/data-$TS.tgz"
+
+    echo "==> pg_dump comic_reader → $PG_OUT"
+    docker compose -f "$COMPOSE" exec -T postgres \
+        pg_dump -U comic -Fc comic_reader > "$PG_OUT.tmp"
+    mv "$PG_OUT.tmp" "$PG_OUT"
+
+    echo "==> tar $DATA_VOL (/data: secrets, thumbs, search) → $DATA_OUT"
+    # `:ro` on the volume avoids in-flight writes corrupting the tar; the
+    # bind mount's absolute path is what docker needs for a host directory.
+    docker run --rm \
+        -v "$DATA_VOL:/d:ro" \
+        -v "$(cd "$BACKUP_DIR" && pwd):/b" \
+        alpine:3 \
+        tar czf "/b/data-$TS.tgz.tmp" -C /d .
+    mv "$DATA_OUT.tmp" "$DATA_OUT"
+
+    echo "==> done:"
+    ls -lh "$PG_OUT" "$DATA_OUT"
+    echo "    restore the DB with: just restore $PG_OUT"
+    echo "    the data tar restore is manual — see docs/install/backup.md"
+
+# DESTRUCTIVE: `pg_restore --clean` drops and recreates every table in
+# comic_reader, so the current DB contents are replaced by the dump. The
+# `app` container is stopped for the duration (its open connections would
+# otherwise block the DROPs / see a half-restored schema) and started again
+# afterwards. Asks for explicit confirmation; run `just backup` first if you
+# might want the current state back. Restore the matching data tar by hand
+# if secrets/ changed too — a DB restored against a different pepper fails
+# every login (docs/install/secrets-backup.md).
+#
+# Restore a `just backup` pg_dump file into the compose.prod.yml postgres (destructive; asks to confirm).
+restore file compose='compose.prod.yml':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    COMPOSE='{{compose}}'
+    DUMP='{{file}}'
+    [ -f "$COMPOSE" ] || { echo "==> compose file not found: $COMPOSE" >&2; exit 1; }
+    [ -f "$DUMP" ] || { echo "==> dump not found: $DUMP" >&2; exit 1; }
+    case "$DUMP" in
+        *.tgz|*.tar.gz|*.tar)
+            echo "==> $DUMP looks like a data-volume tar, not a Postgres dump." >&2
+            echo "    See docs/install/backup.md 'App data' for the volume restore steps." >&2
+            exit 1 ;;
+    esac
+    PG_CID=$(docker compose -f "$COMPOSE" ps -q postgres)
+    if [ -z "$PG_CID" ]; then
+        echo "==> postgres service is not running under $COMPOSE" >&2
+        exit 1
+    fi
+    echo "==> About to restore $DUMP into comic_reader on the '$COMPOSE' postgres."
+    echo "    This DROPS every existing table first and stops 'app' while it runs."
+    read -r -p "    Type 'restore' to continue: " ANSWER
+    if [ "$ANSWER" != "restore" ]; then
+        echo "==> aborted"; exit 1
+    fi
+    echo "==> stopping app"
+    docker compose -f "$COMPOSE" stop app
+    # Re-start app even if the restore fails so the stack isn't left down.
+    trap 'echo "==> starting app"; docker compose -f "$COMPOSE" start app' EXIT
+    echo "==> pg_restore --clean --if-exists → comic_reader"
+    docker compose -f "$COMPOSE" exec -T postgres \
+        pg_restore --clean --if-exists --no-owner -U comic -d comic_reader < "$DUMP"
+    echo "==> restore complete; migrations (if any are newer than the dump) run on app boot"
+
 # ───── release ─────
 
 # CI-parity check suite — the gates enforced by .github/workflows/ci.yml.
