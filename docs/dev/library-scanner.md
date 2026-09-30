@@ -366,6 +366,10 @@ downstream work that has real post-scan value:
   [post_scan.rs:440](../../crates/server/src/jobs/post_scan.rs#L440) —
   cover thumbnail jobs for active issues whose covers are missing,
   stale, or errored. Page-map strips are lazy/explicit admin work.
+- `hash_backfill::enqueue_if_pending` — one indexed probe; when the
+  library has rows whose content hash is still pending (first-import
+  lazy-hash mode), enqueue the `hash_backfill` drain. Runs after series
+  scans too, so a restart that abandoned a drain resumes on the next scan.
 - `spawn_cbl_rematch_all` ([mod.rs:1389](../../crates/server/src/library/scanner/mod.rs#L1389))
   — saved-views: when the scan added/restored issues, re-resolve
   previously-missing CBL entries fire-and-forget.
@@ -477,8 +481,82 @@ the DB:
 | 9 | In-memory live-progress tracker | [LiveProgressTracker mod.rs:182–274](../../crates/server/src/library/scanner/mod.rs#L182-L274), 750 ms heartbeat at [mod.rs:1216–1287](../../crates/server/src/library/scanner/mod.rs#L1216-L1287) | Atomic counters in memory; `scan_runs.stats` JSON is written only on actual progress changes or every 750 ms. Prevents per-file DB churn during a scan. | None. |
 | 10 | Force-rescan tiers | [api/libraries.rs:464](../../crates/server/src/api/libraries.rs#L464), [jobs/scan_series.rs:60](../../crates/server/src/jobs/scan_series.rs#L60), [process.rs:129–146, 164](../../crates/server/src/library/scanner/process.rs#L129-L146) | `force` propagates from the trigger through the job into `process_planned_folder` and `ingest_one_with_fingerprint`, disabling (1), (2), and the `defer_status_reconcile` short-circuit. | The `force` param itself is the bypass. Library default `false`; manual series/issue clicks default `true`. |
 | 11 | Move/dedupe shortcut | [process.rs:311–327](../../crates/server/src/library/scanner/process.rs#L311-L327) | Before `INSERT`ing a new issue row, check whether an existing row already has this content hash as its id. If the old path is missing, update the issue path and maintain `issue_paths`; if the old path still exists, emit `DuplicateContent` and `files_duplicate++`. Without this, the insert would PK-violate and roll back the entire batch. | None — the scanner always checks. |
+| 12 | First-import lazy hash (WP-3.2) | [`process.rs::lazy_hash_eligible`](../../crates/server/src/library/scanner/process.rs), [`jobs/hash_backfill.rs`](../../crates/server/src/jobs/hash_backfill.rs) | Library has `trust_fingerprint_on_first_import` ∧ `last_scan_at IS NULL` ∧ no row for the path → skip the full-file BLAKE3 (the archive parse still runs), insert with `hash_algorithm = 0`, id = `content_hash` = [`lazy_fingerprint(path, size, mtime)`](../../crates/server/src/library/scanner/process.rs), skip the dedupe check (#11), `files_hash_deferred++`. See [First-import lazy-hash mode](#first-import-lazy-hash-mode). | Off by default. Changed files (update path) always hash; once the first full scan completes, new files hash inline again. |
 
 All entries are production-ready against current `master`.
+
+## First-import lazy-hash mode
+
+Roadmap WP-3.2 (audit §3.1 "Import"). On a NAS or spinning disk the
+BLAKE3 pass dominates a cold import — every archive is read end to end
+before the first issue shows up. A library with
+`trust_fingerprint_on_first_import = true` trades that for a two-step
+import:
+
+1. **Scan.** While the library has never completed a full scan
+   (`last_scan_at IS NULL`), a file with no row is ingested on size+mtime
+   alone. The archive parse (central directory, sidecar XML, page header
+   probe) still runs, so series/issue metadata, page counts and covers are
+   there immediately. The row gets `hash_algorithm = 0` ("pending") and
+   `id = content_hash = lazy_fingerprint(path, size, mtime)` — a
+   domain-separated BLAKE3 of the path fingerprint (spec §5.1.2's
+   `blake3(path)` identity, salted with size+mtime so a different file
+   later landing on the same path during an unfinished first import can't
+   collide). Ingest-time dedupe (#11) is skipped — there is no content
+   hash to compare. `bytes_hashed` stays 0; `files_hash_deferred` counts
+   the rows.
+2. **Backfill.** The scan's post-scan step enqueues
+   [`HashBackfillJob`](../../crates/server/src/jobs/hash_backfill.rs)
+   (apalis queue `hash_backfill`, concurrency 1, shares the scanner's
+   archive-work semaphore). It walks the library's pending rows by id,
+   re-stats each file (missing or size/mtime drifted → left pending for
+   the next scan), hashes it, re-stats again, and stamps `content_hash` +
+   `hash_algorithm = 1` under a `WHERE hash_algorithm = 0 AND file_size = …
+   AND file_mtime = …` guard so a concurrent rescan always wins.
+3. **Dedupe re-check.** After hashing, another settled row in the same
+   library with the same content hash whose file still exists makes this
+   a duplicate. The redundant row is hard-deleted (its `external_ids` /
+   `field_provenance` rows too) — preferring to keep whichever copy has
+   reading progress, else the one settled first — and the job enqueues a
+   non-force scoped rescan of that series folder, which re-ingests the
+   dropped path through the normal hashed path and emits the standard
+   `DuplicateContent` health issue. The end state matches an inline-hashed
+   import. (A matching row whose file is gone is a pre-move row; the next
+   reconcile soft-deletes it.)
+   The re-check follows the same policy as ingest-time dedupe (WP-3.3):
+   with `dedupe_by_content = false` it **never** deletes — both copies
+   stay as separate issues and the Duplicates page groups them; and a row
+   carrying an `issue_duplicate_decision` is never the one deleted (it is
+   kept over an undecided copy; if both copies are decided, both stay).
+
+**Id allocation.** New rows get their id from the single allocator
+`process.rs::allocate_issue_id`, with precedence: pending row → lazy
+fingerprint; settled row → content hash; either one already taken →
+`blake3(path)`.
+
+**Identity.** The id is never re-keyed when the hash lands (`issues.id`
+stable / `content_hash` mutable — see Carry-over below), so progress,
+markers, thumbnails and URLs created during the backfill survive it. A
+retag after the backfill is detected like any other (size+mtime change →
+update path → new `content_hash`, same id). A retag *before* the backfill
+settles the row through the update path, which always hashes and sets
+`hash_algorithm = 1`.
+
+**Progress.** `GET /api/libraries/{slug}/hash-backfill` returns
+`{pending, total, hashed, enabled, first_import_active}` off the
+`issues_hash_pending_idx` partial index; the library settings page polls
+it while `pending > 0` and offers a Resume button
+(`POST /api/libraries/{slug}/hash-backfill`, audited as
+`admin.library.hash_backfill.start`). The queue shows up as "Content
+hashing" on `/admin/queue`, and each drain writes one `library_events` row
+(category `file`, action `completed`, `detail.kind = "hash_backfill"`).
+
+**Known limits.** A file moved *while its row is still pending* is not
+recognised as a move (there is no content hash to match): the new path
+ingests as a new row and the old row is soft-deleted by reconcile.
+Caches keyed by `content_hash` (page ETags, page variants, OCR) turn over
+once when the real hash lands. Account export carries the placeholder
+hash for rows that are still pending.
 
 ## Health issues
 
@@ -713,6 +791,7 @@ waiting for the scheduled refresh window.
 | `file_watch_enabled` | bool | `false` | Run a file watcher on this library's root (see [File watcher](#file-watcher)). Flipping it (or moving the root / editing `ignore_globs`) takes effect immediately — the PATCH nudges the watcher supervisor. |
 | `soft_delete_days` | int | `30` | Days a removed issue stays in pending state before auto-confirmation. |
 | `scan_schedule_cron` | string | `null` | 5- or 6-field cron. `null` disables scheduled scans. |
+| `trust_fingerprint_on_first_import` | bool | `false` | First-import lazy-hash mode (WP-3.2). Also accepted on `POST /libraries` so the `scan_now` import benefits. Only acts while `last_scan_at IS NULL`. |
 
 ### Server-wide env (prefix `COMIC_`)
 

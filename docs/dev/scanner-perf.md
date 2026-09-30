@@ -275,6 +275,11 @@ What actually moves the needle on cold scans of real libraries:
    cold scans on a fresh DB hash everything because there's no row
    to match). For an existing-library re-import (same data, fresh
    DB), a hash cache would help — but that's a niche case.
+   **Shipped for first imports as WP-3.2:** a library with
+   `trust_fingerprint_on_first_import` skips the whole-archive hash on
+   its first scan (`bytes_hashed = 0`) and a background
+   `hash_backfill` job settles the hashes afterwards — see
+   [library-scanner.md § First-import lazy-hash mode](library-scanner.md#first-import-lazy-hash-mode).
 
 Code change estimates for (1)+(2)+(3): ~30–50 % wall reduction on
 cold scans of real libraries. Concrete numbers require a follow-up

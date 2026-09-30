@@ -32,7 +32,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(purge_dead_jobs))
 }
 
-/// The eleven apalis queue labels, matching the keys in
+/// The apalis queue labels, matching the keys in
 /// [`crate::jobs::JobRuntime::dead_letter_counts`]. The dead-job list / retry
 /// / purge endpoints validate their `queue` arg against this set so a typo
 /// returns 422 instead of silently operating on a non-existent key.
@@ -49,6 +49,7 @@ const DEAD_QUEUES: &[&str] = &[
     "rewrite_issue_sidecars",
     "archive_edit",
     "backfill",
+    "hash_backfill",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize, utoipa::ToSchema)]
@@ -70,6 +71,8 @@ pub struct QueueDepthView {
     pub archive_edit: i64,
     /// Pending backfill drains (cover-phash / variant-cover; B17).
     pub backfill: i64,
+    /// Pending first-import content-hash drains (one per library; WP-3.2).
+    pub hash_backfill: i64,
     /// Sum across all queues — convenient for the topbar pill.
     pub total: i64,
 }
@@ -493,6 +496,7 @@ fn dead_keys(app: &AppState, queue: &str) -> Option<(String, String)> {
         "rewrite_issue_sidecars" => keys!(j.rewrite_issue_sidecars_storage),
         "archive_edit" => keys!(j.archive_edit_storage),
         "backfill" => keys!(j.backfill_storage),
+        "hash_backfill" => keys!(j.hash_backfill_storage),
         _ => None,
     }
 }
@@ -593,6 +597,7 @@ async fn retry_one(app: &AppState, queue: &str, task_id: &str) -> anyhow::Result
         "rewrite_issue_sidecars" => try_retry!(app.jobs.rewrite_issue_sidecars_storage),
         "archive_edit" => try_retry!(app.jobs.archive_edit_storage),
         "backfill" => try_retry!(app.jobs.backfill_storage),
+        "hash_backfill" => try_retry!(app.jobs.hash_backfill_storage),
         _ => return Ok(false),
     };
     if !pushed {
@@ -652,6 +657,7 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
     let mut sidecars = app.jobs.rewrite_issue_sidecars_storage.clone();
     let mut archive_edit = app.jobs.archive_edit_storage.clone();
     let mut backfill = app.jobs.backfill_storage.clone();
+    let mut hash_backfill = app.jobs.hash_backfill_storage.clone();
 
     let (
         scan_n,
@@ -666,6 +672,7 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
         sidecars_n,
         archive_edit_n,
         backfill_n,
+        hash_backfill_n,
     ) = tokio::try_join!(
         scan.len(),
         scan_series.len(),
@@ -679,6 +686,7 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
         sidecars.len(),
         archive_edit.len(),
         backfill.len(),
+        hash_backfill.len(),
     )?;
 
     let total = scan_n
@@ -692,7 +700,8 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
         + md_apply_issue_n
         + sidecars_n
         + archive_edit_n
-        + backfill_n;
+        + backfill_n
+        + hash_backfill_n;
     Ok(QueueDepthView {
         scan: scan_n,
         scan_series: scan_series_n,
@@ -706,6 +715,7 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
         rewrite_issue_sidecars: sidecars_n,
         archive_edit: archive_edit_n,
         backfill: backfill_n,
+        hash_backfill: hash_backfill_n,
         total,
     })
 }

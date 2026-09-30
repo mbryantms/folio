@@ -25,6 +25,7 @@ export {
 } from "./_core";
 export * from "./thumbnails";
 export * from "./duplicates";
+export * from "./hash-backfill";
 
 import type {
   AcceptMetadataResp,

@@ -52,6 +52,7 @@ const schema = z.object({
   // who want a dry setup can still untick it.
   scan_now: z.boolean().default(true),
   generate_page_thumbs_on_scan: z.boolean().default(false),
+  trust_fingerprint_on_first_import: z.boolean().default(false),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -68,6 +69,7 @@ export function NewLibraryDialog() {
       default_reading_direction: "ltr",
       scan_now: true,
       generate_page_thumbs_on_scan: false,
+      trust_fingerprint_on_first_import: false,
     },
   });
   // react-hook-form's `watch()` returns a non-memoizable function; React
@@ -222,6 +224,29 @@ export function NewLibraryDialog() {
                       scan will keep generating them. You can change this later
                       from library settings, or fill in missing page thumbnails
                       manually from the Thumbnails tab.
+                    </FormDescription>
+                  </div>
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="trust_fingerprint_on_first_import"
+              render={({ field }) => (
+                <FormItem className="border-border flex items-start gap-3 rounded-md border p-3">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value}
+                      onCheckedChange={(v) => field.onChange(v === true)}
+                    />
+                  </FormControl>
+                  <div className="space-y-1">
+                    <FormLabel>Fast first import</FormLabel>
+                    <FormDescription>
+                      Import files on size and modified time, then compute
+                      content hashes in the background. Recommended for large
+                      collections on a NAS or spinning disk. Duplicates are
+                      flagged once hashing finishes.
                     </FormDescription>
                   </div>
                 </FormItem>

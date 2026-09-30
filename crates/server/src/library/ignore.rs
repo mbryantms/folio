@@ -184,6 +184,7 @@ mod tests {
             filename_assume_issue_one: false,
             metadata_auto_apply_strong_matches: false,
             auto_convert_cbr_on_scan: false,
+            trust_fingerprint_on_first_import: false,
         }
     }
 

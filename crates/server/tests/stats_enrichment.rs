@@ -189,6 +189,7 @@ async fn seed_library_with_issues(
         filename_assume_issue_one: Set(false),
         metadata_auto_apply_strong_matches: Set(false),
         auto_convert_cbr_on_scan: Set(false),
+        trust_fingerprint_on_first_import: Set(false),
     }
     .insert(&db)
     .await

@@ -21,6 +21,7 @@ const schema = z
     allow_archive_writeback: z.boolean().default(false),
     metadata_writeback_enabled: z.boolean().default(false),
     auto_convert_cbr_on_scan: z.boolean().default(false),
+    trust_fingerprint_on_first_import: z.boolean().default(false),
   })
   .refine((v) => !v.metadata_writeback_enabled || v.allow_archive_writeback, {
     message:

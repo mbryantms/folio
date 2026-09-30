@@ -1246,6 +1246,8 @@ async fn run_series_phases(
     .await;
     let thumbnail_enqueue_started = Instant::now();
     let _ = crate::jobs::post_scan::enqueue_post_scan_for_series(state, lib.id, series_id).await;
+    // WP-3.2: settle any lazily-ingested rows (no-op probe otherwise).
+    let _ = crate::jobs::hash_backfill::enqueue_if_pending(state, lib.id).await;
     stats.record_phase("thumbnail_enqueue", thumbnail_enqueue_started.elapsed());
     // Saved-views M4: previously-missing CBL entries may now match
     // newly-scanned issues in this series.
@@ -1872,6 +1874,10 @@ async fn run_phases(
     .await;
     let thumbnail_enqueue_started = Instant::now();
     let _ = crate::jobs::post_scan::enqueue_post_scan_for_library(state, lib.id).await;
+    // WP-3.2 first-import lazy-hash mode: the scan skipped the full-file
+    // BLAKE3 for new rows; hand them to the background drain. A single
+    // indexed probe when nothing is pending.
+    let _ = crate::jobs::hash_backfill::enqueue_if_pending(state, lib.id).await;
     stats.record_phase("thumbnail_enqueue", thumbnail_enqueue_started.elapsed());
     // Saved-views M4: re-resolve CBL entries that were previously missing.
     // Best-effort, in a spawned task so the scan finalize path isn't blocked.

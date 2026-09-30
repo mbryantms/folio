@@ -1770,6 +1770,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/libraries/{slug}/hash-backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["libraries_hash_backfill_status"];
+        put?: never;
+        post: operations["libraries_hash_backfill_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/libraries/{slug}/health-issues": {
         parameters: {
             query?: never;
@@ -5739,6 +5755,12 @@ export interface components {
              *     Defaults to false so library creation is side-effect-light.
              */
             scan_now?: boolean;
+            /**
+             * @description First-import lazy-hash mode (WP-3.2): the initial scan ingests on
+             *     size+mtime and defers the full-file BLAKE3 to a background job.
+             *     Set it here so the `scan_now` scan already benefits. Default false.
+             */
+            trust_fingerprint_on_first_import?: boolean;
         };
         CreateMarkerReq: {
             body?: string | null;
@@ -6918,6 +6940,38 @@ export interface components {
             /** Format: int64 */
             issues: number;
         };
+        /** @description Response for `POST /libraries/{slug}/hash-backfill`. */
+        HashBackfillStartResp: {
+            /** @description `false` when there was nothing pending (no job pushed). */
+            enqueued: boolean;
+            /** Format: int64 */
+            pending: number;
+        };
+        /** @description Content-hash backfill progress for one library. */
+        HashBackfillView: {
+            /** @description The library's `trust_fingerprint_on_first_import` opt-in. */
+            enabled: boolean;
+            /**
+             * @description Whether new files are currently ingested without hashing — the
+             *     opt-in is on and the library has never completed a full scan.
+             */
+            first_import_active: boolean;
+            /**
+             * Format: int64
+             * @description `total - pending`.
+             */
+            hashed: number;
+            /**
+             * Format: int64
+             * @description Live issues whose full-file BLAKE3 is still pending.
+             */
+            pending: number;
+            /**
+             * Format: int64
+             * @description Live issues in the library.
+             */
+            total: number;
+        };
         Health: {
             /**
              * Format: int64
@@ -7462,6 +7516,13 @@ export interface components {
             slug: string;
             /** Format: int32 */
             soft_delete_days: number;
+            /**
+             * @description First-import lazy-hash mode (WP-3.2): while the library has never
+             *     completed a full scan, new files ingest on size+mtime and their
+             *     full-file BLAKE3 backfills in the background
+             *     (`GET /libraries/{slug}/hash-backfill` reports progress).
+             */
+            trust_fingerprint_on_first_import: boolean;
         };
         LibraryWatcherView: {
             /** @description The library's `file_watch_enabled` toggle. */
@@ -8551,6 +8612,11 @@ export interface components {
              * @description Pending backfill drains (cover-phash / variant-cover; B17).
              */
             backfill: number;
+            /**
+             * Format: int64
+             * @description Pending first-import content-hash drains (one per library; WP-3.2).
+             */
+            hash_backfill: number;
             /** Format: int64 */
             metadata_apply_issue: number;
             /**
@@ -10213,6 +10279,12 @@ export interface components {
             slug?: string | null;
             /** Format: int32 */
             soft_delete_days?: number | null;
+            /**
+             * @description First-import lazy-hash mode (WP-3.2). Only affects scans while the
+             *     library has never completed a full scan; flipping it afterwards is
+             *     accepted but has no effect until then.
+             */
+            trust_fingerprint_on_first_import?: boolean | null;
         };
         UpdateMarkerReq: {
             /** @description Sending `null` clears the field; omitting leaves it unchanged. */
@@ -14276,6 +14348,76 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    libraries_hash_backfill_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HashBackfillView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    libraries_hash_backfill_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HashBackfillStartResp"];
+                };
             };
             /** @description admin only */
             403: {

@@ -242,7 +242,9 @@ pub async fn ingest_one<C: ConnectionTrait>(
 /// §6.8 — MetronInfo wins on overlap), so callers see a single
 /// canonical `ComicInfo`.
 struct ParsedArchive {
-    hash: String,
+    /// Full-file BLAKE3, or `None` when the hash was deferred to the
+    /// `hash_backfill` job (first-import lazy-hash mode, WP-3.2).
+    hash: Option<String>,
     info: ComicInfo,
     actual_pages: u32,
     /// `"active"` for happy-path + MissingComicInfo (no ComicInfo but
@@ -294,6 +296,7 @@ enum DedupeOutcome {
 /// phase timings, and unwrap the `ArchiveOutcome` into a single
 /// `ParsedArchive` shape. Returns `Ok(None)` for `Unreadable` — the
 /// caller has nothing to write and should return `Ok(())`.
+#[expect(clippy::too_many_arguments)]
 async fn parse_archive_for_ingest(
     state: &AppState,
     lib: &library::Model,
@@ -302,6 +305,7 @@ async fn parse_archive_for_ingest(
     stats: &mut ScanStats,
     health: &mut HealthCollector,
     verify_dims: bool,
+    defer_hash: bool,
 ) -> anyhow::Result<Option<ParsedArchive>> {
     let path_for_blocking = path.to_path_buf();
     // F-9: tunable read buffer for BLAKE3 hashing. Larger buffers reduce
@@ -321,8 +325,17 @@ async fn parse_archive_for_ingest(
             .map_err(|e| anyhow::anyhow!("archive work semaphore closed: {e}"))?;
         tokio::task::spawn_blocking(move || {
             let hash_started = Instant::now();
-            let hash =
-                crate::library::hash::blake3_file_with_buffer(&path_for_blocking, hash_buffer_kb)?;
+            // WP-3.2: a deferred hash skips the full-file read entirely —
+            // the archive parse below only touches the central directory,
+            // the sidecar XML and the probed page headers.
+            let hash = if defer_hash {
+                None
+            } else {
+                Some(crate::library::hash::blake3_file_with_buffer(
+                    &path_for_blocking,
+                    hash_buffer_kb,
+                )?)
+            };
             let hash_ms = hash_started.elapsed().as_millis() as u64;
             let (archive_outcome, mut timing, diagnostics) =
                 parse_archive_timed(&path_for_blocking, archive_limits, verify_dims);
@@ -364,7 +377,10 @@ async fn parse_archive_for_ingest(
             });
         }
     }
-    stats.record_phase_parallel("hash", std::time::Duration::from_millis(timing.hash_ms));
+    if hash.is_some() {
+        stats.record_phase_parallel("hash", std::time::Duration::from_millis(timing.hash_ms));
+        stats.record_bytes_hashed(size.max(0) as u64);
+    }
     stats.record_phase_parallel(
         "archive_parse",
         std::time::Duration::from_millis(timing.archive_parse_ms),
@@ -373,7 +389,6 @@ async fn parse_archive_for_ingest(
         "page_probe",
         std::time::Duration::from_millis(timing.page_probe_ms),
     );
-    stats.record_bytes_hashed(size.max(0) as u64);
     let (mut info, metron_opt, actual_pages, parse_state) = match archive_outcome {
         ArchiveOutcome::Ok {
             info,
@@ -751,6 +766,12 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         .as_ref()
         .is_some_and(|row| !row_matches_file(row, size, mtime));
 
+    // WP-3.2 first-import lazy-hash mode: a file with no row yet, in a
+    // library that opted in and has never completed a full scan, skips
+    // the full-file BLAKE3. Existing rows (changed bytes, retags) always
+    // hash so `content_hash` stays truthful for them.
+    let defer_hash = existing.is_none() && lazy_hash_eligible(lib);
+
     let Some(ParsedArchive {
         hash,
         info,
@@ -760,9 +781,27 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         metroninfo_present,
         metron_fields,
         metron_info_raw,
-    }) = parse_archive_for_ingest(state, lib, path, size, stats, health, verify_dims).await?
+    }) = parse_archive_for_ingest(
+        state,
+        lib,
+        path,
+        size,
+        stats,
+        health,
+        verify_dims,
+        defer_hash,
+    )
+    .await?
     else {
         return Ok(());
+    };
+    // Pending rows carry a size+mtime fingerprint of the path as both id
+    // and `content_hash` placeholder (`hash_algorithm = 0`); the backfill
+    // job swaps in the real BLAKE3 and re-runs the dedupe check. The id
+    // stays pinned forever after, exactly like a retagged row's.
+    let (hash, hash_pending) = match hash {
+        Some(h) => (h, false),
+        None => (lazy_fingerprint(&path_str, size, mtime), true),
     };
 
     // Filename inference fills gaps. M7: honor per-library
@@ -863,8 +902,10 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
 
     // Dedupe-by-content fires only when the per-path lookup missed.
     // `order_by_asc(Id)` inside the helper keeps the choice
-    // deterministic if two rows transiently share a hash.
-    if existing.is_none() {
+    // deterministic if two rows transiently share a hash. A pending
+    // (lazy) row has no content hash to compare yet — `hash_backfill`
+    // re-runs this check once the real hash lands.
+    if existing.is_none() && !hash_pending {
         match dedupe_by_content_hash(db, lib, &hash, series_id, path, health, stats).await? {
             DedupeOutcome::NotDuplicate => {}
             DedupeOutcome::Moved(prior) => existing = Some(*prior),
@@ -940,6 +981,9 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         am.file_mtime = Set(mtime.fixed_offset());
         am.state = Set(parse_state.into());
         am.content_hash = Set(hash);
+        // The update path always hashes, so a row that was still pending
+        // (lazy first import, then retagged) is now settled.
+        am.hash_algorithm = Set(HASH_ALGORITHM_BLAKE3);
         am.special_type = Set(special_type.clone());
         am.metroninfo_present = Set(Some(metroninfo_present));
         am.metron_info_raw = Set(metron_info_raw.clone());
@@ -1179,6 +1223,8 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             }));
         events.push(e);
     } else {
+        // `hash` is the lazy fingerprint for a pending row, else the
+        // content hash — `allocate_issue_id` owns the precedence.
         let issue_id = allocate_issue_id(db, &hash, &path_str).await?;
         let issue_slug = if let Some(set) = slug_set {
             crate::slug::allocate_issue_slug_in_set(
@@ -1269,7 +1315,11 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             superseded_by: Set(None),
             special_type: Set(special_type),
             metroninfo_present: Set(Some(metroninfo_present)),
-            hash_algorithm: Set(1),
+            hash_algorithm: Set(if hash_pending {
+                HASH_ALGORITHM_PENDING
+            } else {
+                HASH_ALGORITHM_BLAKE3
+            }),
             // M1: post-scan thumbs worker stamps these on success.
             thumbnails_generated_at: Set(None),
             thumbnail_version: Set(0),
@@ -1324,6 +1374,9 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         )
         .await?;
         stats.files_added += 1;
+        if hash_pending {
+            stats.files_hash_deferred += 1;
+        }
         let label = issue_label(info.title.as_deref(), number_label.as_deref(), &inserted.id);
         let e = events
             .build(
@@ -1353,8 +1406,16 @@ fn issue_label(title: Option<&str>, number_raw: Option<&str>, issue_id: &str) ->
     }
 }
 
-/// Pick the primary key for a brand-new issue row. The content hash is the
-/// default stable id (spec §5.1.2). When that id is already taken — the
+/// Pick the primary key for a brand-new issue row — the **one** id
+/// allocator for scanner inserts. Precedence:
+///
+/// 1. **Pending** (first-import lazy-hash mode, WP-3.2): `candidate` is the
+///    [`lazy_fingerprint`] placeholder — the full-file hash hasn't run.
+/// 2. **Settled**: `candidate` is the BLAKE3 content hash, the default
+///    stable id (spec §5.1.2).
+/// 3. **Collision** (either case): `blake3(path)`, see below.
+///
+/// Callers pass whichever of (1)/(2) `content_hash` holds for the row. When that id is already taken — the
 /// same bytes live in another library (WP-3.3: dedupe is library-scoped),
 /// a second copy in a `dedupe_by_content = false` library, or a retagged
 /// row whose historical id equals this file's hash — fall back to the
@@ -1363,10 +1424,10 @@ fn issue_label(title: Option<&str>, number_raw: Option<&str>, issue_id: &str) ->
 /// content-derived one.
 async fn allocate_issue_id<C: ConnectionTrait>(
     db: &C,
-    content_hash: &str,
+    candidate: &str,
     path_str: &str,
 ) -> anyhow::Result<String> {
-    let taken = IssueEntity::find_by_id(content_hash.to_owned())
+    let taken = IssueEntity::find_by_id(candidate.to_owned())
         .select_only()
         .column(issue::Column::Id)
         .into_tuple::<String>()
@@ -1376,7 +1437,7 @@ async fn allocate_issue_id<C: ConnectionTrait>(
     if taken {
         Ok(blake3::hash(path_str.as_bytes()).to_hex().to_string())
     } else {
-        Ok(content_hash.to_owned())
+        Ok(candidate.to_owned())
     }
 }
 
@@ -1425,6 +1486,37 @@ async fn remember_primary_issue_path<C: ConnectionTrait>(
     ))
     .await?;
     Ok(())
+}
+
+/// `issues.hash_algorithm` for a row whose `content_hash` is the BLAKE3 of
+/// the file bytes (spec §14.2).
+pub const HASH_ALGORITHM_BLAKE3: i16 = 1;
+/// `issues.hash_algorithm` for a row ingested in first-import lazy-hash
+/// mode (WP-3.2): `content_hash` is still the [`lazy_fingerprint`]
+/// placeholder and the `hash_backfill` job owes it a real BLAKE3.
+pub const HASH_ALGORITHM_PENDING: i16 = 0;
+
+/// Whether new files in this library skip the full-file hash at ingest:
+/// the per-library opt-in is on and the library has never completed a
+/// full scan (the "first import"). Once `last_scan_at` is stamped, new
+/// files hash inline again so move / duplicate detection works at ingest.
+pub fn lazy_hash_eligible(lib: &library::Model) -> bool {
+    lib.trust_fingerprint_on_first_import && lib.last_scan_at.is_none()
+}
+
+/// Path identity for a lazily-ingested file (spec §5.1.2's `blake3(path)`
+/// option), salted with the size+mtime fingerprint so a different file
+/// that later lands on the same path during an unfinished first import
+/// can't collide with a row that moved away. Domain-separated from
+/// content hashes; same 64-hex shape so every id consumer is unaffected.
+pub fn lazy_fingerprint(path: &str, size: i64, mtime: chrono::DateTime<chrono::Utc>) -> String {
+    let mut h = blake3::Hasher::new();
+    h.update(b"folio:lazy-fingerprint:v1\0");
+    h.update(path.as_bytes());
+    h.update(b"\0");
+    h.update(&size.to_le_bytes());
+    h.update(&mtime.timestamp_micros().to_le_bytes());
+    h.finalize().to_hex().to_string()
 }
 
 pub fn file_fingerprint(path: &Path) -> anyhow::Result<(i64, chrono::DateTime<chrono::Utc>)> {

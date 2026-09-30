@@ -139,6 +139,7 @@ async fn seed_issue(app: &TestApp) -> String {
         filename_assume_issue_one: Set(false),
         metadata_auto_apply_strong_matches: Set(false),
         auto_convert_cbr_on_scan: Set(false),
+        trust_fingerprint_on_first_import: Set(false),
     }
     .insert(&db)
     .await
@@ -640,6 +641,7 @@ async fn seed_series_with_issues(app: &TestApp, n_issues: usize) -> (Uuid, Vec<S
         filename_assume_issue_one: Set(false),
         metadata_auto_apply_strong_matches: Set(false),
         auto_convert_cbr_on_scan: Set(false),
+        trust_fingerprint_on_first_import: Set(false),
     }
     .insert(&db)
     .await

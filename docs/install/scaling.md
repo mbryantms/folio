@@ -43,6 +43,14 @@ and apply on the next restart. Defaults are derived from
 | `cache.zip_lru_capacity` (`COMIC_ZIP_LRU_CAPACITY`) | `64` | Open-archive handles kept warm for page serving. |
 | `COMIC_PAGE_VARIANT_CACHE_BYTES` (env only) | `2 GiB` | Byte budget of the on-disk reader page-variant cache under `/data` ([`page_variants.rs`](../../crates/server/src/library/page_variants.rs)). `0` disables caching (variants are recomputed per request). Size it to your hottest working set — this is the single biggest win for reader latency on large libraries. |
 
+**Importing a big collection from a NAS or spinning disk?** Tick *Fast
+first import* when creating the library (or *Trust fingerprint on first
+import* in its settings before the first scan). The first scan then skips
+the full-file BLAKE3 of every archive and the hashes are computed
+afterwards by a background job, with progress on the library settings
+page; duplicate copies are flagged once hashing finishes. See
+[library-scanner.md § First-import lazy-hash mode](../dev/library-scanner.md#first-import-lazy-hash-mode).
+
 Postgres connection pool: fixed at `max_connections(30)` /
 `min_connections(2)` in [`app.rs`](../../crates/server/src/app.rs); there
 is no env knob. A default Postgres (`max_connections = 100`) has ample

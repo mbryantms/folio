@@ -21,6 +21,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TagInput } from "./TagInput";
+import { HashBackfillProgress } from "./HashBackfillProgress";
 import { CronInput } from "./CronInput";
 import { useLibrary, useThumbnailsSettings } from "@/lib/api/queries";
 import { useUnsavedChangesGuard } from "@/lib/ui/use-unsaved-changes-guard";
@@ -58,6 +59,7 @@ const schema = z
     allow_archive_writeback: z.boolean().default(false),
     metadata_writeback_enabled: z.boolean().default(false),
     auto_convert_cbr_on_scan: z.boolean().default(false),
+    trust_fingerprint_on_first_import: z.boolean().default(false),
     archive_backup_retain_count: z.number().int().min(0).max(5).default(1),
     archive_backup_retain_days: z.number().int().min(0).max(3650).default(30),
     archive_writeback_jpeg_quality: z
@@ -101,6 +103,7 @@ function formValuesFromLibrary(lib: LibraryView): z.input<typeof schema> {
     allow_archive_writeback: lib.allow_archive_writeback,
     metadata_writeback_enabled: lib.metadata_writeback_enabled,
     auto_convert_cbr_on_scan: lib.auto_convert_cbr_on_scan,
+    trust_fingerprint_on_first_import: lib.trust_fingerprint_on_first_import,
     archive_backup_retain_count: lib.archive_backup_retain_count,
     archive_backup_retain_days: lib.archive_backup_retain_days,
     archive_writeback_jpeg_quality: lib.archive_writeback_jpeg_quality,
@@ -129,6 +132,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       allow_archive_writeback: false,
       metadata_writeback_enabled: false,
       auto_convert_cbr_on_scan: false,
+      trust_fingerprint_on_first_import: false,
       archive_backup_retain_count: 1,
       archive_backup_retain_days: 30,
       archive_writeback_jpeg_quality: 92,
@@ -167,6 +171,8 @@ export function LibrarySettingsForm({ id }: { id: string }) {
         allow_archive_writeback: values.allow_archive_writeback,
         metadata_writeback_enabled: values.metadata_writeback_enabled,
         auto_convert_cbr_on_scan: values.auto_convert_cbr_on_scan,
+        trust_fingerprint_on_first_import:
+          values.trust_fingerprint_on_first_import,
         archive_backup_retain_count: values.archive_backup_retain_count,
         archive_backup_retain_days: values.archive_backup_retain_days,
         archive_writeback_jpeg_quality: values.archive_writeback_jpeg_quality,
@@ -333,6 +339,33 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                 </FormItem>
               )}
             />
+            <FormField
+              control={form.control}
+              name="trust_fingerprint_on_first_import"
+              render={({ field }) => (
+                <FormItem className="flex items-start justify-between gap-6">
+                  <div className="space-y-1">
+                    <FormLabel>Trust fingerprint on first import</FormLabel>
+                    <FormDescription>
+                      Until this library&rsquo;s first full scan completes, new
+                      files are imported on size and modified time alone and
+                      their content hashes are computed afterwards in the
+                      background. Speeds up the first import of a large
+                      collection on a NAS or spinning disk; duplicate copies are
+                      caught once hashing finishes. Later scans hash new files
+                      as usual.
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+            <HashBackfillProgress librarySlug={id} />
             <FormField
               control={form.control}
               name="soft_delete_days"
