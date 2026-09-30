@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { AccountCacheBoundary } from "./AccountCacheBoundary";
+import { OutboxReplayer } from "./OutboxReplayer";
+import { OfflineBootstrap } from "./offline/OfflineBootstrap";
 
 import { HttpError } from "@/lib/api/queries";
 
@@ -100,6 +102,8 @@ export function QueryProvider({
   return (
     <QueryClientProvider client={client}>
       <AccountCacheBoundary userId={userId} />
+      <OutboxReplayer userId={userId} />
+      <OfflineBootstrap userId={userId} />
       {children}
     </QueryClientProvider>
   );

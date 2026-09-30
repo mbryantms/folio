@@ -119,6 +119,22 @@ Two modes protect your reading history:
   moving your saved position or polluting On Deck, with a
   "Continue from here" banner if you decide to keep reading.
 
+### Read on a plane: offline downloads
+
+"Download for offline" in an issue's or series' actions menu stores the
+pages (at a page size you pick — Small, Medium, Large, or Original — with
+an estimated size shown against the browser's storage quota), their page
+strip thumbnails, and the issue details on the device. Downloads run in the
+background one issue at a time, can be paused and resumed, survive
+reloads, and a whole series is queued issue by issue. With no connection,
+opening the app or a reader link lands in **Downloads** (`/downloads`),
+which opens any finished download in the normal reader; pages you turn
+offline are queued and synced when you reconnect. Settings → Downloads
+lists every download with its size, removes one or all of them, and shows
+how much storage Folio is using. Downloads belong to the signed-in account
+on that browser — signing out removes them, and another account signing
+in on the same browser never sees them.
+
 ### "Up Next" that understands reading lists
 
 Finish an issue and a small card slides in from the page-turn edge (never

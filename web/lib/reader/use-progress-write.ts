@@ -8,9 +8,25 @@ import { nextPersistedProgressPage } from "@/lib/reader/webtoon-window";
 
 import { createProgressWriter } from "./progress-writer";
 import type { ProgressBody } from "./progress-writer";
+import { getOutbox } from "@/lib/pwa/outbox";
 import { PRIVATE_RESET } from "@/lib/pwa/private-state";
 
 const PROGRESS_DEBOUNCE_MS = 300;
+
+/** `POST /progress` through `apiFetch` (CSRF header read per request,
+ *  token refresh on 401). Shared by the live reader and outbox replay. */
+export function postProgress(body: ProgressBody): Promise<Response> {
+  const csrf = getCsrfToken();
+  return apiFetch("/progress", {
+    method: "POST",
+    keepalive: true,
+    headers: {
+      "Content-Type": "application/json",
+      ...(csrf ? { "X-CSRF-Token": csrf } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+}
 
 /**
  * Debounced per-page progress write to `POST /progress`. Fires
@@ -32,8 +48,9 @@ const PROGRESS_DEBOUNCE_MS = 300;
  * the position backwards) and ignores writes tagged with an older
  * run. When the page was opened with `restartRun` ("Read from
  * beginning", or a finished issue reopened from the cover) the first
- * write sends `restart: true` instead of a run, which opens the next
- * run at that page; later writes use the run the server returns.
+ * writes send `restart: true` with the run being left, which opens the
+ * next run at that page — once, so a replay or a duplicate delivery is
+ * harmless; later writes use the run the server returns.
  *
  * Incognito short-circuits the write entirely. The reading-session
  * tracker is also gated separately by `activityTrackingEnabled` in
@@ -46,6 +63,11 @@ const PROGRESS_DEBOUNCE_MS = 300;
  * - Hidden/pagehide/online events flush the latest pending writes. Every
  *   request uses keepalive and a failed response stays pending in memory.
  *   Delivery is serialized; account resets discard pending writes.
+ * - Durable outbox (WP-4.5): each write is also queued in IndexedDB
+ *   (`lib/pwa/outbox.ts`) and removed once acknowledged. If the tab dies
+ *   before delivery, `OutboxReplayer` replays it on the next launch /
+ *   `online` / visible — safe because every write carries its run and a
+ *   run-tagged restart is applied once by the server.
  *
  * Cache invalidation: after each successful write we mark the
  * shared `useUserProgress` query stale + invalidate every cached
@@ -99,31 +121,27 @@ export function useReaderProgressWrite(opts: {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const writer = useMemo(
     () =>
-      createProgressWriter(async (body) => {
-        const csrf = getCsrfToken();
-        const response = await apiFetch("/progress", {
-          method: "POST",
-          keepalive: true,
-          headers: {
-            "Content-Type": "application/json",
-            ...(csrf ? { "X-CSRF-Token": csrf } : {}),
-          },
-          body: JSON.stringify(body),
-        });
-        if (!response.ok) return false;
-        void qc.invalidateQueries({ queryKey: queryKeys.userProgress });
-        invalidateRails(qc);
-        // Hand the reply's run back to the writer, which adopts it for
-        // the next write (after a `restart` it is the new run; a newer
-        // run than ours means another device restarted — follow it).
-        try {
-          const reply = (await response.json()) as { run?: unknown };
-          return typeof reply.run === "number" ? { run: reply.run } : true;
-        } catch {
-          /* keepalive replies may be unreadable after unload */
-          return true;
-        }
-      }),
+      createProgressWriter(
+        async (body) => {
+          const response = await postProgress(body);
+          if (!response.ok) return false;
+          void qc.invalidateQueries({ queryKey: queryKeys.userProgress });
+          invalidateRails(qc);
+          // Hand the reply's run back to the writer, which adopts it for
+          // the next write (after a `restart` it is the new run; a newer
+          // run than ours means another device restarted — follow it).
+          try {
+            const reply = (await response.json()) as { run?: unknown };
+            return typeof reply.run === "number" ? { run: reply.run } : true;
+          } catch {
+            /* keepalive replies may be unreadable after unload */
+            return true;
+          }
+        },
+        // WP-4.5: mirror every write into the durable outbox so one that
+        // never got out (tab killed offline) replays on the next launch.
+        { outbox: getOutbox() },
+      ),
     [qc],
   );
   // High-water mark for the monotonic guard. Seeded from the resume

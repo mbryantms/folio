@@ -36,6 +36,12 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 
 import { PRIVATE_RESET } from "@/lib/pwa/private-state";
 import { apiFetch, getCsrfToken } from "@/lib/api/auth-refresh";
+import {
+  getOutbox,
+  outcomeForStatus,
+  type DeliveryOutcome,
+  type OutboxKind,
+} from "@/lib/pwa/outbox";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const TICK_INTERVAL_MS = 1_000;
@@ -219,7 +225,7 @@ export function useReadingSession(opts: SessionTrackerOptions): void {
         0,
         Math.max(0, totalPages - 1),
       );
-      return {
+      const payload: SessionPayload = {
         client_session_id: sid,
         issue_id: issueId,
         started_at: startedAt.toISOString(),
@@ -232,6 +238,7 @@ export function useReadingSession(opts: SessionTrackerOptions): void {
         device: device ?? null,
         view_mode: viewMode,
       };
+      return payload;
     },
     [device, issueId, totalPages, viewMode],
   );
@@ -372,23 +379,72 @@ function clamp(n: number, lo: number, hi: number): number {
   return n;
 }
 
+/** Body of `POST /me/reading-sessions` as the tracker builds it. */
+export type SessionPayload = {
+  client_session_id: string;
+  issue_id: string;
+  started_at: string;
+  ended_at?: string;
+  active_ms: number;
+  distinct_pages_read: number;
+  page_turns: number;
+  start_page: number;
+  end_page: number;
+  device: string | null;
+  view_mode: SessionTrackerOptions["viewMode"];
+};
+
+/** Outbox kind for reading-session upserts (WP-4.5). One entry per
+ *  `client_session_id`; the payload is cumulative, so the newest wins and
+ *  the server's MAX-merge upsert makes any replay idempotent. */
+export const SESSION_OUTBOX_KIND = "reading-session";
+
+/** `POST /me/reading-sessions` through `apiFetch` — token-expiry on a
+ *  long reading session triggers the implicit refresh-and-retry instead
+ *  of silently dropping the heartbeat (audit M1). */
+export function sendSession(body: SessionPayload): Promise<Response> {
+  const csrf = getCsrfToken();
+  return apiFetch("/me/reading-sessions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(csrf ? { "X-CSRF-Token": csrf } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+export function sessionOutboxKind(
+  post: (body: SessionPayload) => Promise<Response> = sendSession,
+): OutboxKind<SessionPayload> {
+  return {
+    async deliver(body): Promise<DeliveryOutcome> {
+      // 422 (older than the server's 14-day window, or otherwise invalid)
+      // and 404 (issue gone) are permanent: dropped.
+      return outcomeForStatus((await post(body)).status);
+    },
+  };
+}
+
 async function postSession(
-  body: unknown,
+  body: SessionPayload,
   opts?: { invalidateActivityOn?: QueryClient },
 ): Promise<void> {
+  const outbox = getOutbox();
   try {
-    const csrf = getCsrfToken();
-    // Routed through `apiFetch` so token-expiry on a long reading
-    // session triggers the implicit refresh-and-retry instead of
-    // silently dropping the heartbeat (audit M1).
-    await apiFetch("/me/reading-sessions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(csrf ? { "X-CSRF-Token": csrf } : {}),
-      },
-      body: JSON.stringify(body),
-    });
+    // Durable first (WP-4.5): if this request never gets out, the
+    // outbox replays the newest payload for this session later.
+    const queued = outbox
+      .enqueue(SESSION_OUTBOX_KIND, body.client_session_id, body)
+      .catch(() => undefined);
+    const response = await sendSession(body);
+    await queued;
+    if (outcomeForStatus(response.status) !== "retry") {
+      await outbox
+        .acknowledge(SESSION_OUTBOX_KIND, body.client_session_id, body)
+        .catch(() => false);
+    }
+    if (!response.ok) return;
     // Optional cache flush after a successful write. Only the finalize
     // path passes a `QueryClient` — heartbeats every 30s would invalidate
     // unnecessarily often, and the user is rarely on activity/stats
@@ -409,6 +465,6 @@ async function postSession(
       qc.invalidateQueries({ queryKey: ["admin", "users"], exact: false });
     }
   } catch {
-    /* best-effort; the next heartbeat will retry the same row */
+    /* Offline: the outbox entry replays; the next heartbeat also retries. */
   }
 }

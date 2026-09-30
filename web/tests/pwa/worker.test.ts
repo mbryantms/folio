@@ -126,3 +126,24 @@ it("does not repopulate thumbnails with a response started before logout", async
   await event.waitUntil.mock.calls[0]![0];
   expect(cache.put).not.toHaveBeenCalled();
 });
+it("relays an outbox Background Sync to open windows without fetching", async () => {
+  const { OUTBOX_REPLAY_MESSAGE, OUTBOX_SYNC_TAG } =
+    await import("@/lib/pwa/outbox");
+  const client = { postMessage: vi.fn() };
+  Object.assign(globalThis.self, {
+    clients: { matchAll: vi.fn().mockResolvedValue([client]) },
+  });
+  let relay!: Promise<unknown>;
+  dispatch("sync", {
+    tag: OUTBOX_SYNC_TAG,
+    waitUntil: (p: Promise<unknown>) => {
+      relay = p;
+    },
+  });
+  await relay;
+  // Replay stays in the page (CSRF cookie + token refresh live there).
+  expect(client.postMessage).toHaveBeenCalledWith({
+    type: OUTBOX_REPLAY_MESSAGE,
+  });
+  expect(fetch).not.toHaveBeenCalled();
+});
