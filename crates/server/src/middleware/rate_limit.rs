@@ -195,6 +195,18 @@ pub const NOTES_EXPORT: Bucket = Bucket {
     burst: 6,
 };
 
+/// Marker writes — `POST /me/markers`, `PATCH` / `DELETE
+/// /me/markers/{id}`, `POST /me/markers/bulk-delete` (WP-5.3, audit SE-5).
+/// 10/s/IP sustained with a burst of 600: a person adding notes never
+/// comes close, and the burst covers the bookmarks page's "Undo" of a
+/// maximal 500-marker bulk delete, which re-creates each row with its own
+/// POST. A runaway script trips it within a minute.
+pub const MARKER_WRITE: Bucket = Bucket {
+    name: "marker_write",
+    period: Duration::from_millis(100),
+    burst: 600,
+};
+
 // ───────── error handler ─────────
 
 fn handle_governor_error(bucket: &'static str, err: GovernorError) -> Response<Body> {

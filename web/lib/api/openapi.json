@@ -5861,6 +5861,12 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "validation (per-field `error.details`)"
+          },
+          "429": {
+            "description": "marker write rate limit"
           }
         }
       }
@@ -6043,6 +6049,12 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "validation (per-field `error.details`)"
+          },
+          "429": {
+            "description": "marker write rate limit"
           }
         }
       }
@@ -13398,6 +13410,7 @@
       },
       "CreateMarkerReq": {
         "type": "object",
+        "description": "Create a marker. Field limits are checked first (422 with per-field\n`error.details`); the kind-dependent rules (a note needs `body`, a\nhighlight needs `region`) and `page_index` against the issue's page\ncount are checked after.",
         "required": [
           "issue_id",
           "page_index",
@@ -13408,13 +13421,15 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Markdown body, max 10 KB."
           },
           "color": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Palette token, max 32 characters."
           },
           "is_favorite": {
             "type": [
@@ -13428,17 +13443,17 @@
           },
           "kind": {
             "type": "string",
-            "description": "`'bookmark' | 'note' | 'highlight'`."
+            "description": "`'bookmark' | 'note' | 'favorite' | 'highlight'`."
           },
           "page_index": {
             "type": "integer",
             "format": "int32"
           },
           "region": {
-            "description": "`{ x, y, w, h, shape }` — rect dims as 0–100 percent floats\nnormalized to the page's natural pixel dims. Omit for\nwhole-page markers."
+            "description": "`{ x, y, w, h, shape }` — rect dims as 0–100 percent floats\nnormalized to the page's natural pixel dims; `w` and `h` must be\nat least 0.5 after clamping. Omit for whole-page markers."
           },
           "selection": {
-            "description": "`{ text?, image_hash?, ocr_confidence? }`."
+            "description": "`{ text?, image_hash?, ocr_confidence? }`. `text` is capped at\n8 KB."
           },
           "tags": {
             "type": [
@@ -13448,7 +13463,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Freeform tag list. Trimmed + de-duped + lowercased server-side."
+            "description": "Freeform tag list. Trimmed + de-duped + lowercased server-side;\nat most 32 tags of 80 characters."
           }
         }
       },
@@ -24488,7 +24503,9 @@
             "description": "Toggle star flag. Omit to leave unchanged."
           },
           "region": {},
-          "selection": {},
+          "selection": {
+            "description": "`{ text?, … }`. `text` is user-editable (fix an OCR typo, or\ntype the caption by hand) and capped at 8 KB."
+          },
           "tags": {
             "type": [
               "array",
