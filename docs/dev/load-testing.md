@@ -379,19 +379,20 @@ issue of a series or list.
 | label / cover hydrates on list pages | `markers` (marker list), `reading_log` (series-cover pick + finished-issue index), `reading_sessions`, `admin_activity`, `scan_runs` (×2) | full rows for 2–4 columns |
 | On Deck walks | `rails` (`OnDeckIssue` is now an alias of `IssueCardRow`) | already projected (WP-2.x) |
 
-The count as of this WP covers 92 exact `issue::Entity::find()` sites
+The count as of this WP covers 94 exact `issue::Entity::find()` sites
 across `crates/server/src` (not `library_health_issue::Entity`):
 
-- **58 projected.** They use `select_only`, `into_model`, `into_tuple` or
+- **59 projected.** They use `select_only`, `into_model`, `into_tuple` or
   the new `IssueCardRow`. The pre-existing ones are `series::hydrate_series`
   counts and covers, the `series::get_one` aggregates, `admin_thumbs` (6),
   `post_scan` (5), `reconcile`, `provider_ranges`, `libraries` scan preview,
   `account_export`, `slug`, `auto_split`, `orphan_sweep` and
-  `reconcile_status`.
+  `reconcile_status`, plus `folder_checks`, which arrived with WP-3.4.
+  `api/duplicates` (WP-3.3) uses raw projected SQL throughout.
 - **11 `.count()`.** These never load rows.
-- **23 full rows.**
+- **24 full rows.**
 
-**The 23 kept on full rows.** Each is a single-row or detail path, or a
+**The 24 kept on full rows.** Each is a single-row or detail path, or a
 path that genuinely reads the wide or many scalar columns:
 
 - Issue detail: `issues::find_by_slugs` / `get_one`.
@@ -403,6 +404,8 @@ path that genuinely reads the wide or many scalar columns:
   event.
 - The scanner, deep validate, backfill and the post-scan worker's full
   issue fetch.
+- The manual-writeback series fan-out (`metadata/manual_writeback`),
+  which composes the sidecar XML from each full row.
 - The OPDS feeds (see the backlog).
 
 **Backlog: OPDS acquisition feeds** (`opds.rs` ×4, `opds_v2.rs` ×3). A
