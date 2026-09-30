@@ -4,7 +4,7 @@ import { Reader } from "./Reader";
 import { ReaderHealthToast } from "./ReaderHealthToast";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { IssueDetailView, MeView, PageInfo } from "@/lib/api/types";
-import { detectViewMode } from "@/lib/reader/detect";
+import { detectInitialViewMode } from "@/lib/reader/detect";
 import type { Direction, SeriesDirection, ViewMode } from "@/lib/reader/detect";
 import type { FitMode } from "@/lib/reader/store";
 import { readerViewport } from "@/lib/viewport";
@@ -230,7 +230,11 @@ export default async function ReadPage({
     page: firstPage,
     pageInfo: pages[firstPage],
     version: issue.last_rewrite_at ?? null,
-    viewMode: userDefaultViewMode ?? detectViewMode(pages),
+    viewMode: detectInitialViewMode(
+      pages,
+      userDefaultViewMode,
+      seriesReadingDirection,
+    ),
     fitMode: userDefaultFitMode ?? "width",
   });
 
