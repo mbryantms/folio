@@ -46,6 +46,7 @@ pub mod opds_progression;
 pub mod opds_pse;
 pub mod opds_v2;
 pub mod page_bytes;
+pub mod page_overrides;
 pub mod pages;
 pub mod people;
 pub mod progress;

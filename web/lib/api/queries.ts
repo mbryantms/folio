@@ -30,6 +30,7 @@ import type {
   AppearancesView,
   CollectionEntriesView,
   IssueMarkersView,
+  PageOverridesView,
   MarkerKind,
   MarkerCountView,
   MarkerListView,
@@ -1938,6 +1939,25 @@ export function useIssueMarkers(issueId: string) {
     queryKey: queryKeys.issueMarkers(issueId),
     queryFn: () => jsonFetch<IssueMarkersView>(`/me/issues/${issueId}/markers`),
     enabled: !!issueId,
+  });
+}
+
+/** WP-4.3 — the caller's manual spread controls for one issue (force
+ *  spread / force single / shift pairing). `initialData` is the SSR
+ *  prefetch from the read page so the first paint already pairs with
+ *  the overrides applied; `staleTime: Infinity` because only this user's
+ *  own mutations change it, and those write the cache directly. */
+export function useIssuePageOverrides(
+  issueId: string,
+  initialData?: PageOverridesView | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.issuePageOverrides(issueId),
+    queryFn: () =>
+      jsonFetch<PageOverridesView>(`/me/issues/${issueId}/page-overrides`),
+    enabled: !!issueId,
+    initialData: initialData ?? undefined,
+    staleTime: Infinity,
   });
 }
 

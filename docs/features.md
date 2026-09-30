@@ -49,7 +49,11 @@ Three view modes — **single**, **double**, and **webtoon** (continuous
 vertical scroll) — cycled with a keypress. Double-page mode pairs pages
 side-by-side and knows not to pair a page flagged `DoublePage` in
 ComicInfo, so wraparound covers and splash spreads render alone instead of
-being mangled into a fake pair.
+being mangled into a fake pair. When a scan is offset or a spread isn't
+flagged, you can fix it yourself: mark any page as a spread or a single
+from the page strip, or shift the whole issue's pairing by one page. The
+corrections are saved to your account per issue, so they follow you to
+every device.
 
 On the first open of a series, Folio picks the mode for you: webtoon when
 the median page is tall enough to clearly be a vertical strip, double when

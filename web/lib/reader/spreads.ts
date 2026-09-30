@@ -44,9 +44,108 @@ export function isSpreadPage(page: PageInfo | undefined): boolean {
   return false;
 }
 
+/**
+ * Per-user, per-issue manual spread controls (WP-4.3, audit R18 / UX-2),
+ * persisted server-side at `/me/issues/{id}/page-overrides`. Structurally
+ * the wire `PageOverridesView` minus its bookkeeping fields, so the API
+ * response can be passed straight in.
+ *
+ * Overrides win over both automatic signals — the ComicInfo
+ * `double_page` flag and the aspect-ratio heuristic:
+ *  - `spread_pages`: always solo, as a spread.
+ *  - `single_pages`: always an ordinary page that pairs, even when
+ *    flagged or landscape.
+ *  - `shift_pairing`: the first page that would start a pair is shown
+ *    solo instead, shifting every later pair by one (offset scans).
+ */
+export interface SpreadOverrides {
+  shift_pairing: boolean;
+  spread_pages: ReadonlyArray<number>;
+  single_pages: ReadonlyArray<number>;
+}
+
+export const EMPTY_SPREAD_OVERRIDES: SpreadOverrides = {
+  shift_pairing: false,
+  spread_pages: [],
+  single_pages: [],
+};
+
+/** Tri-state per-page mode the strip affordance cycles through. */
+export type PageSpreadMode = "auto" | "spread" | "single";
+
+/** The override mode currently applied to page `index`. */
+export function pageSpreadMode(
+  overrides: SpreadOverrides | null | undefined,
+  index: number,
+): PageSpreadMode {
+  if (!overrides) return "auto";
+  if (overrides.spread_pages.includes(index)) return "spread";
+  if (overrides.single_pages.includes(index)) return "single";
+  return "auto";
+}
+
+/** Next mode in the strip's cycle: auto → spread → single → auto. */
+export function nextPageSpreadMode(mode: PageSpreadMode): PageSpreadMode {
+  if (mode === "auto") return "spread";
+  if (mode === "spread") return "single";
+  return "auto";
+}
+
+/**
+ * Copy of `overrides` with page `index` set to `mode`. Keeps both lists
+ * sorted, unique and disjoint (the server enforces the same).
+ */
+export function withPageSpreadMode(
+  overrides: SpreadOverrides | null | undefined,
+  index: number,
+  mode: PageSpreadMode,
+): SpreadOverrides {
+  const base = overrides ?? EMPTY_SPREAD_OVERRIDES;
+  const spread = base.spread_pages.filter((p) => p !== index);
+  const single = base.single_pages.filter((p) => p !== index);
+  if (mode === "spread") spread.push(index);
+  if (mode === "single") single.push(index);
+  const byNumber = (a: number, b: number) => a - b;
+  return {
+    shift_pairing: base.shift_pairing,
+    spread_pages: spread.sort(byNumber),
+    single_pages: single.sort(byNumber),
+  };
+}
+
+/** True when `overrides` changes nothing (equivalent to absent). */
+export function isEmptySpreadOverrides(
+  overrides: SpreadOverrides | null | undefined,
+): boolean {
+  return (
+    !overrides ||
+    (!overrides.shift_pairing &&
+      overrides.spread_pages.length === 0 &&
+      overrides.single_pages.length === 0)
+  );
+}
+
+/**
+ * {@link isSpreadPage} with the user's manual overrides applied: a forced
+ * spread is always a spread, a forced single never is, anything else
+ * falls through to the automatic flag + aspect detection.
+ */
+export function isEffectiveSpread(
+  pages: ReadonlyArray<PageInfo>,
+  index: number,
+  overrides?: SpreadOverrides | null,
+): boolean {
+  const mode = pageSpreadMode(overrides, index);
+  if (mode === "spread") return true;
+  if (mode === "single") return false;
+  return isSpreadPage(pages[index]);
+}
+
 export interface SpreadOptions {
   /** When true (default), index 0 is rendered solo and pairs sync from 1. */
   coverSolo?: boolean;
+  /** Manual per-issue spread controls; see {@link SpreadOverrides}. */
+  overrides?: SpreadOverrides | null;
   /**
    * Authoritative page count for the issue. ComicInfo's `<Pages>`
    * element is *optional metadata* — some publishers ship it truncated
@@ -63,15 +162,19 @@ export interface SpreadOptions {
  * Walk pages and emit spread groups. Rules, in order:
  *
  *  1. If `coverSolo` (default true) and `i === 0`, emit `[0]` and advance.
- *  2. If `isSpreadPage(pages[i])`, emit `[i]` solo and advance.
- *  3. If `i + 1 < total` and `!isSpreadPage(pages[i + 1])`,
- *     emit `[i, i + 1]` and advance by 2.
+ *  2. If page `i` is a spread, emit `[i]` solo and advance.
+ *  3. If `i + 1 < total` and page `i + 1` is not a spread, emit
+ *     `[i, i + 1]` and advance by 2 — except the first time this rule
+ *     fires with `shift_pairing` on, when `[i]` is emitted solo instead
+ *     (the one-page shift).
  *  4. Else emit `[i]` solo and advance.
  *
- * "Spread" = the `double_page` flag OR a landscape aspect ratio (audit
- * C8) — see {@link isSpreadPage}. Rule (3) avoids ever pairing a page with
- * a *following* spread — the spread takes its own group on the next
- * iteration.
+ * "Spread" = a manual `spread_pages` override, else (unless the page is
+ * in `single_pages`) the `double_page` flag OR a landscape aspect ratio
+ * (audit C8) — see {@link isEffectiveSpread}. Manual overrides always win
+ * over the automatic signals (WP-4.3). Rule (3) avoids ever pairing a
+ * page with a *following* spread — the spread takes its own group on the
+ * next iteration.
  *
  * `total` is `opts.totalPages ?? pages.length`. The `pages[]` array is
  * a metadata side-table consulted for the `double_page` flag; missing
@@ -83,6 +186,9 @@ export function computeSpreadGroups(
 ): ReadonlyArray<SpreadGroup> {
   const coverSolo = opts.coverSolo ?? true;
   const total = Math.max(0, opts.totalPages ?? pages.length);
+  const overrides = opts.overrides ?? null;
+  const spreadAt = (idx: number) => isEffectiveSpread(pages, idx, overrides);
+  let shiftPending = overrides?.shift_pairing === true;
   const groups: number[][] = [];
   let i = 0;
   while (i < total) {
@@ -91,12 +197,18 @@ export function computeSpreadGroups(
       i = 1;
       continue;
     }
-    if (isSpreadPage(pages[i])) {
+    if (spreadAt(i)) {
       groups.push([i]);
       i += 1;
       continue;
     }
-    if (i + 1 < total && !isSpreadPage(pages[i + 1])) {
+    if (i + 1 < total && !spreadAt(i + 1)) {
+      if (shiftPending) {
+        shiftPending = false;
+        groups.push([i]);
+        i += 1;
+        continue;
+      }
       groups.push([i, i + 1]);
       i += 2;
       continue;

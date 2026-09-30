@@ -3,7 +3,12 @@ import { notFound, redirect } from "next/navigation";
 import { Reader } from "./Reader";
 import { ReaderHealthToast } from "./ReaderHealthToast";
 import { apiGet, ApiError } from "@/lib/api/fetch";
-import type { IssueDetailView, MeView, PageInfo } from "@/lib/api/types";
+import type {
+  IssueDetailView,
+  MeView,
+  PageInfo,
+  PageOverridesView,
+} from "@/lib/api/types";
 import { detectInitialViewMode } from "@/lib/reader/detect";
 import type { Direction, SeriesDirection, ViewMode } from "@/lib/reader/detect";
 import type { FitMode } from "@/lib/reader/store";
@@ -122,7 +127,16 @@ export default async function ReadPage({
     explicitPage === null && !startFresh
       ? apiGet<ProgressDelta>(`/progress`).catch(() => null)
       : null;
-  const [delta, me] = await Promise.all([progressPromise, mePromise]);
+  // WP-4.3: the user's manual spread controls, prefetched so the first
+  // double-page paint already pairs with them. Fails soft to automatic.
+  const overridesPromise = apiGet<PageOverridesView>(
+    `/me/issues/${issue.id}/page-overrides`,
+  ).catch(() => null);
+  const [delta, me, pageOverrides] = await Promise.all([
+    progressPromise,
+    mePromise,
+    overridesPromise,
+  ]);
 
   // page_count from ComicInfo isn't always trustworthy; if the reader walks
   // off the end we clamp client-side. 1 is the sane fallback so the reader
@@ -268,6 +282,7 @@ export default async function ReadPage({
         readingMinActiveMs={readingMinActiveMs}
         readingMinPages={readingMinPages}
         readingIdleMs={readingIdleMs}
+        initialPageOverrides={pageOverrides}
       />
     </>
   );

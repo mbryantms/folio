@@ -29,6 +29,7 @@ export * from "./duplicates";
 export * from "./hash-backfill";
 export * from "./markers";
 export { invalidateRails } from "./rails";
+export * from "./page-overrides";
 
 import type {
   AcceptMetadataResp,

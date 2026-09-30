@@ -31,9 +31,10 @@ import {
   computeSpreadGroups,
   firstPageOfGroup,
   groupIndexForPage,
-  isSpreadPage,
+  isEffectiveSpread,
   type SpreadGroup,
 } from "@/lib/reader/spreads";
+import { useSpreadOverrides } from "@/lib/reader/use-spread-overrides";
 import { useReaderProgressWrite } from "@/lib/reader/use-progress-write";
 import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
 import { pageBytesSrcSet, withContentVersion } from "@/lib/urls";
@@ -56,7 +57,7 @@ import {
 import { useIssueMarkers, useNextUp, usePrevUp } from "@/lib/api/queries";
 import { readerUrl } from "@/lib/urls";
 import { usePageMarkerToggle } from "@/lib/markers/use-page-marker-toggle";
-import type { NextUpView, PageInfo } from "@/lib/api/types";
+import type { NextUpView, PageInfo, PageOverridesView } from "@/lib/api/types";
 import {
   computeWebtoonWindow,
   placeholderAspectRatio,
@@ -111,6 +112,7 @@ export function Reader({
   readingMinActiveMs,
   readingMinPages,
   readingIdleMs,
+  initialPageOverrides = null,
 }: {
   issueId: string;
   seriesId: string | null;
@@ -167,6 +169,9 @@ export function Reader({
   readingMinActiveMs: number;
   readingMinPages: number;
   readingIdleMs: number;
+  /** SSR prefetch of the user's manual spread controls (WP-4.3) so the
+   *  first paint already pairs with them applied. */
+  initialPageOverrides?: PageOverridesView | null;
 }) {
   const router = useRouter();
   const init = useReaderStore((s) => s.init);
@@ -453,9 +458,17 @@ export function Reader({
   // page indices, so a {4,5} pair never lands on {5,6} on the next flip.
   // Single + webtoon modes don't pair pages and use the raw `currentPage`
   // for navigation as before.
+  // WP-4.3: the user's manual spread controls win over `double_page` +
+  // aspect detection.
+  const spreadOverrides = useSpreadOverrides(issueId, initialPageOverrides);
   const groups = useMemo<ReadonlyArray<SpreadGroup>>(
-    () => computeSpreadGroups(pages, { coverSolo, totalPages }),
-    [pages, coverSolo, totalPages],
+    () =>
+      computeSpreadGroups(pages, {
+        coverSolo,
+        totalPages,
+        overrides: spreadOverrides,
+      }),
+    [pages, coverSolo, totalPages, spreadOverrides],
   );
   const currentGroupIdx = useMemo(
     () => groupIndexForPage(groups, currentPage),
@@ -899,7 +912,7 @@ export function Reader({
     viewMode === "double" &&
     fitMode === "width" &&
     visiblePages.length === 1 &&
-    !isSpreadPage(pages[visiblePages[0]!]);
+    !isEffectiveSpread(pages, visiblePages[0]!, spreadOverrides);
 
   // Gestures: horizontal drag (swipe) for page nav. Pinch is left
   // to the browser as native pinch-to-zoom so mobile users can

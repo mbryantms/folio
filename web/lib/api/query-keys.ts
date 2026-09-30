@@ -406,6 +406,8 @@ export const queryKeys = {
     ["markers", "list", filters] as const,
   /** Reader overlay's per-issue fetch (one round-trip, all kinds). */
   issueMarkers: (issueId: string) => ["markers", "issue", issueId] as const,
+  /** WP-4.3 — caller's manual spread controls for one issue. */
+  issuePageOverrides: (issueId: string) => ["page-overrides", issueId] as const,
   /** Detected speech-bubble outlines for one page (OCR rework 1.0).
    *  Fetched when the reader enters text-capture mode. */
   issuePageTextRegions: (issueId: string, page: number) =>
