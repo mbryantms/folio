@@ -112,9 +112,30 @@ test("manifest preserves identity and exposes app shortcuts", async ({
   expect(response.ok()).toBeTruthy();
   const manifest = await response.json();
   expect(manifest.id).toBe("/");
+  expect(manifest.display).toBe("standalone");
   expect(
     manifest.shortcuts.map((shortcut: { url: string }) => shortcut.url),
   ).toContain("/bookmarks");
+  // Install prompts, launchers, and shortcut menus render these files; a
+  // 404 degrades to a browser placeholder. Check they are served as PNGs.
+  type Icon = { src: string; sizes: string };
+  const icons: Icon[] = [
+    ...manifest.icons,
+    ...manifest.shortcuts.flatMap((s: { icons?: Icon[] }) => s.icons ?? []),
+  ];
+  expect(
+    manifest.shortcuts.every((s: { icons?: Icon[] }) => s.icons?.length),
+  ).toBeTruthy();
+  for (const icon of icons) {
+    const png = await request.get(icon.src);
+    expect(png.ok(), icon.src).toBeTruthy();
+    expect(png.headers()["content-type"]).toContain("image/png");
+    const body = await png.body();
+    expect(
+      [body.readUInt32BE(16), body.readUInt32BE(20)].join("x"),
+      icon.src,
+    ).toBe(icon.sizes);
+  }
 });
 
 test("accepting an update reloads only that window", async ({

@@ -1,0 +1,36 @@
+[
+  {
+    "label": "iPhone 14 Pro Max / 15 Plus / 15 Pro Max",
+    "width": 430,
+    "height": 932,
+    "ratio": 3
+  },
+  {
+    "label": "iPhone 14 Pro / 15 / 15 Pro",
+    "width": 393,
+    "height": 852,
+    "ratio": 3
+  },
+  {
+    "label": "iPhone 12 / 13 / 14, 12 / 13 Pro",
+    "width": 390,
+    "height": 844,
+    "ratio": 3
+  },
+  { "label": "iPhone 12 / 13 mini", "width": 360, "height": 780, "ratio": 3 },
+  { "label": "iPhone XR / 11", "width": 414, "height": 896, "ratio": 2 },
+  {
+    "label": "iPhone X / XS / 11 Pro",
+    "width": 375,
+    "height": 812,
+    "ratio": 3
+  },
+  { "label": "iPad Pro 12.9\"", "width": 1024, "height": 1366, "ratio": 2 },
+  {
+    "label": "iPad Pro 11\" / iPad Air",
+    "width": 834,
+    "height": 1194,
+    "ratio": 2
+  },
+  { "label": "iPad / iPad mini", "width": 768, "height": 1024, "ratio": 2 }
+]

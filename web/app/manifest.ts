@@ -16,11 +16,13 @@ import type { MetadataRoute } from "next";
  * is applied. That trade-off is intentional — dark is the
  * canonical app theme per the comment at the top of globals.css.
  *
- * Icons reference files under `web/public/icons/` that must exist
- * at runtime. See `web/public/icons/README.md` for the required
- * sizes and the generator recipe. The manifest will still emit if
- * the files are missing; the install UX will degrade until they
- * land.
+ * Icons live under `web/public/icons/` and are generated from the SVG
+ * masters in `web/public/brand/` by `pnpm --filter web run build-icons`
+ * (see `web/public/icons/README.md`). `any` icons carry the master's own
+ * rounded tile; the `maskable` icon is full-bleed with the glyph inside
+ * the 80% safe zone, so the two purposes are deliberately separate
+ * files rather than one `"any maskable"` entry. `tests/pwa/assets.test.ts`
+ * asserts every referenced file exists at its declared size.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -58,8 +60,28 @@ export default function manifest(): MetadataRoute.Manifest {
       },
     ],
     shortcuts: [
-      { name: "Library", url: "/?library=all" },
-      { name: "Bookmarks", url: "/bookmarks" },
+      {
+        name: "Library",
+        url: "/?library=all",
+        icons: [
+          {
+            src: "/icons/shortcut-library-96.png",
+            sizes: "96x96",
+            type: "image/png",
+          },
+        ],
+      },
+      {
+        name: "Bookmarks",
+        url: "/bookmarks",
+        icons: [
+          {
+            src: "/icons/shortcut-bookmarks-96.png",
+            sizes: "96x96",
+            type: "image/png",
+          },
+        ],
+      },
     ],
     categories: ["books", "entertainment"],
   };
