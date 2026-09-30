@@ -1099,10 +1099,14 @@ pub struct IssueDetailView {
     /// User-curated extra links beyond `web_url` (which mirrors ComicInfo).
     /// Each entry has a required `url` and optional `label`.
     pub additional_links: Vec<IssueLink>,
-    /// Names of fields the user has overridden via `PATCH /issues/{id}`. The
-    /// scanner skips these on a rescan. Surfaced so the UI can flag rows as
-    /// "edited" and offer a "revert to ComicInfo" affordance later.
-    pub user_edited: Vec<String>,
+    /// Issue columns the user has pinned via `PATCH` — the column keys
+    /// (`title`, `writer`, `number_raw`, …) carrying a `set_by='user'`
+    /// `field_provenance` row. The scanner and provider applies leave
+    /// pinned values alone; the edit form flags them and offers a
+    /// per-field release. Sorted. (The rolled-up `MetadataField` pins —
+    /// `credits`, `cover_date`, … — are on the metadata overview's
+    /// `user_pinned_fields`.)
+    pub user_pinned_columns: Vec<String>,
     /// Per-page metadata, deserialized from the issue's stored JSON. Empty when
     /// the parse failed or the source had no `<Pages>` block.
     /// `value_type` keeps the parsers crate framework-free; the actual schema
@@ -1254,7 +1258,7 @@ impl IssueDetailView {
             story_arc_number: m.story_arc_number,
             web_url: m.web_url,
             // CV / Metron / GTIN are in external_ids — populated by
-            // [`enrich_issue_detail_legacy_ids`] at the call sites.
+            // [`enrich_issue_detail`] at the call sites.
             // M5's <ExternalIdsCard> is the canonical full surface;
             // these three stay on the response for backwards compat.
             gtin: None,
@@ -1267,7 +1271,9 @@ impl IssueDetailView {
             created_at: m.created_at.to_rfc3339(),
             updated_at: m.updated_at.to_rfc3339(),
             additional_links: serde_json::from_value(m.additional_links).unwrap_or_default(),
-            user_edited: serde_json::from_value(m.user_edited).unwrap_or_default(),
+            // Populated from `field_provenance` by
+            // [`enrich_issue_detail`] at the call sites.
+            user_pinned_columns: Vec::new(),
             // The scanner persists `Vec<PageInfo>` via `serde_json::to_value`; round-trip back.
             // Tolerate broken / empty JSON by falling back to an empty list — the reader
             // already copes with no per-page metadata.
@@ -2437,8 +2443,9 @@ async fn enrich_series_view_legacy_ids(
 
 /// Companion of [`enrich_series_view_legacy_ids`] for issue
 /// responses. Populates the legacy `gtin` / `comicvine_id` /
-/// `metron_id` fields on [`IssueDetailView`] from `external_ids`.
-pub(crate) async fn enrich_issue_detail_legacy_ids(
+/// `metron_id` fields on [`IssueDetailView`] from `external_ids`, and
+/// `user_pinned_columns` from `field_provenance` (`set_by='user'`).
+pub(crate) async fn enrich_issue_detail(
     db: &DatabaseConnection,
     view: &mut IssueDetailView,
     issue_id: &str,
@@ -2449,6 +2456,16 @@ pub(crate) async fn enrich_issue_detail_legacy_ids(
         view.comicvine_id = cv;
         view.metron_id = metron;
         view.gtin = gtin;
+    }
+    if let Ok(pins) =
+        crate::metadata::writers::fetch_user_pinned_fields(db, "issue", issue_id).await
+    {
+        let mut pins: Vec<String> = pins
+            .into_iter()
+            .filter(|k| crate::metadata::writers::ISSUE_COLUMN_PIN_KEYS.contains(&k.as_str()))
+            .collect();
+        pins.sort();
+        view.user_pinned_columns = pins;
     }
 }
 
@@ -2480,7 +2497,7 @@ pub(crate) fn assess_series_view(
 }
 
 /// Assess a hydrated [`IssueDetailView`]'s metadata completeness. Pure — call
-/// *after* `enrich_issue_detail_legacy_ids`. Credits come from the per-role
+/// *after* `enrich_issue_detail`. Credits come from the per-role
 /// CSV columns already on the view (a non-empty role implies ≥1 credit), so
 /// there's no extra junction query.
 pub(crate) fn assess_issue_view(

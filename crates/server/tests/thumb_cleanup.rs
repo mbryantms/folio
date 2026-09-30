@@ -181,7 +181,6 @@ async fn seed(app: &TestApp, with_thumbs_for_state: &str) -> String {
         thumbnail_version: Set(thumbnails::THUMBNAIL_VERSION),
         thumbnails_error: Set(None),
         additional_links: Set(serde_json::json!([])),
-        user_edited: Set(serde_json::json!([])),
         comicinfo_count: Set(None),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),

@@ -1832,6 +1832,213 @@ pub async fn clear_user_pin<C: ConnectionTrait>(
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Issue column pins (WP-3.7 — replaced the per-issue JSON edit list).
+// ─────────────────────────────────────────────────────────────────
+
+/// Every issue column a user edit (`PATCH /series/{s}/issues/{i}` or
+/// the bulk-metadata PATCH) can pin, keyed by its column name. This is
+/// the closed set of **column-level** pin keys `field_provenance.field`
+/// may carry for an issue besides the [`MetadataField::key`] values.
+///
+/// A user edit records `set_by='user'` under BOTH the column key and,
+/// when the column feeds one, the [`MetadataField`] it rolls up into
+/// ([`issue_column_pin_field`]): the column key drives the per-field
+/// pin UI and the scanner's gates for columns without a `MetadataField`
+/// slot (`sort_number`, `number_raw`, `black_and_white`,
+/// `alternate_series`, `web_url`); the `MetadataField` key drives the
+/// apply / composer / scanner precedence checks. The per-issue JSON
+/// edit list retired in WP-3.7 held exactly the column keys; its
+/// entries were backfilled here by that WP's migration.
+///
+/// [`MetadataField`]: crate::metadata::MetadataField
+/// [`MetadataField::key`]: crate::metadata::MetadataField::key
+pub const ISSUE_COLUMN_PIN_KEYS: &[&str] = &[
+    "title",
+    "number_raw",
+    "sort_number",
+    "volume",
+    "year",
+    "month",
+    "day",
+    "summary",
+    "notes",
+    "publisher",
+    "imprint",
+    "writer",
+    "penciller",
+    "inker",
+    "colorist",
+    "letterer",
+    "cover_artist",
+    "editor",
+    "translator",
+    "characters",
+    "teams",
+    "locations",
+    "alternate_series",
+    "story_arc",
+    "story_arc_number",
+    "genre",
+    "tags",
+    "language_code",
+    "age_rating",
+    "format",
+    "manga",
+    "black_and_white",
+    "web_url",
+    "gtin",
+    "comicvine_id",
+    "metron_id",
+];
+
+/// The [`MetadataField`](crate::metadata::MetadataField) an issue
+/// column pin key rolls up into, or `None` for columns with no slot
+/// (`sort_number`, `black_and_white`, `alternate_series`, `web_url`).
+/// The composer / apply pipeline read the `MetadataField` key; the
+/// column key stays the precise per-column pin.
+pub fn issue_column_pin_field(key: &str) -> Option<crate::metadata::MetadataField> {
+    use crate::metadata::MetadataField as F;
+    match key {
+        "title" => Some(F::Title),
+        "summary" => Some(F::Summary),
+        "notes" => Some(F::Notes),
+        "publisher" => Some(F::Publisher),
+        "imprint" => Some(F::Imprint),
+        "language_code" => Some(F::LanguageCode),
+        "age_rating" => Some(F::AgeRating),
+        "format" => Some(F::Format),
+        "manga" => Some(F::Manga),
+        "volume" => Some(F::Volume),
+        "number_raw" => Some(F::Number),
+        // The user edits per-role credit columns and the character /
+        // team / location CSV strings; the composer reads the
+        // junction-shaped fields. Map each to its junction.
+        "writer" | "penciller" | "inker" | "colorist" | "letterer" | "cover_artist" | "editor"
+        | "translator" => Some(F::Credits),
+        "characters" => Some(F::Characters),
+        "teams" => Some(F::Teams),
+        "locations" => Some(F::Locations),
+        "story_arc" | "story_arc_number" => Some(F::StoryArcs),
+        "genre" => Some(F::Genres),
+        "tags" => Some(F::Tags),
+        "gtin" => Some(F::ExternalId(Source::Gtin)),
+        "comicvine_id" => Some(F::ExternalId(Source::ComicVine)),
+        "metron_id" => Some(F::ExternalId(Source::Metron)),
+        // PATCH writes y/m/d separately; the composer reads CoverDate.
+        "year" | "month" | "day" => Some(F::CoverDate),
+        _ => None,
+    }
+}
+
+/// Record a user edit of the given issue columns: one `set_by='user'`
+/// `field_provenance` row per column key plus one per rolled-up
+/// [`MetadataField`](crate::metadata::MetadataField) (see
+/// [`ISSUE_COLUMN_PIN_KEYS`]). Keys outside the closed column set are
+/// ignored (debug-asserted). Run it in the same transaction as the
+/// column update so an edit never lands unpinned.
+pub async fn write_issue_user_pins<C: ConnectionTrait>(
+    db: &C,
+    issue_id: &str,
+    column_keys: &[&str],
+) -> Result<(), DbErr> {
+    let mut fields: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for key in column_keys {
+        debug_assert!(
+            ISSUE_COLUMN_PIN_KEYS.contains(key),
+            "unknown issue column pin key {key}"
+        );
+        if !ISSUE_COLUMN_PIN_KEYS.contains(key) {
+            continue;
+        }
+        fields.insert((*key).to_owned());
+        if let Some(f) = issue_column_pin_field(key) {
+            fields.insert(f.key());
+        }
+    }
+    if fields.is_empty() {
+        return Ok(());
+    }
+    let now = chrono::Utc::now().fixed_offset();
+    let models = fields
+        .into_iter()
+        .map(|field| field_provenance::ActiveModel {
+            entity_type: Set("issue".into()),
+            entity_id: Set(issue_id.into()),
+            field: Set(field),
+            set_by: Set(SetBy::User.as_str()),
+            set_at: Set(now),
+            source_external_id: Set(None),
+        });
+    field_provenance::Entity::insert_many(models)
+        .on_conflict(
+            OnConflict::columns([
+                field_provenance::Column::EntityType,
+                field_provenance::Column::EntityId,
+                field_provenance::Column::Field,
+            ])
+            .update_columns([
+                field_provenance::Column::SetBy,
+                field_provenance::Column::SetAt,
+                field_provenance::Column::SourceExternalId,
+            ])
+            .to_owned(),
+        )
+        .exec_without_returning(db)
+        .await?;
+    Ok(())
+}
+
+/// Release a user pin on an issue, keeping the column-level and
+/// `MetadataField`-level rows consistent:
+///
+/// - `field` is a `MetadataField` key (e.g. `credits`) → its user row
+///   AND every column pin rolling up into it (`writer`, `inker`, …) go.
+/// - `field` is a column key (e.g. `writer`) → its user row goes; the
+///   rolled-up `MetadataField` row goes too once no sibling column
+///   (`penciller`, …) is still user-pinned.
+///
+/// Only `set_by='user'` rows are touched. Returns `true` when any row
+/// was deleted.
+pub async fn clear_issue_user_pin<C: ConnectionTrait>(
+    db: &C,
+    issue_id: &str,
+    field: &str,
+) -> Result<bool, DbErr> {
+    let pinned = fetch_user_pinned_fields(db, "issue", issue_id).await?;
+    let mut to_clear: HashSet<String> = HashSet::new();
+    to_clear.insert(field.to_owned());
+    // MetadataField key → drop every column pin rolling up into it.
+    if let Ok(mf) = field.parse::<crate::metadata::MetadataField>() {
+        for key in ISSUE_COLUMN_PIN_KEYS {
+            if issue_column_pin_field(key) == Some(mf) {
+                to_clear.insert((*key).to_owned());
+            }
+        }
+    }
+    // Column key → drop the rolled-up MetadataField row once no sibling
+    // column still holds a pin.
+    if let Some(mf) = issue_column_pin_field(field) {
+        let sibling_pinned = ISSUE_COLUMN_PIN_KEYS.iter().any(|k| {
+            *k != field
+                && *k != mf.key()
+                && issue_column_pin_field(k) == Some(mf)
+                && pinned.contains(*k)
+        });
+        if !sibling_pinned {
+            to_clear.insert(mf.key());
+        }
+    }
+    let res = field_provenance::Entity::delete_many()
+        .filter(field_provenance::Column::EntityType.eq("issue"))
+        .filter(field_provenance::Column::EntityId.eq(issue_id))
+        .filter(field_provenance::Column::Field.is_in(to_clear))
+        .filter(field_provenance::Column::SetBy.eq("user"))
+        .exec(db)
+        .await?;
+    Ok(res.rows_affected > 0)
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Variant covers.
 // ─────────────────────────────────────────────────────────────────
 

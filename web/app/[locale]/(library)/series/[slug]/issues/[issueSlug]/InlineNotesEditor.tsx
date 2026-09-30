@@ -21,9 +21,9 @@ import { cn } from "@/lib/utils";
  *    differs from the snapshot. Mod+Enter saves; Escape cancels.
  *
  *  Persists via the existing `PATCH /series/{slug}/issues/{slug}`
- *  endpoint — same surface the Edit Issue sheet uses — so the
- *  `user_edited` set is updated and the scanner won't blow over the
- *  edit on a rescan. Empty save clears the column (server treats
+ *  endpoint — same surface the Edit Issue sheet uses — so `notes`
+ *  is user-pinned and the scanner won't blow over the edit on a
+ *  rescan. Empty save clears the column (server treats
  *  `notes: ""` as a clear-with-flag).
  */
 export function InlineNotesEditor({

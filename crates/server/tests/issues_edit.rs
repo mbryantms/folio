@@ -2,8 +2,9 @@
 //! and `GET /series/{series_slug}/issues/{issue_slug}/next`.
 //!
 //! Verifies:
-//!   - The full ComicRack-derived edit set lands in the DB and is tracked
-//!     in `user_edited` so the scanner skips them on rescan.
+//!   - The full ComicRack-derived edit set lands in the DB and every
+//!     touched column is user-pinned in `field_provenance` so the scanner
+//!     skips them on rescan.
 //!   - Validation rejects nonsensical inputs (invalid manga, out-of-range
 //!     year/month).
 //!   - The "next in series" endpoint returns siblings in `sort_number`
@@ -261,7 +262,6 @@ async fn seed(
             thumbnail_version: Set(0),
             thumbnails_error: Set(None),
             additional_links: Set(serde_json::json!([])),
-            user_edited: Set(serde_json::json!([])),
             comicinfo_count: Set(None),
             last_rewrite_at: Set(None),
             last_rewrite_kind: Set(None),
@@ -422,9 +422,9 @@ async fn patch_full_field_set_persists() {
     assert_eq!(gj["black_and_white"], true);
     assert_eq!(gj["web_url"], "https://example.com/issue/1");
 
-    // Every touched column should appear in user_edited so the scanner skips
-    // it on rescan. number_raw is the entity-side name for the API's `number`.
-    let edited: Vec<String> = gj["user_edited"]
+    // Every touched column should be user-pinned so the scanner skips it on
+    // rescan. number_raw is the entity-side name for the API's `number`.
+    let edited: Vec<String> = gj["user_pinned_columns"]
         .as_array()
         .unwrap()
         .iter()
@@ -677,7 +677,7 @@ async fn patch_external_ids_persist_and_round_trip() {
     .await;
     assert_eq!(json["comicvine_id"], 381432);
     assert_eq!(json["metron_id"], 12345);
-    let edited: Vec<String> = json["user_edited"]
+    let edited: Vec<String> = json["user_pinned_columns"]
         .as_array()
         .unwrap()
         .iter()
@@ -1021,16 +1021,15 @@ async fn series_view_includes_progress_summary_and_year_range() {
 // metadata-providers-1.0 M10 — dual-write to field_provenance.
 // De-risks the upcoming metadata-sidecar-writeback plan whose
 // composer reads field_provenance to preserve user pins across
-// provider applies. Without this dual-write, every user PATCH
-// after the M0 backfill would land only in `user_edited` and the
-// composer would silently overwrite the user's value.
+// provider applies. WP-3.7 made field_provenance the only pin store:
+// a PATCH pins the column key AND the MetadataField it rolls up into.
 // ────────────────────────────────────────────────────────────────
 
 use entity::field_provenance;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn patch_writes_field_provenance_alongside_user_edited() {
+async fn patch_pins_column_and_metadata_field_keys() {
     let app = TestApp::spawn().await;
     let auth = register_admin(&app).await;
     let (_lib, _series_id, series_slug, ids) = seed(
@@ -1052,8 +1051,8 @@ async fn patch_writes_field_provenance_alongside_user_edited() {
         "age_rating": "Mature 17+",
         "genre": "Action,Adventure",
         "tags": "tag-1,tag-2",
-        // Fields with no MetadataField slot — should land in
-        // user_edited only, not field_provenance.
+        // Fields with no MetadataField slot — pinned under their
+        // column key only.
         "alternate_series": "Reprint",
         "web_url": "https://example.com/issue/1",
     });
@@ -1077,14 +1076,18 @@ async fn patch_writes_field_provenance_alongside_user_edited() {
         .map(|r| (r.field.clone(), r.set_by.clone()))
         .collect();
 
-    // Every mappable field landed with set_by='user'.
+    // Every column key AND every rolled-up MetadataField key landed
+    // with set_by='user'.
     for field in [
         "title",
         "summary",
         "publisher",
         "age_rating",
+        "genre",
         "genres",
         "tags",
+        "alternate_series",
+        "web_url",
     ] {
         assert_eq!(
             by_field.get(field).map(|s| s.as_str()),
@@ -1092,14 +1095,144 @@ async fn patch_writes_field_provenance_alongside_user_edited() {
             "expected field_provenance row for {field} with set_by=user; got {by_field:?}"
         );
     }
-    // Unmapped fields didn't sneak into field_provenance.
+    // Untouched fields stay unpinned.
     assert!(
-        !by_field.contains_key("alternate_series"),
-        "alternate_series has no MetadataField mapping; shouldn't appear in field_provenance"
+        !by_field.contains_key("notes"),
+        "notes wasn't in the PATCH; got {by_field:?}"
     );
+}
+
+/// Releasing a column pin drops the rolled-up MetadataField pin only once
+/// no sibling column still holds one; releasing the MetadataField key
+/// drops every column pin rolling into it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_field_pin_keeps_column_and_metadata_field_pins_consistent() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let (_lib, _series_id, series_slug, ids) = seed(
+        &app,
+        "pin-family",
+        &[IssueSeed {
+            slug: "issue-1",
+            sort_number: Some(1.0),
+            number_raw: Some("1"),
+        }],
+    )
+    .await;
+    let issue_id = ids[0].clone();
+    let (status, _) = patch(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1"),
+        serde_json::json!({ "writer": "W", "inker": "I", "characters": "C" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let pins = |db: sea_orm::DatabaseConnection, id: String| async move {
+        field_provenance::Entity::find()
+            .filter(field_provenance::Column::EntityType.eq("issue"))
+            .filter(field_provenance::Column::EntityId.eq(id))
+            .filter(field_provenance::Column::SetBy.eq("user"))
+            .all(&db)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.field)
+            .collect::<std::collections::BTreeSet<String>>()
+    };
+    let db = app.state().db.clone();
+    let before = pins(db.clone(), issue_id.clone()).await;
+    for k in ["writer", "inker", "credits", "characters"] {
+        assert!(before.contains(k), "{k} should be pinned; got {before:?}");
+    }
+    // The metadata overview lists every user pin (column + rolled-up
+    // keys); the issue detail lists the column pins only.
+    let (_, ov) = get(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1/metadata-overview"),
+    )
+    .await;
+    assert_eq!(
+        ov["user_pinned_fields"],
+        serde_json::json!(["characters", "credits", "inker", "writer"])
+    );
+    let (_, detail) = get(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1"),
+    )
+    .await;
+    assert_eq!(
+        detail["user_pinned_columns"],
+        serde_json::json!(["characters", "inker", "writer"])
+    );
+
+    // Release `writer`: `inker` still pins credits → credits stays.
+    let (status, body) = delete_req(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1/field-provenance/writer"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cleared"], true);
+    let after = pins(db.clone(), issue_id.clone()).await;
+    assert!(!after.contains("writer"));
     assert!(
-        !by_field.contains_key("web_url"),
-        "web_url has no MetadataField mapping; shouldn't appear in field_provenance"
+        after.contains("inker") && after.contains("credits"),
+        "{after:?}"
+    );
+
+    // Release `inker`: last credit column → credits goes too.
+    let (status, _) = delete_req(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1/field-provenance/inker"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let after = pins(db.clone(), issue_id.clone()).await;
+    assert!(
+        !after.contains("inker") && !after.contains("credits"),
+        "{after:?}"
+    );
+    assert!(after.contains("characters"));
+
+    // Re-pin two credit columns, then release the MetadataField key:
+    // every column pin rolling into it goes.
+    let (status, _) = patch(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1"),
+        serde_json::json!({ "writer": "W2", "editor": "E" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = delete_req(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1/field-provenance/credits"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let after = pins(db.clone(), issue_id.clone()).await;
+    for k in ["writer", "editor", "credits"] {
+        assert!(!after.contains(k), "{k} should be released; got {after:?}");
+    }
+    assert!(after.contains("characters"), "{after:?}");
+
+    // The issue detail surfaces the remaining pins.
+    let (_, json) = get(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1"),
+    )
+    .await;
+    assert_eq!(
+        json["user_pinned_columns"],
+        serde_json::json!(["characters"])
     );
 }
 
@@ -1160,10 +1293,10 @@ async fn patch_overwrites_existing_provider_provenance_with_user() {
 }
 
 #[tokio::test]
-async fn delete_field_pin_clears_user_provenance_and_syncs_user_edited() {
+async fn delete_field_pin_clears_user_provenance() {
     // M5.3 endpoint: DELETE /series/{s}/issues/{i}/field-provenance/{field}
-    // clears a user pin so the next provider apply can write the field.
-    // Also syncs `issue.user_edited` (the JSON list the scanner consults).
+    // clears a user pin so the next provider apply (and rescan) can write
+    // the field.
     let app = TestApp::spawn().await;
     let auth = register_admin(&app).await;
     let series_slug = "delete-pin-series";
@@ -1179,8 +1312,7 @@ async fn delete_field_pin_clears_user_provenance_and_syncs_user_edited() {
     .await;
     let issue_id = ids[0].clone();
 
-    // User PATCHes the title — flips provenance to set_by='user' AND
-    // adds "title" to user_edited.
+    // User PATCHes the title — flips provenance to set_by='user'.
     let (status, _) = patch(
         &app,
         &auth,
@@ -1190,7 +1322,7 @@ async fn delete_field_pin_clears_user_provenance_and_syncs_user_edited() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    // Sanity: provenance row + user_edited reflect the pin.
+    // Sanity: the provenance row reflects the pin.
     let row = field_provenance::Entity::find()
         .filter(field_provenance::Column::EntityType.eq("issue"))
         .filter(field_provenance::Column::EntityId.eq(&issue_id))
@@ -1220,19 +1352,6 @@ async fn delete_field_pin_clears_user_provenance_and_syncs_user_edited() {
         .await
         .unwrap();
     assert!(row.is_none(), "user pin should be deleted");
-
-    // user_edited synced — title dropped from the JSON list.
-    use entity::issue;
-    let issue_row = issue::Entity::find_by_id(&issue_id)
-        .one(&app.state().db)
-        .await
-        .unwrap()
-        .unwrap();
-    let edited: Vec<String> = serde_json::from_value(issue_row.user_edited).unwrap_or_default();
-    assert!(
-        !edited.iter().any(|f| f == "title"),
-        "title should be dropped from user_edited; got {edited:?}",
-    );
 
     // Idempotent: deleting again returns cleared=false (no row to drop).
     let (status, body) = delete_req(

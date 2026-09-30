@@ -1,10 +1,12 @@
-//! Per-field provenance. Generalizes the `issues.user_edited` JSON
-//! array so junction-level provenance (e.g. "characters[] last set
-//! by Metron") is tracked uniformly. The Apply jobs consult this on
-//! every write to decide skip-vs-fill.
+//! Per-field provenance. Generalizes (and, since WP-3.7, replaces) the
+//! per-issue JSON edit list so junction-level provenance (e.g.
+//! "characters[] last set by Metron") is tracked uniformly. The Apply
+//! jobs consult this on every write to decide skip-vs-fill.
 //!
-//! `field` values come from the `MetadataField` enum's `key()` impl
-//! that lands in M0b — never free-form strings at call sites.
+//! `field` values come from the `MetadataField` enum's `key()` impl —
+//! or, for issue user pins, the closed column-key set
+//! `writers::ISSUE_COLUMN_PIN_KEYS` — never free-form strings at call
+//! sites.
 
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};

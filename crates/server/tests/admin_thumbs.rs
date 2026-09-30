@@ -233,7 +233,6 @@ async fn seed_library_with_issues(
             thumbnail_version: Set(if *generated { THUMBNAIL_VERSION } else { 0 }),
             thumbnails_error: Set(if *errored { Some("oops".into()) } else { None }),
             additional_links: Set(serde_json::json!([])),
-            user_edited: Set(serde_json::json!([])),
             comicinfo_count: Set(None),
             last_rewrite_at: Set(None),
             last_rewrite_kind: Set(None),

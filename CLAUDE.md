@@ -322,9 +322,11 @@ Default admin (first registered user becomes admin):
   - Iterate `MetadataField::iter()` without an `is_junction()` /
     `is_cover()` guard. The flat-column update path and the
     junction-reconcile path can't share a switch.
-  - Read provider data from `issue.user_edited` JSON. That column
-    is being retired; consult `field_provenance` via
-    `fetch_field_provenance_map` instead.
+  - Read or write user pins anywhere but `field_provenance`
+    (`fetch_field_provenance_map` / `fetch_user_pinned_fields` to read;
+    `writers::write_issue_user_pins` / `clear_issue_user_pin` for issue
+    column pins). The old per-issue JSON pin column was dropped in
+    WP-3.7 (`docs/dev/schema-restructure.md`).
   - Add a scanner write that overwrites a column or junction whose
     `field_provenance` is user- or provider-set (WP-2.5: `protected()`
     in `scanner/process.rs`, the `skip` set on

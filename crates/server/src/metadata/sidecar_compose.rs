@@ -1060,7 +1060,6 @@ mod tests {
             thumbnail_version: 0,
             thumbnails_error: None,
             additional_links: serde_json::json!([]),
-            user_edited: serde_json::json!([]),
             comicinfo_count: Some(12),
             last_rewrite_at: None,
             last_rewrite_kind: None,

@@ -29,7 +29,8 @@ Eight changes that depend on each other land atomically:
 5. `issue_cover` + `series_cover` — replace the single
    `cover.webp`-per-issue model with primary/variant rows + per-row
    provenance + per-row phash.
-6. `field_provenance` — generalize `issue.user_edited` JSON into
+6. `field_provenance` — generalize the `issue.user_edited` JSON list
+   (dropped in WP-3.7 — see below) into
    a typed (entity, field, set_by, set_at) table covering scalar
    fields, junctions, and external IDs uniformly.
 7. `issue_reprint` — the "this issue reprints …" relation.
@@ -238,7 +239,7 @@ column names the user manually edited) into a typed table:
 CREATE TABLE field_provenance (
     entity_type           TEXT NOT NULL,
     entity_id             TEXT NOT NULL,
-    field                 TEXT NOT NULL,  -- MetadataField::key() — closed set
+    field                 TEXT NOT NULL,  -- MetadataField::key() or an issue column pin key — closed sets
     set_by                TEXT NOT NULL,  -- 'user'|'comicinfo'|'metroninfo'|'comicvine'|…
     set_at                TIMESTAMPTZ NOT NULL,
     source_external_id    TEXT,           -- the provider's id, when applicable
@@ -261,9 +262,53 @@ Wins:
 
 The user-precedence rule that the scanner uses (skip overwriting
 fields the user touched) reads `field_provenance.set_by = 'user'`.
-The pre-M0 read path (`issue.user_edited`) still works in parallel
-during the transition window; `field_provenance` is the long-term
-home (`issue.user_edited` is targeted for removal in M10).
+
+### Retirement of `issue.user_edited` (WP-3.7)
+
+`field_provenance` is the **only** pin store. The `issues.user_edited`
+column was dropped by
+[`m20270216_000001_retire_user_edited`](../../crates/migration/src/m20270216_000001_retire_user_edited.rs)
+(roadmap WP-3.7, audit AR-6 / DI-8):
+
+- **Two key families for issue pins.** A user edit
+  (`PATCH /series/{s}/issues/{i}` or the bulk-metadata PATCH) writes a
+  `set_by='user'` row under the **column key** it touched *and* under
+  the `MetadataField` key that column rolls up into — `writer` →
+  `credits`, `genre` → `genres`, `number_raw` → `number`,
+  `year`/`month`/`day` → `cover_date`, `story_arc` → `story_arcs`,
+  `gtin` → `external_id.gtin`, … (keys equal for `title`, `tags`,
+  `language_code`, …). Columns with no `MetadataField` slot
+  (`sort_number`, `black_and_white`, `alternate_series`, `web_url`)
+  get the column key only. Both families are closed sets:
+  `MetadataField::key()` and
+  [`writers::ISSUE_COLUMN_PIN_KEYS`](../../crates/server/src/metadata/writers.rs)
+  (`issue_column_pin_field` is the rollup). The only write path is
+  `writers::write_issue_user_pins`, run in the same transaction as the
+  column update.
+- **Who reads which key.** The composer / apply / drift paths read the
+  `MetadataField` keys (plus `number_raw`). The scanner's rescan gates
+  use `protected(MetadataField)` for slotted columns and the column key
+  for `sort_number`, `black_and_white`, `alternate_series`, `web_url`
+  and `number_raw` (which also honours a `number` user pin). The issue
+  detail view exposes the column keys as `user_pinned_columns` (the
+  edit form's per-field release icons); the metadata overview exposes
+  every user-pinned key as `user_pinned_fields`.
+- **Release keeps both families consistent.**
+  `DELETE …/field-provenance/{field}` goes through
+  `writers::clear_issue_user_pin`: releasing a `MetadataField` key
+  drops every column pin rolling into it; releasing a column key drops
+  the rolled-up pin once no sibling column is still pinned.
+- **Migration.** `up` backfills every string entry of the old JSON
+  list under both key families (`set_by='user'`, `set_at` = the
+  issue's `updated_at`); a file-tier row at the same key is upgraded,
+  a provider row is kept (an `override_user_edits` apply deliberately
+  replaced the pin), then the column is dropped. `down` re-adds the
+  column (`jsonb NOT NULL DEFAULT '[]'`) and repopulates it from the
+  column-key user pins. Round-trip test:
+  `crates/server/tests/migration_retire_user_edited.rs`.
+- **API.** `IssueDetailView.user_edited` became `user_pinned_columns`
+  and `MetadataOverviewView.user_edited` became `user_pinned_fields`
+  (both `string[]`, sorted).
 
 ## ID column shapes
 

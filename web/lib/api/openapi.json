@@ -16843,7 +16843,7 @@
           "created_at",
           "updated_at",
           "additional_links",
-          "user_edited",
+          "user_pinned_columns",
           "pages",
           "comic_info_raw"
         ],
@@ -17176,12 +17176,12 @@
           "updated_at": {
             "type": "string"
           },
-          "user_edited": {
+          "user_pinned_columns": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Names of fields the user has overridden via `PATCH /issues/{id}`. The\nscanner skips these on a rescan. Surfaced so the UI can flag rows as\n\"edited\" and offer a \"revert to ComicInfo\" affordance later."
+            "description": "Issue columns the user has pinned via `PATCH` — the column keys\n(`title`, `writer`, `number_raw`, …) carrying a `set_by='user'`\n`field_provenance` row. The scanner and provider applies leave\npinned values alone; the edit form flags them and offers a\nper-field release. Sorted. (The rolled-up `MetadataField` pins —\n`credits`, `cover_date`, … — are on the metadata overview's\n`user_pinned_fields`.)"
           },
           "user_rating": {
             "type": [
@@ -18593,7 +18593,7 @@
           "source_files",
           "external_ids",
           "provenance",
-          "user_edited",
+          "user_pinned_fields",
           "alternate_provider_series"
         ],
         "properties": {
@@ -18647,11 +18647,12 @@
           "source_files": {
             "$ref": "#/components/schemas/SourceFilesView"
           },
-          "user_edited": {
+          "user_pinned_fields": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "`field_provenance` keys carrying a `set_by='user'` row — column\nkeys (`writer`, `number_raw`, …) and the `MetadataField` keys\nthey roll up into (`credits`, `number`, …). Sorted."
           }
         }
       },
@@ -23603,7 +23604,7 @@
       },
       "UpdateIssueReq": {
         "type": "object",
-        "description": "Body for `PATCH /series/{series_slug}/issues/{issue_slug}`.\n\nEvery field is optional. For nullable columns the body distinguishes:\n  - field absent     → leave column untouched\n  - field present, null → clear column, mark as user-edited\n  - field present, set  → write column, mark as user-edited\n\n`additional_links` is replace-all: send the full desired array, or `[]`\nto clear. Empty / whitespace-only `url` entries are rejected.\n\nMirrors the editable subset of ComicInfo.xml — fields the scanner reads\nfrom the file. The scanner consults `user_edited` on rescan and skips\nmatching columns, so DB edits are sticky and the source file is never\nrewritten.",
+        "description": "Body for `PATCH /series/{series_slug}/issues/{issue_slug}`.\n\nEvery field is optional. For nullable columns the body distinguishes:\n  - field absent     → leave column untouched\n  - field present, null → clear column, mark as user-edited\n  - field present, set  → write column, mark as user-edited\n\n`additional_links` is replace-all: send the full desired array, or `[]`\nto clear. Empty / whitespace-only `url` entries are rejected.\n\nMirrors the editable subset of ComicInfo.xml — fields the scanner reads\nfrom the file. Every touched column is pinned as a `set_by='user'`\n`field_provenance` row; the scanner skips pinned columns on rescan, so\nDB edits are sticky. (In a writeback library the edit is also pushed\ninto the archive's sidecars — WP-2.10.)",
         "properties": {
           "additional_links": {
             "type": [

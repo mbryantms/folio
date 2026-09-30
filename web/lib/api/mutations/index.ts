@@ -910,8 +910,8 @@ export function useSetIssueRating(seriesSlug: string, issueSlug: string) {
 
 /**
  * `PATCH /series/{series_slug}/issues/{issue_slug}`. Used by the issue page
- * Edit drawer to override ComicInfo-derived fields. Server records the
- * touched fields in `user_edited` so the scanner skips them on rescans.
+ * Edit drawer to override ComicInfo-derived fields. Server user-pins the
+ * touched fields in `field_provenance` so the scanner skips them on rescans.
  */
 export function useUpdateIssue(seriesSlug: string, issueSlug: string) {
   return useApiMutation<IssueDetailView, UpdateIssueReq>(
