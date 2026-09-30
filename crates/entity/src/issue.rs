@@ -189,11 +189,6 @@ pub struct Model {
     /// `web_url` without dropping user-added links.
     pub additional_links: Json,
 
-    /// Column names the user has overridden via `PATCH /issues/{id}`. The
-    /// scanner consults this list on update and skips matching fields, so
-    /// user edits are sticky across rescans (same pattern as `series.match_key`).
-    pub user_edited: Json,
-
     /// ComicInfo `<Count>` from this issue's metadata — "the publisher
     /// claims this series has N issues total". Set per-issue (not just
     /// at series creation) so the scanner's reconciliation step can

@@ -280,7 +280,8 @@ without per-library configuration.
        unreliable
      - DuplicateContent detection (hash collision under a different
        path) ([process.rs:311–327](../../crates/server/src/library/scanner/process.rs#L311-L327))
-     - sticky `user_edited` field protection on update
+     - sticky user-pin (`field_provenance` `set_by='user'`) field
+       protection on update
        ([process.rs:333](../../crates/server/src/library/scanner/process.rs#L333))
      - thumbnail invalidation — only when bytes actually changed
        ([process.rs:339, 411–428](../../crates/server/src/library/scanner/process.rs#L339))
@@ -399,11 +400,16 @@ the DB:
   `comic_info_raw`) are forced through full re-ingest even if size+mtime
   match. One-shot self-heal
   ([process.rs:540–556](../../crates/server/src/library/scanner/process.rs#L540-L556)).
-- **`user_edited` stickiness on update** — fields the user has edited
-  via `PATCH /series/{series_slug}/issues/{issue_slug}` are not refreshed from ComicInfo. The set is
-  consulted at [process.rs:333](../../crates/server/src/library/scanner/process.rs#L333),
-  guarding `sort_number`, `language_code`, `age_rating`, `tags`,
-  `genre`, `comicvine_id`, `metron_id` (others as listed in the source).
+- **User-pin stickiness on update** — fields the user has edited
+  via `PATCH /series/{series_slug}/issues/{issue_slug}` carry a
+  `set_by='user'` `field_provenance` row and are not refreshed from
+  ComicInfo. Slotted columns are gated by `protected(MetadataField)`
+  (which also keeps provider-set values, WP-2.5); `sort_number`,
+  `number_raw`, `black_and_white`, `alternate_series` and `web_url` are
+  gated by their column-key pin. External ids are guarded by
+  `writers::set_external_id`'s own precedence rule. (The legacy
+  `issues.user_edited` JSON list was retired in WP-3.7 — see
+  [schema-restructure.md](schema-restructure.md#retirement-of-issueuser_edited-wp-37).)
 - **Thumbnail invalidation only on content change** — the update path
   recomputes `content_changed = !row_matches_file(row, size, mtime)`
   ([process.rs:339](../../crates/server/src/library/scanner/process.rs#L339))

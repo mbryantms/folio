@@ -1514,6 +1514,67 @@ async fn rescan_preserves_user_and_provider_provenance_and_values() {
     );
 }
 
+/// WP-3.7: columns with no `MetadataField` slot (`web_url`,
+/// `alternate_series`, …) are pinned in `field_provenance` under their
+/// column key — the retired per-issue JSON list's job — and a rescan
+/// leaves them alone.
+#[tokio::test]
+async fn rescan_preserves_column_key_user_pins() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series ColPin (2024)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let cbz = folder.join("ColPin 001.cbz");
+    write_cbz_with_xml(
+        &cbz,
+        1,
+        2,
+        Some(
+            r#"<?xml version="1.0"?><ComicInfo><Series>ColPin</Series><Number>1</Number><Web>https://file.example/a</Web><AlternateSeries>File Alt</AlternateSeries></ComicInfo>"#,
+        ),
+        None,
+    );
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let issue = IssueEntity::find().one(&state.db).await.unwrap().unwrap();
+    assert_eq!(issue.web_url.as_deref(), Some("https://file.example/a"));
+
+    // User edit of web_url only (PATCH shape: column + pin in one go).
+    let mut am: entity::issue::ActiveModel = issue.clone().into();
+    am.web_url = Set(Some("https://user.example/pinned".into()));
+    am.update(&state.db).await.unwrap();
+    server::metadata::writers::write_issue_user_pins(&state.db, &issue.id, &["web_url"])
+        .await
+        .unwrap();
+
+    write_cbz_with_xml(
+        &cbz,
+        2,
+        2,
+        Some(
+            r#"<?xml version="1.0"?><ComicInfo><Series>ColPin</Series><Number>1</Number><Web>https://file.example/b</Web><AlternateSeries>Retagged Alt</AlternateSeries></ComicInfo>"#,
+        ),
+        None,
+    );
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let after = IssueEntity::find_by_id(issue.id.clone())
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after.web_url.as_deref(),
+        Some("https://user.example/pinned"),
+        "column-key user pin must survive the rescan"
+    );
+    assert_eq!(
+        after.alternate_series.as_deref(),
+        Some("Retagged Alt"),
+        "an unpinned column still refreshes from the file"
+    );
+}
+
 #[tokio::test]
 async fn force_rescan_backfills_missing_provenance() {
     let app = TestApp::spawn().await;

@@ -104,6 +104,7 @@ mod m20270124_000001_metadata_cover_hash;
 mod m20270201_000001_progress_run;
 mod m20270202_000001_writeback_hardening;
 mod m20270212_000001_issue_duplicate_decision;
+mod m20270216_000001_retire_user_edited;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -216,6 +217,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270201_000001_progress_run::Migration),
             Box::new(m20270202_000001_writeback_hardening::Migration),
             Box::new(m20270212_000001_issue_duplicate_decision::Migration),
+            Box::new(m20270216_000001_retire_user_edited::Migration),
         ]
     }
 }

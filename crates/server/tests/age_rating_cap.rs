@@ -362,7 +362,6 @@ async fn seed_library(app: &TestApp) -> Fixture {
             thumbnail_version: Set(0),
             thumbnails_error: Set(None),
             additional_links: Set(serde_json::json!([])),
-            user_edited: Set(serde_json::json!([])),
             comicinfo_count: Set(Some(0)),
             last_rewrite_at: Set(None),
             last_rewrite_kind: Set(None),

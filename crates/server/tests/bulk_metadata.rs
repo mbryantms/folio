@@ -8,8 +8,8 @@
 //!   - Validation rejects empty patches and unknown manga values.
 //!   - Credit fields (writer, penciller, …) are NOT accepted —
 //!     forbidden by design.
-//!   - `user_edited` accumulates the touched field names so the
-//!     scanner skips them on rescan.
+//!   - every touched field gains a `set_by='user'` `field_provenance`
+//!     pin so the scanner skips it on rescan.
 
 mod common;
 
@@ -249,7 +249,6 @@ async fn seed_three_issues(app: &TestApp) -> Vec<String> {
             thumbnail_version: Set(0),
             thumbnails_error: Set(None),
             additional_links: Set(serde_json::json!([])),
-            user_edited: Set(serde_json::json!([])),
             comicinfo_count: Set(None),
             last_rewrite_at: Set(None),
             last_rewrite_kind: Set(None),
@@ -318,11 +317,19 @@ async fn bulk_metadata_applies_language_to_all_issues() {
         .unwrap();
     for r in &rows {
         assert_eq!(r.language_code.as_deref(), Some("ja"));
-        // user_edited tracks the bulk-touched field.
-        let edited: Vec<String> = serde_json::from_value(r.user_edited.clone()).unwrap();
-        assert!(
-            edited.contains(&"language_code".to_owned()),
-            "user_edited should include language_code: {edited:?}",
+        // The bulk-touched field is user-pinned in field_provenance.
+        let pin = entity::field_provenance::Entity::find()
+            .filter(entity::field_provenance::Column::EntityType.eq("issue"))
+            .filter(entity::field_provenance::Column::EntityId.eq(r.id.clone()))
+            .filter(entity::field_provenance::Column::Field.eq("language_code"))
+            .one(&db)
+            .await
+            .unwrap();
+        assert_eq!(
+            pin.map(|p| p.set_by).as_deref(),
+            Some("user"),
+            "language_code should be user-pinned on {}",
+            r.id,
         );
     }
 }

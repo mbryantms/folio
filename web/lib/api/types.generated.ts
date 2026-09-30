@@ -7182,11 +7182,15 @@ export interface components {
             translator?: string | null;
             updated_at: string;
             /**
-             * @description Names of fields the user has overridden via `PATCH /issues/{id}`. The
-             *     scanner skips these on a rescan. Surfaced so the UI can flag rows as
-             *     "edited" and offer a "revert to ComicInfo" affordance later.
+             * @description Issue columns the user has pinned via `PATCH` — the column keys
+             *     (`title`, `writer`, `number_raw`, …) carrying a `set_by='user'`
+             *     `field_provenance` row. The scanner and provider applies leave
+             *     pinned values alone; the edit form flags them and offers a
+             *     per-field release. Sorted. (The rolled-up `MetadataField` pins —
+             *     `credits`, `cover_date`, … — are on the metadata overview's
+             *     `user_pinned_fields`.)
              */
-            user_edited: string[];
+            user_pinned_columns: string[];
             /**
              * Format: double
              * @description Calling user's 0..=5 rating for this issue. `None` when unset.
@@ -7840,7 +7844,12 @@ export interface components {
             last_rewrite_kind?: string | null;
             provenance: components["schemas"]["FieldProvenanceRow"][];
             source_files: components["schemas"]["SourceFilesView"];
-            user_edited: string[];
+            /**
+             * @description `field_provenance` keys carrying a `set_by='user'` row — column
+             *     keys (`writer`, `number_raw`, …) and the `MetadataField` keys
+             *     they roll up into (`credits`, `number`, …). Sorted.
+             */
+            user_pinned_fields: string[];
         };
         NextInSeriesView: {
             items: components["schemas"]["IssueSummaryView"][];
@@ -10010,9 +10019,10 @@ export interface components {
          *     to clear. Empty / whitespace-only `url` entries are rejected.
          *
          *     Mirrors the editable subset of ComicInfo.xml — fields the scanner reads
-         *     from the file. The scanner consults `user_edited` on rescan and skips
-         *     matching columns, so DB edits are sticky and the source file is never
-         *     rewritten.
+         *     from the file. Every touched column is pinned as a `set_by='user'`
+         *     `field_provenance` row; the scanner skips pinned columns on rescan, so
+         *     DB edits are sticky. (In a writeback library the edit is also pushed
+         *     into the archive's sidecars — WP-2.10.)
          */
         UpdateIssueReq: {
             /** @description Replace-all. Each link must have a non-empty `url`. */

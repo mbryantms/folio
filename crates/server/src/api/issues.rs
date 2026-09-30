@@ -1,9 +1,10 @@
 //! `/issues/{id}` — read, edit, and refresh-metadata endpoints.
 //!
 //! The DB schema column-set on `issues` is shared with the scanner, so a
-//! `PATCH /issues/{id}` records its writes in `user_edited` to flag those
-//! columns as sticky. The scanner's update path checks the flag set and
-//! skips matching columns, preserving user edits across rescans.
+//! `PATCH /issues/{id}` pins every column it writes as a `set_by='user'`
+//! `field_provenance` row (see `writers::write_issue_user_pins`). The
+//! scanner's update path skips pinned columns, preserving user edits
+//! across rescans.
 
 use axum::{
     Extension, Json,
@@ -174,7 +175,7 @@ pub async fn get_one(
     view.allow_archive_writeback = allow_archive_writeback;
     view.library_cbr_convert_confirmed = library_cbr_convert_confirmed;
     view.creator_slugs = creator_slugs;
-    crate::api::series::enrich_issue_detail_legacy_ids(&app.db, &mut view, &issue_id).await;
+    crate::api::series::enrich_issue_detail(&app.db, &mut view, &issue_id).await;
     view.metadata_completeness = Some(crate::api::series::assess_issue_view(&view));
     Json(view).into_response()
 }
@@ -216,7 +217,10 @@ pub struct MetadataOverviewView {
     pub source_files: SourceFilesView,
     pub external_ids: Vec<crate::api::external_ids::ExternalIdRow>,
     pub provenance: Vec<FieldProvenanceRow>,
-    pub user_edited: Vec<String>,
+    /// `field_provenance` keys carrying a `set_by='user'` row — column
+    /// keys (`writer`, `number_raw`, …) and the `MetadataField` keys
+    /// they roll up into (`credits`, `number`, …). Sorted.
+    pub user_pinned_fields: Vec<String>,
     pub last_metadata_sync_at: Option<String>,
     pub last_rewrite_at: Option<String>,
     pub last_rewrite_kind: Option<String>,
@@ -302,9 +306,6 @@ pub async fn metadata_overview(
     let last_metadata_sync_at = row.last_metadata_sync_at.map(|t| t.to_rfc3339());
     let last_rewrite_at = row.last_rewrite_at.map(|t| t.to_rfc3339());
     let last_rewrite_kind = row.last_rewrite_kind.clone();
-    let user_edited: Vec<String> =
-        serde_json::from_value(row.user_edited.clone()).unwrap_or_default();
-
     // series.json is a per-folder file → its presence lives on the parent
     // series row.
     let series_json_present = series::Entity::find_by_id(series_id)
@@ -317,23 +318,30 @@ pub async fn metadata_overview(
     // Completeness via the shared scorer — build the view the same way
     // `get_one` does so the provider-match signal sees the legacy CV/Metron ids.
     let mut view = IssueDetailView::from_model(row, &series_slug);
-    crate::api::series::enrich_issue_detail_legacy_ids(&app.db, &mut view, &issue_id).await;
+    crate::api::series::enrich_issue_detail(&app.db, &mut view, &issue_id).await;
     let completeness = Some(crate::api::series::assess_issue_view(&view));
 
     // Provenance rows (field → source → when), most-recent first.
-    let provenance: Vec<FieldProvenanceRow> =
+    let provenance_rows =
         crate::metadata::apply::fetch_field_provenance_rows(&app.db, "issue", &issue_id)
             .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| FieldProvenanceRow {
-                source_label: provenance_source_label(&p.set_by).to_owned(),
-                field: p.field,
-                set_by: p.set_by,
-                set_at: p.set_at.to_rfc3339(),
-                source_external_id: p.source_external_id,
-            })
-            .collect();
+            .unwrap_or_default();
+    let mut user_pinned_fields: Vec<String> = provenance_rows
+        .iter()
+        .filter(|p| p.set_by == "user")
+        .map(|p| p.field.clone())
+        .collect();
+    user_pinned_fields.sort();
+    let provenance: Vec<FieldProvenanceRow> = provenance_rows
+        .into_iter()
+        .map(|p| FieldProvenanceRow {
+            source_label: provenance_source_label(&p.set_by).to_owned(),
+            field: p.field,
+            set_by: p.set_by,
+            set_at: p.set_at.to_rfc3339(),
+            source_external_id: p.source_external_id,
+        })
+        .collect();
 
     let external_ids = crate::api::external_ids::fetch_rows(&app, "issue", &issue_id).await;
 
@@ -355,7 +363,7 @@ pub async fn metadata_overview(
         },
         external_ids,
         provenance,
-        user_edited,
+        user_pinned_fields,
         last_metadata_sync_at,
         last_rewrite_at,
         last_rewrite_kind,
@@ -507,9 +515,10 @@ async fn build_issue_creator_slugs(
 /// to clear. Empty / whitespace-only `url` entries are rejected.
 ///
 /// Mirrors the editable subset of ComicInfo.xml — fields the scanner reads
-/// from the file. The scanner consults `user_edited` on rescan and skips
-/// matching columns, so DB edits are sticky and the source file is never
-/// rewritten.
+/// from the file. Every touched column is pinned as a `set_by='user'`
+/// `field_provenance` row; the scanner skips pinned columns on rescan, so
+/// DB edits are sticky. (In a writeback library the edit is also pushed
+/// into the archive's sidecars — WP-2.10.)
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
 pub struct UpdateIssueReq {
     // Identity / publication
@@ -750,14 +759,9 @@ pub async fn update(
         );
     }
 
-    // Carry forward existing edited-flag set; new writes append to it.
-    let mut edited: BTreeSet<String> = match row.user_edited.as_array() {
-        Some(arr) => arr
-            .iter()
-            .filter_map(|v| v.as_str().map(str::to_owned))
-            .collect(),
-        None => BTreeSet::new(),
-    };
+    // Column keys this call writes — each becomes a user pin
+    // (`writers::ISSUE_COLUMN_PIN_KEYS`). Earlier pins stay as they are.
+    let mut edited: BTreeSet<&'static str> = BTreeSet::new();
 
     // Track what changed so the audit payload reflects the actual diff.
     let mut changes = serde_json::Map::new();
@@ -771,7 +775,7 @@ pub async fn update(
             if let Some(v) = req.$req_field {
                 let normalized = norm_str(v);
                 am.$col = Set(normalized.clone());
-                edited.insert($name.into());
+                edited.insert($name);
                 changes.insert($name.into(), serde_json::json!(normalized));
                 touched = true;
             }
@@ -815,7 +819,7 @@ pub async fn update(
     let pending_cv = req.comicvine_id;
     let pending_metron = req.metron_id;
     if pending_gtin.is_some() {
-        edited.insert("gtin".into());
+        edited.insert("gtin");
         changes.insert(
             "gtin".into(),
             serde_json::json!(pending_gtin.as_ref().and_then(|o| o.clone())),
@@ -826,47 +830,47 @@ pub async fn update(
     // ── nullable scalar columns ──
     if let Some(v) = req.volume {
         am.volume = Set(v);
-        edited.insert("volume".into());
+        edited.insert("volume");
         changes.insert("volume".into(), serde_json::json!(v));
         touched = true;
     }
     if let Some(v) = req.year {
         am.year = Set(v);
-        edited.insert("year".into());
+        edited.insert("year");
         changes.insert("year".into(), serde_json::json!(v));
         touched = true;
     }
     if let Some(v) = req.month {
         am.month = Set(v);
-        edited.insert("month".into());
+        edited.insert("month");
         changes.insert("month".into(), serde_json::json!(v));
         touched = true;
     }
     if let Some(v) = req.day {
         am.day = Set(v);
-        edited.insert("day".into());
+        edited.insert("day");
         changes.insert("day".into(), serde_json::json!(v));
         touched = true;
     }
     if let Some(v) = req.black_and_white {
         am.black_and_white = Set(v);
-        edited.insert("black_and_white".into());
+        edited.insert("black_and_white");
         changes.insert("black_and_white".into(), serde_json::json!(v));
         touched = true;
     }
     if let Some(v) = req.sort_number {
         am.sort_number = Set(v);
-        edited.insert("sort_number".into());
+        edited.insert("sort_number");
         changes.insert("sort_number".into(), serde_json::json!(v));
         touched = true;
     }
     if let Some(opt) = pending_cv {
-        edited.insert("comicvine_id".into());
+        edited.insert("comicvine_id");
         changes.insert("comicvine_id".into(), serde_json::json!(opt));
         touched = true;
     }
     if let Some(opt) = pending_metron {
-        edited.insert("metron_id".into());
+        edited.insert("metron_id");
         changes.insert("metron_id".into(), serde_json::json!(opt));
         touched = true;
     }
@@ -881,8 +885,8 @@ pub async fn update(
             .collect();
         let json = serde_json::to_value(&normalized).unwrap_or(serde_json::json!([]));
         am.additional_links = Set(json.clone());
-        // additional_links has no scanner counterpart so we don't add it to
-        // `user_edited`; the scanner never touches it.
+        // additional_links has no scanner counterpart so it isn't pinned;
+        // the scanner never touches it.
         changes.insert("additional_links".into(), json);
         touched = true;
     }
@@ -890,19 +894,17 @@ pub async fn update(
     if !touched {
         let row_id = row.id.clone();
         let mut view = IssueDetailView::from_model(row, &series_slug);
-        crate::api::series::enrich_issue_detail_legacy_ids(&app.db, &mut view, &row_id).await;
+        crate::api::series::enrich_issue_detail(&app.db, &mut view, &row_id).await;
         return Json(view).into_response();
     }
 
-    let edited_arr: Vec<String> = edited.into_iter().collect();
-    am.user_edited = Set(serde_json::json!(edited_arr));
+    let edited_arr: Vec<&str> = edited.into_iter().collect();
     am.updated_at = Set(chrono::Utc::now().fixed_offset());
 
     // The row update and its `field_provenance` user pins commit
     // together (roadmap WP-2.5): a pin that failed to land used to leave
-    // the edit exposed to the next rescan. The legacy user_edited JSON
-    // column stays in place for columns without a MetadataField slot.
-    let keys: Vec<&str> = edited_arr.iter().map(String::as_str).collect();
+    // the edit exposed to the next rescan.
+    let keys = edited_arr.clone();
     let updated = match update_issue_with_user_pins(&app.db, am, &keys).await {
         Ok(m) => m,
         Err(e) => {
@@ -986,7 +988,7 @@ pub async fn update(
             target_id: Some(updated.id.clone()),
             payload: serde_json::json!({
                 "changes": changes,
-                "user_edited": edited_arr,
+                "pinned_fields": edited_arr,
                 "sidecar_rewrite": sidecar_rewrite.label(),
             }),
             ip: ctx.ip_string(),
@@ -997,7 +999,7 @@ pub async fn update(
 
     let updated_id = updated.id.clone();
     let mut view = IssueDetailView::from_model(updated, &series_slug);
-    crate::api::series::enrich_issue_detail_legacy_ids(&app.db, &mut view, &updated_id).await;
+    crate::api::series::enrich_issue_detail(&app.db, &mut view, &updated_id).await;
     Json(view).into_response()
 }
 
@@ -1047,33 +1049,17 @@ pub async fn clear_field_pin(
     if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
-    // Also drop the field from `issue.user_edited` — the JSON list the
-    // scanner consults to skip user-pinned columns on rescan. Without
-    // this the next scan would still treat the field as user-pinned
-    // (the list and the field_provenance row are paired bookkeeping).
+    // Column pins (`writer`) and the `MetadataField` pin they roll up
+    // into (`credits`) are released together — see
+    // `writers::clear_issue_user_pin`.
     let cleared =
-        match crate::metadata::writers::clear_user_pin(&app.db, "issue", &row.id, &field).await {
+        match crate::metadata::writers::clear_issue_user_pin(&app.db, &row.id, &field).await {
             Ok(b) => b,
             Err(e) => {
                 tracing::error!(issue_id = row.id, field, error = %e, "clear_field_pin failed");
                 return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
         };
-    // user_edited JSON list — best-effort sync.
-    if cleared {
-        let mut edited: Vec<String> =
-            serde_json::from_value(row.user_edited.clone()).unwrap_or_default();
-        let before = edited.len();
-        edited.retain(|f| f != &field);
-        if edited.len() != before {
-            let mut am: issue::ActiveModel = row.clone().into();
-            am.user_edited = sea_orm::Set(serde_json::to_value(&edited).unwrap_or_default());
-            am.updated_at = sea_orm::Set(chrono::Utc::now().fixed_offset());
-            if let Err(e) = am.update(&app.db).await {
-                tracing::warn!(issue_id = row.id, field, error = %e, "user_edited sync failed");
-            }
-        }
-    }
 
     audit::record(
         &app.db,
@@ -1491,7 +1477,7 @@ impl BulkMetadataPatch {
     }
 
     /// Names of fields the caller actually included in the patch.
-    /// Used to populate `issue.user_edited` so the scanner skips
+    /// Each becomes a `set_by='user'` pin so the scanner skips
     /// them on rescan and the audit-log row stays concise.
     fn touched_field_names(&self) -> Vec<&'static str> {
         let mut out = Vec::new();
@@ -1691,19 +1677,9 @@ pub async fn bulk_metadata(
             continue;
         }
 
-        // Stamp user_edited with every field this call touched so
-        // the scanner skips them on rescan. We add to the existing
-        // set rather than replace so prior PATCH /issues edits stay
-        // sticky.
+        // Pin every field this call touched so the scanner skips them
+        // on rescan. Pins are additive — prior PATCH edits stay sticky.
         let touched_names = req.patch.touched_field_names();
-        let mut user_edited: BTreeSet<String> =
-            serde_json::from_value(row.user_edited.clone()).unwrap_or_default();
-        for name in &touched_names {
-            user_edited.insert((*name).to_owned());
-        }
-        am.user_edited = Set(serde_json::json!(
-            user_edited.into_iter().collect::<Vec<_>>()
-        ));
         am.updated_at = Set(chrono::Utc::now().fixed_offset());
 
         // Row update + user pins commit together (WP-2.5), same as the
@@ -2725,11 +2701,12 @@ async fn fetch_issue_snippets(
 
 // ───── helpers ─────
 
-/// Persist an issue edit and pin every touched field that maps to a
-/// [`crate::metadata::MetadataField`] as `set_by='user'`, in ONE
-/// transaction. Roadmap WP-2.5: the pins used to be written after the
-/// row update, outside any transaction, with failures ignored — a lost
-/// pin meant the next rescan silently undid the edit.
+/// Persist an issue edit and pin every touched column (plus the
+/// [`crate::metadata::MetadataField`] it rolls up into) as
+/// `set_by='user'`, in ONE transaction. Roadmap WP-2.5: the pins used to
+/// be written after the row update, outside any transaction, with
+/// failures ignored — a lost pin meant the next rescan silently undid
+/// the edit.
 async fn update_issue_with_user_pins(
     db: &sea_orm::DatabaseConnection,
     am: entity::issue::ActiveModel,
@@ -2738,19 +2715,7 @@ async fn update_issue_with_user_pins(
     use sea_orm::TransactionTrait;
     let txn = db.begin().await?;
     let updated = am.update(&txn).await?;
-    for key in touched_keys {
-        if let Some(field) = patch_field_key_to_metadata_field(key) {
-            crate::metadata::writers::write_field_provenance(
-                &txn,
-                "issue",
-                &updated.id,
-                field,
-                crate::metadata::writers::SetBy::User,
-                None,
-            )
-            .await?;
-        }
-    }
+    crate::metadata::writers::write_issue_user_pins(&txn, &updated.id, touched_keys).await?;
     txn.commit().await?;
     Ok(updated)
 }
@@ -2782,66 +2747,5 @@ async fn manual_rewrite_after_edit(
             tracing::error!(issue_id, error = %e, "manual edit: sidecar rewrite enqueue failed");
             IssueEnqueue::Refused(format!("enqueue failed: {e}"))
         }
-    }
-}
-
-/// Map a string key from `issue.user_edited` JSON to its
-/// corresponding [`MetadataField`] variant. Returns `None` for keys
-/// the typed enum doesn't cover yet — the legacy column still
-/// tracks them; only fields the matcher / composer / apply pipeline
-/// understand land in `field_provenance`.
-///
-/// Coverage today includes everything the upcoming sidecar-writeback
-/// plan's composer reads. Keys outside this set (e.g. `web_url`,
-/// `additional_links`, `alternate_series`, the per-role credit
-/// columns) stay in `user_edited` only — the scanner's legacy
-/// user-precedence check still respects them; the composer just
-/// doesn't have a slot for them.
-///
-/// metadata-providers-1.0 M10 dual-write.
-fn patch_field_key_to_metadata_field(key: &str) -> Option<crate::metadata::MetadataField> {
-    use crate::metadata::MetadataField;
-    use crate::metadata::identifier::Source;
-    match key {
-        "title" => Some(MetadataField::Title),
-        "summary" => Some(MetadataField::Summary),
-        "notes" => Some(MetadataField::Notes),
-        "publisher" => Some(MetadataField::Publisher),
-        "imprint" => Some(MetadataField::Imprint),
-        "language_code" => Some(MetadataField::LanguageCode),
-        "age_rating" => Some(MetadataField::AgeRating),
-        "format" => Some(MetadataField::Format),
-        "manga" => Some(MetadataField::Manga),
-        "volume" => Some(MetadataField::Volume),
-        "number_raw" => Some(MetadataField::Number),
-        // The user edits credit roles + character/team/location CSV
-        // strings directly today; the composer reads the junction-
-        // shaped MetadataField variants. Map each to its junction.
-        "writer" | "penciller" | "inker" | "colorist" | "letterer" | "cover_artist" | "editor"
-        | "translator" => Some(MetadataField::Credits),
-        "characters" => Some(MetadataField::Characters),
-        "teams" => Some(MetadataField::Teams),
-        "locations" => Some(MetadataField::Locations),
-        "story_arc" | "story_arc_number" => Some(MetadataField::StoryArcs),
-        "genre" => Some(MetadataField::Genres),
-        "tags" => Some(MetadataField::Tags),
-        // External-IDs already write field_provenance via
-        // writers::set_external_id's own provenance row (set_by='user'
-        // on the external_ids row itself, which the composer reads
-        // through a separate channel). The MetadataField::ExternalId
-        // arm is here for completeness in case a caller switches
-        // to the typed field path.
-        "gtin" => Some(MetadataField::ExternalId(Source::Gtin)),
-        "comicvine_id" => Some(MetadataField::ExternalId(Source::ComicVine)),
-        "metron_id" => Some(MetadataField::ExternalId(Source::Metron)),
-        // Year + cover-date split: PATCH writes y/m/d separately;
-        // the composer reads CoverDate. Map year-the-issue-field to
-        // CoverDate so a user edit on the cover year survives a
-        // provider apply.
-        "year" | "month" | "day" => Some(MetadataField::CoverDate),
-        // Fields with no MetadataField slot: web_url, additional_links,
-        // alternate_series, black_and_white, sort_number. Stay in
-        // user_edited only.
-        _ => None,
     }
 }

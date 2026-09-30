@@ -186,13 +186,13 @@ export function IssueMetadataTab({
           </dl>
         </MetaCard>
 
-        {data.user_edited.length > 0 && (
+        {data.user_pinned_fields.length > 0 && (
           <MetaCard title="Your pinned fields">
             <p className="text-muted-foreground mb-2 text-xs">
               Edited by you — preserved across rescans and provider syncs.
             </p>
             <div className="flex flex-wrap gap-1.5">
-              {data.user_edited.map((f) => (
+              {data.user_pinned_fields.map((f) => (
                 <span
                   key={f}
                   className="bg-secondary text-secondary-foreground inline-flex items-center rounded-md px-2 py-0.5 text-xs"

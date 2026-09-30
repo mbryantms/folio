@@ -326,7 +326,6 @@ async fn seed_issue(
         thumbnail_version: Set(0),
         thumbnails_error: Set(None),
         additional_links: Set(serde_json::json!([])),
-        user_edited: Set(serde_json::json!([])),
         comicinfo_count: Set(None),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),

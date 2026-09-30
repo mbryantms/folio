@@ -875,16 +875,15 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     if let Some(row) = existing {
         // Fields the user has overridden are sticky: the scanner
         // refreshes everything else from ComicInfo but leaves these
-        // alone. Two sources, matching the PATCH handler's dual-write:
-        //   - `field_provenance` rows with `set_by='user'` — the
-        //     canonical pin store, kept current by provider applies
-        //     (an `override_user_edits` apply overwrites the row, so
-        //     the follow-up writeback rescan ingests the overridden
-        //     value instead of deadlocking on a stale pin);
-        //   - the legacy `user_edited` JSON list — still authoritative
-        //     for columns without a `MetadataField` slot (sort_number,
-        //     number_raw, web_url, alternate_series, black_and_white).
-        let edited = user_edited_set(&row.user_edited);
+        // alone. The pin store is `field_provenance` (`set_by='user'`),
+        // kept current by provider applies (an `override_user_edits`
+        // apply overwrites the row, so the follow-up writeback rescan
+        // ingests the overridden value instead of deadlocking on a
+        // stale pin). Columns without a `MetadataField` slot
+        // (sort_number, web_url, alternate_series, black_and_white) and
+        // `number_raw` are pinned under their column key —
+        // `writers::ISSUE_COLUMN_PIN_KEYS` (WP-3.7 retired the
+        // legacy per-issue JSON pin list those keys used to live in).
         // Decision D4 (roadmap WP-2.5): on rescan a file-tier value never
         // replaces a value the user OR a provider set. `field_provenance`
         // records the tier per field; a column whose row is not
@@ -905,6 +904,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             owned(&f.key())
                 || (matches!(f, crate::metadata::MetadataField::Description) && owned("summary"))
         };
+        let user_pinned = |k: &str| provenance.get(k).is_some_and(|sb| sb == "user");
         use crate::metadata::MetadataField as F;
         // Junctions the rollup must leave alone (their rows were written
         // by a provider apply or a user edit; the CSV read-cache columns
@@ -946,10 +946,10 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         if !protected(F::Title) {
             am.title = Set(info.title.clone());
         }
-        if !edited.contains("sort_number") {
+        if !user_pinned("sort_number") {
             am.sort_number = Set(sort_number);
         }
-        if !edited.contains("number_raw") {
+        if !user_pinned("number_raw") && !user_pinned(&F::Number.key()) {
             am.number_raw = Set(number_raw);
         }
         // ComicInfo `<Volume>` and MetronInfo carry the same Mylar3
@@ -971,19 +971,19 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         if !protected(F::Notes) {
             am.notes = Set(info.notes.clone());
         }
-        if !protected(F::LanguageCode) && !edited.contains("language_code") {
+        if !protected(F::LanguageCode) {
             am.language_code = Set(info.language_iso.clone());
         }
         if !protected(F::Format) {
             am.format = Set(info.format.clone());
         }
-        if !edited.contains("black_and_white") {
+        if !user_pinned("black_and_white") {
             am.black_and_white = Set(info.black_and_white);
         }
         if !protected(F::Manga) {
             am.manga = Set(info.manga.clone());
         }
-        if !protected(F::AgeRating) && !edited.contains("age_rating") {
+        if !protected(F::AgeRating) {
             am.age_rating = Set(info.age_rating.clone());
         }
         am.page_count = Set(resolved_page_count);
@@ -998,7 +998,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             Set(parsers::comicinfo::front_cover_page_index(&info.pages).unwrap_or(0));
         am.pages = Set(pages_json);
         am.comic_info_raw = Set(comic_info_raw);
-        if !edited.contains("alternate_series") {
+        if !user_pinned("alternate_series") {
             am.alternate_series = Set(info.alternate_series.clone());
         }
         if !protected(F::StoryArcs) {
@@ -1014,10 +1014,10 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         if !protected(F::Locations) {
             am.locations = Set(info.locations.clone());
         }
-        if !protected(F::Tags) && !edited.contains("tags") {
+        if !protected(F::Tags) {
             am.tags = Set(info.tags.clone());
         }
-        if !protected(F::Genres) && !edited.contains("genre") {
+        if !protected(F::Genres) {
             am.genre = Set(info.genre.clone());
         }
         if !protected(F::Credits) {
@@ -1045,7 +1045,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         // `review` has no MetadataField slot and no provider writes it;
         // it stays file-owned.
         am.review = Set(info.review.clone());
-        if !edited.contains("web_url") {
+        if !user_pinned("web_url") {
             am.web_url = Set(info.web.clone());
         }
         // External-ID writes (CV / Metron / GTIN from ComicInfo) move
@@ -1275,7 +1275,6 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             thumbnail_version: Set(0),
             thumbnails_error: Set(None),
             additional_links: Set(serde_json::json!([])),
-            user_edited: Set(serde_json::json!([])),
             // ComicInfo `<Count>` — see the update path above for why
             // we capture this per-issue.
             comicinfo_count: Set(info.count),
@@ -2329,20 +2328,6 @@ fn truncate_to_micros(t: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chro
         .expect("timestamp_micros round-trip in the supported chrono range")
 }
 
-/// Decode the `issue.user_edited` JSON column into a hash set of column
-/// names. Tolerant of empty / malformed JSON (returns an empty set), since a
-/// missing flag just means "scanner is allowed to refresh this field".
-fn user_edited_set(value: &serde_json::Value) -> std::collections::HashSet<String> {
-    value
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// Detect identifier tags in a series folder name —
 /// `\[([a-z]{2,6})-(\d+)\]` resolved against the [`Source`] prefix
 /// registry. Pre-tagged libraries (metron-tagger output, ComicTagger,
@@ -2560,17 +2545,6 @@ mod tests {
             chrono::DateTime::<chrono::Utc>::from_timestamp(1_768_530_645, 123_456_000)
                 .expect("valid timestamp");
         assert_eq!(truncate_to_micros(micros_only), micros_only);
-    }
-
-    #[test]
-    fn user_edited_set_handles_shapes() {
-        assert!(user_edited_set(&serde_json::json!([])).is_empty());
-        assert!(user_edited_set(&serde_json::json!(null)).is_empty());
-        assert!(user_edited_set(&serde_json::json!({"genre": true})).is_empty());
-        let s = user_edited_set(&serde_json::json!(["genre", "tags", 7]));
-        assert!(s.contains("genre"));
-        assert!(s.contains("tags"));
-        assert_eq!(s.len(), 2);
     }
 
     #[test]

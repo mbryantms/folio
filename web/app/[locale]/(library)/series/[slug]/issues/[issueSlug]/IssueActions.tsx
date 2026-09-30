@@ -400,11 +400,11 @@ function EditForm({
   // field's label fires this mutation, which clears the provenance row
   // for that field so the next scanner pass / metadata fetch is allowed
   // to overwrite. The icon only renders when the field is in
-  // `issue.user_edited`; non-pinned fields look identical to before.
+  // `issue.user_pinned_columns`; non-pinned fields look identical to before.
   const clearPin = useClearIssueFieldPin(issue.series_slug, issue.slug);
   const pinnedFields = useMemo(
-    () => new Set(issue.user_edited),
-    [issue.user_edited],
+    () => new Set(issue.user_pinned_columns),
+    [issue.user_pinned_columns],
   );
   const pinControl = useMemo<PinControl>(
     () => ({
@@ -1014,7 +1014,7 @@ function Field({
 }: {
   label: string;
   htmlFor: string;
-  /** Canonical field name as it appears in `issue.user_edited` — e.g.
+  /** Column key as it appears in `issue.user_pinned_columns` — e.g.
    *  `"title"`, `"number_raw"`, `"writer"`. When present *and* the
    *  field is currently pinned, an inline release icon renders next
    *  to the label. Omit on fields the server can't represent in the
