@@ -523,6 +523,16 @@ import:
    `DuplicateContent` health issue. The end state matches an inline-hashed
    import. (A matching row whose file is gone is a pre-move row; the next
    reconcile soft-deletes it.)
+   The re-check follows the same policy as ingest-time dedupe (WP-3.3):
+   with `dedupe_by_content = false` it **never** deletes — both copies
+   stay as separate issues and the Duplicates page groups them; and a row
+   carrying an `issue_duplicate_decision` is never the one deleted (it is
+   kept over an undecided copy; if both copies are decided, both stay).
+
+**Id allocation.** New rows get their id from the single allocator
+`process.rs::allocate_issue_id`, with precedence: pending row → lazy
+fingerprint; settled row → content hash; either one already taken →
+`blake3(path)`.
 
 **Identity.** The id is never re-keyed when the hash lands (`issues.id`
 stable / `content_hash` mutable — see Carry-over below), so progress,

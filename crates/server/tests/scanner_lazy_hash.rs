@@ -430,6 +430,109 @@ async fn dedupe_keeps_the_copy_with_reading_progress() {
     );
 }
 
+/// Twin CBZs in one lazily-imported library, returning `(lib_id, rows
+/// sorted by id)`. The drain walks pending rows by id, so `rows[1]` is the
+/// one it finds to be a duplicate of the already-settled `rows[0]`.
+async fn lazy_twins(
+    app: &TestApp,
+    root: &Path,
+    dedupe_by_content: bool,
+) -> (Uuid, Vec<issue::Model>) {
+    let folder = root.join("Twins (2021)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let a = folder.join("Twin 001.cbz");
+    write_cbz(&a, None, 77, 512);
+    std::fs::copy(&a, folder.join("Twin 001 (copy).cbz")).unwrap();
+    let lib_id = lazy_library(app, root).await;
+    if !dedupe_by_content {
+        let lib = entity::library::Entity::find_by_id(lib_id)
+            .one(&app.state().db)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut am: entity::library::ActiveModel = lib.into();
+        am.dedupe_by_content = Set(false);
+        am.update(&app.state().db).await.unwrap();
+    }
+    scanner::scan_library(&app.state(), lib_id).await.unwrap();
+    let mut both = rows(app, lib_id).await;
+    assert_eq!(both.len(), 2);
+    both.sort_by(|x, y| x.id.cmp(&y.id));
+    (lib_id, both)
+}
+
+async fn decide(app: &TestApp, lib_id: Uuid, issue_id: &str, decision: &str) {
+    entity::issue_duplicate_decision::ActiveModel {
+        issue_id: Set(issue_id.to_owned()),
+        library_id: Set(lib_id),
+        decision: Set(decision.to_owned()),
+        decided_by: Set(None),
+        decided_at: Set(Utc::now().fixed_offset()),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+}
+
+/// `dedupe_by_content = false` (WP-3.3 made it live): the post-hash
+/// re-check never deletes — both copies stay as separate issues, settled,
+/// with the same content hash, for the Duplicates page to group.
+#[tokio::test]
+async fn dedupe_off_keeps_both_copies_after_hashing() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (lib_id, both) = lazy_twins(&app, tmp.path(), false).await;
+
+    let out = hash_backfill::drain_library(&app.state(), lib_id)
+        .await
+        .unwrap();
+    assert_eq!(out.hashed, 2, "{out:?}");
+    assert_eq!(out.duplicates_removed, 0);
+    assert!(out.rescan_series.is_empty());
+    let after = rows(&app, lib_id).await;
+    assert_eq!(after.len(), 2, "both copies kept");
+    assert!(after.iter().all(|r| r.hash_algorithm == 1));
+    assert_eq!(after[0].content_hash, after[1].content_hash);
+    let mut ids: Vec<_> = after.iter().map(|r| r.id.clone()).collect();
+    ids.sort();
+    assert_eq!(ids, both.iter().map(|r| r.id.clone()).collect::<Vec<_>>());
+}
+
+/// `dedupe_by_content = true` with an admin verdict: the decided copy is
+/// kept over an undecided one (even though the drain would otherwise drop
+/// it), and when both copies carry a verdict neither is deleted.
+#[tokio::test]
+async fn dedupe_never_deletes_a_row_with_a_duplicate_decision() {
+    let app = TestApp::spawn().await;
+
+    // (1) Verdict on the copy the drain would drop → it survives instead.
+    let tmp = tempfile::tempdir().unwrap();
+    let (lib_id, both) = lazy_twins(&app, tmp.path(), true).await;
+    decide(&app, lib_id, &both[1].id, "keep").await;
+    let out = hash_backfill::drain_library(&app.state(), lib_id)
+        .await
+        .unwrap();
+    assert_eq!(out.duplicates_removed, 1, "{out:?}");
+    let left = rows(&app, lib_id).await;
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].id, both[1].id, "decided row kept");
+    assert_eq!(left[0].hash_algorithm, 1);
+
+    // (2) Verdicts on both → nothing deleted.
+    let tmp2 = tempfile::tempdir().unwrap();
+    let (lib2, both2) = lazy_twins(&app, tmp2.path(), true).await;
+    decide(&app, lib2, &both2[0].id, "keep").await;
+    decide(&app, lib2, &both2[1].id, "keep").await;
+    let out = hash_backfill::drain_library(&app.state(), lib2)
+        .await
+        .unwrap();
+    assert_eq!(out.duplicates_removed, 0, "{out:?}");
+    assert_eq!(out.hashed, 2);
+    let left = rows(&app, lib2).await;
+    assert_eq!(left.len(), 2, "both decided rows kept");
+    assert!(left.iter().all(|r| r.hash_algorithm == 1));
+}
+
 /// Lazy mode covers the *first* import only: once a full scan completed,
 /// newly added files hash inline again (so moves/duplicates are caught at
 /// ingest).

@@ -3840,6 +3840,68 @@
         }
       }
     },
+    "/api/libraries/{slug}/hash-backfill": {
+      "get": {
+        "operationId": "libraries_hash_backfill_status",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HashBackfillView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "library not found"
+          }
+        }
+      },
+      "post": {
+        "operationId": "libraries_hash_backfill_start",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HashBackfillStartResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "library not found"
+          }
+        }
+      }
+    },
     "/api/libraries/{slug}/health-issues": {
       "get": {
         "operationId": "health_issues_list",
@@ -13191,6 +13253,10 @@
           "scan_now": {
             "type": "boolean",
             "description": "Explicitly enqueue the initial scan after creating the row.\nDefaults to false so library creation is side-effect-light."
+          },
+          "trust_fingerprint_on_first_import": {
+            "type": "boolean",
+            "description": "First-import lazy-hash mode (WP-3.2): the initial scan ingests on\nsize+mtime and defers the full-file BLAKE3 to a background job.\nSet it here so the `scan_now` scan already benefits. Default false."
           }
         }
       },
@@ -16528,6 +16594,64 @@
           }
         }
       },
+      "HashBackfillStartResp": {
+        "type": "object",
+        "description": "Response for `POST /libraries/{slug}/hash-backfill`.",
+        "required": [
+          "enqueued",
+          "pending"
+        ],
+        "properties": {
+          "enqueued": {
+            "type": "boolean",
+            "description": "`false` when there was nothing pending (no job pushed)."
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "HashBackfillView": {
+        "type": "object",
+        "description": "Content-hash backfill progress for one library.",
+        "required": [
+          "pending",
+          "total",
+          "hashed",
+          "enabled",
+          "first_import_active"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "The library's `trust_fingerprint_on_first_import` opt-in."
+          },
+          "first_import_active": {
+            "type": "boolean",
+            "description": "Whether new files are currently ingested without hashing — the\nopt-in is on and the library has never completed a full scan."
+          },
+          "hashed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`total - pending`.",
+            "minimum": 0
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Live issues whose full-file BLAKE3 is still pending.",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Live issues in the library.",
+            "minimum": 0
+          }
+        }
+      },
       "Health": {
         "type": "object",
         "required": [
@@ -17641,6 +17765,7 @@
           "archive_backup_retain_days",
           "archive_writeback_jpeg_quality",
           "auto_convert_cbr_on_scan",
+          "trust_fingerprint_on_first_import",
           "root_path_writable",
           "metadata_publisher_blacklist",
           "filename_ignore_leading_numbers",
@@ -17759,6 +17884,10 @@
           "soft_delete_days": {
             "type": "integer",
             "format": "int32"
+          },
+          "trust_fingerprint_on_first_import": {
+            "type": "boolean",
+            "description": "First-import lazy-hash mode (WP-3.2): while the library has never\ncompleted a full scan, new files ingest on size+mtime and their\nfull-file BLAKE3 backfills in the background\n(`GET /libraries/{slug}/hash-backfill` reports progress)."
           }
         }
       },
@@ -20216,6 +20345,7 @@
           "rewrite_issue_sidecars",
           "archive_edit",
           "backfill",
+          "hash_backfill",
           "total"
         ],
         "properties": {
@@ -20228,6 +20358,11 @@
             "type": "integer",
             "format": "int64",
             "description": "Pending backfill drains (cover-phash / variant-cover; B17)."
+          },
+          "hash_backfill": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pending first-import content-hash drains (one per library; WP-3.2)."
           },
           "metadata_apply_issue": {
             "type": "integer",
@@ -24047,6 +24182,13 @@
               "null"
             ],
             "format": "int32"
+          },
+          "trust_fingerprint_on_first_import": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "First-import lazy-hash mode (WP-3.2). Only affects scans while the\nlibrary has never completed a full scan; flipping it afterwards is\naccepted but has no effect until then."
           }
         }
       },

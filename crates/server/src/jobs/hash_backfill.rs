@@ -315,9 +315,19 @@ async fn settle_row(
                 && has_progress(&state.db, &row.id).await?
                 && !has_progress(&state.db, &prior.id).await?);
         let (keep, drop, dropped_series, drop_decided) = if keep_row {
-            (row.id.as_str(), prior.id.as_str(), prior.series_id, prior_decided)
+            (
+                row.id.as_str(),
+                prior.id.as_str(),
+                prior.series_id,
+                prior_decided,
+            )
         } else {
-            (prior.id.as_str(), row.id.as_str(), row.series_id, row_decided)
+            (
+                prior.id.as_str(),
+                row.id.as_str(),
+                row.series_id,
+                row_decided,
+            )
         };
         if drop_decided {
             // Both copies carry a verdict — leave the pair to the admin.
@@ -390,10 +400,12 @@ async fn has_duplicate_decision<C: ConnectionTrait>(
     db: &C,
     issue_id: &str,
 ) -> anyhow::Result<bool> {
-    Ok(entity::issue_duplicate_decision::Entity::find_by_id(issue_id.to_owned())
-        .count(db)
-        .await?
-        > 0)
+    Ok(
+        entity::issue_duplicate_decision::Entity::find_by_id(issue_id.to_owned())
+            .count(db)
+            .await?
+            > 0,
+    )
 }
 
 async fn has_progress<C: ConnectionTrait>(db: &C, issue_id: &str) -> anyhow::Result<bool> {
