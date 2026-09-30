@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use uuid::Uuid;
 
+use crate::api::issue_card::IssueCardRow;
 use crate::api::libraries::{ScanMode, ScanResp};
 use crate::audit::{self, AuditEntry};
 use crate::auth::{CurrentUser, RequireAdmin};
@@ -1251,7 +1252,13 @@ pub async fn next_in_series(
             .filter(issue::Column::Id.gt(row.id.clone())),
     };
 
-    let rows: Vec<issue::Model> = match select.limit(limit).all(&app.db).await {
+    // WP-3.6: card projection, not the wide `issue::Model`.
+    let rows: Vec<IssueCardRow> = match select
+        .limit(limit)
+        .into_partial_model::<IssueCardRow>()
+        .all(&app.db)
+        .await
+    {
         Ok(v) => v,
         Err(e) => {
             tracing::error!(error = %e, "next_in_series query failed");
@@ -1261,7 +1268,7 @@ pub async fn next_in_series(
 
     let items = rows
         .into_iter()
-        .map(|m| IssueSummaryView::from_model(m, &series_slug))
+        .map(|m| m.into_summary_view(&series_slug))
         .collect();
     Json(NextInSeriesView { items }).into_response()
 }
@@ -1335,7 +1342,11 @@ pub async fn prev_in_series(
         )),
     };
 
-    let prev: Option<issue::Model> = match select.one(&app.db).await {
+    let prev: Option<IssueCardRow> = match select
+        .into_partial_model::<IssueCardRow>()
+        .one(&app.db)
+        .await
+    {
         Ok(v) => v,
         Err(e) => {
             tracing::error!(error = %e, "prev_in_series query failed");
@@ -1343,7 +1354,7 @@ pub async fn prev_in_series(
         }
     };
 
-    let item = prev.map(|m| IssueSummaryView::from_model(m, &series_slug));
+    let item = prev.map(|m| m.into_summary_view(&series_slug));
     Json(PrevInSeriesView { item }).into_response()
 }
 
@@ -1866,17 +1877,26 @@ const MAX_QUERY_LEN: usize = 200;
 /// (`ts_rank_cd` is 0 for trigram-only matches), so this only *adds* fuzzy
 /// rows below the strict ones — no reordering of good matches.
 fn issue_search_condition(text: &str) -> Condition {
-    Condition::any()
-        .add(Expr::cust_with_values(
-            "search_doc @@ websearch_to_tsquery('simple', $1)",
-            [text],
-        ))
-        .add(Expr::cust_with_values(
-            "EXISTS (SELECT 1 FROM series strg \
-               WHERE strg.id = issues.series_id \
-                 AND strg.normalized_name % $1)",
-            [entity::series::normalize_name(text)],
-        ))
+    // WP-3.6: `search_doc @@ q OR EXISTS(series trigram match)` as one
+    // predicate forces a row-by-row scan of every issue (the OR spans two
+    // tables, so no BitmapOr is possible). Collecting the matching ids from
+    // the two indexed arms — `issues_search_doc_gin`, and the series
+    // trigram index → `issues_series_sortnum_idx` — and filtering the outer
+    // scan by `id = ANY(...)` is the same set (A OR B ≡ id ∈ A ∪ B) but
+    // lets both arms and the outer lookup use indexes.
+    Condition::all().add(Expr::cust_with_values(
+        "issues.id = ANY(ARRAY( \
+           SELECT si.id FROM issues si \
+            WHERE si.search_doc @@ websearch_to_tsquery('simple', $1) \
+           UNION \
+           SELECT si.id FROM issues si \
+             JOIN series strg ON strg.id = si.series_id \
+            WHERE strg.normalized_name % $2))",
+        [
+            Value::from(text.to_owned()),
+            Value::from(entity::series::normalize_name(text)),
+        ],
+    ))
 }
 
 // ───── /issues list helpers ─────
@@ -2042,19 +2062,30 @@ fn apply_issue_csv_facet_filters(
         if values.is_empty() {
             continue;
         }
-        let lowered: Vec<String> = values.iter().map(|s| s.to_lowercase()).collect();
-        let sql = format!(
-            "EXISTS (SELECT 1 FROM unnest( \
-               regexp_split_to_array( \
-                 coalesce(issues.{column}, ''), \
-                 CASE WHEN coalesce(issues.{column}, '') LIKE '%;%' THEN ';' ELSE ',' END \
-               ) \
-             ) AS piece WHERE lower(trim(piece)) = ANY($1))",
-        );
-        select = select.filter(Expr::cust_with_values(sql, [Value::from(lowered)]));
+        // WP-3.6: match against the GIN-indexed facet keys
+        // (`issues_facet_keys_gin`, migration m20270215) instead of an
+        // `EXISTS (unnest(regexp_split_to_array(...)))` per row. The SQL
+        // function applies the identical split / `lower(trim(piece))`
+        // rule, keyed `<column>:<value>`, so results are unchanged.
+        let keys: Vec<String> = values
+            .iter()
+            .map(|s| format!("{column}:{}", s.to_lowercase()))
+            .collect();
+        select = select.filter(Expr::cust_with_values(
+            format!("{ISSUE_FACET_KEYS_EXPR} && $1"),
+            [Value::from(keys)],
+        ));
     }
     select
 }
+
+/// Must match the `issues_facet_keys_gin` index expression (migration
+/// `m20270215_000001_list_query_indexes`) exactly, argument order
+/// included, or the planner can't use the index.
+const ISSUE_FACET_KEYS_EXPR: &str = "folio_issue_facet_keys(issues.genre, issues.tags, \
+     issues.writer, issues.penciller, issues.inker, issues.colorist, issues.letterer, \
+     issues.cover_artist, issues.editor, issues.translator, issues.characters, \
+     issues.teams, issues.locations)";
 
 /// EXISTS-subquery filter on the calling user's per-issue rating.
 /// Caller must call `validate_list_query_params` first — this helper
@@ -2263,7 +2294,7 @@ fn apply_issue_sort_ordering(
 /// correlated subquery's value.
 async fn compute_next_issue_cursor(
     app: &AppState,
-    rows: &[issue::Model],
+    rows: &[IssueCardRow],
     limit: u64,
     sort: super::series::IssueSort,
     user_id: Uuid,
@@ -2378,7 +2409,12 @@ pub async fn list(
         }
         .offset(offset)
         .limit(limit + 1);
-        let rows = match ranked.all(&app.db).await {
+        // WP-3.6: card projection, not the wide `issue::Model`.
+        let rows = match ranked
+            .into_partial_model::<IssueCardRow>()
+            .all(&app.db)
+            .await
+        {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!(error = %e, "list issues cross search failed");
@@ -2387,7 +2423,7 @@ pub async fn list(
         };
         let has_more = rows.len() as u64 > limit;
         let next_cursor = has_more.then(|| super::series::encode_offset_cursor(offset + limit));
-        let page: Vec<issue::Model> = rows.into_iter().take(limit as usize).collect();
+        let page: Vec<IssueCardRow> = rows.into_iter().take(limit as usize).collect();
         return hydrate_and_respond(&app, page, next_cursor, total).await;
     }
 
@@ -2424,7 +2460,12 @@ pub async fn list(
     }
     select = apply_issue_sort_ordering(select, sort, asc, user.id);
 
-    let rows: Vec<issue::Model> = match select.limit(limit + 1).all(&app.db).await {
+    let rows: Vec<IssueCardRow> = match select
+        .limit(limit + 1)
+        .into_partial_model::<IssueCardRow>()
+        .all(&app.db)
+        .await
+    {
         Ok(v) => v,
         Err(e) => {
             tracing::error!(error = %e, "list issues cross failed");
@@ -2432,7 +2473,7 @@ pub async fn list(
         }
     };
     let next_cursor = compute_next_issue_cursor(&app, &rows, limit, sort, user.id).await;
-    let page: Vec<issue::Model> = rows.into_iter().take(limit as usize).collect();
+    let page: Vec<IssueCardRow> = rows.into_iter().take(limit as usize).collect();
     hydrate_and_respond(&app, page, next_cursor, total).await
 }
 
@@ -2490,11 +2531,11 @@ fn apply_user_rating_cursor(
     }
 }
 
-/// Hydrate `issue::Model`s into `IssueSummaryView`s with their parent
+/// Hydrate card rows into `IssueSummaryView`s with their parent
 /// series slug. One batched series fetch keeps it O(1) round-trips.
 async fn hydrate_and_respond(
     app: &AppState,
-    rows: Vec<issue::Model>,
+    rows: Vec<IssueCardRow>,
     next_cursor: Option<String>,
     total: Option<i64>,
 ) -> axum::response::Response {
@@ -2529,7 +2570,10 @@ async fn hydrate_and_respond(
             // `series_name` so card headings read "Series #N" on the
             // cross-library surfaces (grid issues mode, search, the New
             // Issues detail page) — this list inherently mixes series.
-            Some(IssueSummaryView::from_model(i, &series_slug).with_series_name(s.name.clone()))
+            Some(
+                i.into_summary_view(&series_slug)
+                    .with_series_name(s.name.clone()),
+            )
         })
         .collect();
     Json(IssueListView {
@@ -2591,7 +2635,8 @@ pub async fn search(
     if let Some(cap) = visible.issue_cap_condition() {
         sel = sel.filter(cap);
     }
-    let rows = match sel.all(&app.db).await {
+    // WP-3.6: card projection, not the wide `issue::Model`.
+    let rows = match sel.into_partial_model::<IssueCardRow>().all(&app.db).await {
         Ok(v) => v,
         Err(e) => {
             tracing::error!(error = %e, "issue search failed");
@@ -2632,7 +2677,7 @@ pub async fn search(
             let series_name = s.name.clone();
             let snippet = snippets.get(&i.id).cloned();
             Some(IssueSearchHit {
-                issue: IssueSummaryView::from_model(i, &series_slug),
+                issue: i.into_summary_view(&series_slug),
                 series_name,
                 snippet,
             })
@@ -2647,7 +2692,7 @@ pub async fn search(
 /// summary covers ~all real-world matches and keeps the SQL simple.
 async fn fetch_issue_snippets(
     app: &AppState,
-    rows: &[issue::Model],
+    rows: &[IssueCardRow],
     q_text: &str,
 ) -> Result<HashMap<String, String>, sea_orm::DbErr> {
     use sea_orm::{FromQueryResult, Statement, Value};

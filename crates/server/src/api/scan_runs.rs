@@ -214,6 +214,7 @@ pub async fn list(
     if !issue_ids.is_empty() {
         let issue_rows = entity::issue::Entity::find()
             .filter(entity::issue::Column::Id.is_in(issue_ids.iter().cloned().collect::<Vec<_>>()))
+            .into_partial_model::<crate::api::issue_card::IssueCardRow>()
             .all(&app.db)
             .await
             .unwrap_or_default();
@@ -530,6 +531,7 @@ pub(crate) async fn resolve_joins(
     if !issue_ids.is_empty()
         && let Ok(issue_rows) = entity::issue::Entity::find()
             .filter(entity::issue::Column::Id.is_in(issue_ids.iter().cloned().collect::<Vec<_>>()))
+            .into_partial_model::<crate::api::issue_card::IssueCardRow>()
             .all(&app.db)
             .await
     {

@@ -1,0 +1,41 @@
+# label | path — driven in order by scripts/perf/perf-explain.sh.
+# Placeholders: {series_slug} {issue_id} {view_id} {cbl_id} {collection_id}
+# {library_id}; {cursor:<label>} = next_cursor from that label's response.
+#
+# The first ten are the "top ten" list/filter/sort surfaces tracked in
+# docs/dev/load-testing.md; the rest are secondary list paths recorded
+# for completeness.
+
+# 1. Library browse — the default series grid (name sort, first page + count).
+series-browse-name      | /api/series?library={library_id}&limit=50
+# 1b. …and a deep keyset page (cursor from the first page).
+series-browse-page2     | /api/series?library={library_id}&limit=50&cursor={cursor:series-browse-name}
+# 2. Series filter + sort — publisher + year window + genre facet, year sort.
+series-filter-sort      | /api/series?publisher=Load%20Comics&year_from=2005&year_to=2015&genres=Horror&sort=year&order=desc&limit=50
+# 3. Recently added series rail (created_at desc).
+series-recent           | /api/series?sort=created_at&order=desc&limit=24
+# 4. Series search (tsvector + trigram).
+series-search           | /api/series?q=crimson&limit=20
+# 5. Issues in a series (series page issue grid).
+series-issues           | /api/series/{series_slug}/issues?limit=50
+# 6. Cross-library issue browse / New Issues page (created_at desc).
+issues-browse-recent    | /api/issues?sort=created_at&order=desc&limit=50
+# 6b. …filtered by a credit facet + year sort.
+issues-filter-writer    | /api/issues?writers=Writer%20042&sort=year&order=desc&limit=50
+# 7. Issue search.
+issues-search           | /api/issues/search?q=phoenix&limit=20
+# 8. Continue reading rail.
+continue-reading        | /api/me/continue-reading
+# 9. On deck rail.
+on-deck                 | /api/me/on-deck
+# 10a. Saved smart view results (filter DSL compile).
+saved-view-results      | /api/me/saved-views/{view_id}/results?limit=50
+# 10b. CBL entries (reading list page).
+cbl-entries             | /api/me/cbl-lists/{cbl_id}/entries?limit=50
+
+# ── secondary ───────────────────────────────────────────────────────────
+series-detail           | /api/series/{series_slug}
+recent-issues-rail      | /api/me/recent-issues
+collection-entries      | /api/me/collections/{collection_id}/entries?limit=50
+issue-next-up           | /api/issues/{issue_id}/next-up
+series-resume           | /api/series/{series_slug}/resume

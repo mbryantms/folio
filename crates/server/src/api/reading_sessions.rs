@@ -672,6 +672,7 @@ pub async fn list(
     } else {
         issue::Entity::find()
             .filter(issue::Column::Id.is_in(issue_ids))
+            .into_partial_model::<crate::api::issue_card::IssueCardRow>()
             .all(&app.db)
             .await
             .unwrap_or_default()

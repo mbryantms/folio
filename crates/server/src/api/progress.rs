@@ -51,6 +51,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::error;
+use crate::api::issue_card::IssueCardRow;
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
@@ -434,10 +435,13 @@ pub async fn upsert_series(
     // Only active, on-disk issues. The user can't read a removed issue, so
     // the read-state for those is meaningless and the row would clutter
     // future "unread series" queries.
+    // WP-3.6: only id / page_count are read — project, don't hydrate the
+    // wide rows of every issue in the series.
     let issues = match issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(srow.id))
         .filter(issue::Column::State.eq("active"))
         .filter(issue::Column::RemovedAt.is_null())
+        .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
     {
@@ -770,10 +774,12 @@ pub async fn upsert_bulk(
         .filter(|id| seen.insert(id.clone()))
         .collect();
 
+    // WP-3.6: id / page_count + the ACL columns are all that's read.
     let rows = match issue::Entity::find()
         .filter(issue::Column::Id.is_in(ids.clone()))
         .filter(issue::Column::State.eq("active"))
         .filter(issue::Column::RemovedAt.is_null())
+        .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
     {
@@ -998,10 +1004,12 @@ pub async fn upsert_series_bulk(
         }
         // Pull every active, on-disk issue for the series in one
         // query. Mirrors `upsert_series`'s filter.
+        // WP-3.6: id / page_count only — project.
         let issues = match issue::Entity::find()
             .filter(issue::Column::SeriesId.eq(srow.id))
             .filter(issue::Column::State.eq("active"))
             .filter(issue::Column::RemovedAt.is_null())
+            .into_partial_model::<IssueCardRow>()
             .all(&app.db)
             .await
         {

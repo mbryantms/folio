@@ -1233,7 +1233,7 @@ comic-reader/
 ### 16.5 Load tests by phase
 - **End of Phase 2 (soak):** k6 script — 10 concurrent readers turn pages for 1 hour against `compose.prod.yml`. Assertions: no FD leak (`/metrics` `folio_zip_lru_open_fds` ≤ capacity), RSS does not grow > 10 % from start, no 5xx responses.
 - **End of Phase 4 (sync stress):** 100 simulated clients connect/disconnect with offline edits via a Rust harness exercising the Automerge sync protocol. Assertions: convergence (all replicas equal after final sync), per-doc size stays under 16 MiB, no panics.
-- **Phase 6 (full):** the four scenarios in §18.3 plus a 1k-issue scan benchmark.
+- **Phase 6 (full):** the four scenarios in §18.3 (`oha` recipes in `docs/dev/load-testing.md`) plus a 1k-issue scan benchmark (`just perf-scan`, `docs/dev/scanner-perf.md`).
 
 ### 16.6 Coverage targets
 - Not enforced as a CI gate (counterproductive metric). Tracked for visibility only.
@@ -1416,11 +1416,13 @@ Outbound HTTP from the server (when ComicVine/Metron enrichment lands in Phase 7
 - Bundle size regressions caught by `@next/bundle-analyzer` size-limit check in CI.
 
 ### 18.3 Load test scenarios
-Documented in `docs/dev/load-testing.md` (added in Phase 6):
+Documented in `docs/dev/load-testing.md` (WP-3.6), which has an `oha` recipe per scenario:
 - 50 concurrent readers turning pages
 - 1 active scan + 10 concurrent readers
 - 1000-series library list pagination
 - Search query mix (autocomplete + full search) at 100 QPS
+
+The same doc records the `EXPLAIN (ANALYZE, BUFFERS)` baseline for the top list/filter/sort queries on a 50,000-issue stress library (`just perf-explain`). That run gates on "no sequential scan of an issue-scale table".
 
 ---
 

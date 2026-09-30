@@ -28,6 +28,7 @@ pub mod filter_options;
 pub mod form_or_json;
 pub mod health;
 pub mod health_issues;
+pub(crate) mod issue_card;
 pub mod issue_ocr;
 pub mod issue_permalink;
 pub mod issues;

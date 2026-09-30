@@ -451,6 +451,7 @@ async fn hydrate_views(
     } else {
         issue::Entity::find()
             .filter(issue::Column::Id.is_in(issue_ids.iter().cloned().collect::<Vec<_>>()))
+            .into_partial_model::<crate::api::issue_card::IssueCardRow>()
             .all(db)
             .await
             .map_err(|e| {

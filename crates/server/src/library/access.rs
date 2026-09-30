@@ -329,18 +329,24 @@ pub async fn issue_visible(app: &AppState, user: &CurrentUser, row: &issue::Mode
 }
 
 /// [`issue_visible`] for a caller that already holds the ACL.
-pub async fn issue_allowed(app: &AppState, acl: &VisibleLibraries, row: &issue::Model) -> bool {
-    if !acl.contains(row.library_id) {
+pub async fn issue_allowed<T: IssueAclFields>(
+    app: &AppState,
+    acl: &VisibleLibraries,
+    row: &T,
+) -> bool {
+    let library_id = row.acl_library_id();
+    if !acl.contains(library_id) {
         return false;
     }
-    let Some(cap) = acl.cap_for(row.library_id) else {
+    let Some(cap) = acl.cap_for(library_id) else {
         return true;
     };
-    if row.age_rating.is_some() {
-        return age_rating::passes(row.age_rating.as_deref(), Some(cap));
+    if row.acl_age_rating().is_some() {
+        return age_rating::passes(row.acl_age_rating(), Some(cap));
     }
-    let parent = series_ratings(app, &[row.series_id]).await;
-    let series_rating = parent.get(&row.series_id).and_then(|r| r.as_deref());
+    let series_id = row.acl_series_id();
+    let parent = series_ratings(app, &[series_id]).await;
+    let series_rating = parent.get(&series_id).and_then(|r| r.as_deref());
     age_rating::passes(series_rating, Some(cap))
 }
 
@@ -353,31 +359,53 @@ pub async fn series_visible(app: &AppState, user: &CurrentUser, row: &series::Mo
 /// Drop issues the caller can't see (membership + cap), preserving
 /// order. One extra query for the parent ratings, and only when the
 /// caller is capped somewhere and some candidate lacks its own rating.
-pub async fn filter_issues(
+pub async fn filter_issues<T: IssueAclFields>(
     app: &AppState,
     acl: &VisibleLibraries,
-    rows: Vec<issue::Model>,
-) -> Vec<issue::Model> {
+    rows: Vec<T>,
+) -> Vec<T> {
     if !acl.has_caps() {
         return rows
             .into_iter()
-            .filter(|i| acl.contains(i.library_id))
+            .filter(|i| acl.contains(i.acl_library_id()))
             .collect();
     }
     let need_parent: Vec<Uuid> = rows
         .iter()
-        .filter(|i| i.age_rating.is_none() && acl.cap_for(i.library_id).is_some())
-        .map(|i| i.series_id)
+        .filter(|i| i.acl_age_rating().is_none() && acl.cap_for(i.acl_library_id()).is_some())
+        .map(|i| i.acl_series_id())
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
     let parents = series_ratings(app, &need_parent).await;
     rows.into_iter()
         .filter(|i| {
-            let series_rating = parents.get(&i.series_id).and_then(|r| r.as_deref());
-            acl.issue_ok(i.library_id, i.age_rating.as_deref(), series_rating)
+            let series_rating = parents.get(&i.acl_series_id()).and_then(|r| r.as_deref());
+            acl.issue_ok(i.acl_library_id(), i.acl_age_rating(), series_rating)
         })
         .collect()
+}
+
+/// The three issue columns [`filter_issues`] reads. Implemented by the
+/// full `issue::Model` and by slim list projections
+/// (`api::issue_card::IssueCardRow`) so list paths can ACL-filter without
+/// hydrating the wide row.
+pub trait IssueAclFields {
+    fn acl_library_id(&self) -> Uuid;
+    fn acl_series_id(&self) -> Uuid;
+    fn acl_age_rating(&self) -> Option<&str>;
+}
+
+impl IssueAclFields for issue::Model {
+    fn acl_library_id(&self) -> Uuid {
+        self.library_id
+    }
+    fn acl_series_id(&self) -> Uuid {
+        self.series_id
+    }
+    fn acl_age_rating(&self) -> Option<&str> {
+        self.age_rating.as_deref()
+    }
 }
 
 #[cfg(test)]

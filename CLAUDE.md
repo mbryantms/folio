@@ -517,7 +517,11 @@ Default admin (first registered user becomes admin):
     identity rides in the per-issue composed `<Series>` only (safe —
     the scanner never re-homes on `<Series>` change).
   - Load full `issue::Model`s to read just the number — project the
-    columns (`select_only`); `comic_info_raw` is large.
+    columns (`select_only`); `comic_info_raw` is large. List paths that
+    render issue cards select
+    [`api::issue_card::IssueCardRow`](crates/server/src/api/issue_card.rs)
+    (`.into_partial_model::<IssueCardRow>()`), never the full model
+    (WP-3.6; plans in `docs/dev/load-testing.md`).
 
 ## Editing rules
 
@@ -591,6 +595,7 @@ Default admin (first registered user becomes admin):
 
 - Architecture decisions per phase: [docs/dev/phase-status.md](docs/dev/phase-status.md)
 - Library scanner deep dive: [docs/dev/library-scanner.md](docs/dev/library-scanner.md)
+- Load baseline (`just perf-explain` EXPLAIN plans at 50k issues, `oha` recipes, `IssueCardRow` projection audit): [docs/dev/load-testing.md](docs/dev/load-testing.md)
 - Reader keyboard map: [docs/dev/reader-shortcuts.md](docs/dev/reader-shortcuts.md)
 - OPDS readiness audit: [docs/dev/opds-audit.md](docs/dev/opds-audit.md)
 - Runtime-config split (env vs DB): [docs/dev/runtime-configuration.md](docs/dev/runtime-configuration.md)

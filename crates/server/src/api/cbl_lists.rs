@@ -34,6 +34,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
+use crate::api::issue_card::IssueCardRow;
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::cbl::{
     catalog,
@@ -876,19 +877,19 @@ pub async fn entries(
         .iter()
         .filter_map(|e| e.matched_issue_id.clone())
         .collect();
-    let issue_by_id: std::collections::HashMap<String, entity::issue::Model> =
-        if issue_ids.is_empty() {
-            std::collections::HashMap::new()
-        } else {
-            match entity::issue::Entity::find()
-                .filter(entity::issue::Column::Id.is_in(issue_ids))
-                .all(&app.db)
-                .await
-            {
-                Ok(rows) => rows.into_iter().map(|i| (i.id.clone(), i)).collect(),
-                Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
-            }
-        };
+    let issue_by_id: std::collections::HashMap<String, IssueCardRow> = if issue_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        match entity::issue::Entity::find()
+            .filter(entity::issue::Column::Id.is_in(issue_ids))
+            .into_partial_model::<IssueCardRow>()
+            .all(&app.db)
+            .await
+        {
+            Ok(rows) => rows.into_iter().map(|i| (i.id.clone(), i)).collect(),
+            Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+        }
+    };
     let series_ids: std::collections::HashSet<Uuid> =
         issue_by_id.values().map(|i| i.series_id).collect();
     let series_by_id: std::collections::HashMap<Uuid, entity::series::Model> = if series_ids
@@ -907,7 +908,6 @@ pub async fn entries(
             Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
         }
     };
-    use crate::api::series::IssueSummaryView;
     use crate::library::access;
     let visible = access::for_user(&app, &user).await;
 
@@ -928,7 +928,9 @@ pub async fn entries(
                         return None;
                     }
                     Some(
-                        IssueSummaryView::from_model(issue.clone(), &series.slug)
+                        issue
+                            .clone()
+                            .into_summary_view(&series.slug)
                             .with_series_name(series.name.clone()),
                     )
                 });
@@ -1829,6 +1831,7 @@ pub async fn issues(
     }
     let issues = match entity::issue::Entity::find()
         .filter(entity::issue::Column::Id.is_in(issue_ids.clone()))
+        .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
     {
@@ -1848,10 +1851,9 @@ pub async fn issues(
     let series_by_id: std::collections::HashMap<Uuid, entity::series::Model> =
         series_rows.into_iter().map(|s| (s.id, s)).collect();
 
-    let issue_by_id: std::collections::HashMap<String, entity::issue::Model> =
+    let issue_by_id: std::collections::HashMap<String, IssueCardRow> =
         issues.into_iter().map(|i| (i.id.clone(), i)).collect();
 
-    use crate::api::series::IssueSummaryView;
     let mut items = Vec::with_capacity(entries.len());
     for entry in entries {
         let Some(issue_id) = entry.matched_issue_id else {
@@ -1874,7 +1876,9 @@ pub async fn issues(
         }
         let series_slug = series.slug.clone();
         items.push(
-            IssueSummaryView::from_model(issue.clone(), &series_slug)
+            issue
+                .clone()
+                .into_summary_view(&series_slug)
                 .with_series_name(series.name.clone()),
         );
     }
@@ -2311,7 +2315,6 @@ pub async fn reading_window(
     AxPath(id): AxPath<Uuid>,
     Query(q): Query<WindowQuery>,
 ) -> impl IntoResponse {
-    use crate::api::series::IssueSummaryView;
     use crate::library::access;
     use entity::progress_record;
 
@@ -2408,6 +2411,7 @@ pub async fn reading_window(
         .collect();
     let issues = match entity::issue::Entity::find()
         .filter(entity::issue::Column::Id.is_in(slice_issue_ids))
+        .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
     {
@@ -2425,7 +2429,7 @@ pub async fn reading_window(
     };
     let series_by_id: std::collections::HashMap<Uuid, entity::series::Model> =
         series_rows.into_iter().map(|s| (s.id, s)).collect();
-    let issue_by_id: std::collections::HashMap<String, entity::issue::Model> =
+    let issue_by_id: std::collections::HashMap<String, IssueCardRow> =
         issues.into_iter().map(|i| (i.id.clone(), i)).collect();
 
     let mut items: Vec<CblWindowEntry> = Vec::with_capacity(slice.len());
@@ -2462,7 +2466,9 @@ pub async fn reading_window(
         }
 
         items.push(CblWindowEntry {
-            issue: IssueSummaryView::from_model(issue.clone(), &series.slug)
+            issue: issue
+                .clone()
+                .into_summary_view(&series.slug)
                 .with_series_name(series.name.clone()),
             position: entry.position,
             finished,
@@ -2742,6 +2748,7 @@ pub async fn reading_window_paginated(
     } else {
         match entity::issue::Entity::find()
             .filter(entity::issue::Column::Id.is_in(slice_issue_ids))
+            .into_partial_model::<IssueCardRow>()
             .all(&app.db)
             .await
         {
@@ -2766,7 +2773,7 @@ pub async fn reading_window_paginated(
     };
     let series_by_id: std::collections::HashMap<Uuid, entity::series::Model> =
         series_rows.into_iter().map(|s| (s.id, s)).collect();
-    let issue_by_id: std::collections::HashMap<String, entity::issue::Model> =
+    let issue_by_id: std::collections::HashMap<String, IssueCardRow> =
         issues.into_iter().map(|i| (i.id.clone(), i)).collect();
 
     let mut items: Vec<CblWindowEntry> = Vec::with_capacity(slice_entries.len());
@@ -2804,7 +2811,9 @@ pub async fn reading_window_paginated(
         max_pos = Some(max_pos.map_or(entry.position, |m| m.max(entry.position)));
 
         items.push(CblWindowEntry {
-            issue: crate::api::series::IssueSummaryView::from_model(issue.clone(), &series.slug)
+            issue: issue
+                .clone()
+                .into_summary_view(&series.slug)
                 .with_series_name(series.name.clone()),
             position: entry.position,
             finished,

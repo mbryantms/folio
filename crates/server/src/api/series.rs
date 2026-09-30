@@ -23,6 +23,7 @@ use uuid::Uuid;
 const MAX_QUERY_LEN: usize = 200;
 
 use super::error;
+use crate::api::issue_card::IssueCardRow;
 use crate::api::libraries::{ScanMode, ScanResp};
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::library::access;
@@ -1179,25 +1180,11 @@ impl IssueSummaryView {
     /// `series_slug` is the parent series' slug, populated by the caller
     /// (which has the series row in scope). `From` is removed because the
     /// slug isn't on the issue::Model itself.
+    ///
+    /// List paths should select `IssueCardRow` instead of the full model
+    /// (WP-3.6); this delegates to the same mapping.
     pub fn from_model(m: issue::Model, series_slug: &str) -> Self {
-        let cover_url = (m.state == "active").then(|| format!("/issues/{}/pages/0/thumb", m.id));
-        Self {
-            id: m.id,
-            slug: m.slug,
-            series_id: m.series_id.to_string(),
-            series_slug: series_slug.to_owned(),
-            series_name: None,
-            title: m.title,
-            number: m.number_raw,
-            sort_number: m.sort_number,
-            year: m.year,
-            page_count: m.page_count,
-            state: m.state,
-            cover_url,
-            special_type: m.special_type,
-            created_at: m.created_at.to_rfc3339(),
-            updated_at: m.updated_at.to_rfc3339(),
-        }
+        crate::api::issue_card::IssueCardRow::from(m).into_summary_view(series_slug)
     }
 
     /// Attach the parent series name. Use everywhere we want card
@@ -2112,17 +2099,23 @@ pub async fn list(
             },
             None => 0,
         };
-        let filtered = select.filter(
-            Condition::any()
-                .add(Expr::cust_with_values(
-                    "search_doc @@ websearch_to_tsquery('simple', $1)",
-                    [text],
-                ))
-                .add(Expr::cust_with_values(
-                    "normalized_name % $1",
-                    [entity::series::normalize_name(text)],
-                )),
-        );
+        // WP-3.6: `search_doc @@ q OR normalized_name % q` evaluated as one
+        // filter makes the planner scan every series row and run the
+        // (expensive) trigram similarity on each. Collecting the ids from
+        // the two GIN-indexed arms and matching `id = ANY(...)` is the same
+        // set (A OR B ≡ id ∈ A ∪ B) with an index on every step — ~6x
+        // faster on the 2,500-series stress library.
+        let filtered = select.filter(Expr::cust_with_values(
+            "series.id = ANY(ARRAY( \
+               SELECT ss.id FROM series ss \
+                WHERE ss.search_doc @@ websearch_to_tsquery('simple', $1) \
+               UNION \
+               SELECT ss.id FROM series ss WHERE ss.normalized_name % $2))",
+            [
+                sea_orm::Value::from(text.to_owned()),
+                sea_orm::Value::from(entity::series::normalize_name(text)),
+            ],
+        ));
         let total = if q.cursor.is_none() {
             match filtered.clone().count(&app.db).await {
                 Ok(n) => Some(n as i64),
@@ -3937,7 +3930,12 @@ pub async fn list_issues(
             .order_by_asc(issue::Column::Id)
             .offset(offset)
             .limit(limit + 1);
-        let rows: Vec<issue::Model> = match select.all(&app.db).await {
+        // WP-3.6: card projection, not the wide `issue::Model`.
+        let rows: Vec<IssueCardRow> = match select
+            .into_partial_model::<IssueCardRow>()
+            .all(&app.db)
+            .await
+        {
             Ok(v) => v,
             Err(e) => {
                 tracing::error!(error = %e, "list issues search failed");
@@ -3950,7 +3948,7 @@ pub async fn list_issues(
         let items: Vec<IssueSummaryView> = rows
             .into_iter()
             .take(limit as usize)
-            .map(|m| IssueSummaryView::from_model(m, &series_slug))
+            .map(|m| m.into_summary_view(&series_slug))
             .collect();
         return Json(IssueListView {
             items,
@@ -4100,7 +4098,13 @@ pub async fn list_issues(
         }
     };
 
-    let rows: Vec<issue::Model> = match select.limit(limit + 1).all(&app.db).await {
+    // WP-3.6: card projection, not the wide `issue::Model`.
+    let rows: Vec<IssueCardRow> = match select
+        .limit(limit + 1)
+        .into_partial_model::<IssueCardRow>()
+        .all(&app.db)
+        .await
+    {
         Ok(v) => v,
         Err(e) => {
             tracing::error!(error = %e, "list issues failed");
@@ -4123,13 +4127,13 @@ pub async fn list_issues(
     } else {
         None
     };
-    let page: Vec<issue::Model> = rows.into_iter().take(limit as usize).collect();
+    let page: Vec<IssueCardRow> = rows.into_iter().take(limit as usize).collect();
 
     let series_slug = s.slug.clone();
     Json(IssueListView {
         items: page
             .into_iter()
-            .map(|m| IssueSummaryView::from_model(m, &series_slug))
+            .map(|m| m.into_summary_view(&series_slug))
             .collect(),
         next_cursor,
         total,
@@ -4192,10 +4196,13 @@ pub async fn resume(
     if let Some(cap) = acl.issue_cap_condition() {
         issues_sel = issues_sel.filter(cap);
     }
-    let issues: Vec<issue::Model> = match issues_sel
+    // WP-3.6: only id / slug / sort_number are read — project the card
+    // columns instead of every wide row in the series.
+    let issues: Vec<IssueCardRow> = match issues_sel
         .order_by_asc(Expr::cust("sort_number IS NULL"))
         .order_by_asc(issue::Column::SortNumber)
         .order_by_asc(issue::Column::Id)
+        .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
     {
@@ -4228,7 +4235,7 @@ pub async fn resume(
         .collect();
 
     // 1. Most-recently-updated in-progress issue → "Continue reading".
-    let mut best_in_progress: Option<(&issue::Model, &progress_record::Model)> = None;
+    let mut best_in_progress: Option<(&IssueCardRow, &progress_record::Model)> = None;
     for iss in &issues {
         let Some(p) = progress_by_id.get(&iss.id) else {
             continue;
@@ -4255,8 +4262,8 @@ pub async fn resume(
         .into_response();
     }
 
-    let is_main = |i: &&issue::Model| i.sort_number.map(|n| n >= 1.0).unwrap_or(true);
-    let is_unread = |i: &&issue::Model| {
+    let is_main = |i: &&IssueCardRow| i.sort_number.map(|n| n >= 1.0).unwrap_or(true);
+    let is_unread = |i: &&IssueCardRow| {
         progress_by_id
             .get(&i.id)
             .map(|p| !p.finished)
