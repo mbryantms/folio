@@ -972,6 +972,11 @@ pub async fn update(
         }
     }
 
+    // WP-2.10: in a writeback library the archive is the record, so the
+    // edit is pushed into the sidecars too. The job re-enqueues the scoped
+    // rescan; the user pins written above protect the values through it.
+    let sidecar_rewrite = manual_rewrite_after_edit(&app, &updated.id, &user, &ctx).await;
+
     audit::record(
         &app.db,
         AuditEntry {
@@ -982,6 +987,7 @@ pub async fn update(
             payload: serde_json::json!({
                 "changes": changes,
                 "user_edited": edited_arr,
+                "sidecar_rewrite": sidecar_rewrite.label(),
             }),
             ip: ctx.ip_string(),
             user_agent: ctx.user_agent.clone(),
@@ -1644,6 +1650,7 @@ pub async fn bulk_metadata(
     let mut updated: u32 = 0;
     let mut skipped: u32 = 0;
     let mut forbidden: u32 = 0;
+    let mut sidecar_rewrites: u32 = 0;
     let mode_skip_if_set = matches!(req.mode, BulkMode::SkipIfSet);
 
     for row in rows {
@@ -1704,6 +1711,12 @@ pub async fn bulk_metadata(
         match update_issue_with_user_pins(&app.db, am, &touched_names).await {
             Ok(_) => {
                 updated += 1;
+                // WP-2.10: writeback libraries get the edit in the file too.
+                if manual_rewrite_after_edit(&app, &row.id, &user, &ctx).await
+                    == crate::metadata::manual_writeback::IssueEnqueue::Enqueued
+                {
+                    sidecar_rewrites += 1;
+                }
             }
             Err(e) => {
                 tracing::warn!(error = %e, issue_id = %row.id, "bulk-metadata update failed");
@@ -1737,6 +1750,7 @@ pub async fn bulk_metadata(
                 "updated": updated,
                 "skipped": skipped,
                 "forbidden": forbidden,
+                "sidecar_rewrites": sidecar_rewrites,
                 "not_found": not_found,
             }),
             ip: ctx.ip_string(),
@@ -2739,6 +2753,36 @@ async fn update_issue_with_user_pins(
     }
     txn.commit().await?;
     Ok(updated)
+}
+
+/// WP-2.10: push a just-committed issue edit into the archive's sidecars
+/// when the library is in writeback mode. Never fails the request — the
+/// database already holds the edit; a failed enqueue is logged and the
+/// outcome is recorded on the audit row.
+async fn manual_rewrite_after_edit(
+    app: &AppState,
+    issue_id: &str,
+    user: &CurrentUser,
+    ctx: &RequestContext,
+) -> crate::metadata::manual_writeback::IssueEnqueue {
+    use crate::metadata::manual_writeback::{Actor, IssueEnqueue, enqueue_issue_rewrite};
+    let actor = Actor {
+        id: Some(user.id),
+        ip: ctx.ip_string(),
+        user_agent: ctx.user_agent.clone(),
+    };
+    match enqueue_issue_rewrite(app, issue_id, &actor, false).await {
+        Ok(outcome) => {
+            if let IssueEnqueue::Refused(reason) = &outcome {
+                tracing::warn!(issue_id, reason, "manual edit: sidecar rewrite refused");
+            }
+            outcome
+        }
+        Err(e) => {
+            tracing::error!(issue_id, error = %e, "manual edit: sidecar rewrite enqueue failed");
+            IssueEnqueue::Refused(format!("enqueue failed: {e}"))
+        }
+    }
 }
 
 /// Map a string key from `issue.user_edited` JSON to its

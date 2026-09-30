@@ -353,6 +353,12 @@ Default admin (first registered user becomes admin):
   is one policy for every writer, `archive::rewrite_policy`: only junk
   and the Folio-managed sidecars are dropped; `CoMet.xml` / `.txt` /
   `.json` and any other foreign entry stream through byte-for-byte.
+  Manual edits follow the same rule (WP-2.10): the issue PATCH,
+  bulk-metadata, and series PATCH handlers call
+  `metadata::manual_writeback` after their row + provenance transaction
+  commits; it composes both sidecars from the DB (empty provider payload)
+  and enqueues the same job with `post_apply = None`. Non-writeback
+  libraries get `NotWriteback` and no file is touched.
 
   **When adding a new metadata field**, the changeset must touch:
   1. The Rust struct in `crates/parsers/src/comicinfo.rs` (and/or

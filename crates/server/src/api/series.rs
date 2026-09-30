@@ -719,9 +719,35 @@ pub async fn update_series(
                 )
                 .await;
             }
+            // WP-2.10: identity fields ride in every issue's ComicInfo /
+            // MetronInfo, so in a writeback library the whole series is
+            // rewritten (one job per active issue, then a single
+            // series-scoped rescan — the same shape as a series-level
+            // provider apply). Never fails the request.
+            let sidecar_rewrite = if identity.pinned_fields().is_empty() {
+                None
+            } else {
+                let actor = crate::metadata::manual_writeback::Actor {
+                    id: Some(user.id),
+                    ip: ctx.ip_string(),
+                    user_agent: ctx.user_agent.clone(),
+                };
+                match crate::metadata::manual_writeback::enqueue_series_rewrite(&app, uuid, &actor)
+                    .await
+                {
+                    Ok(o) => Some(o.label()),
+                    Err(e) => {
+                        tracing::error!(series_id = %uuid, error = %e, "series edit: sidecar rewrite enqueue failed");
+                        Some(format!("enqueue failed: {e}"))
+                    }
+                }
+            };
             // Single combined audit row for status / external IDs since the
             // user can flip several at once from the issue drawer.
             let mut diff = serde_json::Map::new();
+            if let Some(sc) = &sidecar_rewrite {
+                diff.insert("sidecar_rewrite".into(), serde_json::json!(sc));
+            }
             if let Some(s) = normalized_status {
                 diff.insert("status".into(), serde_json::json!(s));
             }
