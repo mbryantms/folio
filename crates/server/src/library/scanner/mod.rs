@@ -4,6 +4,7 @@
 //! sibling module:
 //!   - `validate`   — §4.2 sanity checks before starting
 //!   - `enumerate`  — §4.3 list children, find series folders + layout violations
+//!   - `folder_checks` — folder-name / mixed-series health checks (WP-3.4)
 //!   - `process`    — §4.5 + §6 per-file pipeline (hash, parse, upsert)
 //!   - `reconcile_status` — §7 series-status reconciliation
 //!   - `metadata_rollup`  — §8 series-level metadata aggregation
@@ -15,6 +16,7 @@
 
 pub mod cbr_convert;
 pub mod enumerate;
+pub mod folder_checks;
 pub mod metadata_rollup;
 pub mod process;
 pub mod reconcile_status;
@@ -1480,10 +1482,17 @@ async fn run_phases(
     for f in &layout.empty_folders {
         health.emit(IssueKind::EmptyFolder { path: f.clone() });
     }
+    for folder in &layout.orphaned_series_json {
+        health.emit(IssueKind::OrphanedSeriesJson {
+            folder: folder.clone(),
+        });
+    }
     for ambiguous in &layout.ambiguous_folders {
         health.emit(IssueKind::AmbiguousFolder {
             path: ambiguous.path.clone(),
             reason: ambiguous.reason.clone(),
+            skipped_archives: ambiguous.skipped_archives.clone(),
+            skipped_archive_count: ambiguous.skipped_archive_count,
         });
     }
 
@@ -2195,6 +2204,29 @@ async fn process_planned_folder(
         let rollup_started = Instant::now();
         metadata_rollup::rollup_series_metadata_best_effort(&state.db, series_id).await;
         stats.record_phase_parallel("metadata_rollup", rollup_started.elapsed());
+    }
+
+    // WP-3.4: folder-name vs ComicInfo `<Series>` and mixed-series checks.
+    // Deliberately NOT behind the PERF-2 `folder_mutated` gate: a folder
+    // whose only change is a *removed* stray file ingests nothing, yet its
+    // verdict changes. One projected query per processed folder; the
+    // on-disk `archives` list scopes it so not-yet-reconciled rows for
+    // deleted files don't count.
+    if let Err(e) = folder_checks::check_series_folder(
+        &state.db,
+        series_id,
+        &folder,
+        &archives,
+        series_json.as_ref().and_then(|m| m.name.as_deref()),
+        health,
+    )
+    .await
+    {
+        tracing::warn!(
+            error = %e,
+            folder = %folder.display(),
+            "scanner: series-folder consistency check failed"
+        );
     }
 
     // Refresh series.total_issues / status / summary using (in

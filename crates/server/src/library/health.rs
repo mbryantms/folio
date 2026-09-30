@@ -47,22 +47,47 @@ pub enum IssueKind {
         path: PathBuf,
         error: String,
     },
+    /// The series folder's name disagrees with the ComicInfo `<Series>`
+    /// its archives carry (spec §7.1: ComicInfo wins, the discrepancy is
+    /// logged). Both sides are reduced to a comparison key first — bracket
+    /// groups (`(2016)`, `[cv-123]`), volume tokens, trailing numbers and
+    /// articles are dropped — so `Batman (2016)` vs `Batman` is *not* a
+    /// mismatch but `Batman (2016)` vs `Batman: Rebirth` is. Suppressed
+    /// when the folder's `series.json` names the same series as ComicInfo
+    /// (the sidecar confirms the identity; the folder is just a label).
+    /// Emitted at series-resolve time by
+    /// [`crate::library::scanner::folder_checks`].
     FolderNameMismatch {
+        /// Absolute series-folder path.
         folder: String,
+        series_id: Uuid,
+        /// The dominant (most files) ComicInfo `<Series>` value.
         comic_info_series: String,
+        /// Files in the folder carrying that value.
+        files: u32,
     },
+    /// Non-special archives in one series folder carry more than one
+    /// distinct ComicInfo `<Series>` (spec §7.2). The scanner keeps them
+    /// all attributed to the folder's series; this surfaces the likely
+    /// misfile. Values are compared by the same key as
+    /// `FolderNameMismatch`; specials (`special_type` set) and values
+    /// that name a recorded provider-divergence range are ignored.
     MixedSeriesInFolder {
         folder: PathBuf,
-        series_values: Vec<String>,
-    },
-    AmbiguousVolume {
-        path: PathBuf,
-        parsed: String,
+        series_id: Uuid,
+        /// Distinct values, most files first, capped at
+        /// [`MIXED_SERIES_VALUES_LIMIT`].
+        series_values: Vec<SeriesValueCount>,
+        /// Distinct values before the cap.
+        distinct_values: u32,
     },
     DuplicateContent {
         path_a: PathBuf,
         path_b: PathBuf,
     },
+    /// A folder with no archives that still holds a `series.json` — the
+    /// sidecar outlived the archives it described. Reported instead of
+    /// `EmptyFolder` for that folder.
     OrphanedSeriesJson {
         folder: PathBuf,
     },
@@ -128,6 +153,15 @@ pub enum IssueKind {
     AmbiguousFolder {
         path: PathBuf,
         reason: String,
+        /// Bounded preview of the archives skipped because of this
+        /// violation (relative to `path`; see
+        /// [`crate::library::scanner::enumerate::AMBIGUOUS_PREVIEW_LIMIT`]).
+        /// Rows written before WP-3.4 lack it.
+        #[serde(default)]
+        skipped_archives: Vec<String>,
+        /// Exact archive count in the skipped subtree.
+        #[serde(default)]
+        skipped_archive_count: u32,
     },
     /// A provider ID embedded in this archive's ComicInfo/MetronInfo is
     /// already owned by another *live* issue — almost always a duplicate
@@ -156,7 +190,6 @@ impl IssueKind {
             Self::MalformedComicInfo { .. } => "MalformedComicInfo",
             Self::FolderNameMismatch { .. } => "FolderNameMismatch",
             Self::MixedSeriesInFolder { .. } => "MixedSeriesInFolder",
-            Self::AmbiguousVolume { .. } => "AmbiguousVolume",
             Self::DuplicateContent { .. } => "DuplicateContent",
             Self::OrphanedSeriesJson { .. } => "OrphanedSeriesJson",
             Self::UnsupportedArchiveFormat { .. } => "UnsupportedArchiveFormat",
@@ -179,7 +212,6 @@ impl IssueKind {
             | Self::EmptyFolder { .. }
             | Self::FolderNameMismatch { .. }
             | Self::MixedSeriesInFolder { .. }
-            | Self::AmbiguousVolume { .. }
             | Self::DuplicateContent { .. }
             | Self::OrphanedSeriesJson { .. }
             | Self::UnsupportedArchiveFormat { .. }
@@ -210,7 +242,6 @@ impl IssueKind {
             Self::MixedSeriesInFolder { folder, .. } => {
                 format!("MixedSeriesInFolder:{}", folder.display())
             }
-            Self::AmbiguousVolume { path, .. } => format!("AmbiguousVolume:{}", path.display()),
             Self::DuplicateContent { path_a, path_b } => {
                 // Order-stable: sort the two paths so emitting (a,b) and (b,a)
                 // produces the same fingerprint.
@@ -291,7 +322,6 @@ impl IssueKind {
             | Self::UnreadableArchive { path, .. }
             | Self::MissingComicInfo { path }
             | Self::MalformedComicInfo { path, .. }
-            | Self::AmbiguousVolume { path, .. }
             | Self::UnsupportedArchiveFormat { path, .. }
             | Self::RecoveredArchive { path, .. }
             | Self::SkippedArchiveEntries { path, .. }
@@ -308,6 +338,22 @@ impl IssueKind {
             }
         }
     }
+}
+
+/// Cap on the distinct `<Series>` values a `MixedSeriesInFolder` row
+/// lists — the jsonb payload stays small even for a dumping-ground folder.
+pub const MIXED_SERIES_VALUES_LIMIT: usize = 10;
+
+/// One distinct ComicInfo `<Series>` value inside a mixed folder.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SeriesValueCount {
+    /// The raw `<Series>` string (most common spelling for its key).
+    pub series: String,
+    /// Non-special files carrying it.
+    pub files: u32,
+    /// One example file (relative to the folder) so the operator can
+    /// find the stray without opening every archive.
+    pub example: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

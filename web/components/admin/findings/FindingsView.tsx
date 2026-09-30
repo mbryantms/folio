@@ -28,6 +28,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  HealthPayloadExtras,
+  PayloadRefLinks,
+} from "@/components/admin/library/HealthIssueExtras";
 import { LibraryEventsList } from "@/components/admin/library/LibraryEventsList";
 import { useDismissHealthIssue } from "@/lib/api/mutations";
 import {
@@ -36,6 +40,10 @@ import {
   useLibraryList,
 } from "@/lib/api/queries";
 import type { CrossLibHealthIssueView } from "@/lib/api/types";
+import {
+  healthKindLabel,
+  healthPayloadSummary,
+} from "@/lib/library/health-issues";
 import { statusToneText } from "@/lib/ui/status-tone";
 
 import type { HealthSeverityFilter } from "@/components/admin/severity";
@@ -314,7 +322,7 @@ function HealthIssueRow({ row }: { row: CrossLibHealthIssueView }) {
   // endpoint — pass the originating library_id from the row.
   const dismiss = useDismissHealthIssue(row.library_id);
   const isOpen = !row.resolved_at && !row.dismissed_at;
-  const summary = formatPayload(row.kind, row.payload);
+  const summary = healthPayloadSummary(row.kind, row.payload);
 
   return (
     <Card>
@@ -322,7 +330,12 @@ function HealthIssueRow({ row }: { row: CrossLibHealthIssueView }) {
         <SeverityIcon severity={row.severity} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="font-mono text-xs">{row.kind}</span>
+            <span className="text-sm font-medium">
+              {healthKindLabel(row.kind)}
+            </span>
+            <span className="text-muted-foreground font-mono text-xs">
+              {row.kind}
+            </span>
             <Badge variant="outline" className="text-[10px]">
               {row.library_slug ? (
                 <Link
@@ -344,6 +357,8 @@ function HealthIssueRow({ row }: { row: CrossLibHealthIssueView }) {
               {summary}
             </p>
           ) : null}
+          <HealthPayloadExtras kind={row.kind} payload={row.payload} />
+          <PayloadRefLinks payload={row.payload} />
         </div>
         {isOpen ? (
           <Button
@@ -538,48 +553,4 @@ function StateBadge({ state }: { state: string }) {
     );
   }
   return <Badge variant="outline">{state}</Badge>;
-}
-
-/**
- * Best-effort summary from a health-issue payload — same heuristic the
- * per-library table uses ([HealthIssuesTable.tsx](../library/HealthIssuesTable.tsx)).
- * Kept inline here rather than imported to avoid coupling the
- * cross-library table to the per-library one; the payload schemas
- * are stable enough that a shared one-liner per kind is fine.
- */
-function formatPayload(kind: string, p: unknown): string {
-  if (!p || typeof p !== "object") return "";
-  const obj = p as Record<string, unknown>;
-  const path =
-    typeof obj.path === "string"
-      ? obj.path
-      : typeof obj.file_path === "string"
-        ? (obj.file_path as string)
-        : "";
-  if (kind === "RecoveredArchive") {
-    const technique =
-      typeof obj.technique === "string" ? obj.technique : "unknown";
-    return path
-      ? `${path} — recovered (${technique})`
-      : `recovered (${technique})`;
-  }
-  if (kind === "SkippedArchiveEntries") {
-    const dropped = typeof obj.dropped === "number" ? obj.dropped : "?";
-    const total = typeof obj.total === "number" ? obj.total : "?";
-    const reason = typeof obj.reason === "string" ? obj.reason : "soft defense";
-    const suffix = `${dropped} of ${total} entries dropped (${reason})`;
-    return path ? `${path} — ${suffix}` : suffix;
-  }
-  for (const k of [
-    "path",
-    "file_path",
-    "series_id",
-    "issue_id",
-    "reason",
-    "details",
-  ]) {
-    const v = obj[k];
-    if (typeof v === "string" && v.length > 0) return v;
-  }
-  return JSON.stringify(p);
 }
