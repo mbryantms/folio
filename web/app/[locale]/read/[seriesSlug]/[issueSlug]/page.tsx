@@ -5,7 +5,7 @@ import { ReaderHealthToast } from "./ReaderHealthToast";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { IssueDetailView, MeView, PageInfo } from "@/lib/api/types";
 import { detectViewMode } from "@/lib/reader/detect";
-import type { Direction, ViewMode } from "@/lib/reader/detect";
+import type { Direction, SeriesDirection, ViewMode } from "@/lib/reader/detect";
 import type { FitMode } from "@/lib/reader/store";
 import { readerViewport } from "@/lib/viewport";
 import { cookies } from "next/headers";
@@ -155,10 +155,13 @@ export default async function ReadPage({
 
   // Series + library reading-direction layers of the resolution chain
   // (see `manga-and-bulk-metadata-1.0`). Both surfaced on
-  // IssueDetailView so the read page doesn't need a second fetch.
-  const seriesReadingDirection: Direction | null =
+  // IssueDetailView so the read page doesn't need a second fetch. The
+  // series layer also carries `ttb` ("Vertical (webtoon)"), which the
+  // reader maps to webtoon view (WP-4.2).
+  const seriesReadingDirection: SeriesDirection | null =
     issue.series_reading_direction === "ltr" ||
-    issue.series_reading_direction === "rtl"
+    issue.series_reading_direction === "rtl" ||
+    issue.series_reading_direction === "ttb"
       ? issue.series_reading_direction
       : null;
   const libraryDefaultDirection: Direction | null =
@@ -191,7 +194,8 @@ export default async function ReadPage({
     if (
       me.default_fit_mode === "width" ||
       me.default_fit_mode === "height" ||
-      me.default_fit_mode === "original"
+      me.default_fit_mode === "original" ||
+      me.default_fit_mode === "contain"
     ) {
       userDefaultFitMode = me.default_fit_mode;
     }

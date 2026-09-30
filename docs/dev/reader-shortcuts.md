@@ -24,8 +24,11 @@ Default bindings — reader scope:
 | `Home`  | First page           | Lands on first spread-group in double-page    |
 | `End`   | Last page            | Lands on last spread-group in double-page     |
 | `t`     | Toggle controls      | Show/hide chrome (top bar)                    |
-| `f`     | Cycle fit mode       | `width` → `height` → `original`               |
+| `f`     | Cycle fit mode       | `width` → `height` → `original` → `contain` (fit screen) |
 | `d`     | Cycle view mode      | `single` → `double` → `webtoon`               |
+| `+`     | Zoom in              | Ladder 1× → 1.5× → 2× → 3×, re-centered; single + double view |
+| `-`     | Zoom out             | Walks the same ladder down                    |
+| `0`     | Reset zoom           | Back to 1×                                    |
 | `m`     | Toggle page strip    | Show/hide the minimap at the bottom           |
 | `Esc`   | Exit reader          | Returns to issue detail                       |
 | `b`     | Bookmark this page   | Toggles a page-0 marker on the current page   |
@@ -58,6 +61,8 @@ Default bindings — global scope (work outside the reader too):
 | `?`       | Toggle the keyboard-shortcuts sheet   | Help-overlay convention                                                |
 | `g g`     | First page (alias for `Home`)         | Vim-flavored leader sequence (500 ms window)                           |
 | `Shift+G` | Last page (alias for `End`)           | Vim convention                                                         |
+| `Ctrl` + scroll | Zoom at the pointer             | Continuous, 1×–3×; also a desktop trackpad pinch. Single + double view (see [Zoom](#zoom)) |
+| Double-click | Toggle 2× zoom at the pointer      | Center tap zone; single + double view                                  |
 
 ### While drawing a region (mouse held)
 
@@ -112,25 +117,99 @@ WP-4.8 (audit AC-2..AC-5) — what a keyboard or screen-reader user gets:
 
 ## Gestures
 
-Powered by `@use-gesture/react`. Disabled in webtoon mode (vertical scroll
+Powered by `@use-gesture/react` (drag) plus
+[`use-wheel-zoom.ts`](../../web/lib/reader/use-wheel-zoom.ts) (wheel /
+trackpad pinch). Swipe is disabled in webtoon mode (vertical scroll
 owns the interaction there).
 
-| Gesture                   | Action                                               |
-|---------------------------|------------------------------------------------------|
-| Swipe left / right        | Next / previous page (direction-aware)               |
-| Pinch out / in            | Native browser zoom (reads small letterer text)      |
-| Double-tap                | Native browser zoom toggle                           |
+| Gesture                        | Action                                                        |
+|--------------------------------|---------------------------------------------------------------|
+| Swipe left / right             | Next / previous page (direction-aware)                        |
+| Drag while zoomed              | Pan the zoomed page / spread (clamped to its edges)           |
+| Double-tap / double-click      | Toggle 2× reader zoom at the tap point (single + double view) |
+| `Ctrl` + wheel, trackpad pinch | Reader zoom anchored at the pointer (desktop)                 |
+| Touch pinch (phone / tablet)   | Native browser zoom (reads small letterer text)               |
 
 Threshold for swipe = 30 px horizontal movement. The `prefers-reduced-motion`
 media query disables gesture rubber-banding (still discrete page changes).
 
 **Pinch behavior change (v0.3.21+):** pinch used to cycle fit modes;
-it now defers to native browser pinch-to-zoom so users can zoom in
-on small text. The fit-mode cycle stays bound to the `f` key and
-the chrome toggle button. While the page is zoomed
+touch pinch now defers to native browser pinch-to-zoom so users can
+zoom in on small text. The fit-mode cycle stays bound to the `f` key
+and the chrome toggle button. While the page is natively zoomed
 (`visualViewport.scale > 1`) the swipe-to-turn handler is
 suppressed so single-finger pans go to the browser viewport
 instead of accidentally turning pages.
+
+### Zoom
+
+Reader zoom is a CSS transform on the page (single view) or the whole
+spread (double view), so both pages of a pair and their marker overlays
+scale and pan together. Webtoon has no reader zoom (it is width-fit by
+construction; ctrl+wheel falls through to the browser there).
+
+- **Desktop pinch / ctrl+wheel (WP-4.2, audit UX-3).** Chromium,
+  Firefox and Edge report a trackpad pinch as a `wheel` event with
+  `ctrlKey`; macOS Safari reports it as `gesture*` events. Both are
+  claimed (`preventDefault`) so they no longer trigger *browser* page
+  zoom — which used to scale the fixed chrome and page strip along
+  with the art — and instead zoom the page continuously (1×–3×,
+  exponential in the wheel delta, one mouse notch ≈ ×1.28) keeping
+  the content under the pointer stationary. `gesture*` events are
+  only handled on fine-pointer devices; on iOS they also fire for a
+  two-finger touch pinch, which stays native.
+- **Keep zoom between pages.** Off by default: zoom resets to 1× on
+  every page turn. With **Reader settings → Display → Keep zoom
+  between pages** on (persisted globally in localStorage as
+  `reader.v1:zoomPersist:_default`), a page turn keeps the zoom level
+  and lands on the new page's reading-order start corner — top-left in
+  LTR, top-right in RTL. Changing fit mode, view mode, or entering a
+  marker-selection mode always resets to 1×.
+- Math lives in [`zoom.ts`](../../web/lib/reader/zoom.ts)
+  (`zoomAboutPoint`, `clampZoomPan`, `zoomAfterPageTurn`), with unit
+  tests in `web/tests/reader/zoom.test.ts`.
+
+### iOS standalone edge-back guard
+
+In an installed (Home Screen) iOS / iPadOS web app, WebKit turns a
+rightward swipe that starts at the left screen edge into history-back,
+which used to exit the reader mid-issue (audit UX-10). In that mode
+only (`navigator.standalone === true`), a touch that starts in the
+left 24 px of the page surface (`EDGE_BACK_INSET_PX`) cancels its
+`touchstart`, which suppresses the OS gesture; the swipe still reaches
+the reader, so an edge swipe turns the page like any other swipe. A
+plain tap in that strip is re-dispatched as the left tap zone (the
+cancelled `touchstart` swallows the synthesized click). The guard is
+scoped to the page surface (`data-edge-guard` on the tap zones and the
+webtoon tap layer), so chrome buttons at the edge keep working; in
+webtoon a tap in the strip does nothing. Browser Safari (not
+installed) and Android / desktop PWAs are unaffected. Implementation:
+[`use-swipe.ts`](../../web/lib/reader/use-swipe.ts).
+
+## Fit modes
+
+| Mode       | Behavior                                                                 |
+|------------|--------------------------------------------------------------------------|
+| `width`    | Page fills the viewport width (scales up if narrower); may scroll down   |
+| `height`   | Page fills the safe viewport height; may overflow (and pan) sideways     |
+| `original` | Intrinsic pixel size                                                     |
+| `contain`  | **Fit screen** — the whole page visible, scaled up or down (audit UX-4)  |
+
+`contain` sizes the image to `min(available width, safe viewport height ×
+aspect)` using a `--page-ar` custom property PageImage sets from the
+server-known page dimensions (or the decoded size), rather than
+`object-fit` — the img box stays the rendered art, so marker overlays
+still align. In double view each page of a pair is capped at half the
+viewport width; webtoon treats `contain` as `width`. It is selectable
+per series (reader settings, `f`) and as the account default fit
+(`Settings → Reading`, stored as `default_fit_mode = "contain"`).
+
+## Progress bar
+
+The thin progress bar under the top chrome mirrors in RTL (audit
+UX-5): it fills from the right edge, matching page-turn direction and
+the page strip. The reported value (`aria-valuenow`) is the same in
+both directions.
 
 ## Tap zones
 
@@ -149,13 +228,19 @@ and the left zone is "next". Swipes feel natural in either direction.
 ## View-mode auto-detect
 
 On first open of a series with no per-series localStorage entry, the reader
-picks an initial mode from per-page metadata:
+resolves the initial view mode (`detectInitialViewMode` in
+[`detect.ts`](../../web/lib/reader/detect.ts)):
 
-- **webtoon** when median page aspect (height / width) ≥ 2.5 — strong tell
-  for vertical strip / webcomic content.
-- **double** when ≥ 10 % of pages carry the `DoublePage` flag, OR when
-  median aspect indicates landscape spreads (width / height > 1.2).
-- **single** otherwise.
+1. `series.reading_direction = "ttb"` (the series editor's
+   **Vertical (webtoon)** option) → **webtoon** (WP-4.2, audit UX-5).
+   Series-level intent, so it beats the account default below.
+2. The user's `default_view_mode` preference.
+3. Page metadata:
+   - **webtoon** when median page aspect (height / width) ≥ 2.5 — strong
+     tell for vertical strip / webcomic content.
+   - **double** when ≥ 10 % of pages carry the `DoublePage` flag, OR when
+     median aspect indicates landscape spreads (width / height > 1.2).
+   - **single** otherwise.
 
 User toggles always win and persist per series under
 `reader:viewMode:<series_id>` in `localStorage`.
@@ -177,9 +262,11 @@ Five-layer resolution chain (highest-priority first), shipped in
    by M1).
 5. Fallback → **LTR**.
 
-Unrecognized values at any layer (`"auto"`, future `"ttb"` at a
-layer that doesn't yet support it) are treated as "no opinion" and
-the chain falls through to the next signal.
+Unrecognized values at any layer (`"auto"`, etc.) are treated as "no
+opinion" and the chain falls through to the next signal. The series
+layer's `"ttb"` is a layout choice — it selects webtoon view (see
+[View-mode auto-detect](#view-mode-auto-detect)) — so it is also "no
+opinion" for page-turn direction.
 
 Per-series localStorage choice (`reader:direction:<series_id>`)
 overrides all five when present — client-side only, not synced

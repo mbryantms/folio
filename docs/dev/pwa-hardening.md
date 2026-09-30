@@ -104,7 +104,7 @@ Record OS/browser/build and results; emulation is not installed-device proof.
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | Install/launch | iPhone/iPad Home Screen, Android install, desktop app window; portrait/landscape; cold/warm; dark/light/amber/system                          |
 | Geometry       | Notch/home indicator; keyboard open/close; rotation while reading; pinch zoom; iPad floating keyboard, split view and Stage Manager           |
-| Navigation     | Android Back with sheet open; iOS edge-back; reader exit after deep-link launch; restore library filters and scroll; auth return destination  |
+| Navigation     | Android Back with sheet open; iOS edge-back (reader guards it, see below); reader exit after deep-link launch; restore library filters and scroll; auth return destination |
 | Overlays       | Install banner, toast, tab bar, sheets and reader strip never cover actionable controls; focused inputs and submit actions stay visible       |
 | Accessibility  | VoiceOver/TalkBack, external keyboard, focus restoration, large text/page zoom, reduced motion, Windows forced colors; every theme/accent     |
 | Lifecycle      | Hide/lock/kill/resume; progress under failed POST; wake-lock release/reacquisition; permission/battery denial                                 |
@@ -112,6 +112,13 @@ Record OS/browser/build and results; emulation is not installed-device proof.
 | Identity       | Logout and account switch with a pending thumbnail fetch; another window open; reconnect; no previous-account cache data or queued progress   |
 
 Do not change sticky safe-area pinning based on desktop emulation alone.
+
+iOS edge-back in the reader: an installed iOS web app cancels `touchstart`
+in the left 24 px of the page surface so WebKit's swipe-back can't exit the
+reader mid-issue (WP-4.2, audit UX-10; details in
+[`reader-shortcuts.md`](reader-shortcuts.md#ios-standalone-edge-back-guard)).
+Verify on device: an edge swipe turns the page, an edge tap acts as the left
+tap zone, and the top-left exit button still works.
 
 ## Performance protocol (review 36)
 

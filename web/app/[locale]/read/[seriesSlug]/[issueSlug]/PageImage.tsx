@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { Loader2, RotateCw } from "lucide-react";
 
 /** Show the "still loading…" hint after this long in flight (audit C3). */
@@ -80,6 +86,9 @@ export function PageImage({
   );
   const [retry, setRetry] = useState(0);
   const [slow, setSlow] = useState(false);
+  // Intrinsic aspect (w/h) once decoded — the fallback for `--page-ar`
+  // when the scanner didn't record dimensions.
+  const [naturalAspect, setNaturalAspect] = useState<number | null>(null);
   const autoRetried = useRef(false);
   const internalImgRef = useRef<HTMLImageElement>(null);
   const imgRef = externalImgRef ?? internalImgRef;
@@ -93,6 +102,7 @@ export function PageImage({
     const el = imgRef.current;
     if (el && el.complete && el.naturalWidth > 0) {
       setStatus("loaded");
+      setNaturalAspect(el.naturalWidth / el.naturalHeight);
       onNaturalSize?.(el.naturalWidth, el.naturalHeight);
     }
     // `onNaturalSize` identity changes are tolerated — we only emit
@@ -124,6 +134,20 @@ export function PageImage({
     setRetry((n) => n + 1);
   };
 
+  // Page aspect (w/h) exposed as `--page-ar` for the `contain` fit class
+  // (WP-4.2), which sizes the img to `min(available width, safe viewport
+  // height × aspect)` — fit-to-screen that also *up*-scales, without
+  // `object-fit` (which would letterbox inside the img box and misalign
+  // the marker overlay). Server dims first, decoded size as the fallback.
+  const aspect =
+    dimensions && dimensions.width > 0 && dimensions.height > 0
+      ? dimensions.width / dimensions.height
+      : naturalAspect;
+  const aspectStyle =
+    aspect && Number.isFinite(aspect)
+      ? ({ "--page-ar": aspect } as CSSProperties)
+      : undefined;
+
   return (
     // `grid w-full place-items-center` is a real, viewport-width container
     // (not an `inline-block` that sizes to the img — which would collapse
@@ -132,7 +156,10 @@ export function PageImage({
     // and stay centered. Stacking is what makes the loaded thumb reserve
     // the cell's height while the full image (often 0-height until decode
     // at fit-width) catches up — no layout shift, no white gap.
-    <span className="relative grid w-full place-items-center [&>img]:[grid-area:1/1]">
+    <span
+      className="relative grid w-full place-items-center [&>img]:[grid-area:1/1]"
+      style={aspectStyle}
+    >
       {status === "loading" && (!thumbSrc || slow) ? (
         <span className="pointer-events-none absolute top-1/2 left-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 text-neutral-500">
           <Loader2 aria-hidden="true" className="size-8 animate-spin" />
@@ -189,6 +216,7 @@ export function PageImage({
           setStatus("loaded");
           const img = e.currentTarget;
           if (img.naturalWidth > 0) {
+            setNaturalAspect(img.naturalWidth / img.naturalHeight);
             onNaturalSize?.(img.naturalWidth, img.naturalHeight);
           }
         }}

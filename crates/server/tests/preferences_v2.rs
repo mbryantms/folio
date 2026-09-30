@@ -269,6 +269,16 @@ async fn invalid_fit_mode_rejected() {
 }
 
 #[tokio::test]
+async fn contain_fit_mode_round_trips() {
+    // WP-4.2: the reader's "Fit screen" mode is a valid default.
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "fit-contain@example.com").await;
+    let (status, body) = patch_pref(&app, &auth, r#"{"default_fit_mode":"contain"}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["default_fit_mode"], "contain");
+}
+
+#[tokio::test]
 async fn invalid_theme_rejected() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "theme-bad@example.com").await;

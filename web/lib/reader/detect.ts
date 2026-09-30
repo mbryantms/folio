@@ -10,6 +10,12 @@ import type { PageInfo } from "@/lib/api/types";
 
 export type Direction = "ltr" | "rtl";
 export type ViewMode = "single" | "double" | "webtoon";
+/** `series.reading_direction` values. `ttb` (top-to-bottom, set from the
+ *  series editor's "Vertical (webtoon)" option) is a *layout* signal, not a
+ *  page-turn direction: it selects webtoon view (see
+ *  {@link detectInitialViewMode}) and is "no opinion" for
+ *  {@link detectDirection}. */
+export type SeriesDirection = Direction | "ttb";
 
 const WEBTOON_ASPECT_THRESHOLD = 2.5; // h/w
 const SPREAD_ASPECT_THRESHOLD = 1.2; // w/h
@@ -27,15 +33,16 @@ const DOUBLE_PAGE_FLAG_RATIO = 0.1;
  *   5. `ltr` (final default)
  *
  * Each layer accepts `null` / `undefined` meaning "no opinion, defer
- * to the next layer." Non-recognized strings ("auto", future "ttb",
- * etc.) are treated as "no opinion" at this layer for forward
- * compatibility — the next-most-specific signal wins.
+ * to the next layer." Non-recognized strings ("auto", etc.) and the
+ * series-level `ttb` (a layout choice — it picks webtoon view instead,
+ * see {@link detectInitialViewMode}) are treated as "no opinion" at
+ * this layer — the next-most-specific signal wins.
  */
 export function detectDirection(
   manga: string | null | undefined,
   userDefault: Direction | null | undefined,
   libraryDefault?: Direction | null | undefined,
-  seriesOverride?: Direction | null | undefined,
+  seriesOverride?: SeriesDirection | null | undefined,
 ): Direction {
   if (manga === "YesAndRightToLeft") return "rtl";
   if (seriesOverride === "ltr" || seriesOverride === "rtl")
@@ -91,4 +98,29 @@ export function detectViewMode(pages: PageInfo[]): ViewMode {
   }
 
   return "single";
+}
+
+/**
+ * Initial view mode for an issue with no per-series localStorage choice
+ * (which `store.init` still lets win over this). Resolution order:
+ *
+ *   1. `series.reading_direction === "ttb"` → `webtoon` (admin intent for
+ *      this series — beats the user's global default, audit UX-5)
+ *   2. the user's `default_view_mode`
+ *   3. {@link detectViewMode} from page metadata
+ */
+export function detectInitialViewMode(
+  pages: PageInfo[],
+  userDefault: ViewMode | null | undefined,
+  seriesDirection?: SeriesDirection | null | undefined,
+): ViewMode {
+  if (seriesDirection === "ttb") return "webtoon";
+  if (
+    userDefault === "single" ||
+    userDefault === "double" ||
+    userDefault === "webtoon"
+  ) {
+    return userDefault;
+  }
+  return detectViewMode(pages);
 }

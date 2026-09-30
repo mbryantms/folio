@@ -19,7 +19,9 @@ import type {
   MarkerSelection,
 } from "@/lib/api/types";
 
-export type FitMode = "width" | "height" | "original";
+/** `contain` = fit the whole page on screen (both axes, up- or down-scaled;
+ *  audit UX-4). */
+export type FitMode = "width" | "height" | "original" | "contain";
 
 /** State the marker overlay is in.
  *
@@ -45,7 +47,9 @@ export type PendingMarker = {
   is_favorite: boolean;
   tags: string[];
 };
-export const FIT_MODES: FitMode[] = ["width", "height", "original"];
+// `contain` is appended (not slotted in) so the `f` cycle keeps its
+// established width → height → original order for existing muscle memory.
+export const FIT_MODES: FitMode[] = ["width", "height", "original", "contain"];
 export const VIEW_MODES: ViewMode[] = ["single", "double", "webtoon"];
 
 type PersistedSlice =
@@ -55,10 +59,11 @@ type PersistedSlice =
   | "coverSolo"
   | "markersHidden"
   | "brightness"
-  | "sepia";
+  | "sepia"
+  | "zoomPersist";
 
 const isFitMode = (v: unknown): v is FitMode =>
-  v === "width" || v === "height" || v === "original";
+  v === "width" || v === "height" || v === "original" || v === "contain";
 const isViewMode = (v: unknown): v is ViewMode =>
   v === "single" || v === "double" || v === "webtoon";
 const isDirection = (v: unknown): v is Direction => v === "ltr" || v === "rtl";
@@ -103,6 +108,12 @@ export const loadMarkersHidden = (): boolean => {
   const raw = load("markersHidden", null, isBoolFlag);
   return raw === "true";
 };
+
+/** "Keep zoom between pages" (WP-4.2). Global like
+ *  {@link loadMarkersHidden}: it's about how the reader likes to read, not
+ *  about one series. Defaults to off — zoom is transient per page. */
+export const loadZoomPersist = (): boolean =>
+  load("zoomPersist", null, isBoolFlag) === "true";
 
 // Vision-adjustment bounds, shared by the setters and the loaders so a
 // persisted value can never re-hydrate outside the slider's range.
@@ -155,6 +166,10 @@ export interface ReaderState {
    *  via localStorage; toggled from the reader settings popover or
    *  the `o` keybind. Does not delete any marker data. */
   markersHidden: boolean;
+  /** When true, transform zoom carries across page turns (landing on the
+   *  new page's reading-order start corner) instead of resetting to 1×.
+   *  Global, persisted in localStorage; toggled from reader settings. */
+  zoomPersist: boolean;
   /** Marker overlay's selection mode. `idle` is the default; the
    *  reader chrome flips it into a select-* mode while the user picks
    *  a region. The overlay returns it to `idle` once the drag commits
@@ -187,6 +202,7 @@ export interface ReaderState {
   setCoverSolo: (v: boolean) => void;
   setMarkersHidden: (v: boolean) => void;
   toggleMarkersHidden: () => void;
+  setZoomPersist: (v: boolean) => void;
   setMarkerMode: (mode: MarkerMode) => void;
   /** Start the marker editor. Pass `null` to close it (also resets
    *  `markerMode` to `idle` so escape-cancel paths converge here). */
@@ -229,6 +245,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   sepia: 0,
   coverSolo: true,
   markersHidden: false,
+  zoomPersist: false,
   markerMode: "idle",
   pendingMarker: null,
   editingMarkerId: null,
@@ -314,6 +331,11 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     set({ markersHidden: next });
   },
 
+  setZoomPersist: (v: boolean) => {
+    save("zoomPersist", null, v ? "true" : "false");
+    set({ zoomPersist: v });
+  },
+
   setMarkerMode: (mode: MarkerMode) => set({ markerMode: mode }),
   beginMarkerEdit: (pending, existingId = null) =>
     set({
@@ -367,6 +389,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       // Marker overlay visibility is global (not per-series), so we
       // re-hydrate from the same `_default` key on every issue switch.
       markersHidden: loadMarkersHidden(),
+      zoomPersist: loadZoomPersist(),
       // Marker state never persists across issue changes.
       markerMode: "idle",
       pendingMarker: null,
