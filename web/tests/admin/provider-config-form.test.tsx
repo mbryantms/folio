@@ -77,11 +77,16 @@ describe("<ProviderConfigForm>", () => {
     expect(html).toMatch(/<button[^>]*disabled[^>]*>[^<]*Save/);
   });
 
-  it("renders the Metron form with username + password inputs", () => {
+  it("renders the Metron form with token + username + password inputs", () => {
     settingsState = {
       isLoading: false,
       data: {
         values: [
+          {
+            key: "metadata.metron.api_token",
+            value: "<set>",
+            is_secret: true,
+          },
           {
             key: "metadata.metron.username",
             value: "alice",
@@ -99,10 +104,32 @@ describe("<ProviderConfigForm>", () => {
     const html = renderToStaticMarkup(
       createElement(ProviderConfigForm, { provider: "metron" }),
     );
+    // WP-2.9: the API token is the preferred credential and sits first;
+    // a saved token renders the "(saved)" placeholder, never its value.
+    expect(html).toContain("API token");
+    expect(html).toContain('id="metron-api-token"');
+    expect(html).toContain("(saved — type to replace)");
+    expect(html).not.toContain("<set>");
     expect(html).toContain("Username");
     expect(html).toContain('value="alice"');
     expect(html).toContain("Password");
     expect(html).toContain("metron.cloud password");
     expect(html).toContain("Enable Metron");
+  });
+
+  it("offers the token paste placeholder when no token is saved", () => {
+    settingsState = {
+      isLoading: false,
+      data: {
+        values: [
+          { key: "metadata.metron.api_token", value: "", is_secret: true },
+          { key: "metadata.metron.enabled", value: true, is_secret: false },
+        ],
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(ProviderConfigForm, { provider: "metron" }),
+    );
+    expect(html).toContain("Paste your Metron API token");
   });
 });

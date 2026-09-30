@@ -211,6 +211,8 @@ async fn seed_issue_with_count(
         comicinfo_count: Set(comicinfo_count),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        last_sidecar_rewrite_at: Set(None),
+        metron_info_raw: Set(None),
         cover_page_index: Set(0),
         metadata_review_accepted_at: Set(None),
         metadata_review_accepted_by: Set(None),
@@ -578,4 +580,56 @@ async fn series_cv_id(db: &sea_orm::DatabaseConnection, series_id: uuid::Uuid) -
         .await
         .unwrap()
         .map(|r| r.external_id)
+}
+
+/// Roadmap WP-2.3: identity fields edited through `PATCH /series/{slug}`
+/// are pinned as user provenance; the reconcile must not overwrite the
+/// pinned columns even when a series.json sidecar carries a different
+/// value, while an unpinned series still heals from the sidecar.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn user_pinned_identity_fields_survive_reconcile() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib = seed_library(&app, "lib").await;
+    let pinned = seed_series(&app, lib, "Mine", "continuing", None).await;
+    let control = seed_series(&app, lib, "Theirs", "continuing", None).await;
+    let now = Utc::now().fixed_offset();
+    for field in ["title", "publisher", "volume", "total_issues"] {
+        entity::field_provenance::ActiveModel {
+            entity_type: Set("series".into()),
+            entity_id: Set(pinned.to_string()),
+            field: Set(field.into()),
+            set_by: Set("user".into()),
+            set_at: Set(now),
+            source_external_id: Set(None),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+    }
+
+    let mut meta = sidecar(Some("Ended"), Some(43), None, None, None);
+    meta.name = Some("Sidecar Name".into());
+    meta.publisher = Some("Sidecar Publisher".into());
+    meta.volume = Some(3);
+
+    reconcile_series_status(&db, pinned, Some(&meta))
+        .await
+        .unwrap();
+    reconcile_series_status(&db, control, Some(&meta))
+        .await
+        .unwrap();
+
+    let p = fetch_series(&app, pinned).await;
+    assert_eq!(p.name, "Mine", "pinned name survives the sidecar");
+    assert_eq!(p.publisher, None, "pinned publisher survives");
+    assert_eq!(p.volume, None, "pinned volume survives");
+    assert_eq!(p.total_issues, None, "pinned issue count survives");
+    assert_eq!(p.status, "ended", "unpinned status still reconciles");
+
+    let c = fetch_series(&app, control).await;
+    assert_eq!(c.name, "Sidecar Name");
+    assert_eq!(c.publisher.as_deref(), Some("Sidecar Publisher"));
+    assert_eq!(c.volume, Some(3));
+    assert_eq!(c.total_issues, Some(43));
 }

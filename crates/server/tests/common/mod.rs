@@ -596,7 +596,15 @@ pub struct SpawnOpts {
     /// for the client to construct.
     pub metron_username: Option<String>,
     pub metron_password: Option<String>,
+    /// Metron API token (WP-2.9). When set, the client prefers it over
+    /// the username/password pair.
+    pub metron_api_token: Option<String>,
     pub metron_enabled: bool,
+    /// Point the production provider factory (`orchestrator::build_providers`
+    /// and `apply::build_provider`) at a wiremock base URL so HTTP-level
+    /// tests exercise the real client wiring (WP-2.8).
+    pub comicvine_base_url: Option<String>,
+    pub metron_base_url: Option<String>,
     /// When `Some`, gates `GET /metrics` behind this bearer token
     /// (`COMIC_METRICS_TOKEN`). `None` (default) leaves it open.
     pub metrics_token: Option<String>,
@@ -655,6 +663,7 @@ impl TestApp {
             comicvine_enabled: false,
             metron_username: None,
             metron_password: None,
+            metron_api_token: None,
             metron_enabled: false,
             metrics_token: None,
             ..SpawnOpts::default()
@@ -695,6 +704,22 @@ impl TestApp {
         .await
     }
 
+    /// Spawn with ComicVine enabled **and** its base URL pointed at
+    /// `base_url` (a wiremock instance). The production provider factory
+    /// honours the override, so search / lookup / apply all hit the mock.
+    pub async fn spawn_with_comicvine_at(
+        api_key: impl Into<String>,
+        base_url: impl Into<String>,
+    ) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            comicvine_api_key: Some(api_key.into()),
+            comicvine_enabled: true,
+            comicvine_base_url: Some(base_url.into()),
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
     /// Spawn with Metron credentials (metadata-providers-1.0 M2 tests).
     pub async fn spawn_with_metron(
         username: impl Into<String>,
@@ -704,6 +729,17 @@ impl TestApp {
         Self::spawn_inner(SpawnOpts {
             metron_username: Some(username.into()),
             metron_password: Some(password.into()),
+            metron_enabled: enabled,
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
+    /// Spawn with a Metron API token only (WP-2.9) — exercises the
+    /// token-preferred auth path with no username/password set.
+    pub async fn spawn_with_metron_token(token: impl Into<String>, enabled: bool) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            metron_api_token: Some(token.into()),
             metron_enabled: enabled,
             ..SpawnOpts::default()
         })
@@ -835,7 +871,10 @@ impl TestApp {
             comicvine_enabled: opts.comicvine_enabled,
             metron_username: opts.metron_username.clone(),
             metron_password: opts.metron_password.clone(),
+            metron_api_token: opts.metron_api_token.clone(),
             metron_enabled: opts.metron_enabled,
+            comicvine_base_url: opts.comicvine_base_url.clone(),
+            metron_base_url: opts.metron_base_url.clone(),
             // metadata-providers-1.0 M7: weekly refresh defaults. Off
             // in tests by default — the cron isn't relevant to most
             // suites, and the scope-resolver tests pass explicit

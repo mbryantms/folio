@@ -767,7 +767,7 @@ function formatCollectionHint(series: SeriesView): string | null {
  * "Total pages" / "Reading time" / "Last updated" tiles with a meaningful
  * per-user metric: how many of this series's active issues the user has
  * finished. Empty bar at 0/N, full + accent label at N/N. Total pages and
- * reading time still live in the Details tab for curators who want them.
+ * reading time still live in the Details tab for editors who want them.
  */
 function ReadProgressStat({ read, total }: { read: number; total: number }) {
   const pct =

@@ -25,6 +25,7 @@ use entity::{field_provenance, issue, metadata_run, metadata_run_candidate};
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use serde_json::json;
 use server::jobs::metadata_apply::apply_issue_inline;
+use server::jobs::rewrite_sidecars::RewriteIssueSidecarsJob;
 use server::metadata::apply::{ApplyArgs, ApplyMode};
 use server::metadata::writers::CoverOverwritePolicy;
 use std::io::{Cursor, Write};
@@ -50,6 +51,52 @@ fn build_cbz_bytes(label: &str) -> Vec<u8> {
         zw.finish().unwrap();
     }
     buf.into_inner()
+}
+
+/// Every `RewriteIssueSidecarsJob` currently sitting in the apalis queue,
+/// decoded from the storage's `{namespace}:data` hash (the stored shape is
+/// apalis's `Request { args, parts }` JSON — same thing the dead-jobs admin
+/// endpoint reads). Tests use this to run the job the apply enqueued.
+async fn queued_rewrite_jobs(app: &TestApp) -> Vec<RewriteIssueSidecarsJob> {
+    let storage = app.state().jobs.rewrite_issue_sidecars_storage.clone();
+    let data_hash = storage.get_config().job_data_hash();
+    let mut conn = app.state().jobs.redis.clone();
+    let all: std::collections::HashMap<String, String> = redis::cmd("HGETALL")
+        .arg(&data_hash)
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let mut jobs: Vec<RewriteIssueSidecarsJob> = all
+        .values()
+        .map(|blob| {
+            let v: serde_json::Value = serde_json::from_str(blob).expect("request json");
+            serde_json::from_value(v["args"].clone()).expect("job args")
+        })
+        .collect();
+    jobs.sort_by(|a, b| a.issue_id.cmp(&b.issue_id));
+    jobs
+}
+
+/// Run every queued sidecar job through the worker entry point (mutex,
+/// rewrite, audit, rescan enqueue, deferred metadata writes) and clear the
+/// queue so a second call only sees newer jobs.
+async fn run_queued_rewrite_jobs(app: &TestApp) -> usize {
+    let jobs = queued_rewrite_jobs(app).await;
+    let n = jobs.len();
+    for job in jobs {
+        server::jobs::rewrite_sidecars::handle(job, apalis::prelude::Data::new(app.state()))
+            .await
+            .expect("rewrite job handle");
+    }
+    let storage = app.state().jobs.rewrite_issue_sidecars_storage.clone();
+    let data_hash = storage.get_config().job_data_hash();
+    let mut conn = app.state().jobs.redis.clone();
+    let _: i64 = redis::cmd("DEL")
+        .arg(&data_hash)
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    n
 }
 
 fn args(run_id: Uuid, ordinal: i32, mode: ApplyMode, override_user: bool) -> ApplyArgs {
@@ -192,7 +239,7 @@ async fn apply_issue_with_writeback_enabled_enqueues_rewrite() {
         .insert(&app.state().db)
         .await;
     let cbz = dir.path().join("saga-1.cbz");
-    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, &build_cbz_bytes("saga-1"), 1.0)
         .insert(&app.state().db)
         .await;
 
@@ -225,6 +272,11 @@ async fn apply_issue_with_writeback_enabled_enqueues_rewrite() {
         "writeback path must enqueue rewrite"
     );
     assert!(
+        outcome.sidecar_skip_reasons.is_empty(),
+        "CBZ takes the sidecar path without a refusal: {:?}",
+        outcome.sidecar_skip_reasons
+    );
+    assert!(
         outcome.applied_fields.is_empty(),
         "writeback path doesn't touch entity rows directly; applied_fields stays empty: {:?}",
         outcome.applied_fields,
@@ -248,18 +300,36 @@ async fn apply_issue_with_writeback_enabled_enqueues_rewrite() {
     assert_eq!(run.items_applied, 1, "items_applied bumps on enqueue");
     assert_eq!(run.items_skipped, 0);
 
-    // Regression: the writeback path must stamp `last_metadata_sync_at` even
-    // though it doesn't write entity rows directly. It previously stayed NULL,
-    // so the issue Metadata tab's "Last metadata sync" showed "Never" after a
-    // successful pull.
-    let issue_row = issue::Entity::find_by_id(issue_id.clone())
+    // WP-2.6 (f): `last_metadata_sync_at` is deferred until the XML is in
+    // the archive — NULL right after the apply, stamped once the rewrite
+    // job has run (it previously stayed NULL forever on this path, so the
+    // Metadata tab's "Last metadata sync" showed "Never" after a pull).
+    let before = issue::Entity::find_by_id(issue_id.clone())
         .one(&app.state().db)
         .await
         .unwrap()
         .expect("issue present");
     assert!(
-        issue_row.last_metadata_sync_at.is_some(),
-        "writeback apply must stamp last_metadata_sync_at",
+        before.last_metadata_sync_at.is_none(),
+        "sync stamp must wait for the rewrite to land",
+    );
+    assert_eq!(
+        run_queued_rewrite_jobs(&app).await,
+        1,
+        "one rewrite job queued"
+    );
+    let after = issue::Entity::find_by_id(issue_id.clone())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("issue present");
+    assert!(
+        after.last_metadata_sync_at.is_some(),
+        "writeback apply must stamp last_metadata_sync_at once the rewrite lands",
+    );
+    assert!(
+        after.last_sidecar_rewrite_at.is_some(),
+        "sidecar rewrite stamps last_sidecar_rewrite_at",
     );
 }
 
@@ -273,7 +343,7 @@ async fn apply_issue_writeback_disabled_takes_legacy_path() {
         .insert(&app.state().db)
         .await;
     let cbz = dir.path().join("saga-1.cbz");
-    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, &build_cbz_bytes("saga-1"), 1.0)
         .insert(&app.state().db)
         .await;
 
@@ -349,7 +419,7 @@ async fn apply_issue_writeback_surfaces_suppressed_user_pins() {
         .insert(&app.state().db)
         .await;
     let cbz = dir.path().join("saga-1.cbz");
-    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, &build_cbz_bytes("saga-1"), 1.0)
         .with_title("My Hand-Edited Title")
         .insert(&app.state().db)
         .await;
@@ -445,6 +515,9 @@ async fn apply_issue_with_writeback_writes_variant_covers_to_issue_cover_table()
     )
     .await
     .expect("apply_issue");
+    // Variant rows land only once the rewrite job has put the XML in the
+    // archive (WP-2.6 (f)).
+    assert_eq!(run_queued_rewrite_jobs(&app).await, 1);
 
     // Provider returned 3 variants but one had no image_url — only
     // 2 land in the table, and outcome.variants_written reflects the
@@ -537,6 +610,7 @@ async fn apply_issue_variant_covers_idempotent_no_dupes() {
     )
     .await
     .expect("first apply");
+    assert_eq!(run_queued_rewrite_jobs(&app).await, 1);
 
     // Re-seed a fresh run and apply again with the same candidate.
     let (run_id2, ordinal2) = seed_issue_run(&app, &issue_id, "comicvine").await;
@@ -547,6 +621,7 @@ async fn apply_issue_variant_covers_idempotent_no_dupes() {
     )
     .await
     .expect("second apply");
+    assert_eq!(run_queued_rewrite_jobs(&app).await, 1);
 
     use entity::issue_cover;
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
@@ -913,7 +988,7 @@ async fn apply_issue_override_user_edits_collapses_pins() {
         .insert(&app.state().db)
         .await;
     let cbz = dir.path().join("saga-1.cbz");
-    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, &build_cbz_bytes("saga-1"), 1.0)
         .with_title("Pinned Title")
         .insert(&app.state().db)
         .await;
@@ -1057,6 +1132,7 @@ async fn apply_issue_keeps_ssrf_rejected_variant_covers_as_hotlinks() {
     .await
     .expect("apply_issue");
     assert_eq!(outcome.variants_written, 2);
+    assert_eq!(run_queued_rewrite_jobs(&app).await, 1);
 
     let rows = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(&issue_id))
@@ -1408,7 +1484,7 @@ async fn apply_issue_with_writeback_writes_provider_field_provenance() {
         .insert(&app.state().db)
         .await;
     let cbz = dir.path().join("saga-1.cbz");
-    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, &build_cbz_bytes("saga-1"), 1.0)
         .insert(&app.state().db)
         .await;
 
@@ -1432,6 +1508,16 @@ async fn apply_issue_with_writeback_writes_provider_field_provenance() {
     )
     .await
     .expect("apply_issue");
+    // Provider provenance is deferred until the rewrite job lands the XML
+    // (a pre-existing user pin is the only row allowed here).
+    assert!(
+        issue_prov(&app, &issue_id)
+            .await
+            .values()
+            .all(|(set_by, _)| set_by == "user"),
+        "no provider provenance before the rewrite runs"
+    );
+    assert_eq!(run_queued_rewrite_jobs(&app).await, 1);
 
     let prov = issue_prov(&app, &issue_id).await;
     // Provider-contributed fields (title, description, credits,
@@ -1467,7 +1553,7 @@ async fn apply_issue_writeback_pin_suppresses_provider_provenance() {
         .insert(&app.state().db)
         .await;
     let cbz = dir.path().join("saga-1.cbz");
-    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, &build_cbz_bytes("saga-1"), 1.0)
         .with_title("My Hand-Edited Title")
         .insert(&app.state().db)
         .await;
@@ -1505,6 +1591,16 @@ async fn apply_issue_writeback_pin_suppresses_provider_provenance() {
     )
     .await
     .expect("apply_issue");
+    // Provider provenance is deferred until the rewrite job lands the XML
+    // (a pre-existing user pin is the only row allowed here).
+    assert!(
+        issue_prov(&app, &issue_id)
+            .await
+            .values()
+            .all(|(set_by, _)| set_by == "user"),
+        "no provider provenance before the rewrite runs"
+    );
+    assert_eq!(run_queued_rewrite_jobs(&app).await, 1);
 
     let prov = issue_prov(&app, &issue_id).await;
     assert_eq!(
@@ -1531,7 +1627,7 @@ async fn apply_issue_writeback_override_retires_user_pin() {
         .insert(&app.state().db)
         .await;
     let cbz = dir.path().join("saga-1.cbz");
-    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy-bytes", 1.0)
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, &build_cbz_bytes("saga-1"), 1.0)
         .with_title("My Hand-Edited Title")
         .insert(&app.state().db)
         .await;
@@ -1569,6 +1665,16 @@ async fn apply_issue_writeback_override_retires_user_pin() {
     )
     .await
     .expect("apply_issue");
+    // Provider provenance is deferred until the rewrite job lands the XML
+    // (a pre-existing user pin is the only row allowed here).
+    assert!(
+        issue_prov(&app, &issue_id)
+            .await
+            .values()
+            .all(|(set_by, _)| set_by == "user"),
+        "no provider provenance before the rewrite runs"
+    );
+    assert_eq!(run_queued_rewrite_jobs(&app).await, 1);
 
     let prov = issue_prov(&app, &issue_id).await;
     assert_eq!(
@@ -1576,5 +1682,415 @@ async fn apply_issue_writeback_override_retires_user_pin() {
         Some("comicvine"),
         "override_user_edits must retire the stale user pin so the \
          follow-up rescan can ingest the overridden value",
+    );
+}
+
+// ───────── WP-2.6 (e) + (f): lock-busy requeue, CBT / CBR formats, deferred writes ─────────
+
+/// A bare sidecar job with fixed XML payloads — what the drift-flush
+/// endpoint enqueues (no provider decisions attached).
+fn sidecar_job(issue_id: &str) -> RewriteIssueSidecarsJob {
+    RewriteIssueSidecarsJob {
+        issue_id: issue_id.to_owned(),
+        comic_info_xml: "<?xml version=\"1.0\"?><ComicInfo><Title>Rewritten</Title></ComicInfo>"
+            .to_owned(),
+        metron_info_xml: "<?xml version=\"1.0\"?><MetronInfo><Title>Rewritten</Title></MetronInfo>"
+            .to_owned(),
+        suppressed_user_pins: Vec::new(),
+        actor_id: None,
+        actor_ip: None,
+        actor_ua: None,
+        triggering_run_id: None,
+        triggering_run_ordinal: None,
+        skip_rescan: false,
+        attempt: 0,
+        post_apply: None,
+    }
+}
+
+/// Minimal tar (CBT) with the given entries, PNG-signed pages included.
+fn build_cbt_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut buf = Cursor::new(Vec::new());
+    {
+        let mut tw = tar::Builder::new(&mut buf);
+        for (name, bytes) in entries {
+            let mut header = tar::Header::new_ustar();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            tw.append_data(&mut header, *name, *bytes).unwrap();
+        }
+        tw.into_inner().unwrap();
+    }
+    buf.into_inner()
+}
+
+fn cbr_fixture() -> std::path::PathBuf {
+    let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/synthetic-3page.cbr");
+    assert!(p.is_file(), "fixtures/synthetic-3page.cbr is committed");
+    p
+}
+
+async fn issue_row(app: &TestApp, issue_id: &str) -> issue::Model {
+    issue::Entity::find_by_id(issue_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("issue present")
+}
+
+/// WP-2.6 (e) / audit DI-13: with the per-issue rewrite lock held, the
+/// job is re-enqueued with `attempt + 1` instead of being silently dropped
+/// (pre-fix it returned `Ok` with a log line claiming "the caller will
+/// re-enqueue" — nothing did). Once the lock is released the requeued job
+/// rewrites the archive.
+#[tokio::test]
+async fn sidecar_job_requeues_when_rewrite_lock_is_busy() {
+    use server::archive_rewrite::mutex;
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let cbz = dir.path().join("saga-1.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, &build_cbz_bytes("saga-1"), 1.0)
+        .insert(&app.state().db)
+        .await;
+    let before = std::fs::read(&cbz).unwrap();
+
+    // Simulate an in-flight page edit holding the lock.
+    let mut redis = app.state().jobs.redis.clone();
+    let token = mutex::try_claim(&mut redis, &issue_id, mutex::EDIT_TTL_SECS)
+        .await
+        .unwrap()
+        .expect("lock claimed");
+
+    server::jobs::rewrite_sidecars::handle(
+        sidecar_job(&issue_id),
+        apalis::prelude::Data::new(app.state()),
+    )
+    .await
+    .expect("busy lock is not an error");
+    assert_eq!(
+        std::fs::read(&cbz).unwrap(),
+        before,
+        "busy lock blocks the rewrite"
+    );
+
+    let queued = queued_rewrite_jobs(&app).await;
+    assert_eq!(queued.len(), 1, "the write was re-enqueued, not dropped");
+    assert_eq!(queued[0].issue_id, issue_id);
+    assert_eq!(queued[0].attempt, 1, "attempt counter bumped");
+    assert!(
+        issue_row(&app, &issue_id)
+            .await
+            .last_sidecar_rewrite_at
+            .is_none(),
+        "no stamp without a rewrite"
+    );
+
+    // Release and let the requeued job run.
+    mutex::release(&mut redis, &issue_id, &token).await;
+    assert_eq!(run_queued_rewrite_jobs(&app).await, 1);
+    assert_ne!(
+        std::fs::read(&cbz).unwrap(),
+        before,
+        "requeued job rewrote the archive"
+    );
+    let mut a = archive::open(&cbz, archive::ArchiveLimits::default()).unwrap();
+    assert!(
+        String::from_utf8(a.read_entry_bytes("ComicInfo.xml").unwrap())
+            .unwrap()
+            .contains("<Title>Rewritten</Title>")
+    );
+    assert!(
+        issue_row(&app, &issue_id)
+            .await
+            .last_sidecar_rewrite_at
+            .is_some()
+    );
+}
+
+/// WP-2.6 (f): a CBT is rewritten in place through the tar writer — pages
+/// keep their original names, foreign sidecars survive, both fresh
+/// sidecars land, and the bookkeeping stamps are set. Pre-fix the job
+/// always `Cbz::open`ed and failed on every tar.
+#[tokio::test]
+async fn sidecar_rewrite_handles_cbt_in_place() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let p1: &[u8] = b"\x89PNG\r\n\x1a\nONE";
+    let p2: &[u8] = b"\x89PNG\r\n\x1a\nTWO";
+    let cbt_bytes = build_cbt_bytes(&[
+        ("Issue/x-0002.png", p2),
+        ("Issue/x-0001.png", p1),
+        ("CoMet.xml", b"<comet/>"),
+        (
+            "ComicInfo.xml",
+            b"<ComicInfo><Title>Old</Title></ComicInfo>",
+        ),
+        ("Thumbs.db", b"junk"),
+    ]);
+    let cbt = dir.path().join("saga-1.cbt");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbt, &cbt_bytes, 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    server::jobs::rewrite_sidecars::handle(
+        sidecar_job(&issue_id),
+        apalis::prelude::Data::new(app.state()),
+    )
+    .await
+    .unwrap();
+
+    let mut a = archive::open(&cbt, archive::ArchiveLimits::default()).unwrap();
+    let pages: Vec<String> = a.pages().iter().map(|e| e.name.clone()).collect();
+    assert_eq!(
+        pages,
+        vec!["Issue/x-0001.png", "Issue/x-0002.png"],
+        "names preserved"
+    );
+    assert_eq!(a.read_entry_bytes("Issue/x-0001.png").unwrap(), p1);
+    assert_eq!(a.read_entry_bytes("CoMet.xml").unwrap(), b"<comet/>");
+    assert!(a.find("Thumbs.db").is_none(), "junk dropped");
+    let ci = String::from_utf8(a.read_entry_bytes("ComicInfo.xml").unwrap()).unwrap();
+    assert!(ci.contains("<Title>Rewritten</Title>"), "{ci}");
+    assert!(a.find("MetronInfo.xml").is_some(), "MetronInfo added");
+    assert!(cbt.with_extension("cbt.bak").exists(), ".bak kept");
+
+    let row = issue_row(&app, &issue_id).await;
+    assert!(row.file_path.ends_with("saga-1.cbt"), "still a .cbt");
+    assert_eq!(row.last_rewrite_kind.as_deref(), Some("sidecar"));
+    assert!(row.last_sidecar_rewrite_at.is_some());
+}
+
+/// WP-2.6 (f): a CBR in a library that allows CBR→CBZ conversion is
+/// converted first (the `.cbr` kept as `.cbr.bak`), the row is repointed
+/// at the `.cbz`, and the sidecars are written into the new archive.
+#[tokio::test]
+async fn sidecar_rewrite_converts_cbr_when_library_allows() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .with_auto_convert_cbr_on_scan()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Thanos")
+        .insert(&app.state().db)
+        .await;
+    let cbr = dir.path().join("Thanos 001.cbr");
+    let issue_id = IssueSeed::new(
+        lib_id,
+        series_id,
+        &cbr,
+        &std::fs::read(cbr_fixture()).unwrap(),
+        1.0,
+    )
+    .insert(&app.state().db)
+    .await;
+
+    server::jobs::rewrite_sidecars::handle(
+        sidecar_job(&issue_id),
+        apalis::prelude::Data::new(app.state()),
+    )
+    .await
+    .unwrap();
+
+    let cbz = cbr.with_extension("cbz");
+    assert!(cbz.exists(), "converted .cbz written");
+    assert!(!cbr.exists(), "original .cbr moved away");
+    let row = issue_row(&app, &issue_id).await;
+    assert_eq!(
+        row.file_path,
+        cbz.to_string_lossy(),
+        "row repointed at the .cbz"
+    );
+    assert!(row.last_sidecar_rewrite_at.is_some());
+
+    let mut a = archive::open(&cbz, archive::ArchiveLimits::default()).unwrap();
+    assert_eq!(a.pages().len(), 3, "all three fixture pages carried over");
+    let ci = String::from_utf8(a.read_entry_bytes("ComicInfo.xml").unwrap()).unwrap();
+    assert!(ci.contains("<Title>Rewritten</Title>"), "{ci}");
+    assert!(a.find("MetronInfo.xml").is_some());
+
+    let libr = entity::library::Entity::find_by_id(lib_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        libr.cbr_convert_confirmed_at.is_some(),
+        "first conversion acknowledged"
+    );
+}
+
+/// WP-2.6 (f): a CBR in a library that has NOT allowed conversion is
+/// refused by the sidecar path *at dispatch* — the apply falls back to the
+/// DB-direct branch with the reason on the outcome, no job is queued, and
+/// the archive is untouched. Pre-fix the job was queued, failed at open,
+/// and the run was already marked applied.
+#[tokio::test]
+async fn apply_issue_cbr_without_conversion_falls_back_to_db_direct() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Thanos")
+        .insert(&app.state().db)
+        .await;
+    let cbr = dir.path().join("Thanos 001.cbr");
+    let cbr_bytes = std::fs::read(cbr_fixture()).unwrap();
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbr, &cbr_bytes, 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    use server::metadata::cache;
+    use server::metadata::identifier::Source;
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Issue,
+        "67890",
+        &stub_provider_payload(),
+    )
+    .await
+    .unwrap();
+    let (run_id, ordinal) = seed_issue_run(&app, &issue_id, "comicvine").await;
+
+    let outcome = apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        args(run_id, ordinal, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("apply_issue");
+
+    assert!(!outcome.enqueued_rewrite, "sidecar path refused");
+    assert_eq!(
+        outcome.sidecar_skip_reasons.len(),
+        1,
+        "{:?}",
+        outcome.sidecar_skip_reasons
+    );
+    assert!(
+        outcome.sidecar_skip_reasons[0].contains("CBR")
+            && outcome.sidecar_skip_reasons[0].contains("applied DB-direct"),
+        "{:?}",
+        outcome.sidecar_skip_reasons
+    );
+    // FillMissing skips the seeded title; the empty summary is filled.
+    assert!(
+        outcome.applied_fields.iter().any(|f| f == "description"),
+        "DB-direct apply ran: {:?}",
+        outcome.applied_fields
+    );
+    assert!(
+        queued_rewrite_jobs(&app).await.is_empty(),
+        "no rewrite job queued"
+    );
+    assert_eq!(std::fs::read(&cbr).unwrap(), cbr_bytes, "archive untouched");
+    let row = issue_row(&app, &issue_id).await;
+    assert_eq!(
+        row.summary.as_deref(),
+        Some("Provider summary."),
+        "provider summary landed DB-direct"
+    );
+    assert!(row.file_path.ends_with(".cbr"), "not converted");
+    assert!(
+        issue_prov(&app, &issue_id)
+            .await
+            .get("description")
+            .is_some_and(|(s, _)| s == "comicvine"),
+        "DB-direct provenance written",
+    );
+}
+
+/// WP-2.6 (f) / audit DI-10: when the rewrite fails (here: the "archive"
+/// isn't a zip at all), none of the deferred metadata writes happen — no
+/// provider provenance, no variant rows, no `last_metadata_sync_at` — so
+/// the DB never attributes provider values that never reached the file.
+#[tokio::test]
+async fn failed_rewrite_writes_no_provenance_variants_or_sync_stamp() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let cbz = dir.path().join("saga-1.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"definitely-not-a-zip", 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    use server::metadata::cache;
+    use server::metadata::identifier::Source;
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Issue,
+        "67890",
+        &stub_provider_payload_with_variants(),
+    )
+    .await
+    .unwrap();
+    let (run_id, ordinal) = seed_issue_run(&app, &issue_id, "comicvine").await;
+
+    let outcome = apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        args(run_id, ordinal, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("apply_issue");
+    assert!(outcome.enqueued_rewrite);
+
+    // The job runs, fails at open, and is audited — not retried, and
+    // none of the deferred writes land.
+    assert_eq!(run_queued_rewrite_jobs(&app).await, 1);
+
+    assert!(
+        issue_prov(&app, &issue_id).await.is_empty(),
+        "no provenance after a failed rewrite"
+    );
+    use entity::issue_cover;
+    use sea_orm::{ColumnTrait, QueryFilter};
+    let variants = issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(&issue_id))
+        .filter(issue_cover::Column::Kind.eq("variant"))
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert!(
+        variants.is_empty(),
+        "no variant rows after a failed rewrite"
+    );
+    let row = issue_row(&app, &issue_id).await;
+    assert!(
+        row.last_metadata_sync_at.is_none(),
+        "no sync stamp after a failed rewrite"
+    );
+    assert!(row.last_sidecar_rewrite_at.is_none());
+    assert_eq!(
+        std::fs::read(&cbz).unwrap(),
+        b"definitely-not-a-zip",
+        "file untouched"
     );
 }

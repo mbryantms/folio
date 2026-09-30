@@ -10,11 +10,18 @@
 //! Non-drift cases (deliberately not surfaced):
 //!   - Library has `metadata_writeback_enabled=false` → DB is canonical;
 //!     XML never reflects user edits by design. Not "drift".
-//!   - Pin is older than `issue.last_rewrite_at` → the most recent sidecar
-//!     write happened after the pin, so the XML already carries the user
-//!     value. The composer reads pins at write time.
-//!   - Issue was never rewritten (`last_rewrite_at IS NULL`) and there are
-//!     no pins → no drift signal.
+//!   - Pin is older than `issue.last_sidecar_rewrite_at` → the most recent
+//!     sidecar write happened after the pin, so the XML already carries
+//!     the user value. The composer reads pins at write time.
+//!   - Issue was never sidecar-rewritten (`last_sidecar_rewrite_at IS
+//!     NULL`) and there are no pins → no drift signal.
+//!
+//! The predicate deliberately reads `last_sidecar_rewrite_at`, **not**
+//! `last_rewrite_at`: the latter is also stamped by page edits and
+//! restores, which only touch page bytes and carry the *old* XML through
+//! verbatim — so a page edit after a user pin used to make the drift
+//! disappear without the XML ever receiving the edit (WP-2.6 (g), audit
+//! DI-14). `last_rewrite_at` stays the UI's "last touched" stamp.
 
 use entity::{field_provenance, issue};
 use sea_orm::sea_query::{Alias, Expr, Query};
@@ -48,15 +55,15 @@ const AFFECTED_SERIES_CAP: usize = 200;
 /// Compute the drift summary for a single library. Pure read — no
 /// writes, no side effects. Cost is one indexed query against
 /// `field_provenance` joined to `issues` by entity_id, filtered by
-/// `library_id` + the `pin.set_at > last_rewrite_at` predicate.
+/// `library_id` + the `pin.set_at > last_sidecar_rewrite_at` predicate.
 pub async fn count_drift_in_library<C: ConnectionTrait>(
     db: &C,
     library_id: Uuid,
 ) -> Result<DriftSummary, sea_orm::DbErr> {
-    // The pin.set_at vs issue.last_rewrite_at comparison is the heart of
+    // The pin.set_at vs issue.last_sidecar_rewrite_at comparison is the heart of
     // M6. We want issues whose pin landed AFTER the most recent rewrite
     // (or never-rewritten issues that have a pin at all). The query
-    // partitions both cases by treating NULL last_rewrite_at as "epoch".
+    // partitions both cases by treating NULL last_sidecar_rewrite_at as "epoch".
     let stmt = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         r#"
@@ -70,7 +77,7 @@ pub async fn count_drift_in_library<C: ConnectionTrait>(
             AND fp.set_by = 'user'
             AND i.library_id = $1
             AND i.removed_at IS NULL
-            AND (i.last_rewrite_at IS NULL OR fp.set_at > i.last_rewrite_at)
+            AND (i.last_sidecar_rewrite_at IS NULL OR fp.set_at > i.last_sidecar_rewrite_at)
           GROUP BY i.series_id, i.id
         )
         SELECT
@@ -105,7 +112,7 @@ pub async fn count_drift_in_library<C: ConnectionTrait>(
           AND fp.set_by = 'user'
           AND i.library_id = $1
           AND i.removed_at IS NULL
-          AND (i.last_rewrite_at IS NULL OR fp.set_at > i.last_rewrite_at)
+          AND (i.last_sidecar_rewrite_at IS NULL OR fp.set_at > i.last_sidecar_rewrite_at)
         ORDER BY series_id
         LIMIT $2
         "#,
@@ -146,7 +153,7 @@ pub async fn drifted_issues_in_series<C: ConnectionTrait>(
           AND i.series_id = $1
           AND i.removed_at IS NULL
           AND i.state = 'active'
-          AND (i.last_rewrite_at IS NULL OR fp.set_at > i.last_rewrite_at)
+          AND (i.last_sidecar_rewrite_at IS NULL OR fp.set_at > i.last_sidecar_rewrite_at)
         ORDER BY issue_id
         "#,
         [series_id.into()],

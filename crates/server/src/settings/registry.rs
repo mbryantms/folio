@@ -227,6 +227,14 @@ pub const REGISTRY: &[SettingDef] = &[
         is_secret: true,
     },
     SettingDef {
+        // Metron API token (`Authorization: Bearer <token>`) —
+        // preferred over username/password when set (WP-2.9).
+        // AEAD-sealed at rest.
+        key: "metadata.metron.api_token",
+        kind: SettingKind::String,
+        is_secret: true,
+    },
+    SettingDef {
         // Master toggle for Metron integration.
         key: "metadata.metron.enabled",
         kind: SettingKind::Bool,

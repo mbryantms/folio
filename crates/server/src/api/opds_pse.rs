@@ -29,8 +29,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use entity::{issue, library_user_access, user};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use entity::{issue, user};
+use sea_orm::EntityTrait;
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::{ReaderStream, SyncIoBridge};
@@ -103,17 +103,11 @@ pub async fn stream(
         }
     };
 
-    // Library ACL — admins always pass, non-admins need an explicit grant.
+    // Library ACL — admins always pass, non-admins need an explicit grant
+    // and (WP-2.7) the issue must sit at or below the grant's age cap.
     if user_row.role != "admin" {
-        let allowed = library_user_access::Entity::find()
-            .filter(library_user_access::Column::UserId.eq(u))
-            .filter(library_user_access::Column::LibraryId.eq(issue_row.library_id))
-            .one(&app.db)
-            .await
-            .ok()
-            .flatten()
-            .is_some();
-        if !allowed {
+        let acl = crate::library::access::for_library_by_id(&app, u, issue_row.library_id).await;
+        if !crate::library::access::issue_allowed(&app, &acl, &issue_row).await {
             return error(StatusCode::FORBIDDEN, "library_access_denied");
         }
     }

@@ -33,12 +33,13 @@ fn is_skipped(name: &str) -> bool {
     matches!(ext.as_str(), "xml" | "json" | "txt")
 }
 
-/// True for archive entries the CBZ rewrite path intentionally drops. The
-/// reader still surfaces them via [`Cbz::entries`] (so a caller can read a
-/// `ComicInfo.xml` for metadata), but [`crate::cbz_write::rebuild`] omits
-/// every such entry — dotfiles, `Thumbs.db`, `__MACOSX`, and
-/// `.xml`/`.json`/`.txt` sidecars — and re-adds the canonical
-/// `ComicInfo.xml` / `MetronInfo.xml` through its override channel.
+/// True for archive entries the CBZ rewrite path intentionally drops:
+/// junk (dotfiles, `Thumbs.db`, `__MACOSX`) plus the two Folio-managed
+/// sidecars (`ComicInfo.xml` / `MetronInfo.xml`, root or nested), which
+/// [`crate::cbz_write::rebuild`] re-adds freshly composed through its
+/// override channel. Every other entry — pages **and** foreign non-page
+/// files such as `CoMet.xml` or a `notes.txt` — streams through verbatim
+/// (WP-2.6 (b); see [`crate::rewrite_policy`]).
 ///
 /// The sidecar-writeback validator uses this to decide which source entries
 /// must survive a rebuild verbatim: a nested or duplicate sidecar (e.g. a
@@ -46,7 +47,7 @@ fn is_skipped(name: &str) -> bool {
 /// won't survive, so requiring it would trip a false "dropped entry" abort.
 /// Case-insensitive — safe to call on either the display or canonical name.
 pub fn is_rewrite_skipped(name: &str) -> bool {
-    is_skipped(name)
+    crate::rewrite_policy::is_rewrite_dropped(name)
 }
 
 /// Page *candidate* predicate: image extension and not a sidecar / trash
@@ -239,14 +240,14 @@ impl Cbz {
         }
     }
 
-    /// True if the entry name at `ordinal` would be filtered by the open
-    /// path's skip rules (`Thumbs.db`, dotfiles, `__MACOSX`, sidecar text
-    /// suffixes). Exposed so the rebuilder mirrors the reader's filter
-    /// exactly — keeps the round-trip property "open(write(X)) sees the
-    /// same entries as open(X)" honest.
+    /// True if the entry at `ordinal` is one the sidecar rewrite drops
+    /// (junk, or a Folio-managed sidecar that the rebuild re-adds fresh —
+    /// see [`crate::rewrite_policy::is_rewrite_dropped`]). Every other raw
+    /// entry, page or not, stream-copies through
+    /// [`crate::cbz_write::rebuild`] untouched.
     pub(crate) fn raw_entry_is_skipped(&mut self, ordinal: usize) -> Result<bool, ArchiveError> {
         let name = self.raw_entry_name(ordinal)?;
-        Ok(is_skipped(&name))
+        Ok(crate::rewrite_policy::is_rewrite_dropped(&name))
     }
 
     /// Stream-copy the entry at zip-index `ordinal` into `dst` verbatim

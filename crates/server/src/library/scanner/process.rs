@@ -268,6 +268,13 @@ struct ParsedArchive {
     /// attribution on the ingest's `field_provenance` writes. Empty when
     /// no MetronInfo.xml was present.
     metron_fields: std::collections::HashSet<String>,
+    /// The parsed `MetronInfo` as JSON (`serde_json::to_value`), captured
+    /// *before* the destructive merge so its `raw` map still lists every
+    /// top-level element Folio doesn't model. Persisted to
+    /// `issues.metron_info_raw` so the sidecar composer can pass those
+    /// elements through on the next rewrite (WP-2.6 (c)). `None` when no
+    /// MetronInfo.xml was present.
+    metron_info_raw: Option<serde_json::Value>,
 }
 
 /// Outcome of the by-content-hash dedupe check, when no row was found
@@ -427,6 +434,11 @@ async fn parse_archive_for_ingest(
 
     let metron_ids = metron_opt.as_ref().map(|m| m.ids.clone());
     let metroninfo_present = metron_opt.is_some();
+    // `merge_metron_into_comicinfo` only reads `m`, so the struct (and its
+    // `raw` passthrough map) is still intact here.
+    let metron_info_raw = metron_opt
+        .as_ref()
+        .and_then(|m| serde_json::to_value(m).ok());
 
     Ok(Some(ParsedArchive {
         hash,
@@ -436,6 +448,7 @@ async fn parse_archive_for_ingest(
         metron_ids,
         metroninfo_present,
         metron_fields,
+        metron_info_raw,
     }))
 }
 
@@ -732,6 +745,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         metron_ids,
         metroninfo_present,
         metron_fields,
+        metron_info_raw,
     }) = parse_archive_for_ingest(state, lib, path, size, stats, health, verify_dims).await?
     else {
         return Ok(());
@@ -860,17 +874,41 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         //     for columns without a `MetadataField` slot (sort_number,
         //     number_raw, web_url, alternate_series, black_and_white).
         let edited = user_edited_set(&row.user_edited);
-        let user_pins =
-            crate::metadata::writers::fetch_user_pinned_fields(db, "issue", &row.id).await?;
+        // Decision D4 (roadmap WP-2.5): on rescan a file-tier value never
+        // replaces a value the user OR a provider set. `field_provenance`
+        // records the tier per field; a column whose row is not
+        // file-sourced (`user` or a provider name) is protected. The
+        // provenance writer already refused to downgrade such rows —
+        // this keeps the *columns* consistent with them.
         // `summary` / `description` alias the same column (PATCH pins
         // write `summary`; provider applies write `description`) —
         // accept either, mirroring the composer's pin check.
-        let pinned = |f: crate::metadata::MetadataField| {
-            user_pins.contains(&f.key())
-                || (matches!(f, crate::metadata::MetadataField::Description)
-                    && user_pins.contains("summary"))
+        let provenance =
+            crate::metadata::writers::fetch_field_provenance_tiers(db, "issue", &row.id).await?;
+        let protected = |f: crate::metadata::MetadataField| {
+            let owned = |k: &str| {
+                provenance
+                    .get(k)
+                    .is_some_and(|sb| !crate::metadata::writers::is_file_tier_set_by(sb))
+            };
+            owned(&f.key())
+                || (matches!(f, crate::metadata::MetadataField::Description) && owned("summary"))
         };
         use crate::metadata::MetadataField as F;
+        // Junctions the rollup must leave alone (their rows were written
+        // by a provider apply or a user edit; the CSV read-cache columns
+        // above are gated the same way).
+        let protected_junctions: std::collections::HashSet<F> = [
+            F::Credits,
+            F::Characters,
+            F::Teams,
+            F::Locations,
+            F::Genres,
+            F::Tags,
+        ]
+        .into_iter()
+        .filter(|f| protected(*f))
+        .collect();
         // Track whether the actual file contents changed. Force scans go
         // through this branch even when size+mtime match — in that case
         // there's no point invalidating thumbnails, since the rendered
@@ -893,7 +931,8 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         am.content_hash = Set(hash);
         am.special_type = Set(special_type.clone());
         am.metroninfo_present = Set(Some(metroninfo_present));
-        if !pinned(F::Title) {
+        am.metron_info_raw = Set(metron_info_raw.clone());
+        if !protected(F::Title) {
             am.title = Set(info.title.clone());
         }
         if !edited.contains("sort_number") {
@@ -907,33 +946,33 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         // `plausible_volume` so year-stamped values get dropped at
         // ingest — same rule already applied to `inferred.volume`
         // (resolved once above, alongside the provenance attribution).
-        if !pinned(F::Volume) {
+        if !protected(F::Volume) {
             am.volume = Set(resolved_volume);
         }
-        if !pinned(F::CoverDate) {
+        if !protected(F::CoverDate) {
             am.year = Set(info.year);
             am.month = Set(info.month);
             am.day = Set(info.day);
         }
-        if !pinned(F::Description) {
+        if !protected(F::Description) {
             am.summary = Set(info.summary.clone());
         }
-        if !pinned(F::Notes) {
+        if !protected(F::Notes) {
             am.notes = Set(info.notes.clone());
         }
-        if !pinned(F::LanguageCode) && !edited.contains("language_code") {
+        if !protected(F::LanguageCode) && !edited.contains("language_code") {
             am.language_code = Set(info.language_iso.clone());
         }
-        if !pinned(F::Format) {
+        if !protected(F::Format) {
             am.format = Set(info.format.clone());
         }
         if !edited.contains("black_and_white") {
             am.black_and_white = Set(info.black_and_white);
         }
-        if !pinned(F::Manga) {
+        if !protected(F::Manga) {
             am.manga = Set(info.manga.clone());
         }
-        if !pinned(F::AgeRating) && !edited.contains("age_rating") {
+        if !protected(F::AgeRating) && !edited.contains("age_rating") {
             am.age_rating = Set(info.age_rating.clone());
         }
         am.page_count = Set(resolved_page_count);
@@ -951,26 +990,26 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         if !edited.contains("alternate_series") {
             am.alternate_series = Set(info.alternate_series.clone());
         }
-        if !pinned(F::StoryArcs) {
+        if !protected(F::StoryArcs) {
             am.story_arc = Set(info.story_arc.clone());
             am.story_arc_number = Set(info.story_arc_number.clone());
         }
-        if !pinned(F::Characters) {
+        if !protected(F::Characters) {
             am.characters = Set(info.characters.clone());
         }
-        if !pinned(F::Teams) {
+        if !protected(F::Teams) {
             am.teams = Set(info.teams.clone());
         }
-        if !pinned(F::Locations) {
+        if !protected(F::Locations) {
             am.locations = Set(info.locations.clone());
         }
-        if !pinned(F::Tags) && !edited.contains("tags") {
+        if !protected(F::Tags) && !edited.contains("tags") {
             am.tags = Set(info.tags.clone());
         }
-        if !pinned(F::Genres) && !edited.contains("genre") {
+        if !protected(F::Genres) && !edited.contains("genre") {
             am.genre = Set(info.genre.clone());
         }
-        if !pinned(F::Credits) {
+        if !protected(F::Credits) {
             am.writer = Set(info.writer.clone());
             am.penciller = Set(info.penciller.clone());
             am.inker = Set(info.inker.clone());
@@ -980,14 +1019,20 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             am.editor = Set(info.editor.clone());
             am.translator = Set(info.translator.clone());
         }
-        if !pinned(F::Publisher) {
+        if !protected(F::Publisher) {
             am.publisher = Set(info.publisher.clone().or(series_publisher.clone()));
         }
-        if !pinned(F::Imprint) {
+        if !protected(F::Imprint) {
             am.imprint = Set(info.imprint.clone());
         }
-        am.scan_information = Set(info.scan_information.clone());
-        am.community_rating = Set(info.community_rating);
+        if !protected(F::ScanInformation) {
+            am.scan_information = Set(info.scan_information.clone());
+        }
+        if !protected(F::CommunityRating) {
+            am.community_rating = Set(info.community_rating);
+        }
+        // `review` has no MetadataField slot and no provider writes it;
+        // it stays file-owned.
         am.review = Set(info.review.clone());
         if !edited.contains("web_url") {
             am.web_url = Set(info.web.clone());
@@ -1088,7 +1133,12 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             emit_external_id_skips(health, path, skips);
         }
         // F-1: pass the just-updated model directly instead of re-fetching by id.
-        super::metadata_rollup::replace_issue_metadata_from_model(db, &updated).await?;
+        super::metadata_rollup::replace_issue_metadata_from_model_skipping(
+            db,
+            &updated,
+            &protected_junctions,
+        )
+        .await?;
         // Field provenance: this ingest re-derived every unpinned
         // metadata column from the file, so record file-level
         // attribution for the fields the sidecars carried and prune
@@ -1223,6 +1273,8 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             // rewritten the bytes of.
             last_rewrite_at: Set(None),
             last_rewrite_kind: Set(None),
+            last_sidecar_rewrite_at: Set(None),
+            metron_info_raw: Set(metron_info_raw),
             // A freshly-scanned issue is never pre-accepted (B4); the operator
             // sets this later from the worklist.
             metadata_review_accepted_at: Set(None),

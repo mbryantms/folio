@@ -14,6 +14,14 @@ A search runs in this order:
    drops candidates that the operator's library settings + the hard
    year gate would reject before any scoring. Two signals:
    - Year gate: candidate's `start_year > comic_year + 1` → drop.
+     **Escape (WP-2.8):** when the gate leaves zero candidates and a
+     local cover hash exists, the orchestrator re-scores the *same*
+     provider results under `YearGate::PhashAware` (a mismatched year
+     survives only with a MEDIUM-or-better cover Hamming) and stamps
+     `year_gate_relaxed` on `metadata_run.query`. Never when the user
+     supplied the year as a search override (`SearchOpts::relax_year_gate
+     = false`). The issue path applies the same escape to the
+     *narrowed* pass before its broad fallback.
    - Publisher blacklist: candidate's publisher (sanitized) matches
      any entry in `library.metadata_publisher_blacklist` → drop.
 2. **Score** (text + cover pHash) per surviving candidate. Text

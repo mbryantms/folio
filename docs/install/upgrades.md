@@ -138,6 +138,23 @@ docker compose -f compose.prod.yml up -d --no-deps app
 
 ## Breaking changes by version
 
+### Unreleased — age-rating caps enforced; library-access `role` removed
+
+- **`library_user_access.age_rating_max` is now enforced.** A user whose
+  grant carries a cap no longer sees series or issues rated above it on
+  any surface (lists, search, reader, covers, page bytes, OPDS, Komga
+  shim). Unrated content stays visible. Caps set before this version
+  were stored but ignored — review `/admin/users/{id}` → *Library
+  access* before upgrading a family server if you relied on that.
+- **The `role` column on `library_user_access` is dropped** (migration
+  `m20270123_000001_drop_library_access_role`; `down` restores it as
+  `NOT NULL DEFAULT 'reader'`). The `reader | curator` value was never
+  enforced. API clients: `LibraryAccessGrantView.role` is gone from
+  `GET /api/admin/users/{id}`; `POST /api/admin/users/{id}/library-access`
+  gains an optional `age_rating_caps` map (`{ library_id: "Teen" }`,
+  values validated against the ComicInfo `AgeRating` ladder → 422
+  otherwise) and the grant view returns `age_rating_max`.
+
 ### v0.2.0 — Rust binary becomes the public origin
 
 Before v0.2.0, `compose.prod.yml` published both `app:8080` and

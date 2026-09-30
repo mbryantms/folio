@@ -95,7 +95,7 @@ pub async fn set_series_rating(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, series_row.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &series_row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     write_rating(
@@ -134,7 +134,7 @@ pub async fn set_issue_rating(
             Ok(r) => r,
             Err(resp) => return resp,
         };
-    if !visible_in_library(&app, &user, issue_row.library_id).await {
+    if !crate::library::access::issue_visible(&app, &user, &issue_row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
     write_rating(&app, user.id, TARGET_TYPE_ISSUE, &issue_row.id, req.rating).await
@@ -212,19 +212,4 @@ async fn write_rating(
         }
         Json(RatingView { rating: None }).into_response()
     }
-}
-
-async fn visible_in_library(app: &AppState, user: &CurrentUser, lib_id: uuid::Uuid) -> bool {
-    if user.role == "admin" {
-        return true;
-    }
-    use entity::library_user_access;
-    library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .filter(library_user_access::Column::LibraryId.eq(lib_id))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
 }

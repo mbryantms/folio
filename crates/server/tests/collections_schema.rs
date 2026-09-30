@@ -208,6 +208,8 @@ async fn seed_library_series_issue(db_url: &str) -> (Uuid, Uuid, String) {
         comicinfo_count: Set(None),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        last_sidecar_rewrite_at: Set(None),
+        metron_info_raw: Set(None),
         cover_page_index: Set(0),
         metadata_review_accepted_at: Set(None),
         metadata_review_accepted_by: Set(None),
@@ -455,7 +457,7 @@ async fn unstarted_and_stale_templates_dropped() {
     // The M9 templates "Unstarted" (id `…0004`, formerly "Want to
     // Read") and "Stale" (id `…0005`) were removed by the
     // m20261224 migration — Unstarted overlapped with the per-user
-    // "Want to Read" collection, and Stale was a curator tool that
+    // "Want to Read" collection, and Stale was a list-maintenance tool that
     // didn't belong in the user catalog. Confirm both rows are gone.
     let app = TestApp::spawn().await;
     let db = Database::connect(&app.db_url).await.unwrap();

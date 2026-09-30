@@ -225,7 +225,8 @@ async fn drift_row_clears_when_rewrite_postdates_pin() {
     );
 
     // Simulate a successful sidecar rewrite that included the pin: bump
-    // `issue.last_rewrite_at` to NOW + 5s so it cleanly post-dates the
+    // `issue.last_sidecar_rewrite_at` (and the shared `last_rewrite_at`
+    // stamp, as the job does) to NOW + 5s so it cleanly post-dates the
     // pin row inserted above.
     let row = issue::Entity::find_by_id(&issue_id)
         .one(&app.state().db)
@@ -233,10 +234,10 @@ async fn drift_row_clears_when_rewrite_postdates_pin() {
         .unwrap()
         .unwrap();
     let mut am: issue::ActiveModel = row.into();
-    am.last_rewrite_at = Set(Some(
-        Utc::now().fixed_offset() + chrono::Duration::seconds(5),
-    ));
+    let stamp = Utc::now().fixed_offset() + chrono::Duration::seconds(5);
+    am.last_rewrite_at = Set(Some(stamp));
     am.last_rewrite_kind = Set(Some("sidecar".into()));
+    am.last_sidecar_rewrite_at = Set(Some(stamp));
     am.update(&app.state().db).await.unwrap();
 
     let arr_after = list_health(&app, &auth, &lib_id.to_string()).await;
@@ -246,7 +247,55 @@ async fn drift_row_clears_when_rewrite_postdates_pin() {
             .unwrap()
             .iter()
             .all(|r| r["kind"] != "MetadataDriftFromXml"),
-        "drift clears once last_rewrite_at > pin.set_at: {arr_after:?}",
+        "drift clears once last_sidecar_rewrite_at > pin.set_at: {arr_after:?}",
+    );
+}
+
+/// WP-2.6 (g) / audit DI-14: a page edit (or restore) stamps
+/// `last_rewrite_at` but carries the old XML through verbatim, so it must
+/// NOT clear the drift row. Only a sidecar rewrite
+/// (`last_sidecar_rewrite_at`) does.
+#[tokio::test]
+async fn page_edit_stamp_does_not_clear_drift() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let cbz = dir.path().join("saga-1.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, &build_cbz_bytes("saga-1"), 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    plant_user_pin(&app, &issue_id, "title").await;
+
+    // A page edit after the pin: `last_rewrite_at` moves, the sidecar
+    // stamp does not.
+    let row = issue::Entity::find_by_id(&issue_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: issue::ActiveModel = row.into();
+    am.last_rewrite_at = Set(Some(
+        Utc::now().fixed_offset() + chrono::Duration::seconds(5),
+    ));
+    am.last_rewrite_kind = Set(Some("edit".into()));
+    am.update(&app.state().db).await.unwrap();
+
+    let arr = list_health(&app, &auth, &lib_id.to_string()).await;
+    assert!(
+        arr.as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["kind"] == "MetadataDriftFromXml"),
+        "a page edit must not mask metadata drift: {arr:?}",
     );
 }
 

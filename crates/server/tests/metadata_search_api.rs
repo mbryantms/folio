@@ -20,7 +20,7 @@ use axum::{
 use chrono::Utc;
 use common::TestApp;
 use common::seed::{IssueSeed, LibrarySeed, SeriesSeed};
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set};
 use serde_json::{Value, json};
 use std::path::Path;
 use tempfile::tempdir;
@@ -361,6 +361,10 @@ async fn candidates_completed_run_includes_provider_quota() {
         cv["remaining_hour"].is_number(),
         "remaining_hour snapshot present: {cv}"
     );
+    // WP-2.9: the headline budget rides along so the dialog can show
+    // "N of M requests left" — ComicVine's is bucket-derived, hourly.
+    assert_eq!(cv["budget"]["window"], "hour", "budget present: {cv}");
+    assert_eq!(cv["budget"]["limit"], 200);
     // No quota-park, so no retry ETA.
     assert!(body["quota"]["retry_after_seconds"].is_null());
 }
@@ -686,7 +690,6 @@ async fn apply_series_403_when_override_user_edits_requested_by_non_admin() {
     library_user_access::ActiveModel {
         user_id: Set(user_row.id),
         library_id: Set(lib_id),
-        role: Set("reader".into()),
         age_rating_max: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
@@ -1173,4 +1176,648 @@ async fn create_series_batch_incomplete_scope_skips_complete_issues() {
         0,
         "complete issue is skipped"
     );
+}
+
+// ───────── WP-2.8: query overrides + lookup-by-URL ─────────
+
+fn cv_ok(results: Value) -> Value {
+    json!({"status_code": 1, "error": "OK", "results": results})
+}
+
+fn cv_volume_detail_json() -> Value {
+    json!({
+        "id": 12345,
+        "name": "Saga",
+        "start_year": "2012",
+        "publisher": {"id": 99, "name": "Image Comics"},
+        "deck": "Sci-fi epic.",
+        "description": "Full description body.",
+        "image": null,
+        "count_of_issues": 60,
+        "site_detail_url": "https://comicvine.gamespot.com/volume/4050-12345/",
+        "date_last_updated": "2024-01-15 12:34:56",
+        "aliases": null,
+    })
+}
+
+fn cv_issue_detail_json() -> Value {
+    json!({
+        "id": 67890,
+        "name": "First Issue",
+        "issue_number": "1",
+        "cover_date": "2012-03-14",
+        "store_date": "2012-03-12",
+        "deck": "Short blurb",
+        "description": "Full HTML body.",
+        "image": null,
+        "person_credits": [],
+        "character_credits": [],
+        "team_credits": [],
+        "location_credits": [],
+        "concept_credits": [],
+        "object_credits": [],
+        "story_arc_credits": [],
+        "associated_images": [],
+        "first_appearance_characters": [],
+        "volume": {
+            "id": 12345,
+            "name": "Saga",
+            "start_year": "2012",
+            "site_detail_url": null,
+            "publisher": null,
+            "deck": null,
+            "description": null,
+            "image": null,
+            "count_of_issues": null,
+            "date_last_updated": null,
+            "aliases": null,
+        },
+        "site_detail_url": "https://comicvine.gamespot.com/issue/4000-67890/",
+        "date_last_updated": "2024-02-20 08:00:00",
+        "aliases": null,
+    })
+}
+
+async fn run_row(app: &TestApp, run_id: &str) -> entity::metadata_run::Model {
+    entity::metadata_run::Entity::find_by_id(Uuid::parse_str(run_id).unwrap())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("run row")
+}
+
+#[tokio::test]
+async fn search_series_overrides_replace_facts_for_the_run_only() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/search"),
+        json!({"name": "  Saga Deluxe Edition ", "year": 2014}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    let run_id = body["run_id"].as_str().unwrap().to_owned();
+
+    // The stored query carries the *effective* facts + a note of which
+    // fields were overridden.
+    let run = run_row(&app, &run_id).await;
+    let q = run.query.expect("stored query");
+    assert_eq!(q["kind"], "series");
+    assert_eq!(q["name"], "Saga Deluxe Edition");
+    assert_eq!(q["year"], 2014);
+    assert_eq!(q["publisher"], "Image Comics", "untouched facts stay local");
+    assert_eq!(q["overrides"]["name"], "Saga Deluxe Edition");
+    assert_eq!(q["overrides"]["year"], 2014);
+    assert!(q["overrides"].get("publisher").is_none());
+
+    // The series row itself is untouched.
+    let s = entity::series::Entity::find_by_id(series_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(s.name, "Saga");
+    assert_ne!(s.year, Some(2014), "override must not write the series row");
+
+    // The polling endpoint surfaces the effective query + the flag so
+    // the dialog can render "searched as …".
+    let resp = get(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/candidates?run_id={run_id}"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["query"]["name"], "Saga Deluxe Edition");
+    assert_eq!(body["query"]["year"], 2014);
+    assert_eq!(body["query"]["overridden"], true);
+    assert_eq!(body["query"]["year_gate_relaxed"], false);
+    assert_eq!(body["query"]["lookup"], false);
+    assert_eq!(body["query"]["label"], "Saga Deluxe Edition");
+}
+
+#[tokio::test]
+async fn search_series_without_body_still_works_and_reports_no_override() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let resp = post(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/search"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    let run = run_row(&app, body["run_id"].as_str().unwrap()).await;
+    let q = run.query.unwrap();
+    assert_eq!(q["name"], "Saga");
+    assert!(q.get("overrides").is_none());
+}
+
+#[tokio::test]
+async fn search_series_override_validation_lands_422_with_field_details() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/search"),
+        json!({"name": "   ", "year": 1800}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "validation");
+    let fields: Vec<&str> = body["error"]["details"]
+        .as_array()
+        .expect("details")
+        .iter()
+        .map(|d| d["field"].as_str().unwrap())
+        .collect();
+    assert!(fields.contains(&"name"), "{fields:?}");
+    assert!(fields.contains(&"year"), "{fields:?}");
+    // No run row was created for a rejected request.
+    let n = entity::metadata_run::Entity::find()
+        .count(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+#[tokio::test]
+async fn search_issue_overrides_number_and_year_persist_on_run() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (lib_id, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let cbz = dir.path().join("test.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy", 1.0)
+        .insert(&app.state().db)
+        .await;
+    let issue = entity::issue::Entity::find_by_id(&issue_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!(
+            "/api/series/{series_id}/issues/{}/metadata/search",
+            issue.slug
+        ),
+        json!({"issue_number": "Annual 1", "year": 2013, "publisher": "Image"}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    let run = run_row(&app, body["run_id"].as_str().unwrap()).await;
+    let q = run.query.unwrap();
+    assert_eq!(q["kind"], "issue");
+    assert_eq!(q["issue_number"], "Annual 1");
+    assert_eq!(q["series_year"], 2013);
+    assert_eq!(q["publisher"], "Image");
+    assert_eq!(q["overrides"]["issue_number"], "Annual 1");
+    // Issue row untouched.
+    let after = entity::issue::Entity::find_by_id(&issue_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.number_raw.as_deref(), Some("1"));
+}
+
+/// The override must reach the provider: replay the persisted query
+/// through the orchestrator (exactly what the worker does with the job
+/// payload) against a wiremock ComicVine that only answers a `filter`
+/// carrying the overridden name.
+#[tokio::test]
+async fn search_series_override_changes_the_provider_query_string() {
+    use server::metadata::orchestrator::{self, PreFilter, StoredQuery};
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let cv_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/volumes"))
+        .and(query_param("filter", "name:Overridden Name"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(cv_ok(json!([{
+            "id": 555,
+            "name": "Overridden Name",
+            "start_year": "2012",
+            "publisher": {"id": 1, "name": "Image Comics"},
+            "deck": null,
+            "description": null,
+            "image": null,
+            "count_of_issues": null,
+            "site_detail_url": null,
+            "date_last_updated": null,
+            "aliases": null,
+        }]))))
+        .expect(1)
+        .mount(&cv_mock)
+        .await;
+    let app = TestApp::spawn_with_comicvine_at("k", cv_mock.uri()).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/search"),
+        json!({"name": "Overridden Name"}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    let run_id = Uuid::parse_str(body["run_id"].as_str().unwrap()).unwrap();
+
+    // Replay the stored query through the orchestrator with the
+    // production provider factory (pointed at wiremock via config).
+    let run = run_row(&app, &run_id.to_string()).await;
+    let StoredQuery::Series(facts) = serde_json::from_value(run.query.unwrap()).unwrap() else {
+        panic!("expected series query")
+    };
+    assert_eq!(facts.name, "Overridden Name");
+    let state = app.state();
+    let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
+    let ranked = orchestrator::run_series_search(
+        &state.db,
+        run_id,
+        &providers,
+        &facts,
+        server::metadata::matcher::Thresholds::new(80.0, 60.0),
+        &PreFilter::default(),
+        3,
+        None,
+    )
+    .await
+    .expect("search");
+    assert_eq!(ranked.len(), 1);
+    assert_eq!(ranked[0].external_id, "555");
+    // wiremock's `.expect(1)` verifies the filter reached the provider.
+}
+
+#[tokio::test]
+async fn lookup_series_rejects_bad_urls_with_422_bound_to_url_field() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let path = format!("/api/series/{series_id}/metadata/lookup");
+
+    for (body, needle) in [
+        (
+            json!({"url": "https://www.comics.org/series/1/"}),
+            "not a supported provider host",
+        ),
+        (
+            json!({"url": "https://comicvine.gamespot.com/saga/"}),
+            "no series or issue id",
+        ),
+        (
+            json!({"url": "https://metron.cloud/series/saga-2012/"}),
+            "slug",
+        ),
+        (
+            json!({"url": "https://comicvine.gamespot.com/x/4000-1/"}),
+            "issue link",
+        ),
+        (json!({}), "paste a provider URL"),
+    ] {
+        let resp = post_json(&app, &admin, &path, body.clone()).await;
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        let out = body_json(resp.into_body()).await;
+        assert_eq!(out["error"]["code"], "validation");
+        assert!(
+            out["error"]["message"].as_str().unwrap().contains(needle),
+            "{body} → {}",
+            out["error"]["message"]
+        );
+        assert_eq!(out["error"]["details"][0]["field"], "url", "{body}");
+    }
+    let n = entity::metadata_run::Entity::find()
+        .count(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "rejected lookups create no run rows");
+}
+
+#[tokio::test]
+async fn lookup_series_rejects_unconfigured_provider_with_422() {
+    // ComicVine is the only configured provider; a Metron URL must be
+    // refused before any network call.
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/lookup"),
+        json!({"url": "https://metron.cloud/api/series/1234/"}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let out = body_json(resp.into_body()).await;
+    assert_eq!(out["error"]["code"], "validation");
+    assert!(
+        out["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("metron is not configured"),
+        "{}",
+        out["error"]["message"]
+    );
+    assert_eq!(out["error"]["details"][0]["field"], "url");
+
+    // Explicit pair form binds to `source` instead.
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/lookup"),
+        json!({"source": "metron", "external_id": "1234"}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let out = body_json(resp.into_body()).await;
+    assert_eq!(out["error"]["details"][0]["field"], "source");
+}
+
+#[tokio::test]
+async fn lookup_series_403_when_non_admin_lacks_library_access() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let _admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let resp = post_json(
+        &app,
+        &user,
+        &format!("/api/series/{series_id}/metadata/lookup"),
+        json!({"url": "https://comicvine.gamespot.com/volume/4050-12345/"}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn lookup_series_creates_one_high_candidate_and_apply_works_on_it() {
+    use server::jobs::metadata_apply::apply_series_inline;
+    use server::metadata::apply::{ApplyArgs, ApplyMode};
+    use server::metadata::writers::CoverOverwritePolicy;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let cv_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/volume/4050-12345"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(cv_ok(cv_volume_detail_json())))
+        // Exactly one provider hit: the apply must reuse the cache the
+        // lookup populated instead of re-fetching.
+        .expect(1)
+        .mount(&cv_mock)
+        .await;
+    let app = TestApp::spawn_with_comicvine_at("k", cv_mock.uri()).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Some Other Name")
+        .insert(&app.state().db)
+        .await;
+    // Clear the seed's year + deck so fill_missing has slots to write.
+    {
+        let row = entity::series::Entity::find_by_id(series_id)
+            .one(&app.state().db)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut am: entity::series::ActiveModel = row.into();
+        am.year = Set(None);
+        am.deck = Set(None);
+        am.update(&app.state().db).await.unwrap();
+    }
+
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/lookup"),
+        json!({"url": "https://comicvine.gamespot.com/saga/4050-12345/"}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["source"], "comicvine");
+    assert_eq!(body["external_id"], "12345");
+    let run_id = body["run_id"].as_str().unwrap().to_owned();
+
+    // The run is already completed with exactly one HIGH candidate and
+    // no matcher outcome row (the matcher never ran).
+    let run = run_row(&app, &run_id).await;
+    assert_eq!(run.status, "completed");
+    assert_eq!(run.items_total, 1);
+    assert_eq!(run.items_matched_high, 1);
+    assert_eq!(run.providers, vec!["comicvine"]);
+    assert_eq!(
+        run.scope_entity_id.as_deref(),
+        Some(series_id.to_string().as_str())
+    );
+    let q = run.query.clone().unwrap();
+    assert_eq!(q["lookup"]["source"], "comicvine");
+    assert_eq!(q["lookup"]["external_id"], "12345");
+    assert_eq!(
+        q["lookup"]["url"],
+        "https://comicvine.gamespot.com/saga/4050-12345/"
+    );
+    let outcomes = entity::metadata_match_outcome::Entity::find()
+        .filter(entity::metadata_match_outcome::Column::RunId.eq(run.id))
+        .count(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(outcomes, 0, "lookup runs don't skew match-quality stats");
+
+    let resp = get(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/candidates?run_id={run_id}"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["status"], "completed");
+    assert_eq!(body["candidates"].as_array().unwrap().len(), 1);
+    let c = &body["candidates"][0];
+    assert_eq!(c["bucket"], "high");
+    assert_eq!(c["score"], 100.0);
+    assert_eq!(c["score_breakdown"]["lookup"], true);
+    assert_eq!(c["candidate"]["kind"], "series");
+    assert_eq!(c["candidate"]["name"], "Saga");
+    assert_eq!(c["candidate"]["year"], 2012);
+    assert_eq!(c["candidate"]["publisher"], "Image Comics");
+    assert_eq!(
+        c["candidate"]["external_url"],
+        "https://comicvine.gamespot.com/volume/4050-12345/"
+    );
+    assert_eq!(body["match_outcome"]["kind"], "single_good");
+    assert_eq!(body["query"]["lookup"], true);
+    assert_eq!(body["query"]["overridden"], false);
+
+    // Apply the lookup candidate through the ordinary apply path.
+    let outcome = apply_series_inline(
+        &app.state(),
+        series_id,
+        ApplyArgs {
+            run_id: run.id,
+            ordinal: 0,
+            mode: ApplyMode::FillMissing,
+            apply_cover: false,
+            cover_overwrite_policy: CoverOverwritePolicy::WhenMissing,
+            override_user_edits: false,
+            actor_id: None,
+            selected_fields: None,
+            override_external_id_sources: std::collections::HashSet::new(),
+        },
+    )
+    .await
+    .expect("apply on lookup candidate");
+    assert!(outcome.applied_fields.contains(&"year_began".to_owned()));
+    let after = entity::series::Entity::find_by_id(series_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.year, Some(2012));
+    assert_eq!(after.deck.as_deref(), Some("Sci-fi epic."));
+    // The real CV mapper also carries the publisher's CV id as an
+    // identifier (written alongside on the series entity), so match on
+    // the set rather than `.one()`.
+    let ids: Vec<String> = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("series"))
+        .filter(entity::external_id::Column::EntityId.eq(series_id.to_string()))
+        .filter(entity::external_id::Column::Source.eq("comicvine"))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.external_id)
+        .collect();
+    assert!(ids.contains(&"12345".to_owned()), "external ids: {ids:?}");
+}
+
+#[tokio::test]
+async fn lookup_issue_by_explicit_source_and_id_creates_issue_candidate() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let cv_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/issue/4000-67890"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(cv_ok(cv_issue_detail_json())))
+        .expect(1)
+        .mount(&cv_mock)
+        .await;
+    let app = TestApp::spawn_with_comicvine_at("k", cv_mock.uri()).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (lib_id, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let cbz = dir.path().join("test.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy", 1.0)
+        .insert(&app.state().db)
+        .await;
+    let issue = entity::issue::Entity::find_by_id(&issue_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!(
+            "/api/series/{series_id}/issues/{}/metadata/lookup",
+            issue.slug
+        ),
+        // CV type prefix tolerated + stripped.
+        json!({"source": "comicvine", "external_id": "4000-67890"}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["external_id"], "67890");
+    let run_id = body["run_id"].as_str().unwrap().to_owned();
+    let run = run_row(&app, &run_id).await;
+    assert_eq!(run.scope, "issue");
+    assert_eq!(run.scope_entity_id.as_deref(), Some(issue_id.as_str()));
+    let q = run.query.unwrap();
+    assert!(
+        q["lookup"].get("url").is_none(),
+        "no url in the explicit-pair form"
+    );
+
+    let resp = get(
+        &app,
+        &admin,
+        &format!(
+            "/api/series/{series_id}/issues/{}/metadata/candidates?run_id={run_id}",
+            issue.slug
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let c = &body["candidates"][0];
+    assert_eq!(c["bucket"], "high");
+    assert_eq!(c["candidate"]["kind"], "issue");
+    assert_eq!(c["candidate"]["issue_number"], "1");
+    assert_eq!(c["candidate"]["series_name"], "Saga");
+    assert_eq!(c["candidate"]["series_external_id"], "12345");
+    assert_eq!(body["match_outcome"]["kind"], "single_good");
+}
+
+#[tokio::test]
+async fn lookup_series_404_when_provider_has_no_such_record() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let cv_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/volume/4050-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status_code": 101,
+            "error": "Object Not Found",
+            "results": [],
+        })))
+        .mount(&cv_mock)
+        .await;
+    let app = TestApp::spawn_with_comicvine_at("k", cv_mock.uri()).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (_lib, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/lookup"),
+        json!({"url": "https://comicvine.gamespot.com/volume/4050-1/"}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let out = body_json(resp.into_body()).await;
+    assert_eq!(out["error"]["code"], "metadata.lookup_not_found");
+    let n = entity::metadata_run::Entity::find()
+        .count(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
 }

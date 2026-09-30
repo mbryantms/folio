@@ -32,6 +32,7 @@ use super::error;
 use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
 use crate::jobs::backfill::{self, BackfillKind};
+use crate::metadata::budget::{self, ProviderLastError, RequestBudget};
 use crate::metadata::comicvine::ComicVineClient;
 use crate::metadata::identifier::Source;
 use crate::metadata::metron::MetronClient;
@@ -67,6 +68,12 @@ pub struct ProviderView {
     /// — UI surfaces a "Enable to test" hint in that state.
     pub configured: bool,
     pub quota: Option<QuotaView>,
+    /// Headline request budget (WP-2.9): what the upstream reported on
+    /// its last response (Metron's daily window) or, for ComicVine, the
+    /// local hourly bucket. `None` when unconfigured or unknown.
+    pub budget: Option<RequestBudget>,
+    /// Most recent provider error, cleared on the next successful call.
+    pub last_error: Option<ProviderLastError>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -98,57 +105,66 @@ pub struct TestProviderResp {
 )]
 #[handler]
 pub async fn list_providers(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
+    let providers = provider_views(&app).await;
+    Json(ProvidersListResp { providers }).into_response()
+}
+
+/// One `ProviderView` per known provider — shared by `list_providers`
+/// and the dashboard so the two surfaces can't drift.
+async fn provider_views(app: &AppState) -> Vec<ProviderView> {
     let cfg = app.cfg();
-    let mut providers = Vec::new();
+    let redis = &app.jobs.redis;
+    let mut providers = Vec::with_capacity(2);
 
     let cv_key_set = cfg
         .comicvine_api_key
         .as_deref()
         .map(|s| !s.trim().is_empty())
         .unwrap_or(false);
-    let cv_enabled = cfg.comicvine_enabled && cv_key_set;
-    let cv_quota = if cv_key_set {
-        comicvine_client(&app)
-            .quota()
-            .await
-            .ok()
-            .map(snapshot_to_view)
+    let (cv_quota, cv_budget, cv_last_error) = if cv_key_set {
+        (
+            comicvine_client(app)
+                .quota()
+                .await
+                .ok()
+                .map(snapshot_to_view),
+            budget::for_provider(redis, Source::ComicVine).await,
+            budget::load_last_error(redis, Source::ComicVine).await,
+        )
     } else {
-        None
+        (None, None, None)
     };
     providers.push(ProviderView {
         id: Source::ComicVine.as_str().to_owned(),
         label: Source::ComicVine.label().to_owned(),
-        enabled: cv_enabled,
+        enabled: cfg.comicvine_enabled && cv_key_set,
         configured: cv_key_set,
         quota: cv_quota,
+        budget: cv_budget,
+        last_error: cv_last_error,
     });
 
-    let metron_set = cfg
-        .metron_username
-        .as_deref()
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false)
-        && cfg
-            .metron_password
-            .as_deref()
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
-    let metron_enabled = cfg.metron_enabled && metron_set;
-    let metron_quota = if metron_set {
-        metron_client(&app).quota().await.ok().map(snapshot_to_view)
-    } else {
-        None
+    let metron = metron_client(app);
+    let metron_set = metron.is_some();
+    let (metron_quota, metron_budget, metron_last_error) = match metron {
+        Some(client) => (
+            client.quota().await.ok().map(snapshot_to_view),
+            budget::for_provider(redis, Source::Metron).await,
+            budget::load_last_error(redis, Source::Metron).await,
+        ),
+        None => (None, None, None),
     };
     providers.push(ProviderView {
         id: Source::Metron.as_str().to_owned(),
         label: Source::Metron.label().to_owned(),
-        enabled: metron_enabled,
+        enabled: cfg.metron_enabled && metron_set,
         configured: metron_set,
         quota: metron_quota,
+        budget: metron_budget,
+        last_error: metron_last_error,
     });
 
-    Json(ProvidersListResp { providers }).into_response()
+    providers
 }
 
 #[utoipa::path(
@@ -209,23 +225,15 @@ pub async fn test_provider(
             (started.elapsed().as_millis() as u64, outcome)
         }
         Source::Metron => {
-            let username_set = cfg
-                .metron_username
-                .as_deref()
-                .map(|s| !s.trim().is_empty())
-                .unwrap_or(false);
-            let password_set = cfg
-                .metron_password
-                .as_deref()
-                .map(|s| !s.trim().is_empty())
-                .unwrap_or(false);
-            if !(username_set && password_set) {
+            // Token preferred, username + password fallback — the
+            // health check exercises whichever `from_config` picked.
+            let Some(client) = metron_client(&app) else {
                 return error(
                     StatusCode::BAD_REQUEST,
                     "metadata.no_credentials",
-                    "set the Metron username and password before testing",
+                    "set a Metron API token (or username and password) before testing",
                 );
-            }
+            };
             if !cfg.metron_enabled {
                 return error(
                     StatusCode::CONFLICT,
@@ -233,7 +241,6 @@ pub async fn test_provider(
                     "Metron integration is disabled; enable it before testing",
                 );
             }
-            let client = metron_client(&app);
             let started = std::time::Instant::now();
             let outcome = client.health_check().await;
             (started.elapsed().as_millis() as u64, outcome)
@@ -322,11 +329,9 @@ fn comicvine_client(app: &AppState) -> ComicVineClient {
     ComicVineClient::new(key, app.jobs.redis.clone())
 }
 
-fn metron_client(app: &AppState) -> MetronClient {
-    let cfg = app.cfg();
-    let username = cfg.metron_username.clone().unwrap_or_default();
-    let password = cfg.metron_password.clone().unwrap_or_default();
-    MetronClient::new(&username, &password, app.jobs.redis.clone())
+/// `None` when neither a token nor a username + password pair is set.
+fn metron_client(app: &AppState) -> Option<MetronClient> {
+    MetronClient::from_config(&app.cfg(), app.jobs.redis.clone())
 }
 
 impl Clone for QuotaView {
@@ -370,8 +375,6 @@ pub struct DashboardResp {
 )]
 #[handler]
 pub async fn dashboard(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
-    let cfg = app.cfg();
-
     let series_total = series::Entity::find()
         .filter(series::Column::RemovedAt.is_null())
         .count(&app.db)
@@ -394,53 +397,7 @@ pub async fn dashboard(State(app): State<AppState>, _admin: RequireAdmin) -> Res
         .await
         .unwrap_or(0) as i64;
 
-    // Reuse `list_providers`' provider-view builder for consistency.
-    let mut providers = Vec::new();
-    let cv_key_set = cfg
-        .comicvine_api_key
-        .as_deref()
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false);
-    let cv_enabled = cfg.comicvine_enabled && cv_key_set;
-    let cv_quota = if cv_key_set {
-        comicvine_client(&app)
-            .quota()
-            .await
-            .ok()
-            .map(snapshot_to_view)
-    } else {
-        None
-    };
-    providers.push(ProviderView {
-        id: Source::ComicVine.as_str().to_owned(),
-        label: Source::ComicVine.label().to_owned(),
-        enabled: cv_enabled,
-        configured: cv_key_set,
-        quota: cv_quota,
-    });
-    let metron_set = cfg
-        .metron_username
-        .as_deref()
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false)
-        && cfg
-            .metron_password
-            .as_deref()
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
-    let metron_enabled = cfg.metron_enabled && metron_set;
-    let metron_quota = if metron_set {
-        metron_client(&app).quota().await.ok().map(snapshot_to_view)
-    } else {
-        None
-    };
-    providers.push(ProviderView {
-        id: Source::Metron.as_str().to_owned(),
-        label: Source::Metron.label().to_owned(),
-        enabled: metron_enabled,
-        configured: metron_set,
-        quota: metron_quota,
-    });
+    let providers = provider_views(&app).await;
 
     Json(DashboardResp {
         series_total,

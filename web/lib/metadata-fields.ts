@@ -23,6 +23,7 @@ const METADATA_FIELD_LABELS: Record<string, string> = {
   store_date: "Store date",
   foc_date: "FOC date",
   page_count: "Page count",
+  total_issues: "Issue count",
   age_rating: "Age rating",
   format: "Format",
   language_code: "Language",

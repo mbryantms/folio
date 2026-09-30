@@ -98,7 +98,11 @@ mod m20270119_000001_series_provider_range;
 mod m20270120_000001_audit_log_created_at_idx;
 mod m20270121_000001_backfill_event_batch_id;
 mod m20270122_000001_new_issues_rail;
+mod m20270123_000001_drop_library_access_role;
+mod m20270123_000001_metadata_cache_validators;
+mod m20270124_000001_metadata_cover_hash;
 mod m20270201_000001_progress_run;
+mod m20270202_000001_writeback_hardening;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -205,7 +209,11 @@ impl MigratorTrait for Migrator {
             Box::new(m20270120_000001_audit_log_created_at_idx::Migration),
             Box::new(m20270121_000001_backfill_event_batch_id::Migration),
             Box::new(m20270122_000001_new_issues_rail::Migration),
+            Box::new(m20270123_000001_drop_library_access_role::Migration),
+            Box::new(m20270123_000001_metadata_cache_validators::Migration),
+            Box::new(m20270124_000001_metadata_cover_hash::Migration),
             Box::new(m20270201_000001_progress_run::Migration),
+            Box::new(m20270202_000001_writeback_hardening::Migration),
         ]
     }
 }

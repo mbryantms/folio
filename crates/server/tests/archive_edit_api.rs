@@ -221,6 +221,14 @@ async fn bulk_edit_fans_out_and_reports_skips() {
         .collect();
     assert!(skipped_ids.contains(&no_writeback.as_str()));
     assert!(skipped_ids.contains(&"does-not-exist"));
+    // The "files stay clean" invariant (docs/dev/archive-writes.md): the
+    // skip reason names the library flag so an operator sees why.
+    let reason = skipped
+        .iter()
+        .find(|s| s["issue_id"] == no_writeback)
+        .map(|s| s["reason"].as_str().unwrap_or_default().to_owned())
+        .unwrap();
+    assert!(reason.contains("writeback disabled"), "{reason}");
 }
 
 #[tokio::test]
@@ -313,6 +321,52 @@ async fn edit_rejected_when_writeback_disabled() {
     assert_eq!(
         body["error"]["code"],
         "validation.archive_writeback_disabled"
+    );
+}
+
+/// Restore-from-`.bak` rewrites the archive too, so it must honour the
+/// same gate as the editor (docs/dev/archive-writes.md, WP-2.4).
+#[tokio::test]
+async fn restore_rejected_when_writeback_disabled() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let issue_id = seed(&app, dir.path(), false, "issue.cbz", cbz_two_pages()).await;
+    // A backup exists on disk; the gate must fire before anything looks at it.
+    std::fs::write(dir.path().join("issue.cbz.bak"), cbz_two_pages()).unwrap();
+
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/issues/{issue_id}/archive/restore"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={}; __Host-comic_csrf={}",
+                        auth.session, auth.csrf
+                    ),
+                )
+                .header("X-CSRF-Token", &auth.csrf)
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(
+        body["error"]["code"],
+        "validation.archive_writeback_disabled"
+    );
+    // And the archive on disk is untouched.
+    assert_eq!(
+        std::fs::read(dir.path().join("issue.cbz")).unwrap(),
+        cbz_two_pages()
     );
 }
 

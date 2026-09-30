@@ -11,7 +11,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use entity::{issue, library, library_health_issue, library_user_access, series};
+use entity::{issue, library, library_health_issue, series};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DbBackend, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, Set, Statement, Value, sea_query::Expr,
@@ -122,7 +122,7 @@ pub async fn get_one(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
     // PERF-8: the rating, parent-series direction, library row, and
@@ -290,7 +290,7 @@ pub async fn metadata_overview(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -665,7 +665,7 @@ pub async fn update(
         Err(resp) => return resp,
     };
     let id = row.id.clone();
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -898,44 +898,18 @@ pub async fn update(
     am.user_edited = Set(serde_json::json!(edited_arr));
     am.updated_at = Set(chrono::Utc::now().fixed_offset());
 
-    let updated = match am.update(&app.db).await {
+    // The row update and its `field_provenance` user pins commit
+    // together (roadmap WP-2.5): a pin that failed to land used to leave
+    // the edit exposed to the next rescan. The legacy user_edited JSON
+    // column stays in place for columns without a MetadataField slot.
+    let keys: Vec<&str> = edited_arr.iter().map(String::as_str).collect();
+    let updated = match update_issue_with_user_pins(&app.db, am, &keys).await {
         Ok(m) => m,
         Err(e) => {
             tracing::error!(issue_id = %id, error = %e, "update issue failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-
-    // Dual-write to field_provenance for every touched scalar that
-    // maps to a typed MetadataField. The legacy user_edited JSON
-    // column stays in place as the scanner's user-precedence source
-    // — this is the de-risking work for the upcoming metadata-
-    // sidecar-writeback plan, whose composer reads field_provenance
-    // to preserve user pins across provider applies.
-    //
-    // Failures here are logged but don't fail the PATCH — the row
-    // already updated, and the next provider apply will overwrite
-    // the field_provenance row anyway. Don't double-roll-back.
-    for key in &edited_arr {
-        if let Some(field) = patch_field_key_to_metadata_field(key)
-            && let Err(e) = crate::metadata::writers::write_field_provenance(
-                &app.db,
-                "issue",
-                &updated.id,
-                field,
-                crate::metadata::writers::SetBy::User,
-                None,
-            )
-            .await
-        {
-            tracing::warn!(
-                issue_id = %updated.id,
-                field = %key,
-                error = %e,
-                "issue PATCH: field_provenance dual-write failed (non-fatal)"
-            );
-        }
-    }
 
     // Apply external-ID edits the user touched. Set-to-value writes
     // route through writers::set_external_id (set_by='user');
@@ -998,6 +972,11 @@ pub async fn update(
         }
     }
 
+    // WP-2.10: in a writeback library the archive is the record, so the
+    // edit is pushed into the sidecars too. The job re-enqueues the scoped
+    // rescan; the user pins written above protect the values through it.
+    let sidecar_rewrite = manual_rewrite_after_edit(&app, &updated.id, &user, &ctx).await;
+
     audit::record(
         &app.db,
         AuditEntry {
@@ -1008,6 +987,7 @@ pub async fn update(
             payload: serde_json::json!({
                 "changes": changes,
                 "user_edited": edited_arr,
+                "sidecar_rewrite": sidecar_rewrite.label(),
             }),
             ip: ctx.ip_string(),
             user_agent: ctx.user_agent.clone(),
@@ -1064,7 +1044,7 @@ pub async fn clear_field_pin(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
     // Also drop the field from `issue.user_edited` — the JSON list the
@@ -1250,7 +1230,7 @@ pub async fn next_in_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
     let limit = q.limit.unwrap_or(5).clamp(1, 20);
@@ -1337,7 +1317,7 @@ pub async fn prev_in_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -1416,7 +1396,7 @@ pub async fn list_issue_health(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -1670,10 +1650,11 @@ pub async fn bulk_metadata(
     let mut updated: u32 = 0;
     let mut skipped: u32 = 0;
     let mut forbidden: u32 = 0;
+    let mut sidecar_rewrites: u32 = 0;
     let mode_skip_if_set = matches!(req.mode, BulkMode::SkipIfSet);
 
     for row in rows {
-        if !visible_in_library(&app, &user, row.library_id).await {
+        if !access::issue_visible(&app, &user, &row).await {
             forbidden += 1;
             continue;
         }
@@ -1725,31 +1706,16 @@ pub async fn bulk_metadata(
         ));
         am.updated_at = Set(chrono::Utc::now().fixed_offset());
 
-        let row_id = row.id.clone();
-        match am.update(&app.db).await {
+        // Row update + user pins commit together (WP-2.5), same as the
+        // per-issue PATCH handler.
+        match update_issue_with_user_pins(&app.db, am, &touched_names).await {
             Ok(_) => {
                 updated += 1;
-                // Dual-write to field_provenance — same de-risking
-                // as the per-issue PATCH handler. Failures non-fatal.
-                for name in &touched_names {
-                    if let Some(field) = patch_field_key_to_metadata_field(name)
-                        && let Err(e) = crate::metadata::writers::write_field_provenance(
-                            &app.db,
-                            "issue",
-                            &row_id,
-                            field,
-                            crate::metadata::writers::SetBy::User,
-                            None,
-                        )
-                        .await
-                    {
-                        tracing::warn!(
-                            issue_id = %row_id,
-                            field = %name,
-                            error = %e,
-                            "bulk-metadata: field_provenance dual-write failed (non-fatal)"
-                        );
-                    }
+                // WP-2.10: writeback libraries get the edit in the file too.
+                if manual_rewrite_after_edit(&app, &row.id, &user, &ctx).await
+                    == crate::metadata::manual_writeback::IssueEnqueue::Enqueued
+                {
+                    sidecar_rewrites += 1;
                 }
             }
             Err(e) => {
@@ -1784,6 +1750,7 @@ pub async fn bulk_metadata(
                 "updated": updated,
                 "skipped": skipped,
                 "forbidden": forbidden,
+                "sidecar_rewrites": sidecar_rewrites,
                 "not_found": not_found,
             }),
             ip: ctx.ip_string(),
@@ -2033,6 +2000,11 @@ fn apply_issue_visibility(
         select = select.filter(
             issue::Column::LibraryId.is_in(visible.allowed.iter().copied().collect::<Vec<_>>()),
         );
+    }
+    // WP-2.7: age-rating cap — the issue's own rating, falling back to the
+    // series rating (unrated rows pass, see `library::age_rating`).
+    if let Some(cap) = visible.issue_cap_condition() {
+        select = select.filter(cap);
     }
     Some(select)
 }
@@ -2640,6 +2612,9 @@ pub async fn search(
         let ids: Vec<Uuid> = visible.allowed.iter().copied().collect();
         sel = sel.filter(issue::Column::LibraryId.is_in(ids));
     }
+    if let Some(cap) = visible.issue_cap_condition() {
+        sel = sel.filter(cap);
+    }
     let rows = match sel.all(&app.db).await {
         Ok(v) => v,
         Err(e) => {
@@ -2750,18 +2725,64 @@ async fn fetch_issue_snippets(
 
 // ───── helpers ─────
 
-async fn visible_in_library(app: &AppState, user: &CurrentUser, lib_id: Uuid) -> bool {
-    if user.role == "admin" {
-        return true;
+/// Persist an issue edit and pin every touched field that maps to a
+/// [`crate::metadata::MetadataField`] as `set_by='user'`, in ONE
+/// transaction. Roadmap WP-2.5: the pins used to be written after the
+/// row update, outside any transaction, with failures ignored — a lost
+/// pin meant the next rescan silently undid the edit.
+async fn update_issue_with_user_pins(
+    db: &sea_orm::DatabaseConnection,
+    am: entity::issue::ActiveModel,
+    touched_keys: &[&str],
+) -> Result<entity::issue::Model, sea_orm::DbErr> {
+    use sea_orm::TransactionTrait;
+    let txn = db.begin().await?;
+    let updated = am.update(&txn).await?;
+    for key in touched_keys {
+        if let Some(field) = patch_field_key_to_metadata_field(key) {
+            crate::metadata::writers::write_field_provenance(
+                &txn,
+                "issue",
+                &updated.id,
+                field,
+                crate::metadata::writers::SetBy::User,
+                None,
+            )
+            .await?;
+        }
     }
-    library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .filter(library_user_access::Column::LibraryId.eq(lib_id))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
+    txn.commit().await?;
+    Ok(updated)
+}
+
+/// WP-2.10: push a just-committed issue edit into the archive's sidecars
+/// when the library is in writeback mode. Never fails the request — the
+/// database already holds the edit; a failed enqueue is logged and the
+/// outcome is recorded on the audit row.
+async fn manual_rewrite_after_edit(
+    app: &AppState,
+    issue_id: &str,
+    user: &CurrentUser,
+    ctx: &RequestContext,
+) -> crate::metadata::manual_writeback::IssueEnqueue {
+    use crate::metadata::manual_writeback::{Actor, IssueEnqueue, enqueue_issue_rewrite};
+    let actor = Actor {
+        id: Some(user.id),
+        ip: ctx.ip_string(),
+        user_agent: ctx.user_agent.clone(),
+    };
+    match enqueue_issue_rewrite(app, issue_id, &actor, false).await {
+        Ok(outcome) => {
+            if let IssueEnqueue::Refused(reason) = &outcome {
+                tracing::warn!(issue_id, reason, "manual edit: sidecar rewrite refused");
+            }
+            outcome
+        }
+        Err(e) => {
+            tracing::error!(issue_id, error = %e, "manual edit: sidecar rewrite enqueue failed");
+            IssueEnqueue::Refused(format!("enqueue failed: {e}"))
+        }
+    }
 }
 
 /// Map a string key from `issue.user_edited` JSON to its

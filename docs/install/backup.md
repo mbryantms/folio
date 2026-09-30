@@ -176,3 +176,14 @@ cd /tmp/folio-restore-test
 - **Operator-facing config** — your `.env`, your reverse-proxy config,
   your TLS certs. These live outside the volumes; back up `/opt/folio/`
   as a tree.
+- **A per-user, app-level dump.** A Postgres dump restores the whole
+  server, but it is tied to this instance's issue ids: re-import the
+  library after a retag and the restored progress may point at rows
+  that no longer exist. Each user can download their own data —
+  progress, notes and bookmarks, collections, saved views, ratings,
+  pages, sidebar, reading log, preferences — as one JSON file from
+  **Settings → Account → Export my data** (`GET /api/me/export`).
+  Every issue in it is keyed by content hash and series name / year /
+  number, so it stays readable after a rebuild or on another host. The
+  shape is documented in [`docs/dev/export-format.md`](../dev/export-format.md).
+  There is no importer; it is a durable copy, not a restore path.

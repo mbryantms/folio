@@ -4,6 +4,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  budgetFraction,
+  budgetNote,
+  budgetResetSeconds,
+  budgetWindowLabel,
+  formatBudget,
   formatCountdown,
   formatRetryEta,
   isDepleted,
@@ -86,5 +91,73 @@ describe("providerLabel", () => {
     expect(providerLabel("comicvine")).toBe("ComicVine");
     expect(providerLabel("metron")).toBe("Metron");
     expect(providerLabel("gcd")).toBe("gcd");
+  });
+});
+
+// ───────── WP-2.9: upstream budget ─────────
+
+const NOW = Date.parse("2026-03-01T12:00:00Z");
+
+describe("budget helpers", () => {
+  it("labels windows and computes the remaining fraction", () => {
+    expect(budgetWindowLabel("minute")).toBe("this minute");
+    expect(budgetWindowLabel("hour")).toBe("this hour");
+    expect(budgetWindowLabel("day")).toBe("today");
+    expect(
+      budgetFraction({
+        limit: 5000,
+        remaining: 1250,
+        reset_at: "2026-03-01T15:00:00Z",
+        window: "day",
+      }),
+    ).toBe(0.25);
+    expect(
+      budgetFraction({
+        limit: 0,
+        remaining: 0,
+        reset_at: "2026-03-01T15:00:00Z",
+        window: "day",
+      }),
+    ).toBe(0);
+  });
+
+  it("formats the admin line with a countdown to the reset", () => {
+    const b = {
+      limit: 5000,
+      remaining: 812,
+      reset_at: "2026-03-01T15:00:00Z",
+      window: "day" as const,
+    };
+    expect(budgetResetSeconds(b, NOW)).toBe(3 * 3600);
+    expect(formatBudget(b, NOW)).toBe("812 of 5,000 left today · resets in 3h");
+    // A reset in the past drops the countdown.
+    expect(formatBudget({ ...b, reset_at: "2026-03-01T11:00:00Z" }, NOW)).toBe(
+      "812 of 5,000 left today",
+    );
+  });
+
+  it("only notes the budget in the dialog under 20%", () => {
+    const low = {
+      provider: "metron",
+      remaining_day: 812,
+      budget: {
+        limit: 5000,
+        remaining: 812,
+        reset_at: "2026-03-01T15:00:00Z",
+        window: "day" as const,
+      },
+    };
+    expect(budgetNote(low)).toBe("Metron: 812 of 5,000 requests left today");
+    expect(
+      budgetNote({
+        ...low,
+        budget: { ...low.budget, remaining: 4120 },
+      }),
+    ).toBeNull();
+    // Exactly 20% is not "below".
+    expect(
+      budgetNote({ ...low, budget: { ...low.budget, remaining: 1000 } }),
+    ).toBeNull();
+    expect(budgetNote({ provider: "comicvine", remaining_hour: 3 })).toBeNull();
   });
 });

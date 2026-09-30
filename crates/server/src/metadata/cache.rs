@@ -12,14 +12,50 @@
 //! rows older than `max(TTLs) * 2` to bound table growth.
 
 use crate::metadata::identifier::Source;
-use crate::metadata::provider::GenericMetadata;
+use crate::metadata::provider::{ConditionalFetch, GenericMetadata};
 use chrono::{DateTime, Duration, Utc};
 use entity::metadata_cache;
+use reqwest::header::{ETAG, HeaderMap, LAST_MODIFIED};
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Set};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock};
+
+/// HTTP validators stored alongside a cached payload (WP-2.9). Sent
+/// back as `If-None-Match` / `If-Modified-Since` on the next fetch once
+/// the row is past its TTL, so an unchanged upstream resource costs a
+/// `304` instead of a full download. Metron's detail endpoints send
+/// `Last-Modified`; the `ETag` slot covers endpoints that add one.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Validators {
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+}
+
+impl Validators {
+    /// Pull the validators off a response. Missing / non-ASCII headers
+    /// leave the slot `None`.
+    pub fn from_headers(headers: &HeaderMap) -> Self {
+        let read = |name| {
+            headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        };
+        Self {
+            etag: read(ETAG),
+            last_modified: read(LAST_MODIFIED),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.etag.is_none() && self.last_modified.is_none()
+    }
+}
 
 /// Version of the provider → [`GenericMetadata`] normalization. Stamped
 /// onto every cached payload by [`put`]; [`get`] treats a row whose
@@ -113,8 +149,17 @@ pub async fn get<C: ConnectionTrait>(
         return Ok(None);
     }
 
-    match serde_json::from_value::<GenericMetadata>(row.payload) {
-        Ok(m) => Ok(Some(m)),
+    Ok(decode_payload(provider, entity, external_id, row.payload))
+}
+
+fn decode_payload(
+    provider: Source,
+    entity: CacheEntity,
+    external_id: &str,
+    payload: serde_json::Value,
+) -> Option<GenericMetadata> {
+    match serde_json::from_value::<GenericMetadata>(payload) {
+        Ok(m) => Some(m),
         Err(e) => {
             // Schema drift — log and treat as miss so the next fetch
             // overwrites with the current shape.
@@ -125,9 +170,61 @@ pub async fn get<C: ConnectionTrait>(
                 error = %e,
                 "metadata_cache payload failed to deserialize; treating as miss"
             );
-            Ok(None)
+            None
         }
     }
+}
+
+/// A cached payload *regardless of TTL*, with the validators the
+/// upstream attached. Feeds the conditional-request path: an expired
+/// row is still a perfectly good body if the upstream says `304`.
+/// Schema-version mismatches and undecodable payloads are still misses
+/// — a 304 can't fix a payload written under an older mapping.
+pub async fn get_stale<C: ConnectionTrait>(
+    db: &C,
+    provider: Source,
+    entity: CacheEntity,
+    external_id: &str,
+) -> Result<Option<(GenericMetadata, Validators)>, sea_orm::DbErr> {
+    let Some(row) = metadata_cache::Entity::find_by_id((
+        provider.as_str().to_string(),
+        entity.as_str().to_string(),
+        external_id.to_string(),
+    ))
+    .one(db)
+    .await?
+    else {
+        return Ok(None);
+    };
+    if row.schema_version != CACHE_SCHEMA_VERSION {
+        return Ok(None);
+    }
+    let validators = Validators {
+        etag: row.etag,
+        last_modified: row.last_modified,
+    };
+    Ok(decode_payload(provider, entity, external_id, row.payload).map(|m| (m, validators)))
+}
+
+/// Refresh `fetched_at` on an existing row after a `304` so the TTL
+/// window restarts without rewriting the payload.
+pub async fn touch<C: ConnectionTrait>(
+    db: &C,
+    provider: Source,
+    entity: CacheEntity,
+    external_id: &str,
+) -> Result<(), sea_orm::DbErr> {
+    metadata_cache::Entity::update_many()
+        .col_expr(
+            metadata_cache::Column::FetchedAt,
+            sea_orm::sea_query::Expr::value(Utc::now()),
+        )
+        .filter(metadata_cache::Column::Provider.eq(provider.as_str()))
+        .filter(metadata_cache::Column::Entity.eq(entity.as_str()))
+        .filter(metadata_cache::Column::ExternalId.eq(external_id))
+        .exec(db)
+        .await?;
+    Ok(())
 }
 
 /// Lenient lookup of a cached series' display name + start year, for UI
@@ -163,13 +260,35 @@ pub async fn series_display_meta<C: ConnectionTrait>(
     Some((name, year))
 }
 
-/// Upsert a freshly-fetched payload.
+/// Upsert a freshly-fetched payload with no validators (clears any the
+/// row carried — the payload came from an unconditional fetch).
 pub async fn put<C: ConnectionTrait>(
     db: &C,
     provider: Source,
     entity: CacheEntity,
     external_id: &str,
     payload: &GenericMetadata,
+) -> Result<(), sea_orm::DbErr> {
+    put_with_validators(
+        db,
+        provider,
+        entity,
+        external_id,
+        payload,
+        &Validators::default(),
+    )
+    .await
+}
+
+/// Upsert a freshly-fetched payload together with the `ETag` /
+/// `Last-Modified` the upstream attached.
+pub async fn put_with_validators<C: ConnectionTrait>(
+    db: &C,
+    provider: Source,
+    entity: CacheEntity,
+    external_id: &str,
+    payload: &GenericMetadata,
+    validators: &Validators,
 ) -> Result<(), sea_orm::DbErr> {
     let json = serde_json::to_value(payload)
         .map_err(|e| sea_orm::DbErr::Custom(format!("serialize GenericMetadata: {e}")))?;
@@ -180,6 +299,8 @@ pub async fn put<C: ConnectionTrait>(
         payload: Set(json),
         fetched_at: Set(Utc::now().into()),
         schema_version: Set(CACHE_SCHEMA_VERSION),
+        etag: Set(validators.etag.clone()),
+        last_modified: Set(validators.last_modified.clone()),
     };
     metadata_cache::Entity::insert(am)
         .on_conflict(
@@ -192,6 +313,8 @@ pub async fn put<C: ConnectionTrait>(
                 metadata_cache::Column::Payload,
                 metadata_cache::Column::FetchedAt,
                 metadata_cache::Column::SchemaVersion,
+                metadata_cache::Column::Etag,
+                metadata_cache::Column::LastModified,
             ])
             .to_owned(),
         )
@@ -247,6 +370,90 @@ where
     let fresh = fetch().await?;
     let _ = put(db, provider, entity, external_id, &fresh).await;
     Ok(fresh)
+}
+
+/// Conditional-request twin of [`get_or_fetch`] (WP-2.9). Same
+/// single-flight shape, but on a miss the stale row (if any) supplies
+/// its validators to `fetch`; a [`ConditionalFetch::NotModified`]
+/// answer refreshes the row's `fetched_at` and returns the stale body,
+/// so an unchanged upstream resource costs one `304` instead of a
+/// download. A fresh body is stored with the validators it carried.
+///
+/// `fetch` is `Fn` (not `FnOnce`) because a `304` with no usable stale
+/// row — a provider bug, or a row purged between the two reads — has to
+/// be re-fetched unconditionally.
+pub async fn get_or_revalidate<C, F, Fut, E>(
+    db: &C,
+    provider: Source,
+    entity: CacheEntity,
+    external_id: &str,
+    ttl: Duration,
+    fetch: F,
+) -> Result<GenericMetadata, E>
+where
+    C: ConnectionTrait,
+    F: Fn(Option<Validators>) -> Fut,
+    Fut: Future<Output = Result<ConditionalFetch, E>>,
+{
+    if let Ok(Some(hit)) = get(db, provider, entity, external_id, ttl).await {
+        return Ok(hit);
+    }
+    let key = format!("{}:{}:{}", provider.as_str(), entity.as_str(), external_id);
+    let lock = {
+        let mut map = keyed_locks().lock().unwrap();
+        map.entry(key)
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+    let _guard = lock.lock().await;
+    if let Ok(Some(hit)) = get(db, provider, entity, external_id, ttl).await {
+        return Ok(hit);
+    }
+    let stale = get_stale(db, provider, entity, external_id)
+        .await
+        .ok()
+        .flatten();
+    let validators = stale
+        .as_ref()
+        .map(|(_, v)| v.clone())
+        .filter(|v| !v.is_empty());
+    let mut outcome = fetch(validators.clone()).await?;
+    if matches!(outcome, ConditionalFetch::NotModified) && stale.is_none() {
+        // A 304 with nothing to serve — only reachable if the row was
+        // purged between the two reads. Go unconditional once.
+        tracing::warn!(
+            provider = provider.as_str(),
+            entity = entity.as_str(),
+            external_id,
+            "metadata_cache: 304 with no cached body; refetching unconditionally"
+        );
+        outcome = fetch(None).await?;
+    }
+    match outcome {
+        ConditionalFetch::Fresh {
+            payload,
+            validators,
+        } => {
+            let _ =
+                put_with_validators(db, provider, entity, external_id, &payload, &validators).await;
+            Ok(*payload)
+        }
+        ConditionalFetch::NotModified => {
+            let _ = touch(db, provider, entity, external_id).await;
+            tracing::debug!(
+                provider = provider.as_str(),
+                entity = entity.as_str(),
+                external_id,
+                "metadata_cache revalidated via 304"
+            );
+            // Stale body is present here: the `is_none()` guard above
+            // re-fetched otherwise, and a provider only answers 304 to
+            // a validator-carrying request. Empty metadata is the
+            // defensive floor for a misbehaving upstream, not a path a
+            // conforming provider can reach.
+            Ok(stale.map(|(payload, _)| payload).unwrap_or_default())
+        }
+    }
 }
 
 /// Delete every cached payload for a provider — used when the operator

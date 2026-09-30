@@ -32,11 +32,13 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
+use crate::api::extractors::{OptionalValidated, Validated};
 use crate::api::saved_views::BatchTargets;
 use crate::auth::CurrentUser;
 use crate::jobs::{metadata_apply, metadata_search};
 use crate::metadata::apply::{self, ApplyArgs, ApplyMode};
 use crate::metadata::diff::{self, DiffResp};
+use crate::metadata::lookup::{self, LookupEntity};
 use crate::metadata::matcher::{IssueQueryFacts, SeriesQueryFacts};
 use crate::metadata::orchestrator;
 use crate::metadata::refresh::{self, RefreshOutcome, RefreshScope};
@@ -47,6 +49,7 @@ use server_macros::handler;
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(search_series))
+        .routes(routes!(lookup_series))
         .routes(routes!(candidates_series))
         .routes(routes!(proposed_diff_series))
         .routes(routes!(composite_diff_series))
@@ -58,6 +61,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(resume_series))
         .routes(routes!(sync_status_series))
         .routes(routes!(search_issue))
+        .routes(routes!(lookup_issue))
         .routes(routes!(candidates_issue))
         // POST + DELETE on one path → combined in a single routes!() call.
         .routes(routes!(accept_issue_metadata, unaccept_issue_metadata))
@@ -120,6 +124,78 @@ pub struct CandidatesResp {
     /// on quota; omitted while still `queued`/`searching`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quota: Option<QuotaStateView>,
+    /// What this run actually searched for (WP-2.8). Carries the
+    /// effective query facts (so the dialog's "Adjust query" form can
+    /// prefill from the run rather than re-resolving the entity) plus
+    /// the run's provenance flags: `overridden` when the user supplied
+    /// query overrides, `year_gate_relaxed` when the orchestrator fell
+    /// back to the cover-aware year gate, `lookup` when the run came
+    /// from a pasted provider URL / id. `None` only for legacy rows
+    /// with no stored query.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<SearchQueryView>,
+}
+
+/// Effective query + provenance flags for one run (WP-2.8). See
+/// [`CandidatesResp::query`].
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SearchQueryView {
+    /// `"series"` | `"issue"`.
+    pub kind: String,
+    /// Series name searched (the override when one was supplied).
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publisher: Option<String>,
+    /// Issue-scope only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue_number: Option<String>,
+    /// Human label, e.g. `Saga` / `Saga #12`.
+    pub label: String,
+    pub overridden: bool,
+    pub year_gate_relaxed: bool,
+    pub lookup: bool,
+}
+
+impl SearchQueryView {
+    fn from_stored(query: &Option<serde_json::Value>) -> Option<Self> {
+        let q = query.as_ref()?;
+        let kind = q.get("kind")?.as_str()?.to_owned();
+        let str_field = |k: &str| q.get(k).and_then(|v| v.as_str()).map(str::to_owned);
+        let int_field = |k: &str| q.get(k).and_then(|v| v.as_i64()).map(|n| n as i32);
+        let (name, year, issue_number) = match kind.as_str() {
+            "series" => (str_field("name")?, int_field("year"), None),
+            "issue" => (
+                str_field("series_name")?,
+                int_field("series_year"),
+                str_field("issue_number"),
+            ),
+            _ => return None,
+        };
+        let label = label_from_query(query).unwrap_or_else(|| name.clone());
+        let flag = |k: &str| {
+            q.get(k)
+                .map(|v| match v {
+                    serde_json::Value::Bool(b) => *b,
+                    serde_json::Value::Null => false,
+                    serde_json::Value::Object(m) => !m.is_empty(),
+                    _ => true,
+                })
+                .unwrap_or(false)
+        };
+        Some(Self {
+            kind,
+            name,
+            year,
+            publisher: str_field("publisher"),
+            issue_number,
+            label,
+            overridden: flag("overrides"),
+            year_gate_relaxed: flag("year_gate_relaxed"),
+            lookup: flag("lookup"),
+        })
+    }
 }
 
 /// Per-provider remaining-quota view for the match dialog (audit B13).
@@ -136,6 +212,10 @@ pub struct ProviderQuotaView {
     pub remaining_day: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seconds_until_reset: Option<u64>,
+    /// Headline upstream budget (WP-2.9) — the dialog shows a
+    /// "N of M requests left today" note when it drops under 20%.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget: Option<crate::metadata::budget::RequestBudget>,
 }
 
 /// Quota state attached to a finalized run (audit B13).
@@ -175,6 +255,135 @@ pub struct CandidatesQuery {
     /// Pin a specific run; defaults to the latest run for the
     /// scope/entity.
     pub run_id: Option<Uuid>,
+}
+
+/// Optional per-run query overrides for `POST …/metadata/search`
+/// (WP-2.8). Each supplied field replaces the corresponding fact read
+/// from the local series / issue row **for this run only** — the rows
+/// themselves are never mutated. Absent body ⇒ every field `None` ⇒
+/// the pre-existing behaviour.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, garde::Validate, utoipa::ToSchema)]
+pub struct SearchOverrides {
+    /// Series name to search instead of the local one.
+    #[serde(default)]
+    #[garde(inner(length(chars, min = 1, max = 200), custom(non_blank)))]
+    pub name: Option<String>,
+    /// Series start year. Supplying it also pins the hard year gate —
+    /// the orchestrator won't relax to the cover-aware gate for a year
+    /// the user asserted.
+    #[serde(default)]
+    #[garde(inner(range(min = 1900, max = 2100)))]
+    pub year: Option<i32>,
+    #[serde(default)]
+    #[garde(inner(length(chars, min = 1, max = 200), custom(non_blank)))]
+    pub publisher: Option<String>,
+    /// Issue-scope only; ignored on a series search. Lets an issue with
+    /// no parsed `number_raw` be searched at all.
+    #[serde(default)]
+    #[garde(inner(length(chars, min = 1, max = 32), custom(non_blank)))]
+    pub issue_number: Option<String>,
+}
+
+impl SearchOverrides {
+    fn is_empty(&self) -> bool {
+        self.name.is_none()
+            && self.year.is_none()
+            && self.publisher.is_none()
+            && self.issue_number.is_none()
+    }
+
+    /// Only the supplied fields, for the `overrides` note on
+    /// `metadata_run.query`.
+    fn as_note(&self) -> serde_json::Value {
+        let mut m = serde_json::Map::new();
+        if let Some(v) = &self.name {
+            m.insert(
+                "name".into(),
+                serde_json::Value::String(v.trim().to_owned()),
+            );
+        }
+        if let Some(v) = self.year {
+            m.insert("year".into(), serde_json::Value::from(v));
+        }
+        if let Some(v) = &self.publisher {
+            m.insert(
+                "publisher".into(),
+                serde_json::Value::String(v.trim().to_owned()),
+            );
+        }
+        if let Some(v) = &self.issue_number {
+            m.insert(
+                "issue_number".into(),
+                serde_json::Value::String(v.trim().to_owned()),
+            );
+        }
+        serde_json::Value::Object(m)
+    }
+
+    fn apply_to_series(&self, facts: &mut SeriesQueryFacts) {
+        if let Some(v) = &self.name {
+            facts.name = v.trim().to_owned();
+        }
+        if let Some(v) = self.year {
+            facts.year = Some(v);
+        }
+        if let Some(v) = &self.publisher {
+            facts.publisher = Some(v.trim().to_owned());
+        }
+    }
+
+    fn apply_to_issue(&self, facts: &mut IssueQueryFacts) {
+        if let Some(v) = &self.name {
+            facts.series_name = v.trim().to_owned();
+        }
+        if let Some(v) = self.year {
+            facts.series_year = Some(v);
+        }
+        if let Some(v) = &self.publisher {
+            facts.publisher = Some(v.trim().to_owned());
+        }
+        if let Some(v) = &self.issue_number {
+            facts.issue_number = v.trim().to_owned();
+        }
+    }
+}
+
+fn non_blank(value: &str, _: &()) -> garde::Result {
+    if value.trim().is_empty() {
+        return Err(garde::Error::new("must not be blank"));
+    }
+    Ok(())
+}
+
+/// Body for `POST …/metadata/lookup` (WP-2.8). Either paste a provider
+/// page / API URL, or name the provider + its native id explicitly. The
+/// URL wins when both are present.
+#[derive(Debug, Default, Clone, Deserialize, garde::Validate, utoipa::ToSchema)]
+pub struct LookupReq {
+    /// ComicVine (`…/4050-<id>/`, `…/4000-<id>/`) or Metron
+    /// (`metron.cloud/series/<id>/`, `…/api/issue/<id>/`) URL.
+    #[serde(default)]
+    #[garde(inner(length(chars, max = 2048)))]
+    pub url: Option<String>,
+    /// `comicvine` | `metron`.
+    #[serde(default)]
+    #[garde(inner(length(chars, max = 32)))]
+    pub source: Option<String>,
+    /// Provider-native numeric id (a `4050-` / `4000-` prefix is
+    /// tolerated and stripped).
+    #[serde(default)]
+    #[garde(inner(length(chars, max = 64)))]
+    pub external_id: Option<String>,
+}
+
+/// `POST …/metadata/lookup` response. The run is already `completed`
+/// with a single HIGH candidate at ordinal 0, so the client polls
+/// `…/metadata/candidates?run_id=` once and goes straight to preview.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct LookupResp {
+    pub run_id: Uuid,
+    pub source: String,
+    pub external_id: String,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -263,11 +472,13 @@ pub struct ApplyAcceptedResp {
     operation_id = "metadata_search_series",    post,
     path = "/series/{slug}/metadata/search",
     params(("slug" = String, Path)),
+    request_body(content = Option<SearchOverrides>, description = "Optional query overrides (WP-2.8); omit the body for the local facts"),
     responses(
         (status = 202, body = SearchStartedResp),
         (status = 400, description = "no providers configured"),
         (status = 403, description = "library access denied"),
         (status = 404, description = "series not found"),
+        (status = 422, description = "override validation failed"),
         (status = 502, description = "queue error"),
     )
 )]
@@ -277,12 +488,13 @@ pub async fn search_series(
     user: CurrentUser,
     Extension(_ctx): Extension<RequestContext>,
     Path(slug): Path<String>,
+    OptionalValidated(overrides): OptionalValidated<SearchOverrides>,
 ) -> Response {
     let s = match crate::api::series::find_by_slug(&app.db, &slug).await {
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -290,12 +502,15 @@ pub async fn search_series(
         );
     }
 
-    let facts = SeriesQueryFacts {
+    let mut facts = SeriesQueryFacts {
         name: s.name.clone(),
         year: s.year,
         publisher: s.publisher.clone(),
         volume: s.volume,
     };
+    // WP-2.8: overrides replace the local facts for this run only.
+    overrides.apply_to_series(&mut facts);
+    let year_asserted = overrides.year.is_some();
 
     let providers = orchestrator::build_providers(&app.cfg(), app.jobs.redis.clone());
     if providers.is_empty() {
@@ -336,6 +551,10 @@ pub async fn search_series(
         }
     };
 
+    if !overrides.is_empty() {
+        note_overrides(&app, new_run_id, &overrides).await;
+    }
+
     let winner_run_id = match metadata_search::reserve_series_slot(&app, s.id, new_run_id).await {
         Ok(id) => id,
         Err(e) => {
@@ -368,6 +587,7 @@ pub async fn search_series(
             series_id: s.id,
             library_id: Some(s.library_id),
             facts,
+            year_asserted,
         })
         .await
     {
@@ -413,7 +633,7 @@ pub async fn candidates_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -496,7 +716,7 @@ pub async fn sync_status_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -569,7 +789,7 @@ async fn toggle_metadata_sync_paused(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(app, user, s.library_id).await {
+    if !crate::library::access::series_visible(app, user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -623,11 +843,13 @@ async fn toggle_metadata_sync_paused(
     operation_id = "metadata_search_issue",    post,
     path = "/series/{slug}/issues/{issue_slug}/metadata/search",
     params(("slug" = String, Path), ("issue_slug" = String, Path)),
+    request_body(content = Option<SearchOverrides>, description = "Optional query overrides (WP-2.8); omit the body for the local facts"),
     responses(
         (status = 202, body = SearchStartedResp),
         (status = 400, description = "no providers configured"),
         (status = 403, description = "library access denied"),
         (status = 404, description = "issue not found"),
+        (status = 422, description = "override validation failed"),
         (status = 502, description = "queue error"),
     )
 )]
@@ -637,11 +859,12 @@ pub async fn search_issue(
     user: CurrentUser,
     Extension(_ctx): Extension<RequestContext>,
     Path((slug, issue_slug)): Path<(String, String)>,
+    OptionalValidated(overrides): OptionalValidated<SearchOverrides>,
 ) -> Response {
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -649,15 +872,28 @@ pub async fn search_issue(
         );
     }
 
-    let Some(issue_number) = i.number_raw.clone().filter(|s| !s.trim().is_empty()) else {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "metadata.no_issue_number",
-            "issue has no number_raw; can't search without it",
-        );
+    // WP-2.8: an `issue_number` override makes an un-numbered issue
+    // searchable; otherwise the local `number_raw` is required.
+    let issue_number = match overrides
+        .issue_number
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+    {
+        Some(n) => n.to_owned(),
+        None => match i.number_raw.clone().filter(|s| !s.trim().is_empty()) {
+            Some(n) => n,
+            None => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "metadata.no_issue_number",
+                    "issue has no number_raw; supply an issue_number override to search",
+                );
+            }
+        },
     };
 
-    let facts = IssueQueryFacts {
+    let mut facts = IssueQueryFacts {
         series_name: s.name.clone(),
         series_year: s.year,
         publisher: s.publisher.clone(),
@@ -665,6 +901,8 @@ pub async fn search_issue(
         issue_number,
         issue_year: i.year,
     };
+    overrides.apply_to_issue(&mut facts);
+    let year_asserted = overrides.year.is_some();
 
     let providers = orchestrator::build_providers(&app.cfg(), app.jobs.redis.clone());
     if providers.is_empty() {
@@ -712,6 +950,10 @@ pub async fn search_issue(
         }
     };
 
+    if !overrides.is_empty() {
+        note_overrides(&app, new_run_id, &overrides).await;
+    }
+
     let winner_run_id = match metadata_search::reserve_issue_slot(&app, &i.id, new_run_id).await {
         Ok(id) => id,
         Err(e) => {
@@ -742,6 +984,7 @@ pub async fn search_issue(
             library_id: Some(s.library_id),
             facts,
             series_targets,
+            year_asserted,
         })
         .await
     {
@@ -764,6 +1007,329 @@ pub async fn search_issue(
         .into_response()
 }
 
+// ───────── lookup by provider URL / id (WP-2.8) ─────────
+
+#[utoipa::path(
+    operation_id = "metadata_lookup_series",    post,
+    path = "/series/{slug}/metadata/lookup",
+    params(("slug" = String, Path)),
+    request_body = LookupReq,
+    responses(
+        (status = 200, body = LookupResp),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "series not found / provider has no such record"),
+        (status = 422, description = "bad URL / id, or provider not configured"),
+        (status = 502, description = "provider error"),
+        (status = 503, description = "provider quota exhausted"),
+    )
+)]
+#[handler]
+pub async fn lookup_series(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Extension(_ctx): Extension<RequestContext>,
+    Path(slug): Path<String>,
+    Validated(req): Validated<LookupReq>,
+) -> Response {
+    let s = match crate::api::series::find_by_slug(&app.db, &slug).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    if !user_can_see_library(&app, &user, s.library_id).await {
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
+    }
+    let facts = SeriesQueryFacts {
+        name: s.name.clone(),
+        year: s.year,
+        publisher: s.publisher.clone(),
+        volume: s.volume,
+    };
+    run_lookup(
+        &app,
+        &user,
+        LookupEntity::Series,
+        &req,
+        LookupTarget {
+            scope: orchestrator::scope::SERIES,
+            scope_entity_id: s.id.to_string(),
+            library_id: s.library_id,
+            query: metadata_search::series_stored_query(&facts),
+        },
+    )
+    .await
+}
+
+#[utoipa::path(
+    operation_id = "metadata_lookup_issue",    post,
+    path = "/series/{slug}/issues/{issue_slug}/metadata/lookup",
+    params(("slug" = String, Path), ("issue_slug" = String, Path)),
+    request_body = LookupReq,
+    responses(
+        (status = 200, body = LookupResp),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "issue not found / provider has no such record"),
+        (status = 422, description = "bad URL / id, or provider not configured"),
+        (status = 502, description = "provider error"),
+        (status = 503, description = "provider quota exhausted"),
+    )
+)]
+#[handler]
+pub async fn lookup_issue(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Extension(_ctx): Extension<RequestContext>,
+    Path((slug, issue_slug)): Path<(String, String)>,
+    Validated(req): Validated<LookupReq>,
+) -> Response {
+    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
+        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+    };
+    if !user_can_see_library(&app, &user, s.library_id).await {
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
+    }
+    let facts = IssueQueryFacts {
+        series_name: s.name.clone(),
+        series_year: s.year,
+        publisher: s.publisher.clone(),
+        volume: s.volume,
+        issue_number: i.number_raw.clone().unwrap_or_default(),
+        issue_year: i.year,
+    };
+    run_lookup(
+        &app,
+        &user,
+        LookupEntity::Issue,
+        &req,
+        LookupTarget {
+            scope: orchestrator::scope::ISSUE,
+            scope_entity_id: i.id.clone(),
+            library_id: s.library_id,
+            query: metadata_search::issue_stored_query(&facts),
+        },
+    )
+    .await
+}
+
+/// The local entity a lookup run is recorded against.
+struct LookupTarget {
+    scope: &'static str,
+    scope_entity_id: String,
+    library_id: Uuid,
+    query: orchestrator::StoredQuery,
+}
+
+/// Shared body of [`lookup_series`] / [`lookup_issue`]: resolve the
+/// request into a provider ref, fetch the detail record through the
+/// provider's cache + rate bucket, and persist a completed run holding
+/// that one record as a HIGH candidate. Rejections are 422 with the
+/// field named in `error.details` so the dialog binds them inline.
+async fn run_lookup(
+    app: &AppState,
+    user: &CurrentUser,
+    entity: LookupEntity,
+    req: &LookupReq,
+    target: LookupTarget,
+) -> Response {
+    let provider_ref = match lookup::resolve(
+        entity,
+        req.url.as_deref(),
+        req.source.as_deref(),
+        req.external_id.as_deref(),
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            return crate::api::respond_with_field_errors(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                shared::error::ApiErrorCode::Validation,
+                e.to_string(),
+                vec![shared::error::FieldError {
+                    field: e.field().to_owned(),
+                    message: e.to_string(),
+                }],
+            );
+        }
+    };
+    let Some(provider) = apply::build_provider(app, provider_ref.source) else {
+        let msg = format!(
+            "{} is not configured + enabled; add credentials under Admin → Metadata → Providers",
+            provider_ref.source.as_str()
+        );
+        return crate::api::respond_with_field_errors(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            shared::error::ApiErrorCode::Validation,
+            msg.clone(),
+            vec![shared::error::FieldError {
+                field: if req.url.as_deref().is_some_and(|u| !u.trim().is_empty()) {
+                    "url".into()
+                } else {
+                    "source".into()
+                },
+                message: msg,
+            }],
+        );
+    };
+
+    let detail = match entity {
+        LookupEntity::Series => {
+            apply::fetch_series_detail(app, &*provider, &provider_ref.external_id).await
+        }
+        LookupEntity::Issue => {
+            apply::fetch_issue_detail(app, &*provider, &provider_ref.external_id).await
+        }
+    };
+    let detail = match detail {
+        Ok(d) => d,
+        Err(crate::metadata::ProviderError::NotFound(_)) => {
+            return error(
+                StatusCode::NOT_FOUND,
+                "metadata.lookup_not_found",
+                &format!(
+                    "{} has no {} with id {}",
+                    provider_ref.source.as_str(),
+                    entity.as_str(),
+                    provider_ref.external_id
+                ),
+            );
+        }
+        Err(crate::metadata::ProviderError::QuotaExceeded { retry_after_secs }) => {
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "metadata.quota_exhausted",
+                &format!(
+                    "{} is out of quota; retry in {retry_after_secs}s",
+                    provider_ref.source.as_str()
+                ),
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                source = provider_ref.source.as_str(),
+                external_id = %provider_ref.external_id,
+                error = %e,
+                "metadata lookup: provider fetch failed"
+            );
+            return error(
+                StatusCode::BAD_GATEWAY,
+                "metadata.provider_error",
+                &format!("{} lookup failed: {e}", provider_ref.source.as_str()),
+            );
+        }
+    };
+
+    let payload = match entity {
+        LookupEntity::Series => {
+            orchestrator::CandidatePayload::Series(lookup::series_candidate_from_detail(
+                provider_ref.source,
+                &provider_ref.external_id,
+                &detail,
+            ))
+        }
+        LookupEntity::Issue => {
+            orchestrator::CandidatePayload::Issue(lookup::issue_candidate_from_detail(
+                provider_ref.source,
+                &provider_ref.external_id,
+                &detail,
+            ))
+        }
+    };
+    let candidate = orchestrator::RankedCandidate {
+        source: provider_ref.source,
+        external_id: provider_ref.external_id.clone(),
+        // A user-pointed record is by definition the match: full text
+        // score, no cover Hamming (none was compared).
+        score: crate::metadata::matcher::Score {
+            total: 100.0,
+            name: 100.0,
+            year: 100.0,
+            publisher: 100.0,
+            issue_number: 100.0,
+            volume: 0.0,
+            cover_hamming: None,
+            matched_via_alternate: false,
+        },
+        bucket: crate::metadata::matcher::Confidence::High,
+        payload,
+    };
+
+    let providers_listed = [provider_ref.source];
+    let run_id = match orchestrator::start_run(
+        &app.db,
+        orchestrator::StartRunArgs {
+            scope: target.scope,
+            scope_entity_id: Some(target.scope_entity_id),
+            library_id: Some(target.library_id),
+            triggered_by: Some(user.id),
+            trigger_kind: orchestrator::trigger_kind::MANUAL,
+            providers: &providers_listed,
+            query: target.query,
+            batch_id: None,
+        },
+    )
+    .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::error!(error = %e, "metadata lookup: start_run failed");
+            return error(
+                StatusCode::BAD_GATEWAY,
+                "metadata.queue",
+                "run insert failed",
+            );
+        }
+    };
+    let mut note = serde_json::json!({
+        "source": provider_ref.source.as_str(),
+        "external_id": provider_ref.external_id,
+    });
+    if let Some(u) = req.url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+        note["url"] = serde_json::Value::String(u.to_owned());
+    }
+    if let Err(e) =
+        orchestrator::annotate_query(&app.db, run_id, serde_json::json!({ "lookup": note })).await
+    {
+        tracing::warn!(run_id = %run_id, error = %e, "metadata lookup: annotation failed");
+    }
+    if let Err(e) = orchestrator::finalize_lookup_run(&app.db, run_id, &candidate).await {
+        tracing::error!(error = %e, "metadata lookup: finalize failed");
+        let _ = orchestrator::fail_run(&app.db, run_id, "lookup finalize failed").await;
+        return error(
+            StatusCode::BAD_GATEWAY,
+            "metadata.queue",
+            "run finalize failed",
+        );
+    }
+
+    Json(LookupResp {
+        run_id,
+        source: provider_ref.source.as_str().to_owned(),
+        external_id: provider_ref.external_id,
+    })
+    .into_response()
+}
+
+/// Record the user's query overrides on the run (WP-2.8). Soft-fails:
+/// the note is advisory, the job payload already carries the effective
+/// facts.
+async fn note_overrides(app: &AppState, run_id: Uuid, overrides: &SearchOverrides) {
+    if let Err(e) = orchestrator::annotate_query(
+        &app.db,
+        run_id,
+        serde_json::json!({ "overrides": overrides.as_note() }),
+    )
+    .await
+    {
+        tracing::warn!(run_id = %run_id, error = %e, "metadata_search: overrides annotation failed");
+    }
+}
+
 #[utoipa::path(
     operation_id = "metadata_candidates_issue",    get,
     path = "/series/{slug}/issues/{issue_slug}/metadata/candidates",
@@ -784,7 +1350,7 @@ pub async fn candidates_issue(
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -851,7 +1417,7 @@ async fn set_issue_metadata_accepted(
     let Some((s, i)) = find_series_issue(app, slug, issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(app, user, s.library_id).await {
+    if !crate::library::access::series_visible(app, user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1015,7 +1581,7 @@ pub async fn proposed_diff_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1076,7 +1642,7 @@ pub async fn apply_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1201,7 +1767,7 @@ pub async fn proposed_diff_issue(
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1287,7 +1853,7 @@ pub async fn composite_diff_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1350,7 +1916,7 @@ pub async fn composite_diff_issue(
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1417,7 +1983,7 @@ pub async fn apply_issue(
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1745,7 +2311,7 @@ pub async fn composite_apply_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1822,7 +2388,7 @@ pub async fn composite_apply_issue(
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -1977,7 +2543,7 @@ pub async fn create_series_batch(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -2084,7 +2650,7 @@ pub async fn create_series_selection_batch(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -3090,6 +3656,7 @@ async fn build_candidates_resp(app: &AppState, run: metadata_run::Model) -> Cand
         })
         .collect();
     let quota = build_quota_state(app, &run).await;
+    let query = SearchQueryView::from_stored(&run.query);
     CandidatesResp {
         run_id: run.id,
         status: run.status,
@@ -3104,6 +3671,7 @@ async fn build_candidates_resp(app: &AppState, run: metadata_run::Model) -> Cand
         candidates,
         match_outcome,
         quota,
+        query,
     }
 }
 
@@ -3126,12 +3694,14 @@ async fn build_quota_state(app: &AppState, run: &metadata_run::Model) -> Option<
     let providers = orchestrator::build_providers(&app.cfg(), app.jobs.redis.clone());
     let mut views = Vec::with_capacity(providers.len());
     for p in &providers {
+        let budget = crate::metadata::budget::for_provider(&app.jobs.redis, p.id()).await;
         match p.quota().await {
             Ok(snap) => views.push(ProviderQuotaView {
                 provider: snap.provider.as_str().to_owned(),
                 remaining_hour: snap.remaining_hour,
                 remaining_day: snap.remaining_day,
                 seconds_until_reset: snap.seconds_until_reset,
+                budget,
             }),
             // A Redis hiccup shouldn't drop the provider — report it with
             // no numbers so the dialog still knows it's configured.
@@ -3140,6 +3710,7 @@ async fn build_quota_state(app: &AppState, run: &metadata_run::Model) -> Option<
                 remaining_hour: None,
                 remaining_day: None,
                 seconds_until_reset: None,
+                budget,
             }),
         }
     }

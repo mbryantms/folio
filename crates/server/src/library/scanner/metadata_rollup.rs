@@ -158,264 +158,300 @@ pub async fn replace_issue_metadata<C: ConnectionTrait>(
     issue_id: &str,
     inputs: &IssueMetadataInputs<'_>,
 ) -> Result<(), sea_orm::DbErr> {
+    replace_issue_metadata_skipping(db, issue_id, inputs, &std::collections::HashSet::new()).await
+}
+
+/// [`replace_issue_metadata`] that leaves the junctions named in `skip`
+/// untouched. The scanner passes the junction fields whose
+/// `field_provenance` is user- or provider-owned (roadmap WP-2.5): those
+/// rows were written by `writers::set_issue_*` with person ids and
+/// ordinals, and rebuilding them from the CSV read-cache would both drop
+/// that detail and, because the two shapes never compare equal, churn
+/// on every rescan.
+pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
+    db: &C,
+    issue_id: &str,
+    inputs: &IssueMetadataInputs<'_>,
+    skip: &std::collections::HashSet<crate::metadata::MetadataField>,
+) -> Result<(), sea_orm::DbErr> {
+    use crate::metadata::MetadataField as F;
     use std::collections::HashSet;
 
     // ───── genres ─────
-    let desired_genres: Vec<String> = inputs.genre.map(split_csv).unwrap_or_default();
-    let existing_genres: HashSet<String> = issue_genre::Entity::find()
-        .filter(issue_genre::Column::IssueId.eq(issue_id))
-        .all(db)
-        .await?
-        .into_iter()
-        .map(|r| r.genre)
-        .collect();
-    let desired_genres_set: HashSet<String> = desired_genres.iter().cloned().collect();
-    if desired_genres_set != existing_genres {
-        issue_genre::Entity::delete_many()
+    if !skip.contains(&F::Genres) {
+        let desired_genres: Vec<String> = inputs.genre.map(split_csv).unwrap_or_default();
+        let existing_genres: HashSet<String> = issue_genre::Entity::find()
             .filter(issue_genre::Column::IssueId.eq(issue_id))
-            .exec(db)
-            .await?;
-        if !desired_genres.is_empty() {
-            let rows: Vec<issue_genre::ActiveModel> = desired_genres
-                .into_iter()
-                .map(|g| issue_genre::ActiveModel {
-                    issue_id: Set(issue_id.to_string()),
-                    genre: Set(g),
-                })
-                .collect();
-            issue_genre::Entity::insert_many(rows)
-                .on_conflict(
-                    OnConflict::columns([issue_genre::Column::IssueId, issue_genre::Column::Genre])
-                        .do_nothing()
-                        .to_owned(),
-                )
-                .try_insert()
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|r| r.genre)
+            .collect();
+        let desired_genres_set: HashSet<String> = desired_genres.iter().cloned().collect();
+        if desired_genres_set != existing_genres {
+            issue_genre::Entity::delete_many()
+                .filter(issue_genre::Column::IssueId.eq(issue_id))
                 .exec(db)
                 .await?;
+            if !desired_genres.is_empty() {
+                let rows: Vec<issue_genre::ActiveModel> = desired_genres
+                    .into_iter()
+                    .map(|g| issue_genre::ActiveModel {
+                        issue_id: Set(issue_id.to_string()),
+                        genre: Set(g),
+                    })
+                    .collect();
+                issue_genre::Entity::insert_many(rows)
+                    .on_conflict(
+                        OnConflict::columns([
+                            issue_genre::Column::IssueId,
+                            issue_genre::Column::Genre,
+                        ])
+                        .do_nothing()
+                        .to_owned(),
+                    )
+                    .try_insert()
+                    .exec(db)
+                    .await?;
+            }
         }
     }
 
     // ───── tags ─────
-    let desired_tags: Vec<String> = inputs.tags.map(split_csv).unwrap_or_default();
-    let existing_tags: HashSet<String> = issue_tag::Entity::find()
-        .filter(issue_tag::Column::IssueId.eq(issue_id))
-        .all(db)
-        .await?
-        .into_iter()
-        .map(|r| r.tag)
-        .collect();
-    let desired_tags_set: HashSet<String> = desired_tags.iter().cloned().collect();
-    if desired_tags_set != existing_tags {
-        issue_tag::Entity::delete_many()
+    if !skip.contains(&F::Tags) {
+        let desired_tags: Vec<String> = inputs.tags.map(split_csv).unwrap_or_default();
+        let existing_tags: HashSet<String> = issue_tag::Entity::find()
             .filter(issue_tag::Column::IssueId.eq(issue_id))
-            .exec(db)
-            .await?;
-        if !desired_tags.is_empty() {
-            let rows: Vec<issue_tag::ActiveModel> = desired_tags
-                .into_iter()
-                .map(|t| issue_tag::ActiveModel {
-                    issue_id: Set(issue_id.to_string()),
-                    tag: Set(t),
-                })
-                .collect();
-            issue_tag::Entity::insert_many(rows)
-                .on_conflict(
-                    OnConflict::columns([issue_tag::Column::IssueId, issue_tag::Column::Tag])
-                        .do_nothing()
-                        .to_owned(),
-                )
-                .try_insert()
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|r| r.tag)
+            .collect();
+        let desired_tags_set: HashSet<String> = desired_tags.iter().cloned().collect();
+        if desired_tags_set != existing_tags {
+            issue_tag::Entity::delete_many()
+                .filter(issue_tag::Column::IssueId.eq(issue_id))
                 .exec(db)
                 .await?;
+            if !desired_tags.is_empty() {
+                let rows: Vec<issue_tag::ActiveModel> = desired_tags
+                    .into_iter()
+                    .map(|t| issue_tag::ActiveModel {
+                        issue_id: Set(issue_id.to_string()),
+                        tag: Set(t),
+                    })
+                    .collect();
+                issue_tag::Entity::insert_many(rows)
+                    .on_conflict(
+                        OnConflict::columns([issue_tag::Column::IssueId, issue_tag::Column::Tag])
+                            .do_nothing()
+                            .to_owned(),
+                    )
+                    .try_insert()
+                    .exec(db)
+                    .await?;
+            }
         }
     }
 
     // ───── credits ─────
-    let mut desired_credits: Vec<(String, String)> = Vec::new();
-    for role in CREDIT_ROLES {
-        let Some(csv) = inputs.credit_csv(*role) else {
-            continue;
-        };
-        for person in split_csv(csv) {
-            desired_credits.push((role.as_str().to_string(), person));
+    if !skip.contains(&F::Credits) {
+        let mut desired_credits: Vec<(String, String)> = Vec::new();
+        for role in CREDIT_ROLES {
+            let Some(csv) = inputs.credit_csv(*role) else {
+                continue;
+            };
+            for person in split_csv(csv) {
+                desired_credits.push((role.as_str().to_string(), person));
+            }
         }
-    }
-    let existing_credits: HashSet<(String, String)> = issue_credit::Entity::find()
-        .filter(issue_credit::Column::IssueId.eq(issue_id))
-        .all(db)
-        .await?
-        .into_iter()
-        .map(|r| (r.role, r.person))
-        .collect();
-    let desired_credits_set: HashSet<(String, String)> = desired_credits.iter().cloned().collect();
-    if desired_credits_set != existing_credits {
-        issue_credit::Entity::delete_many()
+        let existing_credits: HashSet<(String, String)> = issue_credit::Entity::find()
             .filter(issue_credit::Column::IssueId.eq(issue_id))
-            .exec(db)
-            .await?;
-        if !desired_credits.is_empty() {
-            let rows: Vec<issue_credit::ActiveModel> = desired_credits
-                .into_iter()
-                .map(|(role, person)| issue_credit::ActiveModel {
-                    issue_id: Set(issue_id.to_string()),
-                    role: Set(role),
-                    person: Set(person),
-                    // person_id is populated during the series-level
-                    // rollup (see `ensure_persons_for_series`), which
-                    // runs after this per-issue write. Leaving it
-                    // NULL here keeps this hot path off the slug
-                    // allocator.
-                    person_id: Set(None),
-                    // Scanner has no per-credit ordering signal
-                    // (ComicInfo lists writers in a single CSV);
-                    // default 0 is correct. M4 Apply jobs populate
-                    // the real ordinal from provider responses
-                    // (Metron credits expose stable ordering).
-                    ordinal: Set(0),
-                })
-                .collect();
-            issue_credit::Entity::insert_many(rows)
-                .on_conflict(
-                    OnConflict::columns([
-                        issue_credit::Column::IssueId,
-                        issue_credit::Column::Role,
-                        issue_credit::Column::Person,
-                    ])
-                    .do_nothing()
-                    .to_owned(),
-                )
-                .try_insert()
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|r| (r.role, r.person))
+            .collect();
+        let desired_credits_set: HashSet<(String, String)> =
+            desired_credits.iter().cloned().collect();
+        if desired_credits_set != existing_credits {
+            issue_credit::Entity::delete_many()
+                .filter(issue_credit::Column::IssueId.eq(issue_id))
                 .exec(db)
                 .await?;
+            if !desired_credits.is_empty() {
+                let rows: Vec<issue_credit::ActiveModel> = desired_credits
+                    .into_iter()
+                    .map(|(role, person)| issue_credit::ActiveModel {
+                        issue_id: Set(issue_id.to_string()),
+                        role: Set(role),
+                        person: Set(person),
+                        // person_id is populated during the series-level
+                        // rollup (see `ensure_persons_for_series`), which
+                        // runs after this per-issue write. Leaving it
+                        // NULL here keeps this hot path off the slug
+                        // allocator.
+                        person_id: Set(None),
+                        // Scanner has no per-credit ordering signal
+                        // (ComicInfo lists writers in a single CSV);
+                        // default 0 is correct. M4 Apply jobs populate
+                        // the real ordinal from provider responses
+                        // (Metron credits expose stable ordering).
+                        ordinal: Set(0),
+                    })
+                    .collect();
+                issue_credit::Entity::insert_many(rows)
+                    .on_conflict(
+                        OnConflict::columns([
+                            issue_credit::Column::IssueId,
+                            issue_credit::Column::Role,
+                            issue_credit::Column::Person,
+                        ])
+                        .do_nothing()
+                        .to_owned(),
+                    )
+                    .try_insert()
+                    .exec(db)
+                    .await?;
+            }
         }
     }
 
     // ───── characters ─────
-    let desired_characters: Vec<String> = inputs.characters.map(split_csv).unwrap_or_default();
-    let existing_characters: HashSet<String> = issue_character::Entity::find()
-        .filter(issue_character::Column::IssueId.eq(issue_id))
-        .all(db)
-        .await?
-        .into_iter()
-        .map(|r| r.character)
-        .collect();
-    let desired_characters_set: HashSet<String> = desired_characters.iter().cloned().collect();
-    if desired_characters_set != existing_characters {
-        issue_character::Entity::delete_many()
+    if !skip.contains(&F::Characters) {
+        let desired_characters: Vec<String> = inputs.characters.map(split_csv).unwrap_or_default();
+        let existing_characters: HashSet<String> = issue_character::Entity::find()
             .filter(issue_character::Column::IssueId.eq(issue_id))
-            .exec(db)
-            .await?;
-        if !desired_characters.is_empty() {
-            let rows: Vec<issue_character::ActiveModel> = desired_characters
-                .into_iter()
-                .map(|c| issue_character::ActiveModel {
-                    issue_id: Set(issue_id.to_string()),
-                    character: Set(c),
-                    // M4 Apply jobs are the first writer to
-                    // populate character_id (via writers::upsert_character)
-                    // and the first-appearance / died-in-issue
-                    // flags (from provider responses). ComicInfo has
-                    // no such signal; scanner writes NULL/false.
-                    character_id: Set(None),
-                    is_first_appearance: Set(false),
-                    died_in_issue: Set(false),
-                })
-                .collect();
-            issue_character::Entity::insert_many(rows)
-                .on_conflict(
-                    OnConflict::columns([
-                        issue_character::Column::IssueId,
-                        issue_character::Column::Character,
-                    ])
-                    .do_nothing()
-                    .to_owned(),
-                )
-                .try_insert()
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|r| r.character)
+            .collect();
+        let desired_characters_set: HashSet<String> = desired_characters.iter().cloned().collect();
+        if desired_characters_set != existing_characters {
+            issue_character::Entity::delete_many()
+                .filter(issue_character::Column::IssueId.eq(issue_id))
                 .exec(db)
                 .await?;
+            if !desired_characters.is_empty() {
+                let rows: Vec<issue_character::ActiveModel> = desired_characters
+                    .into_iter()
+                    .map(|c| issue_character::ActiveModel {
+                        issue_id: Set(issue_id.to_string()),
+                        character: Set(c),
+                        // M4 Apply jobs are the first writer to
+                        // populate character_id (via writers::upsert_character)
+                        // and the first-appearance / died-in-issue
+                        // flags (from provider responses). ComicInfo has
+                        // no such signal; scanner writes NULL/false.
+                        character_id: Set(None),
+                        is_first_appearance: Set(false),
+                        died_in_issue: Set(false),
+                    })
+                    .collect();
+                issue_character::Entity::insert_many(rows)
+                    .on_conflict(
+                        OnConflict::columns([
+                            issue_character::Column::IssueId,
+                            issue_character::Column::Character,
+                        ])
+                        .do_nothing()
+                        .to_owned(),
+                    )
+                    .try_insert()
+                    .exec(db)
+                    .await?;
+            }
         }
     }
 
     // ───── teams ─────
-    let desired_teams: Vec<String> = inputs.teams.map(split_csv).unwrap_or_default();
-    let existing_teams: HashSet<String> = issue_team::Entity::find()
-        .filter(issue_team::Column::IssueId.eq(issue_id))
-        .all(db)
-        .await?
-        .into_iter()
-        .map(|r| r.team)
-        .collect();
-    let desired_teams_set: HashSet<String> = desired_teams.iter().cloned().collect();
-    if desired_teams_set != existing_teams {
-        issue_team::Entity::delete_many()
+    if !skip.contains(&F::Teams) {
+        let desired_teams: Vec<String> = inputs.teams.map(split_csv).unwrap_or_default();
+        let existing_teams: HashSet<String> = issue_team::Entity::find()
             .filter(issue_team::Column::IssueId.eq(issue_id))
-            .exec(db)
-            .await?;
-        if !desired_teams.is_empty() {
-            let rows: Vec<issue_team::ActiveModel> = desired_teams
-                .into_iter()
-                .map(|t| issue_team::ActiveModel {
-                    issue_id: Set(issue_id.to_string()),
-                    team: Set(t),
-                    // See issue_character.rs above: M4 Apply jobs
-                    // populate team_id + flags; scanner writes
-                    // NULL/false because ComicInfo has no signal.
-                    team_id: Set(None),
-                    is_first_appearance: Set(false),
-                    disbanded_in_issue: Set(false),
-                })
-                .collect();
-            issue_team::Entity::insert_many(rows)
-                .on_conflict(
-                    OnConflict::columns([issue_team::Column::IssueId, issue_team::Column::Team])
-                        .do_nothing()
-                        .to_owned(),
-                )
-                .try_insert()
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|r| r.team)
+            .collect();
+        let desired_teams_set: HashSet<String> = desired_teams.iter().cloned().collect();
+        if desired_teams_set != existing_teams {
+            issue_team::Entity::delete_many()
+                .filter(issue_team::Column::IssueId.eq(issue_id))
                 .exec(db)
                 .await?;
+            if !desired_teams.is_empty() {
+                let rows: Vec<issue_team::ActiveModel> = desired_teams
+                    .into_iter()
+                    .map(|t| issue_team::ActiveModel {
+                        issue_id: Set(issue_id.to_string()),
+                        team: Set(t),
+                        // See issue_character.rs above: M4 Apply jobs
+                        // populate team_id + flags; scanner writes
+                        // NULL/false because ComicInfo has no signal.
+                        team_id: Set(None),
+                        is_first_appearance: Set(false),
+                        disbanded_in_issue: Set(false),
+                    })
+                    .collect();
+                issue_team::Entity::insert_many(rows)
+                    .on_conflict(
+                        OnConflict::columns([
+                            issue_team::Column::IssueId,
+                            issue_team::Column::Team,
+                        ])
+                        .do_nothing()
+                        .to_owned(),
+                    )
+                    .try_insert()
+                    .exec(db)
+                    .await?;
+            }
         }
     }
 
     // ───── locations ─────
-    let desired_locations: Vec<String> = inputs.locations.map(split_csv).unwrap_or_default();
-    let existing_locations: HashSet<String> = issue_location::Entity::find()
-        .filter(issue_location::Column::IssueId.eq(issue_id))
-        .all(db)
-        .await?
-        .into_iter()
-        .map(|r| r.location)
-        .collect();
-    let desired_locations_set: HashSet<String> = desired_locations.iter().cloned().collect();
-    if desired_locations_set != existing_locations {
-        issue_location::Entity::delete_many()
+    if !skip.contains(&F::Locations) {
+        let desired_locations: Vec<String> = inputs.locations.map(split_csv).unwrap_or_default();
+        let existing_locations: HashSet<String> = issue_location::Entity::find()
             .filter(issue_location::Column::IssueId.eq(issue_id))
-            .exec(db)
-            .await?;
-        if !desired_locations.is_empty() {
-            let rows: Vec<issue_location::ActiveModel> = desired_locations
-                .into_iter()
-                .map(|l| issue_location::ActiveModel {
-                    issue_id: Set(issue_id.to_string()),
-                    location: Set(l),
-                    // See issue_character.rs above: M4 Apply jobs
-                    // populate location_id + flag.
-                    location_id: Set(None),
-                    is_first_appearance: Set(false),
-                })
-                .collect();
-            issue_location::Entity::insert_many(rows)
-                .on_conflict(
-                    OnConflict::columns([
-                        issue_location::Column::IssueId,
-                        issue_location::Column::Location,
-                    ])
-                    .do_nothing()
-                    .to_owned(),
-                )
-                .try_insert()
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|r| r.location)
+            .collect();
+        let desired_locations_set: HashSet<String> = desired_locations.iter().cloned().collect();
+        if desired_locations_set != existing_locations {
+            issue_location::Entity::delete_many()
+                .filter(issue_location::Column::IssueId.eq(issue_id))
                 .exec(db)
                 .await?;
+            if !desired_locations.is_empty() {
+                let rows: Vec<issue_location::ActiveModel> = desired_locations
+                    .into_iter()
+                    .map(|l| issue_location::ActiveModel {
+                        issue_id: Set(issue_id.to_string()),
+                        location: Set(l),
+                        // See issue_character.rs above: M4 Apply jobs
+                        // populate location_id + flag.
+                        location_id: Set(None),
+                        is_first_appearance: Set(false),
+                    })
+                    .collect();
+                issue_location::Entity::insert_many(rows)
+                    .on_conflict(
+                        OnConflict::columns([
+                            issue_location::Column::IssueId,
+                            issue_location::Column::Location,
+                        ])
+                        .do_nothing()
+                        .to_owned(),
+                    )
+                    .try_insert()
+                    .exec(db)
+                    .await?;
+            }
         }
     }
 
@@ -726,6 +762,15 @@ pub async fn replace_issue_metadata_from_model<C: ConnectionTrait>(
     db: &C,
     row: &issue::Model,
 ) -> Result<(), sea_orm::DbErr> {
+    replace_issue_metadata_from_model_skipping(db, row, &std::collections::HashSet::new()).await
+}
+
+/// [`replace_issue_metadata_from_model`] with the WP-2.5 junction skips.
+pub async fn replace_issue_metadata_from_model_skipping<C: ConnectionTrait>(
+    db: &C,
+    row: &issue::Model,
+    skip: &std::collections::HashSet<crate::metadata::MetadataField>,
+) -> Result<(), sea_orm::DbErr> {
     let inputs = IssueMetadataInputs {
         genre: row.genre.as_deref(),
         tags: row.tags.as_deref(),
@@ -741,7 +786,7 @@ pub async fn replace_issue_metadata_from_model<C: ConnectionTrait>(
         teams: row.teams.as_deref(),
         locations: row.locations.as_deref(),
     };
-    replace_issue_metadata(db, &row.id, &inputs).await
+    replace_issue_metadata_skipping(db, &row.id, &inputs, skip).await
 }
 
 #[cfg(test)]

@@ -108,7 +108,7 @@ pub async fn list_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -176,7 +176,7 @@ pub async fn coverage_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -743,21 +743,6 @@ fn canon_bound(raw: Option<&str>) -> Option<String> {
     raw.map(str::trim)
         .filter(|s| !s.is_empty())
         .map(canonical_issue_number)
-}
-
-async fn user_can_see_library(app: &AppState, user: &CurrentUser, lib_id: Uuid) -> bool {
-    if user.role == "admin" {
-        return true;
-    }
-    use entity::library_user_access;
-    library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .filter(library_user_access::Column::LibraryId.eq(lib_id))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
 }
 
 #[cfg(test)]

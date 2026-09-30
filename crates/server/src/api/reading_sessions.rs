@@ -18,7 +18,7 @@ use base64::Engine;
 use chrono::{DateTime, Duration, FixedOffset, NaiveDate, Utc};
 use chrono_tz::Tz;
 use entity::{
-    issue, library_user_access,
+    issue,
     reading_session::{self, ActiveModel as ReadingSessionAM, Entity as ReadingSessionEntity},
     series,
     user::Entity as UserEntity,
@@ -495,7 +495,7 @@ pub async fn upsert(
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "issue not found"),
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    if !visible(&app, &user, issue_row.library_id).await {
+    if !crate::library::access::issue_visible(&app, &user, &issue_row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -1962,20 +1962,6 @@ fn streak_lengths(days: &[NaiveDate], today: NaiveDate) -> (i64, i64) {
         0
     };
     (current, longest)
-}
-
-async fn visible(app: &AppState, user: &CurrentUser, lib_id: Uuid) -> bool {
-    if user.role == "admin" {
-        return true;
-    }
-    library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .filter(library_user_access::Column::LibraryId.eq(lib_id))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
 }
 
 #[cfg(test)]

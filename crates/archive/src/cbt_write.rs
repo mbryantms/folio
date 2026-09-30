@@ -62,6 +62,38 @@ pub fn write_pages(
     Ok(summary)
 }
 
+/// Write a fresh CBT from fully-named entries — the **sidecar rewrite**
+/// path for tar archives (WP-2.6 (f)). Unlike [`write_pages`], nothing is
+/// renamed: `entries` are `(name, bytes)` written verbatim in list order,
+/// so a metadata-only refresh keeps every page under its original name
+/// (the reader's natural sort, and therefore every page ordinal, is
+/// unchanged). The caller assembles the list as: every page in source
+/// order, every preserved extra
+/// ([`crate::rewrite_policy::preserved_extras`]), then the freshly
+/// composed `ComicInfo.xml` + `MetronInfo.xml`.
+pub fn write_entries(
+    entries: Vec<(String, Vec<u8>)>,
+    dst_path: &Path,
+    limits: ArchiveLimits,
+) -> Result<RebuildSummary, ArchiveError> {
+    let file = File::create(dst_path)?;
+    let mut builder = Builder::new(file);
+    let mut summary = RebuildSummary::default();
+
+    for (name, bytes) in &entries {
+        append(&mut builder, name, bytes)?;
+        summary.kept_count += 1;
+        summary.entries_written += 1;
+        summary.uncompressed_bytes = summary
+            .uncompressed_bytes
+            .saturating_add(bytes.len() as u64);
+        enforce(&summary, limits)?;
+    }
+
+    builder.into_inner().map_err(ArchiveError::from)?;
+    Ok(summary)
+}
+
 fn append(builder: &mut Builder<File>, name: &str, bytes: &[u8]) -> Result<(), ArchiveError> {
     let mut header = Header::new_ustar();
     header.set_size(bytes.len() as u64);
@@ -119,6 +151,32 @@ mod tests {
             b"\x89PNG\r\n\x1a\nPAGETWO"
         );
         // The sidecar is preserved (surfaced via the reader's lookup map).
+        assert!(c.find("ComicInfo.xml").is_some());
+    }
+
+    #[test]
+    fn write_entries_keeps_original_names_and_order() {
+        let dst = NamedTempFile::new().unwrap();
+        let entries = vec![
+            (
+                "Issue/x-0002.png".to_string(),
+                b"\x89PNG\r\n\x1a\nTWO".to_vec(),
+            ),
+            (
+                "Issue/x-0001.png".to_string(),
+                b"\x89PNG\r\n\x1a\nONE".to_vec(),
+            ),
+            ("CoMet.xml".to_string(), b"<comet/>".to_vec()),
+            ("ComicInfo.xml".to_string(), b"<ComicInfo/>".to_vec()),
+        ];
+        let summary = write_entries(entries, dst.path(), ArchiveLimits::default()).unwrap();
+        assert_eq!(summary.entries_written, 4);
+
+        let mut c = Cbt::open(dst.path(), ArchiveLimits::default()).unwrap();
+        // Names are verbatim; the reader's natural sort still orders pages.
+        let names: Vec<String> = c.pages().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, vec!["Issue/x-0001.png", "Issue/x-0002.png"]);
+        assert_eq!(c.read_entry_bytes("CoMet.xml").unwrap(), b"<comet/>");
         assert!(c.find("ComicInfo.xml").is_some());
     }
 

@@ -241,6 +241,9 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+    // WP-2.7: drops issues rated above the caller's cap (one extra
+    // series-rating query, only for capped callers).
+    let issue_rows = access::filter_issues(&app, &acl, issue_rows).await;
     let issue_by_id: std::collections::HashMap<String, issue::Model> =
         issue_rows.into_iter().map(|i| (i.id.clone(), i)).collect();
 
@@ -347,6 +350,20 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
     } else {
         "AND i.library_id = ANY($3)"
     };
+    let mut values: Vec<sea_orm::Value> = vec![
+        RECENT_ISSUES_PER_SERIES_CAP.into(),
+        RECENT_ISSUES_LIMIT.into(),
+    ];
+    if !acl.unrestricted {
+        let allowed: Vec<Uuid> = acl.allowed.iter().copied().collect();
+        values.push(allowed.into());
+    }
+    // WP-2.7: age-rating cap on the issue's own rating, series fallback.
+    let cap_clause = acl.raw_cap_clause(
+        "i.library_id",
+        "COALESCE(i.age_rating, s.age_rating)",
+        &mut values,
+    );
     let sql = format!(
         r#"
         WITH ranked AS (
@@ -362,7 +379,7 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
             JOIN series s ON s.id = i.series_id
             WHERE i.state = 'active'
               AND i.removed_at IS NULL
-              {acl_clause}
+              {acl_clause}{cap_clause}
         )
         SELECT id, slug, series_id, title, number_raw, sort_number, year,
                page_count, special_type, created_at, updated_at,
@@ -373,14 +390,6 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
         LIMIT $2
         "#
     );
-    let mut values: Vec<sea_orm::Value> = vec![
-        RECENT_ISSUES_PER_SERIES_CAP.into(),
-        RECENT_ISSUES_LIMIT.into(),
-    ];
-    if !acl.unrestricted {
-        let allowed: Vec<Uuid> = acl.allowed.iter().copied().collect();
-        values.push(allowed.into());
-    }
     let rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         sql,
@@ -474,6 +483,7 @@ pub(crate) async fn compute_on_deck(
         series_slug: String,
         last_activity: chrono::DateTime<chrono::FixedOffset>,
         library_id: Uuid,
+        series_age_rating: Option<String>,
     }
     let series_candidates: Vec<SeriesRow> =
         match SeriesRow::find_by_statement(Statement::from_sql_and_values(
@@ -502,7 +512,8 @@ pub(crate) async fn compute_on_deck(
                 SELECT s.id AS series_id, s.name AS series_name,
                        s.slug AS series_slug,
                        started.last_activity AS last_activity,
-                       s.library_id AS library_id
+                       s.library_id AS library_id,
+                       s.age_rating AS series_age_rating
                 FROM started
                 JOIN series s ON s.id = started.series_id
                 LEFT JOIN rail_dismissals d
@@ -540,10 +551,10 @@ pub(crate) async fn compute_on_deck(
     // which ran 2 queries per series and made On Deck scale O(series).
     let visible_series: Vec<&SeriesRow> = series_candidates
         .iter()
-        .filter(|r| acl.contains(r.library_id))
+        .filter(|r| acl.series_ok(r.library_id, r.series_age_rating.as_deref()))
         .collect();
     let series_ids: Vec<Uuid> = visible_series.iter().map(|r| r.series_id).collect();
-    let issues_by_series = match hydrate_series_issues(app, &series_ids).await {
+    let issues_by_series = match hydrate_series_issues(app, &series_ids, acl).await {
         Ok(m) => m,
         Err(resp) => return Err(resp),
     };
@@ -1012,6 +1023,8 @@ pub(crate) struct OnDeckIssue {
     pub special_type: Option<String>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
+    /// WP-2.7: the CBL walk checks the caller's age-rating cap.
+    pub age_rating: Option<String>,
 }
 
 impl crate::api::next_up::WalkIssue for OnDeckIssue {
@@ -1023,6 +1036,9 @@ impl crate::api::next_up::WalkIssue for OnDeckIssue {
     }
     fn walk_library_id(&self) -> Uuid {
         self.library_id
+    }
+    fn walk_age_rating(&self) -> Option<&str> {
+        self.age_rating.as_deref()
     }
 }
 
@@ -1062,15 +1078,21 @@ impl OnDeckIssue {
 async fn hydrate_series_issues(
     app: &AppState,
     series_ids: &[Uuid],
+    acl: &access::VisibleLibraries,
 ) -> Result<std::collections::HashMap<Uuid, Vec<OnDeckIssue>>, Response> {
     use std::collections::HashMap;
     if series_ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let rows = match issue::Entity::find()
+    let mut sel = issue::Entity::find()
         .filter(issue::Column::SeriesId.is_in(series_ids.to_vec()))
         .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::RemovedAt.is_null());
+    // WP-2.7: an issue rated above the cap is never the "next" pick.
+    if let Some(cap) = acl.issue_cap_condition() {
+        sel = sel.filter(cap);
+    }
+    let rows = match sel
         .order_by_asc(issue::Column::SeriesId)
         .order_by_asc(Expr::cust("sort_number IS NULL"))
         .order_by_asc(issue::Column::SortNumber)
@@ -1395,7 +1417,7 @@ async fn ensure_target_visible(
                 .await
                 .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;
             let issue = row.ok_or_else(not_found)?;
-            if !acl.contains(issue.library_id) {
+            if !access::issue_allowed(app, &acl, &issue).await {
                 return Err(not_found());
             }
             Ok(())
@@ -1413,7 +1435,7 @@ async fn ensure_target_visible(
                 .await
                 .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;
             let series = row.ok_or_else(not_found)?;
-            if !acl.contains(series.library_id) {
+            if !acl.series_ok(series.library_id, series.age_rating.as_deref()) {
                 return Err(not_found());
             }
             Ok(())

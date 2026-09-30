@@ -107,7 +107,7 @@ async fn get_progression(
         }
     };
     let visible = access::for_user(&app, &user).await;
-    if !visible.contains(issue_row.library_id) {
+    if !access::issue_allowed(&app, &visible, &issue_row).await {
         return not_found();
     }
     let pr = match progress_record::Entity::find_by_id((user.id, issue_id.clone()))
@@ -173,7 +173,7 @@ async fn put_progression(
         }
     };
     let visible = access::for_user(&app, &user.0).await;
-    if !visible.contains(issue_row.library_id) {
+    if !access::issue_allowed(&app, &visible, &issue_row).await {
         return not_found();
     }
     // Stale-write detection (spec error `progression-date`). If a

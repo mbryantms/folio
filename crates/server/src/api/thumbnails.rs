@@ -25,8 +25,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use entity::{issue, issue_cover, library, library_user_access};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use entity::{issue, issue_cover, library};
+use sea_orm::EntityTrait;
 use serde::Deserialize;
 use std::time::Duration;
 use tokio_util::io::ReaderStream;
@@ -75,7 +75,7 @@ pub async fn thumb(
     let Ok(Some(row)) = issue::Entity::find_by_id(id.clone()).one(&app.db).await else {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     };
-    if !visible(&app, &user, row.library_id).await {
+    if !crate::library::access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -343,7 +343,7 @@ pub async fn serve_issue_cover(
     else {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     };
-    if !visible(&app, &user, issue_row.library_id).await {
+    if !crate::library::access::issue_visible(&app, &user, &issue_row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "cover not found");
     }
     let path = app.cfg().data_path.join(&cover.local_path);
@@ -399,18 +399,4 @@ fn cover_mime(ext: &str) -> &'static str {
         "gif" => "image/gif",
         _ => "image/jpeg",
     }
-}
-
-async fn visible(app: &AppState, user: &CurrentUser, lib_id: uuid::Uuid) -> bool {
-    if user.role == "admin" {
-        return true;
-    }
-    library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .filter(library_user_access::Column::LibraryId.eq(lib_id))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
 }

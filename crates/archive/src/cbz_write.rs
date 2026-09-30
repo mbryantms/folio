@@ -20,11 +20,13 @@
 //!   - `Keep`'d entries land in the destination with byte-equal
 //!     compressed payloads (`raw_copy_file`). Critical for the sidecar
 //!     plan's "every page byte preserved" property.
-//!   - Entries the [reader] skips (Thumbs.db, dotfiles, `__MACOSX`,
-//!     sidecar suffixes `.xml`/`.json`/`.txt`) are dropped on rewrite
-//!     so trash doesn't propagate. ComicInfo/MetronInfo entries are
-//!     allowed back in via the `additions` channel, the same way the
-//!     scanner discovers them.
+//!   - Junk entries (Thumbs.db, dotfiles, `__MACOSX`) and the two
+//!     Folio-managed sidecars (`ComicInfo.xml` / `MetronInfo.xml`, root
+//!     or nested) are dropped on rewrite — see
+//!     [`crate::rewrite_policy`]. The fresh ComicInfo/MetronInfo come
+//!     back in via the override / `additions` channel. **Every other
+//!     non-page entry** (`CoMet.xml`, `notes.txt`, an embedded `.json`)
+//!     is carried through byte-for-byte, same as the pages (WP-2.6 (b)).
 //!   - Source entry order preserved for `Keep`'d entries; `additions`
 //!     append at the end in their declared order.
 //!   - Output written to a caller-supplied path; the rebuilder doesn't
@@ -146,10 +148,10 @@ pub fn rebuild(
 
     for ordinal in 0..src.inner_entry_count() {
         if src.raw_entry_is_skipped(ordinal)? {
-            // Trash entry (Thumbs.db, dotfile, __MACOSX, sidecar .xml/.json/.txt).
-            // The reader filters these; we drop them on rewrite to keep the
-            // round-trip property — `additions` is the channel that puts
-            // ComicInfo.xml / MetronInfo.xml back in.
+            // Junk (Thumbs.db, dotfile, __MACOSX) or a Folio-managed
+            // sidecar (ComicInfo.xml / MetronInfo.xml at any depth). The
+            // override / `additions` channel puts the fresh root pair back
+            // in; foreign non-page entries fall through to `Keep` below.
             continue;
         }
         let raw_name = src.raw_entry_name(ordinal)?;
@@ -798,6 +800,179 @@ mod tests {
         let dst = NamedTempFile::new().unwrap();
         let err = rebuild_pages(&mut src, plan, Vec::new(), dst.path(), limits).unwrap_err();
         assert!(matches!(err, ArchiveError::CapExceeded(_)));
+    }
+
+    /// Fixture with every entry class the rewrite policy distinguishes:
+    /// root pages, a nested image (a page to every reader), foreign
+    /// non-page files (`CoMet.xml`, `notes.txt`, `meta.json`), junk
+    /// (`Thumbs.db`, `.DS_Store`, `__MACOSX/`), the root Folio pair and
+    /// a stale nested `ComicInfo.xml`.
+    fn build_mixed_fixture() -> (NamedTempFile, BTreeMap<String, Vec<u8>>) {
+        let tmp = NamedTempFile::new().expect("temp");
+        let mut written: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+        let entries: Vec<(&str, Vec<u8>)> = vec![
+            ("p1.jpg", b"\xFF\xD8\xFFPAGE1".to_vec()),
+            ("p2.jpg", b"\xFF\xD8\xFFPAGE2".to_vec()),
+            ("extras/cover-alt.jpg", b"\xFF\xD8\xFFALTCOVER".to_vec()),
+            ("CoMet.xml", b"<comet><title>Kept</title></comet>".to_vec()),
+            ("notes.txt", b"scanner notes, keep me".to_vec()),
+            ("meta.json", b"{\"kept\":true}".to_vec()),
+            ("Thumbs.db", b"junk".to_vec()),
+            (".DS_Store", b"junk".to_vec()),
+            ("__MACOSX/._p1.jpg", b"junk".to_vec()),
+            (
+                "ComicInfo.xml",
+                b"<ComicInfo><Title>Old</Title></ComicInfo>".to_vec(),
+            ),
+            (
+                "Sub/ComicInfo.xml",
+                b"<ComicInfo><Title>Stale</Title></ComicInfo>".to_vec(),
+            ),
+        ];
+        {
+            let mut zw = ZipWriter::new(tmp.reopen().expect("reopen"));
+            let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+            for (name, bytes) in &entries {
+                zw.start_file(*name, opts).unwrap();
+                zw.write_all(bytes).unwrap();
+                written.insert((*name).to_owned(), bytes.clone());
+            }
+            zw.finish().unwrap();
+        }
+        (tmp, written)
+    }
+
+    /// WP-2.6 (b): the sidecar rewrite carries every foreign non-page
+    /// entry through byte-for-byte, drops junk + the stale nested Folio
+    /// sidecar, and swaps in the fresh root pair.
+    #[test]
+    fn rebuild_preserves_foreign_sidecars_and_drops_junk() {
+        let (src_file, written) = build_mixed_fixture();
+        let src_path = src_file.path().to_path_buf();
+        let pre_lens = raw_payload_lens(&src_path);
+        let mut src = Cbz::open(&src_path, ArchiveLimits::default()).unwrap();
+        let dst = NamedTempFile::new().unwrap();
+
+        let mut plan = RebuildPlan::new();
+        plan.set_entry(
+            "ComicInfo.xml",
+            b"<ComicInfo><Title>New</Title></ComicInfo>".to_vec(),
+        );
+        plan.set_entry("MetronInfo.xml", b"<MetronInfo/>".to_vec());
+        rebuild(&mut src, plan, dst.path(), ArchiveLimits::default()).unwrap();
+        drop(src);
+
+        let out = extract(dst.path());
+        for kept in [
+            "p1.jpg",
+            "p2.jpg",
+            "extras/cover-alt.jpg",
+            "CoMet.xml",
+            "notes.txt",
+            "meta.json",
+        ] {
+            assert_eq!(
+                out.get(kept),
+                written.get(kept),
+                "{kept} must survive verbatim"
+            );
+        }
+        // Stream-copied, not re-encoded: compressed sizes match too.
+        let post_lens = raw_payload_lens(dst.path());
+        for kept in ["CoMet.xml", "notes.txt", "extras/cover-alt.jpg"] {
+            assert_eq!(
+                pre_lens.get(kept),
+                post_lens.get(kept),
+                "{kept} not raw-copied"
+            );
+        }
+        for dropped in [
+            "Thumbs.db",
+            ".DS_Store",
+            "__MACOSX/._p1.jpg",
+            "Sub/ComicInfo.xml",
+        ] {
+            assert!(!out.contains_key(dropped), "{dropped} must be dropped");
+        }
+        assert!(
+            out["ComicInfo.xml"].windows(3).any(|w| w == b"New"),
+            "root ComicInfo replaced"
+        );
+        assert!(out.contains_key("MetronInfo.xml"), "MetronInfo added");
+
+        // The nested image is still a page to the reader after the rewrite.
+        let reopened = Cbz::open(dst.path(), ArchiveLimits::default()).unwrap();
+        let pages: Vec<&str> = reopened.pages().iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(pages, vec!["extras/cover-alt.jpg", "p1.jpg", "p2.jpg"]);
+    }
+
+    /// The page editor path: `preserved_extras` feeds `rebuild_pages` so a
+    /// structural edit keeps the same foreign entries the sidecar rewrite
+    /// keeps (and the existing root Folio pair, untouched).
+    #[test]
+    fn rebuild_pages_with_preserved_extras_keeps_foreign_entries() {
+        use crate::rewrite_policy::preserved_extras;
+        let (src_file, written) = build_mixed_fixture();
+        let mut src = Cbz::open(src_file.path(), ArchiveLimits::default()).unwrap();
+        let dst = NamedTempFile::new().unwrap();
+
+        let extras = preserved_extras(&mut src, true).unwrap();
+        let extra_names: Vec<&str> = extras.iter().map(|(n, _, _)| n.as_str()).collect();
+        // Source order; root Folio pair + foreign non-page entries, no
+        // junk, no nested sidecar.
+        assert_eq!(
+            extra_names,
+            vec!["CoMet.xml", "notes.txt", "meta.json", "ComicInfo.xml"],
+        );
+
+        // Keep the two root pages in order (drop the nested one) — a
+        // structural edit.
+        let idx: BTreeMap<String, usize> = src
+            .pages()
+            .iter()
+            .map(|e| (e.name.clone(), e.index))
+            .collect();
+        let pages = vec![
+            OutputPage {
+                ext: "jpg".into(),
+                bytes: PageBytes::Keep {
+                    src_index: idx["p1.jpg"],
+                },
+            },
+            OutputPage {
+                ext: "jpg".into(),
+                bytes: PageBytes::Keep {
+                    src_index: idx["p2.jpg"],
+                },
+            },
+        ];
+        rebuild_pages(
+            &mut src,
+            pages,
+            extras,
+            dst.path(),
+            ArchiveLimits::default(),
+        )
+        .unwrap();
+
+        let out = extract(dst.path());
+        assert_eq!(out.get("p0001.jpg"), written.get("p1.jpg"));
+        assert_eq!(out.get("p0002.jpg"), written.get("p2.jpg"));
+        for kept in ["CoMet.xml", "notes.txt", "meta.json", "ComicInfo.xml"] {
+            assert_eq!(
+                out.get(kept),
+                written.get(kept),
+                "{kept} must survive verbatim"
+            );
+        }
+        for dropped in [
+            "Thumbs.db",
+            ".DS_Store",
+            "__MACOSX/._p1.jpg",
+            "Sub/ComicInfo.xml",
+        ] {
+            assert!(!out.contains_key(dropped), "{dropped} must be dropped");
+        }
     }
 
     // Silence the unused-import warning on Seek + SeekFrom; reserved for

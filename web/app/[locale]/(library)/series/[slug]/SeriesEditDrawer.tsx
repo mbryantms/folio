@@ -41,6 +41,26 @@ const READING_DIRECTION_OPTIONS: Array<{ value: string; label: string }> = [
 /** OCR language override at the series level. Empty string = "Auto"
  *  (= NULL on the row; the OCR handler infers manga from an `rtl`
  *  reading direction at request time). OCR rework 1.0. */
+/** ComicInfo `AgeRating` vocabulary. Empty = clear (unrated). */
+const AGE_RATING_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "", label: "Unrated" },
+  ...[
+    "Early Childhood",
+    "Everyone",
+    "G",
+    "Everyone 10+",
+    "PG",
+    "Kids to Adults",
+    "Teen",
+    "MA15+",
+    "Mature 17+",
+    "M",
+    "R18+",
+    "Adults Only 18+",
+    "X18+",
+  ].map((v) => ({ value: v, label: v })),
+];
+
 const TEXT_LANGUAGE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "", label: "Auto (infer from direction)" },
   { value: "western", label: "Western (Latin script)" },
@@ -49,7 +69,10 @@ const TEXT_LANGUAGE_OPTIONS: Array<{ value: string; label: string }> = [
 
 /**
  * Series Edit drawer — companion to the per-issue Edit drawer. Surfaces the
- * series-wide fields (status, summary, reading direction). Provider IDs
+ * series-wide fields (identity, status, summary, reading direction).
+ * Identity edits (name, year, volume, publisher, imprint, age rating,
+ * issue count, language) are pinned server-side as user edits so the
+ * scanner and provider applies leave them alone (roadmap WP-2.3). Provider IDs
  * (ComicVine volume, Metron series, etc.) live exclusively in the "External
  * IDs" tab on the series page — the External IDs tab is the single typed-ID
  * editor for both surfaces. On save we PATCH `/series/{slug}` and
@@ -91,6 +114,14 @@ export function SeriesEditDrawer({
 }
 
 type FormState = {
+  name: string;
+  year: string;
+  volume: string;
+  publisher: string;
+  imprint: string;
+  age_rating: string;
+  total_issues: string;
+  language_code: string;
   status: string;
   reading_direction: string;
   text_language: string;
@@ -99,6 +130,14 @@ type FormState = {
 
 function initialState(s: SeriesView): FormState {
   return {
+    name: s.name,
+    year: s.year == null ? "" : String(s.year),
+    volume: s.volume == null ? "" : String(s.volume),
+    publisher: s.publisher ?? "",
+    imprint: s.imprint ?? "",
+    age_rating: s.age_rating ?? "",
+    total_issues: s.total_issues == null ? "" : String(s.total_issues),
+    language_code: s.language_code ?? "",
     status: s.status?.toLowerCase() ?? "continuing",
     reading_direction: s.reading_direction ?? "",
     text_language: s.text_language ?? "",
@@ -143,16 +182,84 @@ function EditForm({
         <div className="space-y-8">
           <Section
             title="Identity"
-            hint={`Read-only. Series name and slug are managed via admin tools.`}
+            hint="Edits here are pinned: rescans and provider matches won't overwrite them. The folder on disk is untouched."
           >
             <Field label="Series" htmlFor="se-name">
               <Input
                 id="se-name"
-                value={series.name}
-                disabled
-                aria-readonly="true"
+                value={form.name}
+                onChange={(e) => set("name", e.target.value)}
+                required
               />
             </Field>
+            <div className="grid grid-cols-3 gap-3">
+              <Field label="Year" htmlFor="se-year">
+                <Input
+                  id="se-year"
+                  type="number"
+                  inputMode="numeric"
+                  min={1900}
+                  max={2100}
+                  value={form.year}
+                  onChange={(e) => set("year", e.target.value)}
+                />
+              </Field>
+              <Field label="Volume" htmlFor="se-volume">
+                <Input
+                  id="se-volume"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  value={form.volume}
+                  onChange={(e) => set("volume", e.target.value)}
+                />
+              </Field>
+              <Field label="Issue count" htmlFor="se-total">
+                <Input
+                  id="se-total"
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  value={form.total_issues}
+                  onChange={(e) => set("total_issues", e.target.value)}
+                />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Publisher" htmlFor="se-publisher">
+                <Input
+                  id="se-publisher"
+                  value={form.publisher}
+                  onChange={(e) => set("publisher", e.target.value)}
+                />
+              </Field>
+              <Field label="Imprint" htmlFor="se-imprint">
+                <Input
+                  id="se-imprint"
+                  value={form.imprint}
+                  onChange={(e) => set("imprint", e.target.value)}
+                />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Age rating" htmlFor="se-age-rating">
+                <NativeSelect
+                  id="se-age-rating"
+                  value={form.age_rating}
+                  onChange={(v) => set("age_rating", v)}
+                  options={AGE_RATING_OPTIONS}
+                />
+              </Field>
+              <Field label="Language" htmlFor="se-language">
+                <Input
+                  id="se-language"
+                  value={form.language_code}
+                  onChange={(e) => set("language_code", e.target.value)}
+                  placeholder="en"
+                  maxLength={8}
+                />
+              </Field>
+            </div>
           </Section>
 
           <Section title="Publication" hint="Status applies to every issue.">
@@ -274,6 +381,35 @@ function Field({
  */
 function buildBody(prev: SeriesView, form: FormState): UpdateSeriesReq {
   const body: UpdateSeriesReq = {};
+
+  // Identity fields (WP-2.3). Numbers: "" → null clears; strings: "" → null.
+  const nextName = form.name.trim();
+  if (nextName !== "" && nextName !== prev.name) body.name = nextName;
+  const num = (v: string): number | null => {
+    const t = v.trim();
+    if (t === "") return null;
+    const n = Number.parseInt(t, 10);
+    return Number.isFinite(n) ? n : null;
+  };
+  if (num(form.year) !== (prev.year ?? null)) body.year = num(form.year);
+  if (num(form.volume) !== (prev.volume ?? null))
+    body.volume = num(form.volume);
+  if (num(form.total_issues) !== (prev.total_issues ?? null)) {
+    body.total_issues = num(form.total_issues);
+  }
+  if (didChangeStr(prev.publisher, form.publisher)) {
+    body.publisher = emptyToNull(form.publisher);
+  }
+  if (didChangeStr(prev.imprint, form.imprint)) {
+    body.imprint = emptyToNull(form.imprint);
+  }
+  if (didChangeStr(prev.age_rating, form.age_rating)) {
+    body.age_rating = emptyToNull(form.age_rating);
+  }
+  const nextLang = form.language_code.trim().toLowerCase();
+  if (nextLang !== "" && nextLang !== (prev.language_code ?? "")) {
+    body.language_code = nextLang;
+  }
 
   const nextStatus = form.status.trim().toLowerCase();
   if (nextStatus !== "" && nextStatus !== prev.status?.toLowerCase()) {

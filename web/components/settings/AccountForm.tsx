@@ -22,6 +22,7 @@ import { getCsrfToken } from "@/lib/api/auth-refresh";
 import { useMe } from "@/lib/api/queries";
 import { useUpdateAccount, useUpdatePreferences } from "@/lib/api/mutations";
 
+import { DataExportCard } from "./DataExportCard";
 import { SessionsCard } from "./SessionsCard";
 import { SettingsSection } from "./SettingsSection";
 
@@ -85,6 +86,7 @@ export function AccountForm() {
       <SidebarPrefsCard me={me.data} />
       <PasswordCard me={me.data} />
       <SessionsCard />
+      <DataExportCard />
     </div>
   );
 }

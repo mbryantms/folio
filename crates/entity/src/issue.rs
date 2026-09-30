@@ -215,6 +215,24 @@ pub struct Model {
     /// audit-log surface and the issue-detail status row tell them apart.
     #[sea_orm(nullable)]
     pub last_rewrite_kind: Option<String>,
+    /// Timestamp of the last **sidecar** rewrite only — stamped by
+    /// `jobs::rewrite_sidecars`, never by page edits or restores (those
+    /// bump [`Self::last_rewrite_at`] alone). User-edit drift detection
+    /// compares `field_provenance.set_at` against this column, so a page
+    /// edit can no longer mask metadata the XML hasn't received (WP-2.6
+    /// (g), audit DI-14). NULL = never sidecar-rewritten.
+    #[sea_orm(nullable)]
+    #[serde(default)]
+    pub last_sidecar_rewrite_at: Option<DateTimeWithTimeZone>,
+    /// Parsed `MetronInfo.xml` (`serde_json::to_value(&MetronInfo)`),
+    /// mirroring [`Self::comic_info_raw`]. Its `raw` map holds the
+    /// top-level elements Folio doesn't model so the sidecar composer
+    /// can pass them through on the next rewrite (WP-2.6 (c)). NULL when
+    /// no MetronInfo.xml was present at the last scan, or the row was
+    /// scanned before the column existed.
+    #[sea_orm(nullable)]
+    #[serde(default)]
+    pub metron_info_raw: Option<Json>,
 
     /// 0-based page index to use as the cover when extracting the
     /// thumbnail + computing the perceptual hash. Stamped by the

@@ -5286,6 +5286,25 @@
         }
       }
     },
+    "/api/me/export": {
+      "get": {
+        "operationId": "account_export",
+        "responses": {
+          "200": {
+            "description": "Attachment; `Content-Disposition: attachment; filename=\"folio-export-<date>.json\"`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserExport"
+                }
+              }
+            }
+          },
+          "401": {},
+          "429": {}
+        }
+      }
+    },
     "/api/me/issues/bulk-metadata": {
       "patch": {
         "summary": "Bulk-update a per-field patch across a list of issue ids.",
@@ -8357,6 +8376,65 @@
         }
       }
     },
+    "/api/series/{slug}/issues/{issue_slug}/metadata/lookup": {
+      "post": {
+        "operationId": "metadata_lookup_issue",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LookupReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LookupResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "issue not found / provider has no such record"
+          },
+          "422": {
+            "description": "bad URL / id, or provider not configured"
+          },
+          "502": {
+            "description": "provider error"
+          },
+          "503": {
+            "description": "provider quota exhausted"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/issues/{issue_slug}/metadata/proposed-diff": {
       "get": {
         "operationId": "metadata_proposed_diff_issue",
@@ -8458,6 +8536,23 @@
             }
           }
         ],
+        "requestBody": {
+          "description": "Optional query overrides (WP-2.8); omit the body for the local facts",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SearchOverrides"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "content": {
@@ -8476,6 +8571,9 @@
           },
           "404": {
             "description": "issue not found"
+          },
+          "422": {
+            "description": "override validation failed"
           },
           "502": {
             "description": "queue error"
@@ -8778,6 +8876,57 @@
         }
       }
     },
+    "/api/series/{slug}/metadata/lookup": {
+      "post": {
+        "operationId": "metadata_lookup_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LookupReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LookupResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series not found / provider has no such record"
+          },
+          "422": {
+            "description": "bad URL / id, or provider not configured"
+          },
+          "502": {
+            "description": "provider error"
+          },
+          "503": {
+            "description": "provider quota exhausted"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/metadata/pause": {
       "post": {
         "operationId": "metadata_pause_series",
@@ -8927,6 +9076,23 @@
             }
           }
         ],
+        "requestBody": {
+          "description": "Optional query overrides (WP-2.8); omit the body for the local facts",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SearchOverrides"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "content": {
@@ -8945,6 +9111,9 @@
           },
           "404": {
             "description": "series not found"
+          },
+          "422": {
+            "description": "override validation failed"
           },
           "502": {
             "description": "queue error"
@@ -10822,6 +10991,15 @@
           }
         }
       },
+      "BudgetWindow": {
+        "type": "string",
+        "description": "Refill window a budget figure applies to.",
+        "enum": [
+          "minute",
+          "hour",
+          "day"
+        ]
+      },
       "BulkAddMembersReq": {
         "type": "object",
         "description": "Body for `POST /me/collections/{id}/members/bulk-add`. Each\nmember follows the same `(entry_kind, ref_id)` shape as the\nsingle-add endpoint. Multi-select toolbar (`<SelectionToolbar>`'s\n\"Add to collection…\" action) builds this from the user's\n`selectedIds` set.\n\nPlan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M3).",
@@ -11352,6 +11530,17 @@
             "items": {
               "type": "string"
             }
+          },
+          "query": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SearchQueryView",
+                "description": "What this run actually searched for (WP-2.8). Carries the\neffective query facts (so the dialog's \"Adjust query\" form can\nprefill from the run rather than re-resolving the entity) plus\nthe run's provenance flags: `overridden` when the user supplied\nquery overrides, `year_gate_relaxed` when the orchestrator fell\nback to the cover-aware year gate, `lookup` when the run came\nfrom a pasted provider URL / id. `None` only for legacy rows\nwith no stored query."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "quota": {
             "oneOf": [
@@ -14918,6 +15107,827 @@
           }
         }
       },
+      "ExportCollection": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "custom_tags",
+          "preserve_canonical_order",
+          "created_at",
+          "updated_at",
+          "entries"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "custom_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportCollectionEntry"
+            },
+            "description": "Entries in `position` order."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "preserve_canonical_order": {
+            "type": "boolean"
+          },
+          "system_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`\"want_to_read\"` for the system collection, `null` otherwise."
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ExportCollectionEntry": {
+        "type": "object",
+        "required": [
+          "position",
+          "entry_kind",
+          "added_at"
+        ],
+        "properties": {
+          "added_at": {
+            "type": "string"
+          },
+          "entry_kind": {
+            "type": "string",
+            "description": "`\"issue\"` or `\"series\"` — exactly one of the refs below is set."
+          },
+          "issue": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssueRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "series": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SeriesRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ExportMarker": {
+        "type": "object",
+        "required": [
+          "id",
+          "issue",
+          "page_index",
+          "kind",
+          "is_favorite",
+          "tags",
+          "hidden_from_log",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "hidden_from_log": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_favorite": {
+            "type": "boolean"
+          },
+          "issue": {
+            "$ref": "#/components/schemas/IssueRef"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "page_index": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "region": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "selection": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ExportPage": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "is_system",
+          "position",
+          "created_at",
+          "updated_at",
+          "pins"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_system": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportViewPin"
+            },
+            "description": "Pinned rails on this page in `position` order."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ExportPreferences": {
+        "type": "object",
+        "description": "Raw preference columns off the `users` row. Token columns are exported\nas stored (`null` = \"no preference\").",
+        "required": [
+          "default_page_strip",
+          "default_cover_solo",
+          "keybinds",
+          "activity_tracking_enabled",
+          "timezone",
+          "reading_min_active_ms",
+          "reading_min_pages",
+          "reading_idle_ms",
+          "language",
+          "exclude_from_aggregates",
+          "show_marker_count",
+          "opds_wtr_reorder",
+          "opds_progress_glyphs",
+          "max_rails_per_page"
+        ],
+        "properties": {
+          "accent_color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "activity_tracking_enabled": {
+            "type": "boolean"
+          },
+          "default_cover_solo": {
+            "type": "boolean"
+          },
+          "default_fit_mode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default_page_animation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default_page_strip": {
+            "type": "boolean"
+          },
+          "default_reading_direction": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default_view_mode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "density": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exclude_from_aggregates": {
+            "type": "boolean"
+          },
+          "keybinds": {
+            "type": "object",
+            "description": "Reader key overrides — `{ action_name: key_string }`."
+          },
+          "language": {
+            "type": "string"
+          },
+          "max_rails_per_page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "opds_progress_glyphs": {
+            "type": "boolean"
+          },
+          "opds_wtr_reorder": {
+            "type": "boolean"
+          },
+          "reading_idle_ms": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reading_min_active_ms": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reading_min_pages": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "show_marker_count": {
+            "type": "boolean"
+          },
+          "theme": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": "string"
+          }
+        }
+      },
+      "ExportProgress": {
+        "type": "object",
+        "required": [
+          "issue",
+          "run",
+          "last_page",
+          "percent",
+          "finished",
+          "is_backfill",
+          "updated_at"
+        ],
+        "properties": {
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished": {
+            "type": "boolean"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_backfill": {
+            "type": "boolean"
+          },
+          "issue": {
+            "$ref": "#/components/schemas/IssueRef"
+          },
+          "last_page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "percent": {
+            "type": "number",
+            "format": "double"
+          },
+          "run": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Reading-run counter: 0 is the first read, each explicit re-read\nopens the next run (`docs/dev/reading-progress.md`)."
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ExportRailDismissal": {
+        "type": "object",
+        "required": [
+          "target_kind",
+          "target_id",
+          "dismissed_at"
+        ],
+        "properties": {
+          "dismissed_at": {
+            "type": "string"
+          },
+          "target_id": {
+            "type": "string"
+          },
+          "target_kind": {
+            "type": "string",
+            "description": "`issue` / `series` / `cbl`."
+          }
+        }
+      },
+      "ExportRating": {
+        "type": "object",
+        "required": [
+          "target_type",
+          "rating",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "issue": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssueRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rating": {
+            "type": "number",
+            "format": "double"
+          },
+          "series": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SeriesRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_type": {
+            "type": "string",
+            "description": "`\"issue\"` or `\"series\"` — exactly one of the refs below is set."
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ExportReadingSession": {
+        "type": "object",
+        "required": [
+          "id",
+          "issue",
+          "client_session_id",
+          "started_at",
+          "last_heartbeat_at",
+          "active_ms",
+          "distinct_pages_read",
+          "page_turns",
+          "start_page",
+          "end_page",
+          "furthest_page",
+          "client_meta",
+          "hidden_from_log"
+        ],
+        "properties": {
+          "active_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "client_meta": {
+            "type": "object"
+          },
+          "client_session_id": {
+            "type": "string"
+          },
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "distinct_pages_read": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "end_page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "furthest_page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "hidden_from_log": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "issue": {
+            "$ref": "#/components/schemas/IssueRef"
+          },
+          "last_heartbeat_at": {
+            "type": "string"
+          },
+          "page_turns": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "start_page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "view_mode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ExportSavedView": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "custom_tags",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "cbl_list_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "For `kind = \"cbl\"`: the backing `cbl_lists` row. CBL lists have\ntheir own XML export (`GET /me/cbl-lists/{id}/export`)."
+          },
+          "conditions": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Filter DSL — a JSON array of `{group_id, field, op, value}`."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "custom_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "custom_year_end": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "custom_year_start": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`\"filter_series\"` or `\"cbl\"`."
+          },
+          "match_mode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "result_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "sort_field": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort_order": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ExportSections": {
+        "type": "object",
+        "required": [
+          "progress",
+          "markers",
+          "collections",
+          "saved_views",
+          "ratings",
+          "custom_pages",
+          "sidebar",
+          "rail_dismissals",
+          "reading_log",
+          "preferences"
+        ],
+        "properties": {
+          "collections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportCollection"
+            },
+            "description": "User-authored collections (`saved_views.kind = 'collection'`,\nno `system_key`). Want to Read is split out below."
+          },
+          "custom_pages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportPage"
+            },
+            "description": "Every `user_page` row including the system Home page, each with\nits pinned rails."
+          },
+          "markers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportMarker"
+            }
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/ExportPreferences",
+            "description": "Per-user preferences from the `users` row, including reader\n`keybinds`."
+          },
+          "progress": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportProgress"
+            }
+          },
+          "rail_dismissals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportRailDismissal"
+            }
+          },
+          "ratings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportRating"
+            }
+          },
+          "reading_log": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportReadingSession"
+            },
+            "description": "`reading_sessions` rows. Hidden sessions are included with\n`hidden_from_log = true` so the flag survives a restore."
+          },
+          "saved_views": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportSavedView"
+            },
+            "description": "Filter and CBL-backed saved views (every user-owned `saved_views`\nrow whose `kind != 'collection'`)."
+          },
+          "sidebar": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportSidebarEntry"
+            }
+          },
+          "want_to_read": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExportCollection",
+                "description": "The per-user Want to Read system collection, or `null` when the\nuser has never touched a surface that seeds it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ExportSidebarEntry": {
+        "type": "object",
+        "required": [
+          "kind",
+          "ref_id",
+          "visible",
+          "position"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`builtin` / `library` / `view` / `header` / `spacer`."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ref_id": {
+            "type": "string"
+          },
+          "visible": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ExportUser": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ExportViewPin": {
+        "type": "object",
+        "required": [
+          "view_id",
+          "position",
+          "pinned",
+          "show_in_sidebar"
+        ],
+        "properties": {
+          "icon": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "show_in_sidebar": {
+            "type": "boolean"
+          },
+          "view_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "view_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pinned view's `kind` (`filter_series` / `cbl` / `system` /\n`collection`), hydrated so a system rail is recognisable after a\nrebuild. `null` when the view no longer exists."
+          },
+          "view_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "view_system_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`system_key` of the pinned view (e.g. `continue_reading`), when it\nis a built-in rail or the Want to Read collection."
+          }
+        }
+      },
       "ExternalIdConflictRow": {
         "type": "object",
         "description": "External-ID conflict row — surfaces in the preview pane as an\namber row with a Keep mine / Use theirs control.",
@@ -15925,6 +16935,57 @@
           }
         }
       },
+      "IssueRef": {
+        "type": "object",
+        "description": "Portable identity for an issue. `issue_id` is Folio's BLAKE3 id;\n`content_hash` plus `(series_name, series_year, issue_number)` are\nthe keys that survive a rebuild. The hydrated fields are `null` only\nwhen the referenced row no longer exists.",
+        "required": [
+          "issue_id"
+        ],
+        "properties": {
+          "content_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issue_id": {
+            "type": "string"
+          },
+          "issue_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`issues.number_raw` — the number exactly as tagged."
+          },
+          "library_slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "series_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
       "IssueSearchHit": {
         "allOf": [
           {
@@ -16078,17 +17139,20 @@
         "type": "object",
         "required": [
           "library_id",
-          "library_name",
-          "role"
+          "library_name"
         ],
         "properties": {
+          "age_rating_max": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ComicInfo `AgeRating` cap for this grant (a rung of the ladder in\n`library::age_rating::LADDER`), or `null` for unrestricted.\nSeries / issues rated above the cap are hidden from the user on\nevery read surface; unrated rows are shown (WP-2.7, D6)."
+          },
           "library_id": {
             "type": "string"
           },
           "library_name": {
-            "type": "string"
-          },
-          "role": {
             "type": "string"
           }
         }
@@ -16099,6 +17163,16 @@
           "library_ids"
         ],
         "properties": {
+          "age_rating_caps": {
+            "type": "object",
+            "description": "Per-library age-rating caps, keyed by library id (WP-2.7). A\nlibrary listed in `library_ids` but absent here is uncapped.\nValues must be a rung of the ComicInfo `AgeRating` ladder\n(`Early Childhood` … `X18+`); keys for libraries not in\n`library_ids` are ignored.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "library_ids": {
             "type": "array",
             "items": {
@@ -16499,6 +17573,54 @@
             "format": "int64",
             "description": "Highest id in the response (or `since`, if empty). Pass back as\n`?since=` to tail.",
             "minimum": 0
+          }
+        }
+      },
+      "LookupReq": {
+        "type": "object",
+        "description": "Body for `POST …/metadata/lookup` (WP-2.8). Either paste a provider\npage / API URL, or name the provider + its native id explicitly. The\nURL wins when both are present.",
+        "properties": {
+          "external_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Provider-native numeric id (a `4050-` / `4000-` prefix is\ntolerated and stripped)."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`comicvine` | `metron`."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ComicVine (`…/4050-<id>/`, `…/4000-<id>/`) or Metron\n(`metron.cloud/series/<id>/`, `…/api/issue/<id>/`) URL."
+          }
+        }
+      },
+      "LookupResp": {
+        "type": "object",
+        "description": "`POST …/metadata/lookup` response. The run is already `completed`\nwith a single HIGH candidate at ordinal 0, so the client polls\n`…/metadata/candidates?run_id=` once and goes straight to preview.",
+        "required": [
+          "run_id",
+          "source",
+          "external_id"
+        ],
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "source": {
+            "type": "string"
           }
         }
       },
@@ -18384,6 +19506,23 @@
           }
         }
       },
+      "ProviderLastError": {
+        "type": "object",
+        "description": "The most recent provider error, for the admin card.",
+        "required": [
+          "message",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
       "ProviderQuotaView": {
         "type": "object",
         "description": "Per-provider remaining-quota view for the match dialog (audit B13).\nMirrors `crate::metadata::provider::QuotaSnapshot`; ComicVine carries\nonly the hour bucket, Metron carries both the minute (`remaining_hour`)\nand day buckets.",
@@ -18391,6 +19530,17 @@
           "provider"
         ],
         "properties": {
+          "budget": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RequestBudget",
+                "description": "Headline upstream budget (WP-2.9) — the dialog shows a\n\"N of M requests left today\" note when it drops under 20%."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "provider": {
             "type": "string",
             "description": "`\"comicvine\"` | `\"metron\"`."
@@ -18517,6 +19667,17 @@
           "configured"
         ],
         "properties": {
+          "budget": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RequestBudget",
+                "description": "Headline request budget (WP-2.9): what the upstream reported on\nits last response (Metron's daily window) or, for ComicVine, the\nlocal hourly bucket. `None` when unconfigured or unknown."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "configured": {
             "type": "boolean",
             "description": "`true` when the credential is set but the master toggle is off\n— UI surfaces a \"Enable to test\" hint in that state."
@@ -18531,6 +19692,17 @@
           },
           "label": {
             "type": "string"
+          },
+          "last_error": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProviderLastError",
+                "description": "Most recent provider error, cleared on the next successful call."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "quota": {
             "oneOf": [
@@ -19522,6 +20694,35 @@
           }
         }
       },
+      "RequestBudget": {
+        "type": "object",
+        "description": "One window's budget: how many requests the provider allows, how many\nare left, and when the counter resets.",
+        "required": [
+          "limit",
+          "remaining",
+          "reset_at",
+          "window"
+        ],
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "remaining": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "reset_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "window": {
+            "$ref": "#/components/schemas/BudgetWindow"
+          }
+        }
+      },
       "RequestPasswordResetReq": {
         "type": "object",
         "required": [
@@ -20465,6 +21666,95 @@
           "stats": {}
         }
       },
+      "SearchOverrides": {
+        "type": "object",
+        "description": "Optional per-run query overrides for `POST …/metadata/search`\n(WP-2.8). Each supplied field replaces the corresponding fact read\nfrom the local series / issue row **for this run only** — the rows\nthemselves are never mutated. Absent body ⇒ every field `None` ⇒\nthe pre-existing behaviour.",
+        "properties": {
+          "issue_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue-scope only; ignored on a series search. Lets an issue with\nno parsed `number_raw` be searched at all."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Series name to search instead of the local one."
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Series start year. Supplying it also pins the hard year gate —\nthe orchestrator won't relax to the cover-aware gate for a year\nthe user asserted."
+          }
+        }
+      },
+      "SearchQueryView": {
+        "type": "object",
+        "description": "Effective query + provenance flags for one run (WP-2.8). See\n[`CandidatesResp::query`].",
+        "required": [
+          "kind",
+          "name",
+          "label",
+          "overridden",
+          "year_gate_relaxed",
+          "lookup"
+        ],
+        "properties": {
+          "issue_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue-scope only."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`\"series\"` | `\"issue\"`."
+          },
+          "label": {
+            "type": "string",
+            "description": "Human label, e.g. `Saga` / `Saga #12`."
+          },
+          "lookup": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string",
+            "description": "Series name searched (the override when one was supplied)."
+          },
+          "overridden": {
+            "type": "boolean"
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "year_gate_relaxed": {
+            "type": "boolean"
+          }
+        }
+      },
       "SearchStartedResp": {
         "type": "object",
         "required": [
@@ -20539,6 +21829,38 @@
             "type": "integer",
             "format": "int64",
             "description": "Active issues in the series (excludes removed / soft-deleted)."
+          }
+        }
+      },
+      "SeriesRef": {
+        "type": "object",
+        "description": "Portable identity for a series.",
+        "required": [
+          "series_id"
+        ],
+        "properties": {
+          "library_slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "series_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
           }
         }
       },
@@ -20675,6 +21997,12 @@
           },
           "id": {
             "type": "string"
+          },
+          "imprint": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "inkers": {
             "type": "array",
@@ -22437,14 +23765,34 @@
       },
       "UpdateSeriesReq": {
         "type": "object",
-        "description": "Body for `PATCH /series/{id}`. `match_key` is the §7.4 sticky override\nthe scanner won't touch; `slug` is the admin-rename hook for the URL\nsegment (validated unique across all series). `status` and the external\nIDs are surfaced in the issue drawer so curators can correct\ncontinuing/ended state and database links without leaving the issue page.",
+        "description": "Body for `PATCH /series/{id}`. `match_key` is the §7.4 sticky override\nthe scanner won't touch; `slug` is the admin-rename hook for the URL\nsegment (validated unique across all series). `status` and the external\nIDs are surfaced in the issue drawer so editors can correct\ncontinuing/ended state and database links without leaving the issue page.",
         "properties": {
+          "age_rating": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ComicInfo `AgeRating` vocabulary (free text, ≤ 40 chars) or `null`."
+          },
           "comicvine_id": {
             "type": [
               "integer",
               "null"
             ],
             "format": "int64"
+          },
+          "imprint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "language_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO 639-1 language code (`en`, `ja`). The column is NOT NULL, so\nthere is no clear."
           },
           "match_key": {
             "type": [
@@ -22459,6 +23807,19 @@
               "null"
             ],
             "format": "int64"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Display name. Non-empty; also refreshes `normalized_name`."
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "reading_direction": {
             "type": [
@@ -22494,6 +23855,30 @@
               "null"
             ],
             "description": "Per-series OCR language override. `\"western\"` / `\"manga\"` or\n`null` for \"Auto — infer from reading direction\". See OCR\nrework 1.0."
+          },
+          "total_issues": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Number of issues in the run (0..=10000) or `null` when unknown."
+          },
+          "volume": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Volume number (1..=9999) or `null` to clear."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Start year (1900..=2100) or `null` to clear."
           }
         }
       },
@@ -22844,6 +24229,39 @@
             "type": "integer",
             "format": "int32",
             "description": "Issue rows that received a new or updated progress record.",
+            "minimum": 0
+          }
+        }
+      },
+      "UserExport": {
+        "type": "object",
+        "description": "Top-level export envelope.",
+        "required": [
+          "format",
+          "version",
+          "exported_at",
+          "user",
+          "sections"
+        ],
+        "properties": {
+          "exported_at": {
+            "type": "string",
+            "description": "RFC 3339 timestamp of when the document was produced."
+          },
+          "format": {
+            "type": "string",
+            "description": "Always `\"folio-user-export\"`."
+          },
+          "sections": {
+            "$ref": "#/components/schemas/ExportSections"
+          },
+          "user": {
+            "$ref": "#/components/schemas/ExportUser"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Envelope version. See `docs/dev/export-format.md` for the changelog.",
             "minimum": 0
           }
         }

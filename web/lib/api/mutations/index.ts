@@ -694,7 +694,7 @@ export function useTriggerDeepValidate(libraryId: string) {
 export function useTriggerSeriesScan(seriesId: string, libraryId?: string) {
   const qc = useQueryClient();
   // Defaults to force=true; "Scan series" is an explicit user action and
-  // skipping unchanged files is rarely what curators want when they click
+  // skipping unchanged files is rarely what editors want when they click
   // the menu item. The endpoint accepts ?force=false for cron-style
   // callers that explicitly want the cheap path.
   return useApiMutation<ScanResp, void>(
@@ -2581,19 +2581,28 @@ import type {
   CompositeApplyResp,
   DetectResp,
   ExternalIdRow,
+  LookupReq,
+  LookupResp,
   ProviderRangeRow,
+  SearchOverrides,
   SearchStartedResp,
   SyncStatusResp,
 } from "../types";
 
+/** Kick a provider search for a series. Pass `SearchOverrides` (WP-2.8)
+ *  to replace the local name / year / publisher for this run only; the
+ *  dialog's auto-kick on open goes through raw `apiMutate` instead (see
+ *  `useMetadataCandidateSearch`), so this hook is the user-click path. */
 export function useSearchMetadataForSeries(seriesSlug: string) {
   const qc = useQueryClient();
-  return useApiMutation<SearchStartedResp, void>(
-    () => ({
+  return useApiMutation<SearchStartedResp, SearchOverrides | void>(
+    (input) => ({
       path: `/series/${encodeURIComponent(seriesSlug)}/metadata/search`,
       method: "POST",
+      body: input ?? undefined,
     }),
     {
+      successMessage: "Searching providers",
       onSuccess: () => {
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "metadata", "candidates"],
@@ -2608,12 +2617,66 @@ export function useSearchMetadataForIssue(
   issueSlug: string,
 ) {
   const qc = useQueryClient();
-  return useApiMutation<SearchStartedResp, void>(
-    () => ({
+  return useApiMutation<SearchStartedResp, SearchOverrides | void>(
+    (input) => ({
       path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/search`,
       method: "POST",
+      body: input ?? undefined,
     }),
     {
+      successMessage: "Searching providers",
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: [
+            "series",
+            seriesSlug,
+            "issues",
+            issueSlug,
+            "metadata",
+            "candidates",
+          ],
+        });
+      },
+    },
+  );
+}
+
+/** Fetch one provider record by pasted URL / explicit id (WP-2.8). The
+ *  server answers with an already-completed run holding that record as
+ *  its single HIGH candidate; the dialog adopts `run_id` and the normal
+ *  preview → apply flow takes over. */
+export function useLookupMetadataForSeries(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<LookupResp, LookupReq>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/lookup`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: "Fetched from provider",
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "metadata", "candidates"],
+        });
+      },
+    },
+  );
+}
+
+export function useLookupMetadataForIssue(
+  seriesSlug: string,
+  issueSlug: string,
+) {
+  const qc = useQueryClient();
+  return useApiMutation<LookupResp, LookupReq>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/lookup`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: "Fetched from provider",
       onSuccess: () => {
         qc.invalidateQueries({
           queryKey: [

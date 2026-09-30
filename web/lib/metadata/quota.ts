@@ -1,9 +1,64 @@
-import type { CandidatesResp } from "@/lib/api/types";
+import type { CandidatesResp, RequestBudget } from "@/lib/api/types";
 
 /** One provider's live budget, as carried on the candidates response (B13). */
 export type ProviderQuota = NonNullable<
   CandidatesResp["quota"]
 >["providers"][number];
+
+/**
+ * Below this fraction of the headline window's budget the search dialog
+ * shows the "N of M requests left" note (WP-2.9).
+ */
+export const LOW_BUDGET_FRACTION = 0.2;
+
+/** `"this minute"` / `"this hour"` / `"today"` for a budget window. */
+export function budgetWindowLabel(window: RequestBudget["window"]): string {
+  switch (window) {
+    case "minute":
+      return "this minute";
+    case "hour":
+      return "this hour";
+    case "day":
+      return "today";
+  }
+}
+
+/** Fraction of the window's budget still available, `0..1`. */
+export function budgetFraction(b: RequestBudget): number {
+  if (b.limit <= 0) return 0;
+  return Math.max(0, Math.min(1, b.remaining / b.limit));
+}
+
+/**
+ * Seconds until the budget window resets, from a server timestamp and
+ * an explicit `now` (kept pure — no `Date.now()` during render).
+ */
+export function budgetResetSeconds(b: RequestBudget, nowMs: number): number {
+  const reset = Date.parse(b.reset_at);
+  if (Number.isNaN(reset)) return 0;
+  return Math.max(0, Math.round((reset - nowMs) / 1000));
+}
+
+/**
+ * Admin-card line, e.g. `"812 of 5,000 left today · resets in 3h"`.
+ */
+export function formatBudget(b: RequestBudget, nowMs: number): string {
+  const base = `${b.remaining.toLocaleString()} of ${b.limit.toLocaleString()} left ${budgetWindowLabel(b.window)}`;
+  const reset = budgetResetSeconds(b, nowMs);
+  return reset > 0 ? `${base} · resets in ${formatCountdown(reset)}` : base;
+}
+
+/**
+ * The search dialog's one-line low-budget note, e.g.
+ * `"Metron: 812 of 5,000 requests left today"`. `null` when the provider
+ * carries no budget or still has ≥ 20% of it.
+ */
+export function budgetNote(p: ProviderQuota): string | null {
+  const b = p.budget;
+  if (!b) return null;
+  if (budgetFraction(b) >= LOW_BUDGET_FRACTION) return null;
+  return `${providerLabel(p.provider)}: ${b.remaining.toLocaleString()} of ${b.limit.toLocaleString()} requests left ${budgetWindowLabel(b.window)}`;
+}
 
 const PROVIDER_LABELS: Record<string, string> = {
   comicvine: "ComicVine",

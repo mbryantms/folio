@@ -65,9 +65,14 @@ import {
   CandidateRow,
   MatchOutcomeBanner,
 } from "@/components/library/MetadataMatchCandidates";
+import { MetadataQueryTools } from "@/components/library/MetadataQueryTools";
 import { useMetadataApplyWait } from "@/components/library/useMetadataApplyWait";
 import { useMetadataCandidateSearch } from "@/components/library/useMetadataCandidateSearch";
-import { formatRetryEta, summarizeProviderQuota } from "@/lib/metadata/quota";
+import {
+  budgetNote,
+  formatRetryEta,
+  summarizeProviderQuota,
+} from "@/lib/metadata/quota";
 import type { MetadataMatchScope } from "@/components/library/metadata-match-scope";
 
 export type { MetadataMatchScope } from "@/components/library/metadata-match-scope";
@@ -196,6 +201,7 @@ export function MetadataMatchForm({
     searchErrorCode,
     reused,
     researchFromScratch,
+    adoptRun,
   } = useMetadataCandidateSearch({ scope, open });
   const seriesCandidates = useMetadataCandidatesSeries(
     scope.kind === "series" ? scope.seriesSlug : "",
@@ -343,6 +349,9 @@ export function MetadataMatchForm({
   // even exists.
   const quota = candidates.data?.quota;
   const quotaLines = (quota?.providers ?? []).map(summarizeProviderQuota);
+  const lowBudgetNotes = (quota?.providers ?? [])
+    .map(budgetNote)
+    .filter((n): n is string => n !== null);
   const retryEta = formatRetryEta(quota?.retry_after_seconds);
   const noProvidersConfigured = searchErrorCode === "metadata.no_providers";
 
@@ -450,7 +459,7 @@ export function MetadataMatchForm({
     onClose,
   });
 
-  const restart = () => {
+  const resetPicks = () => {
     setPickedOrdinal(null);
     setPreviewOrdinal(null);
     setCompareMode(false);
@@ -458,9 +467,20 @@ export function MetadataMatchForm({
     setFieldSources({});
     lastSeededComposite.current = null;
     lastSeededSelection.current = null;
+  };
+  const restart = () => {
+    resetPicks();
     // Run + auto-kick guard reset live in the search hook.
     researchFromScratch();
   };
+  // WP-2.8: an override search / URL lookup produced a new run — adopt
+  // it in place of the auto-kicked one.
+  const onNewRun = (id: string) => {
+    resetPicks();
+    adoptRun(id);
+  };
+  // WP-2.8 provenance of the current run (what was actually searched).
+  const runQuery = candidates.data?.query;
 
   return (
     <>
@@ -679,6 +699,28 @@ export function MetadataMatchForm({
                   Use Re-search for fresh results.
                 </div>
               )}
+              {runQuery?.lookup && isFinalized && (
+                <div className="text-muted-foreground pb-1 text-xs">
+                  Fetched directly from{" "}
+                  {candidates.data?.providers.join(", ") ?? "the provider"} — no
+                  matching was run.
+                </div>
+              )}
+              {runQuery?.overridden && isFinalized && (
+                <div className="text-muted-foreground pb-1 text-xs">
+                  Searched as{" "}
+                  <span className="text-foreground">{runQuery.label}</span>
+                  {runQuery.year ? ` (${runQuery.year})` : ""}
+                  {runQuery.publisher ? `, ${runQuery.publisher}` : ""}.
+                </div>
+              )}
+              {runQuery?.year_gate_relaxed && isFinalized && (
+                <div className="border-warning/40 bg-warning/10 mb-1 rounded-md border px-3 py-2 text-xs">
+                  Year gate relaxed — the local year dropped every result, so
+                  cover-confirmed candidates are shown even though they may be
+                  from a different volume. Set the year below to pin it.
+                </div>
+              )}
               {(candidates.data?.candidates.length ?? 0) >= 2 && (
                 <div className="text-muted-foreground flex items-center justify-end gap-2 pb-1 text-xs">
                   <span>{selectedOrdinals.size} selected to compare</span>
@@ -718,7 +760,8 @@ export function MetadataMatchForm({
                 {isFinalized &&
                   (candidates.data?.candidates.length ?? 0) === 0 && (
                     <li className="text-muted-foreground py-8 text-center text-sm">
-                      No matches. Try editing the series name or year.
+                      No matches. Adjust the query below, or paste the provider
+                      page URL to fetch it directly.
                     </li>
                   )}
               </ul>
@@ -729,7 +772,28 @@ export function MetadataMatchForm({
                   Provider budget: {quotaLines.join(" · ")}
                 </p>
               )}
+              {lowBudgetNotes.length > 0 && (
+                // WP-2.9: the upstream-reported budget is running low —
+                // say so in plain numbers before the next batch burns it.
+                <p
+                  className="text-muted-foreground mt-1 text-xs"
+                  data-testid="low-budget-note"
+                >
+                  {lowBudgetNotes.join(" · ")}
+                </p>
+              )}
             </>
+          )}
+          {/* WP-2.8 escape hatches. Reachable from every settled state —
+              including a failed search or a "no issue number" refusal, where
+              an override or a pasted URL is precisely the fix. */}
+          {!noProvidersConfigured && !isPolling && (
+            <MetadataQueryTools
+              scope={scope}
+              defaults={runQuery ?? null}
+              disabled={applyIsPending}
+              onNewRun={onNewRun}
+            />
           )}
         </div>
       )}

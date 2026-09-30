@@ -19,7 +19,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use entity::{library_user_access, series};
+use entity::series;
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, QueryFilter, Statement, Value,
 };
@@ -27,7 +27,6 @@ use serde::Serialize;
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
-use uuid::Uuid;
 
 use super::error;
 use crate::auth::CurrentUser;
@@ -68,23 +67,6 @@ pub struct AppearancesView {
     pub reading_lists: Vec<AppearanceView>,
     pub collections: Vec<AppearanceView>,
     pub arcs: Vec<AppearanceView>,
-}
-
-/// Same admin-OR-ACL gate the issue/series read endpoints use. Duplicated
-/// per-module to match the existing convention (issues.rs / series.rs /
-/// ratings.rs each carry their own private copy).
-async fn visible_in_library(app: &AppState, user: &CurrentUser, lib_id: Uuid) -> bool {
-    if user.role == "admin" {
-        return true;
-    }
-    library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .filter(library_user_access::Column::LibraryId.eq(lib_id))
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
 }
 
 /// Run a statement that selects exactly `id` (text), `name` (text),
@@ -165,7 +147,7 @@ pub async fn issue_appearances(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !visible_in_library(&app, &user, row.library_id).await {
+    if !crate::library::access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -250,7 +232,7 @@ pub async fn series_appearances(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    if !visible_in_library(&app, &user, s.library_id).await {
+    if !crate::library::access::series_visible(&app, &user, &s).await {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 

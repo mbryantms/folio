@@ -106,7 +106,6 @@ async fn grant_access(app: &TestApp, user_id: Uuid, lib_id: Uuid) {
     library_user_access::ActiveModel {
         library_id: Set(lib_id),
         user_id: Set(user_id),
-        role: Set("reader".into()),
         age_rating_max: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
@@ -309,6 +308,8 @@ async fn seed_issue(app: &TestApp, lib_id: Uuid, series_id: Uuid, idx: u8) -> St
         comicinfo_count: Set(None),
         last_rewrite_at: Set(None),
         last_rewrite_kind: Set(None),
+        last_sidecar_rewrite_at: Set(None),
+        metron_info_raw: Set(None),
         cover_page_index: Set(0),
         metadata_review_accepted_at: Set(None),
         metadata_review_accepted_by: Set(None),

@@ -920,7 +920,11 @@ pub async fn entries(
                 .and_then(|iid| issue_by_id.get(iid))
                 .and_then(|issue| {
                     let series = series_by_id.get(&issue.series_id)?;
-                    if !visible.contains(series.library_id) {
+                    if !visible.issue_ok(
+                        series.library_id,
+                        issue.age_rating.as_deref(),
+                        series.age_rating.as_deref(),
+                    ) {
                         return None;
                     }
                     Some(
@@ -1859,8 +1863,13 @@ pub async fn issues(
         let Some(series) = series_by_id.get(&issue.series_id) else {
             continue;
         };
-        // Library visibility — silently drop issues the user can't see.
-        if !visible.contains(series.library_id) {
+        // Library visibility (membership + age cap) — silently drop
+        // issues the user can't see.
+        if !visible.issue_ok(
+            series.library_id,
+            issue.age_rating.as_deref(),
+            series.age_rating.as_deref(),
+        ) {
             continue;
         }
         let series_slug = series.slug.clone();
@@ -2433,7 +2442,11 @@ pub async fn reading_window(
         let Some(series) = series_by_id.get(&issue.series_id) else {
             continue;
         };
-        if !acl.contains(series.library_id) {
+        if !acl.issue_ok(
+            series.library_id,
+            issue.age_rating.as_deref(),
+            series.age_rating.as_deref(),
+        ) {
             continue;
         }
         let progress = progress_by_issue.get(&issue_id);
@@ -2770,7 +2783,11 @@ pub async fn reading_window_paginated(
         let Some(series) = series_by_id.get(&issue.series_id) else {
             continue;
         };
-        if !acl.contains(series.library_id) {
+        if !acl.issue_ok(
+            series.library_id,
+            issue.age_rating.as_deref(),
+            series.age_rating.as_deref(),
+        ) {
             continue;
         }
         let progress = progress_by_issue.get(&issue_id);

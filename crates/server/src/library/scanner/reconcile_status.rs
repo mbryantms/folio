@@ -227,6 +227,16 @@ where
 {
     let comicinfo_count = aggregates.comicinfo_count;
 
+    // User pins (roadmap WP-2.3): identity fields edited through
+    // `PATCH /series/{slug}` carry `field_provenance.set_by='user'` and
+    // must survive every rescan. The provenance writer already refuses
+    // to downgrade a user row; this gate keeps the *column* from being
+    // overwritten too.
+    let user_pins =
+        crate::metadata::writers::fetch_user_pinned_fields(db, "series", &row.id.to_string())
+            .await?;
+    let pinned = |f: crate::metadata::MetadataField| user_pins.contains(&f.key());
+
     // Resolve each field using the precedence ladder. None on either
     // signal source means "no change" — never overwrite an existing
     // value with NULL just because we didn't see it this scan.
@@ -280,6 +290,7 @@ where
     // vs. the v1 "always overwrite" behavior.
     if let Some(t) = resolved_total
         && row.total_issues != Some(t)
+        && !pinned(crate::metadata::MetadataField::TotalIssues)
     {
         am.total_issues = Set(Some(t));
         am.updated_at = Set(Utc::now().fixed_offset());
@@ -371,6 +382,7 @@ where
     };
     if let Some(new_value) = target_volume
         && row.volume != new_value
+        && !pinned(crate::metadata::MetadataField::Volume)
     {
         am.volume = Set(new_value);
         am.updated_at = Set(Utc::now().fixed_offset());
@@ -389,6 +401,7 @@ where
         .map(str::trim)
         .filter(|s| !s.is_empty())
         && row.name != name
+        && !pinned(crate::metadata::MetadataField::Title)
     {
         am.name = Set(name.to_owned());
         am.normalized_name = Set(entity::series::normalize_name(name));
@@ -402,6 +415,7 @@ where
         .map(str::trim)
         .filter(|s| !s.is_empty())
         && row.publisher.as_deref() != Some(publisher)
+        && !pinned(crate::metadata::MetadataField::Publisher)
     {
         am.publisher = Set(Some(publisher.to_owned()));
         am.updated_at = Set(Utc::now().fixed_offset());

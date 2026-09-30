@@ -2467,6 +2467,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["account_export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/issues/bulk-metadata": {
         parameters: {
             query?: never;
@@ -3764,6 +3780,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/issues/{issue_slug}/metadata/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_lookup_issue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/issues/{issue_slug}/metadata/proposed-diff": {
         parameters: {
             query?: never;
@@ -3895,6 +3927,22 @@ export interface paths {
         get: operations["metadata_composite_diff_series"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/metadata/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_lookup_series"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4759,6 +4807,11 @@ export interface components {
             series_created: number;
         };
         /**
+         * @description Refill window a budget figure applies to.
+         * @enum {string}
+         */
+        BudgetWindow: "minute" | "hour" | "day";
+        /**
          * @description Body for `POST /me/collections/{id}/members/bulk-add`. Each
          *     member follows the same `(entry_kind, ref_id)` shape as the
          *     single-add endpoint. Multi-select toolbar (`<SelectionToolbar>`'s
@@ -5005,6 +5058,7 @@ export interface components {
             items_total: number;
             match_outcome?: components["schemas"]["MatchOutcomeView"] | null;
             providers: string[];
+            query?: components["schemas"]["SearchQueryView"] | null;
             quota?: components["schemas"]["QuotaStateView"] | null;
             /** Format: uuid */
             run_id: string;
@@ -6411,6 +6465,248 @@ export interface components {
             /** Format: int32 */
             year?: number | null;
         };
+        ExportCollection: {
+            created_at: string;
+            custom_tags: string[];
+            description?: string | null;
+            /** @description Entries in `position` order. */
+            entries: components["schemas"]["ExportCollectionEntry"][];
+            /** Format: uuid */
+            id: string;
+            name: string;
+            preserve_canonical_order: boolean;
+            /** @description `"want_to_read"` for the system collection, `null` otherwise. */
+            system_key?: string | null;
+            updated_at: string;
+        };
+        ExportCollectionEntry: {
+            added_at: string;
+            /** @description `"issue"` or `"series"` — exactly one of the refs below is set. */
+            entry_kind: string;
+            issue?: components["schemas"]["IssueRef"] | null;
+            /** Format: int32 */
+            position: number;
+            series?: components["schemas"]["SeriesRef"] | null;
+        };
+        ExportMarker: {
+            body?: string | null;
+            color?: string | null;
+            created_at: string;
+            hidden_from_log: boolean;
+            /** Format: uuid */
+            id: string;
+            is_favorite: boolean;
+            issue: components["schemas"]["IssueRef"];
+            kind: string;
+            /** Format: int32 */
+            page_index: number;
+            region?: Record<string, never> | null;
+            selection?: Record<string, never> | null;
+            tags: string[];
+            updated_at: string;
+        };
+        ExportPage: {
+            created_at: string;
+            description?: string | null;
+            /** Format: uuid */
+            id: string;
+            is_system: boolean;
+            name: string;
+            /** @description Pinned rails on this page in `position` order. */
+            pins: components["schemas"]["ExportViewPin"][];
+            /** Format: int32 */
+            position: number;
+            slug: string;
+            updated_at: string;
+        };
+        /**
+         * @description Raw preference columns off the `users` row. Token columns are exported
+         *     as stored (`null` = "no preference").
+         */
+        ExportPreferences: {
+            accent_color?: string | null;
+            activity_tracking_enabled: boolean;
+            default_cover_solo: boolean;
+            default_fit_mode?: string | null;
+            default_page_animation?: string | null;
+            default_page_strip: boolean;
+            default_reading_direction?: string | null;
+            default_view_mode?: string | null;
+            density?: string | null;
+            exclude_from_aggregates: boolean;
+            /** @description Reader key overrides — `{ action_name: key_string }`. */
+            keybinds: Record<string, never>;
+            language: string;
+            /** Format: int32 */
+            max_rails_per_page: number;
+            opds_progress_glyphs: boolean;
+            opds_wtr_reorder: boolean;
+            /** Format: int32 */
+            reading_idle_ms: number;
+            /** Format: int32 */
+            reading_min_active_ms: number;
+            /** Format: int32 */
+            reading_min_pages: number;
+            show_marker_count: boolean;
+            theme?: string | null;
+            timezone: string;
+        };
+        ExportProgress: {
+            device?: string | null;
+            finished: boolean;
+            finished_at?: string | null;
+            is_backfill: boolean;
+            issue: components["schemas"]["IssueRef"];
+            /** Format: int32 */
+            last_page: number;
+            /** Format: double */
+            percent: number;
+            /**
+             * Format: int32
+             * @description Reading-run counter: 0 is the first read, each explicit re-read
+             *     opens the next run (`docs/dev/reading-progress.md`).
+             */
+            run: number;
+            updated_at: string;
+        };
+        ExportRailDismissal: {
+            dismissed_at: string;
+            target_id: string;
+            /** @description `issue` / `series` / `cbl`. */
+            target_kind: string;
+        };
+        ExportRating: {
+            created_at: string;
+            issue?: components["schemas"]["IssueRef"] | null;
+            /** Format: double */
+            rating: number;
+            series?: components["schemas"]["SeriesRef"] | null;
+            /** @description `"issue"` or `"series"` — exactly one of the refs below is set. */
+            target_type: string;
+            updated_at: string;
+        };
+        ExportReadingSession: {
+            /** Format: int64 */
+            active_ms: number;
+            client_meta: Record<string, never>;
+            client_session_id: string;
+            device?: string | null;
+            /** Format: int32 */
+            distinct_pages_read: number;
+            /** Format: int32 */
+            end_page: number;
+            ended_at?: string | null;
+            /** Format: int32 */
+            furthest_page: number;
+            hidden_from_log: boolean;
+            /** Format: uuid */
+            id: string;
+            issue: components["schemas"]["IssueRef"];
+            last_heartbeat_at: string;
+            /** Format: int32 */
+            page_turns: number;
+            /** Format: int32 */
+            start_page: number;
+            started_at: string;
+            view_mode?: string | null;
+        };
+        ExportSavedView: {
+            /**
+             * Format: uuid
+             * @description For `kind = "cbl"`: the backing `cbl_lists` row. CBL lists have
+             *     their own XML export (`GET /me/cbl-lists/{id}/export`).
+             */
+            cbl_list_id?: string | null;
+            /** @description Filter DSL — a JSON array of `{group_id, field, op, value}`. */
+            conditions?: Record<string, never> | null;
+            created_at: string;
+            custom_tags: string[];
+            /** Format: int32 */
+            custom_year_end?: number | null;
+            /** Format: int32 */
+            custom_year_start?: number | null;
+            description?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** @description `"filter_series"` or `"cbl"`. */
+            kind: string;
+            match_mode?: string | null;
+            name: string;
+            /** Format: int32 */
+            result_limit?: number | null;
+            sort_field?: string | null;
+            sort_order?: string | null;
+            updated_at: string;
+        };
+        ExportSections: {
+            /**
+             * @description User-authored collections (`saved_views.kind = 'collection'`,
+             *     no `system_key`). Want to Read is split out below.
+             */
+            collections: components["schemas"]["ExportCollection"][];
+            /**
+             * @description Every `user_page` row including the system Home page, each with
+             *     its pinned rails.
+             */
+            custom_pages: components["schemas"]["ExportPage"][];
+            markers: components["schemas"]["ExportMarker"][];
+            /**
+             * @description Per-user preferences from the `users` row, including reader
+             *     `keybinds`.
+             */
+            preferences: components["schemas"]["ExportPreferences"];
+            progress: components["schemas"]["ExportProgress"][];
+            rail_dismissals: components["schemas"]["ExportRailDismissal"][];
+            ratings: components["schemas"]["ExportRating"][];
+            /**
+             * @description `reading_sessions` rows. Hidden sessions are included with
+             *     `hidden_from_log = true` so the flag survives a restore.
+             */
+            reading_log: components["schemas"]["ExportReadingSession"][];
+            /**
+             * @description Filter and CBL-backed saved views (every user-owned `saved_views`
+             *     row whose `kind != 'collection'`).
+             */
+            saved_views: components["schemas"]["ExportSavedView"][];
+            sidebar: components["schemas"]["ExportSidebarEntry"][];
+            want_to_read?: components["schemas"]["ExportCollection"] | null;
+        };
+        ExportSidebarEntry: {
+            /** @description `builtin` / `library` / `view` / `header` / `spacer`. */
+            kind: string;
+            label?: string | null;
+            /** Format: int32 */
+            position: number;
+            ref_id: string;
+            visible: boolean;
+        };
+        ExportUser: {
+            display_name: string;
+            email?: string | null;
+            /** Format: uuid */
+            id: string;
+        };
+        ExportViewPin: {
+            icon?: string | null;
+            pinned: boolean;
+            /** Format: int32 */
+            position: number;
+            show_in_sidebar: boolean;
+            /** Format: uuid */
+            view_id: string;
+            /**
+             * @description The pinned view's `kind` (`filter_series` / `cbl` / `system` /
+             *     `collection`), hydrated so a system rail is recognisable after a
+             *     rebuild. `null` when the view no longer exists.
+             */
+            view_kind?: string | null;
+            view_name?: string | null;
+            /**
+             * @description `system_key` of the pinned view (e.g. `continue_reading`), when it
+             *     is a built-in rail or the Want to Read collection.
+             */
+            view_system_key?: string | null;
+        };
         /**
          * @description External-ID conflict row — surfaces in the preview pane as an
          *     amber row with a Keep mine / Use theirs control.
@@ -6824,6 +7120,24 @@ export interface components {
              */
             items: components["schemas"]["MarkerView"][];
         };
+        /**
+         * @description Portable identity for an issue. `issue_id` is Folio's BLAKE3 id;
+         *     `content_hash` plus `(series_name, series_year, issue_number)` are
+         *     the keys that survive a rebuild. The hydrated fields are `null` only
+         *     when the referenced row no longer exists.
+         */
+        IssueRef: {
+            content_hash?: string | null;
+            issue_id: string;
+            /** @description `issues.number_raw` — the number exactly as tagged. */
+            issue_number?: string | null;
+            library_slug?: string | null;
+            /** Format: uuid */
+            series_id?: string | null;
+            series_name?: string | null;
+            /** Format: int32 */
+            series_year?: number | null;
+        };
         IssueSearchHit: components["schemas"]["IssueSummaryView"] & {
             series_name: string;
             /**
@@ -6878,11 +7192,27 @@ export interface components {
             tag: string;
         };
         LibraryAccessGrantView: {
+            /**
+             * @description ComicInfo `AgeRating` cap for this grant (a rung of the ladder in
+             *     `library::age_rating::LADDER`), or `null` for unrestricted.
+             *     Series / issues rated above the cap are hidden from the user on
+             *     every read surface; unrated rows are shown (WP-2.7, D6).
+             */
+            age_rating_max?: string | null;
             library_id: string;
             library_name: string;
-            role: string;
         };
         LibraryAccessReq: {
+            /**
+             * @description Per-library age-rating caps, keyed by library id (WP-2.7). A
+             *     library listed in `library_ids` but absent here is uncapped.
+             *     Values must be a rung of the ComicInfo `AgeRating` ladder
+             *     (`Early Childhood` … `X18+`); keys for libraries not in
+             *     `library_ids` are ignored.
+             */
+            age_rating_caps?: {
+                [key: string]: string;
+            };
             /**
              * @description Final set of library ids the user should be granted access to. The
              *     server replaces the user's `library_user_access` rows with this list.
@@ -7083,6 +7413,36 @@ export interface components {
              *     `?since=` to tail.
              */
             watermark: number;
+        };
+        /**
+         * @description Body for `POST …/metadata/lookup` (WP-2.8). Either paste a provider
+         *     page / API URL, or name the provider + its native id explicitly. The
+         *     URL wins when both are present.
+         */
+        LookupReq: {
+            /**
+             * @description Provider-native numeric id (a `4050-` / `4000-` prefix is
+             *     tolerated and stripped).
+             */
+            external_id?: string | null;
+            /** @description `comicvine` | `metron`. */
+            source?: string | null;
+            /**
+             * @description ComicVine (`…/4050-<id>/`, `…/4000-<id>/`) or Metron
+             *     (`metron.cloud/series/<id>/`, `…/api/issue/<id>/`) URL.
+             */
+            url?: string | null;
+        };
+        /**
+         * @description `POST …/metadata/lookup` response. The run is already `completed`
+         *     with a single HIGH candidate at ordinal 0, so the client polls
+         *     `…/metadata/candidates?run_id=` once and goes straight to preview.
+         */
+        LookupResp: {
+            external_id: string;
+            /** Format: uuid */
+            run_id: string;
+            source: string;
         };
         /** @description The integer-numbered backbone of a series and its inferred gaps. */
         MainRunReport: {
@@ -7928,6 +8288,12 @@ export interface components {
         ProviderCoverageResp: {
             providers: components["schemas"]["ProviderCoverage"][];
         };
+        /** @description The most recent provider error, for the admin card. */
+        ProviderLastError: {
+            /** Format: date-time */
+            at: string;
+            message: string;
+        };
         /**
          * @description Per-provider remaining-quota view for the match dialog (audit B13).
          *     Mirrors `crate::metadata::provider::QuotaSnapshot`; ComicVine carries
@@ -7935,6 +8301,7 @@ export interface components {
          *     and day buckets.
          */
         ProviderQuotaView: {
+            budget?: components["schemas"]["RequestBudget"] | null;
             /** @description `"comicvine"` | `"metron"`. */
             provider: string;
             /** Format: int32 */
@@ -7969,6 +8336,7 @@ export interface components {
             series_id: string;
         };
         ProviderView: {
+            budget?: components["schemas"]["RequestBudget"] | null;
             /**
              * @description `true` when the credential is set but the master toggle is off
              *     — UI surfaces a "Enable to test" hint in that state.
@@ -7982,6 +8350,7 @@ export interface components {
             /** @description Stable identifier — `"comicvine"` | `"metron"` (M2). */
             id: string;
             label: string;
+            last_error?: components["schemas"]["ProviderLastError"] | null;
             quota?: components["schemas"]["QuotaView"] | null;
         };
         ProvidersListResp: {
@@ -8391,6 +8760,19 @@ export interface components {
              */
             ids: string[];
         };
+        /**
+         * @description One window's budget: how many requests the provider allows, how many
+         *     are left, and when the counter resets.
+         */
+        RequestBudget: {
+            /** Format: int32 */
+            limit: number;
+            /** Format: int32 */
+            remaining: number;
+            /** Format: date-time */
+            reset_at: string;
+            window: components["schemas"]["BudgetWindow"];
+        };
         RequestPasswordResetReq: {
             email: string;
         };
@@ -8757,6 +9139,50 @@ export interface components {
             state: string;
             stats: unknown;
         };
+        /**
+         * @description Optional per-run query overrides for `POST …/metadata/search`
+         *     (WP-2.8). Each supplied field replaces the corresponding fact read
+         *     from the local series / issue row **for this run only** — the rows
+         *     themselves are never mutated. Absent body ⇒ every field `None` ⇒
+         *     the pre-existing behaviour.
+         */
+        SearchOverrides: {
+            /**
+             * @description Issue-scope only; ignored on a series search. Lets an issue with
+             *     no parsed `number_raw` be searched at all.
+             */
+            issue_number?: string | null;
+            /** @description Series name to search instead of the local one. */
+            name?: string | null;
+            publisher?: string | null;
+            /**
+             * Format: int32
+             * @description Series start year. Supplying it also pins the hard year gate —
+             *     the orchestrator won't relax to the cover-aware gate for a year
+             *     the user asserted.
+             */
+            year?: number | null;
+        };
+        /**
+         * @description Effective query + provenance flags for one run (WP-2.8). See
+         *     [`CandidatesResp::query`].
+         */
+        SearchQueryView: {
+            /** @description Issue-scope only. */
+            issue_number?: string | null;
+            /** @description `"series"` | `"issue"`. */
+            kind: string;
+            /** @description Human label, e.g. `Saga` / `Saga #12`. */
+            label: string;
+            lookup: boolean;
+            /** @description Series name searched (the override when one was supplied). */
+            name: string;
+            overridden: boolean;
+            publisher?: string | null;
+            /** Format: int32 */
+            year?: number | null;
+            year_gate_relaxed: boolean;
+        };
         SearchStartedResp: {
             /**
              * @description `true` when an in-flight run for the same target was reused
@@ -8807,6 +9233,15 @@ export interface components {
              * @description Active issues in the series (excludes removed / soft-deleted).
              */
             total: number;
+        };
+        /** @description Portable identity for a series. */
+        SeriesRef: {
+            library_slug?: string | null;
+            /** Format: uuid */
+            series_id: string;
+            series_name?: string | null;
+            /** Format: int32 */
+            series_year?: number | null;
         };
         /**
          * @description Response for `GET /series/{slug}/resume` — the issue (and page) the user
@@ -8886,6 +9321,7 @@ export interface components {
             earliest_year?: number | null;
             genres?: string[];
             id: string;
+            imprint?: string | null;
             inkers?: string[];
             /** Format: int64 */
             issue_count?: number | null;
@@ -9662,16 +10098,27 @@ export interface components {
          * @description Body for `PATCH /series/{id}`. `match_key` is the §7.4 sticky override
          *     the scanner won't touch; `slug` is the admin-rename hook for the URL
          *     segment (validated unique across all series). `status` and the external
-         *     IDs are surfaced in the issue drawer so curators can correct
+         *     IDs are surfaced in the issue drawer so editors can correct
          *     continuing/ended state and database links without leaving the issue page.
          */
         UpdateSeriesReq: {
+            /** @description ComicInfo `AgeRating` vocabulary (free text, ≤ 40 chars) or `null`. */
+            age_rating?: string | null;
             /** Format: int64 */
             comicvine_id?: number | null;
+            imprint?: string | null;
+            /**
+             * @description ISO 639-1 language code (`en`, `ja`). The column is NOT NULL, so
+             *     there is no clear.
+             */
+            language_code?: string | null;
             /** @description `null` clears the override; an empty/whitespace string is treated as null. */
             match_key?: string | null;
             /** Format: int64 */
             metron_id?: number | null;
+            /** @description Display name. Non-empty; also refreshes `normalized_name`. */
+            name?: string | null;
+            publisher?: string | null;
             /**
              * @description Per-series reading-direction override. `"ltr"` / `"rtl"` /
              *     `"ttb"` (future-compat) or `null` for "Auto, inherit". Empty or
@@ -9700,6 +10147,21 @@ export interface components {
              *     rework 1.0.
              */
             text_language?: string | null;
+            /**
+             * Format: int32
+             * @description Number of issues in the run (0..=10000) or `null` when unknown.
+             */
+            total_issues?: number | null;
+            /**
+             * Format: int32
+             * @description Volume number (1..=9999) or `null` to clear.
+             */
+            volume?: number | null;
+            /**
+             * Format: int32
+             * @description Start year (1900..=2100) or `null` to clear.
+             */
+            year?: number | null;
         };
         UpdateSettingsReq: {
             [key: string]: unknown;
@@ -9897,6 +10359,20 @@ export interface components {
              * @description Issue rows that received a new or updated progress record.
              */
             updated: number;
+        };
+        /** @description Top-level export envelope. */
+        UserExport: {
+            /** @description RFC 3339 timestamp of when the document was produced. */
+            exported_at: string;
+            /** @description Always `"folio-user-export"`. */
+            format: string;
+            sections: components["schemas"]["ExportSections"];
+            user: components["schemas"]["ExportUser"];
+            /**
+             * Format: int32
+             * @description Envelope version. See `docs/dev/export-format.md` for the changelog.
+             */
+            version: number;
         };
         /**
          * @description Audit-remediation M9.4 typed enums for the `?role=` / `?state=` query
@@ -14858,6 +15334,38 @@ export interface operations {
             };
         };
     };
+    account_export: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attachment; `Content-Disposition: attachment; filename="folio-export-<date>.json"` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserExport"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     issues_bulk_metadata: {
         parameters: {
             query?: never;
@@ -17579,6 +18087,67 @@ export interface operations {
             };
         };
     };
+    metadata_lookup_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LookupReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LookupResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found / provider has no such record */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description bad URL / id, or provider not configured */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description provider error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description provider quota exhausted */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     metadata_proposed_diff_issue: {
         parameters: {
             query: {
@@ -17644,7 +18213,12 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        /** @description Optional query overrides (WP-2.8); omit the body for the local facts */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SearchOverrides"] | null;
+            };
+        };
         responses: {
             202: {
                 headers: {
@@ -17670,6 +18244,13 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description override validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17941,6 +18522,66 @@ export interface operations {
             };
         };
     };
+    metadata_lookup_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LookupReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LookupResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found / provider has no such record */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description bad URL / id, or provider not configured */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description provider error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description provider quota exhausted */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     metadata_pause_series: {
         parameters: {
             query?: never;
@@ -18074,7 +18715,12 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        /** @description Optional query overrides (WP-2.8); omit the body for the local facts */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SearchOverrides"] | null;
+            };
+        };
         responses: {
             202: {
                 headers: {
@@ -18100,6 +18746,13 @@ export interface operations {
             };
             /** @description series not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description override validation failed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

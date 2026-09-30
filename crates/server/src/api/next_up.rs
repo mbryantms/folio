@@ -166,7 +166,7 @@ pub async fn next_up(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    if !acl.contains(current.library_id) {
+    if !access::issue_allowed(&app, &acl, &current).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -475,11 +475,17 @@ pub(crate) async fn pick_next_in_series(
     app: &AppState,
     user_id: Uuid,
     series_id: Uuid,
+    acl: &access::VisibleLibraries,
 ) -> Result<Option<issue::Model>, Response> {
-    let issues: Vec<issue::Model> = match issue::Entity::find()
+    let mut sel = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
         .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::RemovedAt.is_null());
+    // WP-2.7: never resolve "up next" onto an issue the caller can't open.
+    if let Some(cap) = acl.issue_cap_condition() {
+        sel = sel.filter(cap);
+    }
+    let issues: Vec<issue::Model> = match sel
         .order_by_asc(Expr::cust("sort_number IS NULL"))
         .order_by_asc(issue::Column::SortNumber)
         .order_by_asc(issue::Column::Id)
@@ -609,10 +615,15 @@ async fn pick_next_in_series_after(
     current: &issue::Model,
     acl: &access::VisibleLibraries,
 ) -> Result<Option<issue::Model>, Response> {
-    let issues: Vec<issue::Model> = match issue::Entity::find()
+    let mut sel = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(current.series_id))
         .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::RemovedAt.is_null());
+    // WP-2.7: skip issues rated above the caller's cap.
+    if let Some(cap) = acl.issue_cap_condition() {
+        sel = sel.filter(cap);
+    }
+    let issues: Vec<issue::Model> = match sel
         .order_by_asc(Expr::cust("sort_number IS NULL"))
         .order_by_asc(issue::Column::SortNumber)
         .order_by_asc(issue::Column::Id)
@@ -690,6 +701,9 @@ pub(crate) trait WalkIssue {
     fn walk_id(&self) -> &str;
     fn walk_series_id(&self) -> Uuid;
     fn walk_library_id(&self) -> Uuid;
+    /// The issue's own `age_rating` (WP-2.7 cap check; the series
+    /// rating is the fallback and comes from `series_by_id`).
+    fn walk_age_rating(&self) -> Option<&str>;
 }
 
 impl WalkIssue for issue::Model {
@@ -701,6 +715,9 @@ impl WalkIssue for issue::Model {
     }
     fn walk_library_id(&self) -> Uuid {
         self.library_id
+    }
+    fn walk_age_rating(&self) -> Option<&str> {
+        self.age_rating.as_deref()
     }
 }
 
@@ -904,12 +921,16 @@ pub(crate) fn walk_cbl_pick<I: WalkIssue + Clone>(
         let Some(issue_model) = issue_by_id.get(&issue_id) else {
             continue;
         };
-        if !acl.contains(issue_model.walk_library_id()) {
-            continue;
-        }
         let Some(s) = series_by_id.get(&issue_model.walk_series_id()) else {
             continue;
         };
+        if !acl.issue_ok(
+            issue_model.walk_library_id(),
+            issue_model.walk_age_rating(),
+            s.age_rating.as_deref(),
+        ) {
+            continue;
+        }
         return Some(CblNextPick {
             issue: issue_model.clone(),
             series_slug: s.slug.clone(),
@@ -977,7 +998,7 @@ pub async fn prev_up(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    if !acl.contains(current.library_id) {
+    if !access::issue_allowed(&app, &acl, &current).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -1162,10 +1183,15 @@ async fn pick_prev_in_series_before(
     if !acl.contains(current.library_id) {
         return Ok(None);
     }
-    let issues: Vec<issue::Model> = match issue::Entity::find()
+    let mut sel = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(current.series_id))
         .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::RemovedAt.is_null());
+    // WP-2.7: skip issues rated above the caller's cap.
+    if let Some(cap) = acl.issue_cap_condition() {
+        sel = sel.filter(cap);
+    }
+    let issues: Vec<issue::Model> = match sel
         .order_by_asc(Expr::cust("sort_number IS NULL"))
         .order_by_asc(issue::Column::SortNumber)
         .order_by_asc(issue::Column::Id)
@@ -1236,13 +1262,21 @@ async fn pick_prev_in_cbl(
         if !acl.contains(issue_model.library_id) {
             continue;
         }
-        let (series_slug, series_name) = match series::Entity::find_by_id(issue_model.series_id)
-            .one(&app.db)
-            .await
-        {
-            Ok(Some(s)) => (s.slug, s.name),
-            _ => continue,
-        };
+        let (series_slug, series_name, series_rating) =
+            match series::Entity::find_by_id(issue_model.series_id)
+                .one(&app.db)
+                .await
+            {
+                Ok(Some(s)) => (s.slug, s.name, s.age_rating),
+                _ => continue,
+            };
+        if !acl.issue_ok(
+            issue_model.library_id,
+            issue_model.age_rating.as_deref(),
+            series_rating.as_deref(),
+        ) {
+            continue;
+        }
         return Ok(Some((
             issue_model,
             series_slug,

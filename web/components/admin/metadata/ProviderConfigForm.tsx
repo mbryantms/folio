@@ -5,8 +5,10 @@
  *
  * Writes to the same `PATCH /admin/settings` endpoint the generic
  * settings page uses, but presents labeled inputs ("ComicVine API
- * key", "Metron password") instead of forcing the operator to find
- * `metadata.comicvine.api_key` in a flat list. Secret values come
+ * key", "Metron API token") instead of forcing the operator to find
+ * `metadata.comicvine.api_key` in a flat list. Metron prefers its API
+ * token (WP-2.9); the username + password pair stays as the fallback
+ * the server uses when no token is set. Secret values come
  * back from `GET /admin/settings` as the sentinel string `"<set>"`
  * — the form shows a "(saved)" placeholder + leaves the input
  * empty so re-saving without typing is a no-op.
@@ -41,6 +43,8 @@ type CredentialFields =
     }
   | {
       kind: "metron";
+      apiToken: string;
+      apiTokenAlreadySet: boolean;
       username: string;
       password: string;
       passwordAlreadySet: boolean;
@@ -83,7 +87,7 @@ export function ProviderConfigForm({
   const formKey =
     initial.kind === "comicvine"
       ? `cv-${initial.apiKeyAlreadySet ? "1" : "0"}-${initial.enabled ? "1" : "0"}`
-      : `metron-${initial.username}-${initial.passwordAlreadySet ? "1" : "0"}-${initial.enabled ? "1" : "0"}`;
+      : `metron-${initial.username}-${initial.apiTokenAlreadySet ? "1" : "0"}-${initial.passwordAlreadySet ? "1" : "0"}-${initial.enabled ? "1" : "0"}`;
 
   return (
     <ProviderForm
@@ -124,8 +128,11 @@ function readInitial(
     };
   }
   const passRaw = str("metadata.metron.password");
+  const tokenRaw = str("metadata.metron.api_token");
   return {
     kind: "metron",
+    apiToken: tokenRaw === SECRET_SET ? "" : tokenRaw,
+    apiTokenAlreadySet: tokenRaw === SECRET_SET,
     username: str("metadata.metron.username"),
     password: passRaw === SECRET_SET ? "" : passRaw,
     passwordAlreadySet: passRaw === SECRET_SET,
@@ -152,6 +159,9 @@ function ProviderForm({
   const [apiKey, setApiKey] = React.useState(
     initial.kind === "comicvine" ? initial.apiKey : "",
   );
+  const [apiToken, setApiToken] = React.useState(
+    initial.kind === "metron" ? initial.apiToken : "",
+  );
   const [username, setUsername] = React.useState(
     initial.kind === "metron" ? initial.username : "",
   );
@@ -174,6 +184,10 @@ function ProviderForm({
         patch["metadata.comicvine.enabled"] = enabled;
       }
     } else {
+      const trimmedToken = apiToken.trim();
+      if (trimmedToken !== "" && trimmedToken !== initial.apiToken) {
+        patch["metadata.metron.api_token"] = trimmedToken;
+      }
       const trimmedUser = username.trim();
       const trimmedPass = password.trim();
       if (trimmedUser !== initial.username) {
@@ -192,6 +206,7 @@ function ProviderForm({
 
   const dirty = isDirty(provider, initial, {
     apiKey,
+    apiToken,
     username,
     password,
     enabled,
@@ -222,6 +237,26 @@ function ProviderForm({
         </div>
       ) : (
         <>
+          <div className="grid gap-1.5">
+            <Label htmlFor="metron-api-token">API token</Label>
+            <Input
+              id="metron-api-token"
+              type="password"
+              autoComplete="off"
+              value={apiToken}
+              onChange={(e) => setApiToken(e.target.value)}
+              placeholder={
+                initial.apiTokenAlreadySet
+                  ? "(saved — type to replace)"
+                  : "Paste your Metron API token"
+              }
+            />
+            <p className="text-muted-foreground text-xs">
+              Generate one under <span className="font-medium">API Tokens</span>{" "}
+              on your metron.cloud account page. Preferred; the username +
+              password below are only used when no token is set.
+            </p>
+          </div>
           <div className="grid gap-1.5">
             <Label htmlFor="metron-username">Username</Label>
             <Input
@@ -290,6 +325,7 @@ function isDirty(
   initial: CredentialFields,
   current: {
     apiKey: string;
+    apiToken: string;
     username: string;
     password: string;
     enabled: boolean;
@@ -300,6 +336,9 @@ function isDirty(
     return current.apiKey !== "" && current.apiKey !== initial.apiKey;
   }
   if (provider === "metron" && initial.kind === "metron") {
+    if (current.apiToken !== "" && current.apiToken !== initial.apiToken) {
+      return true;
+    }
     if (current.username !== initial.username) return true;
     if (current.password !== "" && current.password !== initial.password) {
       return true;

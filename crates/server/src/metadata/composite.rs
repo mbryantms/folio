@@ -720,7 +720,30 @@ pub async fn apply_composite(
                 .one(&state.db)
                 .await?
                 .ok_or(ApplyError::IssueGone)?;
-            let writeback = library_is_writeback(state, issue_row.library_id).await?;
+            // WP-2.6 (f): same format gate as `apply::apply_issue` — a
+            // refused archive (CBR without conversion, CB7) takes the
+            // DB-direct branch with the reason on the outcome.
+            let mut sidecar_refused: Option<String> = None;
+            let writeback = match writeback_library(state, issue_row.library_id).await? {
+                Some(lib) => {
+                    match crate::jobs::rewrite_sidecars::sidecar_refusal(&lib, &issue_row.file_path)
+                    {
+                        None => true,
+                        Some(reason) => {
+                            tracing::warn!(
+                                issue_id = %issue_row.id,
+                                path = %issue_row.file_path,
+                                reason,
+                                "apply_composite: sidecar writeback refused; applying DB-direct",
+                            );
+                            sidecar_refused =
+                                Some(format!("{}: {reason}; applied DB-direct", issue_row.id));
+                            false
+                        }
+                    }
+                }
+                None => false,
+            };
             let outcome = if writeback {
                 apply_issue_via_sidecar(
                     state,
@@ -744,7 +767,7 @@ pub async fn apply_composite(
                 let cover_provider = build_provider(state, cover_source).ok_or_else(|| {
                     ApplyError::InvalidScope(format!("provider {cover_source} not configured"))
                 })?;
-                write_issue_fields(
+                let mut outcome = write_issue_fields(
                     state,
                     &issue_row,
                     &merged,
@@ -753,7 +776,9 @@ pub async fn apply_composite(
                     &*cover_provider,
                     cover_source,
                 )
-                .await?
+                .await?;
+                outcome.sidecar_skip_reasons.extend(sidecar_refused);
+                outcome
             };
             (outcome, writeback)
         }
@@ -869,12 +894,19 @@ pub async fn apply_composite_auto(
 }
 
 async fn library_is_writeback(state: &AppState, library_id: Uuid) -> Result<bool, ApplyError> {
+    Ok(writeback_library(state, library_id).await?.is_some())
+}
+
+/// The library row when both writeback flags are on (so the caller can
+/// also run the per-archive format gate), else `None`.
+async fn writeback_library(
+    state: &AppState,
+    library_id: Uuid,
+) -> Result<Option<entity::library::Model>, ApplyError> {
     let lib = entity::library::Entity::find_by_id(library_id)
         .one(&state.db)
         .await?;
-    Ok(lib
-        .map(|l| l.metadata_writeback_enabled && l.allow_archive_writeback)
-        .unwrap_or(false))
+    Ok(lib.filter(|l| l.metadata_writeback_enabled && l.allow_archive_writeback))
 }
 
 #[cfg(test)]
