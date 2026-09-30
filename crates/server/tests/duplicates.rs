@@ -432,7 +432,8 @@ async fn set_primary_phash(app: &TestApp, issue_id: &str, phash: i64) {
             sea_orm::DatabaseBackend::Postgres,
             "INSERT INTO issue_cover (issue_id, kind, ordinal, local_path, phash, is_active) \
              VALUES ($1, 'primary', 0, 'covers/x.webp', $2, true) \
-             ON CONFLICT (issue_id, kind, ordinal) DO UPDATE SET phash = EXCLUDED.phash, is_active = true",
+             ON CONFLICT (issue_id, kind, ordinal) WHERE is_active \
+             DO UPDATE SET phash = EXCLUDED.phash",
             [issue_id.into(), phash.into()],
         ))
         .await
