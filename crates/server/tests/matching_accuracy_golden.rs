@@ -28,8 +28,8 @@
 
 use server::metadata::identifier::Source;
 use server::metadata::matcher::{
-    Confidence, FORMAT_MISMATCH_PENALTY, IssueQueryFacts, SeriesQueryFacts, Thresholds,
-    local_issue_format_hint, score_issue_with_phash, score_series_with_phash,
+    Confidence, FORMAT_MISMATCH_PENALTY, IssueQueryFacts, LocalIssueFormat, SeriesQueryFacts,
+    Thresholds, local_issue_format_hint, score_issue_with_phash, score_series_with_phash,
 };
 use server::metadata::provider::{IssueCandidate, SeriesCandidate};
 
@@ -161,6 +161,25 @@ fn issue_facts_fmt(
         format,
         ..issue_facts(series_name, series_year, number)
     }
+}
+
+/// Local format hint exactly as production builds it
+/// (`local_issue_format_hint`), from the scanned columns.
+fn local_hint(
+    series_name: &str,
+    number: &str,
+    issue_format: Option<&str>,
+    special_type: Option<&str>,
+    manga: Option<&str>,
+) -> Option<String> {
+    local_issue_format_hint(LocalIssueFormat {
+        issue_format,
+        special_type,
+        manga,
+        series_name,
+        issue_number: Some(number),
+        ..Default::default()
+    })
 }
 
 // ───────── known-correct cases ─────────
@@ -301,7 +320,13 @@ fn known_correct_issues() -> Vec<IssueGoldenCase> {
                 "One Piece",
                 Some(2003),
                 "Vol. 03",
-                local_issue_format_hint(Some("TPB"), None, None, Some("YesAndRightToLeft")),
+                local_hint(
+                    "One Piece",
+                    "Vol. 03",
+                    Some("TPB"),
+                    None,
+                    Some("YesAndRightToLeft"),
+                ),
             ),
             candidate: issue_fmt("One Piece", Some(2003), "3", "Ongoing Series"),
             local_phash: None,
@@ -315,9 +340,39 @@ fn known_correct_issues() -> Vec<IssueGoldenCase> {
                 "One Piece",
                 Some(2003),
                 "v03",
-                local_issue_format_hint(None, None, None, Some("Yes")),
+                local_hint("One Piece", "v03", None, None, Some("Yes")),
             ),
             candidate: issue_fmt("One Piece", Some(2003), "3", "Trade Paperback"),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
+        IssueGoldenCase {
+            // Owner decision 2026-09-30: untagged plain numbers default
+            // to Single, but an untagged *trade* numbered "Vol. 1" must
+            // stay unknown — so a Trade Paperback candidate still wins
+            // HIGH.
+            name: "untagged trade 'Vol. 1' is not misclassified as single",
+            facts: issue_facts_fmt(
+                "Saga",
+                Some(2012),
+                "Vol. 1",
+                local_hint("Saga", "Vol. 1", None, None, None),
+            ),
+            candidate: issue_fmt("Saga", Some(2012), "1", "Trade Paperback"),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
+        IssueGoldenCase {
+            // An untagged file in a TPB-named local series classifies
+            // collected from the name, not single from its plain number.
+            name: "untagged file in a TPB-named series is collected, not single",
+            facts: issue_facts_fmt(
+                "Saga TPB",
+                Some(2012),
+                "1",
+                local_hint("Saga TPB", "1", None, None, None),
+            ),
+            candidate: issue_fmt("Saga TPB", Some(2012), "1", "TPB"),
             local_phash: None,
             candidate_phashes: vec![],
         },
@@ -452,11 +507,26 @@ fn known_incorrect_issues() -> Vec<IssueGoldenCase> {
                 "Saga",
                 Some(2012),
                 "1",
-                local_issue_format_hint(None, Some("TPB"), None, None),
+                local_hint("Saga", "1", None, Some("TPB"), None),
             ),
             candidate: issue_fmt("Saga", Some(2012), "1", "Ongoing Series"),
             local_phash: None,
             candidate_phashes: vec![],
+        },
+        IssueGoldenCase {
+            // Owner decision 2026-09-30: an untagged single "#3" now
+            // defaults to Single, so a trade candidate (same name, same
+            // number, even the same cover) is capped at MEDIUM.
+            name: "untagged single #3 caps a TPB candidate to MEDIUM",
+            facts: issue_facts_fmt(
+                "Saga",
+                Some(2012),
+                "3",
+                local_hint("Saga", "3", None, None, None),
+            ),
+            candidate: issue_fmt("Saga", Some(2012), "3", "Trade Paperback"),
+            local_phash: Some(0),
+            candidate_phashes: vec![Some(0x3)],
         },
         IssueGoldenCase {
             // A local annual must not match the parent run's regular #1.
@@ -613,7 +683,7 @@ fn format_penalty_needs_both_sides_known() {
         None,
         Some("Manga".to_owned()),
         Some("Special".to_owned()),
-        local_issue_format_hint(Some("Series"), None, None, Some("Yes")),
+        local_hint("Saga", "1", Some("Series"), None, Some("Yes")),
     ] {
         let s = score_issue_with_phash(
             &issue_facts_fmt("Saga", Some(2012), "1", local.clone()),
@@ -661,4 +731,39 @@ fn format_penalty_total_floors_at_zero() {
     );
     assert!(s.format_mismatch);
     assert!(s.total >= 0.0);
+}
+
+/// Owner decision 2026-09-30, pinned directly: the untagged-single
+/// default fires only on plain numbers, and the resulting mismatch
+/// lands exactly in MEDIUM (text-only) against a trade.
+#[test]
+fn untagged_single_default_is_narrow_and_soft() {
+    assert_eq!(
+        local_hint("Saga", "3", None, None, None),
+        Some("Single".into())
+    );
+    assert_eq!(
+        local_hint("Saga", "½", None, None, None),
+        Some("Single".into())
+    );
+    assert_eq!(local_hint("Saga", "Vol. 1", None, None, None), None);
+    assert_eq!(local_hint("Saga", "v01", None, None, None), None);
+    assert_eq!(local_hint("Saga", "14AU", None, None, None), None);
+    assert_eq!(
+        local_hint("Saga TPB", "1", None, None, None),
+        Some("TPB".into())
+    );
+    let s = score_issue_with_phash(
+        &issue_facts_fmt(
+            "Saga",
+            Some(2012),
+            "3",
+            local_hint("Saga", "3", None, None, None),
+        ),
+        &issue_fmt("Saga", Some(2012), "3", "Trade Paperback"),
+        None,
+        &[],
+    );
+    assert!(s.format_mismatch);
+    assert_eq!(s.bucket(Thresholds::default()), Confidence::Medium);
 }

@@ -902,10 +902,14 @@ pub async fn search_issue(
         issue_number,
         issue_year: i.year,
         format: crate::metadata::matcher::local_issue_format_hint(
-            i.format.as_deref(),
-            i.special_type.as_deref(),
-            s.series_type.as_deref(),
-            i.manga.as_deref(),
+            crate::metadata::matcher::LocalIssueFormat {
+                issue_format: i.format.as_deref(),
+                special_type: i.special_type.as_deref(),
+                series_type: s.series_type.as_deref(),
+                manga: i.manga.as_deref(),
+                series_name: &s.name,
+                issue_number: i.number_raw.as_deref(),
+            },
         ),
     };
     overrides.apply_to_issue(&mut facts);
@@ -1111,10 +1115,14 @@ pub async fn lookup_issue(
         issue_number: i.number_raw.clone().unwrap_or_default(),
         issue_year: i.year,
         format: crate::metadata::matcher::local_issue_format_hint(
-            i.format.as_deref(),
-            i.special_type.as_deref(),
-            s.series_type.as_deref(),
-            i.manga.as_deref(),
+            crate::metadata::matcher::LocalIssueFormat {
+                issue_format: i.format.as_deref(),
+                special_type: i.special_type.as_deref(),
+                series_type: s.series_type.as_deref(),
+                manga: i.manga.as_deref(),
+                series_name: &s.name,
+                issue_number: i.number_raw.as_deref(),
+            },
         ),
     };
     run_lookup(

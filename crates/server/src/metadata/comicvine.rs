@@ -511,7 +511,10 @@ fn cv_issue_to_candidate(issue: &CvIssue) -> Option<IssueCandidate> {
 
 /// WP-5.6: ComicVine exposes no volume type, so a volume's format is
 /// inferred from its name + deck (`"Saga TPB"`, `"X-Men Annual"`,
-/// deck `"Collects #1-6"`). `None` when nothing says so.
+/// deck `"Collects #1-6"`). `None` when nothing says so. **Matching
+/// only** (owner decision 2026-09-30): it feeds the candidate's
+/// `format` hint and is never written to `Format` / `series_type` on
+/// apply — only Metron's explicit `series_type` is.
 fn cv_volume_format(v: &CvVolume) -> Option<&'static str> {
     crate::metadata::title_norm::infer_format_from_title(
         v.name.as_deref().unwrap_or(""),
@@ -519,22 +522,8 @@ fn cv_volume_format(v: &CvVolume) -> Option<&'static str> {
     )
 }
 
-/// Metron-vocabulary `series_type` for an inferred CV format label, so
-/// `series.series_type` reads the same whichever provider set it.
-fn cv_series_type(format: &str) -> Option<&'static str> {
-    match format {
-        "TPB" => Some("Trade Paperback"),
-        "Hardcover" => Some("Hard Cover"),
-        "Omnibus" => Some("Omnibus"),
-        "Graphic Novel" => Some("Graphic Novel"),
-        "Annual" => Some("Annual Series"),
-        _ => None,
-    }
-}
-
 fn cv_volume_to_metadata(v: CvVolume) -> GenericMetadata {
     let external_id = v.id.map(|n| n.to_string()).unwrap_or_default();
-    let format = cv_volume_format(&v);
     let (cover, alts) = best_image_url(&v.image);
     let mut identifiers = vec![Identifier::with_canonical_url(
         Source::ComicVine,
@@ -552,8 +541,6 @@ fn cv_volume_to_metadata(v: CvVolume) -> GenericMetadata {
     }
     GenericMetadata {
         series_name: v.name,
-        series_type: format.and_then(cv_series_type).map(str::to_owned),
-        format: format.map(str::to_owned),
         year_began: parse_year(&v.start_year),
         publisher: v.publisher.as_ref().and_then(|p| p.name.clone()),
         deck: v.deck,
@@ -681,7 +668,6 @@ fn cv_credit_to_credit(c: &CvPersonCredit) -> Option<CreditCandidate> {
 
 fn cv_issue_to_metadata(issue: CvIssue) -> GenericMetadata {
     let external_id = issue.id.map(|n| n.to_string()).unwrap_or_default();
-    let issue_format = issue.volume.as_ref().and_then(cv_volume_format);
     let (cover, alts) = best_image_url(&issue.image);
     let mut identifiers = vec![Identifier::with_canonical_url(
         Source::ComicVine,
@@ -792,9 +778,6 @@ fn cv_issue_to_metadata(issue: CvIssue) -> GenericMetadata {
         cover_image_alt_urls: alts,
         aliases: split_aliases(&issue.aliases),
         series_name: issue.volume.as_ref().and_then(|v| v.name.clone()),
-        // WP-5.6: format inferred from the parent volume's name.
-        series_type: issue_format.and_then(cv_series_type).map(str::to_owned),
-        format: issue_format.map(str::to_owned),
         series_external_id: issue
             .volume
             .as_ref()
@@ -1149,15 +1132,18 @@ mod tests {
         };
         let c = cv_volume_to_candidate(&vol("Saga", Some("Collects #1-6."))).unwrap();
         assert_eq!(c.format.as_deref(), Some("TPB"));
-        let m = cv_volume_to_metadata(vol("Saga", Some("Collects #1-6.")));
-        assert_eq!(m.format.as_deref(), Some("TPB"));
-        assert_eq!(m.series_type.as_deref(), Some("Trade Paperback"));
-        let m = cv_volume_to_metadata(vol("X-Men Annual", None));
-        assert_eq!(m.format.as_deref(), Some("Annual"));
-        assert_eq!(m.series_type.as_deref(), Some("Annual Series"));
-        let m = cv_volume_to_metadata(vol("Saga", None));
-        assert_eq!(m.format, None);
-        assert_eq!(m.series_type, None);
+        let c = cv_volume_to_candidate(&vol("X-Men Annual", None)).unwrap();
+        assert_eq!(c.format.as_deref(), Some("Annual"));
+        assert_eq!(
+            cv_volume_to_candidate(&vol("Saga", None)).unwrap().format,
+            None
+        );
+        // Matching only (owner decision): never written on apply.
+        for (name, deck) in [("Saga", Some("Collects #1-6.")), ("X-Men Annual", None)] {
+            let m = cv_volume_to_metadata(vol(name, deck));
+            assert_eq!(m.format, None, "{name}");
+            assert_eq!(m.series_type, None, "{name}");
+        }
     }
 
     #[test]

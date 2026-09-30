@@ -24,8 +24,8 @@
 
 use crate::metadata::provider::{IssueCandidate, SeriesCandidate};
 use crate::metadata::title_norm::{
-    FormatClass, classify_format, has_annual_token, issue_number_key, strip_annual_prefix,
-    strip_annual_token, strip_volume_prefix,
+    FormatClass, classify_format, has_annual_token, infer_format_from_title, issue_number_key,
+    strip_annual_prefix, strip_annual_token, strip_volume_prefix,
 };
 
 /// Confidence bucket — set by [`Score::bucket`] from the numeric score.
@@ -291,6 +291,23 @@ pub struct IssueQueryFacts {
     pub format: Option<String>,
 }
 
+/// Local columns that feed [`local_issue_format_hint`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LocalIssueFormat<'a> {
+    /// `issue.format` (ComicInfo `Format`).
+    pub issue_format: Option<&'a str>,
+    /// `issue.special_type` (scanner classification).
+    pub special_type: Option<&'a str>,
+    /// `series.series_type`.
+    pub series_type: Option<&'a str>,
+    /// `issue.manga` (`Yes` / `YesAndRightToLeft` / `No` / …).
+    pub manga: Option<&'a str>,
+    /// `series.name`.
+    pub series_name: &'a str,
+    /// `issue.number_raw` as scanned (not a search override).
+    pub issue_number: Option<&'a str>,
+}
+
 /// Build the local publication-format hint for an issue query from the
 /// columns the scanner already populates, first hit wins:
 ///
@@ -298,32 +315,53 @@ pub struct IssueQueryFacts {
 ///    which classifies as unknown — a manga "issue" is a tankōbon
 ///    volume and providers file those as either ongoing issues or
 ///    trades, so neither side may be penalised;
-/// 2. `issue.format` (ComicInfo `Format`);
+/// 2. `issue.format` (ComicInfo `Format`), verbatim — an explicit tag
+///    the matcher doesn't recognise stays unknown;
 /// 3. `issue.special_type` when it's `TPB` or `Annual` (`OneShot` is
 ///    inferred from a missing number and `Special` says nothing about
 ///    single vs collected, so both are skipped);
-/// 4. `series.series_type`.
-pub fn local_issue_format_hint(
-    issue_format: Option<&str>,
-    special_type: Option<&str>,
-    series_type: Option<&str>,
-    manga: Option<&str>,
-) -> Option<String> {
-    if manga.is_some_and(|m| m.trim().to_ascii_lowercase().starts_with("yes")) {
-        return Some("Manga".to_owned());
-    }
+/// 4. `series.series_type` when [`classify_format`] recognises it;
+/// 5. a collected / annual marker in the series name
+///    ([`infer_format_from_title`]: `"Saga TPB"`, `"X-Men Annual"`);
+/// 6. **owner default (2026-09-30):** an otherwise untagged issue whose
+///    number is plain (integer, decimal, `½`) with no `Annual` /
+///    volume marker and no suffix → `"Single"`. A `"Vol. 1"` / `"v03"`
+///    number, a suffixed number, or no number stays unknown.
+pub fn local_issue_format_hint(local: LocalIssueFormat<'_>) -> Option<String> {
     fn non_empty(v: Option<&str>) -> Option<&str> {
         v.map(str::trim).filter(|s| !s.is_empty())
     }
-    if let Some(f) = non_empty(issue_format) {
+    if local
+        .manga
+        .is_some_and(|m| m.trim().to_ascii_lowercase().starts_with("yes"))
+    {
+        return Some("Manga".to_owned());
+    }
+    if let Some(f) = non_empty(local.issue_format) {
         return Some(f.to_owned());
     }
-    if let Some(st) = non_empty(special_type)
+    if let Some(st) = non_empty(local.special_type)
         && matches!(st, "TPB" | "Annual")
     {
         return Some(st.to_owned());
     }
-    non_empty(series_type).map(str::to_owned)
+    if let Some(st) = non_empty(local.series_type)
+        && classify_format(st).is_some()
+    {
+        return Some(st.to_owned());
+    }
+    if let Some(label) = infer_format_from_title(local.series_name, None) {
+        return Some(label.to_owned());
+    }
+    let number = non_empty(local.issue_number)?;
+    let bare = number.trim_start_matches('#').trim();
+    let key = issue_number_key(bare);
+    let plain = strip_annual_prefix(bare).is_none()
+        && strip_volume_prefix(bare).is_none()
+        && !key.annual
+        && key.value.is_some()
+        && key.suffix.is_empty();
+    plain.then(|| "Single".to_owned())
 }
 
 /// Known-format-mismatch test shared by the series + issue scorers.
@@ -920,25 +958,100 @@ mod tests {
 
     #[test]
     fn local_issue_format_hint_precedence() {
+        let base = LocalIssueFormat {
+            series_name: "Saga",
+            issue_number: Some("1"),
+            ..Default::default()
+        };
+        let hint = |l: LocalIssueFormat<'_>| local_issue_format_hint(l);
         // Manga beats everything (neutral class).
         assert_eq!(
-            local_issue_format_hint(Some("TPB"), Some("TPB"), Some("ongoing"), Some("Yes")),
+            hint(LocalIssueFormat {
+                issue_format: Some("TPB"),
+                special_type: Some("TPB"),
+                series_type: Some("ongoing"),
+                manga: Some("Yes"),
+                ..base
+            }),
             Some("Manga".into())
         );
         assert_eq!(
-            local_issue_format_hint(Some("TPB"), None, Some("ongoing"), Some("No")),
+            hint(LocalIssueFormat {
+                issue_format: Some("TPB"),
+                series_type: Some("ongoing"),
+                manga: Some("No"),
+                ..base
+            }),
             Some("TPB".into())
         );
         assert_eq!(
-            local_issue_format_hint(None, Some("Annual"), Some("ongoing"), None),
+            hint(LocalIssueFormat {
+                special_type: Some("Annual"),
+                series_type: Some("ongoing"),
+                ..base
+            }),
             Some("Annual".into())
         );
         // OneShot / Special special_types are skipped.
         assert_eq!(
-            local_issue_format_hint(None, Some("OneShot"), Some("ongoing"), None),
+            hint(LocalIssueFormat {
+                special_type: Some("OneShot"),
+                series_type: Some("ongoing"),
+                ..base
+            }),
             Some("ongoing".into())
         );
-        assert_eq!(local_issue_format_hint(Some("  "), None, None, None), None);
+        // A collected series type wins over the plain-number default.
+        assert_eq!(
+            hint(LocalIssueFormat {
+                series_type: Some("Trade Paperback"),
+                ..base
+            }),
+            Some("Trade Paperback".into())
+        );
+        // An explicit but unrecognised Format stays verbatim (unknown).
+        assert_eq!(
+            hint(LocalIssueFormat {
+                issue_format: Some("Director's Cut"),
+                ..base
+            }),
+            Some("Director's Cut".into())
+        );
+    }
+
+    #[test]
+    fn untagged_plain_number_defaults_to_single() {
+        // Owner decision 2026-09-30.
+        let untagged = |series_name, number| {
+            local_issue_format_hint(LocalIssueFormat {
+                series_name,
+                issue_number: number,
+                ..Default::default()
+            })
+        };
+        for n in ["1", "014", "#12", "0.5", "½", "1.5", "-1"] {
+            assert_eq!(untagged("Saga", Some(n)), Some("Single".into()), "{n}");
+        }
+        // Volume / annual markers, suffixes, no number → unknown.
+        for n in [
+            "Vol. 1", "v03", "Annual 1", "14AU", "1.NOW", "Alpha", "", "  ",
+        ] {
+            assert_eq!(untagged("Saga", Some(n)), None, "{n:?}");
+        }
+        assert_eq!(untagged("Saga", None), None);
+        // A series name that says "trade" / "annual" classifies instead.
+        assert_eq!(untagged("Saga TPB", Some("1")), Some("TPB".into()));
+        assert_eq!(untagged("X-Men Annual", Some("1")), Some("Annual".into()));
+        // An unrecognised series type doesn't block the default.
+        assert_eq!(
+            local_issue_format_hint(LocalIssueFormat {
+                series_type: Some("Magazine"),
+                series_name: "Heavy Metal",
+                issue_number: Some("3"),
+                ..Default::default()
+            }),
+            Some("Single".into())
+        );
     }
 
     #[test]

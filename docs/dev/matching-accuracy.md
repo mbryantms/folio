@@ -82,8 +82,8 @@ matched as if every file were a single periodical issue.
 | Source | Signal |
 |---|---|
 | Metron | `series_type` on series details and (when present) issue list/detail series refs: `Ongoing Series`, `Limited Series`, `One-Shot` → Single; `Annual Series` → Annual; `Trade Paperback`, `Hard Cover`, `Omnibus`, `Graphic Novel` → Collected |
-| ComicVine | CV volumes have **no type field**. `infer_format_from_title` reads the volume name (`TPB`, `TP`, `HC`, `Omnibus`, `Compendium`, `Graphic Novel`, `… Edition`, trailing `Annual`) and a deck that opens with `Collects…` |
-| Local issue | `matcher::local_issue_format_hint`, first match wins: manga flag → neutral; ComicInfo `Format`; scanner `special_type` `TPB`/`Annual`; `series.series_type` |
+| ComicVine | CV volumes have **no type field**. `infer_format_from_title` reads the volume name (`TPB`, `TP`, `HC`, `Omnibus`, `Compendium`, `Graphic Novel`, `… Edition`, trailing `Annual`) and a deck that opens with `Collects…`. **Matching only**: this is never written on apply |
+| Local issue | `matcher::local_issue_format_hint`, first match wins: manga flag → neutral; ComicInfo `Format`; scanner `special_type` `TPB`/`Annual`; a recognised `series.series_type`; a collected/annual marker in the series name; otherwise **Single** for a plain number (see below) |
 | Local series | `series.series_type` |
 
 Anything unrecognised is **unknown, and unknown never penalises**. Manga
@@ -91,6 +91,14 @@ Anything unrecognised is **unknown, and unknown never penalises**. Manga
 tankōbon volume that providers file as either ongoing issues or trades.
 A `OneShot` special type is skipped too, because the scanner infers it
 from a missing number.
+
+**Untagged issues default to Single** (owner decision 2026-09-30). This
+applies when nothing above matched and the issue number is plain: an
+integer, a decimal, or `½`, with no `Annual` or volume marker and no
+suffix. An untagged `Vol. 1` / `v03` number, a suffixed number
+(`14AU`, `1.NOW`), an issue with no number, or a file in a series whose
+type or name says it's collected (`Saga TPB`) stays unknown or
+collected. It is never classed as single.
 
 **Penalty.** Both sides must be known and differ. Then
 `Score.format = -FORMAT_MISMATCH_PENALTY` (a fixed 15 points, not
@@ -102,12 +110,14 @@ when the cover decides HIGH, because a trade's cover is usually its
 first issue's cover. It is the same shape as the gap-to-next-best guard.
 The ladder constants are unchanged.
 
-**Provider apply.** `GenericMetadata.format` is now populated with a
-ComicInfo-vocabulary label (`TPB`, `Hardcover`, `Omnibus`,
+**Provider apply.** Only Metron's explicit `series_type` reaches apply.
+It keeps populating `series_type` as before, and `GenericMetadata.format`
+now gets a ComicInfo-vocabulary label (`TPB`, `Hardcover`, `Omnibus`,
 `Graphic Novel`, `Annual`, `Limited Series`, `One-Shot`). Metron
 *ongoing* and *cancelled* series map to `None`, so applying a periodical
-never rewrites every file's `Format` to `Series`. ComicVine volumes also
-fill `series_type` in Metron's vocabulary when a format is inferred.
+never rewrites every file's `Format` to `Series`. The ComicVine
+name/deck inference is **matching-only**: it never fills `Format` or
+`series.series_type` (owner decision 2026-09-30).
 
 **Issue numbers.** `title_norm::issue_number_key` is the comparison key.
 It is numeric (`1` = `01` = `1.0`, `½` = `0.5` = `1/2`, `1½` = `1.5`),

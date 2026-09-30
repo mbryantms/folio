@@ -507,10 +507,14 @@ pub async fn enqueue_issue_search(
         issue_number,
         issue_year: i.year,
         format: crate::metadata::matcher::local_issue_format_hint(
-            i.format.as_deref(),
-            i.special_type.as_deref(),
-            s.series_type.as_deref(),
-            i.manga.as_deref(),
+            crate::metadata::matcher::LocalIssueFormat {
+                issue_format: i.format.as_deref(),
+                special_type: i.special_type.as_deref(),
+                series_type: s.series_type.as_deref(),
+                manga: i.manga.as_deref(),
+                series_name: &s.name,
+                issue_number: i.number_raw.as_deref(),
+            },
         ),
     };
 
