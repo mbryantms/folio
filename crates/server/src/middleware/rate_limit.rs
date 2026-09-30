@@ -186,6 +186,15 @@ pub const USER_EXPORT: Bucket = Bucket {
     burst: 6,
 };
 
+/// `GET /me/markers/export` — same budget as [`USER_EXPORT`] (6/min/IP +
+/// burst 6), in its own bucket so a notes download and a full account
+/// export don't starve each other.
+pub const NOTES_EXPORT: Bucket = Bucket {
+    name: "notes_export",
+    period: Duration::from_secs(10),
+    burst: 6,
+};
+
 // ───────── error handler ─────────
 
 fn handle_governor_error(bucket: &'static str, err: GovernorError) -> Response<Body> {

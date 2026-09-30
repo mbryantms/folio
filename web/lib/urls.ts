@@ -112,6 +112,21 @@ export function readerUrl(
   return appendOpts(base, b as IssueUrlOpts | undefined);
 }
 
+/** Marker permalink (roadmap WP-5.1). A bare Rust route that 303s to the
+ *  reader at the marker's page in peek mode, so a copied link survives
+ *  series / issue slug changes. Relative; pass `origin` for a link that
+ *  leaves the app (clipboard, notes export). */
+export function markerPermalink(id: string, origin = ""): string {
+  return `${origin}/markers/${encodeURIComponent(id)}`;
+}
+
+/** Same-origin download URL for the notes export (`GET /me/markers/export`).
+ *  A plain `<a download>` carries the session cookie and honours the
+ *  server's `Content-Disposition` filename. */
+export function notesExportHref(format: "md" | "json"): string {
+  return `/api/me/markers/export?format=${format}`;
+}
+
 // ───── Page bytes (still UUID — internal/signed) ─────
 //
 // Page-byte URLs intentionally keep the BLAKE3 issue id since (a) they're

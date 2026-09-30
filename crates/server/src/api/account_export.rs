@@ -525,21 +525,7 @@ async fn build_export(
 
     let markers = marker_rows
         .into_iter()
-        .map(|m| ExportMarker {
-            id: m.id,
-            issue: refs.issue(&m.issue_id),
-            page_index: m.page_index,
-            kind: m.kind,
-            is_favorite: m.is_favorite,
-            tags: m.tags,
-            region: m.region,
-            selection: m.selection,
-            body: m.body,
-            color: m.color,
-            hidden_from_log: m.hidden_from_log,
-            created_at: m.created_at.to_rfc3339(),
-            updated_at: m.updated_at.to_rfc3339(),
-        })
+        .map(|m| export_marker(m, &refs))
         .collect();
 
     let mut entries_by_view: HashMap<Uuid, Vec<ExportCollectionEntry>> = HashMap::new();
@@ -744,32 +730,71 @@ async fn build_export(
     })
 }
 
+/// One marker in the shared export shape. The notes export
+/// (`api::markers_export`) wraps the same struct, so a marker is described
+/// once across both documents.
+pub(crate) fn export_marker(m: marker::Model, refs: &Refs) -> ExportMarker {
+    ExportMarker {
+        id: m.id,
+        issue: refs.issue(&m.issue_id),
+        page_index: m.page_index,
+        kind: m.kind,
+        is_favorite: m.is_favorite,
+        tags: m.tags,
+        region: m.region,
+        selection: m.selection,
+        body: m.body,
+        color: m.color,
+        hidden_from_log: m.hidden_from_log,
+        created_at: m.created_at.to_rfc3339(),
+        updated_at: m.updated_at.to_rfc3339(),
+    }
+}
+
 // ───────── identity hydration ─────────
 
-struct IssueRow {
+pub(crate) struct IssueRow {
     content_hash: String,
-    series_id: Uuid,
+    pub(crate) series_id: Uuid,
     number_raw: Option<String>,
+    library_id: Uuid,
+    /// Only read by the notes export (`markers_export`), which orders
+    /// issues by `sort_number` and prints the title.
+    pub(crate) sort_number: Option<f64>,
+    pub(crate) title: Option<String>,
+}
+
+pub(crate) struct SeriesRow {
+    pub(crate) name: String,
+    pub(crate) year: Option<i32>,
     library_id: Uuid,
 }
 
-struct SeriesRow {
-    name: String,
-    year: Option<i32>,
-    library_id: Uuid,
-}
+/// `(id, content_hash, series_id, number_raw, library_id, sort_number, title)`.
+type IssueTuple = (
+    String,
+    String,
+    Uuid,
+    Option<String>,
+    Uuid,
+    Option<f64>,
+    Option<String>,
+);
 
 /// IN-batched lookup tables for issue / series / library identity. Loads
 /// issues first (their `series_id` widens the series set), then series
 /// (their `library_id` widens the library set), then libraries.
-struct Refs {
-    issues: HashMap<String, IssueRow>,
-    series: HashMap<Uuid, SeriesRow>,
+///
+/// Shared with the notes export (`api::markers_export`) so a marker is
+/// described by the same identity keys in both documents.
+pub(crate) struct Refs {
+    pub(crate) issues: HashMap<String, IssueRow>,
+    pub(crate) series: HashMap<Uuid, SeriesRow>,
     libraries: HashMap<Uuid, String>,
 }
 
 impl Refs {
-    async fn load(
+    pub(crate) async fn load(
         db: &DatabaseConnection,
         issue_ids: HashSet<String>,
         mut series_ids: HashSet<Uuid>,
@@ -784,11 +809,13 @@ impl Refs {
                 .column(issue::Column::SeriesId)
                 .column(issue::Column::NumberRaw)
                 .column(issue::Column::LibraryId)
+                .column(issue::Column::SortNumber)
+                .column(issue::Column::Title)
                 .filter(issue::Column::Id.is_in(chunk.to_vec()))
-                .into_tuple::<(String, String, Uuid, Option<String>, Uuid)>()
+                .into_tuple::<IssueTuple>()
                 .all(db)
                 .await?;
-            for (id, content_hash, series_id, number_raw, library_id) in rows {
+            for (id, content_hash, series_id, number_raw, library_id, sort_number, title) in rows {
                 series_ids.insert(series_id);
                 issues.insert(
                     id,
@@ -797,6 +824,8 @@ impl Refs {
                         series_id,
                         number_raw,
                         library_id,
+                        sort_number,
+                        title,
                     },
                 );
             }
@@ -850,7 +879,7 @@ impl Refs {
         })
     }
 
-    fn issue(&self, issue_id: &str) -> IssueRef {
+    pub(crate) fn issue(&self, issue_id: &str) -> IssueRef {
         let Some(i) = self.issues.get(issue_id) else {
             return IssueRef {
                 issue_id: issue_id.to_owned(),
@@ -874,7 +903,7 @@ impl Refs {
         }
     }
 
-    fn series(&self, series_id: Uuid) -> SeriesRef {
+    pub(crate) fn series(&self, series_id: Uuid) -> SeriesRef {
         let s = self.series.get(&series_id);
         SeriesRef {
             series_id,
