@@ -16248,6 +16248,8 @@ export interface operations {
             query?: {
                 kind?: string;
                 issue_id?: string;
+                /** @description series UUID */
+                series_id?: string;
                 q?: string;
                 is_favorite?: boolean;
                 tags?: string;

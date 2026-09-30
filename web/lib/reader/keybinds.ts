@@ -47,6 +47,7 @@ export type KeybindAction =
   | "startHighlight"
   | "captureText"
   | "togglePageText"
+  | "toggleMarkerDrawer"
   | "favoritePage"
   | "toggleMarkersHidden"
   | "nextBookmark"
@@ -78,6 +79,7 @@ export const READER_KEYBIND_ACTIONS: readonly KeybindAction[] = [
   "startHighlight",
   "captureText",
   "togglePageText",
+  "toggleMarkerDrawer",
   "favoritePage",
   "toggleMarkersHidden",
   "nextBookmark",
@@ -113,6 +115,7 @@ export const KEYBIND_SCOPES: Record<KeybindAction, KeybindScope> = {
   startHighlight: "reader",
   captureText: "reader",
   togglePageText: "reader",
+  toggleMarkerDrawer: "reader",
   favoritePage: "reader",
   toggleMarkersHidden: "reader",
   nextBookmark: "reader",
@@ -142,6 +145,7 @@ export const KEYBIND_LABELS: Record<KeybindAction, string> = {
   startHighlight: "Start highlight",
   captureText: "Capture text (OCR)",
   togglePageText: "Show page text",
+  toggleMarkerDrawer: "Show markers in this issue",
   favoritePage: "Favorite this page",
   toggleMarkersHidden: "Show / hide markers",
   nextBookmark: "Next bookmark",
@@ -180,6 +184,9 @@ export const KEYBIND_DEFAULTS: Record<KeybindAction, string> = {
   // `r` for read — opens the page-text panel (WP-4.8): the page's OCR
   // text in reading order, for screen readers and small lettering.
   togglePageText: "r",
+  // `l` for list — opens the marker drawer (WP-5.2): every marker on
+  // this issue in page order; Enter jumps to the page.
+  toggleMarkerDrawer: "l",
   // `s` for star — `f` is taken by `cycleFit`. Toggles the favorite
   // flag on the current page's bookmark, creating one if needed.
   favoritePage: "s",

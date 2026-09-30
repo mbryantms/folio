@@ -33,6 +33,7 @@ Default bindings — reader scope:
 | `h`     | Start highlight      | Begins region selection                       |
 | `x`     | Capture text (OCR)   | Text mode: detected bubbles light up — tap one to OCR it, or drag a box |
 | `r`     | Show page text       | Opens the page-text panel: the visible page's OCR text in reading order (see [Accessibility](#accessibility)) |
+| `l`     | Show markers in this issue | Opens the marker drawer: every marker on the issue in page order (see [Accessibility](#accessibility)) |
 | `s`     | Favorite this page   | Toggles the star/favorite flag                |
 | `o`     | Show / hide markers  | Hides every overlay without deleting data     |
 | `]`     | Next bookmark        | Jumps to the next bookmark-kind marker        |
@@ -106,6 +107,16 @@ WP-4.8 (audit AC-2..AC-5) — what a keyboard or screen-reader user gets:
   region 3 of 7"); Enter runs the same tap-to-OCR capture a pointer tap
   does. The buttons ignore pointer input so drag-select is unaffected.
   Saved region markers already had equivalent proxies (audit E4).
+- **Marker drawer** (`l`, or the chrome's *Show markers in this issue*
+  button; WP-5.2). A non-modal side sheet listing every bookmark, note,
+  favorite and highlight on the issue in page order, with the note body or
+  captured text under each. The list is a single Tab stop with roving
+  focus: `↑` / `↓` move (wrapping), `Home` / `End` jump to the ends,
+  `Enter` / `Space` jump the reader to that marker's page. Those keys are
+  kept from the reader keymap while focus is in the list (so `Home` does
+  not turn to page 1); markers on the current page carry
+  `aria-current="page"`. It reads the per-issue marker cache the overlay
+  already fetched, and is a lazy chunk mounted on first open.
 - **Axe.** The reader is covered by the Playwright axe pass (WCAG 2.2 AA
   tags) in `web/tests/e2e/reader-flow.spec.ts`, with the chrome hidden, the
   chrome shown, and the page-text panel open.

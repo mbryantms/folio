@@ -8,6 +8,7 @@ import {
   BookmarkCheck,
   EyeOff,
   ImageIcon,
+  ListOrdered,
   Maximize2,
   Minimize2,
   ScanText,
@@ -45,6 +46,7 @@ import { usePageTextPanel } from "@/lib/reader/page-text";
 // Lazy: the settings body (sliders, switches, segmented controls) only
 // loads when the popover is first opened or the gear shows intent.
 import { ReaderSettings, preloadReaderSettings } from "./lazy";
+import { useMarkerDrawer } from "@/lib/reader/marker-drawer";
 import { ReadingProgress } from "./ReadingProgress";
 
 const AUTO_HIDE_MS = 4000;
@@ -191,6 +193,7 @@ export function ReaderChrome({
           <FavoriteToggleButton issueId={issueId} pageIndex={currentPage} />
           <MarkerMenuButton issueId={issueId} pageIndex={currentPage} />
           <PageTextButton />
+          <MarkerDrawerButton />
           <SettingsButton seriesId={seriesId} onPinChange={setChromePinned} />
           <FullscreenButton />
         </span>
@@ -528,6 +531,21 @@ function PageTextButton() {
 
 function preloadSettingsOnIntent() {
   void preloadReaderSettings();
+}
+
+/** Opens the marker drawer (WP-5.2) — this issue's markers in page
+ *  order, each jumping to its page. */
+function MarkerDrawerButton() {
+  const open = useMarkerDrawer((s) => s.open);
+  const toggle = useMarkerDrawer((s) => s.toggle);
+  return (
+    <ChromeIconButton
+      label={open ? "Hide markers list" : "Show markers in this issue"}
+      icon={<ListOrdered />}
+      onClick={toggle}
+      active={open}
+    />
+  );
 }
 
 function SettingsButton({

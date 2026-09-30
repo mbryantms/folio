@@ -3,9 +3,11 @@
 //! Five endpoints back the marker surface:
 //!
 //!   - `GET /me/markers` — paginated feed for the `/bookmarks` index
-//!     page. Supports `kind`, `issue_id`, `q` (full-text against the
-//!     note body and OCR `selection.text`), plus opaque cursor pagination
-//!     keyed on `updated_at | id`.
+//!     page and the series / issue "Your notes" tabs. Supports `kind`,
+//!     `issue_id`, `series_id`, `q` (full-text against the note body and
+//!     OCR `selection.text`), plus opaque cursor pagination keyed on
+//!     `updated_at | id`. Only markers whose issue is live
+//!     (`removed_at IS NULL`) and visible to the caller are listed (DI-20).
 //!   - `GET /me/issues/{id}/markers` — fast one-shot lookup the
 //!     `<MarkerOverlay>` calls on reader mount; returns every marker
 //!     across every page without pagination because issues have a
@@ -34,7 +36,7 @@ use chrono::Utc;
 use entity::{issue, marker};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, ModelTrait, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect,
+    QueryFilter, QueryOrder, QuerySelect, QueryTrait,
 };
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
@@ -330,6 +332,9 @@ pub struct ListQuery {
     /// Filter to a single issue.
     #[serde(default)]
     pub issue_id: Option<String>,
+    /// Filter to one series (the series page's "Your notes" tab).
+    #[serde(default)]
+    pub series_id: Option<Uuid>,
     /// ILIKE search against `body` and `selection->>'text'`.
     #[serde(default)]
     pub q: Option<String>,
@@ -678,6 +683,7 @@ fn decode_cursor(raw: &str) -> Result<(chrono::DateTime<chrono::FixedOffset>, Uu
     params(
         ("kind" = Option<String>, Query,),
         ("issue_id" = Option<String>, Query,),
+        ("series_id" = Option<String>, Query, description = "series UUID"),
         ("q" = Option<String>, Query,),
         ("is_favorite" = Option<bool>, Query,),
         ("tags" = Option<String>, Query,),
@@ -695,8 +701,23 @@ pub async fn list(
 ) -> impl IntoResponse {
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
 
+    // DI-20: markers are only listed while their issue is live and still
+    // visible to the caller (library grant + age-rating cap), the same
+    // rule the reading log applies. A revoked grant or a soft-removed
+    // issue hides the marker without deleting it (the export and
+    // `/me/export` still carry it).
+    let acl = access::for_user(&app, &user).await;
+    let mut visible_issues = issue::Entity::find()
+        .select_only()
+        .column(issue::Column::Id)
+        .filter(issue::Column::RemovedAt.is_null());
+    if let Some(cond) = acl.issue_filter() {
+        visible_issues = visible_issues.filter(cond);
+    }
+
     let mut select = marker::Entity::find()
         .filter(marker::Column::UserId.eq(user.id))
+        .filter(marker::Column::IssueId.in_subquery(visible_issues.into_query()))
         .order_by_desc(marker::Column::UpdatedAt)
         .order_by_desc(marker::Column::Id);
 
@@ -707,6 +728,9 @@ pub async fn list(
     }
     if let Some(issue_id) = q.issue_id.as_ref() {
         select = select.filter(marker::Column::IssueId.eq(issue_id));
+    }
+    if let Some(series_id) = q.series_id {
+        select = select.filter(marker::Column::SeriesId.eq(series_id));
     }
     if let Some(true) = q.is_favorite {
         // v0.3.44: union over the two favorite shapes — the legacy
