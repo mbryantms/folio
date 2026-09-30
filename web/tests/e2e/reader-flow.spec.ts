@@ -221,6 +221,7 @@ test.describe("Reader flow", () => {
     //    relaunch — the queued write replays from IndexedDB.
     await page.goto(`/read/${series.slug}/${issue.slug}`);
     await expect(page.locator("img[src*='/pages/']").first()).toBeVisible();
+    await readerReady();
     await context.setOffline(true);
     await page.keyboard.press("ArrowRight");
     const queued = () =>
