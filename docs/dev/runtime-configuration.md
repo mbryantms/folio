@@ -44,6 +44,7 @@ config.
 | `auth.jwt.{access_ttl,refresh_ttl}` | `/admin/auth` → Tokens | Live for newly-minted tokens; existing tokens keep their original `exp`. |
 | `auth.rate_limit_enabled` | `/admin/server` → Hardening | Live, but only affects the failed-auth Redis lockout. The per-route `tower_governor` buckets are sized at boot. |
 | `observability.log_level` | `/admin/server` → Diagnostics | Live via `tracing_subscriber::reload::Handle`. |
+| `library.hard_purge_multiplier` | `/admin/server` → Removed-file purge | Live — the 04:15 hard-purge sweep reads it each run. Confirmed-removed rows are deleted after `soft_delete_days × this` days; `0` disables; range `[0, 100]`, default `2` (WP-3.5, see [library-scanner.md](library-scanner.md#removal-lifecycle)). Env bootstrap: `COMIC_LIBRARY_HARD_PURGE_MULTIPLIER`. |
 | `cache.zip_lru_capacity` | `/admin/server` → Caching | **Applies on next restart** (LRU sized at boot). |
 | `workers.{scan_count,post_scan_count,scan_batch_size,scan_hash_buffer_kb,archive_work_parallel,thumb_inline_parallel}` | `/admin/server` → Workers | **Applies on next restart** (apalis pool size fixed at startup). |
 | `metadata.comicvine.{api_key,enabled}`, `metadata.metron.{api_token,username,password,enabled}` | `/admin/metadata` → Providers | Live — provider clients are built per job/request from the current `Config`. `api_token` (secret, `Bearer`) is preferred over the username/password pair when set (WP-2.9). Env bootstrap: `COMIC_COMICVINE_API_KEY`, `COMIC_METRON_API_TOKEN`, `COMIC_METRON_USERNAME`, `COMIC_METRON_PASSWORD`. |

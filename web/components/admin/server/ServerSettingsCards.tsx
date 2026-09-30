@@ -50,6 +50,7 @@ export function ServerSettingsCards() {
   const logLevel = asString("observability.log_level", "info");
   const panelsMode = asString("compat.opds_panels_mode", "off");
   const zipLru = asUint("cache.zip_lru_capacity", 64);
+  const purgeMultiplier = asUint("library.hard_purge_multiplier", 2);
   const workers = {
     scan_count: asUint("workers.scan_count", 4),
     post_scan_count: asUint("workers.post_scan_count", 2),
@@ -66,6 +67,7 @@ export function ServerSettingsCards() {
         <DiagnosticsCard key={`diag-${logLevel}`} initial={logLevel} />
       </div>
       <CompatibilityCard key={`compat-${panelsMode}`} initial={panelsMode} />
+      <PurgeCard key={`purge-${purgeMultiplier}`} initial={purgeMultiplier} />
       <CachingCard key={`caching-${zipLru}`} initial={zipLru} />
       <WorkersCard
         key={`workers-${Object.values(workers).join("-")}`}
@@ -224,6 +226,63 @@ function HardeningCard({ initial }: { initial: boolean }) {
         </div>
         <div className="flex justify-end">
           <Button onClick={onSave} disabled={!dirty || update.isPending}>
+            {update.isPending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Roadmap WP-3.5: hard-purge window multiplier. Confirmed-removed issues
+ *  (and emptied series) are hard-deleted once their removal has been
+ *  confirmed for `soft_delete_days × multiplier` days. Live — the daily
+ *  sweep reads it on every run. */
+function PurgeCard({ initial }: { initial: number }) {
+  const [multiplier, setMultiplier] = useState(String(initial));
+  const update = useUpdateSettings();
+  const bad =
+    multiplier !== String(initial) &&
+    (!/^\d+$/.test(multiplier) || Number(multiplier) > 100);
+  const dirty = Number(multiplier) !== initial;
+
+  async function onSave() {
+    await update.mutateAsync({
+      "library.hard_purge_multiplier": Number(multiplier),
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">
+          Removed-file purge
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-2">
+          <Label htmlFor="hard-purge-multiplier">
+            Purge after (× each library&rsquo;s soft-delete days)
+          </Label>
+          <Input
+            id="hard-purge-multiplier"
+            inputMode="numeric"
+            value={multiplier}
+            onChange={(e) => setMultiplier(e.target.value)}
+          />
+          {bad && (
+            <p className="text-destructive text-xs">Must be in [0, 100].</p>
+          )}
+          <p className="text-muted-foreground text-xs">
+            A daily sweep permanently deletes issues whose removal was confirmed
+            more than this many soft-delete windows ago, along with their
+            bookmarks, notes, reading progress and ratings. If the file comes
+            back later it is imported as a new issue with no read state. Set to{" "}
+            <code>0</code> to never purge.
+          </p>
+        </div>
+        <div className="flex justify-end">
+          <Button onClick={onSave} disabled={!dirty || update.isPending || bad}>
             {update.isPending ? "Saving…" : "Save"}
           </Button>
         </div>

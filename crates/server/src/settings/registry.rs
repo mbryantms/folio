@@ -277,6 +277,15 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Uint,
         is_secret: false,
     },
+    // ───────── Library lifecycle (roadmap WP-3.5) ─────────
+    SettingDef {
+        // Hard-purge window = `library.soft_delete_days × this` days after
+        // removal is confirmed. `0` disables the daily purge sweep.
+        // Default 2. Live — read on every sweep.
+        key: "library.hard_purge_multiplier",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
     // ───────── Match-bucket thresholds (matching-accuracy-1.0 M1) ────
     SettingDef {
         // Score at or above which a candidate is bucketed HIGH. Default

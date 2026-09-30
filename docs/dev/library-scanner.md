@@ -424,9 +424,17 @@ the DB:
   runs daily at 04:00 UTC
   ([scheduler.rs:357–361](../../crates/server/src/jobs/scheduler.rs#L357-L361))
   and stamps `removal_confirmed_at` on rows whose `removed_at` is older
-  than `library.soft_delete_days`. The scanner never hard-deletes;
-  confirmed rows persist until a future purge job lands (see
-  §Carry-over).
+  than `library.soft_delete_days`. The scanner itself never
+  hard-deletes; that is the purge sweep's job (next bullet).
+- **Hard-purge cron** (roadmap WP-3.5) —
+  [`jobs::hard_purge`](../../crates/server/src/jobs/hard_purge.rs) runs
+  daily at 04:15 UTC (between the 04:00 auto-confirm and the 04:30
+  thumbnail orphan sweep, which then reaps the purged ids' thumbs) and
+  hard-`DELETE`s issues whose `removal_confirmed_at` is older than
+  `library.soft_delete_days × library.hard_purge_multiplier` days
+  (global setting, default `2`, `0` disables; window floor 1 day; at
+  most 5 000 issues per library per run). See **Removal lifecycle**
+  below.
 - **`series.json` re-read every scan** — there is no caching layer;
   changes to the sidecar take effect on the next pass through the
   folder ([mod.rs:1479](../../crates/server/src/library/scanner/mod.rs#L1479)).
@@ -680,6 +688,51 @@ waiting for the scheduled refresh window.
   auto-restored by the next scan
   ([reconcile.rs:62–68, 198–204](../../crates/server/src/library/reconcile.rs#L62-L68)).
 
+### Removal lifecycle
+
+| State | Columns | Reached by | Reversible? |
+|---|---|---|---|
+| Active | `removed_at IS NULL` | scan | — |
+| Soft-deleted | `removed_at` set, `removal_confirmed_at` NULL | reconcile: file missing | yes — file returns (auto) or admin restore |
+| Confirmed | both set | 04:00 auto-confirm after `soft_delete_days`, or admin `confirm-removal` | yes — a returning file still restores the row |
+| Purged | row gone | 04:15 hard-purge once confirmed for `soft_delete_days × library.hard_purge_multiplier` days | **no** |
+
+With the defaults (`soft_delete_days = 30`, multiplier `2`) a missing
+file's row survives ~90 days: 30 pending, then 60 confirmed.
+
+The purge ([`jobs/hard_purge.rs`](../../crates/server/src/jobs/hard_purge.rs)):
+
+- **Only confirmed rows.** The candidate `SELECT` and the `DELETE` both
+  carry `removed_at IS NOT NULL AND removal_confirmed_at IS NOT NULL AND
+  removal_confirmed_at < cutoff`, so a row restored between the two
+  survives. Soft-deleted-but-unconfirmed and active rows are never
+  touched.
+- **Series** are purged only when confirmed past the same window *and*
+  they own no issue rows at all (`issues.series_id` cascades, so a
+  series that still owns a live or soft-deleted issue is kept).
+- **Cascades.** FK dependents (markers, reading sessions, collection
+  entries, metadata junctions, covers, …) go via `ON DELETE CASCADE`;
+  CBL matches / reprint links go `SET NULL`. References with no FK are
+  cleaned in the same transaction: polymorphic rows (`user_ratings`,
+  `rail_dismissals`, `external_ids`, `field_provenance`), the FK-less
+  `progress_records`, and dangling `issues.superseded_by` /
+  `character.first_appearance_issue_id` pointers (cleared). History
+  (`audit_log`, `library_events`, `scan_runs`) keeps the ids.
+  `tests/hard_purge.rs` pins both halves: every FK into
+  `issues`/`series` is CASCADE/SET NULL, and every FK-less id column has
+  an explicit policy.
+- **Export first.** Before deleting, one structured `WARN` line per row
+  (`target = folio::hard_purge`: ids, path, content hash, timestamps,
+  and counts of markers / progress rows / reading sessions / collection
+  entries / ratings about to be lost). After the delete, one
+  `library_events` row per purged entity (`category = issue|series`,
+  `action = purged`, same counts in `detail`) lands on the Library
+  stream, plus the `folio_library_hard_purged_total{kind}` counter.
+- **Trade-off.** The purged row's `content_hash` is what lets a
+  re-appearing file de-dupe back into the same issue id; after a purge a
+  returning file is imported as a new issue with no read state. Raise the
+  multiplier (or set `0`) for collections on flaky mounts.
+
 ### File-watch (not implemented)
 
 There is no filesystem watcher today. New or changed files are picked
@@ -833,19 +886,13 @@ markers, a saved-view CBL slot). Two recovery paths:
   a pread extent). `.cbr` streams only once a library opting into
   `auto_convert_cbr_on_scan` has rewritten it to `.cbz`
   (`scanner::cbr_convert`); `.cb7` is scaffolded only.
-- **Hard-purge of confirmed-removed rows.** Today rows live in `issues`
-  and `series` forever once `removal_confirmed_at` is set —
-  `auto_confirm_sweep` is the only reaper and it only flips that
-  timestamp, never `DELETE`s. Fine for normal self-hosted libraries,
-  but a high-churn collection (years of file rotation) eventually
-  accrues thousands of dead rows. Follow-up: a cron job that
-  hard-deletes `issues` / `series` rows with
-  `removal_confirmed_at < now() - INTERVAL '<library.purge_after_days>'`,
-  with a per-library `purge_after_days` setting (default `null` =
-  never purge, preserving today's behavior). Watch-outs: the issue's
-  `content_hash` is what lets a re-appearing file de-dupe back into
-  the same row, so purging breaks that recovery path — document the
-  trade-off in the settings UI when it lands.
+- ~~**Hard-purge of confirmed-removed rows.**~~ Shipped as roadmap
+  WP-3.5 — see §Removal lifecycle. Chosen shape: one global
+  `library.hard_purge_multiplier` over the existing per-library
+  `soft_delete_days` (default ×2, `0` = never) rather than a separate
+  per-library `purge_after_days`. **Upgrade note:** on the first 04:15
+  run after upgrading, rows already confirmed for longer than the window
+  are purged; set the multiplier to `0` beforehand to opt out.
 - **Scan-side audit-log emission** — scan triggers, soft-deletes from
   reconcile, and auto-confirm sweeps don't currently land in
   `audit_log`. Wire `crate::audit::record` calls into `finalize_run`
