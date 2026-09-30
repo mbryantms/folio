@@ -4,8 +4,9 @@ import spec from "@/lib/api/openapi.json";
 import { MARKER_PALETTE, isValidMarkerColor } from "@/lib/markers/palette";
 
 type Schema = { properties: Record<string, { pattern?: string }> };
-const schemas = (spec as { components: { schemas: Record<string, Schema> } })
-  .components.schemas;
+const schemas = (
+  spec as unknown as { components: { schemas: Record<string, Schema> } }
+).components.schemas;
 
 describe("marker colour palette (WP-5.3)", () => {
   it("matches the server's published pattern exactly", () => {
