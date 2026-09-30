@@ -53,49 +53,28 @@ import {
   computeWebtoonWindow,
   placeholderAspectRatio,
 } from "@/lib/reader/webtoon-window";
-import { EndOfIssueCard } from "./EndOfIssueCard";
-import { WebtoonEndFooter } from "./WebtoonEndFooter";
 import {
   usePageTransition,
   type PageTransitionResult,
 } from "@/lib/reader/use-page-transition";
 
-import dynamic from "next/dynamic";
-
-// Lazy-load the marker editor (Sheet + form + its deps) so its bytes
-// leave the reader's first-load JS — it's only needed once the user
-// actually starts a marker edit (audit 2.5 bundle ratchet). `ssr: false`
-// because it's interactive client UI gated on a store flag.
-const MarkerEditor = dynamic(
-  () => import("./MarkerEditor").then((m) => m.MarkerEditor),
-  { ssr: false },
-);
-// Active-marker-mode indicator + touch cancel (audit C7); lazy since it's
-// only shown while a marker mode is active.
-const MarkerModePill = dynamic(
-  () => import("./MarkerModePill").then((m) => m.MarkerModePill),
-  { ssr: false },
-);
-// One-time reader orientation overlay (audit C5); lazy + only mounted for
-// genuine first-run users, so its bytes never touch the steady-state
-// first-load JS budget.
-const ReaderFirstRunOverlay = dynamic(
-  () => import("./ReaderFirstRunOverlay").then((m) => m.ReaderFirstRunOverlay),
-  { ssr: false },
-);
-// Page-text panel (WP-4.8): OCR text of the visible page for screen
-// readers. Lazy + mounted only once opened — it drives server OCR, so
-// neither its bytes nor its requests touch a reader that never opens it.
-const PageTextPanel = dynamic(
-  () => import("./PageTextPanel").then((m) => m.PageTextPanel),
-  { ssr: false },
-);
-import { MarkerOverlay } from "./MarkerOverlay";
+// Everything not needed to paint page one is code-split — see `./lazy`
+// for the pattern (WP-4.4 reader bundle budget). Import new overlays /
+// sheets / panels from there, not directly.
+import {
+  EndOfIssueCard,
+  MarkerEditor,
+  MarkerModePill,
+  MarkerOverlay,
+  PageStrip,
+  PageTextPanel,
+  ReaderChrome,
+  ReaderFirstRunOverlay,
+  WebtoonEndFooter,
+} from "./lazy";
 import { ReaderSkipLinks } from "./ReaderSkipLinks";
 import { usePageTextPanel } from "@/lib/reader/page-text";
-import { PageStrip } from "./PageStrip";
 import { PageImage } from "./PageImage";
-import { ReaderChrome } from "./ReaderChrome";
 
 export function Reader({
   issueId,
@@ -315,6 +294,15 @@ export function Reader({
   const [showEndCard, setShowEndCard] = useState(false);
   if (showEndCard && currentPage < totalPages - 1) {
     setShowEndCard(false);
+  }
+  // The card is a lazy chunk (`./lazy`). Mount it — closed — once the
+  // reader is within two pages of the end (or it is asked to open), and
+  // keep it mounted, so its chunk is loaded and the slide-in animation
+  // plays from the closed state when the user pages past the end.
+  const nearEnd = currentPage >= totalPages - 2;
+  const [endCardArmed, setEndCardArmed] = useState(false);
+  if (!endCardArmed && (nearEnd || showEndCard)) {
+    setEndCardArmed(true);
   }
   const dismissEndCard = useCallback(() => setShowEndCard(false), []);
   const continueFromEndCard = useCallback(() => {
@@ -1061,15 +1049,17 @@ export function Reader({
           onDismiss={dismissFirstRun}
         />
       ) : null}
-      <EndOfIssueCard
-        open={showEndCard}
-        data={nextUp.data}
-        isLoading={nextUp.isLoading}
-        direction={direction}
-        exitUrl={exitUrl}
-        onContinue={continueFromEndCard}
-        onDismiss={dismissEndCard}
-      />
+      {endCardArmed ? (
+        <EndOfIssueCard
+          open={showEndCard}
+          data={nextUp.data}
+          isLoading={nextUp.isLoading}
+          direction={direction}
+          exitUrl={exitUrl}
+          onContinue={continueFromEndCard}
+          onDismiss={dismissEndCard}
+        />
+      ) : null}
     </div>
   );
 }

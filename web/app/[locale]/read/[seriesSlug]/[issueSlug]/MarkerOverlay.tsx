@@ -17,7 +17,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useIssueMarkers, useIssuePageTextRegions } from "@/lib/api/queries";
-import { useCreateMarker, useDeleteMarker } from "@/lib/api/mutations";
+import { useCreateMarker, useDeleteMarker } from "@/lib/api/mutations/markers";
 import { primaryPointerIsCoarse } from "@/lib/reader/coarse-pointer";
 import { markerToCreateReq } from "@/lib/markers/recreate";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";

@@ -385,8 +385,11 @@ per-list opt-out to preserve curated orders).
   Reverse-proxy templates for Caddy, nginx, and Traefik, a Kubernetes
   guide, Prometheus metrics at `/metrics`, and backup docs.
 - The web app is an installable **PWA**, and the reader's first-load
-  JavaScript is gated in CI so it stays fast on an iPad over Wi-Fi (the
-  measured size and the gate live in `docs/dev/pwa-performance.md`).
+  JavaScript is gated in CI so it stays fast on an iPad over Wi-Fi:
+  about 117 KB gzip of reader-route JS on top of the shared framework
+  runtime, with a 130 KB ceiling. Everything not needed to paint the
+  first page (chrome, settings, page strip, markers, end-of-issue card)
+  loads after it. Details in `docs/dev/pwa-performance.md`.
 
 ---
 

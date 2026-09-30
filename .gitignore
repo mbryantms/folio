@@ -16,6 +16,9 @@ out/
 web/public/sw.js
 web/public/swe-worker-*.js
 
+# Reader bundle report (`check-bundle-size --report`, CI artifact).
+web/bundle-report/
+
 # Env / secrets
 .env
 .env.local

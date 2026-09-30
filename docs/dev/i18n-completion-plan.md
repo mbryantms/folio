@@ -87,8 +87,8 @@ These gate the work and should be answered first (flagged so we don't guess):
 
 `NextIntlClientProvider` ships whatever `messages` it's given into the client
 bundle. Passing the **entire** catalog would add weight to every route — and
-the reader route is on a hard budget (currently 195 KB ceiling after the React
-Compiler bump; §18.1 target 150 KB). Mitigations, in priority order:
+the reader route is on a hard budget (130 KB ceiling, 120 KB target since
+WP-4.4; numbers in `docs/dev/pwa-performance.md`). Mitigations, in priority order:
 
 1. **Prefer `getTranslations()` in server components** so most strings never
    reach the client bundle at all.

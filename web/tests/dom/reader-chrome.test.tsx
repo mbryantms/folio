@@ -140,7 +140,10 @@ describe("ReaderChrome (jsdom)", () => {
     );
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toBeTruthy();
-    expect(screen.getByRole("group", { name: "View mode" })).toBeTruthy();
+    // The settings body is a lazy chunk (WP-4.4) — it lands a tick later.
+    expect(
+      await screen.findByRole("group", { name: "View mode" }),
+    ).toBeTruthy();
     expect(
       screen.getByRole("group", { name: "Reading direction" }),
     ).toBeTruthy();

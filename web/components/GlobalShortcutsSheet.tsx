@@ -10,13 +10,25 @@ import {
   useState,
 } from "react";
 
-import { ShortcutsSheet } from "./ShortcutsSheet";
+import dynamic from "next/dynamic";
 import { useMe } from "@/lib/api/queries";
 import {
   readMeKeybinds,
   resolveKeybinds,
   shouldSkipHotkey,
 } from "@/lib/reader/keybinds";
+
+/** The sheet (Radix Dialog + scroll lock + focus trap + the keybind
+ *  tables) is only needed once someone presses `?` or picks "Keyboard
+ *  shortcuts". This provider wraps the root layout, so a static import
+ *  would put all of it in every route's first-load JS — including the
+ *  reader's budgeted bundle (WP-4.4). Lazy-load it and mount on first
+ *  open; the open state is already set, so the sheet appears as soon as
+ *  the chunk resolves. */
+const ShortcutsSheet = dynamic(
+  () => import("./ShortcutsSheet").then((m) => m.ShortcutsSheet),
+  { ssr: false },
+);
 
 interface ShortcutsSheetContextValue {
   open: () => void;
@@ -58,6 +70,10 @@ export function GlobalShortcutsSheet({
   children: React.ReactNode;
 }) {
   const [isOpen, setOpen] = useState(false);
+  // Mount the lazy sheet on first open and keep it mounted afterwards so
+  // the close animation plays and re-opens are instant.
+  const [hasOpened, setHasOpened] = useState(false);
+  if (isOpen && !hasOpened) setHasOpened(true);
   const me = useMe();
   const pathname = usePathname() ?? "";
 
@@ -94,12 +110,14 @@ export function GlobalShortcutsSheet({
   return (
     <Ctx.Provider value={value}>
       {children}
-      <ShortcutsSheet
-        open={isOpen}
-        onOpenChange={setOpen}
-        bindings={bindings}
-        initialSection={inReader ? "reader" : "global"}
-      />
+      {hasOpened ? (
+        <ShortcutsSheet
+          open={isOpen}
+          onOpenChange={setOpen}
+          bindings={bindings}
+          initialSection={inReader ? "reader" : "global"}
+        />
+      ) : null}
     </Ctx.Provider>
   );
 }

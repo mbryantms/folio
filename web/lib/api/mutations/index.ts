@@ -13,6 +13,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { apiFetch } from "../auth-refresh";
 import { queryKeys } from "../queries";
 import { getCsrfToken, useApiMutation } from "./_core";
+import { invalidateRails } from "./rails";
 
 // Re-exports kept stable across the M5 directory split so callers
 // can continue to import everything from `"@/lib/api/mutations"`.
@@ -26,6 +27,8 @@ export {
 export * from "./thumbnails";
 export * from "./duplicates";
 export * from "./hash-backfill";
+export * from "./markers";
+export { invalidateRails } from "./rails";
 
 import type {
   AcceptMetadataResp,
@@ -43,10 +46,7 @@ import type {
   CreateUserReq,
   CreateUserResp,
   CreateLibraryReq,
-  CreateMarkerReq,
   CreateSavedViewReq,
-  MarkerBulkDeleteResp,
-  MarkerView,
   DeleteLibraryResp,
   EditRequest,
   EditResponse,
@@ -91,7 +91,6 @@ import type {
   UpdateIssueReq,
   UpdateLibraryReq,
   UpdateLayoutReq,
-  UpdateMarkerReq,
   UpdateSavedViewReq,
   UpdateSeriesReq,
   SidebarLayoutView,
@@ -1143,34 +1142,6 @@ export function useSetSavedViewIcon() {
 
 // ---------- Home rails (Continue Reading / On Deck) ----------
 
-/** Invalidate every cached surface that derives from per-user reading
- *  progress: the two system rails, the saved-views index + per-view
- *  results, the CBL list rail/grid variants, the collection rail/grid
- *  variants, the marker + bookmarks listing, and the bookmarks badge.
- *
- *  Used by every progress-mutating hook (upsert / bulk-mark / dismiss)
- *  AND by the reader's raw-apiFetch progress writer
- *  (`useReaderProgressWrite`) — both need the same invalidation set
- *  so navigating back from `/read/...` to a paginated detail page
- *  doesn't show stale "unread" state on a just-finished issue.
- *
- *  The previous narrower helper missed `cbl-lists/window`, `cbl-lists/
- *  entries`, `collections/entries`, and the bookmark surfaces, which
- *  caused stale cards after a kebab "Mark as read" on the home rails
- *  and `/views/[id]` detail pages. See
- *  [docs/dev/multi-select.md](docs/dev/multi-select.md) for the rail
- *  inventory that drove the broadening.
- */
-export function invalidateRails(qc: ReturnType<typeof useQueryClient>) {
-  qc.invalidateQueries({ queryKey: queryKeys.continueReading });
-  qc.invalidateQueries({ queryKey: queryKeys.onDeck });
-  qc.invalidateQueries({ queryKey: ["saved-views"], exact: false });
-  qc.invalidateQueries({ queryKey: ["cbl-lists"], exact: false });
-  qc.invalidateQueries({ queryKey: ["collections"], exact: false });
-  qc.invalidateQueries({ queryKey: ["markers"], exact: false });
-  qc.invalidateQueries({ queryKey: queryKeys.markerCount });
-}
-
 /** `POST /me/rail-dismissals` — hide an issue / series / CBL from the home
  *  rails. Auto-restores when the underlying target sees new progress past
  *  `dismissed_at`. */
@@ -1979,145 +1950,6 @@ export function useRemoveCollectionEntry(collectionId: string) {
       successMessage: "Removed",
       onSuccess: () => {
         invalidateCollectionEntries(qc, collectionId);
-      },
-    },
-  );
-}
-
-// ---------- Markers (markers + collections M5) ----------
-
-/** Create a marker — bookmark / note / favorite / highlight. The
- *  reader cover-menu and `b` / `n` / `h` keybinds chain here. On
- *  success the per-issue + global feed caches are invalidated so the
- *  overlay and `/bookmarks` page refresh together.
- *
- *  No toast on success — reader keybind call sites wrap with
- *  kind-specific toasts ("Bookmarked page X", "Starred page X"); a
- *  generic "Marker created" would compete. */
-export function useCreateMarker() {
-  const qc = useQueryClient();
-  return useApiMutation<MarkerView, CreateMarkerReq>(
-    (body) => ({ path: "/me/markers", method: "POST", body }),
-    {
-      onSuccess: (_data, input) => {
-        qc.invalidateQueries({
-          queryKey: ["markers", "issue", input.issue_id],
-        });
-        qc.invalidateQueries({ queryKey: ["markers", "list"] });
-        // Sidebar badge — only create + delete change the total, so we
-        // skip the count invalidation in `useUpdateMarker`.
-        qc.invalidateQueries({ queryKey: ["markers", "count"] });
-        qc.invalidateQueries({ queryKey: ["markers", "tags"] });
-      },
-    },
-  );
-}
-
-/** Edit a marker's body / color / region / selection. Per-kind
- *  invariants are enforced server-side (e.g. a note body can't be
- *  cleared). `issueId` keys the per-issue invalidation. */
-export function useUpdateMarker(id: string, issueId: string) {
-  const qc = useQueryClient();
-  return useApiMutation<MarkerView, UpdateMarkerReq>(
-    (body) => ({ path: `/me/markers/${id}`, method: "PATCH", body }),
-    {
-      // Tailor the toast for the most common single-field toggles so
-      // the action is unambiguous. Falls back to "Saved" for editor
-      // submits (body / region / tags / multiple-field updates).
-      successMessage: (_data, input) => {
-        const keys = Object.keys(input);
-        if (keys.length === 1 && keys[0] === "is_favorite") {
-          return input.is_favorite
-            ? "Added to favorites"
-            : "Removed from favorites";
-        }
-        return "Saved";
-      },
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: ["markers", "issue", issueId] });
-        qc.invalidateQueries({ queryKey: ["markers", "list"] });
-        // Tag edits change the rollup but not the count — invalidate
-        // tags specifically (count stays stable so we skip that key).
-        qc.invalidateQueries({ queryKey: ["markers", "tags"] });
-      },
-    },
-  );
-}
-
-/** `silent: true` suppresses the default "Removed" toast for callers
- *  that compose their own (a) Reader keybinds emit kind-specific
- *  labels like "Removed bookmark on page X"; (b) every delete surface
- *  pairs the toast with an Undo action via `markerToCreateReq` +
- *  `useCreateMarker`. The 8 marker-delete call sites all use
- *  `silent: true` post-M3.5 — see docs/dev/notifications-audit.md
- *  §F-8 / cleanup plan M3.5. */
-export function useDeleteMarker(
-  id: string,
-  issueId: string,
-  opts?: { silent?: boolean },
-) {
-  const qc = useQueryClient();
-  return useApiMutation<unknown, void>(
-    () => ({ path: `/me/markers/${id}`, method: "DELETE" }),
-    {
-      ...(opts?.silent ? {} : { successMessage: "Removed" }),
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: ["markers", "issue", issueId] });
-        qc.invalidateQueries({ queryKey: ["markers", "list"] });
-        qc.invalidateQueries({ queryKey: ["markers", "count"] });
-        qc.invalidateQueries({ queryKey: ["markers", "tags"] });
-      },
-    },
-  );
-}
-
-/** Delete a marker whose id arrives at `mutate()` time. For hot
- *  paths like the reader's `b`/`s` toggles, where the fixed-id
- *  [`useDeleteMarker`] forced re-deriving a hook per page turn and
- *  minted mutations bound to `""` whenever no marker existed on the
- *  current page. Same invalidation set. */
-export function useDeleteMarkerById(
-  issueId: string,
-  opts?: { silent?: boolean },
-) {
-  const qc = useQueryClient();
-  return useApiMutation<unknown, string>(
-    (id) => ({ path: `/me/markers/${id}`, method: "DELETE" }),
-    {
-      ...(opts?.silent ? {} : { successMessage: "Removed" }),
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: ["markers", "issue", issueId] });
-        qc.invalidateQueries({ queryKey: ["markers", "list"] });
-        qc.invalidateQueries({ queryKey: ["markers", "count"] });
-        qc.invalidateQueries({ queryKey: ["markers", "tags"] });
-      },
-    },
-  );
-}
-
-/** Bulk-delete markers by id for the /bookmarks multi-select flow
- *  (audit B11). Input is the selected id list; the server caps at 500,
- *  dedups, and silently skips ids that aren't the caller's. Returns
- *  `{ deleted, not_found }`.
- *
- *  No `successMessage` — like the single delete, the call site composes
- *  its own toast with an Undo action (the marker-delete exception to the
- *  AlertDialog-confirm rule; see docs/dev/notifications-audit.md §F-8).
- *  Same invalidation set as `useDeleteMarker` minus the per-issue key
- *  (a bulk selection spans many issues). */
-export function useBulkDeleteMarkers() {
-  const qc = useQueryClient();
-  return useApiMutation<MarkerBulkDeleteResp, string[]>(
-    (markerIds) => ({
-      path: "/me/markers/bulk-delete",
-      method: "POST",
-      body: { marker_ids: markerIds },
-    }),
-    {
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: ["markers", "list"] });
-        qc.invalidateQueries({ queryKey: ["markers", "count"] });
-        qc.invalidateQueries({ queryKey: ["markers", "tags"] });
       },
     },
   );

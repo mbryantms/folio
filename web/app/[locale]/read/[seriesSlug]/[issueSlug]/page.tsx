@@ -4,10 +4,13 @@ import { Reader } from "./Reader";
 import { ReaderHealthToast } from "./ReaderHealthToast";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { IssueDetailView, MeView, PageInfo } from "@/lib/api/types";
+import { detectViewMode } from "@/lib/reader/detect";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
 import type { FitMode } from "@/lib/reader/store";
 import { readerViewport } from "@/lib/viewport";
 import { cookies } from "next/headers";
+import { preload } from "react-dom";
+import { pageBytesSrcSet, withContentVersion } from "@/lib/urls";
 import { THEME_COOKIE, isTheme } from "@/lib/theme";
 
 // The reader is always black regardless of the user's theme. On a
@@ -216,6 +219,17 @@ export default async function ReadPage({
     readingIdleMs = me.reading_idle_ms ?? 180_000;
   }
 
+  const pages = (issue.pages as PageInfo[] | null | undefined) ?? [];
+  const firstPage = Math.min(initialPage, totalPages - 1);
+  preloadFirstPage({
+    issueId: issue.id,
+    page: firstPage,
+    pageInfo: pages[firstPage],
+    version: issue.last_rewrite_at ?? null,
+    viewMode: userDefaultViewMode ?? detectViewMode(pages),
+    fitMode: userDefaultFitMode ?? "width",
+  });
+
   return (
     <>
       <ReaderHealthToast seriesSlug={seriesSlug} issueSlug={issueSlug} />
@@ -228,7 +242,7 @@ export default async function ReadPage({
         initialPage={initialPage}
         initialRun={initialRun}
         restartRun={restartRun}
-        pages={(issue.pages as PageInfo[] | null | undefined) ?? []}
+        pages={pages}
         pageUrlVersion={issue.last_rewrite_at ?? null}
         manga={issue.manga ?? null}
         userDefaultDirection={userDefaultDirection}
@@ -248,6 +262,54 @@ export default async function ReadPage({
         readingIdleMs={readingIdleMs}
       />
     </>
+  );
+}
+
+/** Emit `<link rel="preload">` hints (React DOM `preload()`, hoisted into
+ *  the document head) for the page the reader opens on and its blurred
+ *  strip thumb, so the browser starts fetching both before the reader's
+ *  JS has loaded and hydrated. The `<img>` itself also carries
+ *  `fetchpriority="high"`. WP-4.4.
+ *
+ *  The hint mirrors the `srcSet` / `sizes` the page views render for the
+ *  same defaults the Reader initialises its store from (single + webtoon:
+ *  `100vw`, double: `50vw`; single-page original fit: full-res only), so
+ *  the preload and the eventual `<img>` resolve to the same URL. A
+ *  per-series localStorage override can still change the view after
+ *  hydration, in which case the browser just drops the unused hint. */
+function preloadFirstPage({
+  issueId,
+  page,
+  pageInfo,
+  version,
+  viewMode,
+  fitMode,
+}: {
+  issueId: string;
+  page: number;
+  pageInfo: PageInfo | undefined;
+  version: string | null;
+  viewMode: ViewMode;
+  fitMode: FitMode;
+}) {
+  const src = withContentVersion(`/issues/${issueId}/pages/${page}`, version);
+  const imageSrcSet =
+    viewMode === "webtoon" || fitMode !== "original"
+      ? pageBytesSrcSet(src, pageInfo?.image_width)
+      : undefined;
+  preload(src, {
+    as: "image",
+    fetchPriority: "high",
+    ...(imageSrcSet
+      ? { imageSrcSet, imageSizes: viewMode === "double" ? "50vw" : "100vw" }
+      : {}),
+  });
+  preload(
+    withContentVersion(
+      `/issues/${issueId}/pages/${page}/thumb?variant=strip`,
+      version,
+    ),
+    { as: "image" },
   );
 }
 

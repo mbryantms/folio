@@ -130,6 +130,15 @@ test.describe("Reader flow", () => {
         firstPage.evaluate((el) => (el as HTMLImageElement).naturalWidth),
       )
       .toBe(100);
+    // The page image is server-rendered, so it is visible before React
+    // hydrates; a key pressed before then is lost. The chrome is a lazy
+    // client-only chunk (WP-4.4), so its presence proves both hydration and
+    // the keymap are live.
+    const readerReady = () =>
+      expect(page.getByTestId("reader-chrome")).toBeAttached({
+        timeout: 15_000,
+      });
+    await readerReady();
 
     // 5. Turn one page; the debounced progress write must reach the server.
     const progressWrite = page.waitForResponse(
@@ -154,6 +163,7 @@ test.describe("Reader flow", () => {
     //    read the page counter.
     await page.reload();
     await expect(page.locator("img[src*='/pages/']").first()).toBeVisible();
+    await readerReady();
     await page.keyboard.press("t");
     await expect(
       page.getByRole("button", { name: "Page 2 of 3; click to jump" }),
@@ -167,16 +177,16 @@ test.describe("Reader flow", () => {
     await page.waitForTimeout(400); // let the 300 ms slide-in settle
     await expectNoAxeViolations(page, "reader, chrome shown");
 
-    // …with the page-text panel open (`r`). The fixture pages are solid
-    // colour, so the panel settles on "no text" (or on "couldn't detect"
-    // where the image ships without OCR models) — either way the panel,
-    // its status region and its controls are what axe inspects.
+    // …with the page-text panel open (`r`). The panel, its status region
+    // and its controls are what axe inspects, so any status phase will
+    // do. Don't wait for OCR to settle: a fresh smoke container downloads
+    // the detector model on first use, which has held the request past
+    // 90 s on CI runners (the OCR outcome is covered by the jsdom tests).
     await page.keyboard.press("r");
     const panel = page.getByRole("dialog", { name: "Page text" });
     await expect(panel).toBeVisible();
     await expect(panel.getByRole("status").first()).toHaveText(
-      /No text detected|Couldn't detect|Couldn't read|text block/,
-      { timeout: 90_000 },
+      /Finding text|Reading text|No text detected|Couldn't detect|Couldn't read|text block/,
     );
     await expectNoAxeViolations(page, "reader, page-text panel open");
     // Esc closes the panel without also quitting the reader.
