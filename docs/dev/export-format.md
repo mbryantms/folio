@@ -312,7 +312,11 @@ app. It reuses the `markers` section's shape above (`ExportMarker` +
 - UI: "Export" menu on `/bookmarks`
   ([`NotesExportMenu`](../../web/components/markers/NotesExportMenu.tsx)).
 - Auth: cookie or Bearer; only the caller's markers, every kind, including
-  markers on issues since removed (same posture as `/me/export`).
+  markers on issues since removed or no longer visible to the caller
+  (same posture as `/me/export`). Those entries carry `available: false`
+  and no `jump_url`, and read `(no longer available)` in Markdown in
+  place of the Jump link (owner decision 2026-09-30). "Visible" is the
+  list rule: issue not removed, library granted, within the age cap.
   Rate-limited at 6 / min / IP in its own bucket (`rate_limit::NOTES_EXPORT`).
 - `format` defaults to `md`; an unknown value is a 400.
 - Response headers: `text/markdown; charset=utf-8` or `application/json`,
@@ -346,7 +350,7 @@ a rename. "Copy link" on a `/bookmarks` card copies the same URL.
           "issue": { "issue_id": "…", "content_hash": "…", "issue_number": "1", "…": "…" },
           "issue_title": "Chapter One",
           "pages": [
-            { "page_index": 2, "markers": [ { "id": "…", "kind": "note", "body": "…", "…": "…", "jump_url": "https://folio.example/markers/…" } ] }
+            { "page_index": 2, "markers": [ { "id": "…", "kind": "note", "body": "…", "…": "…", "available": true, "jump_url": "https://folio.example/markers/…" } ] }
           ]
         }
       ]
@@ -357,7 +361,8 @@ a rename. "Copy link" on a `/bookmarks` card copies the same URL.
 
 **Markdown layout**: `#` title, an `Exported <ts> · N markers` line,
 then `## Series (year)`, `### #number · title`, `#### Page n` (1-based),
-and per marker a line `**Kind** [★] · [Jump to page](url) [· tags: `a`, `b`]`,
+and per marker a line `**Kind** [★] · [Jump to page](url) [· tags: `a`, `b`]`
+(`(no longer available)` instead of the link for an unavailable marker),
 the captured text (`selection.text`) as a blockquote, and the note body
 verbatim.
 

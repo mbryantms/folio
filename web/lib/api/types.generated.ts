@@ -8037,10 +8037,17 @@ export interface components {
         };
         NotesExportMarker: components["schemas"]["ExportMarker"] & {
             /**
-             * @description Absolute marker permalink (`{public_url}/markers/{id}`); 303s to
-             *     the reader at this page in peek mode.
+             * @description `false` when the marker's issue was removed from the library or is
+             *     no longer visible to the caller (library grant / age cap). The
+             *     marker is still exported; only the link is withheld.
              */
-            jump_url: string;
+            available: boolean;
+            /**
+             * @description Absolute marker permalink (`{public_url}/markers/{id}`); 303s to
+             *     the reader at this page in peek mode. Omitted when `available` is
+             *     `false`.
+             */
+            jump_url?: string | null;
         };
         NotesExportPage: {
             /** @description Markers on this page, oldest first. */

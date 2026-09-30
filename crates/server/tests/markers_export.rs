@@ -143,6 +143,7 @@ const M_SAGA1_P1_BM: &str = "00000000-0000-7000-8000-000000000003";
 const M_SAGA2_P5_NOTE: &str = "00000000-0000-7000-8000-000000000004";
 const M_ALPHA1_P2_FAV: &str = "00000000-0000-7000-8000-000000000005";
 const M_OTHER_USER: &str = "00000000-0000-7000-8000-000000000006";
+const M_GONE_P1_NOTE: &str = "00000000-0000-7000-8000-000000000007";
 
 struct Seeded {
     saga_id: Uuid,
@@ -256,6 +257,34 @@ async fn seed(db: &DatabaseConnection, root: &std::path::Path, owner: Uuid, othe
     )
     .await;
 
+    // A marker on an issue since removed from the library: still
+    // exported, but flagged unavailable with no Jump link.
+    let gone_id = SeriesSeed::new(lib, "Gone Series").insert(db).await;
+    let gone1 = seed_issue(db, lib, gone_id, &root.join("gone1.cbz"), b"gone-1", 1.0).await;
+    insert_marker(
+        db,
+        id(M_GONE_P1_NOTE),
+        owner,
+        gone_id,
+        &gone1,
+        0,
+        "note",
+        Some("Note on a removed issue."),
+        None,
+        &[],
+        false,
+        at(6),
+    )
+    .await;
+    let row = entity::issue::Entity::find_by_id(gone1.clone())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::issue::ActiveModel = row.into();
+    am.removed_at = Set(Some(t0));
+    am.update(db).await.unwrap();
+
     Seeded { saga_id, saga1 }
 }
 
@@ -353,15 +382,22 @@ async fn json_export_groups_series_issue_page() {
 
     assert_eq!(doc["format"], "folio-notes-export");
     assert_eq!(doc["version"], 1);
-    assert_eq!(doc["total"], 5);
+    assert_eq!(doc["total"], 6);
     let series = doc["series"].as_array().unwrap();
     let names: Vec<&str> = series
         .iter()
         .map(|s| s["series"]["series_name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["Alpha Flight", "Saga"]);
+    assert_eq!(names, ["Alpha Flight", "Gone Series", "Saga"]);
 
-    let saga = &series[1];
+    // Removed issue: exported, flagged unavailable, no jump_url.
+    let gone = &series[1]["issues"][0]["pages"][0]["markers"][0];
+    assert_eq!(gone["id"], M_GONE_P1_NOTE);
+    assert_eq!(gone["available"], false);
+    assert!(gone.get("jump_url").is_none(), "{gone:#}");
+    assert_eq!(gone["body"], "Note on a removed issue.");
+
+    let saga = &series[2];
     assert_eq!(saga["series"]["series_id"], seeded.saga_id.to_string());
     let issues = saga["issues"].as_array().unwrap();
     assert_eq!(issues.len(), 2);
@@ -392,6 +428,7 @@ async fn json_export_groups_series_issue_page() {
     assert_eq!(hl["tags"], json!(["quote"]));
     assert_eq!(hl["selection"]["text"], "We are all\nborn of the stars.");
     assert_eq!(hl["issue"]["issue_id"], seeded.saga1);
+    assert_eq!(hl["available"], true);
     assert_eq!(
         hl["jump_url"],
         format!("http://localhost:8080/markers/{M_SAGA1_P3_HL}")
@@ -524,4 +561,94 @@ async fn permalink_404s_when_issue_is_no_longer_visible() {
         .unwrap();
     let resp = get(&app, &format!("/markers/{marker_id}"), Some(&user)).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_flags_markers_the_user_can_no_longer_see() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "admin@example.com").await;
+    let user = register(&app, "reader@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = seed_library(&db, tmp.path()).await;
+    let series_id = SeriesSeed::new(lib, "Capped").insert(&db).await;
+    let issue_id = seed_issue(
+        &db,
+        lib,
+        series_id,
+        &tmp.path().join("c.cbz"),
+        b"capped",
+        1.0,
+    )
+    .await;
+    let now = chrono::Utc::now().fixed_offset();
+    library_user_access::ActiveModel {
+        user_id: Set(user.user_id),
+        library_id: Set(lib),
+        age_rating_max: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    let marker_id = Uuid::now_v7();
+    insert_marker(
+        &db,
+        marker_id,
+        user.user_id,
+        series_id,
+        &issue_id,
+        0,
+        "bookmark",
+        None,
+        None,
+        &[],
+        false,
+        now,
+    )
+    .await;
+
+    let fetch = || async {
+        let resp = get(&app, "/api/me/markers/export?format=json", Some(&user)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let doc: Value = serde_json::from_slice(&body_bytes(resp.into_body()).await).unwrap();
+        doc["series"][0]["issues"][0]["pages"][0]["markers"][0].clone()
+    };
+    assert_eq!(fetch().await["available"], true);
+
+    // Age cap below the issue's rating hides it.
+    let row = entity::issue::Entity::find_by_id(issue_id.clone())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::issue::ActiveModel = row.into();
+    am.age_rating = Set(Some("Mature 17+".into()));
+    am.update(&db).await.unwrap();
+    let grant = library_user_access::Entity::find_by_id((lib, user.user_id))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut gam: library_user_access::ActiveModel = grant.into();
+    gam.age_rating_max = Set(Some("Teen".into()));
+    gam.update(&db).await.unwrap();
+    let m = fetch().await;
+    assert_eq!(m["available"], false);
+    assert!(m.get("jump_url").is_none());
+
+    // Revoked grant: still exported (it's the user's data), still flagged.
+    library_user_access::Entity::delete_by_id((lib, user.user_id))
+        .exec(&db)
+        .await
+        .unwrap();
+    let m = fetch().await;
+    assert_eq!(m["id"], marker_id.to_string());
+    assert_eq!(m["available"], false);
+
+    let resp = get(&app, "/api/me/markers/export?format=md", Some(&user)).await;
+    let md = String::from_utf8(body_bytes(resp.into_body()).await).unwrap();
+    assert!(md.contains("**Bookmark** · (no longer available)"), "{md}");
+    assert!(!md.contains("/markers/"), "{md}");
 }

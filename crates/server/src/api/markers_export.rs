@@ -17,14 +17,18 @@
 //!
 //! Scope: every marker the caller owns, every kind (bookmark, note,
 //! favorite, highlight), including markers on issues since removed from
-//! the library — the export is the user's own data, same posture as
-//! `GET /me/export`. Query shape: one marker query plus the account
-//! export's IN-batched identity hydration (issues → series → libraries).
+//! the library or no longer visible to the caller — the export is the
+//! user's own data, same posture as `GET /me/export`. Those entries are
+//! flagged `available: false`, carry no `jump_url` (the permalink would
+//! 404), and read "(no longer available)" in Markdown (owner decision
+//! 2026-09-30). Query shape: one marker query, the account export's
+//! IN-batched identity hydration (issues → series → libraries), and one
+//! IN-batched visibility probe (live + library grant + age cap).
 //!
 //! Wire format is documented in `docs/dev/export-format.md` ("Notes
 //! export").
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 
 use axum::{
@@ -34,8 +38,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use entity::marker;
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
+use entity::{issue, marker};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
@@ -45,6 +49,7 @@ use uuid::Uuid;
 use super::account_export::{ExportMarker, IssueRef, Refs, SeriesRef, export_marker};
 use crate::api::respond;
 use crate::auth::CurrentUser;
+use crate::library::access::{self, VisibleLibraries};
 use crate::middleware::rate_limit;
 use crate::state::AppState;
 use server_macros::handler;
@@ -121,9 +126,15 @@ pub struct NotesExportPage {
 pub struct NotesExportMarker {
     #[serde(flatten)]
     pub marker: ExportMarker,
+    /// `false` when the marker's issue was removed from the library or is
+    /// no longer visible to the caller (library grant / age cap). The
+    /// marker is still exported; only the link is withheld.
+    pub available: bool,
     /// Absolute marker permalink (`{public_url}/markers/{id}`); 303s to
-    /// the reader at this page in peek mode.
-    pub jump_url: String,
+    /// the reader at this page in peek mode. Omitted when `available` is
+    /// `false`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jump_url: Option<String>,
 }
 
 // ───────── handler ─────────
@@ -147,7 +158,8 @@ pub async fn export(
     Query(q): Query<ExportQuery>,
 ) -> Response {
     let base_url = app.cfg().public_url.trim_end_matches('/').to_owned();
-    let doc = match build(&app.db, user.id, &base_url).await {
+    let acl = access::for_user(&app, &user).await;
+    let doc = match build(&app.db, user.id, &acl, &base_url).await {
         Ok(doc) => doc,
         Err(e) => {
             tracing::error!(error = %e, "notes export failed");
@@ -210,9 +222,37 @@ impl Ord for OrdF64 {
     }
 }
 
+/// Rows per `IN (...)` visibility batch (same bound as the account
+/// export's hydration).
+const VISIBLE_CHUNK: usize = 1000;
+
+/// The subset of `issue_ids` that is live (`removed_at IS NULL`) and
+/// visible to the caller under `acl` (library grant + age cap).
+async fn visible_issue_ids(
+    db: &DatabaseConnection,
+    acl: &VisibleLibraries,
+    issue_ids: &HashSet<String>,
+) -> Result<HashSet<String>, sea_orm::DbErr> {
+    let ids: Vec<String> = issue_ids.iter().cloned().collect();
+    let mut out = HashSet::with_capacity(ids.len());
+    for chunk in ids.chunks(VISIBLE_CHUNK) {
+        let mut q = issue::Entity::find()
+            .select_only()
+            .column(issue::Column::Id)
+            .filter(issue::Column::Id.is_in(chunk.to_vec()))
+            .filter(issue::Column::RemovedAt.is_null());
+        if let Some(cond) = acl.issue_filter() {
+            q = q.filter(cond);
+        }
+        out.extend(q.into_tuple::<String>().all(db).await?);
+    }
+    Ok(out)
+}
+
 async fn build(
     db: &DatabaseConnection,
     user_id: Uuid,
+    acl: &VisibleLibraries,
     base_url: &str,
 ) -> Result<NotesExport, sea_orm::DbErr> {
     let rows = marker::Entity::find()
@@ -222,7 +262,8 @@ async fn build(
         .all(db)
         .await?;
     let total = rows.len() as u64;
-    let issue_ids = rows.iter().map(|m| m.issue_id.clone()).collect();
+    let issue_ids: HashSet<String> = rows.iter().map(|m| m.issue_id.clone()).collect();
+    let visible = visible_issue_ids(db, acl, &issue_ids).await?;
     let series_ids = rows.iter().map(|m| m.series_id).collect();
     let refs = Refs::load(db, issue_ids, series_ids).await?;
 
@@ -252,7 +293,8 @@ async fn build(
             refs.issue(&issue_id).issue_number.unwrap_or_default(),
             issue_id.clone(),
         );
-        let jump_url = format!("{base_url}/markers/{}", m.id);
+        let available = visible.contains(&issue_id);
+        let jump_url = available.then(|| format!("{base_url}/markers/{}", m.id));
         let marker = export_marker(m, &refs);
         tree.entry(series_key)
             .or_default()
@@ -261,7 +303,11 @@ async fn build(
             .1
             .entry(page_index)
             .or_default()
-            .push(NotesExportMarker { marker, jump_url });
+            .push(NotesExportMarker {
+                marker,
+                available,
+                jump_url,
+            });
     }
 
     let series = tree
@@ -347,12 +393,13 @@ pub fn render_markdown(doc: &NotesExport) -> String {
 fn render_marker(out: &mut String, nm: &NotesExportMarker) {
     let m = &nm.marker;
     let star = if m.is_favorite { " ★" } else { "" };
-    let _ = write!(
-        out,
-        "\n**{}**{star} · [Jump to page]({})",
-        kind_label(&m.kind),
-        nm.jump_url
-    );
+    let _ = write!(out, "\n**{}**{star} · ", kind_label(&m.kind));
+    match (&nm.jump_url, nm.available) {
+        (Some(url), true) => {
+            let _ = write!(out, "[Jump to page]({url})");
+        }
+        _ => out.push_str("(no longer available)"),
+    }
     if !m.tags.is_empty() {
         let tags: Vec<String> = m.tags.iter().map(|t| format!("`{t}`")).collect();
         let _ = write!(out, " · tags: {}", tags.join(", "));

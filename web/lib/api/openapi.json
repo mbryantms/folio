@@ -19050,12 +19050,19 @@
           {
             "type": "object",
             "required": [
-              "jump_url"
+              "available"
             ],
             "properties": {
+              "available": {
+                "type": "boolean",
+                "description": "`false` when the marker's issue was removed from the library or is\nno longer visible to the caller (library grant / age cap). The\nmarker is still exported; only the link is withheld."
+              },
               "jump_url": {
-                "type": "string",
-                "description": "Absolute marker permalink (`{public_url}/markers/{id}`); 303s to\nthe reader at this page in peek mode."
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Absolute marker permalink (`{public_url}/markers/{id}`); 303s to\nthe reader at this page in peek mode. Omitted when `available` is\n`false`."
               }
             }
           }
