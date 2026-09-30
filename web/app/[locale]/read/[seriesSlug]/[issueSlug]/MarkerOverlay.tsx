@@ -827,14 +827,21 @@ async function finalizePending(
         // one came back — the saved region hugs the bubble instead
         // of the rough drag. New pending markers only; re-detect on
         // an existing marker never rewrites stored geometry.
+        // w / h are clamped to what's left of the page so the region
+        // always fits (the server rejects x + w or y + h past 100).
         const snapped = ocr.refinedBbox
-          ? {
-              x: clamp((ocr.refinedBbox.x / naturalSize.width) * 100, 0, 100),
-              y: clamp((ocr.refinedBbox.y / naturalSize.height) * 100, 0, 100),
-              w: clamp((ocr.refinedBbox.w / naturalSize.width) * 100, 0, 100),
-              h: clamp((ocr.refinedBbox.h / naturalSize.height) * 100, 0, 100),
-              shape: region.shape,
-            }
+          ? (() => {
+              const bbox = ocr.refinedBbox;
+              const x = clamp((bbox.x / naturalSize.width) * 100, 0, 100);
+              const y = clamp((bbox.y / naturalSize.height) * 100, 0, 100);
+              return {
+                x,
+                y,
+                w: clamp((bbox.w / naturalSize.width) * 100, 0, 100 - x),
+                h: clamp((bbox.h / naturalSize.height) * 100, 0, 100 - y),
+                shape: region.shape,
+              };
+            })()
           : region;
         return {
           ...base,
