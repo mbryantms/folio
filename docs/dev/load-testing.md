@@ -155,6 +155,22 @@ own as the ratio drops. The few-hundred-microsecond swings between runs on
 unchanged plans (series-browse-name, continue-reading) are timing noise;
 the plan shapes are identical.
 
+A clean end-to-end rerun of the final code passed the gate: fresh
+containers, a new scan, `PERF_OHA=1`. That run's planner also used one more
+info-level `series` scan, in `series-browse-name`'s hydrate. Which
+2,500-row series scans appear varies with statistics sampling. Its `oha`
+pass (debug build, 16 connections, 5 s per endpoint, same busy host)
+achieved these request rates with a 100 % success rate:
+
+| endpoint | req/s | endpoint | req/s |
+|---|---:|---|---:|
+| series-browse-name | 817 | issues-search | 459 |
+| series-filter-sort | 931 | continue-reading | 1,518 |
+| series-search | 1,120 | on-deck | 215 |
+| series-issues | 2,065 | saved-view-results | 802 |
+| issues-browse-recent | 1,176 | cbl-entries | 1,008 |
+| issues-filter-writer | 1,441 | recent-issues-rail | 1,717 |
+
 `COUNT(*)` for the first-page `total` is inherently O(active issues). It is
 now an index-only scan over the 5 MB `issues_active_created_idx` instead of
 a scan of the 65 MB heap: 4 ms instead of 26 ms here, roughly 40 ms at
