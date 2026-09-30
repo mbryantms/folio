@@ -170,6 +170,9 @@ function renderValueEditor(
           library={library}
         />
       );
+    case "bool":
+      // `is_true` / `is_false` carry no value (handled above).
+      return null;
     case "uuid":
       // Library is the only UUID field today. Use MultiSelectEditor for
       // `in/not_in`; a TextEditor placeholder for direct equals/not.

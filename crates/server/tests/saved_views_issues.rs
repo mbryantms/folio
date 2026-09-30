@@ -649,3 +649,124 @@ async fn issue_results_respect_library_acl() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+// ───── WP-5.7: has_notes / has_bookmarks / has_highlights ─────
+
+async fn add_marker(db: &DatabaseConnection, user: Uuid, issue_id: &str, kind: &str) {
+    db.execute_raw(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DbBackend::Postgres,
+        "INSERT INTO markers (id, user_id, series_id, issue_id, page_index, kind, \
+             is_favorite, tags, region, body, created_at, updated_at, hidden_from_log) \
+         SELECT $1, $2, i.series_id, i.id, 0, $4, false, ARRAY[]::text[], \
+             CASE WHEN $4 = 'highlight' \
+                  THEN '{\"x\":1,\"y\":1,\"w\":5,\"h\":5,\"shape\":\"rect\"}'::jsonb END, \
+             CASE WHEN $4 = 'note' THEN 'a note' END, now(), now(), false \
+         FROM issues i WHERE i.id = $3",
+        [
+            Uuid::now_v7().into(),
+            user.into(),
+            issue_id.into(),
+            kind.into(),
+        ],
+    ))
+    .await
+    .unwrap();
+}
+
+async fn preview_ids(app: &TestApp, auth: &Authed, path: &str, conditions: Value) -> Value {
+    let (status, res) = http(
+        app,
+        Method::POST,
+        path,
+        auth,
+        Some(json!({
+            "filter": {"match_mode": "all", "conditions": conditions},
+            "sort_field": "name",
+            "sort_order": "asc",
+            "result_limit": 50,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{res}");
+    res
+}
+
+fn names(v: &Value) -> Vec<String> {
+    v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn marker_filters_are_scoped_to_the_viewing_user() {
+    let app = TestApp::spawn().await;
+    let me = register(&app, "annotator@example.com").await;
+    let other = register(&app, "other@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let fx = seed(&app, tmp.path(), me.user_id).await;
+    // A second series the caller never annotates.
+    let lib: Uuid = {
+        use sea_orm::FromQueryResult;
+        #[derive(FromQueryResult)]
+        struct R {
+            library_id: Uuid,
+        }
+        R::find_by_statement(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            "SELECT library_id FROM issues WHERE id = $1",
+            [fx.regular_2019.clone().into()],
+        ))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .library_id
+    };
+    let quiet = seed_series(&db, lib, "Quiet").await;
+    let quiet_issue =
+        seed_issue(&db, lib, quiet, &tmp.path().join("q1.cbz"), b"quiet-1", 1.0).await;
+
+    add_marker(&db, me.user_id, &fx.annual_2019_unread, "note").await;
+    add_marker(&db, me.user_id, &fx.annual_2018, "bookmark").await;
+    add_marker(&db, me.user_id, &fx.regular_2019, "highlight").await;
+    // Another user's annotations must never make a row match for `me`.
+    add_marker(&db, other.user_id, &quiet_issue, "note").await;
+    add_marker(&db, other.user_id, &fx.annual_2019_read, "note").await;
+
+    let issues = "/api/me/saved-views/preview-issues";
+    let series = "/api/me/saved-views/preview";
+    let flag = |field: &str, op: &str| json!([{"field": field, "op": op}]);
+
+    let r = preview_ids(&app, &me, issues, flag("has_notes", "is_true")).await;
+    assert_eq!(ids(&r), vec![fx.annual_2019_unread.clone()]);
+    let r = preview_ids(&app, &me, issues, flag("has_bookmarks", "is_true")).await;
+    assert_eq!(ids(&r), vec![fx.annual_2018.clone()]);
+    let r = preview_ids(&app, &me, issues, flag("has_highlights", "is_true")).await;
+    assert_eq!(ids(&r), vec![fx.regular_2019.clone()]);
+    let r = preview_ids(&app, &me, issues, flag("has_notes", "is_false")).await;
+    let without_notes = ids(&r);
+    assert!(!without_notes.contains(&fx.annual_2019_unread));
+    assert!(without_notes.contains(&fx.annual_2019_read));
+    assert!(without_notes.contains(&quiet_issue));
+
+    // Series level: Batman has my note; Quiet only has someone else's.
+    let r = preview_ids(&app, &me, series, flag("has_notes", "is_true")).await;
+    assert_eq!(names(&r), vec!["Batman"]);
+    let r = preview_ids(&app, &me, series, flag("has_notes", "is_false")).await;
+    assert_eq!(names(&r), vec!["Quiet"]);
+
+    // A note on a removed issue no longer counts for its series.
+    db.execute_raw(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DbBackend::Postgres,
+        "UPDATE issues SET removed_at = now() WHERE id = $1",
+        [fx.annual_2019_unread.clone().into()],
+    ))
+    .await
+    .unwrap();
+    let r = preview_ids(&app, &me, series, flag("has_notes", "is_true")).await;
+    assert!(names(&r).is_empty(), "{r}");
+}

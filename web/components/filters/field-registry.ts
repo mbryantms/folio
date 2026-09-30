@@ -13,7 +13,15 @@ import type { Field, Op } from "@/lib/api/types";
 
 /** High-level value family. Drives which editor renders + what shape
  *  the `Condition.value` has on the wire. */
-export type FieldKind = "text" | "number" | "date" | "enum" | "uuid" | "multi";
+export type FieldKind =
+  | "text"
+  | "number"
+  | "date"
+  | "enum"
+  | "uuid"
+  | "multi"
+  /** Yes/no predicate — `is_true` / `is_false`, no value (WP-5.7). */
+  | "bool";
 
 /** Which root a filter view compiles against (WP-5.4): `filter_series`
  *  views → `"series"`, `filter_issues` views → `"issue"`. */
@@ -129,6 +137,8 @@ const MULTI_OPS: readonly [Op, ...Op[]] = [
   "is_empty",
   "is_not_empty",
 ];
+
+const BOOL_OPS: readonly [Op, ...Op[]] = ["is_true", "is_false"];
 
 /** `issues.special_type` values (spec §6.5). Mirrors
  *  `SPECIAL_TYPE_VALUES` in the Rust registry. */
@@ -432,6 +442,26 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
   },
   // WP-5.4: the caller's own star rating (series + issue views)
   { id: "rating", label: "My Rating", kind: "number", allowedOps: NUMBER_OPS },
+  // WP-5.7: the caller's own annotations (series + issue views). Always
+  // scoped to the viewing user server-side.
+  {
+    id: "has_notes",
+    label: "Has My Notes",
+    kind: "bool",
+    allowedOps: BOOL_OPS,
+  },
+  {
+    id: "has_bookmarks",
+    label: "Has My Bookmarks",
+    kind: "bool",
+    allowedOps: BOOL_OPS,
+  },
+  {
+    id: "has_highlights",
+    label: "Has My Highlights",
+    kind: "bool",
+    allowedOps: BOOL_OPS,
+  },
 ] as const;
 
 /** Whether `spec` can be used on a view of `entity`. */

@@ -24,6 +24,8 @@ pub enum FieldKind {
     Uuid,
     /// Multi-valued junction-backed field — ops act on a set.
     Multi,
+    /// Yes/no predicate (`is_true` / `is_false`), no value (WP-5.7).
+    Bool,
 }
 
 /// Where the field lives in SQL. `Series(col)` filters on a column of the
@@ -79,6 +81,10 @@ pub enum Source {
     /// The caller's own `user_ratings.rating` for the row — target type
     /// `series` on series views, `issue` on issue views. NULL when unrated.
     UserRating,
+    /// `EXISTS` a marker of this kind owned by the caller on the row
+    /// (`markers.issue_id = issues.id` / `markers.series_id = series.id`),
+    /// ignoring markers on removed issues (WP-5.7).
+    MarkerExists(&'static str),
 }
 
 #[derive(Debug, Clone)]
@@ -177,6 +183,8 @@ const MULTI_OPS: &[Op] = &[
     Op::IsEmpty,
     Op::IsNotEmpty,
 ];
+
+const BOOL_OPS: &[Op] = &[Op::IsTrue, Op::IsFalse];
 
 /// `issues.special_type` values the scanner writes (spec §6.5,
 /// `scanner::process::detect_special_type`). NULL = ordinary issue.
@@ -701,6 +709,37 @@ const SPECS: &[FieldSpec] = &[
         allowed_ops: NUMBER_OPS,
         enum_values: &[],
     },
+    // ─── WP-5.7: the caller's own annotations (both entities) ────────────
+    FieldSpec {
+        field: Field::HasNotes,
+        kind: FieldKind::Bool,
+        id: "has_notes",
+        label: "Has My Notes",
+        source: Some(Source::MarkerExists("note")),
+        issue_source: Some(Source::MarkerExists("note")),
+        allowed_ops: BOOL_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
+        field: Field::HasBookmarks,
+        kind: FieldKind::Bool,
+        id: "has_bookmarks",
+        label: "Has My Bookmarks",
+        source: Some(Source::MarkerExists("bookmark")),
+        issue_source: Some(Source::MarkerExists("bookmark")),
+        allowed_ops: BOOL_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
+        field: Field::HasHighlights,
+        kind: FieldKind::Bool,
+        id: "has_highlights",
+        label: "Has My Highlights",
+        source: Some(Source::MarkerExists("highlight")),
+        issue_source: Some(Source::MarkerExists("highlight")),
+        allowed_ops: BOOL_OPS,
+        enum_values: &[],
+    },
 ];
 
 pub fn spec_for(field: Field) -> &'static FieldSpec {
@@ -737,7 +776,7 @@ mod tests {
         // and a matching `FieldSpec` row. Forgetting both leaves the
         // count unchanged but `spec_for` would panic at runtime — the
         // mismatch is the alarm.
-        const KNOWN_FIELD_COUNT: usize = 37;
+        const KNOWN_FIELD_COUNT: usize = 40;
         assert_eq!(SPECS.len(), KNOWN_FIELD_COUNT);
         for spec in SPECS {
             let looked_up = spec_for(spec.field);

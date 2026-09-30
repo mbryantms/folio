@@ -117,6 +117,14 @@ pub enum Field {
     /// rating on series views, the issue rating on issue views. Unrated
     /// rows are NULL (`is_empty`).
     Rating,
+    // ───── per-user annotations (WP-5.7; series and issue views) ─────
+    /// The caller has at least one `note` marker on the issue (issue
+    /// views) or on any issue of the series (series views).
+    HasNotes,
+    /// Same, for `bookmark` markers.
+    HasBookmarks,
+    /// Same, for `highlight` markers.
+    HasHighlights,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
