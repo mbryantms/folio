@@ -51,6 +51,10 @@ export function ServerSettingsCards() {
   const panelsMode = asString("compat.opds_panels_mode", "off");
   const zipLru = asUint("cache.zip_lru_capacity", 64);
   const purgeMultiplier = asUint("library.hard_purge_multiplier", 2);
+  const watcher = {
+    debounce: asUint("scanner.watch_debounce_secs", 30),
+    poll: asUint("scanner.watch_poll_interval_secs", 300),
+  };
   const workers = {
     scan_count: asUint("workers.scan_count", 4),
     post_scan_count: asUint("workers.post_scan_count", 2),
@@ -69,6 +73,10 @@ export function ServerSettingsCards() {
       <CompatibilityCard key={`compat-${panelsMode}`} initial={panelsMode} />
       <PurgeCard key={`purge-${purgeMultiplier}`} initial={purgeMultiplier} />
       <CachingCard key={`caching-${zipLru}`} initial={zipLru} />
+      <FileWatcherCard
+        key={`watcher-${watcher.debounce}-${watcher.poll}`}
+        initial={watcher}
+      />
       <WorkersCard
         key={`workers-${Object.values(workers).join("-")}`}
         initial={workers}
@@ -340,6 +348,95 @@ function CachingCard({ initial }: { initial: number }) {
         </div>
         <div className="flex justify-end">
           <Button onClick={onSave} disabled={!dirty || update.isPending || bad}>
+            {update.isPending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** WP-3.1 file watcher timing. Live — the watcher supervisor restarts
+ *  affected watchers on save, no server restart. Per-library on/off lives on
+ *  each library's settings; current mode per library is on the scan
+ *  dashboard. */
+function FileWatcherCard({
+  initial,
+}: {
+  initial: { debounce: number; poll: number };
+}) {
+  const [debounce, setDebounce] = useState(String(initial.debounce));
+  const [poll, setPoll] = useState(String(initial.poll));
+  const update = useUpdateSettings();
+
+  const inRange = (v: string, min: number, max: number) =>
+    /^\d+$/.test(v) && Number(v) >= min && Number(v) <= max;
+  const debounceOk = inRange(debounce, 1, 3600);
+  const pollOk = inRange(poll, 30, 86400);
+  const dirty =
+    Number(debounce) !== initial.debounce || Number(poll) !== initial.poll;
+
+  async function onSave() {
+    const patch: Record<string, number> = {};
+    if (Number(debounce) !== initial.debounce)
+      patch["scanner.watch_debounce_secs"] = Number(debounce);
+    if (Number(poll) !== initial.poll)
+      patch["scanner.watch_poll_interval_secs"] = Number(poll);
+    await update.mutateAsync(patch);
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">
+          File watcher
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="watch-debounce">Debounce (seconds)</Label>
+            <Input
+              id="watch-debounce"
+              inputMode="numeric"
+              value={debounce}
+              onChange={(e) => setDebounce(e.target.value)}
+            />
+            <p className="text-muted-foreground text-xs">
+              Quiet period after the last change on a local disk before one scan
+              of the changed folders runs. Range [1, 3600].
+            </p>
+            {!debounceOk && (
+              <p className="text-destructive text-xs">Must be in [1, 3600].</p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="watch-poll">Network poll interval (seconds)</Label>
+            <Input
+              id="watch-poll"
+              inputMode="numeric"
+              value={poll}
+              onChange={(e) => setPoll(e.target.value)}
+            />
+            <p className="text-muted-foreground text-xs">
+              How often NFS / SMB / FUSE libraries are checked. Only folder
+              timestamps are read — files are never opened. Range [30, 86400].
+            </p>
+            {!pollOk && (
+              <p className="text-destructive text-xs">
+                Must be in [30, 86400].
+              </p>
+            )}
+          </div>
+        </div>
+        <p className="text-muted-foreground text-xs">
+          Applies immediately. Turn watching on per library in its settings.
+        </p>
+        <div className="flex justify-end">
+          <Button
+            onClick={onSave}
+            disabled={!dirty || update.isPending || !debounceOk || !pollOk}
+          >
             {update.isPending ? "Saving…" : "Save"}
           </Button>
         </div>

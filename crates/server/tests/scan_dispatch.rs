@@ -492,6 +492,7 @@ async fn returned_scan_id_is_used_by_worker_scan_run() {
             library_id,
             scan_run_id: scan_id,
             force: false,
+            scope: None,
         },
         apalis::prelude::Data::new(app.state()),
     )

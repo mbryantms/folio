@@ -323,6 +323,7 @@ async fn retry_dead_job_reenqueues_and_audits() {
             library_id: Uuid::now_v7(),
             scan_run_id: Uuid::now_v7(),
             force: false,
+            scope: None,
         })
         .await
         .expect("push");

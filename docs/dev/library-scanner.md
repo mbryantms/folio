@@ -32,7 +32,7 @@ flowchart TD
     UI["Admin UI<br/><b>POST /libraries/:slug/scan</b>"]:::trig
     SR["UI<br/><b>POST /series/:id/scan</b>"]:::trig
     IR["UI<br/><b>POST /issues/:id/scan</b>"]:::trig
-    FW["File-watch<br/><i>planned — roadmap WP-3.1, not wired</i>"]:::trig
+    FW["File watcher<br/><i>inotify / directory-mtime poll</i><br/>library/watcher.rs"]:::trig
     SCH["Scheduler<br/><i>scan_schedule_cron</i>"]:::trig
     BOOT["Boot<br/><i>COMIC_SCAN_ON_STARTUP</i>"]:::trig
 
@@ -41,7 +41,7 @@ flowchart TD
     BOOT --> COAL
     SR --> SS["jobs/scan_series.rs<br/><b>JobKind::Series</b>"]
     IR --> SS2["jobs/scan_series.rs<br/><b>JobKind::Issue</b>"]
-    FW -.->|not implemented| SS
+    FW -->|"touched dirs<br/>coalesce_watch_scan"| COAL
 
     COAL --> SCAN["jobs/scan.rs::handle"]
     SS --> NARROW["scan_series_folder<br/>scanner/mod.rs:295"]:::phase
@@ -106,7 +106,7 @@ reconcile so unscanned siblings stay untouched.
 | Manual series scan | `POST /series/{slug}/scan` | Per-folder rescan via [`jobs/scan_series.rs`](../../crates/server/src/jobs/scan_series.rs) with `JobKind::Series`. Manual clicks set `force=true`. |
 | Manual issue scan | `POST /series/{series_slug}/issues/{issue_slug}/scan` | Same job type, `JobKind::Issue` — runs [`scan_issue_file`](../../crates/server/src/library/scanner/mod.rs#L376). |
 | Scheduled scan | `library.scan_schedule_cron` per-library | [`jobs/scheduler.rs:224`](../../crates/server/src/jobs/scheduler.rs#L224) — `coalesce_scan(.., false)`. 5- or 6-field cron via `tokio_cron_scheduler`. |
-| File-watch | **Not implemented** (planned — roadmap WP-3.1) | There is no filesystem watcher: no `notify` dependency in any `Cargo.toml`, and nothing enqueues work on file events. `library.file_watch_enabled` is stored by [api/libraries.rs](../../crates/server/src/api/libraries.rs) but inert — it is only counted into `watchers_enabled` on `/admin/server/info` ([api/server_info.rs:74](../../crates/server/src/api/server_info.rs#L74)) and echoed by `scan-preview` as `watcher_status = enabled_unverified`. New files are picked up by the scheduled, startup, or manual triggers above. |
+| File watcher | `library.file_watch_enabled` per library ([library/watcher.rs](../../crates/server/src/library/watcher.rs)) | inotify on local mounts, directory-mtime poll on NFS/SMB/CIFS/FUSE (picked by `statfs` at watcher start). Touched directories are collapsed over `scanner.watch_debounce_secs` (30 s) and enqueued via [`JobRuntime::coalesce_watch_scan`](../../crates/server/src/jobs/mod.rs) as a **scoped, non-forced** library scan of those directories only ([`scan_library_scoped`](../../crates/server/src/library/scanner/mod.rs)). Shares the full scan's `scan:in_flight` / `scan:queued` keys, so a storm is one scan plus at most one queued follow-up. See [File watcher](#file-watcher). |
 | Startup scan | `COMIC_SCAN_ON_STARTUP=true` | Enqueues a full scan of every library at boot. |
 
 ## Phase walkthrough
@@ -704,7 +704,7 @@ waiting for the scheduled refresh window.
 | `ignore_globs` | string[] | `[]` | `globset` syntax. Validated at PATCH time — invalid patterns return 400. |
 | `report_missing_comicinfo` | bool | `false` | When true, files without `ComicInfo.xml` emit `MissingComicInfo` info-level health issues. |
 | `dedupe_by_content` | bool | `true` | When true, a second copy of a file already in *this* library is skipped with a `DuplicateContent` health row. When false, every copy is ingested and the Duplicates page lists the exact-hash group. Never cross-library. |
-| `file_watch_enabled` | bool | `false` | **Inert.** Stored and returned by the API, counted on `/admin/server/info`, but no watcher consumes it (see Triggers). Reserved for roadmap WP-3.1. |
+| `file_watch_enabled` | bool | `false` | Run a file watcher on this library's root (see [File watcher](#file-watcher)). Flipping it (or moving the root / editing `ignore_globs`) takes effect immediately — the PATCH nudges the watcher supervisor. |
 | `soft_delete_days` | int | `30` | Days a removed issue stays in pending state before auto-confirmation. |
 | `scan_schedule_cron` | string | `null` | 5- or 6-field cron. `null` disables scheduled scans. |
 
@@ -714,10 +714,13 @@ waiting for the scheduled refresh window.
 |---|---|---|
 | `COMIC_REDIS_URL` | (required) | Apalis backend. No longer optional since Library Scanner v1. |
 | `COMIC_SCAN_ON_STARTUP` | `false` | Enqueue a full scan of every library at boot. |
-| `COMIC_SCAN_WORKER_COUNT` | `min(cpu, 4)` | Per-queue concurrency for `scan` + `scan_series`. |
-| `COMIC_POST_SCAN_WORKER_COUNT` | `2` | thumbs / search / dictionary. |
+| `COMIC_SCAN_WORKER_COUNT` | `min(cpu, 8)` | Per-queue concurrency for `scan` + `scan_series`. |
+| `COMIC_POST_SCAN_WORKER_COUNT` | `clamp(cpu/2, 2, 8)` | thumbs / search / dictionary. |
 | `COMIC_SCAN_BATCH_SIZE` | `100` | Issues per DB transaction within a series. |
-| `COMIC_SCAN_HASH_BUFFER_KB` | `64` | BLAKE3 streaming buffer. |
+| `COMIC_SCAN_HASH_BUFFER_KB` | `1024` | BLAKE3 streaming buffer. |
+| `COMIC_WATCH_DEBOUNCE_SECS` | `30` | File-watcher quiet period (DB key `scanner.watch_debounce_secs`, live). |
+| `COMIC_WATCH_POLL_INTERVAL_SECS` | `300` | Network-mount directory poll cadence (DB key `scanner.watch_poll_interval_secs`, live). |
+| `COMIC_WATCH_FORCE_POLL` | `false` | Env-only. Poll every watched library instead of using inotify. |
 
 ## Operations
 
@@ -725,9 +728,8 @@ waiting for the scheduled refresh window.
 
 - `GET /libraries/{slug}/scan-preview` — admin-only preflight for the
   scan button: estimated mode, dirty-folder count, known issue count,
-  cover backlog, last scan duration/state, watcher status
-  (`enabled_unverified` | `disabled` — echoes the flag only, there is no
-  live watcher to verify), and reason.
+  cover backlog, last scan duration/state, watcher status (the live
+  watcher mode: `inotify` | `poll` | `disabled`), and reason.
 - `GET /libraries/{slug}/removed` — list pending removals
 - `POST /series/{series_slug}/issues/{issue_slug}/restore` — reverse the soft-delete (file must be back)
 - `POST /series/{series_slug}/issues/{issue_slug}/confirm-removal` — admin confirmation now (skip the wait)
@@ -818,17 +820,72 @@ The purge ([`jobs/hard_purge.rs`](../../crates/server/src/jobs/hard_purge.rs)):
   returning file is imported as a new issue with no read state. Raise the
   multiplier (or set `0`) for collections on flaky mounts.
 
-### File-watch (not implemented)
+### File watcher
 
-There is no filesystem watcher today. New or changed files are picked
-up by the per-library cron (`scan_schedule_cron`), the optional boot
-scan (`COMIC_SCAN_ON_STARTUP`), or a manual scan. The
-`file_watch_enabled` flag exists in the schema and API but nothing
-reads it beyond the `/admin/server/info` count and the `scan-preview`
-`watcher_status` echo. A debounced `notify`-based watcher is roadmap
-item WP-3.1; when it lands, expect the usual caveats (NFS / SMB /
-rclone roots don't deliver events reliably) and a debounce window so a
-bulk copy fires one scan rather than hundreds.
+WP-3.1 (roadmap §3.6, decision D1). Implemented in
+[library/watcher.rs](../../crates/server/src/library/watcher.rs); one
+watcher per library with `file_watch_enabled = true`, run in-process
+(single instance, D2).
+
+- **Supervisor.** `watcher::spawn_supervisor` (started in `app::serve`)
+  reconciles running watchers against the `library` table every 30 s and
+  immediately when nudged — library create / PATCH / delete and every
+  `/admin/settings` save nudge it. A watcher restarts when its root,
+  `ignore_globs`, debounce or poll interval changes, and stops when the
+  toggle goes off or the library is deleted.
+- **Mode.** At start the root is `statfs`'d. NFS, SMB/SMB2/CIFS, FUSE, 9p,
+  Ceph, AFS, Lustre, GPFS, GlusterFS … → **poll**; everything else →
+  **inotify**. `COMIC_WATCH_FORCE_POLL=true` forces poll; an inotify setup
+  failure (e.g. `fs.inotify.max_user_watches` exhausted) falls back to
+  poll with the reason in the status `detail`. A root that can't be
+  inspected leaves the library **disabled** with the error, retried on the
+  next sync.
+- **inotify path.** `notify` + `notify-debouncer-full`, one recursive
+  watch. Events are reduced to *touched directories*: an archive
+  (`.cbz/.cbt/.cbr/.cb7`) or `series.json` added / changed / removed
+  touches its parent; a directory created / removed / renamed touches
+  itself and its parent. Temp files (`*.part`, `*.tmp`), `.bak` backups,
+  dotfiles, `@eaDir`/`__MACOSX` and the library's ignore globs never
+  count. The set flushes after `scanner.watch_debounce_secs` (default 30)
+  of quiet, or after ten windows of continuous activity. A kernel queue
+  overflow (`need_rescan`) triggers a non-forced **full** scan instead,
+  since the change set is unknown.
+- **Poll path.** Every `scanner.watch_poll_interval_secs` (default 300)
+  the poller `stat`s every *directory* in the tree — never a file — and
+  `readdir`s only directories whose mtime moved, that are new, or whose
+  mtime is too fresh to trust at 1–2 s timestamp granularity (then the
+  entry names are compared). A directory whose entries changed is a
+  touched directory. The first pass is a silent baseline. The
+  filesystem access goes through the `DirProbe` trait so
+  `tests/file_watcher.rs` can count calls and assert no file is stat'ed.
+  Limitation: a directory mtime only moves when an entry is added,
+  removed or renamed, so an archive overwritten *in place* on a network
+  share is picked up by the next scheduled scan, not the poller.
+- **Scan.** Touched directories go to
+  [`JobRuntime::coalesce_watch_scan`](../../crates/server/src/jobs/mod.rs),
+  which uses the full-library `scan:in_flight` / `scan:queued` keys: with
+  nothing running it enqueues a `scan::Job { scope: Some(dirs) }`; while a
+  scan runs it unions the dirs into `scan:queued:<lib>:dirs` and the one
+  queued follow-up runs scoped (a full trigger in the meantime makes the
+  follow-up full). More than 1,000 dirs degrade to a non-forced full scan.
+  The job runs [`scan_library_scoped`](../../crates/server/src/library/scanner/mod.rs):
+  [`enumerate_scoped`](../../crates/server/src/library/scanner/enumerate.rs)
+  classifies only the depth-1 "tops" containing a touched dir (the root
+  itself is read once, non-recursively, when it was touched), plans only
+  series folders that contain a touched dir or are new, and the reconcile
+  only judges series under those tops. The plan uses the normal
+  `list_archives_changed_since` folder fast path and the per-file
+  size+mtime fingerprint — a watcher event never causes a hash on its own.
+  Scoped runs are recorded as `kind='library'` with a "Watcher scan
+  started (N changed folders)" event, use the scoped health collector (no
+  auto-resolve of issues they didn't revisit), and do not bump
+  `library.last_scan_at`.
+- **Status.** `GET /admin/server/watchers` returns each library's mode,
+  filesystem, start time, last event, last trigger (time, dir count,
+  scan id, whether it joined a running scan), trigger count and `detail`;
+  the admin scan dashboard (`/admin/scan-dashboard`) renders it.
+  `/admin/server/info` carries `watchers_enabled` (toggle count) and
+  `watchers_running`. Metric: `folio_watcher_triggers_total{mode}`.
 
 ### Prometheus metrics
 
@@ -950,9 +1007,6 @@ markers, a saved-view CBL slot). Two recovery paths:
   `duplicate_content_is_skipped_and_reported`.
 - **LocalizedSeries matching + mixed-series merging** (spec §7.1.2,
   §7.2).
-- **File-watcher** (roadmap WP-3.1) — debounced `notify` watcher per
-  library root, plus the mount-type detection sentinel (spec §3.1) so
-  NFS / SMB roots fall back to schedule-only.
 - **Live-reload of cron / library config** without a restart.
 - **Per-user library-access filtering** on `GET /ws/scan-events` —
   currently admin-only.

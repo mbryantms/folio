@@ -22,6 +22,14 @@
 //!     a trigger arrived during an in-flight scan
 //!   - `scan:scan_id:<library_id>`   — current scan run id (for read-back)
 //!
+//! Watcher-scoped scans (WP-3.1) ride the same three keys, so an event
+//! storm collapses into one in-flight scan plus at most one queued
+//! follow-up. Two extra keys carry the follow-up's scope:
+//!   - `scan:queued:<library_id>:scoped` — set when every trigger that
+//!     queued the follow-up was scoped; a full trigger deletes it (full wins)
+//!   - `scan:queued:<library_id>:dirs`   — Redis SET, union of the touched
+//!     directories of every scoped trigger that coalesced
+//!
 //! Workers run inside the same tokio runtime as the HTTP server. There is no
 //! separate worker binary; this matches the single-binary deploy story.
 
@@ -121,7 +129,27 @@ impl JobRuntime {
         library_id: Uuid,
         force: bool,
     ) -> anyhow::Result<CoalesceOutcome> {
-        self.coalesce_scan_inner(library_id, force, None).await
+        self.coalesce_scan_inner(library_id, force, None, None)
+            .await
+    }
+
+    /// Coalesce a watcher-triggered, directory-scoped scan (WP-3.1).
+    ///
+    /// Shares the full-library in-flight / queued keys so an event storm
+    /// coalesces into one scan: if nothing is running the scoped job is
+    /// enqueued; if a scan is running the directories are unioned into the
+    /// queued follow-up (which stays a *full* scan when a full trigger also
+    /// queued it). Never forces — the scan reuses the size+mtime fast paths.
+    /// A scope larger than [`MAX_WATCH_SCOPE_DIRS`] degrades to a non-forced
+    /// full scan so the job payload stays bounded.
+    pub async fn coalesce_watch_scan(
+        &self,
+        library_id: Uuid,
+        dirs: Vec<String>,
+    ) -> anyhow::Result<CoalesceOutcome> {
+        let scope = (!dirs.is_empty() && dirs.len() <= MAX_WATCH_SCOPE_DIRS).then_some(dirs);
+        self.coalesce_scan_inner(library_id, false, None, scope)
+            .await
     }
 
     /// Like [`Self::coalesce_scan`], but stamps `batch_id` on the
@@ -135,7 +163,7 @@ impl JobRuntime {
         force: bool,
         batch_id: Uuid,
     ) -> anyhow::Result<CoalesceOutcome> {
-        self.coalesce_scan_inner(library_id, force, Some(batch_id))
+        self.coalesce_scan_inner(library_id, force, Some(batch_id), None)
             .await
     }
 
@@ -144,6 +172,7 @@ impl JobRuntime {
         library_id: Uuid,
         force: bool,
         batch_id: Option<Uuid>,
+        scope: Option<Vec<String>>,
     ) -> anyhow::Result<CoalesceOutcome> {
         let mut conn = self.redis.clone();
         let in_flight_key = in_flight_key(library_id);
@@ -154,6 +183,30 @@ impl JobRuntime {
         if let Some(_existing) = in_flight {
             // A scan is running. Mark another one queued and return the
             // running id so the caller can advertise a stable scan_id.
+            let already_queued: Option<String> = conn.get(&queued_key).await?;
+            let scoped_key = queued_scoped_key(library_id);
+            let dirs_key = queued_dirs_key(library_id);
+            match &scope {
+                Some(dirs) => {
+                    // Scoped follow-up only if nothing (or only other scoped
+                    // triggers) queued it; a full queued follow-up stays full.
+                    let scoped_marker: Option<String> = conn.get(&scoped_key).await?;
+                    if already_queued.is_none() || scoped_marker.is_some() {
+                        let _: () = conn
+                            .set_ex(&scoped_key, "1", SCAN_COALESCE_TTL_SECS)
+                            .await?;
+                        let _: () = conn.sadd(&dirs_key, dirs).await?;
+                        let _: () = conn
+                            .expire(&dirs_key, SCAN_COALESCE_TTL_SECS as i64)
+                            .await?;
+                    }
+                }
+                None => {
+                    // Full trigger: the follow-up must cover the whole library.
+                    let _: () = conn.del(&scoped_key).await?;
+                    let _: () = conn.del(&dirs_key).await?;
+                }
+            }
             let _: () = conn
                 .set_ex(&queued_key, "1", SCAN_COALESCE_TTL_SECS)
                 .await?;
@@ -190,6 +243,7 @@ impl JobRuntime {
                 library_id,
                 scan_run_id: scan_id,
                 force,
+                scope,
             })
             .await?;
         Ok(CoalesceOutcome::Enqueued { scan_id })
@@ -203,14 +257,26 @@ impl JobRuntime {
         let queued_key = queued_key(library_id);
         let queued_force_key = format!("{queued_key}:force");
         let scan_id_key = scan_id_key(library_id);
+        let scoped_key = queued_scoped_key(library_id);
+        let dirs_key = queued_dirs_key(library_id);
 
         let _: () = conn.del(&in_flight_key).await?;
 
         let queued: Option<String> = conn.get(&queued_key).await?;
         if queued.is_some() {
             let force_flag: Option<String> = conn.get(&queued_force_key).await?;
+            let scoped_marker: Option<String> = conn.get(&scoped_key).await?;
+            let scope = if scoped_marker.is_some() {
+                let mut dirs: Vec<String> = conn.smembers(&dirs_key).await?;
+                dirs.sort();
+                (!dirs.is_empty() && dirs.len() <= MAX_WATCH_SCOPE_DIRS).then_some(dirs)
+            } else {
+                None
+            };
             let _: () = conn.del(&queued_key).await?;
             let _: () = conn.del(&queued_force_key).await?;
+            let _: () = conn.del(&scoped_key).await?;
+            let _: () = conn.del(&dirs_key).await?;
             let new_id = Uuid::now_v7();
             let _: () = conn
                 .set_ex(&scan_id_key, new_id.to_string(), SCAN_COALESCE_TTL_SECS)
@@ -227,6 +293,7 @@ impl JobRuntime {
                     library_id,
                     scan_run_id: new_id,
                     force: force_flag.is_some(),
+                    scope,
                 })
                 .await?;
         }
@@ -643,6 +710,17 @@ fn queued_key(library_id: Uuid) -> String {
 fn scan_id_key(library_id: Uuid) -> String {
     format!("scan:scan_id:{library_id}")
 }
+fn queued_scoped_key(library_id: Uuid) -> String {
+    format!("scan:queued:{library_id}:scoped")
+}
+fn queued_dirs_key(library_id: Uuid) -> String {
+    format!("scan:queued:{library_id}:dirs")
+}
+
+/// Largest directory scope a watcher-triggered scan carries (WP-3.1). A
+/// bigger change set (a whole-library reshuffle) is cheaper and simpler as a
+/// non-forced full scan, which still skips unchanged folders by mtime.
+pub const MAX_WATCH_SCOPE_DIRS: usize = 1000;
 fn scoped_in_flight_key(
     library_id: Uuid,
     series_id: Uuid,
@@ -687,6 +765,8 @@ impl JobRuntime {
         let _: () = conn.del(&in_flight_key).await?;
         let _: () = conn.del(&queued_key).await?;
         let _: () = conn.del(&queued_force_key).await?;
+        let _: () = conn.del(queued_scoped_key(library_id)).await?;
+        let _: () = conn.del(queued_dirs_key(library_id)).await?;
         let _: () = conn.del(&scan_id_key).await?;
         Ok(())
     }

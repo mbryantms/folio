@@ -173,6 +173,23 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Uint,
         is_secret: false,
     },
+    // ───────── File watcher (WP-3.1) ─────────
+    //
+    // Live (not restart-required): the watcher supervisor re-reads the
+    // config on every sync and restarts any watcher whose timing changed.
+    SettingDef {
+        // Seconds of quiet after the last filesystem event before the
+        // touched directories are handed to one scoped scan. Default 30.
+        key: "scanner.watch_debounce_secs",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
+    SettingDef {
+        // Directory-mtime poll cadence on network mounts. Default 300.
+        key: "scanner.watch_poll_interval_secs",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
     // ───────── Update check (server-info-github-link M4) ─────────
     SettingDef {
         // When `false`, `/admin/server/latest-release` returns 204 (no

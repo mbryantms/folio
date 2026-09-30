@@ -161,8 +161,8 @@ Shipped:
   detection populates `special_type`; ComicInfo `<PageCount>` is stored as
   metadata but no longer treated as a health signal
 - **Scheduling** — `tokio-cron-scheduler` for `library.scan_schedule_cron`
-  (a `notify`-based file-watcher was planned here but never wired; the
-  `file_watch_enabled` flag is stored but inert — roadmap WP-3.1),
+  (the `notify`-based file watcher behind `file_watch_enabled` landed
+  later as roadmap WP-3.1 — see `library-scanner.md` → File watcher),
   daily reconcile sweep, daily scan_runs prune. `POST /series/{id}/scan` for
   per-folder rescan. Optional `COMIC_SCAN_ON_STARTUP=true`
 - **WebSocket scan events** — `GET /ws/scan-events` (admin-only) emits
@@ -199,7 +199,8 @@ Cross-cutting tech debt entries (carry-over for follow-up plan):
 - **Dedupe-by-content `issue_paths` alias table** (§6, §10.1
   DuplicateContent) — needs new table + per-library dedupe-mode handler
 - **LocalizedSeries + mixed-series merging** (§7.1.2, §7.2)
-- **Mount-type sentinel detection** for the file-watcher (§3.1)
+- ~~**Mount-type sentinel detection** for the file-watcher (§3.1)~~ —
+  shipped in WP-3.1 as `statfs` magic detection (poll on network mounts)
 - **Live-reload of cron / library config** without server restart
 - **WS per-user library-access filtering** — currently admin-only blanket
 - **Web admin UI** — health-issues tab, scan history table, removed-items

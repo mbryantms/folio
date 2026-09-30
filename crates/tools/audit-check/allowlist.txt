@@ -114,6 +114,7 @@ list_library_events   # GET /admin/library-events — durable manifest read
 info            # GET /admin/server — build/version/SHA info
 restart_pending # GET /admin/server/restart-pending — boot-vs-current settings diff (read-only)
 releases        # GET /admin/server/releases — upstream-release availability check
+watchers        # GET /admin/server/watchers — per-library file-watcher mode + last trigger (read-only, WP-3.1)
 
 # ── server_releases.rs ──────────────────────────────────────
 check_releases   # GET /admin/server/releases — upstream-release poll

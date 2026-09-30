@@ -188,6 +188,7 @@ export const queryKeys = {
   serverInfo: ["admin", "server-info"] as const,
   /** Boot-only settings changed since startup (need a restart). */
   restartPending: ["admin", "restart-pending"] as const,
+  watchers: ["admin", "server", "watchers"] as const,
   latestRelease: ["admin", "latest-release"] as const,
   /** OCR model download / on-disk state (text-detection-1.0 M5). */
   ocrModels: ["admin", "ocr-models"] as const,

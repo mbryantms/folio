@@ -170,6 +170,26 @@ pub struct Config {
     #[serde(default = "default_thumb_inline_parallel")]
     pub thumb_inline_parallel: usize,
 
+    /// File watcher (WP-3.1): seconds of quiet after the last filesystem
+    /// event before the touched directories are handed to a scoped scan.
+    /// Env `COMIC_WATCH_DEBOUNCE_SECS`, DB `scanner.watch_debounce_secs`.
+    /// Live — the watcher supervisor restarts affected watchers on change.
+    #[serde(default = "default_watch_debounce_secs")]
+    pub watch_debounce_secs: u64,
+    /// File watcher (WP-3.1): directory-mtime poll cadence for libraries on
+    /// network mounts (NFS/SMB/CIFS/FUSE), where inotify can't see remote
+    /// writes. Env `COMIC_WATCH_POLL_INTERVAL_SECS`, DB
+    /// `scanner.watch_poll_interval_secs`. Live.
+    #[serde(default = "default_watch_poll_interval_secs")]
+    pub watch_poll_interval_secs: u64,
+    /// File watcher (WP-3.1): force the directory-mtime poller for every
+    /// watched library, skipping `statfs` mount detection. Infrastructure,
+    /// so env-only (`COMIC_WATCH_FORCE_POLL`): use it when a network share is
+    /// mounted in a way that reports a local filesystem type (e.g. a bind
+    /// mount of a FUSE share inside a container) and inotify stays silent.
+    #[serde(default)]
+    pub watch_force_poll: bool,
+
     // Archive limits (spec §4.1.1). Defaults mirror the `archive` crate's
     // `ArchiveLimits::default()`; overridable per-deploy via the
     // `COMIC_ARCHIVE_MAX_*` env vars to tune DoS bounds for unusually
@@ -395,6 +415,9 @@ impl std::fmt::Debug for Config {
             .field("scan_hash_buffer_kb", &self.scan_hash_buffer_kb)
             .field("archive_work_parallel", &self.archive_work_parallel)
             .field("thumb_inline_parallel", &self.thumb_inline_parallel)
+            .field("watch_debounce_secs", &self.watch_debounce_secs)
+            .field("watch_poll_interval_secs", &self.watch_poll_interval_secs)
+            .field("watch_force_poll", &self.watch_force_poll)
             .field("archive_max_entries", &self.archive_max_entries)
             .field("archive_max_total_bytes", &self.archive_max_total_bytes)
             .field("archive_max_entry_bytes", &self.archive_max_entry_bytes)
@@ -505,6 +528,14 @@ fn default_scan_hash_buffer_kb() -> usize {
     // docs/dev/scanner-perf.md F-9. Floor at 64 KB enforced inside
     // `blake3_file_with_buffer`.
     1024
+}
+fn default_watch_debounce_secs() -> u64 {
+    // Roadmap §3.6: events collapse for 30 s into one set of touched dirs.
+    30
+}
+fn default_watch_poll_interval_secs() -> u64 {
+    // Roadmap §3.6: network mounts are probed every 5 min.
+    300
 }
 fn default_archive_work_parallel() -> usize {
     std::thread::available_parallelism()
@@ -723,6 +754,13 @@ impl Config {
             self.library_hard_purge_multiplier,
             0,
             100,
+        )?;
+        check_range("watch_debounce_secs", self.watch_debounce_secs, 1, 3600)?;
+        check_range(
+            "watch_poll_interval_secs",
+            self.watch_poll_interval_secs,
+            30,
+            86_400,
         )?;
         Ok(())
     }
@@ -1205,6 +1243,18 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(s) => cfg.metadata_merge_provider_preference = s.trim().to_owned(),
             None => bad_type(&row.key, "string", &row.value),
         },
+        // ───── File watcher (WP-3.1) ─────
+        // Live: the watcher supervisor diffs each library's effective
+        // debounce / poll interval on its next sync and restarts watchers
+        // whose value changed. Range validation lives in `Config::validate`.
+        "scanner.watch_debounce_secs" => match row.value.as_u64() {
+            Some(n) => cfg.watch_debounce_secs = n,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
+        "scanner.watch_poll_interval_secs" => match row.value.as_u64() {
+            Some(n) => cfg.watch_poll_interval_secs = n,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
 
         other => {
             tracing::debug!(key = %other, "app_setting row ignored (no overlay binding yet)");
@@ -1342,6 +1392,9 @@ mod tests {
             scan_hash_buffer_kb: 64,
             archive_work_parallel: 1,
             thumb_inline_parallel: 1,
+            watch_debounce_secs: default_watch_debounce_secs(),
+            watch_poll_interval_secs: default_watch_poll_interval_secs(),
+            watch_force_poll: false,
             archive_max_entries: 0,
             archive_max_total_bytes: 0,
             archive_max_entry_bytes: 0,
