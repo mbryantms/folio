@@ -151,6 +151,28 @@ async fn add_character(db: &DatabaseConnection, issue_id: &str, name: &str, fk: 
     .await;
 }
 
+async fn set_provenance(db: &DatabaseConnection, issue_id: &str, field: &str, set_by: &str) {
+    exec(
+        db,
+        "INSERT INTO field_provenance (entity_type, entity_id, field, set_by, set_at) \
+         VALUES ('issue', $1, $2, $3, now())",
+        vec![issue_id.into(), field.into(), set_by.into()],
+    )
+    .await;
+}
+
+/// First column of a one-row query as `i64` (`None` for no row / NULL).
+async fn scalar(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) -> Option<i64> {
+    db.query_one_raw(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        sql,
+        values,
+    ))
+    .await
+    .unwrap()
+    .and_then(|r| r.try_get::<Option<i64>>("", "n").unwrap())
+}
+
 struct Fixture {
     _tmp: tempfile::TempDir,
     db: DatabaseConnection,
@@ -407,14 +429,22 @@ async fn arcs_merge_fk_and_csv_rows_in_reading_order() {
     let app = TestApp::spawn().await;
     let f = fixture(&app).await;
     let arc = add_entity(&f.db, "story_arc", "knightfall", "Knightfall").await;
-    // Issue 3 is part 1 via the provider junction; issues 1 + 2 are parts
-    // 3 + 2 via the scanner CSV read-cache only.
+    // Issue 3 is part 1 via a provider apply: `issue_arcs` row + provider
+    // provenance (so the rollup must leave it alone) + the rebuilt CSV.
     exec(
         &f.db,
         "INSERT INTO issue_arcs (issue_id, arc_id, position_in_arc) VALUES ($1, $2, 1)",
         vec![f.a_issues[2].clone().into(), arc.into()],
     )
     .await;
+    exec(
+        &f.db,
+        "UPDATE issues SET story_arc = 'Knightfall' WHERE id = $1",
+        vec![f.a_issues[2].clone().into()],
+    )
+    .await;
+    set_provenance(&f.db, &f.a_issues[2], "story_arcs", "comicvine").await;
+    // Issues 1 + 2 are parts 3 + 2 via the scanner CSV read-cache only.
     exec(
         &f.db,
         "UPDATE issues SET story_arc = 'Other Arc, Knightfall', story_arc_number = '3' WHERE id = $1",
@@ -427,13 +457,45 @@ async fn arcs_merge_fk_and_csv_rows_in_reading_order() {
         vec![f.a_issues[1].clone().into()],
     )
     .await;
-    // A substring-but-not-member arc name must not match.
+    // A substring-but-not-member arc name must not match; a stale
+    // file-owned link (CSV no longer names the arc) must be dropped.
     exec(
         &f.db,
         "UPDATE issues SET story_arc = 'Knightfall Aftermath' WHERE id = $1",
         vec![f.a_mature.clone().into()],
     )
     .await;
+    exec(
+        &f.db,
+        "INSERT INTO issue_arcs (issue_id, arc_id) VALUES ($1, $2)",
+        vec![f.a_mature.clone().into(), arc.into()],
+    )
+    .await;
+
+    // The rollup reconciles the CSV arcs into `issue_arcs` (WP-5.5).
+    server::library::scanner::metadata_rollup::rollup_series_metadata(&f.db, f.series_a)
+        .await
+        .unwrap();
+    assert_eq!(
+        scalar(
+            &f.db,
+            "SELECT position_in_arc::int8 AS n FROM issue_arcs WHERE issue_id = $1 AND arc_id = $2",
+            vec![f.a_issues[1].clone().into(), arc.into()],
+        )
+        .await,
+        Some(2),
+        "single-arc issue takes story_arc_number as its position"
+    );
+    assert_eq!(
+        scalar(
+            &f.db,
+            "SELECT position_in_arc::int8 AS n FROM issue_arcs WHERE issue_id = $1",
+            vec![f.a_issues[2].clone().into()],
+        )
+        .await,
+        Some(1),
+        "provider-owned link untouched"
+    );
 
     let (s, body) = get_json(&app, "/api/arcs/knightfall/issues", &f.admin).await;
     assert_eq!(s, StatusCode::OK, "{body}");
@@ -542,9 +604,78 @@ async fn rollup_mints_entity_rows_and_detail_pages_expose_slugs() {
     )
     .await;
 
+    // A provider-linked row whose entity's name differs from the junction
+    // text must keep its FK (fill-only-while-NULL).
+    let the_batman = add_entity(&f.db, "character", "the-batman", "The Batman").await;
+    add_entity(&f.db, "character", "batman", "Batman").await;
+    add_character(&f.db, &f.a_issues[1], "Batman", Some(the_batman)).await;
+
     server::library::scanner::metadata_rollup::rollup_series_metadata(&f.db, f.series_a)
         .await
         .unwrap();
+
+    // Id links filled by the rollup.
+    let linked = |sql: &'static str| {
+        let db = f.db.clone();
+        let issue = f.a_issues[0].clone();
+        async move { scalar(&db, sql, vec![issue.into()]).await }
+    };
+    assert_eq!(
+        linked(
+            "SELECT count(*) AS n FROM issue_characters j JOIN character e ON e.id = j.character_id \
+             WHERE j.issue_id = $1 AND e.slug = 'harley-quinn'"
+        )
+        .await,
+        Some(1)
+    );
+    assert_eq!(
+        linked(
+            "SELECT count(*) AS n FROM issue_teams j JOIN team e ON e.id = j.team_id \
+             WHERE j.issue_id = $1 AND e.slug = 'gotham-sirens'"
+        )
+        .await,
+        Some(1)
+    );
+    assert_eq!(
+        linked(
+            "SELECT count(*) AS n FROM issue_arcs j JOIN story_arc e ON e.id = j.arc_id \
+             WHERE j.issue_id = $1 AND e.slug = 'mad-love'"
+        )
+        .await,
+        Some(1)
+    );
+    assert_eq!(
+        scalar(
+            &f.db,
+            "SELECT count(*) AS n FROM series s JOIN publisher e ON e.id = s.publisher_id \
+             WHERE s.id = $1 AND e.slug = 'dc-comics'",
+            vec![f.series_a.into()],
+        )
+        .await,
+        Some(1)
+    );
+    assert_eq!(
+        scalar(
+            &f.db,
+            "SELECT count(*) AS n FROM series_characters j JOIN character e ON e.id = j.character_id \
+             WHERE j.series_id = $1 AND e.slug = 'harley-quinn'",
+            vec![f.series_a.into()],
+        )
+        .await,
+        Some(1),
+        "series_characters rebuild carries the FK"
+    );
+    assert_eq!(
+        scalar(
+            &f.db,
+            "SELECT count(*) AS n FROM issue_characters \
+             WHERE issue_id = $1 AND character = 'Batman' AND character_id = $2",
+            vec![f.a_issues[1].clone().into(), the_batman.into()],
+        )
+        .await,
+        Some(1),
+        "provider-set FK is never re-pointed by a name match"
+    );
     // Idempotent: a second rollup inserts nothing and doesn't error.
     server::library::scanner::metadata_rollup::rollup_series_metadata(&f.db, f.series_a)
         .await
@@ -597,4 +728,104 @@ async fn rollup_mints_entity_rows_and_detail_pages_expose_slugs() {
         series["entity_slugs"]["publishers"]["DC Comics"],
         "dc-comics"
     );
+}
+
+/// `m20270305` on pre-existing scanner data: entity rows minted, FKs /
+/// `series.publisher_id` filled, CSV arcs linked for file-owned issues,
+/// provider-owned arcs left alone. Rolled back and re-applied on seeded
+/// data, the same way `migration_retire_user_edited.rs` exercises its
+/// migration.
+#[tokio::test]
+async fn migration_backfills_entities_and_links() {
+    use migration::MigratorTrait;
+    let app = TestApp::spawn().await;
+    let f = fixture(&app).await;
+    add_character(&f.db, &f.a_issues[0], "Poison Ivy", None).await;
+    exec(
+        &f.db,
+        "INSERT INTO issue_teams (issue_id, team) VALUES ($1, 'Birds of Prey')",
+        vec![f.a_issues[0].clone().into()],
+    )
+    .await;
+    exec(
+        &f.db,
+        "UPDATE issues SET story_arc = 'No Man''s Land', story_arc_number = '4' WHERE id = $1",
+        vec![f.a_issues[0].clone().into()],
+    )
+    .await;
+    // Provider-owned arcs: CSV names an arc, but provenance says a provider
+    // owns the field — the migration must not add a link for it.
+    exec(
+        &f.db,
+        "UPDATE issues SET story_arc = 'Hush' WHERE id = $1",
+        vec![f.a_issues[1].clone().into()],
+    )
+    .await;
+    set_provenance(&f.db, &f.a_issues[1], "story_arcs", "metron").await;
+
+    let names: Vec<String> = migration::Migrator::migrations()
+        .iter()
+        .map(|m| m.name().to_owned())
+        .collect();
+    let pos = names
+        .iter()
+        .position(|n| n == "m20270305_000001_entity_pages")
+        .expect("migration registered");
+    let steps = u32::try_from(names.len() - pos).unwrap();
+    migration::Migrator::down(&f.db, Some(steps)).await.unwrap();
+    migration::Migrator::up(&f.db, None).await.unwrap();
+
+    let one = |sql: &'static str, v: Vec<sea_orm::Value>| {
+        let db = f.db.clone();
+        async move { scalar(&db, sql, v).await }
+    };
+    assert_eq!(
+        one(
+            "SELECT count(*) AS n FROM issue_characters j JOIN character e ON e.id = j.character_id \
+             WHERE j.issue_id = $1 AND e.slug = 'poison-ivy'",
+            vec![f.a_issues[0].clone().into()],
+        )
+        .await,
+        Some(1)
+    );
+    assert_eq!(
+        one(
+            "SELECT count(*) AS n FROM issue_teams j JOIN team e ON e.id = j.team_id \
+             WHERE j.issue_id = $1 AND e.slug = 'birds-of-prey'",
+            vec![f.a_issues[0].clone().into()],
+        )
+        .await,
+        Some(1)
+    );
+    assert_eq!(
+        one(
+            "SELECT j.position_in_arc::int8 AS n FROM issue_arcs j JOIN story_arc e ON e.id = j.arc_id \
+             WHERE j.issue_id = $1 AND e.slug = 'no-man-s-land'",
+            vec![f.a_issues[0].clone().into()],
+        )
+        .await,
+        Some(4)
+    );
+    assert_eq!(
+        one(
+            "SELECT count(*) AS n FROM issue_arcs WHERE issue_id = $1",
+            vec![f.a_issues[1].clone().into()],
+        )
+        .await,
+        Some(0),
+        "provider-owned arcs are not relinked"
+    );
+    assert_eq!(
+        one(
+            "SELECT count(*) AS n FROM series s JOIN publisher e ON e.id = s.publisher_id \
+             WHERE s.id = $1 AND e.slug = 'dc-comics'",
+            vec![f.series_a.into()],
+        )
+        .await,
+        Some(1)
+    );
+    // And the landing page resolves through the id link.
+    let (s, body) = get_json(&app, "/api/arcs/no-man-s-land/issues", &f.user).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], 1);
 }

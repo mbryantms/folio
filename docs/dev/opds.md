@@ -62,7 +62,7 @@ negotiation deliberately skips these paths (no `/opds/v2` twin yet).
 |---|---|---|
 | `/opds/v1/characters` · `/teams` · `/arcs` · `/publishers` | Navigation feed, one subsection entry per entity | Name order, 50/page (`?page=N`). Entry summary = issue + series counts. |
 | `/opds/v1/characters/{slug}` · `/teams/{slug}` | Acquisition feed of the entity's issues | Year → series → number order. 50/page. |
-| `/opds/v1/arcs/{slug}` | Acquisition feed in arc reading order | `issue_arcs.position_in_arc`, else a numeric `story_arc_number`. Emits PSE `rel=next/previous` like other reading-sequence feeds. |
+| `/opds/v1/arcs/{slug}` | Acquisition feed in arc reading order | `issue_arcs.position_in_arc` (the rollup seeds it from a numeric `story_arc_number`), else a numeric `story_arc_number`. Emits PSE `rel=next/previous` like other reading-sequence feeds. |
 | `/opds/v1/publishers/{slug}` | Series subsection entries | Same entry shape as `/by-creator`. |
 
 ### Faceted browse (M4)

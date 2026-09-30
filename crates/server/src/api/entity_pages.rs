@@ -10,17 +10,20 @@
 //!
 //! ## Membership
 //!
-//! An entity row (`character` / `team` / `story_arc` / `publisher`)
-//! owns a junction row when the junction's FK points at it **or**, while
-//! the FK is still NULL (scanner-minted rows between provider applies),
-//! when `btrim(lower(name)) = entity.normalized_name`:
+//! Membership is the id link first. The scanner series rollup fills
+//! `issue_characters.character_id`, `issue_teams.team_id`,
+//! `series.publisher_id` and reconciles `issue_arcs` from the story-arc
+//! CSV (`metadata_rollup::link_series_entity_ids`); `m20270305` backfilled
+//! existing rows. A name fallback (`btrim(lower(name)) =
+//! entity.normalized_name`) remains only where the id can still be NULL —
+//! a junction row scanned since the last rollup:
 //!
 //! - character / team — `issue_characters` / `issue_teams` (issue hits)
-//!   plus `series_characters` / `series_teams` (series-level cast).
-//! - story arc — `issue_arcs` (provider FK rows) plus the
-//!   `issues.story_arc` CSV read-cache (scanner-sourced arcs never get an
-//!   `issue_arcs` row); `series_arcs` for series-level membership.
-//! - publisher — `series.publisher_id` or the `series.publisher` name.
+//!   plus `series_characters` / `series_teams` (series-level cast), by FK
+//!   or (FK NULL) name.
+//! - story arc — `issue_arcs` only (the link *is* the row), plus
+//!   `series_arcs` for series-level membership.
+//! - publisher — `series.publisher_id`, or the name while it is NULL.
 //!
 //! ## Visibility
 //!
@@ -260,11 +263,6 @@ fn series_visible(acl: &AclSql) -> String {
     format!("s.removed_at IS NULL{}{}", acl.lib, acl.series_cap)
 }
 
-/// CSV split used for the `issues.story_arc` read-cache — identical to
-/// `metadata_rollup::split_csv` (`;` when present, else `,`).
-const ARC_SPLIT: &str = "regexp_split_to_table(i.story_arc, \
-     CASE WHEN i.story_arc LIKE '%;%' THEN ';' ELSE ',' END)";
-
 /// `SELECT issue_id, series_id` of every visible issue one entity
 /// (`$e` = id, `$n` = normalized name) appears in.
 fn issue_hits_one(kind: EntityKind, e: usize, n: usize, acl: &AclSql) -> String {
@@ -281,17 +279,15 @@ fn issue_hits_one(kind: EntityKind, e: usize, n: usize, acl: &AclSql) -> String 
                     AND {vis}"
             )
         }
+        // Arc membership is the `issue_arcs` link only: the series rollup
+        // reconciles scanner-sourced CSV arcs into it (WP-5.5), so no
+        // per-row CSV split is needed on the read side.
         EntityKind::Arc => format!(
             "SELECT i.id AS issue_id, i.series_id AS series_id \
-               FROM issues i \
+               FROM issue_arcs ia \
+               JOIN issues i ON i.id = ia.issue_id \
                JOIN series s ON s.id = i.series_id \
-              WHERE (EXISTS (SELECT 1 FROM issue_arcs ia \
-                              WHERE ia.issue_id = i.id AND ia.arc_id = ${e}) \
-                     OR (i.story_arc IS NOT NULL \
-                         AND strpos(lower(i.story_arc), ${n}) > 0 \
-                         AND EXISTS (SELECT 1 FROM {ARC_SPLIT} AS x(nm) \
-                                      WHERE btrim(lower(x.nm)) = ${n}))) \
-                AND {vis}"
+              WHERE ia.arc_id = ${e} AND {vis}"
         ),
         EntityKind::Publisher => format!(
             "SELECT i.id AS issue_id, i.series_id AS series_id \
@@ -386,13 +382,6 @@ fn hits_all(kind: EntityKind, acl: &AclSql) -> String {
                JOIN issues i ON i.id = ia.issue_id \
                JOIN series s ON s.id = i.series_id \
               WHERE {ivis} \
-             UNION ALL \
-             SELECT e.id, i.id, i.series_id \
-               FROM issues i \
-               JOIN series s ON s.id = i.series_id \
-               CROSS JOIN LATERAL {ARC_SPLIT} AS x(nm) \
-               JOIN story_arc e ON e.normalized_name = btrim(lower(x.nm)) \
-              WHERE i.story_arc IS NOT NULL AND i.story_arc <> '' AND {ivis} \
              UNION ALL \
              SELECT sa.arc_id, NULL::text, s.id \
                FROM series_arcs sa \

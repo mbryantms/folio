@@ -110,6 +110,14 @@ pub const BUILTIN_REGISTRY: &[BuiltinDef] = &[
         icon: "Users",
         href: "/creators",
     },
+    // WP-5.5: one tabbed browse index for characters / teams / story
+    // arcs / publishers / creators (`/browse?tab=…`).
+    BuiltinDef {
+        key: "browse",
+        label: "Browse",
+        icon: "Compass",
+        href: "/browse",
+    },
     BuiltinDef {
         key: "want_to_read",
         label: "Want to Read",

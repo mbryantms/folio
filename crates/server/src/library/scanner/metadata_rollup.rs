@@ -513,6 +513,7 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
     // names, so every chip on the series + issue pages has a slug for
     // its entity landing page. Entity rows only — no junction writes.
     crate::metadata::writers::ensure_series_entity_rows(db, series_id).await?;
+    link_series_entity_ids(db, series_id).await?;
     db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE issue_credits ic \
@@ -550,8 +551,8 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
         .await?;
     db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
-        r#"INSERT INTO series_characters (series_id, "character")
-            SELECT DISTINCT $1, ic."character"
+        r#"INSERT INTO series_characters (series_id, "character", character_id)
+            SELECT DISTINCT $1, ic."character", ic.character_id
             FROM issue_characters ic
             JOIN issues i ON i.id = ic.issue_id
             WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
@@ -566,8 +567,8 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
         .await?;
     db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
-        r"INSERT INTO series_teams (series_id, team)
-            SELECT DISTINCT $1, it.team
+        r"INSERT INTO series_teams (series_id, team, team_id)
+            SELECT DISTINCT $1, it.team, it.team_id
             FROM issue_teams it
             JOIN issues i ON i.id = it.issue_id
             WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
@@ -717,6 +718,102 @@ async fn ensure_persons_for_series<C: ConnectionTrait>(
              VALUES ($1, $2, $3) \
              ON CONFLICT (normalized_name) DO NOTHING",
             [slug.into(), display_name.into(), normalized.into()],
+        ))
+        .await?;
+    }
+    Ok(())
+}
+
+/// Protection predicate on `issues i`: true when the issue's story arcs
+/// are *not* owned by a provider apply or a user edit (no
+/// `field_provenance` row for `story_arcs` outside the file tiers). Same
+/// rule as `scanner::process`'s `protected()` for the other junctions.
+fn arcs_file_owned() -> String {
+    let tiers = crate::metadata::writers::FILE_SOURCED_SET_BY
+        .iter()
+        .map(|t| format!("'{t}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "NOT EXISTS (SELECT 1 FROM field_provenance fp \
+          WHERE fp.entity_type = 'issue' AND fp.entity_id = i.id \
+            AND fp.field = 'story_arcs' AND fp.set_by NOT IN ({tiers}))"
+    )
+}
+
+/// WP-5.5: link this series' scanner-minted rows to their entity rows,
+/// mirroring the `issue_credits.person_id` fill above. Runs after
+/// [`crate::metadata::writers::ensure_series_entity_rows`] so every name
+/// has a row to link to.
+///
+/// - `issue_characters.character_id` / `issue_teams.team_id` and
+///   `series.publisher_id` are filled **only while NULL**. Provider
+///   applies write these FKs by identifier match, where the provider's
+///   entity can legitimately carry a different normalized name than the
+///   junction text — a name match must never re-point those. (The
+///   junction's name column is part of its PK, so a renamed value is a
+///   new row with a NULL FK and gets linked here.)
+/// - Story arcs live only in the `issues.story_arc` CSV for scanned
+///   files; their link is an `issue_arcs` row. For issues whose arcs are
+///   file-owned ([`ARCS_FILE_OWNED`]) `issue_arcs` is reconciled to the
+///   CSV: missing rows inserted (position from a numeric
+///   `story_arc_number` when the issue names a single arc), rows for arcs
+///   no longer in the CSV removed. Provider- / user-owned issues are
+///   untouched (their `issue_arcs` are the source the CSV was built from).
+async fn link_series_entity_ids<C: ConnectionTrait>(
+    db: &C,
+    series_id: Uuid,
+) -> Result<(), sea_orm::DbErr> {
+    let backend = db.get_database_backend();
+    let owned = arcs_file_owned();
+    let active = "i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL";
+    let arc_split = "regexp_split_to_table(i.story_arc, \
+         CASE WHEN i.story_arc LIKE '%;%' THEN ';' ELSE ',' END)";
+    let statements = [
+        format!(
+            "UPDATE issue_characters j SET character_id = e.id \
+               FROM character e, issues i \
+              WHERE j.issue_id = i.id AND {active} AND j.character_id IS NULL \
+                AND e.normalized_name = btrim(lower(j.character))"
+        ),
+        format!(
+            "UPDATE issue_teams j SET team_id = e.id \
+               FROM team e, issues i \
+              WHERE j.issue_id = i.id AND {active} AND j.team_id IS NULL \
+                AND e.normalized_name = btrim(lower(j.team))"
+        ),
+        "UPDATE series s SET publisher_id = e.id \
+           FROM publisher e \
+          WHERE s.id = $1 AND s.publisher_id IS NULL \
+            AND e.normalized_name = btrim(lower(s.publisher))"
+            .to_owned(),
+        format!(
+            "INSERT INTO issue_arcs (issue_id, arc_id, position_in_arc) \
+             SELECT DISTINCT ON (i.id, e.id) i.id, e.id, \
+                    CASE WHEN i.story_arc NOT LIKE '%;%' AND i.story_arc NOT LIKE '%,%' \
+                          AND i.story_arc_number ~ '^\\s*[0-9]{{1,9}}\\s*$' \
+                         THEN btrim(i.story_arc_number)::int4 END \
+               FROM issues i \
+               CROSS JOIN LATERAL {arc_split} AS x(nm) \
+               JOIN story_arc e ON e.normalized_name = btrim(lower(x.nm)) \
+              WHERE {active} AND i.story_arc IS NOT NULL AND i.story_arc <> '' \
+                AND {owned} \
+             ON CONFLICT DO NOTHING"
+        ),
+        format!(
+            "DELETE FROM issue_arcs ia USING issues i, story_arc e \
+              WHERE ia.issue_id = i.id AND e.id = ia.arc_id AND {active} \
+                AND {owned} \
+                AND NOT EXISTS ( \
+                    SELECT 1 FROM {arc_split} AS x(nm) \
+                     WHERE btrim(lower(x.nm)) = e.normalized_name)"
+        ),
+    ];
+    for sql in statements {
+        db.execute_raw(Statement::from_sql_and_values(
+            backend,
+            sql,
+            [series_id.into()],
         ))
         .await?;
     }

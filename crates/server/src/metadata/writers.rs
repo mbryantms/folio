@@ -97,7 +97,7 @@ impl SetBy {
 /// The `set_by` codes `write_file_field_provenance` is allowed to
 /// overwrite — kept as a slice so the guard's SQL `IN` list and
 /// `SetBy::is_file_sourced` can't drift apart.
-const FILE_SOURCED_SET_BY: [&str; 5] = [
+pub(crate) const FILE_SOURCED_SET_BY: [&str; 5] = [
     "comicinfo",
     "metroninfo",
     "series_json",

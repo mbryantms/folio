@@ -11,12 +11,8 @@
 //! 1. **Re-run the entity backfill** for names that appeared after M0:
 //!    `issue_characters` / `series_characters`, `issue_teams` /
 //!    `series_teams`, the `issues.story_arc` CSV read-cache, and
-//!    `series.publisher`. Rows are *entity* rows only — no junction,
-//!    FK or provenance write happens here; the read side matches a
-//!    junction row to its entity by FK or, when the FK is NULL, by
-//!    `btrim(lower(name)) = normalized_name`. Going forward the series
-//!    rollup keeps the tables topped up
-//!    (`writers::ensure_entity_rows_by_name`).
+//!    `series.publisher`. Going forward the series rollup keeps the
+//!    tables topped up (`writers::ensure_series_entity_rows`).
 //!
 //!    Slugs: same `[^a-z0-9]+ → -` shape as M0. A base slug already
 //!    taken by an existing row (or shared by two new names) gets an
@@ -25,7 +21,16 @@
 //!    providers already allocated. `ON CONFLICT DO NOTHING` (no target)
 //!    covers both unique constraints.
 //!
-//! 2. **Expression indexes** on the lowercased/trimmed name columns so
+//! 2. **Link the rows by id** (owner decision 2026-09-30): fill NULL
+//!    `issue_characters.character_id` / `series_characters.character_id`
+//!    / `issue_teams.team_id` / `series_teams.team_id` /
+//!    `series.publisher_id` by normalized name (never re-pointing an
+//!    existing, possibly provider-set, FK), and reconcile `issue_arcs` to
+//!    the `story_arc` CSV for issues whose arcs are file-owned (no
+//!    provider / user `field_provenance`). The series rollup keeps this
+//!    up to date afterwards (`metadata_rollup::link_series_entity_ids`).
+//!
+//! 3. **Expression indexes** on the lowercased/trimmed name columns so
 //!    the per-entity lookups (`… OR btrim(lower(character)) = $n`) and
 //!    the `publisher` name fallback are index scans, not heap scans.
 
@@ -59,6 +64,59 @@ const BACKFILL_SOURCES: &[(&str, &str)] = &[
         "SELECT publisher AS nm FROM series WHERE publisher IS NOT NULL",
     ),
 ];
+
+/// Issues whose story arcs are file-owned: no `field_provenance` row for
+/// `story_arcs` outside the scanner's file tiers (mirror of
+/// `writers::FILE_SOURCED_SET_BY` — keep in sync).
+const ARCS_FILE_OWNED: &str = "NOT EXISTS (SELECT 1 FROM field_provenance fp \
+     WHERE fp.entity_type = 'issue' AND fp.entity_id = i.id \
+       AND fp.field = 'story_arcs' \
+       AND fp.set_by NOT IN ('comicinfo', 'metroninfo', 'series_json', \
+                             'scanner_inference', 'scanner_folder_tag'))";
+
+const ARC_SPLIT: &str = "regexp_split_to_table(i.story_arc, \
+     CASE WHEN i.story_arc LIKE '%;%' THEN ';' ELSE ',' END)";
+
+/// Id-link backfill (same statements the series rollup's
+/// `link_series_entity_ids` runs per series, here over every row).
+/// FK columns are filled only while NULL, never re-pointed.
+fn link_statements() -> Vec<String> {
+    vec![
+        "UPDATE issue_characters j SET character_id = e.id FROM character e \
+          WHERE j.character_id IS NULL AND e.normalized_name = btrim(lower(j.character))"
+            .to_owned(),
+        "UPDATE series_characters j SET character_id = e.id FROM character e \
+          WHERE j.character_id IS NULL AND e.normalized_name = btrim(lower(j.character))"
+            .to_owned(),
+        "UPDATE issue_teams j SET team_id = e.id FROM team e \
+          WHERE j.team_id IS NULL AND e.normalized_name = btrim(lower(j.team))"
+            .to_owned(),
+        "UPDATE series_teams j SET team_id = e.id FROM team e \
+          WHERE j.team_id IS NULL AND e.normalized_name = btrim(lower(j.team))"
+            .to_owned(),
+        "UPDATE series s SET publisher_id = e.id FROM publisher e \
+          WHERE s.publisher_id IS NULL AND e.normalized_name = btrim(lower(s.publisher))"
+            .to_owned(),
+        format!(
+            "INSERT INTO issue_arcs (issue_id, arc_id, position_in_arc) \
+             SELECT DISTINCT ON (i.id, e.id) i.id, e.id, \
+                    CASE WHEN i.story_arc NOT LIKE '%;%' AND i.story_arc NOT LIKE '%,%' \
+                          AND i.story_arc_number ~ '^\\s*[0-9]{{1,9}}\\s*$' \
+                         THEN btrim(i.story_arc_number)::int4 END \
+               FROM issues i \
+               CROSS JOIN LATERAL {ARC_SPLIT} AS x(nm) \
+               JOIN story_arc e ON e.normalized_name = btrim(lower(x.nm)) \
+              WHERE i.story_arc IS NOT NULL AND i.story_arc <> '' AND {ARCS_FILE_OWNED} \
+             ON CONFLICT DO NOTHING"
+        ),
+        format!(
+            "DELETE FROM issue_arcs ia USING issues i, story_arc e \
+              WHERE ia.issue_id = i.id AND e.id = ia.arc_id AND {ARCS_FILE_OWNED} \
+                AND NOT EXISTS (SELECT 1 FROM {ARC_SPLIT} AS x(nm) \
+                                 WHERE btrim(lower(x.nm)) = e.normalized_name)"
+        ),
+    ]
+}
 
 const INDEXES: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS issue_characters_norm_name_idx \
@@ -126,6 +184,9 @@ impl MigrationTrait for Migration {
                 "#
             ))
             .await?;
+        }
+        for sql in link_statements() {
+            db.execute_unprepared(&sql).await?;
         }
         for sql in INDEXES {
             db.execute_unprepared(sql).await?;

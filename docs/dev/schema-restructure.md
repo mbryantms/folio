@@ -345,18 +345,32 @@ landing pages.
 
 - `m20270305_000001_entity_pages` re-runs the entity backfill for those
   names (base slug, or base + 8-hex `md5(normalized_name)` when the base
-  is taken) and adds `btrim(lower(name))` expression indexes on the four
-  name junctions + `series.publisher`.
-- The series rollup calls
-  `writers::ensure_series_entity_rows` (next to
-  `ensure_persons_for_series`) so new names get a row on the next scan.
-  **Entity rows only** — no junction, FK or `field_provenance` write;
-  inserts are `ON CONFLICT DO NOTHING` so concurrent rollups racing on a
-  shared name never error.
-- Reads (`api::entity_pages`) resolve a junction row to its entity by FK,
-  or by `btrim(lower(name)) = normalized_name` while the FK is NULL.
-  Arc membership is `issue_arcs` ∪ the `story_arc` CSV (split rule of
-  `metadata_rollup::split_csv`).
+  is taken), then **links the rows by id**: NULL
+  `issue_characters.character_id` / `series_characters.character_id` /
+  `issue_teams.team_id` / `series_teams.team_id` / `series.publisher_id`
+  are filled by normalized name, and `issue_arcs` is reconciled to the
+  `story_arc` CSV for issues whose arcs are file-owned. It also adds
+  `btrim(lower(name))` expression indexes for the remaining name fallback.
+- The series rollup keeps both up to date on every scan:
+  `writers::ensure_series_entity_rows` mints missing entity rows (next to
+  `ensure_persons_for_series`), then
+  `metadata_rollup::link_series_entity_ids` runs the same link statements
+  scoped to the series (mirror of the `issue_credits.person_id` fill), and
+  the `series_characters` / `series_teams` rebuild carries the FK along.
+  - FKs are filled **only while NULL** — a provider apply links by
+    external identifier, so its entity may carry a different normalized
+    name than the junction text; a name match must never re-point it.
+  - `issue_arcs` is reconciled (insert missing, drop arcs no longer named
+    in the CSV; position from a numeric `story_arc_number` when the issue
+    names a single arc) **only** for issues with no provider / user
+    `field_provenance` on `story_arcs` — the same file-tier rule the
+    scanner applies to every other junction (WP-2.5).
+  - Entity inserts are `ON CONFLICT DO NOTHING`, so concurrent rollups
+    racing on a shared name never error.
+- Reads (`api::entity_pages`) join by id; a name fallback
+  (`btrim(lower(name)) = normalized_name`) remains only where the id can
+  still be NULL (a row scanned since the last rollup). Arc membership is
+  `issue_arcs` alone — no per-row CSV split on the read side.
 
 ## ID column shapes
 

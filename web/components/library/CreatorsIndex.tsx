@@ -41,9 +41,13 @@ const CANONICAL_ROLES: readonly string[] = [
  *  backfill hasn't slugged yet. */
 export function CreatorsIndex({
   initialStartsWith,
+  embedded = false,
 }: {
   /** Server-parsed `?starts_with=` jump-rail bucket for deep-links. */
   initialStartsWith?: string | null;
+  /** Rendered inside the `/browse` tabs (WP-5.5): the tab strip is the
+   *  heading, so the PageHeader collapses to its one-line summary. */
+  embedded?: boolean;
 }) {
   const [startsWith, setStartsWith] = React.useState<string | null>(
     initialStartsWith ?? null,
@@ -108,16 +112,26 @@ export function CreatorsIndex({
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Creators"
-        description={
-          searching
+      {embedded ? (
+        <p className="text-muted-foreground text-sm">
+          {searching
             ? `Searching for “${debouncedQ}”`
             : total != null
               ? `${total.toLocaleString()} ${total === 1 ? "creator" : "creators"} across your libraries`
-              : "Everyone credited across your libraries"
-        }
-      />
+              : "Everyone credited across your libraries"}
+        </p>
+      ) : (
+        <PageHeader
+          title="Creators"
+          description={
+            searching
+              ? `Searching for “${debouncedQ}”`
+              : total != null
+                ? `${total.toLocaleString()} ${total === 1 ? "creator" : "creators"} across your libraries`
+                : "Everyone credited across your libraries"
+          }
+        />
+      )}
 
       <div className="border-border bg-card focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm focus-within:ring-2">
         <Search

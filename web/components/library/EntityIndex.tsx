@@ -23,9 +23,13 @@ const SEARCH_DEBOUNCE_MS = 250;
 export function EntityIndex({
   kind,
   initialStartsWith,
+  embedded = false,
 }: {
   kind: EntityKindPath;
   initialStartsWith?: string | null;
+  /** Rendered inside the `/browse` tabs: the PageHeader collapses to its
+   *  one-line summary (the tab strip is the heading). */
+  embedded?: boolean;
 }) {
   const meta = ENTITY_KINDS[kind];
   const [startsWith, setStartsWith] = React.useState<string | null>(
@@ -60,14 +64,22 @@ export function EntityIndex({
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={meta.plural}
-        description={
-          total != null
+      {embedded ? (
+        <p className="text-muted-foreground text-sm">
+          {total != null
             ? `${total.toLocaleString()} ${total === 1 ? meta.noun : `${meta.noun}s`} across your libraries`
-            : `Every ${meta.noun} in your libraries`
-        }
-      />
+            : `Every ${meta.noun} in your libraries`}
+        </p>
+      ) : (
+        <PageHeader
+          title={meta.plural}
+          description={
+            total != null
+              ? `${total.toLocaleString()} ${total === 1 ? meta.noun : `${meta.noun}s`} across your libraries`
+              : `Every ${meta.noun} in your libraries`
+          }
+        />
+      )}
 
       <div className="border-border bg-card focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm focus-within:ring-2">
         <Search
