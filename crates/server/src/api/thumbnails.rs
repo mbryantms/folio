@@ -101,6 +101,7 @@ pub async fn thumb(
     // format-agnostic so old thumbs keep serving until force-recreate.
     if let Some(cached) = app.cached_thumb_path(&cache_key) {
         if tokio::fs::try_exists(&cached).await.unwrap_or(false) {
+            touch_for_lru(&app, &cached);
             return serve_file(&cached, &headers, &row.id, page_index, variant).await;
         }
         app.uncache_thumb_path(&cache_key);
@@ -109,6 +110,7 @@ pub async fn thumb(
         thumbnails::find_existing_variant(&app.cfg().data_path, &row.id, variant, page_index)
     {
         app.cache_thumb_path(cache_key.clone(), existing.clone());
+        touch_for_lru(&app, &existing);
         return serve_file(&existing, &headers, &row.id, page_index, variant).await;
     }
 
@@ -218,7 +220,23 @@ pub async fn thumb(
     }
 
     app.cache_thumb_path(cache_key, path.clone());
+    // A fresh write may push the tree over the optional byte budget
+    // (WP-3.8); throttled + no-op when the budget is off.
+    let cfg = app.cfg();
+    thumbnails::spawn_budget_sweep_if_needed(cfg.data_path.clone(), cfg.thumbs_budget_bytes());
     serve_file(&path, &headers, &row.id, page_index, variant).await
+}
+
+/// Keep a served thumbnail's mtime fresh so the byte-budget sweep evicts
+/// least-recently-*used* files, not least-recently-generated ones. Only
+/// when a budget is configured — with it off (the default) the hot path
+/// stays syscall-free.
+fn touch_for_lru(app: &AppState, path: &std::path::Path) {
+    if app.cfg().thumbs_budget_mb == 0 {
+        return;
+    }
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || thumbnails::touch_if_stale(&path));
 }
 
 fn thumb_cache_key(issue_id: &str, variant: Variant, page_index: usize) -> String {

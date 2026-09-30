@@ -660,6 +660,237 @@ pub fn wipe_issue_variant_covers(data_dir: &Path, issue_id: &str) {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Byte budget + `folio_thumbs_bytes` gauge (WP-3.8, audit OP-5).
+// ─────────────────────────────────────────────────────────────────
+
+/// Prometheus gauge: total bytes under `data_dir/thumbs/` (generated
+/// covers + strips + downloaded provider covers), refreshed by every
+/// [`thumbs_budget_sweep`].
+pub const THUMBS_BYTES_GAUGE: &str = "folio_thumbs_bytes";
+/// Prometheus counter: generated thumbnail files evicted to honor the
+/// `cache.thumbs_budget_mb` byte budget.
+pub const THUMBS_EVICTED_COUNTER: &str = "folio_thumbs_evicted_files_total";
+
+/// Outcome of one [`thumbs_budget_sweep`].
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ThumbsBudgetSweep {
+    /// Bytes on disk under `thumbs/` before eviction.
+    pub total_before: u64,
+    /// Bytes on disk under `thumbs/` after eviction (the gauge value).
+    pub total_after: u64,
+    /// Bytes under `thumbs/issues/` — downloaded provider covers. Counted
+    /// in the totals but never evicted: they are not regenerable locally.
+    pub protected_bytes: u64,
+    pub evicted_files: u64,
+    pub evicted_bytes: u64,
+}
+
+/// Eviction tier. Strips go first (a reader re-renders a missing one
+/// inline and the catchup job refills the rest), then covers.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum EvictTier {
+    Strip,
+    Cover,
+}
+
+type EvictCandidate = (EvictTier, std::time::SystemTime, u64, PathBuf);
+
+fn is_thumb_file(name: &str) -> bool {
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| KNOWN_EXTS.iter().any(|e| e.eq_ignore_ascii_case(ext)))
+}
+
+fn walk_sum(dir: &Path) -> u64 {
+    let Ok(rd) = fs::read_dir(dir) else { return 0 };
+    let mut total = 0u64;
+    for entry in rd.flatten() {
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_dir() {
+            total += walk_sum(&entry.path());
+        } else if ft.is_file() {
+            total += entry.metadata().map(|m| m.len()).unwrap_or(0);
+        }
+    }
+    total
+}
+
+/// Collect every generated artifact under an issue dir (`thumbs/{id}/…`;
+/// strips live at `s/`). Adds every file's size to `total`, but only
+/// finished thumbnails become eviction candidates.
+fn walk_generated(dir: &Path, out: &mut Vec<EvictCandidate>, total: &mut u64) {
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    for entry in rd.flatten() {
+        let Ok(ft) = entry.file_type() else { continue };
+        let path = entry.path();
+        if ft.is_dir() {
+            walk_generated(&path, out, total);
+            continue;
+        }
+        if !ft.is_file() {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        *total += meta.len();
+        // An in-flight temp file from a concurrent encoder must never be
+        // pulled out from under it — only known thumbnail extensions.
+        if entry.file_name().to_str().is_some_and(is_thumb_file) {
+            out.push((
+                EvictTier::Strip,
+                meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+                meta.len(),
+                path,
+            ));
+        }
+    }
+}
+
+/// Walk `data_dir/thumbs/`, publish [`THUMBS_BYTES_GAUGE`], and — when
+/// `budget_bytes > 0` and the total exceeds it — delete generated
+/// thumbnails oldest-mtime first (strips before covers) until the total is
+/// ≤ 90% of the budget (hysteresis, mirroring the page-variant cache in
+/// [`crate::library::page_variants`]). Reads bump mtime via
+/// [`touch_if_stale`], so mtime order approximates least-recently-used.
+///
+/// Evicted artifacts are regenerated on demand: the thumbnail handler
+/// renders a missing cover/strip inline and enqueues the strip catchup.
+/// Downloaded provider covers (`thumbs/issues/`) count toward the gauge but
+/// are never evicted.
+pub fn thumbs_budget_sweep(
+    data_dir: &Path,
+    budget_bytes: u64,
+) -> std::io::Result<ThumbsBudgetSweep> {
+    let root = thumbs_root(data_dir);
+    let mut out = ThumbsBudgetSweep::default();
+    if !root.exists() {
+        metrics::gauge!(THUMBS_BYTES_GAUGE).set(0.0);
+        return Ok(out);
+    }
+    let mut files: Vec<EvictCandidate> = Vec::new();
+    let mut total = 0u64;
+    let mut issue_dirs: Vec<PathBuf> = Vec::new();
+    for entry in fs::read_dir(&root)? {
+        let Ok(entry) = entry else { continue };
+        let Ok(ft) = entry.file_type() else { continue };
+        let path = entry.path();
+        if ft.is_dir() {
+            if entry.file_name() == VARIANT_COVERS_ROOT {
+                out.protected_bytes = walk_sum(&path);
+                total += out.protected_bytes;
+            } else {
+                walk_generated(&path, &mut files, &mut total);
+                issue_dirs.push(path);
+            }
+        } else if ft.is_file() {
+            let Ok(meta) = entry.metadata() else { continue };
+            total += meta.len();
+            if entry.file_name().to_str().is_some_and(is_thumb_file) {
+                files.push((
+                    EvictTier::Cover,
+                    meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+                    meta.len(),
+                    path,
+                ));
+            }
+        }
+    }
+    out.total_before = total;
+
+    if budget_bytes > 0 && total > budget_bytes {
+        let target = budget_bytes.saturating_mul(9) / 10;
+        files.sort_by_key(|(tier, mtime, _, _)| (*tier, *mtime));
+        for (_, _, size, path) in files {
+            if total - out.evicted_bytes <= target {
+                break;
+            }
+            if fs::remove_file(&path).is_ok() {
+                out.evicted_bytes += size;
+                out.evicted_files += 1;
+            }
+        }
+        // Prune per-issue dirs the eviction emptied (`{id}/s/` then `{id}/`);
+        // `remove_dir` fails harmlessly on a non-empty dir.
+        if out.evicted_files > 0 {
+            for dir in &issue_dirs {
+                let _ = fs::remove_dir(dir.join("s"));
+                let _ = fs::remove_dir(dir);
+            }
+            metrics::counter!(THUMBS_EVICTED_COUNTER).increment(out.evicted_files);
+            tracing::info!(
+                evicted_files = out.evicted_files,
+                evicted_bytes = out.evicted_bytes,
+                total_before = total,
+                budget = budget_bytes,
+                "thumbnail budget sweep evicted generated thumbnails"
+            );
+        }
+    }
+    out.total_after = total - out.evicted_bytes;
+    metrics::gauge!(THUMBS_BYTES_GAUGE).set(out.total_after as f64);
+    Ok(out)
+}
+
+/// One budget sweep at a time per process.
+static THUMBS_SWEEP_RUNNING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+/// Unix seconds of the last write-triggered sweep (throttle).
+static THUMBS_SWEEP_LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Minimum spacing between write-triggered sweeps. A scan's thumbnail
+/// burst writes thousands of files; walking the tree after each would cost
+/// more than the budget saves. The hourly scheduled sweep is the backstop.
+const WRITE_TRIGGER_MIN_INTERVAL_SECS: u64 = 300;
+
+/// Fire-and-forget budget enforcement after thumbnail writes. No-op when
+/// the budget is off (`0`), a sweep is already running, or one ran within
+/// the last [`WRITE_TRIGGER_MIN_INTERVAL_SECS`].
+pub fn spawn_budget_sweep_if_needed(data_dir: PathBuf, budget_bytes: u64) {
+    use std::sync::atomic::Ordering;
+    if budget_bytes == 0 {
+        return;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if now.saturating_sub(THUMBS_SWEEP_LAST.load(Ordering::Acquire))
+        < WRITE_TRIGGER_MIN_INTERVAL_SECS
+    {
+        return;
+    }
+    if THUMBS_SWEEP_RUNNING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    THUMBS_SWEEP_LAST.store(now, Ordering::Release);
+    tokio::task::spawn_blocking(move || {
+        let result = thumbs_budget_sweep(&data_dir, budget_bytes);
+        THUMBS_SWEEP_RUNNING.store(false, Ordering::Release);
+        if let Err(e) = result {
+            tracing::warn!(error = %e, "thumbnail budget sweep failed");
+        }
+    });
+}
+
+/// How stale a served thumbnail's mtime may get before a read bumps it.
+/// Coarse on purpose: LRU only needs hour-scale ordering, and this keeps a
+/// hot grid from issuing a metadata write per request.
+const TOUCH_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Bump a served thumbnail's mtime when it is older than
+/// [`TOUCH_STALE_AFTER`], so the budget sweep sees recently-read files as
+/// recently used (atime is unreliable on `noatime` mounts). Best-effort.
+pub fn touch_if_stale(path: &Path) {
+    let now = std::time::SystemTime::now();
+    let stale = fs::metadata(path)
+        .and_then(|m| m.modified())
+        .is_ok_and(|m| {
+            now.duration_since(m)
+                .is_ok_and(|age| age > TOUCH_STALE_AFTER)
+        });
+    if stale && let Ok(f) = fs::File::options().append(true).open(path) {
+        let _ = f.set_times(fs::FileTimes::new().set_modified(now));
+    }
+}
+
 /// Generate the cover thumbnail. Idempotent — no-op if a file at the
 /// target format already exists. `front_side` picks the half of a
 /// wraparound cover page to keep (see [`front_cover_crop`]).
@@ -1254,6 +1485,86 @@ pub struct GenerateAllOutcome {
     /// since a missing cover is a real failure; per-page strip misses are
     /// tolerated so a single corrupt page doesn't lose every other thumb.
     pub failed: Vec<(usize, String)>,
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    fn write_aged(path: &Path, len: usize, age_secs: u64) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, vec![0u8; len]).unwrap();
+        let t = SystemTime::now() - Duration::from_secs(age_secs);
+        let f = fs::File::options().append(true).open(path).unwrap();
+        f.set_times(fs::FileTimes::new().set_modified(t)).unwrap();
+    }
+
+    #[test]
+    fn evicts_lru_strips_then_covers_and_never_provider_covers() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let t = d.join("thumbs");
+        // Provider cover: oldest of all, but protected.
+        write_aged(&t.join("issues/a/covers/p.jpg"), 100, 9000);
+        // Covers: old + fresh.
+        write_aged(&t.join("a.webp"), 100, 5000);
+        write_aged(&t.join("b.webp"), 100, 10);
+        // Strips: fresher than the old cover, still evicted first.
+        write_aged(&t.join("a/s/1.webp"), 100, 400);
+        write_aged(&t.join("a/s/2.webp"), 100, 300);
+        write_aged(&t.join("b/s/1.webp"), 100, 20);
+        // In-flight temp file: counted, never evicted.
+        write_aged(&t.join("b/s/3.webp.tmp"), 100, 99_999);
+
+        // total 700 > budget 500 → evict down to ≤ 450.
+        let out = thumbs_budget_sweep(d, 500).unwrap();
+        assert_eq!(out.total_before, 700);
+        assert_eq!(out.protected_bytes, 100);
+        assert_eq!(out.evicted_files, 3);
+        assert_eq!(out.total_after, 400);
+        // All three strips go before any cover.
+        assert!(!t.join("a/s/1.webp").exists());
+        assert!(!t.join("a/s/2.webp").exists());
+        assert!(!t.join("b/s/1.webp").exists());
+        assert!(!t.join("a").exists(), "emptied issue dir pruned");
+        assert!(t.join("a.webp").exists());
+        assert!(t.join("b.webp").exists());
+        assert!(t.join("b/s/3.webp.tmp").exists());
+        assert!(t.join("issues/a/covers/p.jpg").exists());
+
+        // Budget 0 = off: walk + gauge only.
+        let out = thumbs_budget_sweep(d, 0).unwrap();
+        assert_eq!(out.evicted_files, 0);
+        assert_eq!(out.total_after, 400);
+
+        // Tighter budget reaches the covers, oldest first.
+        let out = thumbs_budget_sweep(d, 350).unwrap();
+        assert_eq!(out.evicted_files, 1);
+        assert!(!t.join("a.webp").exists(), "LRU cover evicted");
+        assert!(t.join("b.webp").exists());
+    }
+
+    #[test]
+    fn touch_if_stale_bumps_only_old_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.webp");
+        let fresh = dir.path().join("fresh.webp");
+        write_aged(&old, 1, 7200);
+        write_aged(&fresh, 1, 60);
+        let fresh_before = fs::metadata(&fresh).unwrap().modified().unwrap();
+        touch_if_stale(&old);
+        touch_if_stale(&fresh);
+        let old_age = SystemTime::now()
+            .duration_since(fs::metadata(&old).unwrap().modified().unwrap())
+            .unwrap();
+        assert!(old_age < Duration::from_secs(60), "stale file bumped");
+        assert_eq!(
+            fs::metadata(&fresh).unwrap().modified().unwrap(),
+            fresh_before,
+            "fresh file untouched"
+        );
+    }
 }
 
 #[cfg(test)]

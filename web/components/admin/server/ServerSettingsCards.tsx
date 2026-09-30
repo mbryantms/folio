@@ -51,6 +51,7 @@ export function ServerSettingsCards() {
   const panelsMode = asString("compat.opds_panels_mode", "off");
   const zipLru = asUint("cache.zip_lru_capacity", 64);
   const purgeMultiplier = asUint("library.hard_purge_multiplier", 2);
+  const thumbsBudgetMb = asUint("cache.thumbs_budget_mb", 0);
   const watcher = {
     debounce: asUint("scanner.watch_debounce_secs", 30),
     poll: asUint("scanner.watch_poll_interval_secs", 300),
@@ -73,6 +74,10 @@ export function ServerSettingsCards() {
       <CompatibilityCard key={`compat-${panelsMode}`} initial={panelsMode} />
       <PurgeCard key={`purge-${purgeMultiplier}`} initial={purgeMultiplier} />
       <CachingCard key={`caching-${zipLru}`} initial={zipLru} />
+      <ThumbnailBudgetCard
+        key={`thumbs-budget-${thumbsBudgetMb}`}
+        initial={thumbsBudgetMb}
+      />
       <FileWatcherCard
         key={`watcher-${watcher.debounce}-${watcher.poll}`}
         initial={watcher}
@@ -437,6 +442,66 @@ function FileWatcherCard({
             onClick={onSave}
             disabled={!dirty || update.isPending || !debounceOk || !pollOk}
           >
+            {update.isPending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+const THUMBS_BUDGET_MIN_MB = 64;
+const THUMBS_BUDGET_MAX_MB = 16 * 1024 * 1024;
+
+/** WP-3.8 (audit OP-5): optional byte budget for generated thumbnails
+ *  under `thumbs/`. 0 = unlimited (default). Live — the next budget sweep
+ *  (hourly, or after thumbnail writes) picks it up, no restart. */
+function ThumbnailBudgetCard({ initial }: { initial: number }) {
+  const [budget, setBudget] = useState(String(initial));
+  const update = useUpdateSettings();
+  const n = Number(budget);
+  const bad =
+    budget !== String(initial) &&
+    (!/^\d+$/.test(budget) ||
+      (n !== 0 && (n < THUMBS_BUDGET_MIN_MB || n > THUMBS_BUDGET_MAX_MB)));
+  const dirty = n !== initial;
+
+  async function onSave() {
+    await update.mutateAsync({ "cache.thumbs_budget_mb": n });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">
+          Thumbnail storage
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-2">
+          <Label htmlFor="thumbs-budget-mb">
+            Thumbnail budget (MiB, 0 = unlimited)
+          </Label>
+          <Input
+            id="thumbs-budget-mb"
+            inputMode="numeric"
+            value={budget}
+            onChange={(e) => setBudget(e.target.value)}
+          />
+          {bad && (
+            <p className="text-destructive text-xs">
+              Must be 0 or in [{THUMBS_BUDGET_MIN_MB}, {THUMBS_BUDGET_MAX_MB}].
+            </p>
+          )}
+          <p className="text-muted-foreground text-xs">
+            When set, the least-recently-viewed generated page strips (then
+            covers) are deleted once the thumbnail folder exceeds the budget;
+            they are re-rendered on demand. Downloaded provider covers are never
+            evicted. Applies on the next sweep — no restart needed.
+          </p>
+        </div>
+        <div className="flex justify-end">
+          <Button onClick={onSave} disabled={!dirty || update.isPending || bad}>
             {update.isPending ? "Saving…" : "Save"}
           </Button>
         </div>

@@ -106,15 +106,21 @@ async fn drain_variant_covers(state: &AppState) -> (u64, u64) {
     let data_path = state.cfg().data_path.clone();
     let mut stored = 0u64;
     let mut skipped = 0u64;
+    // Keyset walk over every variant row (DI-15). The previous shape
+    // re-read the same first page each pass and stopped on the first pass
+    // that stored nothing, stranding recoverable rows behind a page of
+    // already-stored or dead-URL rows. One full walk visits each row once;
+    // dead-URL rows are counted as skipped (re-applying metadata is their
+    // recovery path).
+    let mut cursor = None;
     for _ in 0..MAX_DRAIN_ITERS {
-        match writers::run_variant_cover_backfill(&state.db, &data_path).await {
-            Ok(o) => {
+        match writers::run_variant_cover_backfill_page(&state.db, &data_path, cursor).await {
+            Ok((o, next)) => {
                 stored += o.stored as u64;
-                skipped = o.skipped as u64; // last pass's residual dead-URL rows
-                // No cover re-downloaded → drained, or only dead-URL rows
-                // remain (re-applying metadata is the recovery path).
-                if o.stored == 0 {
-                    break;
+                skipped += o.skipped as u64;
+                match next {
+                    Some(n) => cursor = Some(n),
+                    None => break,
                 }
             }
             Err(e) => {

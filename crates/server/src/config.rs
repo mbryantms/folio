@@ -143,6 +143,14 @@ pub struct Config {
     #[serde(default = "default_page_variant_cache_bytes")]
     pub page_variant_cache_bytes: u64,
 
+    /// Optional byte budget (MiB) for the generated-thumbnail tree under
+    /// `data_path/thumbs/` (WP-3.8, audit OP-5). `0` (default) = unbounded.
+    /// When set, the budget sweep evicts least-recently-used generated
+    /// strips, then covers, down to 90% of the budget; they regenerate on
+    /// demand. DB setting `cache.thumbs_budget_mb` (live — read per sweep).
+    #[serde(default)]
+    pub thumbs_budget_mb: u64,
+
     /// Per-queue worker concurrency for scan jobs (spec §3.2, §11).
     #[serde(default = "default_scan_worker_count")]
     pub scan_worker_count: usize,
@@ -409,6 +417,7 @@ impl std::fmt::Debug for Config {
             .field("otlp_endpoint", &self.otlp_endpoint)
             .field("auto_migrate", &self.auto_migrate)
             .field("zip_lru_capacity", &self.zip_lru_capacity)
+            .field("thumbs_budget_mb", &self.thumbs_budget_mb)
             .field("scan_worker_count", &self.scan_worker_count)
             .field("post_scan_worker_count", &self.post_scan_worker_count)
             .field("scan_batch_size", &self.scan_batch_size)
@@ -762,7 +771,23 @@ impl Config {
             30,
             86_400,
         )?;
+        // 0 = off; otherwise a floor so a typo (e.g. `1`) can't make every
+        // sweep evict the whole tree and thrash inline regeneration.
+        if self.thumbs_budget_mb != 0 {
+            check_range(
+                "thumbs_budget_mb",
+                self.thumbs_budget_mb,
+                64,
+                16 * 1024 * 1024,
+            )?;
+        }
         Ok(())
+    }
+
+    /// The generated-thumbnail byte budget in bytes (`0` = unbounded). See
+    /// [`crate::library::thumbnails::thumbs_budget_sweep`].
+    pub fn thumbs_budget_bytes(&self) -> u64 {
+        self.thumbs_budget_mb.saturating_mul(1024 * 1024)
     }
 
     /// Access-cookie + access-JWT TTL. Validated at startup so unwrap is safe
@@ -1084,6 +1109,12 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(n) => cfg.zip_lru_capacity = n as usize,
             None => bad_type(&row.key, "uint", &row.value),
         },
+        // Live (not restart-gated): every budget sweep reads the current
+        // `Config`. 0 = off.
+        "cache.thumbs_budget_mb" => match row.value.as_u64() {
+            Some(n) => cfg.thumbs_budget_mb = n,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
         "workers.scan_count" => match row.value.as_u64() {
             Some(n) => cfg.scan_worker_count = n as usize,
             None => bad_type(&row.key, "uint", &row.value),
@@ -1367,6 +1398,7 @@ mod tests {
             library_path: PathBuf::new(),
             data_path: PathBuf::new(),
             page_variant_cache_bytes: 2 * 1024 * 1024 * 1024,
+            thumbs_budget_mb: 0,
             public_url: "http://localhost".into(),
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             log_level: "info".into(),

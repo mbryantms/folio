@@ -799,6 +799,7 @@ impl TestApp {
                 .unwrap_or_else(|| PathBuf::from("/tmp/library")),
             data_path: data_dir.path().to_path_buf(),
             page_variant_cache_bytes: 2 * 1024 * 1024 * 1024,
+            thumbs_budget_mb: 0,
             public_url: "http://localhost:8080".into(),
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             log_level: "warn".into(),
