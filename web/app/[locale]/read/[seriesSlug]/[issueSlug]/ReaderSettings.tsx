@@ -137,7 +137,7 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
         <div className="space-y-1">
           <div className="flex items-center justify-between text-xs text-neutral-300">
             <span>Brightness</span>
-            <span className="text-neutral-500">
+            <span className="text-neutral-400">
               {Math.round(brightness * 100)}%
             </span>
           </div>
@@ -155,7 +155,7 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
         <div className="space-y-1">
           <div className="flex items-center justify-between text-xs text-neutral-300">
             <span>Sepia</span>
-            <span className="text-neutral-500">{Math.round(sepia * 100)}%</span>
+            <span className="text-neutral-400">{Math.round(sepia * 100)}%</span>
           </div>
           <Slider
             value={[sepia]}
@@ -175,7 +175,7 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
               setBrightness(1);
               setSepia(0);
             }}
-            className="inline-flex items-center gap-2 text-[11px] text-neutral-500 underline-offset-4 hover:text-neutral-200 hover:underline"
+            className="inline-flex items-center gap-2 text-xs text-neutral-400 underline-offset-4 hover:text-neutral-200 hover:underline"
           >
             <RotateCcw className="size-3" />
             Reset vision
@@ -209,7 +209,7 @@ function Section({
 }) {
   return (
     <section className="space-y-2">
-      <h3 className="text-[10px] font-semibold tracking-[0.12em] text-neutral-500 uppercase">
+      <h3 className="text-xs font-semibold tracking-[0.12em] text-neutral-400 uppercase">
         {title}
       </h3>
       <div className="space-y-2">{children}</div>
@@ -248,7 +248,7 @@ function SwitchRow({
       <div className="space-y-0.5">
         <p className="text-xs font-medium text-neutral-200">{label}</p>
         {description ? (
-          <p className="text-[11px] text-neutral-500">{description}</p>
+          <p className="text-xs text-neutral-400">{description}</p>
         ) : null}
       </div>
       <Switch checked={checked} onCheckedChange={onChange} aria-label={label} />
@@ -281,7 +281,7 @@ function SeriesOverridesRow({ seriesId }: { seriesId: string | null }) {
     <button
       type="button"
       onClick={reset}
-      className="inline-flex items-center gap-2 text-[11px] text-neutral-500 underline-offset-4 hover:text-neutral-200 hover:underline"
+      className="inline-flex items-center gap-2 text-xs text-neutral-400 underline-offset-4 hover:text-neutral-200 hover:underline"
     >
       <RotateCcw className="size-3" />
       Reset this series to defaults

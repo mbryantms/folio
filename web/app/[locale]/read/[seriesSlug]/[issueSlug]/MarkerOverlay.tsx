@@ -26,6 +26,7 @@ import {
   type MarkerMode,
   type PendingMarker,
 } from "@/lib/reader/store";
+import { readingOrderRegions } from "@/lib/reader/page-text";
 import { cn } from "@/lib/utils";
 import type {
   MarkerKind,
@@ -149,6 +150,14 @@ export function MarkerOverlay({
     () =>
       markerMode === "select-text" ? (regionsQuery.data?.regions ?? []) : [],
     [markerMode, regionsQuery.data],
+  );
+  // Reading-order, de-duplicated view of the same regions for the
+  // keyboard proxies — Tab should walk bubbles the way the page reads,
+  // not in detector output order.
+  const direction = useReaderStore((s) => s.direction);
+  const orderedTextRegions = React.useMemo(
+    () => readingOrderRegions(textRegions, direction),
+    [textRegions, direction],
   );
   // Bubble the user is hovering (pointer) and the one whose OCR is
   // in flight after a tap. Outline rects are `pointer-events: none`
@@ -436,6 +445,44 @@ export function MarkerOverlay({
     void completeDrag();
   }
 
+  // Tap-to-OCR on a detected bubble. Shared by the pointer/touch tap
+  // path and the keyboard proxies below (WP-4.8): the region IS the
+  // detector's bbox, so the request runs recognizer-only
+  // (`detect: false`) and is fast.
+  async function captureTextRegion(hit: TextRegionView) {
+    const region: MarkerRegion = {
+      x: hit.x,
+      y: hit.y,
+      w: hit.w,
+      h: hit.h,
+      shape: "text",
+    };
+    // The regions payload carries the decoded page dims, so a tap
+    // works even before the <img> has reported naturalSize.
+    const size =
+      naturalSize ??
+      (regionsQuery.data
+        ? {
+            width: regionsQuery.data.page_w,
+            height: regionsQuery.data.page_h,
+          }
+        : null);
+    setBusyRegion(hit);
+    try {
+      const pending = await finalizePending(
+        "select-text",
+        pageIndex,
+        region,
+        issueId,
+        size,
+        { detect: false },
+      );
+      beginMarkerEdit(pending);
+    } finally {
+      setBusyRegion(null);
+    }
+  }
+
   // Release path shared by both event bindings: tap-to-OCR on a
   // near-zero drag, otherwise finalize the dragged region into a
   // PendingMarker and open the editor.
@@ -458,37 +505,7 @@ export function MarkerOverlay({
         release.currentY,
       );
       if (hit) {
-        const region: MarkerRegion = {
-          x: hit.x,
-          y: hit.y,
-          w: hit.w,
-          h: hit.h,
-          shape: "text",
-        };
-        // The regions payload carries the decoded page dims, so a
-        // tap works even before the <img> has reported naturalSize.
-        const size =
-          naturalSize ??
-          (regionsQuery.data
-            ? {
-                width: regionsQuery.data.page_w,
-                height: regionsQuery.data.page_h,
-              }
-            : null);
-        setBusyRegion(hit);
-        try {
-          const pending = await finalizePending(
-            "select-text",
-            pageIndex,
-            region,
-            issueId,
-            size,
-            { detect: false },
-          );
-          beginMarkerEdit(pending);
-        } finally {
-          setBusyRegion(null);
-        }
+        await captureTextRegion(hit);
         return;
       }
     }
@@ -616,6 +633,49 @@ export function MarkerOverlay({
               />
             );
           })}
+        </div>
+      ) : null}
+
+      {/* Keyboard / screen-reader proxies for detected text regions
+          (WP-4.8, audit AC-3). The bubble outlines are `pointer-events:
+          none` rects in the SVG — reachable only by pointer. These
+          buttons sit over each bubble in reading order so Tab reaches
+          it and Enter / Space runs the same tap-to-OCR capture. They
+          stay `pointer-events-none` themselves: the SVG must keep sole
+          ownership of pointer input so drag-select still works, and
+          keyboard activation doesn't need hit-testing. */}
+      {markerMode === "select-text" && orderedTextRegions.length > 0 ? (
+        <div
+          role="group"
+          aria-label={`Detected text on page ${pageIndex + 1}`}
+          className="pointer-events-none absolute z-20"
+          style={{ position: "absolute", ...svgPositionStyle }}
+        >
+          <p className="sr-only" aria-live="polite">
+            {`${orderedTextRegions.length} text ${orderedTextRegions.length === 1 ? "region" : "regions"} found. Tab to a region and press Enter to capture its text.`}
+          </p>
+          {orderedTextRegions.map((region, i) => (
+            <button
+              key={`text-region-proxy-${i}`}
+              type="button"
+              aria-label={`Capture text region ${i + 1} of ${orderedTextRegions.length}`}
+              aria-busy={region === busyRegion || undefined}
+              onClick={() => {
+                // One capture at a time; don't `disabled` the button —
+                // that would drop keyboard focus mid-OCR.
+                if (busyRegion === null) void captureTextRegion(region);
+              }}
+              onFocus={() => setHoverRegion(region)}
+              onBlur={() => setHoverRegion(null)}
+              className="focus-visible:ring-ring pointer-events-none absolute rounded-sm focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none"
+              style={{
+                left: `${region.x}%`,
+                top: `${region.y}%`,
+                width: `${region.w}%`,
+                height: `${region.h}%`,
+              }}
+            />
+          ))}
         </div>
       ) : null}
 
