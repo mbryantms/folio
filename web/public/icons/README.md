@@ -1,88 +1,45 @@
 # PWA icons
 
-This directory holds the icons referenced from
-[`web/app/manifest.ts`](../../app/manifest.ts) and from the
-`metadata.icons` field in [`web/app/layout.tsx`](../../app/layout.tsx).
-None of the PNG files are checked into the repo yet because Folio does
-not have a finalised brand mark; the manifest still emits with the
-references in place, and the install UX degrades gracefully (browsers
-fall back to a generated tile or a screenshot of the page) until the
-files land.
-
-## Required files
-
-| File                    | Size      | Purpose                                                                                                             |
-| ----------------------- | --------- | ------------------------------------------------------------------------------------------------------------------- |
-| `icon-192.png`          | 192 × 192 | Web App Manifest `any` icon. Used by Android Chrome / desktop browsers for the install tile.                        |
-| `icon-512.png`          | 512 × 512 | Web App Manifest `any` icon at the larger size that Play Store / TWA wrappers want.                                 |
-| `icon-512-maskable.png` | 512 × 512 | Maskable icon. Android adaptive icons crop to a circle / squircle; the safe zone is the central 80 % of the canvas. |
-| `apple-touch-icon.png`  | 180 × 180 | iOS Home Screen icon. Without this, iOS scrapes a screenshot of the page (usually ugly).                            |
-
-A favicon is not strictly required for PWA install but is a sensible
-companion file:
-
-| File          | Size         | Notes                                                                  |
-| ------------- | ------------ | ---------------------------------------------------------------------- |
-| `favicon.ico` | 16 / 32 / 48 | Browser tab icon. Multi-resolution `.ico` so old browsers stay happy.  |
-| `icon.svg`    | scalable     | Modern browsers prefer the SVG favicon for crisp rendering at any DPI. |
-
-The favicon files belong in the parent `web/public/` directory rather
-than `web/public/icons/`, with explicit metadata links; alternatively use Next’s `app/favicon.ico` and
-`app/icon.svg` file conventions.
-
-## Generating
-
-Once a brand mark exists as a single high-resolution source (SVG ideally,
-or a 1024 × 1024 PNG), `pwa-asset-generator` produces every size at once:
+Every file in this directory (plus `../favicon.ico` and `../icon.svg`) is
+**generated** from the SVG masters in [`../brand/`](../brand/README.md) by
+[`scripts/build-icons.mjs`](../../scripts/build-icons.mjs). Do not edit the
+PNGs by hand; change a master and regenerate:
 
 ```sh
-npx pwa-asset-generator <source.svg> ./web/public/icons \
-  --icon-only \
-  --background "#0c0e13" \
-  --padding "10%" \
-  --type png \
-  --opaque false
+pnpm --filter web run build-icons
+# or with a different master:
+pnpm --filter web run build-icons path/to/icon-master.svg
 ```
 
-The `--background "#0c0e13"` matches the manifest's `theme_color` and
-`background_color`, both of which are derived from the dark
-`--background` token in `web/styles/globals.css`. The `--padding "10%"`
-inset keeps the mark inside the 80 % safe zone required for the
-maskable variant.
+The masters are currently **interim** (see `../brand/README.md`).
 
-For the maskable variant specifically, run the generator a second time
-with `--maskable true` so the central safe zone is enforced:
+## Generated files
 
-```sh
-npx pwa-asset-generator <source.svg> ./web/public/icons \
-  --icon-only \
-  --maskable true \
-  --background "#0c0e13" \
-  --padding "20%" \
-  --type png
-```
+| File                            | Size          | Referenced from                                   |
+| ------------------------------- | ------------- | ------------------------------------------------- |
+| `icon-192.png`, `icon-512.png`  | 192², 512²    | `app/manifest.ts`, `purpose: "any"`               |
+| `icon-512-maskable.png`         | 512²          | `app/manifest.ts`, `purpose: "maskable"` (opaque) |
+| `shortcut-library-96.png`       | 96²           | manifest shortcut "Library"                       |
+| `shortcut-bookmarks-96.png`     | 96²           | manifest shortcut "Bookmarks"                     |
+| `apple-touch-icon.png`          | 180² (opaque) | `app/layout.tsx` `icons.apple`                    |
+| `splash-<w>x<h>.png` (18 files) | device pixels | `app/layout.tsx` via `lib/pwa/apple-splash.ts`    |
+| `../favicon.ico`                | 16 / 32 / 48  | `app/layout.tsx` `icons.icon`                     |
+| `../icon.svg`                   | scalable      | `app/layout.tsx` `icons.icon` (copy of master)    |
 
-Then rename the maskable output to `icon-512-maskable.png` to match
-the manifest's reference.
+`any` and `maskable` are separate files on purpose: the `any` icon keeps
+the master's rounded tile and transparent corners, while the maskable one
+is full-bleed and opaque with the glyph inside the 80 % safe zone.
 
-## iOS splash screens
+The iOS startup-image device list lives in
+[`lib/pwa/apple-splash-devices.json`](../../lib/pwa/apple-splash-devices.json),
+shared by the build script and the layout. Adding a device there and
+rerunning the script produces both its portrait and landscape files and
+the matching `<link rel="apple-touch-startup-image">` tags.
 
-A second tier of PWA polish — proper splash screens during the
-launch-from-Home-Screen sequence on iOS — needs an additional set of
-per-device-size PNGs declared via `<link rel="apple-touch-startup-image">`
-tags. Apple requires the dimensions to match each device's screen
-exactly, which means a dozen or so files. `pwa-asset-generator` can
-emit those too:
+## Checks
 
-```sh
-npx pwa-asset-generator <source.svg> ./web/public/icons \
-  --splash-only \
-  --background "#0c0e13" \
-  --padding "30%" \
-  --type png
-```
-
-Portrait `<link>` tags already exist in
-[`web/app/layout.tsx`](../../app/layout.tsx), but their files are missing.
-Generate both portrait and landscape assets and update the declarations to
-match the supported devices. See [PWA hardening](../../../docs/dev/pwa-hardening.md).
+- `tests/pwa/assets.test.ts` (vitest): every manifest, shortcut, Apple, and
+  startup image is a committed PNG at its declared size, maskable/Apple
+  icons are opaque, and file sizes stay within budget.
+- `scripts/check-pwa-assets.mjs` and `tests/e2e/pwa.spec.ts`: the same
+  assets served by the booted public origin (docker-smoke CI).

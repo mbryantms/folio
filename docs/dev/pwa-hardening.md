@@ -32,15 +32,43 @@ promises made by the offline fallback.
   active page images and browser overhead).
 - Destination-preserving auth redirects and user-initiated chunk recovery.
 
-## Brand-dependent items (review 5, 6, 9)
+## Brand assets (review 5, 6, 9; WP-4.7)
 
-The reviewed raster brand concept is not included in this change; a production
-vector master and derived assets are still pending. The manifest and Apple
-metadata still declare the planned icons/splash screens. They remain explicit blockers;
-do not describe their 404s as a working branded install. Supply the source mark,
-generate the declared PNGs, verify maskable safe zones and dimensions, add
-landscape/startup coverage for supported devices, and then make
-`PWA_REQUIRE_BRAND=1 pnpm --filter web run check-pwa-assets` mandatory.
+Every declared icon and splash screen now exists. They are generated from
+**interim** SVG masters in `web/public/brand/` (an open-book/comic-panel
+glyph in the amber `--primary` on the dark `--background`). A production
+brand mark is still pending and will replace them without code changes.
+
+- Masters: `web/public/brand/icon-master.svg` plus two 96 px shortcut
+  glyphs. `web/public/brand/README.md` has the replacement rules
+  (maskable safe-zone radius, tile expectations).
+- Outputs: manifest `any` 192/512, opaque full-bleed `maskable` 512,
+  Library/Bookmarks shortcut icons, opaque 180 px `apple-touch-icon`,
+  18 iOS startup images (9 devices, portrait and landscape), and
+  `favicon.ico` (16/32/48) + `icon.svg`. The table is in
+  `web/public/icons/README.md`.
+- The startup-image device list is `web/lib/pwa/apple-splash-devices.json`.
+  The generator and `lib/pwa/apple-splash.ts` (which emits the
+  `<link rel="apple-touch-startup-image">` tags) both read it, so files and
+  tags cannot drift.
+- Next 16 renders `appleWebApp.capable` as `mobile-web-app-capable` only,
+  so the root layout adds `apple-mobile-web-app-capable` explicitly for iOS
+  releases before 16.4.
+
+### Regenerating
+
+After replacing a master under `web/public/brand/`:
+
+```sh
+pnpm --filter web run build-icons
+pnpm --filter web exec vitest run tests/pwa/assets.test.ts
+```
+
+Then commit everything under `web/public/`. The generator
+(`web/scripts/build-icons.mjs`, using `sharp`) reads the background colour
+from `lib/pwa/theme-colors.ts`, so regenerate after changing the dark
+`--background` token too. Output is about 130 KiB in total. Icons keep full
+anti-aliasing and splash screens are palette-quantised.
 
 Install screenshots require synthetic comic/library data and final visual
 assets. Never capture real private library content for manifest screenshots.
@@ -56,10 +84,17 @@ assets. Never capture real private library content for manifest screenshots.
 - `PLAYWRIGHT_BASE_URL=http://localhost:8080 pnpm --filter web exec playwright test`:
   production public-origin integration, including desktop and mobile Chromium
   PWA tests. The PWA suite tests cold offline navigation, stale API-cache
-  rejection, thumbnail reset, and manifest identity/shortcuts.
+  rejection, thumbnail reset, and manifest identity/shortcuts. It also checks
+  that every manifest and shortcut icon is served as a PNG at its declared
+  size.
 - `PLAYWRIGHT_BASE_URL=http://localhost:8080 pnpm --filter web run check-pwa-assets`:
-  HTTP status/MIME, manifest PNG dimensions, worker cache headers, Apple assets,
-  and offline page. CI reports brand blockers explicitly until assets land.
+  HTTP status/MIME, `display: standalone`, the `any`/`maskable` split,
+  manifest and shortcut PNG dimensions, the Apple touch icon, every startup
+  image at its media query's resolution, `apple-mobile-web-app-capable`,
+  favicons, worker cache headers, and the offline page. A missing brand
+  asset is a hard failure (the former `PWA_REQUIRE_BRAND` opt-in is gone).
+- `pnpm --filter web exec vitest run tests/pwa/assets.test.ts` checks the
+  same asset inventory statically against `web/public/`, with no server.
 
 ## Real-device release checklist (review 20, 22, 38)
 
@@ -113,6 +148,6 @@ current issue only after authentication; no private URLs belong in a manifest.
   IssueActions and LibrarySettingsForm. Query-key, status-color, and current
   reader bundle gates pass.
 - Local production HTTP checks confirm worker revalidation, manifest identity,
-  and the offline document. Thirteen declared brand assets remain missing and
-  are reported as blockers. Rust-origin checks are wired into compose smoke CI;
+  and the offline document. Thirteen declared brand assets were missing at the
+  time and reported as blockers; WP-4.7 generated them (see "Brand assets"). Rust-origin checks are wired into compose smoke CI;
   no Rust backend or physical installed device was available for the local run.

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- INTERIM Folio mark, not the final brand. See README.md in this directory. -->
+  <title>Folio</title>
+  <rect width="512" height="512" rx="112" fill="#0c0e13"/>
+  <g fill="#f6a823">
+    <!-- Left page: two stacked panels. -->
+    <path d="M246 156C204 138 158 132 108 138V244H246Z"/>
+    <path d="M108 262V372C158 366 204 372 246 390V262Z"/>
+    <!-- Right page: a wide top panel over two narrow ones. -->
+    <path d="M266 156C308 138 354 132 404 138V222H266Z"/>
+    <path d="M266 240V390C284 382 302 377 320 373V240Z"/>
+    <path d="M338 240V370C360 367 382 367 404 372V240Z"/>
+  </g>
+</svg>

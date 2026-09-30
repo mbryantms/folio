@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { themedViewport } from "@/lib/viewport";
+import { appleStartupImages } from "@/lib/pwa/apple-splash";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import { cookies, headers } from "next/headers";
@@ -27,86 +28,15 @@ import {
 } from "@/lib/theme";
 import "@/styles/globals.css";
 
-// Apple touch startup images. The `media` query is what binds an
-// image file to a specific iOS device resolution and orientation;
-// iOS picks the first matching entry. Sizes here cover the modern
-// iPhone lineup (12-mini through 15 Pro Max) plus the standard
-// iPad / iPad Air / iPad Pro families. Older devices fall back to
-// the plain `theme_color` splash. Files are produced by
-// `pwa-asset-generator --splash-only` per the icons README.
-const APPLE_STARTUP_IMAGES = [
-  // iPhone 14 Pro Max / 15 Plus / 15 Pro Max  — 1290 x 2796 (@3x)
-  {
-    rel: "apple-touch-startup-image",
-    url: "/icons/splash-1290x2796.png",
-    media:
-      "(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)",
-  },
-  // iPhone 14 Pro / 15 / 15 Pro  — 1179 x 2556 (@3x)
-  {
-    rel: "apple-touch-startup-image",
-    url: "/icons/splash-1179x2556.png",
-    media:
-      "(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)",
-  },
-  // iPhone 12/13/14, 12/13 Pro, 14 Plus  — 1170 x 2532 (@3x)
-  {
-    rel: "apple-touch-startup-image",
-    url: "/icons/splash-1170x2532.png",
-    media:
-      "(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)",
-  },
-  // iPhone 12/13 mini  — 1080 x 2340 (@3x)
-  {
-    rel: "apple-touch-startup-image",
-    url: "/icons/splash-1080x2340.png",
-    media:
-      "(device-width: 360px) and (device-height: 780px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)",
-  },
-  // iPhone XR / 11  — 828 x 1792 (@2x)
-  {
-    rel: "apple-touch-startup-image",
-    url: "/icons/splash-828x1792.png",
-    media:
-      "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)",
-  },
-  // iPhone X / XS / 11 Pro  — 1125 x 2436 (@3x)
-  {
-    rel: "apple-touch-startup-image",
-    url: "/icons/splash-1125x2436.png",
-    media:
-      "(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)",
-  },
-  // iPad Pro 12.9"  — 2048 x 2732 (@2x)
-  {
-    rel: "apple-touch-startup-image",
-    url: "/icons/splash-2048x2732.png",
-    media:
-      "(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)",
-  },
-  // iPad Pro 11" / Air  — 1668 x 2388 (@2x)
-  {
-    rel: "apple-touch-startup-image",
-    url: "/icons/splash-1668x2388.png",
-    media:
-      "(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)",
-  },
-  // iPad / iPad mini  — 1536 x 2048 (@2x)
-  {
-    rel: "apple-touch-startup-image",
-    url: "/icons/splash-1536x2048.png",
-    media:
-      "(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)",
-  },
-];
-
 export const metadata: Metadata = {
   title: "Folio",
   description: "Self-hostable comic reader",
-  // Apple-specific PWA tags. `capable: true` emits
-  // `<meta name="apple-mobile-web-app-capable" content="yes">`,
-  // which is the legacy-iOS opt-in to standalone launch and the
-  // signal `usePullToRefresh` reads via `navigator.standalone`.
+  // Apple-specific PWA tags. Next 16's `capable: true` emits only the
+  // standardised `<meta name="mobile-web-app-capable">`; the legacy
+  // `apple-mobile-web-app-capable` meta (the pre-16.4 iOS opt-in to
+  // standalone launch, and what makes `navigator.standalone` true for
+  // `usePullToRefresh` there) is added explicitly via `other` below.
+  // iOS 16.4+ also honours the manifest's `display: standalone`.
   // Status bar style: `black` (opaque) rather than `black-translucent`.
   // Since iOS / iPadOS 26.1 the OS reserves an opaque status bar for
   // home-screen apps regardless, so translucency no longer buys the
@@ -121,23 +51,25 @@ export const metadata: Metadata = {
     title: "Folio",
     statusBarStyle: "black",
   },
-  // Apple touch icon. Required for iOS to use a real branded icon
-  // when the app is added to the Home Screen — without it, iOS
-  // takes a screenshot of the page (usually ugly). The file must
-  // exist at `web/public/icons/apple-touch-icon.png` (180×180 PNG).
+  other: { "apple-mobile-web-app-capable": "yes" },
+  // Every file below is generated from `public/brand/icon-master.svg` by
+  // `pnpm --filter web run build-icons` (see `public/icons/README.md`).
   //
-  // The `other` array configures `apple-touch-startup-image`s,
-  // which iOS uses for the splash screen between Home Screen tap
-  // and first paint when the app is launched in standalone mode.
-  // Each device-class needs its own file at the exact device
-  // resolution — `pwa-asset-generator --splash-only` emits the
-  // full set in one pass. See `web/public/icons/README.md`. When
-  // a file is missing, iOS falls back to a plain `theme_color`
-  // splash (`black-translucent` over `#0c1012`) which is fine
-  // but unbranded.
+  // - `icon`: tab favicon. The multi-size `.ico` for legacy browsers and
+  //   the SVG for everything modern.
+  // - `apple`: iOS Home Screen icon (180×180, opaque). Without it iOS
+  //   takes a screenshot of the page as the icon.
+  // - `other`: `apple-touch-startup-image`s, the splash iOS shows between
+  //   a Home Screen tap and first paint in standalone mode. One file per
+  //   device class and orientation at the exact device resolution; see
+  //   `lib/pwa/apple-splash.ts`.
   icons: {
-    apple: "/icons/apple-touch-icon.png",
-    other: APPLE_STARTUP_IMAGES,
+    icon: [
+      { url: "/favicon.ico", sizes: "16x16 32x32 48x48" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    apple: { url: "/icons/apple-touch-icon.png", sizes: "180x180" },
+    other: appleStartupImages(),
   },
 };
 
