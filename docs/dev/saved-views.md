@@ -47,7 +47,7 @@ guards the mirror.
 | genres, tags, credit roles, characters, teams, locations | `series_*` junction `EXISTS` | `issue_*` junction `EXISTS` (`issue_id`) |
 | `read_status`                           | per-series rollup over `user_series_progress` | per-issue: `finished` → read, `last_page > 0` → in progress, else unread (same rule as `GET /issues?read_status=`) |
 | `rating`                                | caller's own series rating (`user_ratings`, `target_type='series'`) | caller's own issue rating (`target_type='issue'`) |
-| `special_type`, `format`, `story_arc`   | —                                    | `issues.*`                               |
+| `special_type`, `format`, `story_arc`, `title` | —                             | `issues.*` (`title` = the issue's own title) |
 | `read_progress`, `last_read`, `read_count`, `unread_issues`, `collection_completeness`, `metadata_completeness` | per-series rollups | — |
 
 ### `is_empty` / `is_not_empty`
@@ -83,7 +83,12 @@ them).
   on the issue's effective rating. Sorts: `name` (series name, then issue
   number, then id), `year`, `created_at`, `updated_at`; `last_read` /
   `read_progress` are series-only (`SortNotAvailable`, 422). Paginated
-  with an opaque offset cursor.
+  with an opaque **keyset** cursor (`IssueCursor`: base64 JSON of the last
+  returned row's sort-key values + issue id). The "after" predicate is
+  lexicographic over `(keys…, issues.id)` in the view's direction with
+  nullable keys (`sort_number`, `year`) ordered NULLS LAST, so issues
+  added or removed between page fetches never cause skipped or repeated
+  rows. `total` is counted on the first page only.
 
 `compile::validate(dsl, entity, sort_field, sort_order)` is what the
 create / update handlers call before persisting; an update re-validates

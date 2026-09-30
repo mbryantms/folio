@@ -680,6 +680,16 @@ const SPECS: &[FieldSpec] = &[
         allowed_ops: TEXT_OPS,
         enum_values: &[],
     },
+    FieldSpec {
+        field: Field::Title,
+        kind: FieldKind::Text,
+        id: "title",
+        label: "Issue Title",
+        source: None,
+        issue_source: Some(Source::Issue("title")),
+        allowed_ops: TEXT_OPS,
+        enum_values: &[],
+    },
     // ─── WP-5.4: the caller's own star rating (both entities) ────────────
     FieldSpec {
         field: Field::Rating,
@@ -727,7 +737,7 @@ mod tests {
         // and a matching `FieldSpec` row. Forgetting both leaves the
         // count unchanged but `spec_for` would panic at runtime — the
         // mismatch is the alarm.
-        const KNOWN_FIELD_COUNT: usize = 36;
+        const KNOWN_FIELD_COUNT: usize = 37;
         assert_eq!(SPECS.len(), KNOWN_FIELD_COUNT);
         for spec in SPECS {
             let looked_up = spec_for(spec.field);
@@ -742,7 +752,12 @@ mod tests {
 
     #[test]
     fn issue_only_fields_have_no_series_mapping() {
-        for f in [Field::SpecialType, Field::Format, Field::StoryArc] {
+        for f in [
+            Field::SpecialType,
+            Field::Format,
+            Field::StoryArc,
+            Field::Title,
+        ] {
             assert!(source_for(spec_for(f), ViewEntity::Series).is_none());
             assert!(source_for(spec_for(f), ViewEntity::Issue).is_some());
         }

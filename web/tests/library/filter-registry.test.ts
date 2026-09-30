@@ -49,6 +49,7 @@ const ALL_FIELDS: Field[] = [
   "special_type",
   "format",
   "story_arc",
+  "title",
   "rating",
 ];
 
@@ -120,7 +121,12 @@ describe("filter field registry", () => {
   it("issue-only fields are hidden from series views", () => {
     const series = fieldsFor("series").map((s) => s.id);
     const issue = fieldsFor("issue").map((s) => s.id);
-    for (const f of ["special_type", "format", "story_arc"] as Field[]) {
+    for (const f of [
+      "special_type",
+      "format",
+      "story_arc",
+      "title",
+    ] as Field[]) {
       expect(series).not.toContain(f);
       expect(issue).toContain(f);
     }

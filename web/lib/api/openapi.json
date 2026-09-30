@@ -16568,6 +16568,7 @@
           "special_type",
           "format",
           "story_arc",
+          "title",
           "rating"
         ]
       },

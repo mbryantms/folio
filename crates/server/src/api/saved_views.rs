@@ -1949,7 +1949,7 @@ pub async fn preview_issues(
         sort_field: req.sort_field,
         sort_order: req.sort_order,
         limit,
-        offset: 0,
+        cursor: None,
         user_id: user.id,
         visible_libraries: visible,
     };
@@ -2011,10 +2011,10 @@ pub async fn issue_results(
         .limit
         .unwrap_or(view_limit)
         .clamp(MIN_RESULT_LIMIT, MAX_RESULT_LIMIT);
-    let offset = match q.cursor.as_deref() {
-        None => 0,
-        Some(c) => match parse_offset_cursor(c) {
-            Some(o) => o,
+    let cursor = match q.cursor.as_deref() {
+        None => None,
+        Some(c) => match compile::IssueCursor::decode(c) {
+            Some(c) => Some(c),
             None => return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor"),
         },
     };
@@ -2024,7 +2024,7 @@ pub async fn issue_results(
         sort_field,
         sort_order,
         limit,
-        offset,
+        cursor,
         user_id: user.id,
         visible_libraries: visible,
     };
@@ -2079,7 +2079,7 @@ async fn fetch_issue_view_rows(
     app: &AppState,
     input: &IssueCompileInput<'_>,
 ) -> Result<Vec<IssueViewRow>, axum::response::Response> {
-    let stmt = compile::compile_issues(input).map_err(compile_error_response)?;
+    let stmt = compile::compile_issues(input).map_err(issue_compile_error_response)?;
     let (sql, values) = stmt.build(PostgresQueryBuilder);
     let raw = Statement::from_sql_and_values(app.db.get_database_backend(), sql, values);
     IssueViewRow::find_by_statement(raw)
@@ -2087,6 +2087,39 @@ async fn fetch_issue_view_rows(
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "saved_views: issue query failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        })
+}
+
+/// Like [`compile_error_response`], but a malformed keyset cursor is the
+/// caller's parse error (400), not a filter-validation failure (422).
+fn issue_compile_error_response(e: CompileError) -> axum::response::Response {
+    match e {
+        CompileError::InvalidCursor => {
+            error(StatusCode::BAD_REQUEST, "validation", "invalid cursor")
+        }
+        other => compile_error_response(other),
+    }
+}
+
+/// First-page `total` for an issue view (same filters, no cursor/limit).
+async fn count_issue_view_rows(
+    app: &AppState,
+    input: &IssueCompileInput<'_>,
+) -> Result<i64, axum::response::Response> {
+    #[derive(FromQueryResult)]
+    struct Total {
+        total: i64,
+    }
+    let stmt = compile::compile_issues_count(input).map_err(issue_compile_error_response)?;
+    let (sql, values) = stmt.build(PostgresQueryBuilder);
+    let raw = Statement::from_sql_and_values(app.db.get_database_backend(), sql, values);
+    Total::find_by_statement(raw)
+        .one(&app.db)
+        .await
+        .map(|r| r.map(|t| t.total).unwrap_or(0))
+        .map_err(|e| {
+            tracing::error!(error = %e, "saved_views: issue count failed");
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
         })
 }
@@ -2099,9 +2132,31 @@ async fn run_issue_filter_query(
         Ok(r) => r,
         Err(resp) => return resp,
     };
+    // `total` rides the first page only, like every cursor list.
+    let total = if input.cursor.is_none() {
+        match count_issue_view_rows(app, &input).await {
+            Ok(n) => Some(n),
+            Err(resp) => return resp,
+        }
+    } else {
+        None
+    };
+    // Over-fetched by one: drop the extra and key the next page off the
+    // last row actually returned, so nothing is skipped or repeated.
     let next_cursor = if rows.len() as u64 > input.limit {
         rows.pop();
-        Some(encode_offset_cursor(input.offset + input.limit))
+        rows.last().map(|r| {
+            compile::IssueCursor::for_row(
+                input.sort_field,
+                &r.id,
+                &r.series_name,
+                r.sort_number,
+                r.year,
+                &r.created_at,
+                &r.updated_at,
+            )
+            .encode()
+        })
     } else {
         None
     };
@@ -2112,28 +2167,9 @@ async fn run_issue_filter_query(
     Json(IssueListView {
         items,
         next_cursor,
-        total: None,
+        total,
     })
     .into_response()
-}
-
-/// Issue-view cursors are an opaque base64 `o:<offset>` (see
-/// `compile::IssueCompileInput`).
-fn encode_offset_cursor(offset: u64) -> String {
-    use base64::Engine;
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!("o:{offset}"))
-}
-
-fn parse_offset_cursor(s: &str) -> Option<u64> {
-    use base64::Engine;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(s.as_bytes())
-        .ok()?;
-    String::from_utf8(bytes)
-        .ok()?
-        .strip_prefix("o:")?
-        .parse()
-        .ok()
 }
 
 fn dsl_from_view(view: &saved_view::Model) -> Result<FilterDsl, serde_json::Error> {
@@ -2270,7 +2306,7 @@ pub async fn resolve_metadata_batch_targets(
                 sort_field: SortField::CreatedAt,
                 sort_order: SortOrder::Desc,
                 limit: REFRESH_BATCH_CAP as u64,
-                offset: 0,
+                cursor: None,
                 user_id: user.id,
                 visible_libraries: visible,
             };

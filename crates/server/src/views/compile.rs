@@ -68,6 +68,8 @@ pub enum CompileError {
     FieldNotAvailable { field: Field, entity: ViewEntity },
     #[error("sort `{}` is not available on {} views", sort.as_str(), entity.as_str())]
     SortNotAvailable { sort: SortField, entity: ViewEntity },
+    #[error("invalid cursor")]
+    InvalidCursor,
     #[error("internal: {0}")]
     Internal(String),
 }
@@ -148,18 +150,212 @@ pub fn compile(input: &CompileInput<'_>) -> Result<SelectStatement, CompileError
 }
 
 /// Inputs for [`compile_issues`]. Issue views paginate with an opaque
-/// offset cursor (the caller encodes `offset`), since their sorts are
-/// multi-key (`name` = series name → issue number → id) and a keyset over
-/// three nullable keys buys nothing for rail-sized pages.
+/// keyset cursor ([`IssueCursor`]) over the view's sort keys plus the
+/// issue id — the same pattern as the series root's `(sort value, id)`
+/// cursor, extended to the multi-key `name` sort (series name → issue
+/// number → id). A keyset never skips or repeats rows when issues are
+/// added or removed between page fetches.
 #[derive(Debug, Clone)]
 pub struct IssueCompileInput<'a> {
     pub dsl: &'a FilterDsl,
     pub sort_field: SortField,
     pub sort_order: SortOrder,
     pub limit: u64,
-    pub offset: u64,
+    pub cursor: Option<IssueCursor>,
     pub user_id: Uuid,
     pub visible_libraries: VisibleLibraries,
+}
+
+/// Keyset position for issue-view pagination: the last returned row's
+/// sort-key values (JSON-typed; `null` = SQL NULL) and its id. Encoded as
+/// opaque base64url JSON; callers never interpret it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct IssueCursor {
+    pub keys: Vec<Value>,
+    pub id: String,
+}
+
+impl IssueCursor {
+    pub fn encode(&self) -> String {
+        use base64::Engine;
+        let json = serde_json::to_vec(self).unwrap_or_default();
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json)
+    }
+
+    /// `None` on any malformed token (the handler answers 400).
+    pub fn decode(s: &str) -> Option<Self> {
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(s.as_bytes())
+            .ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    /// The cursor for a result row, given the row's sort-key columns.
+    /// Key order must match [`issue_sort_keys`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn for_row(
+        sort: SortField,
+        id: &str,
+        series_name: &str,
+        sort_number: Option<f64>,
+        year: Option<i32>,
+        created_at: &chrono::DateTime<chrono::FixedOffset>,
+        updated_at: &chrono::DateTime<chrono::FixedOffset>,
+    ) -> Self {
+        let keys = match sort {
+            SortField::Name => vec![Value::from(series_name), serde_json::json!(sort_number)],
+            SortField::Year => vec![serde_json::json!(year)],
+            SortField::CreatedAt => vec![Value::from(created_at.to_rfc3339())],
+            SortField::UpdatedAt => vec![Value::from(updated_at.to_rfc3339())],
+            SortField::LastRead | SortField::ReadProgress => Vec::new(),
+        };
+        Self {
+            keys,
+            id: id.to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum KeyType {
+    Text,
+    Float,
+    Int,
+    Timestamp,
+}
+
+/// One sort key of an issue view: SQL expression, bind type, nullability.
+/// Nullable keys order NULLS LAST in both directions.
+#[derive(Debug, Clone, Copy)]
+struct IssueSortKey {
+    sql: &'static str,
+    ty: KeyType,
+    nullable: bool,
+}
+
+/// Sort keys (before the `issues.id` tiebreaker) for each issue-view sort.
+fn issue_sort_keys(sort: SortField) -> Result<&'static [IssueSortKey], CompileError> {
+    const NAME: &[IssueSortKey] = &[
+        IssueSortKey {
+            sql: "series.name",
+            ty: KeyType::Text,
+            nullable: false,
+        },
+        IssueSortKey {
+            sql: "issues.sort_number",
+            ty: KeyType::Float,
+            nullable: true,
+        },
+    ];
+    const YEAR: &[IssueSortKey] = &[IssueSortKey {
+        sql: "issues.year",
+        ty: KeyType::Int,
+        nullable: true,
+    }];
+    const CREATED: &[IssueSortKey] = &[IssueSortKey {
+        sql: "issues.created_at",
+        ty: KeyType::Timestamp,
+        nullable: false,
+    }];
+    const UPDATED: &[IssueSortKey] = &[IssueSortKey {
+        sql: "issues.updated_at",
+        ty: KeyType::Timestamp,
+        nullable: false,
+    }];
+    match sort {
+        SortField::Name => Ok(NAME),
+        SortField::Year => Ok(YEAR),
+        SortField::CreatedAt => Ok(CREATED),
+        SortField::UpdatedAt => Ok(UPDATED),
+        SortField::LastRead | SortField::ReadProgress => Err(CompileError::SortNotAvailable {
+            sort,
+            entity: ViewEntity::Issue,
+        }),
+    }
+}
+
+/// Bind a cursor key value with the column's type; `Ok(None)` = SQL NULL.
+fn cursor_bind(ty: KeyType, v: &Value) -> Result<Option<sea_orm::Value>, CompileError> {
+    let bad = || CompileError::InvalidCursor;
+    if v.is_null() {
+        return Ok(None);
+    }
+    Ok(Some(match ty {
+        KeyType::Text => v.as_str().ok_or_else(bad)?.to_owned().into(),
+        KeyType::Float => v.as_f64().ok_or_else(bad)?.into(),
+        KeyType::Int => i32::try_from(v.as_i64().ok_or_else(bad)?)
+            .map_err(|_| bad())?
+            .into(),
+        KeyType::Timestamp => chrono::DateTime::parse_from_rfc3339(v.as_str().ok_or_else(bad)?)
+            .map_err(|_| bad())?
+            .into(),
+    }))
+}
+
+/// Lexicographic "strictly after the cursor" predicate over
+/// `(keys…, issues.id)` in the view's direction, NULLS LAST:
+/// `OR_i (k_0 = v_0 AND … AND k_{i-1} = v_{i-1} AND k_i after v_i)`,
+/// where equality on a NULL cursor value is `IS NULL`, "after a NULL" is
+/// impossible (NULLs sort last), and "after a value" on a nullable key
+/// also admits NULLs.
+fn issue_keyset_predicate(
+    keys: &[IssueSortKey],
+    cursor: &IssueCursor,
+    order: SortOrder,
+) -> Result<SimpleExpr, CompileError> {
+    if cursor.keys.len() != keys.len() {
+        return Err(CompileError::InvalidCursor);
+    }
+    let op = match order {
+        SortOrder::Asc => ">",
+        SortOrder::Desc => "<",
+    };
+    let mut values: Vec<sea_orm::Value> = Vec::new();
+    let bind = |v: sea_orm::Value, values: &mut Vec<sea_orm::Value>| {
+        values.push(v);
+        format!("${}", values.len())
+    };
+    let mut bound: Vec<(IssueSortKey, Option<sea_orm::Value>)> = Vec::new();
+    for (k, v) in keys.iter().zip(&cursor.keys) {
+        bound.push((*k, cursor_bind(k.ty, v)?));
+    }
+    bound.push((
+        IssueSortKey {
+            sql: "issues.id",
+            ty: KeyType::Text,
+            nullable: false,
+        },
+        Some(cursor.id.clone().into()),
+    ));
+    let mut disjuncts: Vec<String> = Vec::new();
+    for i in 0..bound.len() {
+        let (key, val) = &bound[i];
+        let Some(val) = val else {
+            continue; // nothing sorts after NULL (NULLS LAST)
+        };
+        let mut parts: Vec<String> = Vec::new();
+        for (pk, pv) in &bound[..i] {
+            parts.push(match pv {
+                None => format!("{} IS NULL", pk.sql),
+                Some(v) => format!("{} = {}", pk.sql, bind(v.clone(), &mut values)),
+            });
+        }
+        let p = bind(val.clone(), &mut values);
+        parts.push(if key.nullable {
+            format!("({k} {op} {p} OR {k} IS NULL)", k = key.sql)
+        } else {
+            format!("{} {op} {p}", key.sql)
+        });
+        disjuncts.push(format!("({})", parts.join(" AND ")));
+    }
+    if disjuncts.is_empty() {
+        return Ok(Expr::val(false));
+    }
+    Ok(Expr::cust_with_values(
+        format!("({})", disjuncts.join(" OR ")),
+        values,
+    ))
 }
 
 /// Columns projected by [`compile_issues`] — the `IssueSummaryView` card
@@ -183,13 +379,35 @@ const ISSUE_CARD_COLUMNS: &[issue::Column] = &[
     issue::Column::AgeRating,
 ];
 
+/// `FROM issues JOIN series WHERE <active, visible, conditions>` — shared
+/// by the page query and the first-page count.
+fn issue_base(input: &IssueCompileInput<'_>) -> Result<SelectStatement, CompileError> {
+    let mut q = Query::select();
+    q.from(issue::Entity);
+    q.inner_join(
+        series::Entity,
+        Expr::col((series::Entity, series::Column::Id))
+            .equals((issue::Entity, issue::Column::SeriesId)),
+    );
+    q.and_where(Expr::col((issue::Entity, issue::Column::State)).eq("active"));
+    q.and_where(Expr::col((issue::Entity, issue::Column::RemovedAt)).is_null());
+    apply_issue_visibility(&mut q, &input.visible_libraries);
+    let ctx = Ctx {
+        entity: ViewEntity::Issue,
+        user_id: input.user_id,
+    };
+    apply_conditions(&mut q, input.dsl, &ctx)?;
+    Ok(q)
+}
+
 /// Compile an issue-level (`filter_issues`) view. Selects active,
 /// non-removed issues the caller can see, joined to their parent series
 /// (series-column fields like `name` / `status` evaluate against it).
-/// Fetches `limit + 1` rows from `offset`; the caller pops the trailing
-/// row to decide `next_cursor`.
+/// Fetches `limit + 1` rows after `cursor`; the caller pops the extra row
+/// and encodes `next_cursor` from the last row it returns.
 pub fn compile_issues(input: &IssueCompileInput<'_>) -> Result<SelectStatement, CompileError> {
-    let mut q = Query::select();
+    let keys = issue_sort_keys(input.sort_field)?;
+    let mut q = issue_base(input)?;
     for col in ISSUE_CARD_COLUMNS {
         q.column((issue::Entity, *col));
     }
@@ -201,60 +419,36 @@ pub fn compile_issues(input: &IssueCompileInput<'_>) -> Result<SelectStatement, 
         Expr::col((series::Entity, series::Column::Name)),
         Alias::new("series_name"),
     );
-    q.from(issue::Entity);
-    q.inner_join(
-        series::Entity,
-        Expr::col((series::Entity, series::Column::Id))
-            .equals((issue::Entity, issue::Column::SeriesId)),
-    );
-    q.and_where(Expr::col((issue::Entity, issue::Column::State)).eq("active"));
-    q.and_where(Expr::col((issue::Entity, issue::Column::RemovedAt)).is_null());
-    apply_issue_visibility(&mut q, &input.visible_libraries);
-
-    let ctx = Ctx {
-        entity: ViewEntity::Issue,
-        user_id: input.user_id,
-    };
-    apply_conditions(&mut q, input.dsl, &ctx)?;
-
+    if let Some(c) = &input.cursor {
+        q.and_where(issue_keyset_predicate(keys, c, input.sort_order)?);
+    }
     let order = match input.sort_order {
         SortOrder::Asc => Order::Asc,
         SortOrder::Desc => Order::Desc,
     };
-    match input.sort_field {
-        SortField::Name => {
-            q.order_by((series::Entity, series::Column::Name), order.clone());
-            q.order_by_with_nulls(
-                (issue::Entity, issue::Column::SortNumber),
-                order.clone(),
-                NullOrdering::Last,
-            );
-        }
-        SortField::Year => {
-            q.order_by_with_nulls(
-                (issue::Entity, issue::Column::Year),
-                order.clone(),
-                NullOrdering::Last,
-            );
-        }
-        SortField::CreatedAt => {
-            q.order_by((issue::Entity, issue::Column::CreatedAt), order.clone());
-        }
-        SortField::UpdatedAt => {
-            q.order_by((issue::Entity, issue::Column::UpdatedAt), order.clone());
-        }
-        SortField::LastRead | SortField::ReadProgress => {
-            return Err(CompileError::SortNotAvailable {
-                sort: input.sort_field,
-                entity: ViewEntity::Issue,
-            });
+    for k in keys {
+        let expr: SimpleExpr = Expr::cust(k.sql);
+        if k.nullable {
+            q.order_by_expr_with_nulls(expr, order.clone(), NullOrdering::Last);
+        } else {
+            q.order_by_expr(expr, order.clone());
         }
     }
     q.order_by((issue::Entity, issue::Column::Id), order);
     q.limit(input.limit + 1);
-    if input.offset > 0 {
-        q.offset(input.offset);
-    }
+    Ok(q)
+}
+
+/// `SELECT COUNT(*) AS total` over the same filtered set — the issue-view
+/// results endpoint runs it on the first page only.
+pub fn compile_issues_count(
+    input: &IssueCompileInput<'_>,
+) -> Result<SelectStatement, CompileError> {
+    let mut q = issue_base(input)?;
+    q.expr_as(
+        Func::count(Expr::col((issue::Entity, issue::Column::Id))),
+        Alias::new("total"),
+    );
     Ok(q)
 }
 
@@ -282,7 +476,7 @@ pub fn validate(
             sort_field,
             sort_order,
             limit: 12,
-            offset: 0,
+            cursor: None,
             user_id: Uuid::nil(),
             visible_libraries: VisibleLibraries::unrestricted(),
         })
@@ -1282,7 +1476,7 @@ mod tests {
             sort_field,
             sort_order: SortOrder::Desc,
             limit: 12,
-            offset: 0,
+            cursor: None,
             user_id: Uuid::nil(),
             visible_libraries: VisibleLibraries::unrestricted(),
         };
@@ -1361,9 +1555,12 @@ mod tests {
     #[test]
     fn issue_name_sort_orders_by_series_then_number() {
         let sql = issues_sql_sorted(vec![], SortField::Name).unwrap();
-        let by_name = sql.find(r#""series"."name" DESC"#).expect("series name");
-        let by_num = sql.find(r#""issues"."sort_number" DESC"#).expect("number");
-        assert!(by_name < by_num, "SQL: {sql}");
+        let by_name = sql.find("series.name DESC").expect("series name");
+        let by_num = sql
+            .find("issues.sort_number DESC NULLS LAST")
+            .expect("number");
+        let by_id = sql.find(r#""issues"."id" DESC"#).expect("id");
+        assert!(by_name < by_num && by_num < by_id, "SQL: {sql}");
     }
 
     #[test]
@@ -1464,6 +1661,150 @@ mod tests {
             sql.contains("ur.target_type = 'issue'") && sql.contains("IS NULL"),
             "SQL: {sql}"
         );
+    }
+
+    #[test]
+    fn title_field_filters_issue_title_on_issue_views_only() {
+        let sql = issues_sql(vec![cond(Field::Title, Op::Contains, json!("Origin"))]).unwrap();
+        assert!(
+            sql.contains(r#""issues"."title" LIKE '%Origin%'"#),
+            "SQL: {sql}"
+        );
+        let sql = issues_sql(vec![cond(Field::Title, Op::IsEmpty, json!(null))]).unwrap();
+        assert!(
+            sql.contains(r#"btrim(COALESCE("issues"."title", '')) = ''"#),
+            "SQL: {sql}"
+        );
+        let d = dsl_all(vec![cond(Field::Title, Op::Contains, json!("x"))]);
+        assert!(matches!(
+            compile(&make(d)).unwrap_err(),
+            CompileError::FieldNotAvailable {
+                field: Field::Title,
+                ..
+            }
+        ));
+    }
+
+    fn keyset_sql(sort_field: SortField, sort_order: SortOrder, cursor: IssueCursor) -> String {
+        let dsl = dsl_all(vec![]);
+        let input = IssueCompileInput {
+            dsl: &dsl,
+            sort_field,
+            sort_order,
+            limit: 2,
+            cursor: Some(cursor),
+            user_id: Uuid::nil(),
+            visible_libraries: VisibleLibraries::unrestricted(),
+        };
+        compile_issues(&input)
+            .unwrap()
+            .to_string(PostgresQueryBuilder)
+    }
+
+    #[test]
+    fn name_keyset_is_lexicographic_over_series_number_id() {
+        let sql = keyset_sql(
+            SortField::Name,
+            SortOrder::Asc,
+            IssueCursor {
+                keys: vec![json!("Batman"), json!(2.0)],
+                id: "abc".into(),
+            },
+        );
+        assert!(sql.contains("series.name > 'Batman'"), "SQL: {sql}");
+        assert!(
+            sql.contains(
+                "series.name = 'Batman' AND (issues.sort_number > 2 OR issues.sort_number IS NULL)"
+            ),
+            "SQL: {sql}"
+        );
+        assert!(
+            sql.contains("series.name = 'Batman' AND issues.sort_number = 2 AND issues.id > 'abc'"),
+            "SQL: {sql}"
+        );
+        assert!(!sql.contains("OFFSET"), "SQL: {sql}");
+    }
+
+    #[test]
+    fn null_cursor_key_only_advances_within_the_null_tail() {
+        // Year DESC NULLS LAST: after a NULL year only later NULL-year ids
+        // remain — never a non-NULL year again.
+        let sql = keyset_sql(
+            SortField::Year,
+            SortOrder::Desc,
+            IssueCursor {
+                keys: vec![json!(null)],
+                id: "abc".into(),
+            },
+        );
+        assert!(
+            sql.contains("(issues.year IS NULL AND issues.id < 'abc')"),
+            "SQL: {sql}"
+        );
+        assert!(!sql.contains("issues.year <"), "SQL: {sql}");
+    }
+
+    #[test]
+    fn timestamp_cursor_binds_as_timestamptz() {
+        let dsl = dsl_all(vec![]);
+        let input = IssueCompileInput {
+            dsl: &dsl,
+            sort_field: SortField::CreatedAt,
+            sort_order: SortOrder::Desc,
+            limit: 2,
+            cursor: Some(IssueCursor {
+                keys: vec![json!("2026-05-08T22:42:18.758666+00:00")],
+                id: "abc".into(),
+            }),
+            user_id: Uuid::nil(),
+            visible_libraries: VisibleLibraries::unrestricted(),
+        };
+        let (_, values) = compile_issues(&input).unwrap().build(PostgresQueryBuilder);
+        assert!(
+            values
+                .iter()
+                .any(|v| matches!(v, sea_orm::Value::ChronoDateTimeWithTimeZone(Some(_)))),
+            "{values:?}"
+        );
+    }
+
+    #[test]
+    fn malformed_cursor_is_invalid_cursor() {
+        let dsl = dsl_all(vec![]);
+        let mut input = IssueCompileInput {
+            dsl: &dsl,
+            sort_field: SortField::Name,
+            sort_order: SortOrder::Asc,
+            limit: 2,
+            cursor: Some(IssueCursor {
+                keys: vec![json!("only-one-key")],
+                id: "abc".into(),
+            }),
+            user_id: Uuid::nil(),
+            visible_libraries: VisibleLibraries::unrestricted(),
+        };
+        assert_eq!(
+            compile_issues(&input).unwrap_err(),
+            CompileError::InvalidCursor
+        );
+        input.cursor = Some(IssueCursor {
+            keys: vec![json!(12), json!(1.0)],
+            id: "abc".into(),
+        });
+        assert_eq!(
+            compile_issues(&input).unwrap_err(),
+            CompileError::InvalidCursor
+        );
+    }
+
+    #[test]
+    fn issue_cursor_round_trips_opaquely() {
+        let ts = chrono::DateTime::parse_from_rfc3339("2026-05-08T22:42:18.758666+00:00").unwrap();
+        let c = IssueCursor::for_row(SortField::Name, "id1", "Batman", Some(1.5), None, &ts, &ts);
+        let token = c.encode();
+        assert!(!token.contains("Batman"));
+        assert_eq!(IssueCursor::decode(&token), Some(c));
+        assert_eq!(IssueCursor::decode("not base64 json"), None);
     }
 
     #[test]

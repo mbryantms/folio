@@ -423,6 +423,13 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     allowedOps: TEXT_OPS,
     entities: ISSUE_ONLY,
   },
+  {
+    id: "title",
+    label: "Issue Title",
+    kind: "text",
+    allowedOps: TEXT_OPS,
+    entities: ISSUE_ONLY,
+  },
   // WP-5.4: the caller's own star rating (series + issue views)
   { id: "rating", label: "My Rating", kind: "number", allowedOps: NUMBER_OPS },
 ] as const;

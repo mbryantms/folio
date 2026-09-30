@@ -109,6 +109,9 @@ pub enum Field {
     Format,
     /// ComicInfo `<StoryArc>` (the issue's CSV read-cache column).
     StoryArc,
+    /// The issue's own title (`issues.title`). Issue views only — on an
+    /// issue view `name` is the parent series' name.
+    Title,
     // ───── per-user rating (WP-5.4; series and issue views) ─────
     /// The caller's own 0..=5 star rating from `user_ratings` — the series
     /// rating on series views, the issue rating on issue views. Unrated

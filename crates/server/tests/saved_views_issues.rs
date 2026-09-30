@@ -275,55 +275,136 @@ async fn unread_annuals_2019_rail_renders_pinned() {
     assert_eq!(err["error"]["code"], "unsupported_view_kind");
 }
 
-#[tokio::test]
-async fn issue_results_paginate_with_opaque_cursor() {
-    let app = TestApp::spawn().await;
-    let auth = register(&app, "pager@example.com").await;
-    let tmp = tempfile::tempdir().unwrap();
-    let fx = seed(&app, tmp.path(), auth.user_id).await;
-    let (_, view) = http(
-        &app,
+async fn create_view(app: &TestApp, auth: &Authed, sort_field: &str, sort_order: &str) -> String {
+    let (status, view) = http(
+        app,
         Method::POST,
         "/api/me/saved-views",
-        &auth,
+        auth,
         Some(json!({
             "kind": "filter_issues",
             "name": "All annuals",
             "filter": {"match_mode": "all", "conditions": [
                 {"field": "special_type", "op": "is", "value": "Annual"}
             ]},
-            "sort_field": "name",
-            "sort_order": "asc",
+            "sort_field": sort_field,
+            "sort_order": sort_order,
             "result_limit": 12,
         })),
     )
     .await;
-    let id = view["id"].as_str().unwrap();
+    assert_eq!(status, StatusCode::CREATED, "{view}");
+    view["id"].as_str().unwrap().to_owned()
+}
+
+async fn page(app: &TestApp, auth: &Authed, id: &str, cursor: Option<&str>) -> Value {
+    let uri = match cursor {
+        Some(c) => format!("/api/me/saved-views/{id}/issue-results?limit=2&cursor={c}"),
+        None => format!("/api/me/saved-views/{id}/issue-results?limit=2"),
+    };
+    let (status, page) = http(app, Method::GET, &uri, auth, None).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    page
+}
+
+async fn walk(app: &TestApp, auth: &Authed, id: &str) -> Vec<String> {
     let mut seen = Vec::new();
     let mut cursor: Option<String> = None;
     loop {
-        let uri = match &cursor {
-            Some(c) => format!("/api/me/saved-views/{id}/issue-results?limit=3&cursor={c}"),
-            None => format!("/api/me/saved-views/{id}/issue-results?limit=3"),
-        };
-        let (status, page) = http(&app, Method::GET, &uri, &auth, None).await;
-        assert_eq!(status, StatusCode::OK, "{page}");
-        seen.extend(ids(&page));
-        match page["next_cursor"].as_str() {
+        let p = page(app, auth, id, cursor.as_deref()).await;
+        seen.extend(ids(&p));
+        match p["next_cursor"].as_str() {
             Some(c) => cursor = Some(c.to_owned()),
-            None => break,
+            None => return seen,
         }
     }
-    // Series name then issue number: #1..#4 are the annuals.
+}
+
+/// Keyset paging (owner decision 2026-09-30): issues inserted between page
+/// fetches — one behind the cursor, one ahead of it — must neither shift
+/// a row onto the next page twice nor push one past it. Offset paging
+/// would repeat #2 here.
+#[tokio::test]
+async fn issue_results_keyset_survives_mid_scroll_inserts() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "pager@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = seed(&app, tmp.path(), auth.user_id).await;
+    let id = create_view(&app, &auth, "name", "asc").await;
+
+    let first = page(&app, &auth, &id, None).await;
+    assert_eq!(
+        ids(&first),
+        vec![fx.annual_2019_unread.clone(), fx.annual_2019_read.clone()]
+    );
+    assert_eq!(first["total"], 4, "total rides the first page");
+    let cursor = first["next_cursor"].as_str().unwrap().to_owned();
+
+    // Mid-scroll inserts into the same series: #1.5 lands behind the
+    // cursor, #3.5 ahead of it.
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let (lib, series) = {
+        use sea_orm::FromQueryResult;
+        #[derive(FromQueryResult)]
+        struct R {
+            library_id: Uuid,
+            series_id: Uuid,
+        }
+        let r = R::find_by_statement(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            "SELECT library_id, series_id FROM issues WHERE id = $1",
+            [fx.annual_2019_unread.clone().into()],
+        ))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+        (r.library_id, r.series_id)
+    };
+    let behind = seed_issue(
+        &db,
+        lib,
+        series,
+        &tmp.path().join("b15.cbz"),
+        b"annual-15",
+        1.5,
+    )
+    .await;
+    set_issue(&db, &behind, 2019, Some("Annual"), None).await;
+    let ahead = seed_issue(
+        &db,
+        lib,
+        series,
+        &tmp.path().join("b35.cbz"),
+        b"annual-35",
+        3.5,
+    )
+    .await;
+    set_issue(&db, &ahead, 2019, Some("Annual"), None).await;
+
+    let mut seen = ids(&first);
+    let mut cursor = Some(cursor);
+    while let Some(c) = cursor {
+        let p = page(&app, &auth, &id, Some(&c)).await;
+        assert!(
+            p.get("total").is_none(),
+            "total only on the first page: {p}"
+        );
+        seen.extend(ids(&p));
+        cursor = p["next_cursor"].as_str().map(str::to_owned);
+    }
     assert_eq!(
         seen,
         vec![
-            fx.annual_2019_unread,
-            fx.annual_2019_read,
-            fx.annual_2019_started,
-            fx.annual_2018
-        ]
+            fx.annual_2019_unread.clone(),
+            fx.annual_2019_read.clone(),
+            fx.annual_2019_started.clone(),
+            ahead,
+            fx.annual_2018.clone(),
+        ],
+        "no row skipped, none repeated, the row behind the cursor not shown"
     );
+
     let (status, _) = http(
         &app,
         Method::GET,
@@ -333,6 +414,54 @@ async fn issue_results_paginate_with_opaque_cursor() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// Every issue-view sort pages completely and in the same order as one
+/// big page — including the nullable `year` key (NULLS LAST) and ties.
+#[tokio::test]
+async fn issue_results_keyset_walks_every_sort() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "sorts@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = seed(&app, tmp.path(), auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    // One annual with no year: sorts last in both directions.
+    db.execute_raw(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DbBackend::Postgres,
+        "UPDATE issues SET year = NULL WHERE id = $1",
+        [fx.annual_2019_read.clone().into()],
+    ))
+    .await
+    .unwrap();
+
+    for (sort, order) in [
+        ("name", "asc"),
+        ("name", "desc"),
+        ("year", "asc"),
+        ("year", "desc"),
+        ("created_at", "desc"),
+        ("updated_at", "asc"),
+    ] {
+        let id = create_view(&app, &auth, sort, order).await;
+        let walked = walk(&app, &auth, &id).await;
+        let (_, all) = http(
+            &app,
+            Method::GET,
+            &format!("/api/me/saved-views/{id}/issue-results?limit=50"),
+            &auth,
+            None,
+        )
+        .await;
+        assert_eq!(walked, ids(&all), "{sort} {order}");
+        assert_eq!(walked.len(), 4, "{sort} {order}");
+        if sort == "year" {
+            assert_eq!(
+                walked.last(),
+                Some(&fx.annual_2019_read),
+                "NULLS LAST ({order})"
+            );
+        }
+    }
 }
 
 #[tokio::test]
