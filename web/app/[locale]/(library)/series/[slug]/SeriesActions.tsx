@@ -55,6 +55,7 @@ export function SeriesActions({
         seriesId={series.id}
         seriesSlug={series.slug}
         seriesName={series.name}
+        issueCount={series.issue_count}
         libraryId={libraryId}
         firstIssue={firstIssue}
         readIncognitoHref={readIncognitoHref}

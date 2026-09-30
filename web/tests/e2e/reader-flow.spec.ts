@@ -271,5 +271,145 @@ test.describe("Reader flow", () => {
     await expect
       .poll(serverPage, { message: "outbox replays on relaunch" })
       .toBe(2);
+
+    // 10. Per-issue offline download (WP-4.6): download from the issue
+    //     menu, go offline, open the reader URL (the worker redirects to
+    //     the stored offline shell), read a page, reconnect — the page
+    //     turn made offline replays to the server.
+    const reader = relaunched;
+    // The worker controls a page only after a reload (no clients.claim).
+    await reader.evaluate(async () => {
+      await navigator.serviceWorker.ready;
+    });
+    await reader.reload();
+    await reader.waitForFunction(() => !!navigator.serviceWorker.controller);
+    await reader.goto(`/series/${series.slug}/issues/${issue.slug}`);
+    await reader.getByRole("button", { name: "Issue actions" }).click();
+    await reader
+      .getByRole("menuitem", { name: "Download for offline…" })
+      .click();
+    const dialog = reader.getByRole("dialog");
+    await expect(dialog.getByText(/Estimated size/)).toBeVisible();
+    await dialog.getByRole("radio", { name: /Original/ }).click();
+    await dialog.getByRole("button", { name: "Download" }).click();
+    const offlineState = () =>
+      reader.evaluate(
+        (issueId) =>
+          new Promise<string>((resolve) => {
+            const req = indexedDB.open("folio-offline");
+            req.onerror = () => resolve("no-db");
+            req.onsuccess = () => {
+              const db = req.result;
+              if (!db.objectStoreNames.contains("downloads")) {
+                db.close();
+                return resolve("no-store");
+              }
+              const all = db
+                .transaction("downloads")
+                .objectStore("downloads")
+                .getAll();
+              all.onsuccess = () => {
+                db.close();
+                const row = (
+                  all.result as { issueId: string; status: string }[]
+                ).find((r) => r.issueId === issueId);
+                resolve(row?.status ?? "missing");
+              };
+            };
+          }),
+        issue.id,
+      );
+    await expect
+      .poll(offlineState, { timeout: 30_000, message: "download completes" })
+      .toBe("complete");
+    // The offline shell is stored after the first completed download.
+    await expect
+      .poll(
+        () =>
+          reader.evaluate(async () => {
+            const cache = await caches.open("folio-offline-shell-v1");
+            return !!(await cache.match("/downloads"));
+          }),
+        { timeout: 30_000, message: "offline shell stored" },
+      )
+      .toBe(true);
+    await expect(
+      reader.getByText(/is ready to read offline/).first(),
+    ).toBeVisible();
+
+    // Settings → Downloads lists it with its size.
+    await reader.goto("/settings/downloads");
+    await expect(reader.getByText(/^Downloaded · /)).toBeVisible();
+
+    const before = (
+      await json<{
+        records: { issue_id: string; page: number; run?: number }[];
+      }>(
+        context.request.get(
+          `/api/progress?issue_id=${encodeURIComponent(issue.id)}`,
+        ),
+      )
+    ).records[0]!;
+
+    await context.setOffline(true);
+    await reader.goto(`/read/${series.slug}/${issue.slug}`);
+    await reader.waitForURL(/\/downloads\?from=/);
+    const offlinePage = reader.locator("img[src*='/pages/']").first();
+    await expect(offlinePage).toBeVisible();
+    await expect
+      .poll(() =>
+        offlinePage.evaluate((el) => (el as HTMLImageElement).naturalWidth),
+      )
+      .toBe(100);
+    // The issue was finished on its last page (step 9), so the offline
+    // open restarts from the cover as a new run, exactly like online.
+    await reader.keyboard.press("ArrowRight");
+    const queuedProgress = () =>
+      reader.evaluate(
+        () =>
+          new Promise<number>((resolve) => {
+            const req = indexedDB.open("folio-outbox");
+            req.onerror = () => resolve(-1);
+            req.onsuccess = () => {
+              const db = req.result;
+              if (!db.objectStoreNames.contains("entries")) {
+                db.close();
+                return resolve(0);
+              }
+              const all = db
+                .transaction("entries")
+                .objectStore("entries")
+                .getAll();
+              all.onsuccess = () => {
+                db.close();
+                resolve(
+                  (all.result as { kind: string }[]).filter(
+                    (e) => e.kind === "progress",
+                  ).length,
+                );
+              };
+            };
+          }),
+      );
+    await expect
+      .poll(queuedProgress, { message: "offline page turn queued" })
+      .toBe(1);
+    await context.setOffline(false);
+    await expect
+      .poll(
+        async () =>
+          (
+            await json<{
+              records: { issue_id: string; page: number; run?: number }[];
+            }>(
+              context.request.get(
+                `/api/progress?issue_id=${encodeURIComponent(issue.id)}`,
+              ),
+            )
+          ).records[0],
+        { timeout: 30_000, message: "offline progress replays on reconnect" },
+      )
+      .toMatchObject({ page: 1, run: (before.run ?? 0) + 1 });
+    await expect.poll(queuedProgress).toBe(0);
   });
 });

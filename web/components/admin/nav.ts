@@ -13,6 +13,7 @@ export type IconName =
   | "BookOpen"
   | "Cog"
   | "Copy"
+  | "Download"
   | "FileClock"
   | "FileText"
   | "Gauge"
@@ -146,6 +147,7 @@ export function settingsNav(localePrefix: string): NavSection[] {
         },
         { href: p("/theme"), label: "Theme", icon: "Palette" },
         { href: p("/activity"), label: "Reading stats", icon: "Activity" },
+        { href: p("/downloads"), label: "Downloads", icon: "Download" },
       ],
     },
     {
