@@ -48,6 +48,37 @@ The parity rule is enforced by [crates/server/tests/schema_parity.rs](../../crat
 (audit-remediation M8.3). A new column without an entity update fails the
 test; the same allow-list above is the only escape hatch.
 
+## `down` round-trip gate (WP-3.8, audit AR-9)
+
+Every migration ships a `down`, and CI now runs the newest ten of them:
+the `Rust — migration down round-trip` job
+([scripts/ci/migration-roundtrip.sh](../../scripts/ci/migration-roundtrip.sh),
+wired into `.github/workflows/ci.yml` and folded into the `rust-check`
+aggregate) builds only the `migration` crate and, against a fresh Postgres 18
+service DB:
+
+1. `up` (all) and snapshots `pg_dump --schema-only`;
+2. `down -n 10`, and asserts the schema equals a second fresh DB migrated to
+   exactly `total - 10` — so a `down` that "succeeds" but leaves a column,
+   index or constraint behind fails;
+3. `up` again, and asserts the schema equals step 1 — the ups re-run cleanly.
+
+Column order inside a `CREATE TABLE` is normalised before diffing (a `down`
+that re-adds a dropped column can only append it). Run locally against a
+throwaway PG18 container:
+
+```sh
+docker run -d --rm --name mig-rt -e POSTGRES_USER=comic -e POSTGRES_PASSWORD=comic -p 55438:5432 postgres:18-alpine
+cargo build -p migration
+PG_CONTAINER=mig-rt PG_URL_BASE=postgres://comic:comic@localhost:55438 scripts/ci/migration-roundtrip.sh
+docker stop mig-rt
+```
+
+Writing a new migration: make its `down` the exact inverse of its `up`
+(including indexes/constraints the `up` drops), or the gate fails on the PR
+that adds it. Data-destroying `up`s (column drops) can only restore the
+*shape* on `down`, not the data — the gate checks schema only.
+
 ## Index audit (M8.4)
 
 Audit-remediation M8.4 catalogued the indexes on the hot read paths flagged

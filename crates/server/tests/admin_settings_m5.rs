@@ -173,3 +173,35 @@ async fn negative_number_rejected_at_type_check() {
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "settings.invalid_value");
 }
+
+/// WP-3.8: `cache.thumbs_budget_mb` is live (not restart-gated), defaults
+/// off, and rejects a non-zero value below the 64 MiB floor.
+#[tokio::test]
+async fn thumbs_budget_setting_applies_live_and_validates_floor() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    assert_eq!(app.state().cfg().thumbs_budget_mb, 0, "default off");
+
+    let resp = patch_settings(&app, &admin, json!({ "cache.thumbs_budget_mb": 2048 })).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(app.state().cfg().thumbs_budget_mb, 2048);
+    assert_eq!(app.state().cfg().thumbs_budget_bytes(), 2048 * 1024 * 1024);
+    assert!(
+        !server::settings::registry::requires_restart("cache.thumbs_budget_mb"),
+        "budget is read per sweep — must not raise the restart banner"
+    );
+
+    let resp = patch_settings(&app, &admin, json!({ "cache.thumbs_budget_mb": 10 })).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "settings.invalid_combination");
+    assert_eq!(
+        app.state().cfg().thumbs_budget_mb,
+        2048,
+        "live config unchanged"
+    );
+
+    let resp = patch_settings(&app, &admin, json!({ "cache.thumbs_budget_mb": 0 })).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(app.state().cfg().thumbs_budget_mb, 0, "0 turns it back off");
+}

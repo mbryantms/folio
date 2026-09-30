@@ -62,3 +62,33 @@ pub async fn run(state: &AppState) -> anyhow::Result<usize> {
     }
     Ok(wiped)
 }
+
+/// Daily sweep entry point: the orphan pass, then a byte-budget sweep so
+/// the `folio_thumbs_bytes` gauge reflects what the cleanup freed. Each
+/// step is best-effort — one failing never skips the other.
+pub async fn run_all(state: &AppState) {
+    match run(state).await {
+        Ok(n) if n > 0 => tracing::info!(wiped = n, "thumbnail orphan sweep"),
+        Ok(_) => {}
+        Err(e) => tracing::error!(error = %e, "thumbnail orphan sweep failed"),
+    }
+    if let Err(e) = run_budget_sweep(state).await {
+        tracing::warn!(error = %e, "thumbnail budget sweep failed");
+    }
+}
+
+/// Walk `thumbs/`, publish the `folio_thumbs_bytes` gauge, and enforce the
+/// optional `cache.thumbs_budget_mb` byte budget (WP-3.8, audit OP-5). Runs
+/// hourly from the scheduler, once at boot, and after the daily orphan
+/// sweep; thumbnail writes also trigger a throttled one. The budget is read
+/// from the live `Config` per run, so a settings change applies on the next
+/// sweep without a restart.
+pub async fn run_budget_sweep(state: &AppState) -> anyhow::Result<thumbnails::ThumbsBudgetSweep> {
+    let cfg = state.cfg();
+    let data_path = cfg.data_path.clone();
+    let budget = cfg.thumbs_budget_bytes();
+    let out =
+        tokio::task::spawn_blocking(move || thumbnails::thumbs_budget_sweep(&data_path, budget))
+            .await??;
+    Ok(out)
+}

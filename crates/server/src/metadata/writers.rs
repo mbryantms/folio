@@ -2316,25 +2316,60 @@ pub const VARIANT_BACKFILL_BATCH_CAP: u64 = 500;
 ///     points at bytes that are gone. This is the recovery path for
 ///     covers reclaimed in error by the thumbnail orphan sweep.
 ///
-/// Used by the admin-triggered backfill and the startup drain. Bounded by
-/// [`VARIANT_BACKFILL_BATCH_CAP`] rows scanned per call; rows whose file
-/// already exists cost only a `stat` and are skipped — re-run to drain
-/// larger backlogs. `null` / blank `source_url` rows are unrecoverable
-/// and counted as skipped.
+/// Used by the admin-triggered backfill and the startup drain. Scans at
+/// most [`VARIANT_BACKFILL_BATCH_CAP`] rows per call; rows whose file
+/// already exists cost only a `stat` and are skipped. `null` / blank
+/// `source_url` rows are unrecoverable and counted as skipped.
+///
+/// One page from the start of the table — the drain walks the whole
+/// backlog with [`run_variant_cover_backfill_page`].
 pub async fn run_variant_cover_backfill<C: ConnectionTrait>(
     db: &C,
     data_path: &std::path::Path,
 ) -> Result<VariantCoverBackfillOutcome, sea_orm::DbErr> {
-    // Order empty `local_path` (definitely-missing) rows first so a single
-    // capped pass prioritizes the never-stored backlog; the disk-existence
-    // check below catches the swept-away rows behind them.
-    let rows = issue_cover::Entity::find()
+    run_variant_cover_backfill_page(db, data_path, None)
+        .await
+        .map(|(outcome, _)| outcome)
+}
+
+/// Keyset-paged variant-cover backfill (DI-15). Scans the variant rows with
+/// `id > after` in id order, at most [`VARIANT_BACKFILL_BATCH_CAP`], and
+/// returns the cursor for the next page (`None` once the table is walked).
+///
+/// Paging by id is what lets the drain reach the whole backlog: the old
+/// single-query shape re-read the same first page every pass, so a page of
+/// already-stored rows (or dead URLs) stopped the drain on its
+/// "no forward progress" check with recoverable rows still behind it.
+pub async fn run_variant_cover_backfill_page<C: ConnectionTrait>(
+    db: &C,
+    data_path: &std::path::Path,
+    after: Option<Uuid>,
+) -> Result<(VariantCoverBackfillOutcome, Option<Uuid>), sea_orm::DbErr> {
+    let mut query = issue_cover::Entity::find()
         .filter(issue_cover::Column::Kind.eq("variant"))
-        .filter(issue_cover::Column::SourceUrl.is_not_null())
-        .order_by_asc(issue_cover::Column::LocalPath)
+        .filter(issue_cover::Column::SourceUrl.is_not_null());
+    if let Some(after) = after {
+        query = query.filter(issue_cover::Column::Id.gt(after));
+    }
+    let rows = query
+        .order_by_asc(issue_cover::Column::Id)
         .limit(VARIANT_BACKFILL_BATCH_CAP)
         .all(db)
         .await?;
+    let next = if rows.len() as u64 == VARIANT_BACKFILL_BATCH_CAP {
+        rows.last().map(|r| r.id)
+    } else {
+        None
+    };
+    let outcome = variant_backfill_rows(db, data_path, rows).await?;
+    Ok((outcome, next))
+}
+
+async fn variant_backfill_rows<C: ConnectionTrait>(
+    db: &C,
+    data_path: &std::path::Path,
+    rows: Vec<issue_cover::Model>,
+) -> Result<VariantCoverBackfillOutcome, sea_orm::DbErr> {
     let mut outcome = VariantCoverBackfillOutcome::default();
     for row in rows {
         // Already have the bytes on disk — nothing to do.

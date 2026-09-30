@@ -9,8 +9,9 @@ the endpoint is served by [`api::meta`](../../crates/server/src/api/meta.rs).
 
 > **Lazy registration:** counters/histograms appear only after the relevant code
 > path runs at least once. Boot-time gauges (`folio_process_*`,
-> `folio_jobs_queue_depth`, `folio_metadata_writeback_libraries_remaining`) show
-> immediately.
+> `folio_jobs_queue_depth`, `folio_metadata_writeback_libraries_remaining`,
+> `folio_thumbs_bytes`) show immediately (`folio_thumbs_bytes` once the boot
+> walk of `thumbs/` finishes).
 
 ## Catalogue
 
@@ -40,6 +41,22 @@ never the raw URI — unmatched/proxied requests bucket under `"<unmatched>"`. T
 `post_scan_dictionary`, `metadata_search_series`, `metadata_search_issue`,
 `metadata_apply_series`, `metadata_apply_issue`, `rewrite_issue_sidecars`,
 `archive_edit`. Queue-depth refreshes every 30s ([`jobs::scheduler`](../../crates/server/src/jobs/scheduler.rs)).
+
+### Thumbnail storage — [`library::thumbnails`](../../crates/server/src/library/thumbnails.rs) (WP-3.8, audit OP-5)
+| Metric | Type | Labels |
+|---|---|---|
+| `folio_thumbs_bytes` | gauge | — |
+| `folio_thumbs_evicted_files_total` | counter | — |
+
+`folio_thumbs_bytes` is the total size of `data_path/thumbs/` — generated covers
+(`{id}.webp`, `{id}@sm.webp`), page strips (`{id}/s/*`) and downloaded provider
+covers (`issues/{id}/covers/*`). Refreshed by the thumbnail budget sweep
+([`jobs::orphan_sweep::run_budget_sweep`](../../crates/server/src/jobs/orphan_sweep.rs)):
+once at boot, hourly at `:17`, after the daily 04:30 UTC orphan sweep, and
+(throttled to one per 5 min, only when a budget is set) after thumbnail writes.
+The eviction counter only moves when the optional `cache.thumbs_budget_mb`
+budget is set — see [runtime-configuration.md](runtime-configuration.md).
+Alert idea: `folio_thumbs_bytes` growing toward the data volume's free space.
 
 ### Subsystem counters (pre-existing)
 `folio_scan_duration_seconds`, `folio_scan_files_total`, `folio_scan_health_issues_open`,

@@ -56,6 +56,7 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
+              - 'scripts/ci/migration-roundtrip.sh'
               - '.github/workflows/ci.yml'
             backend_or_spec:
               - 'crates/**'
@@ -282,10 +283,54 @@ jobs:
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
+  # Migration down-path gate (WP-3.8, audit AR-9): every migration ships a
+  # `down`, but nothing ran them. Against a fresh Postgres 18 service DB this
+  # applies everything, rolls back the newest 10, asserts the schema equals a
+  # DB migrated to exactly `total - 10`, then re-applies and asserts the
+  # schema equals the original. Only the small `migration` crate is built.
+  # See scripts/ci/migration-roundtrip.sh.
+  migration-roundtrip:
+    name: Rust — migration down round-trip
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true'
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: 0
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+    services:
+      postgres:
+        image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        env:
+          POSTGRES_USER: comic
+          POSTGRES_PASSWORD: comic
+          POSTGRES_DB: comic
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U comic" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: build migration CLI
+        run: cargo build --locked -p migration --bin migration
+      - name: up → down -n 10 → up
+        run: scripts/ci/migration-roundtrip.sh
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+          PG_URL_BASE: postgres://comic:comic@localhost:5432
+          MIGRATION_BIN: target/debug/migration
+          ROUNDTRIP_COUNT: "10"
+      - name: sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
+
   rust-check:
     name: Rust — fmt / clippy / test
     runs-on: ubuntu-24.04
-    needs: [changes, rust-fmt, rust-clippy, rust-test]
+    needs: [changes, rust-fmt, rust-clippy, rust-test, migration-roundtrip]
     if: always()
     timeout-minutes: 5
     steps:
@@ -299,6 +344,7 @@ jobs:
             echo "| fmt | ${{ needs.rust-fmt.result }} |"
             echo "| clippy | ${{ needs.rust-clippy.result }} |"
             echo "| test | ${{ needs.rust-test.result }} |"
+            echo "| migration round-trip | ${{ needs.migration-roundtrip.result }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           case "${{ needs.rust-fmt.result }}" in
@@ -312,6 +358,10 @@ jobs:
           case "${{ needs.rust-test.result }}" in
             success|skipped) ;;
             *) echo "::error::rust test gate did not pass"; exit 1 ;;
+          esac
+          case "${{ needs.migration-roundtrip.result }}" in
+            success|skipped) ;;
+            *) echo "::error::migration round-trip gate did not pass"; exit 1 ;;
           esac
 
   rust-audit:

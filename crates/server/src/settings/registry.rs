@@ -144,6 +144,13 @@ pub const REGISTRY: &[SettingDef] = &[
         is_secret: false,
     },
     SettingDef {
+        // Byte budget (MiB) for generated thumbnails under `thumbs/`
+        // (WP-3.8). 0 / unset = unbounded. Live — NOT restart-gated.
+        key: "cache.thumbs_budget_mb",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
+    SettingDef {
         key: "workers.scan_count",
         kind: SettingKind::Uint,
         is_secret: false,

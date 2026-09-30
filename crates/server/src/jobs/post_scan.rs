@@ -370,6 +370,13 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                 pages: o.total_pages as u64,
             });
             app.unmark_thumb_job_queued(&dedupe_key).await;
+            // Optional thumbnail byte budget (WP-3.8): throttled, no-op
+            // when `cache.thumbs_budget_mb` is 0.
+            let cfg = app.cfg();
+            thumbnails::spawn_budget_sweep_if_needed(
+                cfg.data_path.clone(),
+                cfg.thumbs_budget_bytes(),
+            );
             Ok(())
         }
         Ok(Err(e)) => {

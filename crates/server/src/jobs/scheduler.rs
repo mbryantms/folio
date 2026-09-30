@@ -29,6 +29,7 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     register_scan_runs_prune(&scheduler, &state).await;
     register_library_events_prune(&scheduler, &state).await;
     register_thumbnail_orphan_sweep(&scheduler, &state).await;
+    register_thumbs_budget_sweep(&scheduler, &state).await;
     register_backup_prune(&scheduler, &state).await;
     // No thumbnail/phash catchup sweep: queued work is user-directed
     // only (a scan, or an explicit admin "Generate missing" / backfill
@@ -397,14 +398,7 @@ async fn register_thumbnail_orphan_sweep(scheduler: &JobScheduler, state: &AppSt
     let job_result = Job::new_async("0 30 4 * * *", move |_uuid, _l| {
         let state = state.clone();
         Box::pin(async move {
-            match crate::jobs::orphan_sweep::run(&state).await {
-                Ok(n) => {
-                    if n > 0 {
-                        tracing::info!(wiped = n, "thumbnail orphan sweep");
-                    }
-                }
-                Err(e) => tracing::error!(error = %e, "thumbnail orphan sweep failed"),
-            }
+            crate::jobs::orphan_sweep::run_all(&state).await;
         })
     });
     match job_result {
@@ -416,6 +410,38 @@ async fn register_thumbnail_orphan_sweep(scheduler: &JobScheduler, state: &AppSt
             }
         }
         Err(e) => tracing::error!(error = %e, "scheduler: build thumbnail_orphan_sweep failed"),
+    }
+}
+
+/// Hourly `thumbs/` byte-budget sweep (WP-3.8, audit OP-5): publishes the
+/// `folio_thumbs_bytes` gauge and, when `cache.thumbs_budget_mb` is set,
+/// evicts least-recently-used generated thumbnails. One run at boot (in the
+/// background — a large tree takes a moment to walk) seeds the gauge.
+async fn register_thumbs_budget_sweep(scheduler: &JobScheduler, state: &AppState) {
+    let boot_state = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::jobs::orphan_sweep::run_budget_sweep(&boot_state).await {
+            tracing::warn!(error = %e, "thumbnail budget sweep (boot) failed");
+        }
+    });
+    let state = state.clone();
+    let job_result = Job::new_async("0 17 * * * *", move |_uuid, _l| {
+        let state = state.clone();
+        Box::pin(async move {
+            if let Err(e) = crate::jobs::orphan_sweep::run_budget_sweep(&state).await {
+                tracing::warn!(error = %e, "thumbnail budget sweep failed");
+            }
+        })
+    });
+    match job_result {
+        Ok(job) => {
+            if let Err(e) = scheduler.add(job).await {
+                tracing::error!(error = %e, "scheduler: add thumbs_budget_sweep failed");
+            } else {
+                tracing::info!("thumbnail budget sweep registered (hourly at :17)");
+            }
+        }
+        Err(e) => tracing::error!(error = %e, "scheduler: build thumbs_budget_sweep failed"),
     }
 }
 
