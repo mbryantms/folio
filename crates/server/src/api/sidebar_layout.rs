@@ -522,7 +522,7 @@ fn default_header(ref_id: &str, label: &str) -> SidebarEntryView {
 fn view_default_icon(v: &saved_view::Model) -> String {
     match v.kind.as_str() {
         "system" => "sparkles",
-        "filter_series" => "filter",
+        "filter_series" | "filter_issues" => "filter",
         "cbl" => "list-ordered",
         "collection" => "Folder",
         _ => "filter",

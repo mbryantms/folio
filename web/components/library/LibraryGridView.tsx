@@ -304,6 +304,8 @@ export function LibraryGridView({
     const today = new Date().toISOString().slice(0, 10);
     const result = libraryGridStateToFilterBuilderState(
       {
+        mode,
+        readStatus,
         status,
         metadataCompleteness,
         yearFrom,

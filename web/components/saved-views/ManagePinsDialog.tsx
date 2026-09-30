@@ -30,6 +30,7 @@ const DEFAULT_RAIL_CAP = 12;
 const GROUP_ORDER: ReadonlyArray<SavedViewView["kind"]> = [
   "system",
   "filter_series",
+  "filter_issues",
   "cbl",
   "collection",
 ];
@@ -40,6 +41,8 @@ function groupLabel(kind: SavedViewView["kind"]): string {
       return "Built-in";
     case "filter_series":
       return "Filter views";
+    case "filter_issues":
+      return "Issue filter views";
     case "cbl":
       return "CBL lists";
     case "collection":

@@ -14,14 +14,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import {
   SeriesCard,
   SeriesCardSkeleton,
 } from "@/components/library/SeriesCard";
-import { previewSavedView } from "@/lib/api/queries";
+import { previewSavedIssueView, previewSavedView } from "@/lib/api/queries";
 import type {
   Condition,
   FilterDsl,
+  IssueListView,
   MatchMode,
   PreviewReq,
   SavedViewSortField,
@@ -31,11 +33,18 @@ import type {
 import { HttpError } from "@/lib/api/queries";
 
 import { ConditionRow } from "./condition-row";
-import { specFor } from "./field-registry";
+import { fieldAvailableOn, specFor, type ViewEntity } from "./field-registry";
+
+type Preview =
+  | { entity: "series"; data: SeriesListView }
+  | { entity: "issue"; data: IssueListView };
 
 export type FilterBuilderState = {
   name: string;
   description: string;
+  /** What the view lists: series (`filter_series`) or issues
+   *  (`filter_issues`, WP-5.4). */
+  entity: ViewEntity;
   matchMode: MatchMode;
   conditions: Condition[];
   sortField: SavedViewSortField;
@@ -52,11 +61,15 @@ export type FilterBuilderProps = {
   /** Optional library scope passed to async option lookups. */
   library?: string;
   saveLabel?: string;
+  /** Hide the series/issues switch — a saved view's kind is fixed after
+   *  creation, so the edit sheet locks it. */
+  entityLocked?: boolean;
 };
 
 const DEFAULT_STATE: FilterBuilderState = {
   name: "",
   description: "",
+  entity: "series",
   matchMode: "all",
   conditions: [],
   sortField: "created_at",
@@ -79,6 +92,40 @@ const SORT_FIELDS: { value: SavedViewSortField; label: string }[] = [
   { value: "read_progress", label: "Read progress" },
 ];
 
+/** Sort axes an issue view accepts — the per-user series rollups
+ *  (`last_read`, `read_progress`) have no issue-level equivalent and the
+ *  server 422s them. `name` sorts by series name, then issue number. */
+const ISSUE_SORT_FIELDS: { value: SavedViewSortField; label: string }[] = [
+  { value: "name", label: "Series & number" },
+  { value: "year", label: "Release date" },
+  { value: "created_at", label: "Recently added" },
+  { value: "updated_at", label: "Recently updated" },
+];
+
+export function sortFieldsFor(
+  entity: ViewEntity,
+): { value: SavedViewSortField; label: string }[] {
+  return entity === "issue" ? ISSUE_SORT_FIELDS : SORT_FIELDS;
+}
+
+/** Switching entity keeps only the conditions (and sort) still valid on
+ *  the new root, so the preview/save never 422s on a hidden field. */
+export function switchEntity(
+  state: FilterBuilderState,
+  entity: ViewEntity,
+): FilterBuilderState {
+  const conditions = state.conditions.filter((c) =>
+    fieldAvailableOn(specFor(c.field), entity),
+  );
+  const sortOk = sortFieldsFor(entity).some((f) => f.value === state.sortField);
+  return {
+    ...state,
+    entity,
+    conditions,
+    sortField: sortOk ? state.sortField : "created_at",
+  };
+}
+
 function mergeInitial(
   initial?: Partial<FilterBuilderState>,
 ): FilterBuilderState {
@@ -91,11 +138,12 @@ export function FilterBuilder({
   onCancel,
   library,
   saveLabel = "Save view",
+  entityLocked = false,
 }: FilterBuilderProps) {
   const [state, setState] = React.useState<FilterBuilderState>(() =>
     mergeInitial(initial),
   );
-  const [preview, setPreview] = React.useState<SeriesListView | null>(null);
+  const [preview, setPreview] = React.useState<Preview | null>(null);
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
@@ -136,8 +184,11 @@ export function FilterBuilder({
         sort_order: state.sortOrder,
         result_limit: state.resultLimit,
       };
-      const res = await previewSavedView(req);
-      setPreview(res);
+      if (state.entity === "issue") {
+        setPreview({ entity: "issue", data: await previewSavedIssueView(req) });
+      } else {
+        setPreview({ entity: "series", data: await previewSavedView(req) });
+      }
     } catch (e) {
       const msg =
         e instanceof HttpError
@@ -190,6 +241,27 @@ export function FilterBuilder({
         </div>
       </div>
 
+      {entityLocked ? null : (
+        <div className="flex flex-col gap-1 sm:max-w-xs">
+          <Label htmlFor="filter-entity">Show</Label>
+          <Select
+            value={state.entity}
+            onValueChange={(v) => {
+              setState((prev) => switchEntity(prev, v as ViewEntity));
+              setPreview(null);
+            }}
+          >
+            <SelectTrigger id="filter-entity">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="series">Series</SelectItem>
+              <SelectItem value="issue">Issues</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
       <Separator />
 
       <div className="flex flex-col gap-2">
@@ -229,6 +301,7 @@ export function FilterBuilder({
               key={i}
               condition={c}
               library={library}
+              entity={state.entity}
               onChange={(next) => updateCondition(i, next)}
               onRemove={() => removeCondition(i)}
             />
@@ -249,7 +322,7 @@ export function FilterBuilder({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {SORT_FIELDS.map((f) => (
+              {sortFieldsFor(state.entity).map((f) => (
                 <SelectItem key={f.value} value={f.value}>
                   {f.label}
                 </SelectItem>
@@ -327,16 +400,22 @@ export function FilterBuilder({
         </div>
       ) : null}
 
-      <PreviewGrid preview={preview} loading={isPreviewing} />
+      <PreviewGrid
+        preview={preview}
+        entity={state.entity}
+        loading={isPreviewing}
+      />
     </div>
   );
 }
 
 function PreviewGrid({
   preview,
+  entity,
   loading,
 }: {
-  preview: SeriesListView | null;
+  preview: Preview | null;
+  entity: ViewEntity;
   loading: boolean;
 }) {
   // Use SeriesCard `size="md"` (`w-full`) inside the grid so each card
@@ -349,14 +428,18 @@ function PreviewGrid({
   if (loading) {
     return (
       <div className={gridClass}>
-        {Array.from({ length: 6 }).map((_, i) => (
-          <SeriesCardSkeleton key={i} size="md" />
-        ))}
+        {Array.from({ length: 6 }).map((_, i) =>
+          entity === "issue" ? (
+            <IssueCardSkeleton key={i} />
+          ) : (
+            <SeriesCardSkeleton key={i} size="md" />
+          ),
+        )}
       </div>
     );
   }
   if (!preview) return null;
-  if (preview.items.length === 0) {
+  if (preview.data.items.length === 0) {
     return (
       <div className="text-muted-foreground rounded-md border border-dashed p-6 text-center text-sm">
         No matches.
@@ -365,9 +448,11 @@ function PreviewGrid({
   }
   return (
     <div className={gridClass}>
-      {preview.items.map((s) => (
-        <SeriesCard key={s.id} series={s} size="md" />
-      ))}
+      {preview.entity === "issue"
+        ? preview.data.items.map((i) => <IssueCard key={i.id} issue={i} />)
+        : preview.data.items.map((s) => (
+            <SeriesCard key={s.id} series={s} size="md" />
+          ))}
     </div>
   );
 }

@@ -13,6 +13,24 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// Which table a filter view's DSL is compiled against (WP-5.4). Derived
+/// from `saved_views.kind` (`filter_series` → `Series`, `filter_issues` →
+/// `Issue`) — never sent on the wire, so the discriminator has one home.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ViewEntity {
+    Series,
+    Issue,
+}
+
+impl ViewEntity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ViewEntity::Series => "series",
+            ViewEntity::Issue => "issue",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MatchMode {
@@ -83,6 +101,19 @@ pub enum Field {
     /// the series has no active issues). Mirrors the per-issue scorer in
     /// `metadata::completeness`.
     MetadataCompleteness,
+    // ───── issue-level fields (WP-5.4; `filter_issues` views only) ─────
+    /// Spec §6.5 classification: `Special` / `Annual` / `OneShot` /
+    /// `TPB`; NULL for an ordinary numbered issue (`is_empty`).
+    SpecialType,
+    /// ComicInfo `<Format>` (free text: "Annual", "Trade Paperback", …).
+    Format,
+    /// ComicInfo `<StoryArc>` (the issue's CSV read-cache column).
+    StoryArc,
+    // ───── per-user rating (WP-5.4; series and issue views) ─────
+    /// The caller's own 0..=5 star rating from `user_ratings` — the series
+    /// rating on series views, the issue rating on issue views. Unrated
+    /// rows are NULL (`is_empty`).
+    Rating,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
@@ -120,6 +151,11 @@ pub enum Op {
     // bool
     IsTrue,
     IsFalse,
+    /// NULL (or blank text / no junction row / no rating). Takes no
+    /// value. WP-5.4.
+    IsEmpty,
+    /// Negation of [`Op::IsEmpty`]. WP-5.4.
+    IsNotEmpty,
 }
 
 /// One condition row in a filter DSL. `group_id` always 0 in v1; reserved

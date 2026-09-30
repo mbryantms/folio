@@ -3,8 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   FIELD_SPECS,
   OP_LABELS,
+  entityForKind,
+  fieldLabel,
+  fieldsFor,
+  kindForEntity,
+  opTakesNoValue,
   specFor,
 } from "@/components/filters/field-registry";
+import { switchEntity } from "@/components/filters/filter-builder";
 import type { Field, Op } from "@/lib/api/types";
 
 const ALL_FIELDS: Field[] = [
@@ -40,6 +46,10 @@ const ALL_FIELDS: Field[] = [
   "unread_issues",
   "collection_completeness",
   "metadata_completeness",
+  "special_type",
+  "format",
+  "story_arc",
+  "rating",
 ];
 
 const ALL_OPS: Op[] = [
@@ -65,6 +75,8 @@ const ALL_OPS: Op[] = [
   "excludes",
   "is_true",
   "is_false",
+  "is_empty",
+  "is_not_empty",
 ];
 
 describe("filter field registry", () => {
@@ -101,5 +113,71 @@ describe("filter field registry", () => {
     for (const spec of multi) {
       expect(spec.optionsEndpoint).toBeDefined();
     }
+  });
+
+  // WP-5.4 — per-entity availability mirrors `source` / `issue_source`
+  // in crates/server/src/views/registry.rs.
+  it("issue-only fields are hidden from series views", () => {
+    const series = fieldsFor("series").map((s) => s.id);
+    const issue = fieldsFor("issue").map((s) => s.id);
+    for (const f of ["special_type", "format", "story_arc"] as Field[]) {
+      expect(series).not.toContain(f);
+      expect(issue).toContain(f);
+    }
+  });
+
+  it("series rollups are hidden from issue views", () => {
+    const issue = fieldsFor("issue").map((s) => s.id);
+    for (const f of [
+      "read_progress",
+      "last_read",
+      "read_count",
+      "unread_issues",
+      "collection_completeness",
+      "metadata_completeness",
+    ] as Field[]) {
+      expect(issue).not.toContain(f);
+    }
+    expect(issue).toContain("read_status");
+    expect(issue).toContain("rating");
+  });
+
+  it("is_empty is offered on nullable fields but not on computed ones", () => {
+    expect(specFor("story_arc").allowedOps).toContain("is_empty");
+    expect(specFor("genres").allowedOps).toContain("is_not_empty");
+    expect(specFor("read_status").allowedOps).not.toContain("is_empty");
+    expect(specFor("name").allowedOps).not.toContain("is_empty");
+    expect(opTakesNoValue("is_empty")).toBe(true);
+    expect(opTakesNoValue("equals")).toBe(false);
+  });
+
+  it("kind <-> entity round-trips and issue labels override", () => {
+    expect(entityForKind("filter_issues")).toBe("issue");
+    expect(entityForKind("filter_series")).toBe("series");
+    expect(kindForEntity("issue")).toBe("filter_issues");
+    expect(fieldLabel(specFor("name"), "issue")).toBe("Series Name");
+    expect(fieldLabel(specFor("name"), "series")).toBe("Name");
+  });
+
+  it("switching the builder to issues drops series-only conditions + sorts", () => {
+    const next = switchEntity(
+      {
+        name: "x",
+        description: "",
+        entity: "series",
+        matchMode: "all",
+        conditions: [
+          { field: "unread_issues", op: "gt", value: 1 },
+          { field: "year", op: "equals", value: 2019 },
+        ],
+        sortField: "read_progress",
+        sortOrder: "desc",
+        resultLimit: 12,
+      },
+      "issue",
+    );
+    expect(next.entity).toBe("issue");
+    expect(next.conditions.map((c) => c.field)).toEqual(["year"]);
+    expect(next.sortField).toBe("created_at");
   });
 });

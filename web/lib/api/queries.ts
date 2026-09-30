@@ -1675,12 +1675,48 @@ export function useSavedViewResultsInfinite(id: string) {
   });
 }
 
+/** Issue-level (`filter_issues`) view results — the home rail's first
+ *  page (WP-5.4). */
+export function useSavedViewIssueResults(id: string) {
+  return useQuery({
+    queryKey: queryKeys.savedViewIssueResults(id),
+    queryFn: () =>
+      jsonFetch<IssueListView>(`/me/saved-views/${id}/issue-results`),
+    enabled: !!id,
+  });
+}
+
+/** Cursor-paginated issue-view results for the detail page's grid. */
+export function useSavedViewIssueResultsInfinite(id: string) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.savedViewIssueResultsInfinite(id),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<IssueListView>(
+        `/me/saved-views/${id}/issue-results${buildQuery({ cursor: pageParam, limit: 60 })}`,
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    enabled: !!id,
+  });
+}
+
+/** POST /me/saved-views/preview-issues — stateless issue-level preview. */
+export async function previewSavedIssueView(
+  req: PreviewReq,
+): Promise<IssueListView> {
+  return postPreview<IssueListView>("/me/saved-views/preview-issues", req);
+}
+
 /** POST /me/saved-views/preview — stateless filter-DSL preview. */
 export async function previewSavedView(
   req: PreviewReq,
 ): Promise<SeriesListView> {
+  return postPreview<SeriesListView>("/me/saved-views/preview", req);
+}
+
+async function postPreview<T>(path: string, req: PreviewReq): Promise<T> {
   const csrf = getCsrfToken();
-  const res = await apiFetch("/me/saved-views/preview", {
+  const res = await apiFetch(path, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1690,7 +1726,7 @@ export async function previewSavedView(
     body: JSON.stringify(req),
   });
   if (!res.ok) {
-    let detail = `/me/saved-views/preview → ${res.status}`;
+    let detail = `${path} → ${res.status}`;
     try {
       const body = await res.json();
       detail = body?.error?.message ?? detail;
@@ -1699,7 +1735,7 @@ export async function previewSavedView(
     }
     throw new HttpError(res.status, detail);
   }
-  return (await res.json()) as SeriesListView;
+  return (await res.json()) as T;
 }
 
 // ---------- CBL lists (M5 read-only hooks; M6 builds on these) ----------

@@ -24,6 +24,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { kindForEntity } from "@/components/filters/field-registry";
 import { PopoverPortalContainer } from "@/components/ui/popover";
 import { useCreateSavedView, usePinSavedView } from "@/lib/api/mutations";
 
@@ -107,7 +108,8 @@ export function NewFilterViewDialog({
         <DialogHeader>
           <DialogTitle>New filter view</DialogTitle>
           <DialogDescription>
-            Chain conditions to define what shows up. Preview before saving.
+            List series or individual issues. Chain conditions to define what
+            shows up, and preview before saving.
           </DialogDescription>
         </DialogHeader>
         <PopoverPortalContainer value={portalContainer}>
@@ -122,7 +124,7 @@ export function NewFilterViewDialog({
               onSave={async (state) => {
                 try {
                   const view = await create.mutateAsync({
-                    kind: "filter_series",
+                    kind: kindForEntity(state.entity),
                     name: state.name,
                     description: state.description.trim() || null,
                     filter: {

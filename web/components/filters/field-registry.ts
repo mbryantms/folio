@@ -15,6 +15,20 @@ import type { Field, Op } from "@/lib/api/types";
  *  the `Condition.value` has on the wire. */
 export type FieldKind = "text" | "number" | "date" | "enum" | "uuid" | "multi";
 
+/** Which root a filter view compiles against (WP-5.4): `filter_series`
+ *  views → `"series"`, `filter_issues` views → `"issue"`. */
+export type ViewEntity = "series" | "issue";
+
+export function entityForKind(kind: string): ViewEntity {
+  return kind === "filter_issues" ? "issue" : "series";
+}
+
+export function kindForEntity(
+  entity: ViewEntity,
+): "filter_series" | "filter_issues" {
+  return entity === "issue" ? "filter_issues" : "filter_series";
+}
+
 export type OptionsEndpoint =
   | { kind: "genres" }
   | { kind: "tags" }
@@ -44,16 +58,33 @@ export type FieldSpec = {
   /** Where the `MultiSelectEditor` (or library-Combobox) fetches its
    *  options. `undefined` when there is no remote lookup. */
   optionsEndpoint?: OptionsEndpoint;
+  /** Entities the field is available on — mirrors `source` /
+   *  `issue_source` in the Rust registry. Defaults to both. */
+  entities?: readonly ViewEntity[];
+  /** Label override on issue views (e.g. `name` means the parent
+   *  series' name there). */
+  issueLabel?: string;
 };
 
-const TEXT_OPS: readonly [Op, ...Op[]] = [
+const SERIES_ONLY: readonly ViewEntity[] = ["series"];
+const ISSUE_ONLY: readonly ViewEntity[] = ["issue"];
+
+// Nullable fields carry `is_empty` / `is_not_empty` (WP-5.4); the
+// `*_REQUIRED` / `COMPUTED_*` lists omit them for NOT NULL columns and
+// derived rollups, exactly as the Rust registry does.
+const TEXT_OPS_REQUIRED: readonly [Op, ...Op[]] = [
   "contains",
   "not_contains",
   "starts_with",
   "equals",
   "not_equals",
 ];
-const NUMBER_OPS: readonly [Op, ...Op[]] = [
+const TEXT_OPS: readonly [Op, ...Op[]] = [
+  ...TEXT_OPS_REQUIRED,
+  "is_empty",
+  "is_not_empty",
+];
+const COMPUTED_NUMBER_OPS: readonly [Op, ...Op[]] = [
   "equals",
   "not_equals",
   "gt",
@@ -62,7 +93,12 @@ const NUMBER_OPS: readonly [Op, ...Op[]] = [
   "lte",
   "between",
 ];
-const DATE_OPS: readonly [Op, ...Op[]] = [
+const NUMBER_OPS: readonly [Op, ...Op[]] = [
+  ...COMPUTED_NUMBER_OPS,
+  "is_empty",
+  "is_not_empty",
+];
+const DATE_OPS_REQUIRED: readonly [Op, ...Op[]] = [
   "before",
   "after",
   "between",
@@ -70,12 +106,33 @@ const DATE_OPS: readonly [Op, ...Op[]] = [
   "lt",
   "gt",
 ];
-const ENUM_OPS: readonly [Op, ...Op[]] = ["is", "is_not", "in", "not_in"];
+const DATE_OPS: readonly [Op, ...Op[]] = [
+  ...DATE_OPS_REQUIRED,
+  "is_empty",
+  "is_not_empty",
+];
+const COMPUTED_ENUM_OPS: readonly [Op, ...Op[]] = [
+  "is",
+  "is_not",
+  "in",
+  "not_in",
+];
+const ENUM_OPS: readonly [Op, ...Op[]] = [
+  ...COMPUTED_ENUM_OPS,
+  "is_empty",
+  "is_not_empty",
+];
 const MULTI_OPS: readonly [Op, ...Op[]] = [
   "includes_any",
   "includes_all",
   "excludes",
+  "is_empty",
+  "is_not_empty",
 ];
+
+/** `issues.special_type` values (spec §6.5). Mirrors
+ *  `SPECIAL_TYPE_VALUES` in the Rust registry. */
+const SPECIAL_TYPE_VALUES = ["Annual", "Special", "OneShot", "TPB"] as const;
 
 const SERIES_STATUS_VALUES = [
   "continuing",
@@ -134,7 +191,13 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     allowedOps: ["equals", "not_equals", "in", "not_in"],
     optionsEndpoint: { kind: "libraries" },
   },
-  { id: "name", label: "Name", kind: "text", allowedOps: TEXT_OPS },
+  {
+    id: "name",
+    label: "Name",
+    kind: "text",
+    allowedOps: TEXT_OPS_REQUIRED,
+    issueLabel: "Series Name",
+  },
   { id: "year", label: "Year", kind: "number", allowedOps: NUMBER_OPS },
   { id: "volume", label: "Volume", kind: "number", allowedOps: NUMBER_OPS },
   {
@@ -142,6 +205,7 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     label: "Total Issues",
     kind: "number",
     allowedOps: NUMBER_OPS,
+    issueLabel: "Series Total Issues",
   },
   { id: "publisher", label: "Publisher", kind: "text", allowedOps: TEXT_OPS },
   { id: "imprint", label: "Imprint", kind: "text", allowedOps: TEXT_OPS },
@@ -149,8 +213,9 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     id: "status",
     label: "Status",
     kind: "enum",
-    allowedOps: ENUM_OPS,
+    allowedOps: COMPUTED_ENUM_OPS,
     enumValues: SERIES_STATUS_VALUES,
+    issueLabel: "Series Status",
   },
   {
     id: "age_rating",
@@ -165,8 +230,18 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     kind: "text",
     allowedOps: TEXT_OPS,
   },
-  { id: "created_at", label: "Created At", kind: "date", allowedOps: DATE_OPS },
-  { id: "updated_at", label: "Updated At", kind: "date", allowedOps: DATE_OPS },
+  {
+    id: "created_at",
+    label: "Created At",
+    kind: "date",
+    allowedOps: DATE_OPS_REQUIRED,
+  },
+  {
+    id: "updated_at",
+    label: "Updated At",
+    kind: "date",
+    allowedOps: DATE_OPS_REQUIRED,
+  },
   {
     id: "genres",
     label: "Genres",
@@ -262,21 +337,29 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     id: "read_progress",
     label: "Read Progress",
     kind: "number",
-    allowedOps: NUMBER_OPS,
+    allowedOps: COMPUTED_NUMBER_OPS,
+    entities: SERIES_ONLY,
   },
-  { id: "last_read", label: "Last Read", kind: "date", allowedOps: DATE_OPS },
+  {
+    id: "last_read",
+    label: "Last Read",
+    kind: "date",
+    allowedOps: DATE_OPS,
+    entities: SERIES_ONLY,
+  },
   {
     id: "read_count",
     label: "Read Count",
     kind: "number",
-    allowedOps: NUMBER_OPS,
+    allowedOps: COMPUTED_NUMBER_OPS,
+    entities: SERIES_ONLY,
   },
   // library-filters-richer-1.0 M2: three-state read rollup
   {
     id: "read_status",
     label: "Read Status",
     kind: "enum",
-    allowedOps: ENUM_OPS,
+    allowedOps: COMPUTED_ENUM_OPS,
     enumValues: READ_STATUS_VALUES,
     enumLabels: { read: "Read", in_progress: "In progress", unread: "Unread" },
   },
@@ -285,35 +368,89 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     id: "unread_issues",
     label: "Unread Issues",
     kind: "number",
-    allowedOps: NUMBER_OPS,
+    allowedOps: COMPUTED_NUMBER_OPS,
+    entities: SERIES_ONLY,
   },
   // library-filters-richer-1.0 M4: do I have all issues?
   {
     id: "collection_completeness",
     label: "Collection Completeness",
     kind: "enum",
-    allowedOps: ENUM_OPS,
+    allowedOps: COMPUTED_ENUM_OPS,
     enumValues: COLLECTION_COMPLETENESS_VALUES,
     enumLabels: {
       complete: "Complete",
       incomplete: "Incomplete",
       unknown: "Unknown (no expected count)",
     },
+    entities: SERIES_ONLY,
   },
   // metadata-completeness: which series still need metadata pulled
   {
     id: "metadata_completeness",
     label: "Metadata Completeness",
     kind: "enum",
-    allowedOps: ENUM_OPS,
+    allowedOps: COMPUTED_ENUM_OPS,
     enumValues: METADATA_COMPLETENESS_VALUES,
     enumLabels: {
       complete: "Complete",
       partial: "Partial",
       needs_metadata: "Needs metadata",
     },
+    entities: SERIES_ONLY,
   },
+  // WP-5.4: issue-level fields (`filter_issues` views only)
+  {
+    id: "special_type",
+    label: "Special Type",
+    kind: "enum",
+    allowedOps: ENUM_OPS,
+    enumValues: SPECIAL_TYPE_VALUES,
+    enumLabels: { OneShot: "One-shot" },
+    entities: ISSUE_ONLY,
+  },
+  {
+    id: "format",
+    label: "Format",
+    kind: "text",
+    allowedOps: TEXT_OPS,
+    entities: ISSUE_ONLY,
+  },
+  {
+    id: "story_arc",
+    label: "Story Arc",
+    kind: "text",
+    allowedOps: TEXT_OPS,
+    entities: ISSUE_ONLY,
+  },
+  // WP-5.4: the caller's own star rating (series + issue views)
+  { id: "rating", label: "My Rating", kind: "number", allowedOps: NUMBER_OPS },
 ] as const;
+
+/** Whether `spec` can be used on a view of `entity`. */
+export function fieldAvailableOn(spec: FieldSpec, entity: ViewEntity): boolean {
+  return (spec.entities ?? ["series", "issue"]).includes(entity);
+}
+
+/** Fields offered by the builder for `entity`. */
+export function fieldsFor(entity: ViewEntity): FieldSpec[] {
+  return FIELD_SPECS.filter((s) => fieldAvailableOn(s, entity));
+}
+
+/** The picker label for `spec` on `entity`. */
+export function fieldLabel(spec: FieldSpec, entity: ViewEntity): string {
+  return entity === "issue" && spec.issueLabel ? spec.issueLabel : spec.label;
+}
+
+/** Ops that take no value (the editor hides the value input). */
+export function opTakesNoValue(op: Op): boolean {
+  return (
+    op === "is_true" ||
+    op === "is_false" ||
+    op === "is_empty" ||
+    op === "is_not_empty"
+  );
+}
 
 export function specFor(field: Field): FieldSpec {
   const spec = FIELD_SPECS.find((s) => s.id === field);
@@ -344,4 +481,6 @@ export const OP_LABELS: Record<Op, string> = {
   excludes: "none of",
   is_true: "is true",
   is_false: "is false",
+  is_empty: "is empty",
+  is_not_empty: "is not empty",
 };

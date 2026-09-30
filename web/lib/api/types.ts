@@ -669,7 +669,12 @@ export type SavedViewSortField =
   | "last_read"
   | "read_progress";
 
-export type SavedViewKind = "filter_series" | "cbl" | "system" | "collection";
+export type SavedViewKind =
+  | "filter_series"
+  | "filter_issues"
+  | "cbl"
+  | "system"
+  | "collection";
 
 export type SystemRailKey = "continue_reading" | "on_deck" | "want_to_read";
 

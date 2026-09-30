@@ -3120,6 +3120,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/saved-views/preview-issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /me/saved-views/preview-issues` — stateless preview of an
+         *     issue-level (`filter_issues`) DSL. Same body as `/preview`.
+         */
+        post: operations["saved_views_preview_issues"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/saved-views/reorder": {
         parameters: {
             query?: never;
@@ -3162,6 +3182,27 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["saved_views_set_icon"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/saved-views/{id}/issue-results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /me/saved-views/{id}/issue-results` — run an issue-level
+         *     (`filter_issues`) view. Other kinds are 422 `unsupported_view_kind`.
+         *     `next_cursor` is opaque; pass it back verbatim.
+         */
+        get: operations["saved_views_issue_results"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5797,8 +5838,8 @@ export interface components {
             description?: string | null;
             filter?: components["schemas"]["FilterDsl"] | null;
             /**
-             * @description `'filter_series'` or `'cbl'`. Validated server-side; mismatched
-             *     kind/body shape returns 422.
+             * @description `'filter_series'`, `'filter_issues'` (WP-5.4) or `'cbl'`. Validated
+             *     server-side; mismatched kind/body shape returns 422.
              */
             kind: string;
             name: string;
@@ -6771,7 +6812,7 @@ export interface components {
             description?: string | null;
             /** Format: uuid */
             id: string;
-            /** @description `"filter_series"` or `"cbl"`. */
+            /** @description `"filter_series"`, `"filter_issues"` or `"cbl"`. */
             kind: string;
             match_mode?: string | null;
             name: string;
@@ -6895,7 +6936,7 @@ export interface components {
          *     JSON constant.
          * @enum {string}
          */
-        Field: "library" | "name" | "year" | "volume" | "total_issues" | "publisher" | "imprint" | "status" | "age_rating" | "language_code" | "created_at" | "updated_at" | "genres" | "tags" | "writer" | "penciller" | "inker" | "colorist" | "letterer" | "cover_artist" | "editor" | "translator" | "characters" | "teams" | "locations" | "read_progress" | "last_read" | "read_count" | "read_status" | "unread_issues" | "collection_completeness" | "metadata_completeness";
+        Field: "library" | "name" | "year" | "volume" | "total_issues" | "publisher" | "imprint" | "status" | "age_rating" | "language_code" | "created_at" | "updated_at" | "genres" | "tags" | "writer" | "penciller" | "inker" | "colorist" | "letterer" | "cover_artist" | "editor" | "translator" | "characters" | "teams" | "locations" | "read_progress" | "last_read" | "read_count" | "read_status" | "unread_issues" | "collection_completeness" | "metadata_completeness" | "special_type" | "format" | "story_arc" | "rating";
         /**
          * @description One field's provenance: which source set it, when, and (for provider
          *     sources) which external record it came from.
@@ -8218,7 +8259,7 @@ export interface components {
             items: components["schemas"]["OnDeckCard"][];
         };
         /** @enum {string} */
-        Op: "contains" | "not_contains" | "starts_with" | "equals" | "not_equals" | "is" | "is_not" | "in" | "not_in" | "gt" | "gte" | "lt" | "lte" | "between" | "before" | "after" | "relative" | "includes_any" | "includes_all" | "excludes" | "is_true" | "is_false";
+        Op: "contains" | "not_contains" | "starts_with" | "equals" | "not_equals" | "is" | "is_not" | "in" | "not_in" | "gt" | "gte" | "lt" | "lte" | "between" | "before" | "after" | "relative" | "includes_any" | "includes_all" | "excludes" | "is_true" | "is_false" | "is_empty" | "is_not_empty";
         OverviewView: {
             /**
              * Format: int64
@@ -16956,6 +16997,29 @@ export interface operations {
             };
         };
     };
+    saved_views_preview_issues: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueListView"];
+                };
+            };
+        };
+    };
     saved_views_reorder: {
         parameters: {
             query?: never;
@@ -17041,6 +17105,30 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    saved_views_issue_results: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueListView"];
+                };
             };
         };
     };

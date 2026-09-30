@@ -159,6 +159,7 @@ export function defaultIconKeyForKind(kind: SavedViewKind): string {
     case "system":
       return "sparkles";
     case "filter_series":
+    case "filter_issues":
       return "filter";
     case "cbl":
       return "list-ordered";

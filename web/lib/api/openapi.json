@@ -6752,6 +6752,33 @@
         }
       }
     },
+    "/api/me/saved-views/preview-issues": {
+      "post": {
+        "summary": "`POST /me/saved-views/preview-issues` — stateless preview of an\nissue-level (`filter_issues`) DSL. Same body as `/preview`.",
+        "operationId": "saved_views_preview_issues",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueListView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/me/saved-views/reorder": {
       "post": {
         "operationId": "saved_views_reorder",
@@ -6847,6 +6874,51 @@
         },
         "responses": {
           "204": {}
+        }
+      }
+    },
+    "/api/me/saved-views/{id}/issue-results": {
+      "get": {
+        "summary": "`GET /me/saved-views/{id}/issue-results` — run an issue-level\n(`filter_issues`) view. Other kinds are 422 `unsupported_view_kind`.\n`next_cursor` is opaque; pass it back verbatim.",
+        "operationId": "saved_views_issue_results",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueListView"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -13382,7 +13454,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`'filter_series'` or `'cbl'`. Validated server-side; mismatched\nkind/body shape returns 422."
+            "description": "`'filter_series'`, `'filter_issues'` (WP-5.4) or `'cbl'`. Validated\nserver-side; mismatched kind/body shape returns 422."
           },
           "name": {
             "type": "string"
@@ -16130,7 +16202,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`\"filter_series\"` or `\"cbl\"`."
+            "description": "`\"filter_series\"`, `\"filter_issues\"` or `\"cbl\"`."
           },
           "match_mode": {
             "type": [
@@ -16492,7 +16564,11 @@
           "read_status",
           "unread_issues",
           "collection_completeness",
-          "metadata_completeness"
+          "metadata_completeness",
+          "special_type",
+          "format",
+          "story_arc",
+          "rating"
         ]
       },
       "FieldProvenanceRow": {
@@ -19370,7 +19446,9 @@
           "includes_all",
           "excludes",
           "is_true",
-          "is_false"
+          "is_false",
+          "is_empty",
+          "is_not_empty"
         ]
       },
       "OverviewView": {

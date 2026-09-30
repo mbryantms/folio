@@ -108,6 +108,7 @@ mod m20270212_000001_issue_duplicate_decision;
 mod m20270215_000001_list_query_indexes;
 mod m20270216_000001_retire_user_edited;
 mod m20270218_000001_issue_cover_active_unique;
+mod m20270304_000001_issue_saved_views;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -224,6 +225,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270211_000001_lazy_hash_import::Migration),
             Box::new(m20270215_000001_list_query_indexes::Migration),
             Box::new(m20270218_000001_issue_cover_active_unique::Migration),
+            Box::new(m20270304_000001_issue_saved_views::Migration),
         ]
     }
 }

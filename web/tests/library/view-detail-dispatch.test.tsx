@@ -21,6 +21,11 @@ vi.mock("@/components/saved-views/FilterViewDetail", () => ({
     return null;
   },
 }));
+vi.mock("@/components/saved-views/IssueFilterViewDetail", () => ({
+  IssueFilterViewDetail: function IssueFilterViewDetail() {
+    return null;
+  },
+}));
 vi.mock("@/components/saved-views/CollectionViewDetail", () => ({
   CollectionViewDetail: function CollectionViewDetail() {
     return null;
@@ -36,6 +41,7 @@ import { ViewClient } from "@/app/[locale]/(library)/views/[id]/ViewClient";
 import { CblViewDetail } from "@/components/saved-views/CblViewDetail";
 import { CollectionViewDetail } from "@/components/saved-views/CollectionViewDetail";
 import { FilterViewDetail } from "@/components/saved-views/FilterViewDetail";
+import { IssueFilterViewDetail } from "@/components/saved-views/IssueFilterViewDetail";
 import { SystemViewDetail } from "@/components/saved-views/SystemViewDetail";
 import type { SavedViewView } from "@/lib/api/types";
 
@@ -87,6 +93,12 @@ describe("ViewClient kind dispatch", () => {
     const tree = ViewClient({ view: view() });
     expect(findByType(tree, FilterViewDetail)).toBeTruthy();
     expect(findByType(tree, CblViewDetail)).toBeFalsy();
+  });
+
+  it("renders IssueFilterViewDetail for filter_issues kind (WP-5.4)", () => {
+    const tree = ViewClient({ view: view({ kind: "filter_issues" }) });
+    expect(findByType(tree, IssueFilterViewDetail)).toBeTruthy();
+    expect(findByType(tree, FilterViewDetail)).toBeFalsy();
   });
 
   it("renders CblViewDetail for cbl kind", () => {
