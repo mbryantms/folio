@@ -30,8 +30,8 @@ use axum::{
 use chrono::Utc;
 use entity::{cbl_entry, issue, progress_record, rail_dismissal, series};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DbBackend, DerivePartialModel, EntityTrait, FromQueryResult,
-    QueryFilter, QueryOrder, Set, Statement, prelude::DateTimeWithTimeZone, sea_query::Expr,
+    ActiveModelTrait, ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter,
+    QueryOrder, Set, Statement, sea_query::Expr,
 };
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
@@ -227,11 +227,12 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
         return Json(ContinueReadingView { items: Vec::new() }).into_response();
     }
 
-    // Hydrate full issue::Model rows for `IssueSummaryView::from_model`.
-    // One batched fetch keeps it O(1) round-trips even for the full 24.
+    // Hydrate the slim card projection (WP-3.6) for the page. One batched
+    // fetch keeps it O(1) round-trips even for the full 24.
     let issue_ids: Vec<String> = rows.iter().map(|r| r.issue_id.clone()).collect();
     let issue_rows = match issue::Entity::find()
         .filter(issue::Column::Id.is_in(issue_ids.clone()))
+        .into_partial_model::<OnDeckIssue>()
         .all(&app.db)
         .await
     {
@@ -244,7 +245,7 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
     // WP-2.7: drops issues rated above the caller's cap (one extra
     // series-rating query, only for capped callers).
     let issue_rows = access::filter_issues(&app, &acl, issue_rows).await;
-    let issue_by_id: std::collections::HashMap<String, issue::Model> =
+    let issue_by_id: std::collections::HashMap<String, OnDeckIssue> =
         issue_rows.into_iter().map(|i| (i.id.clone(), i)).collect();
 
     let items: Vec<ContinueReadingCard> = rows
@@ -255,7 +256,8 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
             }
             let issue_model = issue_by_id.get(&row.issue_id)?.clone();
             Some(ContinueReadingCard {
-                issue: IssueSummaryView::from_model(issue_model, &row.series_slug)
+                issue: issue_model
+                    .into_summary_view(&row.series_slug)
                     .with_series_name(row.series_name.clone()),
                 series_name: row.series_name,
                 progress: ProgressInfo {
@@ -339,71 +341,108 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
         series_name: String,
     }
 
-    // Rank each issue within its series by ingest recency, keep the top
-    // `CAP` per series, then take the newest `LIMIT` overall. Columns are
+    // Newest `LIMIT` issues overall, at most `CAP` per series. Columns are
     // projected to what the card renders (see `OnDeckIssue` for the
     // rationale — full issue rows average ~1.9 KB).
+    //
+    // WP-3.6: this used to rank *every* active issue with
+    // `ROW_NUMBER() OVER (PARTITION BY series_id ...)` and keep rank ≤ CAP —
+    // a full scan + sort of the library on every home-page load. Walking
+    // the active set newest-first down `issues_active_created_idx` in
+    // keyset batches and counting per series in Rust yields exactly the
+    // same rows (a series' issues appear in the global walk in the same
+    // `created_at DESC, id DESC` order the window ranked them by), and
+    // normally stops after the first batch. A scan-flood of one series
+    // costs extra batches, bounded by the old full scan.
     let acl_clause = if acl.unrestricted {
-        ""
+        String::new()
     } else if acl.allowed.is_empty() {
         return Json(RecentIssuesView { items: Vec::new() }).into_response();
     } else {
-        "AND i.library_id = ANY($3)"
+        "AND i.library_id = ANY($1)".to_owned()
     };
-    let mut values: Vec<sea_orm::Value> = vec![
-        RECENT_ISSUES_PER_SERIES_CAP.into(),
-        RECENT_ISSUES_LIMIT.into(),
-    ];
+    let mut base_values: Vec<sea_orm::Value> = Vec::new();
     if !acl.unrestricted {
         let allowed: Vec<Uuid> = acl.allowed.iter().copied().collect();
-        values.push(allowed.into());
+        base_values.push(allowed.into());
     }
     // WP-2.7: age-rating cap on the issue's own rating, series fallback.
     let cap_clause = acl.raw_cap_clause(
         "i.library_id",
         "COALESCE(i.age_rating, s.age_rating)",
-        &mut values,
+        &mut base_values,
     );
-    let sql = format!(
-        r#"
-        WITH ranked AS (
+    const BATCH: usize = 128;
+    let cap = RECENT_ISSUES_PER_SERIES_CAP as usize;
+    let limit = RECENT_ISSUES_LIMIT as usize;
+    let mut per_series: std::collections::HashMap<Uuid, usize> = std::collections::HashMap::new();
+    let mut rows: Vec<Row> = Vec::with_capacity(limit);
+    let mut after: Option<(chrono::DateTime<chrono::FixedOffset>, String)> = None;
+    'walk: loop {
+        let mut values = base_values.clone();
+        let keyset = match &after {
+            Some((ts, id)) => {
+                values.push((*ts).into());
+                values.push(id.clone().into());
+                format!(
+                    "AND (i.created_at, i.id) < (${}, ${})",
+                    values.len() - 1,
+                    values.len()
+                )
+            }
+            None => String::new(),
+        };
+        values.push((BATCH as i64).into());
+        let limit_param = values.len();
+        let sql = format!(
+            r#"
             SELECT i.id, i.slug, i.series_id, i.title, i.number_raw,
                    i.sort_number, i.year, i.page_count, i.special_type,
                    i.created_at, i.updated_at,
-                   s.slug AS series_slug, s.name AS series_name,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY i.series_id
-                       ORDER BY i.created_at DESC, i.id DESC
-                   ) AS series_rank
+                   s.slug AS series_slug, s.name AS series_name
             FROM issues i
             JOIN series s ON s.id = i.series_id
             WHERE i.state = 'active'
               AND i.removed_at IS NULL
               {acl_clause}{cap_clause}
-        )
-        SELECT id, slug, series_id, title, number_raw, sort_number, year,
-               page_count, special_type, created_at, updated_at,
-               series_slug, series_name
-        FROM ranked
-        WHERE series_rank <= $1
-        ORDER BY created_at DESC, id DESC
-        LIMIT $2
-        "#
-    );
-    let rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        sql,
-        values,
-    ))
-    .all(&app.db)
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!(error = %e, "rails: recent-issues query failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+              {keyset}
+            ORDER BY i.created_at DESC, i.id DESC
+            LIMIT ${limit_param}
+            "#
+        );
+        let batch: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            sql,
+            values,
+        ))
+        .all(&app.db)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(error = %e, "rails: recent-issues query failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        };
+        let exhausted = batch.len() < BATCH;
+        if let Some(last) = batch.last() {
+            after = Some((last.created_at, last.id.clone()));
         }
-    };
+        for row in batch {
+            let seen = per_series.entry(row.series_id).or_insert(0);
+            if *seen >= cap {
+                continue;
+            }
+            *seen += 1;
+            rows.push(row);
+            if rows.len() >= limit {
+                break 'walk;
+            }
+        }
+        if exhausted {
+            break;
+        }
+    }
 
     let items: Vec<IssueSummaryView> = rows
         .into_iter()
@@ -997,77 +1036,14 @@ async fn cbl_saved_view_ids_for_candidates(
     Ok(map)
 }
 
-/// Slim projection of `issue` carrying only the columns the On Deck walk
-/// (`next_up::walk_*`) and the rendered `IssueSummaryView` card read —
-/// 13 narrow columns instead of all 76. The full row averages ~1.9 KB
-/// (the `pages` page-map JSON, `summary`, `characters`, `notes`,
-/// `search_doc`, …), and On Deck hydrates *every* active issue across up
-/// to 40 candidate series plus every matched CBL issue just to pick the
-/// next-up issue per candidate and keep 24 cards. Projecting to the
-/// fields actually used drops that transfer + deserialization by ~20-40x.
-/// The card output is byte-for-byte identical to `IssueSummaryView::
-/// from_model` (see `into_summary_view`).
-#[derive(Clone, Debug, DerivePartialModel)]
-#[sea_orm(entity = "issue::Entity")]
-pub(crate) struct OnDeckIssue {
-    pub id: String,
-    pub slug: String,
-    pub series_id: Uuid,
-    pub library_id: Uuid,
-    pub title: Option<String>,
-    pub number_raw: Option<String>,
-    pub sort_number: Option<f64>,
-    pub year: Option<i32>,
-    pub page_count: Option<i32>,
-    pub state: String,
-    pub special_type: Option<String>,
-    pub created_at: DateTimeWithTimeZone,
-    pub updated_at: DateTimeWithTimeZone,
-    /// WP-2.7: the CBL walk checks the caller's age-rating cap.
-    pub age_rating: Option<String>,
-}
-
-impl crate::api::next_up::WalkIssue for OnDeckIssue {
-    fn walk_id(&self) -> &str {
-        &self.id
-    }
-    fn walk_series_id(&self) -> Uuid {
-        self.series_id
-    }
-    fn walk_library_id(&self) -> Uuid {
-        self.library_id
-    }
-    fn walk_age_rating(&self) -> Option<&str> {
-        self.age_rating.as_deref()
-    }
-}
-
-impl OnDeckIssue {
-    /// Build the card view from the slim row. Mirrors
-    /// [`IssueSummaryView::from_model`] field-for-field (including the
-    /// `cover_url` derivation) so the projection is invisible on the wire.
-    fn into_summary_view(self, series_slug: &str) -> IssueSummaryView {
-        let cover_url =
-            (self.state == "active").then(|| format!("/issues/{}/pages/0/thumb", self.id));
-        IssueSummaryView {
-            id: self.id,
-            slug: self.slug,
-            series_id: self.series_id.to_string(),
-            series_slug: series_slug.to_owned(),
-            series_name: None,
-            title: self.title,
-            number: self.number_raw,
-            sort_number: self.sort_number,
-            year: self.year,
-            page_count: self.page_count,
-            state: self.state,
-            cover_url,
-            special_type: self.special_type,
-            created_at: self.created_at.to_rfc3339(),
-            updated_at: self.updated_at.to_rfc3339(),
-        }
-    }
-}
+/// Slim projection of `issue` the On Deck walk (`next_up::walk_*`) and the
+/// rendered `IssueSummaryView` card read. On Deck hydrates *every* active
+/// issue across up to 40 candidate series plus every matched CBL issue just
+/// to pick the next-up issue per candidate, so projecting to the 14 card
+/// columns (instead of all ~76, ~1.9 KB/row) drops transfer +
+/// deserialization by ~20-40x. Shared with every other issue-card list path
+/// since WP-3.6 — see [`crate::api::issue_card`].
+pub(crate) type OnDeckIssue = crate::api::issue_card::IssueCardRow;
 
 /// Bulk-fetch the active, non-removed issues for many series in one query,
 /// grouped by series id and ordered the way each series reads

@@ -36,6 +36,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
 
+use crate::api::issue_card::IssueCardRow;
 use crate::api::saved_views::{KIND_COLLECTION, SYSTEM_KEY_WANT_TO_READ, SavedViewView};
 use crate::api::series::{IssueSummaryView, SeriesView, hydrate_series};
 use crate::auth::CurrentUser;
@@ -1294,12 +1295,14 @@ async fn hydrate_entries(
         .filter_map(|v| Uuid::parse_str(&v.id).ok().map(|id| (id, v)))
         .collect();
 
-    // Issue batch: model + parent series slug for the summary view.
-    let issue_rows: Vec<issue::Model> = if issue_ids.is_empty() {
+    // Issue batch: card projection (WP-3.6) + parent series slug for the
+    // summary view.
+    let issue_rows: Vec<IssueCardRow> = if issue_ids.is_empty() {
         Vec::new()
     } else {
         issue::Entity::find()
             .filter(issue::Column::Id.is_in(issue_ids.clone()))
+            .into_partial_model::<IssueCardRow>()
             .all(&app.db)
             .await
             .unwrap_or_default()
@@ -1317,7 +1320,7 @@ async fn hydrate_entries(
             .map(|s| (s.id, (s.slug, s.name)))
             .collect()
     };
-    let issue_by_id: HashMap<String, issue::Model> =
+    let issue_by_id: HashMap<String, IssueCardRow> =
         issue_rows.into_iter().map(|i| (i.id.clone(), i)).collect();
 
     rows.into_iter()
@@ -1329,7 +1332,7 @@ async fn hydrate_entries(
                         .get(&m.series_id)
                         .cloned()
                         .unwrap_or_default();
-                    let view = IssueSummaryView::from_model(m.clone(), &slug);
+                    let view = m.clone().into_summary_view(&slug);
                     if name.is_empty() {
                         view
                     } else {
@@ -1468,11 +1471,14 @@ async fn build_collection_cbl(
 
     // Direct issue entries — fetched by id regardless of state (the user
     // hand-picked them).
-    let direct_issues: HashMap<String, issue::Model> = if direct_issue_ids.is_empty() {
+    // WP-3.6: the export reads id / series / number / sort order only —
+    // project the card columns instead of every wide issue row.
+    let direct_issues: HashMap<String, IssueCardRow> = if direct_issue_ids.is_empty() {
         HashMap::new()
     } else {
         issue::Entity::find()
             .filter(issue::Column::Id.is_in(direct_issue_ids.clone()))
+            .into_partial_model::<IssueCardRow>()
             .all(&app.db)
             .await?
             .into_iter()
@@ -1481,12 +1487,13 @@ async fn build_collection_cbl(
     };
 
     // Series-expansion — only active, non-removed issues, in reading order.
-    let mut series_issues: HashMap<Uuid, Vec<issue::Model>> = HashMap::new();
+    let mut series_issues: HashMap<Uuid, Vec<IssueCardRow>> = HashMap::new();
     if !series_entry_ids.is_empty() {
         let rows = issue::Entity::find()
             .filter(issue::Column::SeriesId.is_in(series_entry_ids.clone()))
             .filter(issue::Column::State.eq("active"))
             .filter(issue::Column::RemovedAt.is_null())
+            .into_partial_model::<IssueCardRow>()
             .all(&app.db)
             .await?;
         for i in rows {
@@ -1502,7 +1509,7 @@ async fn build_collection_cbl(
     }
 
     // Walk entries in order, expanding series entries in place.
-    let mut ordered_issues: Vec<issue::Model> = Vec::new();
+    let mut ordered_issues: Vec<IssueCardRow> = Vec::new();
     for e in &entries {
         match e.entry_kind.as_str() {
             ENTRY_KIND_ISSUE => {

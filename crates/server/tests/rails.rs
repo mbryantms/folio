@@ -1963,6 +1963,72 @@ async fn recent_issues_caps_per_series_and_orders_desc() {
     );
 }
 
+/// WP-3.6: the rail walks the active set newest-first in keyset batches
+/// (128 rows) instead of window-ranking the whole library. A scan-flood
+/// of one series bigger than a batch must not starve older series: the
+/// walk keeps going past the capped rows until the older series' issues
+/// surface, in the same order the old `ROW_NUMBER()` query produced.
+#[tokio::test]
+async fn recent_issues_walks_past_a_scan_flood() {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    let app = TestApp::spawn().await;
+    let user = register(&app, "ri-flood@example.com").await;
+
+    let (lib_a, series_a, _a1) = seed_one_issue(&app, "ri-flood-a").await;
+    for n in 2..=140 {
+        seed_extra_issue(&app, lib_a, series_a, n as f64, &format!("ri-flood-a-{n}")).await;
+    }
+    let (lib_b, series_b, _b1) = seed_one_issue(&app, "ri-flood-b").await;
+    seed_extra_issue(&app, lib_b, series_b, 2.0, "ri-flood-b-2").await;
+
+    // A's 140 issues are all newer than B's two; within each series the
+    // higher number is newer.
+    let db = Database::connect(&app.db_url).await.unwrap();
+    for (series, offset) in [(series_a, 10_000), (series_b, 0)] {
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE issues SET created_at = now() - interval '1 day' \
+               + make_interval(secs => $2 + coalesce(sort_number, 1)) \
+             WHERE series_id = $1",
+            [series.into(), f64::from(offset).into()],
+        ))
+        .await
+        .unwrap();
+    }
+
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/recent-issues",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let got: Vec<(String, String)> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| {
+            (
+                i["series_name"].as_str().unwrap().to_owned(),
+                i["number"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    let want: Vec<(String, String)> = [
+        ("Series ri-flood-a", "140"),
+        ("Series ri-flood-a", "139"),
+        ("Series ri-flood-a", "138"),
+        ("Series ri-flood-b", "2"),
+        ("Series ri-flood-b", "1"),
+    ]
+    .iter()
+    .map(|(s, n)| ((*s).to_owned(), (*n).to_owned()))
+    .collect();
+    assert_eq!(got, want);
+}
+
 #[tokio::test]
 async fn recent_issues_respects_library_acl() {
     let app = TestApp::spawn().await;

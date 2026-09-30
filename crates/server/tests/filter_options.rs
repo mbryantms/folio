@@ -1463,6 +1463,106 @@ async fn issues_cross_library_filter_by_writer() {
     assert_eq!(items[0]["title"].as_str(), Some("iss-a1"));
 }
 
+/// WP-3.6: the cross-library issue facets moved from a per-row
+/// `EXISTS (unnest(regexp_split_to_array(...)))` predicate to the
+/// GIN-indexed `folio_issue_facet_keys(...) && $1`. Pin the CSV-cache
+/// matching rules the old predicate had: `;` splits when present (else
+/// `,`), pieces are trimmed + case-folded, whole-piece equality (no
+/// substring matches), any-of within a facet, AND across facets.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issues_cross_library_facet_csv_matching_rules() {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "admin@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let lib = seed_library_with_publishers(&app, "lib", &[]).await;
+    let s1 = seed_one_series(&app, lib, "Series A", "continuing", Some(2020), None, &[]).await;
+    // Comma list, odd spacing / case.
+    let a = seed_issue_in_series(
+        &app,
+        lib,
+        s1,
+        "comma",
+        Some(" Alan Moore ,Dave GIBBONS"),
+        None,
+    )
+    .await;
+    // Semicolon list: a comma inside a piece is part of the name.
+    let b = seed_issue_in_series(
+        &app,
+        lib,
+        s1,
+        "semicolon",
+        Some("Moore, Alan; Gibbons, Dave"),
+        None,
+    )
+    .await;
+    // Substring of a real name — must not match "alan moore".
+    let c = seed_issue_in_series(&app, lib, s1, "substring", Some("Alan Mooreland"), None).await;
+    seed_issue_in_series(&app, lib, s1, "none", None, None).await;
+
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    for (id, genre) in [(&a, "Horror, Crime"), (&b, "Horror"), (&c, "crime")] {
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE issues SET genre = $1 WHERE id = $2",
+            [genre.into(), id.as_str().into()],
+        ))
+        .await
+        .unwrap();
+    }
+
+    let titles = |url: &'static str| {
+        let app = &app;
+        let auth = &auth;
+        async move {
+            let (status, json) = http(app, Method::GET, url, Some(auth)).await;
+            assert_eq!(status, StatusCode::OK, "{url}: {json}");
+            let mut t: Vec<String> = json["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|i| i["title"].as_str().unwrap_or("").to_owned())
+                .collect();
+            t.sort();
+            t
+        }
+    };
+
+    assert_eq!(
+        titles("/api/issues?writers=alan%20moore").await,
+        vec!["comma"]
+    );
+    assert_eq!(
+        titles("/api/issues?writers=DAVE%20GIBBONS").await,
+        vec!["comma"]
+    );
+    // A `;`-separated value is not also split on ',' — its piece is
+    // "moore, alan", so the bare surname matches nothing.
+    assert_eq!(
+        titles("/api/issues?writers=moore").await,
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        titles("/api/issues?writers=alan%20mooreland").await,
+        vec!["substring"]
+    );
+    // Any-of within a facet.
+    assert_eq!(
+        titles("/api/issues?writers=alan%20moore,alan%20mooreland").await,
+        vec!["comma", "substring"]
+    );
+    // AND across facets.
+    assert_eq!(
+        titles("/api/issues?genres=horror&writers=dave%20gibbons").await,
+        vec!["comma"]
+    );
+    assert_eq!(
+        titles("/api/issues?genres=crime").await,
+        vec!["comma", "substring"]
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issues_cross_library_sort_by_year_then_page_count() {
     let app = TestApp::spawn().await;

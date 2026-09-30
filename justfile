@@ -364,6 +364,19 @@ perf-scan email='first@example.com' password='Atvvasa22Atvvasa22' api='http://12
     echo "    $PG_DUMP"
     echo "    $PHASES_JSON"
 
+# EXPLAIN (ANALYZE, BUFFERS) for the top list/filter/sort endpoints against a
+# 50,000-issue stress library (`fixtures/build.py --scale stress --series 2500
+# --rich`), scanned by the real server into a throwaway Postgres 18 + Redis on
+# free ports (never the dev services). Plans are captured with auto_explain
+# while each endpoint is driven over HTTP, split per endpoint into
+# perf-out/explain-<ts>/plans/, and summarised; exits 1 if any plan
+# seq-scans a table with ≥ 5,000 rows. Knobs (PERF_SERIES, PERF_KEEP,
+# PERF_PG_CONTAINER, PERF_OHA, …) are documented in the script header and in
+# docs/dev/load-testing.md. First run ≈ 5 min (fixture + scan); reruns with
+# PERF_KEEP=1 + PERF_PG_CONTAINER=… skip both.
+perf-explain:
+    scripts/perf/perf-explain.sh
+
 # ───── run ─────
 
 dev: dev-stop

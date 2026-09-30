@@ -45,6 +45,7 @@ fixtures/*.cbr
 # ~1000 CBZs across ~50 series; used by the perf-profiling pass
 # (docs/dev/scanner-perf.md). Re-generate with `just regen-fixtures-stress`.
 fixtures/library-stress/
+fixtures/library-stress-*/
 
 # Per-run artifacts from `just perf-scan` (flamegraph SVG, pg_stat_statements
 # dump, phase timings JSON). Not checked in; the doc cites baseline numbers.

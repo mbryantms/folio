@@ -42,6 +42,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
+use crate::api::issue_card::IssueCardRow;
 use crate::api::rails::OnDeckCard;
 use crate::api::saved_views::KIND_CBL;
 use crate::api::series::IssueSummaryView;
@@ -222,7 +223,8 @@ pub async fn next_up(
                     return Json(none_view(cbl_param_was_stale)).into_response();
                 }
             };
-            let target = IssueSummaryView::from_model(next, &series_row.slug)
+            let target = next
+                .into_summary_view(&series_row.slug)
                 .with_series_name(series_row.name);
             record_resolved("series");
             Json(NextUpView {
@@ -485,10 +487,13 @@ pub(crate) async fn pick_next_in_series(
     if let Some(cap) = acl.issue_cap_condition() {
         sel = sel.filter(cap);
     }
-    let issues: Vec<issue::Model> = match sel
+    // WP-3.6: walk the series on the card projection; only the picked
+    // issue is loaded in full (callers render an OPDS entry from it).
+    let issues: Vec<IssueCardRow> = match sel
         .order_by_asc(Expr::cust("sort_number IS NULL"))
         .order_by_asc(issue::Column::SortNumber)
         .order_by_asc(issue::Column::Id)
+        .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
     {
@@ -527,14 +532,40 @@ pub(crate) async fn pick_next_in_series(
         .map(|p| (p.issue_id.clone(), p))
         .collect();
 
-    for iss in issues {
-        let progress = progress_by_id.get(&iss.id);
-        let finished = progress.map(|p| p.finished).unwrap_or(false);
-        if !finished {
-            return Ok(Some(iss));
+    let Some(pick) = issues.into_iter().find(|iss| {
+        !progress_by_id
+            .get(&iss.id)
+            .map(|p| p.finished)
+            .unwrap_or(false)
+    }) else {
+        return Ok(None);
+    };
+    load_full_issue(
+        app,
+        pick.id,
+        "rails: pick_next_in_series pick hydrate failed",
+    )
+    .await
+}
+
+/// Load one full `issue::Model` by id — the tail of the projected walks
+/// above, whose callers need the wide row for the single picked issue.
+async fn load_full_issue(
+    app: &AppState,
+    id: String,
+    what: &'static str,
+) -> Result<Option<issue::Model>, Response> {
+    match issue::Entity::find_by_id(id).one(&app.db).await {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            tracing::error!(error = %e, "{what}");
+            Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ))
         }
     }
-    Ok(None)
 }
 
 /// "Next unread issue after the user's *latest finished* issue in this
@@ -614,7 +645,7 @@ async fn pick_next_in_series_after(
     user_id: Uuid,
     current: &issue::Model,
     acl: &access::VisibleLibraries,
-) -> Result<Option<issue::Model>, Response> {
+) -> Result<Option<IssueCardRow>, Response> {
     let mut sel = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(current.series_id))
         .filter(issue::Column::State.eq("active"))
@@ -623,10 +654,13 @@ async fn pick_next_in_series_after(
     if let Some(cap) = acl.issue_cap_condition() {
         sel = sel.filter(cap);
     }
-    let issues: Vec<issue::Model> = match sel
+    // WP-3.6: every issue in the series is walked; project the card
+    // columns instead of hydrating each wide row.
+    let issues: Vec<IssueCardRow> = match sel
         .order_by_asc(Expr::cust("sort_number IS NULL"))
         .order_by_asc(issue::Column::SortNumber)
         .order_by_asc(issue::Column::Id)
+        .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
     {
@@ -832,8 +866,11 @@ async fn scan_next_in_cbl(
     // a per-entry round-trip. Fetching every matched issue (not just up to
     // the pick) is a bounded over-fetch — CBL lists are small — and yields
     // the identical pick.
+    // WP-3.6: the walk reads id / series / library / rating only — project
+    // the card columns; the single pick is re-read in full below.
     let issue_rows = match issue::Entity::find()
         .filter(issue::Column::Id.is_in(matched_ids.clone()))
+        .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
     {
@@ -847,7 +884,7 @@ async fn scan_next_in_cbl(
             ));
         }
     };
-    let issue_by_id: std::collections::HashMap<String, issue::Model> = issue_rows
+    let issue_by_id: std::collections::HashMap<String, IssueCardRow> = issue_rows
         .iter()
         .map(|i| (i.id.clone(), i.clone()))
         .collect();
@@ -874,13 +911,31 @@ async fn scan_next_in_cbl(
         }
     };
 
-    Ok(walk_cbl_pick(
+    let Some(pick) = walk_cbl_pick(
         &entries,
         &progress_by_issue,
         &issue_by_id,
         &series_by_id,
         acl,
-    ))
+    ) else {
+        return Ok(None);
+    };
+    let Some(full) = load_full_issue(
+        app,
+        pick.issue.id.clone(),
+        "next_up: pick_next_in_cbl pick hydrate failed",
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(CblNextPick {
+        issue: full,
+        series_slug: pick.series_slug,
+        series_name: pick.series_name,
+        position: pick.position,
+        prefix_last_activity: pick.prefix_last_activity,
+    }))
 }
 
 /// Pure in-memory pick over a CBL list's matched entries — shared by the
@@ -1041,7 +1096,8 @@ pub async fn prev_up(
                     return Json(none_view(cbl_param_was_stale)).into_response();
                 }
             };
-            let target = IssueSummaryView::from_model(prev, &series_row.slug)
+            let target = prev
+                .into_summary_view(&series_row.slug)
                 .with_series_name(series_row.name);
             record_resolved_prev("series");
             Json(NextUpView {
@@ -1179,7 +1235,7 @@ async fn pick_prev_in_series_before(
     app: &AppState,
     current: &issue::Model,
     acl: &access::VisibleLibraries,
-) -> Result<Option<issue::Model>, Response> {
+) -> Result<Option<IssueCardRow>, Response> {
     if !acl.contains(current.library_id) {
         return Ok(None);
     }
@@ -1191,10 +1247,12 @@ async fn pick_prev_in_series_before(
     if let Some(cap) = acl.issue_cap_condition() {
         sel = sel.filter(cap);
     }
-    let issues: Vec<issue::Model> = match sel
+    // WP-3.6: card projection (see `pick_next_in_series_after`).
+    let issues: Vec<IssueCardRow> = match sel
         .order_by_asc(Expr::cust("sort_number IS NULL"))
         .order_by_asc(issue::Column::SortNumber)
         .order_by_asc(issue::Column::Id)
+        .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
     {
@@ -1212,7 +1270,7 @@ async fn pick_prev_in_series_before(
     // Walk forward, track the latest issue seen before `current`. When
     // we hit current, return the tracked candidate. Simpler than a
     // reverse iteration + the ordering is already done by SQL.
-    let mut candidate: Option<issue::Model> = None;
+    let mut candidate: Option<IssueCardRow> = None;
     for iss in issues {
         if iss.id == current.id {
             return Ok(candidate);

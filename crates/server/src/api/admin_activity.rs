@@ -340,6 +340,7 @@ async fn resolve_activity_labels(
         // tables, then build "Series Name #N" / "Series Name — Title".
         let issue_rows = issue::Entity::find()
             .filter(issue::Column::Id.is_in(issue_ids.iter().cloned()))
+            .into_partial_model::<crate::api::issue_card::IssueCardRow>()
             .all(&app.db)
             .await?;
         let extra_series: HashSet<Uuid> = issue_rows

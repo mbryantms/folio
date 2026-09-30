@@ -575,6 +575,7 @@ async fn gather_events(
             .filter(issue::Column::SeriesId.is_in(series_ids.iter().copied().collect::<Vec<_>>()))
             .filter(issue::Column::State.eq("active"))
             .filter(issue::Column::RemovedAt.is_null())
+            .into_partial_model::<crate::api::issue_card::IssueCardRow>()
             .all(&app.db)
             .await?;
         let mut by_series: HashMap<Uuid, (Option<f64>, String)> = HashMap::new();
@@ -1066,6 +1067,7 @@ async fn fetch_issue_finished(
     let issue_ids: Vec<String> = rows.iter().map(|r| r.issue_id.clone()).collect();
     let issue_rows = issue::Entity::find()
         .filter(issue::Column::Id.is_in(issue_ids))
+        .into_partial_model::<crate::api::issue_card::IssueCardRow>()
         .all(&app.db)
         .await?;
     let series_by_issue: HashMap<String, Uuid> = issue_rows
