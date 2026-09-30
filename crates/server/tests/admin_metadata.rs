@@ -302,6 +302,99 @@ async fn runs_list_empty_then_returns_seeded_row() {
     assert_eq!(body["candidates"].as_array().unwrap().len(), 0);
 }
 
+/// Regression: `next_cursor` was built from the popped lookahead row and
+/// the next page filters strictly older, so one run vanished at every
+/// page boundary; and the cursor carried only `started_at`, so runs
+/// sharing a timestamp were dropped too. Seed 7 runs (4 tied on
+/// `started_at`), walk limit=2 via `before=next_cursor`, and require
+/// the concatenation to equal the unpaged list.
+#[tokio::test]
+async fn runs_list_cursor_walk_has_no_gaps_or_duplicates() {
+    use sea_orm::{ActiveModelTrait, Set};
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let base = chrono::Utc::now().fixed_offset();
+    for i in 0..7i64 {
+        // Runs 1..=4 share one started_at; the rest are distinct.
+        let started_at = if (1..=4).contains(&i) {
+            base - chrono::Duration::minutes(10)
+        } else {
+            base - chrono::Duration::minutes(i)
+        };
+        entity::metadata_run::ActiveModel {
+            id: Set(uuid::Uuid::now_v7()),
+            scope: Set("series".into()),
+            scope_entity_id: Set(None),
+            library_id: Set(None),
+            triggered_by: Set(None),
+            trigger_kind: Set("manual".into()),
+            providers: Set(vec!["comicvine".into()]),
+            status: Set("completed".into()),
+            started_at: Set(started_at),
+            finished_at: Set(Some(started_at)),
+            items_total: Set(0),
+            items_matched_high: Set(0),
+            items_matched_medium: Set(0),
+            items_matched_low: Set(0),
+            items_no_match: Set(0),
+            items_applied: Set(0),
+            items_skipped: Set(0),
+            items_failed: Set(0),
+            error_summary: Set(None),
+            resume_after: Set(None),
+            batch_id: Set(None),
+            query: Set(None),
+        }
+        .insert(&app.state().db)
+        .await
+        .unwrap();
+    }
+    let ids = |v: &Value| -> Vec<String> {
+        v["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let resp = get(&app, &admin, "/api/admin/metadata/runs?limit=100").await;
+    let expected = ids(&body_json(resp.into_body()).await);
+    assert_eq!(expected.len(), 7);
+
+    let mut walked = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..20 {
+        let path = match &cursor {
+            // Percent-encode `+` so a plain RFC3339 cursor survives the
+            // query string too.
+            Some(c) => format!(
+                "/api/admin/metadata/runs?limit=2&before={}",
+                c.replace('+', "%2B")
+            ),
+            None => "/api/admin/metadata/runs?limit=2".to_owned(),
+        };
+        let resp = get(&app, &admin, &path).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        let page = body_json(resp.into_body()).await;
+        walked.extend(ids(&page));
+        match page["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_owned()),
+            None => break,
+        }
+    }
+    assert_eq!(walked, expected, "paged walk must equal the unpaged list");
+
+    // The legacy plain-RFC3339 `before=` form is still accepted.
+    let resp = get(
+        &app,
+        &admin,
+        "/api/admin/metadata/runs?before=2999-01-01T00:00:00Z",
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(ids(&body_json(resp.into_body()).await), expected);
+}
+
 /// B14: the recent-applies feed lists only runs that wrote changes
 /// (`items_applied > 0`), newest finish first, with resolved entity labels
 /// and the `automatic` flag distinguishing weekly-refresh from manual.

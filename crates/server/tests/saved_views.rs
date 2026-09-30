@@ -464,6 +464,83 @@ async fn create_filter_view_and_run_results() {
     assert!(!names.contains(&"Saga".to_owned()), "Saga is Sci-Fi");
 }
 
+/// Regression: the results cursor was built from the popped lookahead
+/// row while the next page filters strictly after the cursor, so one
+/// series vanished at every page boundary. Walk every page (limit 2
+/// over 7 series) and require the concatenation to equal the unpaged
+/// result — for `name` (unique) and `year` (every row ties at 2020, so
+/// the id tiebreaker carries the keyset).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn results_cursor_walk_has_no_gaps_or_duplicates() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "walk@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let names = [
+        "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf",
+    ];
+    seed_series_with_genre(&app, "walk-lib", "Walk", &names).await;
+
+    let ids = |v: &serde_json::Value| -> Vec<String> {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    for (sort_field, sort_order) in [("name", "asc"), ("year", "desc"), ("year", "asc")] {
+        let body = serde_json::json!({
+            "kind": "filter_series",
+            "name": format!("Walk {sort_field} {sort_order}"),
+            "filter": {
+                "match_mode": "all",
+                "conditions": [
+                    { "group_id": 0, "field": "genres", "op": "includes_any", "value": ["Walk"] }
+                ]
+            },
+            "sort_field": sort_field,
+            "sort_order": sort_order,
+            "result_limit": 50,
+        });
+        let (status, view) = http(
+            &app,
+            Method::POST,
+            "/api/me/saved-views",
+            Some(&auth),
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "view: {view:#?}");
+        let view_id = view["id"].as_str().unwrap().to_owned();
+
+        let url = format!("/api/me/saved-views/{view_id}/results?limit=50");
+        let (status, all) = http(&app, Method::GET, &url, Some(&auth), None).await;
+        assert_eq!(status, StatusCode::OK, "results: {all:#?}");
+        let expected = ids(&all);
+        assert_eq!(expected.len(), names.len());
+
+        let mut walked = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..20 {
+            let url = match &cursor {
+                Some(c) => format!("/api/me/saved-views/{view_id}/results?limit=2&cursor={c}"),
+                None => format!("/api/me/saved-views/{view_id}/results?limit=2"),
+            };
+            let (status, page) = http(&app, Method::GET, &url, Some(&auth), None).await;
+            assert_eq!(status, StatusCode::OK, "page: {page:#?}");
+            walked.extend(ids(&page));
+            match page["next_cursor"].as_str() {
+                Some(c) => cursor = Some(c.to_owned()),
+                None => break,
+            }
+        }
+        assert_eq!(
+            walked, expected,
+            "{sort_field} {sort_order}: paged walk must equal the unpaged result"
+        );
+    }
+}
+
 /// M1 of library-filters-richer-1.0: the `not_contains` operator
 /// excludes rows whose text column contains the pattern. NULL values
 /// in the column are also excluded (`NOT LIKE` semantics on NULL).

@@ -1927,10 +1927,13 @@ async fn run_filter_query(app: &AppState, input: CompileInput<'_>) -> axum::resp
 
     let limit = input.limit;
     let mut rows = rows;
+    // Drop the lookahead row, then cursor from the last KEPT row —
+    // `apply_cursor` filters strictly after the cursor, so cursoring from
+    // the lookahead would skip it.
     let next_cursor = if rows.len() as u64 > limit {
-        let extra = rows.pop();
-        extra.map(|r| {
-            let value = sort_value_for(&r, input.sort_field);
+        rows.pop();
+        rows.last().map(|r| {
+            let value = sort_value_for(r, input.sort_field);
             encode_cursor(&value, &r.id.to_string())
         })
     } else {

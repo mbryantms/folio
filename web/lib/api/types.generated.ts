@@ -9103,8 +9103,8 @@ export interface components {
         };
         RunsListResp: {
             /**
-             * @description `started_at` of the last row — caller passes back as `before=`
-             *     for the next page. `None` when no more rows.
+             * @description Opaque cursor for the last row — caller passes it back as
+             *     `before=` for the next page. `None` when no more rows.
              */
             next_cursor?: string | null;
             runs: components["schemas"]["RunRow"][];
@@ -11733,8 +11733,8 @@ export interface operations {
                 /** @description Hard cap of 100; default 25. */
                 limit?: number | null;
                 /**
-                 * @description ISO-8601 timestamp; returns rows older than this for
-                 *     cursor-style pagination.
+                 * @description Opaque `next_cursor` from the previous page. A plain ISO-8601
+                 *     timestamp is still accepted (legacy form: rows strictly older).
                  */
                 before?: string | null;
             };
