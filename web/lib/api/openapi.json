@@ -13429,7 +13429,8 @@
               "string",
               "null"
             ],
-            "description": "Palette token, max 32 characters."
+            "description": "A palette name (`yellow | green | blue | red | violet`) or a\n`#RRGGBB` / `#RRGGBBAA` hex. Blank means \"no colour\".",
+            "pattern": "^(yellow|green|blue|red|violet|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$"
           },
           "is_favorite": {
             "type": [
@@ -24493,7 +24494,9 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Same rule as on create; `null` clears.",
+            "pattern": "^(yellow|green|blue|red|violet|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$"
           },
           "is_favorite": {
             "type": [

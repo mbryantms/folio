@@ -14,8 +14,9 @@
 //!     bounded page count.
 //!   - `POST /me/markers` — create. `Validated<CreateMarkerReq>` (garde,
 //!     422 with per-field `details`): body ≤ 10 KB, `selection.text`
-//!     ≤ 8 KB, color ≤ 32 chars, region `w`/`h` ≥ 0.5% after clamping to
-//!     [0, 100]. Then the per-kind shape (`body` required for `note`,
+//!     ≤ 8 KB, `color` a [`MARKER_PALETTE`] name or `#RRGGBB[AA]`, region
+//!     `w`/`h` ≥ 0.5% and `x + w`, `y + h` ≤ 100, all after clamping each
+//!     value to [0, 100]. Then the per-kind shape (`body` required for `note`,
 //!     `region` required for `highlight`) and `page_index` against
 //!     `issues.page_count`.
 //!   - `PATCH /me/markers/{id}` — partial update (body / color /
@@ -88,9 +89,20 @@ const MAX_BODY_BYTES: usize = 10 * 1024;
 /// Cap on `selection.text` — OCR output or the user's edit of it
 /// (WP-5.3; was ~1.1 KB, too tight for a full caption box).
 const MAX_SELECTION_TEXT_BYTES: usize = 8 * 1024;
-/// Cap on the palette token. The client uses short names (`yellow`,
-/// `violet`); anything longer is junk.
-const MAX_COLOR_LEN: usize = 32;
+/// Marker colour palette (owner decision 2026-09-30). `color` is one of
+/// these names or a `#RRGGBB` / `#RRGGBBAA` hex. Nothing renders marker
+/// colour yet; the list is published to the web client through the
+/// OpenAPI `pattern` on `color` ([`MARKER_COLOR_PATTERN`]) and mirrored in
+/// `web/lib/markers/palette.ts`, whose test checks the two agree.
+pub const MARKER_PALETTE: &[&str] = &["yellow", "green", "blue", "red", "violet"];
+/// Regex form of the colour rule, emitted as the OpenAPI `pattern`.
+/// Keep in step with [`MARKER_PALETTE`] (unit test below).
+pub const MARKER_COLOR_PATTERN: &str =
+    "^(yellow|green|blue|red|violet|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$";
+/// Float slack for the `x + w <= 100` / `y + h <= 100` bound — clients
+/// compute percentages from pixels, so an edge-to-edge region can sum to
+/// 100.00000000000001.
+const REGION_BOUND_EPSILON: f64 = 1e-6;
 /// Smallest region side, in percent of the page. A stray click-drag
 /// otherwise saves a zero-area highlight nothing can render or crop.
 const MIN_REGION_DIM_PCT: f64 = 0.5;
@@ -274,9 +286,11 @@ pub struct CreateMarkerReq {
     #[serde(default)]
     #[garde(inner(length(bytes, max = MAX_BODY_BYTES)))]
     pub body: Option<String>,
-    /// Palette token, max 32 characters.
+    /// A palette name (`yellow | green | blue | red | violet`) or a
+    /// `#RRGGBB` / `#RRGGBBAA` hex. Blank means "no colour".
     #[serde(default)]
-    #[garde(inner(length(chars, max = MAX_COLOR_LEN)))]
+    #[garde(custom(valid_color_opt))]
+    #[schema(pattern = "^(yellow|green|blue|red|violet|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$")]
     pub color: Option<String>,
     /// Star flag. Omit / false for a regular marker.
     #[serde(default)]
@@ -295,8 +309,10 @@ pub struct UpdateMarkerReq {
     #[serde(default, deserialize_with = "double_option")]
     #[garde(custom(valid_body_patch))]
     pub body: Option<Option<String>>,
+    /// Same rule as on create; `null` clears.
     #[serde(default, deserialize_with = "double_option")]
     #[garde(custom(valid_color_patch))]
+    #[schema(pattern = "^(yellow|green|blue|red|violet|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$")]
     pub color: Option<Option<String>>,
     /// Toggle star flag. Omit to leave unchanged.
     #[serde(default)]
@@ -335,7 +351,7 @@ fn region_problem(value: &serde_json::Value) -> Option<&'static str> {
     let serde_json::Value::Object(obj) = value else {
         return Some("region must be an object");
     };
-    let mut dims = [0.0_f64; 2];
+    let mut v4 = [0.0_f64; 4];
     for (i, key) in ["x", "y", "w", "h"].into_iter().enumerate() {
         let Some(v) = obj.get(key) else {
             return Some("region requires x, y, w, h");
@@ -343,12 +359,14 @@ fn region_problem(value: &serde_json::Value) -> Option<&'static str> {
         let Some(n) = v.as_f64() else {
             return Some("region x/y/w/h must be numbers");
         };
-        if i >= 2 {
-            dims[i - 2] = n.clamp(0.0, 100.0);
-        }
+        v4[i] = n.clamp(0.0, 100.0);
     }
-    if dims.iter().any(|d| *d < MIN_REGION_DIM_PCT) {
+    let [x, y, w, h] = v4;
+    if w < MIN_REGION_DIM_PCT || h < MIN_REGION_DIM_PCT {
         return Some("region w and h must be at least 0.5% of the page");
+    }
+    if region_out_of_bounds(x, y, w, h) {
+        return Some("region must fit on the page (x + w and y + h at most 100)");
     }
     match obj.get("shape") {
         None => None,
@@ -372,6 +390,35 @@ fn selection_problem(value: &serde_json::Value) -> Option<&'static str> {
         Some(serde_json::Value::String(_)) => None,
         Some(_) => Some("selection.text must be a string"),
     }
+}
+
+/// `x + w > 100` or `y + h > 100` on the already-clamped values (each of
+/// x/y/w/h is clamped to [0, 100] independently, as `normalize_region`
+/// stores them).
+fn region_out_of_bounds(x: f64, y: f64, w: f64, h: f64) -> bool {
+    x + w > 100.0 + REGION_BOUND_EPSILON || y + h > 100.0 + REGION_BOUND_EPSILON
+}
+
+/// `None` when `c` is an accepted colour (see [`MARKER_PALETTE`]).
+/// Surrounding whitespace is ignored and blank means "no colour", matching
+/// how the handlers store it.
+fn color_problem(c: &str) -> Option<&'static str> {
+    let c = c.trim();
+    if c.is_empty() || MARKER_PALETTE.contains(&c) {
+        return None;
+    }
+    let hex = c
+        .strip_prefix('#')
+        .is_some_and(|h| matches!(h.len(), 6 | 8) && h.bytes().all(|b| b.is_ascii_hexdigit()));
+    if hex {
+        None
+    } else {
+        Some("color must be yellow | green | blue | red | violet or #RRGGBB / #RRGGBBAA")
+    }
+}
+
+fn valid_color_opt(value: &Option<String>, _: &()) -> garde::Result {
+    as_garde(value.as_deref().and_then(color_problem))
 }
 
 fn as_garde(problem: Option<&'static str>) -> garde::Result {
@@ -415,12 +462,12 @@ fn valid_body_patch(value: &Option<Option<String>>, _: &()) -> garde::Result {
 }
 
 fn valid_color_patch(value: &Option<Option<String>>, _: &()) -> garde::Result {
-    match value {
-        Some(Some(c)) if c.chars().count() > MAX_COLOR_LEN => {
-            Err(garde::Error::new("color too long (max 32 characters)"))
-        }
-        _ => Ok(()),
-    }
+    as_garde(
+        value
+            .as_ref()
+            .and_then(Option::as_deref)
+            .and_then(color_problem),
+    )
 }
 
 /// Deserialize an `Option<Option<T>>` so a **present** JSON `null` becomes
@@ -768,6 +815,18 @@ fn normalize_region(
                 .map(serde_json::Value::Number)
                 .unwrap_or(serde_json::Value::Number(serde_json::Number::from(0))),
         );
+    }
+    let num = |k: &str| {
+        obj.get(k)
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0)
+    };
+    if region_out_of_bounds(num("x"), num("y"), num("w"), num("h")) {
+        return Err(MarkerError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "region must fit on the page (x + w and y + h at most 100)",
+        ));
     }
     if let Some(shape) = obj.get("shape") {
         let Some(s) = shape.as_str() else {
@@ -1613,4 +1672,43 @@ pub async fn bulk_delete(
         }),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::*;
+
+    #[test]
+    fn pattern_matches_the_palette_and_hex_rule() {
+        for name in MARKER_PALETTE {
+            assert!(color_problem(name).is_none(), "{name}");
+        }
+        for ok in ["#a1B2c3", "#A1B2C3FF", "  red  ", ""] {
+            assert!(color_problem(ok).is_none(), "{ok}");
+        }
+        for bad in [
+            "purple", "Yellow", "#abc", "#abcdefg", "#1234567", "red;", "#12345G",
+        ] {
+            assert!(color_problem(bad).is_some(), "{bad}");
+        }
+        // The literal repeated in the `#[schema(pattern)]` attributes.
+        assert_eq!(
+            MARKER_COLOR_PATTERN,
+            "^(yellow|green|blue|red|violet|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$"
+        );
+        assert_eq!(
+            MARKER_COLOR_PATTERN,
+            format!(
+                "^({}|#[0-9A-Fa-f]{{6}}|#[0-9A-Fa-f]{{8}})$",
+                MARKER_PALETTE.join("|")
+            )
+        );
+    }
+
+    #[test]
+    fn bounds_tolerate_float_slack_only() {
+        assert!(!region_out_of_bounds(90.0, 0.0, 10.000_000_000_000_01, 5.0));
+        assert!(region_out_of_bounds(90.0, 0.0, 10.1, 5.0));
+        assert!(region_out_of_bounds(0.0, 95.0, 5.0, 5.01));
+    }
 }

@@ -131,11 +131,25 @@ async fn create_rejects_bad_fields_with_field_details() {
     let (app, auth, issue, _tmp) = setup().await;
     let post = |body: Value| http(&app, Method::POST, "/api/me/markers", &auth, Some(body));
 
-    let (s, b) = post(
-        json!({"issue_id": issue, "page_index": 0, "kind": "bookmark", "color": "x".repeat(33)}),
-    )
-    .await;
-    assert_field_error(s, &b, "color");
+    // Colour: palette name or #RRGGBB / #RRGGBBAA only.
+    for bad in [
+        "x".repeat(33),
+        "purple".into(),
+        "Yellow".into(),
+        "#abc".into(),
+        "#12345G".into(),
+    ] {
+        let (s, b) =
+            post(json!({"issue_id": issue, "page_index": 0, "kind": "bookmark", "color": bad}))
+                .await;
+        assert_field_error(s, &b, "color");
+    }
+    for good in ["violet", "#1a2B3c", "#1A2B3C80", "  "] {
+        let (s, b) =
+            post(json!({"issue_id": issue, "page_index": 0, "kind": "bookmark", "color": good}))
+                .await;
+        assert_eq!(s, StatusCode::CREATED, "{good}: {b:#}");
+    }
 
     let (s, b) = post(json!({"issue_id": issue, "page_index": -1, "kind": "bookmark"})).await;
     assert_field_error(s, &b, "page_index");
@@ -171,16 +185,31 @@ async fn create_rejects_bad_fields_with_field_details() {
         json!({"x": 10, "y": 10, "w": -5, "h": 20}),
         json!({"x": 10, "y": 10, "w": 20}),
         json!({"x": 10, "y": 10, "w": 20, "h": 20, "shape": "blob"}),
+        // Off the page: x + w / y + h past 100 (after clamping each value
+        // to [0, 100], so w: 200 at x: 10 is still out of bounds).
+        json!({"x": 90, "y": 10, "w": 20, "h": 20}),
+        json!({"x": 10, "y": 95, "w": 20, "h": 10}),
+        json!({"x": 10, "y": 10, "w": 200, "h": 20}),
     ] {
         let (s, b) = post(highlight(&issue, region.clone())).await;
         assert_field_error(s, &b, "region");
+    }
+
+    // Clamping still applies first: x -10 → 0 with w 100 fits exactly, and
+    // an edge-to-edge region with float slack is accepted.
+    for region in [
+        json!({"x": -10, "y": 0, "w": 100, "h": 100}),
+        json!({"x": 33.333_333_333_333_336, "y": 0, "w": 66.666_666_666_666_67, "h": 50}),
+    ] {
+        let (s, b) = post(highlight(&issue, region.clone())).await;
+        assert_eq!(s, StatusCode::CREATED, "{region}: {b:#}");
     }
 
     // Boundaries are inclusive and the old ~1.1 KB selection cap is gone.
     let (s, b) = post(json!({
         "issue_id": issue, "page_index": 0, "kind": "highlight",
         "region": {"x": 10, "y": 10, "w": 0.5, "h": 0.5},
-        "color": "y".repeat(32),
+        "color": "yellow",
         "selection": {"text": "é".repeat(4 * 1024)},
     }))
     .await;
@@ -205,6 +234,13 @@ async fn update_rejects_bad_fields_with_field_details() {
 
     let (s, b) = patch(json!({"color": "x".repeat(33)})).await;
     assert_field_error(s, &b, "color");
+    let (s, b) = patch(json!({"color": "magenta"})).await;
+    assert_field_error(s, &b, "color");
+    let (s, b) = patch(json!({"color": "#AABBCC"})).await;
+    assert_eq!(s, StatusCode::OK, "body: {b:#}");
+    assert_eq!(b["color"], "#AABBCC");
+    let (s, b) = patch(json!({"region": {"x": 95, "y": 1, "w": 10, "h": 10}})).await;
+    assert_field_error(s, &b, "region");
     let (s, b) = patch(json!({"body": "x".repeat(10 * 1024 + 1)})).await;
     assert_field_error(s, &b, "body");
     let (s, b) = patch(json!({"region": {"x": 1, "y": 1, "w": 10, "h": 0.2}})).await;

@@ -5844,7 +5844,10 @@ export interface components {
         CreateMarkerReq: {
             /** @description Markdown body, max 10 KB. */
             body?: string | null;
-            /** @description Palette token, max 32 characters. */
+            /**
+             * @description A palette name (`yellow | green | blue | red | violet`) or a
+             *     `#RRGGBB` / `#RRGGBBAA` hex. Blank means "no colour".
+             */
             color?: string | null;
             /** @description Star flag. Omit / false for a regular marker. */
             is_favorite?: boolean | null;
@@ -10425,6 +10428,7 @@ export interface components {
         UpdateMarkerReq: {
             /** @description Sending `null` clears the field; omitting leaves it unchanged. */
             body?: string | null;
+            /** @description Same rule as on create; `null` clears. */
             color?: string | null;
             /** @description Toggle star flag. Omit to leave unchanged. */
             is_favorite?: boolean | null;
