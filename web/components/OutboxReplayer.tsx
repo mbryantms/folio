@@ -2,7 +2,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { invalidateRails } from "@/lib/api/mutations";
+import { invalidateRails } from "@/lib/api/mutations/rails";
 import { queryKeys } from "@/lib/api/queries";
 import { getOutbox, startOutboxReplay } from "@/lib/pwa/outbox";
 import {
