@@ -675,6 +675,43 @@ fn decode_cursor(raw: &str) -> Result<(chrono::DateTime<chrono::FixedOffset>, Uu
     Ok((parsed_ts, parsed_id))
 }
 
+/// DI-20: markers surface only while their issue is live and still
+/// visible to the caller (library grant + age-rating cap), the same rule
+/// the reading log applies. A revoked grant or a soft-removed issue hides
+/// the marker without deleting it (the notes export and `/me/export` still
+/// carry it). Shared by the list, the count badge and search so the three
+/// agree; the tag index applies the same rule in raw SQL
+/// ([`visible_marker_sql`]).
+fn visible_marker_condition(acl: &access::VisibleLibraries) -> sea_orm::sea_query::SimpleExpr {
+    let mut visible_issues = issue::Entity::find()
+        .select_only()
+        .column(issue::Column::Id)
+        .filter(issue::Column::RemovedAt.is_null());
+    if let Some(cond) = acl.issue_filter() {
+        visible_issues = visible_issues.filter(cond);
+    }
+    marker::Column::IssueId.in_subquery(visible_issues.into_query())
+}
+
+/// [`visible_marker_condition`] for hand-written SQL over
+/// `markers m JOIN issues i ON i.id = m.issue_id`. Pushes bind values onto
+/// `params`; the fragment starts with ` AND `.
+fn visible_marker_sql(acl: &access::VisibleLibraries, params: &mut Vec<sea_orm::Value>) -> String {
+    let mut sql = String::from(" AND i.removed_at IS NULL");
+    if !acl.unrestricted {
+        params.push(sea_orm::Value::from(
+            acl.allowed.iter().copied().collect::<Vec<Uuid>>(),
+        ));
+        sql.push_str(&format!(" AND i.library_id = ANY(${})", params.len()));
+        sql.push_str(&acl.raw_cap_clause(
+            "i.library_id",
+            "COALESCE(i.age_rating, (SELECT s.age_rating FROM series s WHERE s.id = i.series_id))",
+            params,
+        ));
+    }
+    sql
+}
+
 // ────────────── handlers ──────────────
 
 #[utoipa::path(
@@ -701,23 +738,10 @@ pub async fn list(
 ) -> impl IntoResponse {
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
 
-    // DI-20: markers are only listed while their issue is live and still
-    // visible to the caller (library grant + age-rating cap), the same
-    // rule the reading log applies. A revoked grant or a soft-removed
-    // issue hides the marker without deleting it (the export and
-    // `/me/export` still carry it).
     let acl = access::for_user(&app, &user).await;
-    let mut visible_issues = issue::Entity::find()
-        .select_only()
-        .column(issue::Column::Id)
-        .filter(issue::Column::RemovedAt.is_null());
-    if let Some(cond) = acl.issue_filter() {
-        visible_issues = visible_issues.filter(cond);
-    }
-
     let mut select = marker::Entity::find()
         .filter(marker::Column::UserId.eq(user.id))
-        .filter(marker::Column::IssueId.in_subquery(visible_issues.into_query()))
+        .filter(visible_marker_condition(&acl))
         .order_by_desc(marker::Column::UpdatedAt)
         .order_by_desc(marker::Column::Id);
 
@@ -828,8 +852,12 @@ pub async fn list(
 )]
 #[handler]
 pub async fn count(State(app): State<AppState>, user: CurrentUser) -> impl IntoResponse {
+    // Same visibility rule as the list (DI-20) so the sidebar badge
+    // matches what /bookmarks shows.
+    let acl = access::for_user(&app, &user).await;
     match marker::Entity::find()
         .filter(marker::Column::UserId.eq(user.id))
+        .filter(visible_marker_condition(&acl))
         .count(&app.db)
         .await
     {
@@ -874,7 +902,11 @@ pub async fn search(
     // text. `ilike_pattern` escapes `%` / `_` so "10_things" isn't read as a
     // wildcard. ts_headline highlighting runs separately off the raw `text`.
     use crate::util::search::{col_ilike, ilike_pattern};
-    let mut search_sel = marker::Entity::find().filter(marker::Column::UserId.eq(user.id));
+    // Same visibility rule as the list (DI-20).
+    let acl = access::for_user(&app, &user).await;
+    let mut search_sel = marker::Entity::find()
+        .filter(marker::Column::UserId.eq(user.id))
+        .filter(visible_marker_condition(&acl));
     for token in text.split_whitespace() {
         let pat = ilike_pattern(token);
         search_sel = search_sel.filter(
@@ -1033,24 +1065,31 @@ pub async fn tags_index(State(app): State<AppState>, user: CurrentUser) -> impl 
         tag: String,
         count: i64,
     }
-    let rows: Vec<TagRow> =
-        match TagRow::find_by_statement(sea_orm::Statement::from_sql_and_values(
-            sea_orm::DatabaseBackend::Postgres,
-            "SELECT tag, COUNT(*)::bigint AS count \
-             FROM (SELECT UNNEST(tags) AS tag FROM markers WHERE user_id = $1) t \
-             GROUP BY tag \
-             ORDER BY count DESC, tag ASC",
-            [user.id.into()],
-        ))
-        .all(&app.db)
-        .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::error!(error = %e, "markers: tag index failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        };
+    // Same visibility rule as the list (DI-20), so a tag chip's count
+    // matches the markers the chip filters to.
+    let acl = access::for_user(&app, &user).await;
+    let mut params: Vec<sea_orm::Value> = vec![user.id.into()];
+    let visible = visible_marker_sql(&acl, &mut params);
+    let sql = format!(
+        "SELECT tag, COUNT(*)::bigint AS count \
+         FROM (SELECT UNNEST(m.tags) AS tag FROM markers m \
+               JOIN issues i ON i.id = m.issue_id \
+               WHERE m.user_id = $1{visible}) t \
+         GROUP BY tag \
+         ORDER BY count DESC, tag ASC"
+    );
+    let rows: Vec<TagRow> = match TagRow::find_by_statement(
+        sea_orm::Statement::from_sql_and_values(sea_orm::DatabaseBackend::Postgres, sql, params),
+    )
+    .all(&app.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "markers: tag index failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
     let items: Vec<TagEntryView> = rows
         .into_iter()
         .map(|r| TagEntryView {
