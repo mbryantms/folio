@@ -46,12 +46,76 @@ pub struct EnumerationResult {
     /// Folders that violate the two-layouts contract. M2 surfaces these
     /// via [`crate::library::health::IssueKind::AmbiguousFolder`].
     pub ambiguous_folders: Vec<AmbiguousFolder>,
+    /// Folders with no archives that still carry a `series.json`
+    /// sidecar — usually a series whose archives were moved or deleted
+    /// while the Mylar3 sidecar stayed behind. Surfaced as
+    /// [`crate::library::health::IssueKind::OrphanedSeriesJson`] *instead
+    /// of* `EmptyFolder` (the folder isn't empty; it's orphaned).
+    pub orphaned_series_json: Vec<PathBuf>,
 }
+
+/// Upper bound on how many skipped archive paths an
+/// [`AmbiguousFolder`] carries in its preview. The health row stores the
+/// preview in its jsonb payload, so the bound keeps a 5k-archive
+/// mis-nested publisher tree from producing a megabyte row; the exact
+/// total still rides alongside in `skipped_archive_count`.
+pub const AMBIGUOUS_PREVIEW_LIMIT: usize = 20;
 
 #[derive(Debug, Clone)]
 pub struct AmbiguousFolder {
     pub path: PathBuf,
     pub reason: String,
+    /// Bounded preview (≤ [`AMBIGUOUS_PREVIEW_LIMIT`]) of the archives the
+    /// scanner skipped because of this violation, as paths relative to
+    /// `path` (or the file name itself when `path` is a stray archive).
+    /// Sorted for a stable payload across scans.
+    pub skipped_archives: Vec<String>,
+    /// Exact number of archives in the skipped subtree.
+    pub skipped_archive_count: u32,
+}
+
+impl AmbiguousFolder {
+    fn new(path: PathBuf, reason: String, ignore: &IgnoreRules) -> Self {
+        let (skipped_archives, skipped_archive_count) = preview_skipped_archives(&path, ignore);
+        Self {
+            path,
+            reason,
+            skipped_archives,
+            skipped_archive_count,
+        }
+    }
+}
+
+/// Walk the skipped subtree once, counting every recognized archive and
+/// keeping the first [`AMBIGUOUS_PREVIEW_LIMIT`] (by sorted relative
+/// path). A stray archive file previews as itself.
+fn preview_skipped_archives(path: &Path, ignore: &IgnoreRules) -> (Vec<String>, u32) {
+    if path.is_file() {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        return (vec![name], 1);
+    }
+    let mut all: Vec<String> = list_archives_with(path, ignore)
+        .into_iter()
+        .map(|p| {
+            p.strip_prefix(path)
+                .unwrap_or(&p)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    let total = u32::try_from(all.len()).unwrap_or(u32::MAX);
+    all.sort();
+    all.truncate(AMBIGUOUS_PREVIEW_LIMIT);
+    (all, total)
+}
+
+/// An archive-less folder that still holds a `series.json` is an orphaned
+/// sidecar, not an empty folder.
+fn has_series_json(folder: &Path) -> bool {
+    folder.join("series.json").is_file()
 }
 
 #[derive(Debug, Default)]
@@ -114,12 +178,14 @@ pub fn enumerate_with(root: &Path, ignore: &IgnoreRules) -> std::io::Result<Enum
             FolderShape::PublisherContainer => {
                 classify_publisher_children(&child, ignore, &mut result);
             }
+            FolderShape::Empty if has_series_json(&child) => {
+                result.orphaned_series_json.push(child);
+            }
             FolderShape::Empty => result.empty_folders.push(child),
             FolderShape::Ambiguous(reason) => {
-                result.ambiguous_folders.push(AmbiguousFolder {
-                    path: child,
-                    reason,
-                });
+                result
+                    .ambiguous_folders
+                    .push(AmbiguousFolder::new(child, reason, ignore));
             }
         }
     }
@@ -155,14 +221,14 @@ fn classify_publisher_children(
                     .as_deref()
                     .is_some_and(crate::library::ignore::is_recognized_archive_ext);
                 if is_archive {
-                    result.ambiguous_folders.push(AmbiguousFolder {
-                        path: sub,
-                        reason: format!(
-                            "archive file directly inside publisher folder \"{}\"; \
-                             move it into a series folder",
-                            publisher_name.as_deref().unwrap_or("(unnamed)"),
-                        ),
-                    });
+                    let reason = format!(
+                        "archive file directly inside publisher folder \"{}\"; \
+                         move it into a series folder",
+                        publisher_name.as_deref().unwrap_or("(unnamed)"),
+                    );
+                    result
+                        .ambiguous_folders
+                        .push(AmbiguousFolder::new(sub, reason, ignore));
                 }
             }
             continue;
@@ -175,18 +241,21 @@ fn classify_publisher_children(
             }),
             FolderShape::PublisherContainer => {
                 // 3-deep nesting — out of scope per the plan.
-                result.ambiguous_folders.push(AmbiguousFolder {
-                    path: sub,
-                    reason: "folder appears to be a third nesting level; \
-                             Folio supports at most Publisher/Series/CBZ"
-                        .to_owned(),
-                });
+                let reason = "folder appears to be a third nesting level; \
+                              Folio supports at most Publisher/Series/CBZ"
+                    .to_owned();
+                result
+                    .ambiguous_folders
+                    .push(AmbiguousFolder::new(sub, reason, ignore));
+            }
+            FolderShape::Empty if has_series_json(&sub) => {
+                result.orphaned_series_json.push(sub);
             }
             FolderShape::Empty => result.empty_folders.push(sub),
             FolderShape::Ambiguous(reason) => {
                 result
                     .ambiguous_folders
-                    .push(AmbiguousFolder { path: sub, reason });
+                    .push(AmbiguousFolder::new(sub, reason, ignore));
             }
         }
     }
@@ -672,6 +741,81 @@ mod tests {
         assert_eq!(result.series_folders.len(), 1);
         assert_eq!(result.series_folders[0].path, marvel);
         assert!(result.series_folders[0].publisher_hint.is_none());
+    }
+
+    /// The AmbiguousFolder row must list what it skipped: a bounded,
+    /// sorted preview of relative archive paths plus the exact total.
+    #[test]
+    fn ambiguous_folder_previews_skipped_subtree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        let vertigo = root.join("DC").join("Vertigo");
+        let sandman = vertigo.join("Sandman");
+        fs::create_dir_all(&sandman).unwrap();
+        for i in 0..(AMBIGUOUS_PREVIEW_LIMIT + 5) {
+            write_empty(&sandman.join(format!("Sandman {i:03}.cbz")));
+        }
+        write_empty(&sandman.join("notes.txt"));
+
+        let result = enumerate(root).unwrap();
+        assert_eq!(result.ambiguous_folders.len(), 1);
+        let amb = &result.ambiguous_folders[0];
+        assert_eq!(amb.path, vertigo);
+        assert_eq!(
+            amb.skipped_archive_count as usize,
+            AMBIGUOUS_PREVIEW_LIMIT + 5
+        );
+        assert_eq!(amb.skipped_archives.len(), AMBIGUOUS_PREVIEW_LIMIT);
+        assert_eq!(
+            amb.skipped_archives[0],
+            Path::new("Sandman")
+                .join("Sandman 000.cbz")
+                .to_string_lossy()
+        );
+    }
+
+    /// A stray archive path previews as itself.
+    #[test]
+    fn stray_archive_preview_is_the_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stray = tmp.path().join("stray.cbz");
+        write_empty(&stray);
+        let (preview, total) = preview_skipped_archives(&stray, &IgnoreRules::default());
+        assert_eq!(preview, vec!["stray.cbz".to_owned()]);
+        assert_eq!(total, 1);
+    }
+
+    /// An archive-less folder that still holds `series.json` is reported
+    /// as an orphaned sidecar, not as an empty folder — at the root and
+    /// under a publisher.
+    #[test]
+    fn orphaned_series_json_detected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        let orphan = root.join("Gone Series (2019)");
+        fs::create_dir(&orphan).unwrap();
+        fs::write(orphan.join("series.json"), b"{}").unwrap();
+
+        let marvel = root.join("Marvel");
+        let daredevil = marvel.join("Daredevil");
+        fs::create_dir_all(&daredevil).unwrap();
+        write_empty(&daredevil.join("Daredevil 001.cbz"));
+        let nested_orphan = marvel.join("Moved Away");
+        fs::create_dir(&nested_orphan).unwrap();
+        fs::write(nested_orphan.join("series.json"), b"{}").unwrap();
+
+        let lonely = root.join("Lonely");
+        fs::create_dir(&lonely).unwrap();
+
+        let result = enumerate(root).unwrap();
+        let mut orphans = result.orphaned_series_json.clone();
+        orphans.sort();
+        let mut expected = vec![orphan, nested_orphan];
+        expected.sort();
+        assert_eq!(orphans, expected);
+        assert_eq!(result.empty_folders, vec![lonely]);
     }
 
     /// Hidden folders are still ignored.

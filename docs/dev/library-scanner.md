@@ -491,13 +491,16 @@ opaque JSON so adding variants doesn't need a migration.
   ([health.rs:331](../../crates/server/src/library/health.rs#L331)).
   Endpoint: `POST /libraries/{slug}/health-issues/{issue_id}/dismiss`.
 
-### Actively emitted (10 variants)
+### Actively emitted
 
 | Kind | Severity | Trigger | Emitter | Payload | Fix |
 |---|---|---|---|---|---|
 | `FileAtRoot` | warning | Archive sits at the library root, not inside a series folder. | [enumerate Phase 2 → mod.rs:1138](../../crates/server/src/library/scanner/mod.rs#L1138) | `{ path }` | Move into a series folder. |
 | `EmptyFolder` | warning | Direct child of root has no entries. | [enumerate Phase 2 → mod.rs:1141](../../crates/server/src/library/scanner/mod.rs#L1141) | `{ path }` | Add files or remove the folder. |
-| `AmbiguousFolder` | warning | Folder violates the two-layouts contract: archives at depth-1 *and* non-allowlist archive-bearing subdirs; or no archives at depth-1 with only allowlist subdirs; or 3-deep nesting; or a stray archive directly inside a publisher folder. The subtree is skipped — better than guessing. | [enumerate Phase 2 → mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ path, reason }` (`reason` carries an actionable hint that adapts to the violation shape) | Fix the on-disk layout per §4.2 "Two supported on-disk layouts". |
+| `AmbiguousFolder` | warning | Folder violates the two-layouts contract: archives at depth-1 *and* non-allowlist archive-bearing subdirs; or no archives at depth-1 with only allowlist subdirs; or 3-deep nesting; or a stray archive directly inside a publisher folder. The subtree is skipped — better than guessing. | [enumerate Phase 2 → mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ path, reason, skipped_archives, skipped_archive_count }` — `reason` carries an actionable hint that adapts to the violation shape; `skipped_archives` is a sorted preview (≤ `enumerate::AMBIGUOUS_PREVIEW_LIMIT` = 20) of the skipped archives relative to `path`, `skipped_archive_count` the exact total (WP-3.4). Rows written before WP-3.4 lack both until the next full scan. | Fix the on-disk layout per §4.2 "Two supported on-disk layouts". |
+| `OrphanedSeriesJson` | warning | A folder with no archives still holds a `series.json` — the sidecar outlived its archives. Reported *instead of* `EmptyFolder` for that folder (root children and folders under a publisher container). | [enumerate Phase 2 → mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ folder }` | Restore the archives, or delete the folder. |
+| `FolderNameMismatch` | warning | The series folder's name disagrees with the dominant ComicInfo `<Series>` of its non-special archives (spec §7.1 — ComicInfo still wins for the series name). See "Folder consistency checks" below for the normalization that keeps this quiet on healthy libraries. | [folder_checks.rs](../../crates/server/src/library/scanner/folder_checks.rs), called from `process_planned_folder` after ingest | `{ folder, series_id, comic_info_series, files }` | Rename the folder, or re-tag the archives if the folder is right. |
+| `MixedSeriesInFolder` | warning | Non-special archives in one series folder carry more than one distinct `<Series>` (spec §7.2). All files stay attributed to the folder's series. | [folder_checks.rs](../../crates/server/src/library/scanner/folder_checks.rs) | `{ folder, series_id, series_values: [{ series, files, example }], distinct_values }` — values sorted most-files-first, capped at `MIXED_SERIES_VALUES_LIMIT` = 10; `example` is one file (relative to the folder) carrying the value. | Move the stray archives into their own series folder. |
 | `UnreadableFile` | error | Per-issue scan target is masked by the library's ignore globs. | [run_issue_phase mod.rs:995](../../crates/server/src/library/scanner/mod.rs#L995) | `{ path, error }` | Adjust `library.ignore_globs`, or move the file out of the ignored path. |
 | `UnreadableArchive` | error | OS / archive-layer I/O error opening the archive. | [process.rs:244](../../crates/server/src/library/scanner/process.rs#L244) | `{ path, error }` | Check perms, replace the file. |
 | `MissingComicInfo` | info | Archive has no `ComicInfo.xml`. **Gated** on `library.report_missing_comicinfo=true` — loose libraries don't get spammed by default. | [process.rs:222](../../crates/server/src/library/scanner/process.rs#L222) | `{ path }` | Tag with ComicTagger / Mylar, or flip the per-library setting off. |
@@ -506,23 +509,57 @@ opaque JSON so adding variants doesn't need a migration.
 | `UnsupportedArchiveFormat` | warning | `.cb7`: always — the [cb7.rs](../../crates/archive/src/cb7.rs) reader is a stub. `.cbr`: only when the library has `auto_convert_cbr_on_scan=false` **or** the conversion failed (not RAR/ZIP by magic bytes, encrypted, I/O error). With the flag on, the scanner converts the file to a sibling `.cbz` via [scanner/cbr_convert.rs](../../crates/server/src/library/scanner/cbr_convert.rs) and ingests that instead — no health row. | [process.rs](../../crates/server/src/library/scanner/process.rs) (`Some("cbr")` / `Some("cb7")` arms) | `{ path, ext }` | Enable `auto_convert_cbr_on_scan` on the library (needs `allow_archive_writeback`), or convert to CBZ by hand. CB7: convert to CBZ. |
 | `SkippedArchiveEntries` | warning | The archive opened, but one or more entries were dropped from the page index by a soft defense in the archive crate. One row per `reason`: `compression ratio cap` (CBZ entry claiming >200× expansion) or `image extension but non-image content` (an image-named entry whose leading bytes carry no image signature — the "`ComicInfo.xml` saved as `-0001.jpg`" publisher bug; every reader content-sniffs page candidates at open via [`archive::image_sniff`](../../crates/archive/src/image_sniff.rs)). The issue ingests with the surviving pages, so cover thumbnails, the reader and OCR all agree on page 0. | [process.rs](../../crates/server/src/library/scanner/process.rs) (translates `entries_skipped()`) | `{ path, dropped, total, reason }` | Repack the archive without the offending entry, or leave it — nothing downstream reads it. |
 
-### Defined but not emitted (4 stub variants)
+### Folder consistency checks (WP-3.4)
 
-These variants are wired into `IssueKind`, severity, fingerprinting,
-and the touch logic, but no code calls `health.emit(IssueKind::X { … })`
-anywhere in the scanner. They are dead branches today —
-forward-compatibility hooks for spec §7.2 (mixed-series merging) and
-§6.4 (volume year-vs-sequence split) that haven't shipped yet.
-Future contributors should either wire them up by adding the emit-site
-predicates *or* prune them from the enum; do not assume open rows of
-these kinds will ever appear.
+`FolderNameMismatch` and `MixedSeriesInFolder` run once per processed
+series folder, after its archives are ingested
+([`folder_checks::check_series_folder`](../../crates/server/src/library/scanner/folder_checks.rs)).
+Inputs are the folder's active issues projected to `file_path`,
+`special_type` and `comic_info_raw->>'series'`, intersected with the
+folder's current on-disk archive list (the soft-delete reconcile for
+vanished files runs after every folder, so a just-deleted stray must not
+count). One projected query per processed folder; it deliberately does
+**not** sit behind the PERF-2 `folder_mutated` gate, because removing a
+stray file ingests nothing yet changes the verdict. Folders skipped by
+the folder-level fast path are `touch_folder`-ed, which keeps their rows
+open; full scans auto-resolve rows no longer re-emitted, scoped
+(series/issue) scans never auto-resolve.
 
-| Kind | Severity (defined) | Intended trigger (per spec / enum docstring) |
-|---|---|---|
-| `FolderNameMismatch` | warning | Folder name doesn't match ComicInfo `<Series>` value. |
-| `MixedSeriesInFolder` | warning | One folder contains files claiming different `<Series>` values (spec §7.2). |
-| `AmbiguousVolume` | warning | `<Volume>` couldn't be classified as year vs sequence (spec §6.4). |
-| `OrphanedSeriesJson` | warning | `series.json` present but no comics in the folder. |
+Noise control — both sides of every comparison go through
+`folder_checks::series_key`:
+
+1. Bracket groups are dropped: `(2016)`, `[cv-4050-12345]`, `(Digital)`.
+2. [`title_norm::sanitize_title`](../../crates/server/src/metadata/title_norm.rs)
+   folds case, accents, quotes, punctuation (`X-Men: Blue` = `X-Men - Blue`)
+   and ComicTagger's article list (`The`, `&`/`and`, …) — the matcher's
+   own normalization, so scanner and matcher agree on "same name".
+3. Volume tokens (`v2`, `Vol. 3`, `Volume 3`) are dropped.
+4. Trailing bare numbers are dropped (`Batman 2016`, and issue-folder
+   layouts such as `Publisher/Batman 001/Batman 001.cbz`), unless the
+   number is the whole name (`1602`).
+
+Further suppressions: files with a `special_type` (allowlisted
+`Specials`/`Annuals` subfolders, annual/one-shot formats) are ignored —
+`Batman Annual` inside `Batman/` is normal; no row is emitted when no
+file carries a ComicInfo `<Series>`; `FolderNameMismatch` is suppressed
+when the folder's `series.json` `name` has the same key as the dominant
+ComicInfo value (the sidecar confirms the identity, the folder name is
+just a label); `MixedSeriesInFolder` ignores values whose key matches a
+recorded [`series_provider_range`](../../crates/entity/src/series_provider_range.rs)
+`provider_series_name` (a tracked provider-divergence split, whose
+identity writeback composes into the per-issue `<Series>`).
+
+### Removed: `AmbiguousVolume` (WP-3.4)
+
+`AmbiguousVolume` ("`<Volume>` couldn't be classified as year vs
+sequence", spec §6.4) was never emitted and has been deleted from
+`IssueKind`. Volume classification is deterministic — every `V<N>`
+source goes through `parsers::filename::plausible_volume` (1–99 and not
+equal to the year, otherwise dropped) — so there is no ambiguous outcome
+to report, and flagging every Mylar3 `V<year>` stamp would bury the
+findings page. The wire `kind` is a plain string (no OpenAPI enum), and
+no rows of this kind can exist, so no migration or oasdiff exception is
+needed; any stray row would be auto-resolved by the next full scan.
 
 ## Progress events
 
@@ -803,12 +840,6 @@ markers, a saved-view CBL slot). Two recovery paths:
 
 ## Carry-over (deferred from v1, tracked for follow-up)
 
-- **Wire the four stub health-issue variants** (`FolderNameMismatch`,
-  `MixedSeriesInFolder`, `AmbiguousVolume`, `OrphanedSeriesJson`) into
-  emit sites, **or** prune them from `IssueKind` in
-  [health.rs:28–78](../../crates/server/src/library/health.rs#L28-L78).
-  They show up as unused enum arms in any future code search and the
-  fingerprint logic carries dead branches for each.
 - **CB7 reader** — extension recognized + dispatch wired; the
   [cb7.rs](../../crates/archive/src/cb7.rs) stub returns `Malformed`
   so the scanner emits `UnsupportedArchiveFormat`. (CBR is done: the

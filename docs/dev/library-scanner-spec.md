@@ -305,7 +305,7 @@ rustenum LibraryHealthIssue {
     MalformedComicInfo { path: PathBuf, error: String },
     FolderNameMismatch { folder: String, comic_info_series: String },
     MixedSeriesInFolder { folder: PathBuf, series_values: Vec<String> },
-    AmbiguousVolume { path: PathBuf, parsed: String },
+    AmbiguousVolume { path: PathBuf, parsed: String },         // never emitted; removed in WP-3.4 (see library-scanner.md)
     DuplicateContent { path_a: PathBuf, path_b: PathBuf },     // same hash, different paths
     PageCountMismatch { path: PathBuf, expected: u32, actual: u32 },
     OrphanedSeriesJson { folder: PathBuf },                    // series.json with no archives
