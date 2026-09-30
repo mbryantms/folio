@@ -1733,6 +1733,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/libraries/{slug}/duplicates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["duplicates_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/libraries/{slug}/health-issues": {
         parameters: {
             query?: never;
@@ -3414,6 +3430,22 @@ export interface paths {
         put?: never;
         post: operations["reconcile_confirm_issue"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{series_slug}/issues/{issue_slug}/duplicate-decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["duplicates_set_decision"];
+        post?: never;
+        delete: operations["duplicates_clear_decision"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6303,6 +6335,74 @@ export interface components {
             hour: number;
             /** Format: int64 */
             sessions: number;
+        };
+        /**
+         * @description Per-kind group counts (first page only) for the filter chips. Counts are
+         *     unsuppressed — each matches what `?kind=<k>` lists.
+         */
+        DuplicateCounts: {
+            /** Format: int64 */
+            cover: number;
+            /** Format: int64 */
+            hash: number;
+            /** Format: int64 */
+            number: number;
+        };
+        /**
+         * @description Admin verdict on one duplicate-group member.
+         * @enum {string}
+         */
+        DuplicateDecision: "keep" | "remove";
+        DuplicateGroupView: {
+            issues: components["schemas"]["DuplicateIssueView"][];
+            /** @description Stable group identifier (unique within a listing) — use as a React key. */
+            key: string;
+            kind: components["schemas"]["DuplicateKind"];
+            /**
+             * Format: int32
+             * @description Largest pairwise cover distance inside the group (`cover` only).
+             */
+            max_cover_distance?: number | null;
+            /**
+             * @description Series the group belongs to. For `hash` groups whose copies span
+             *     series this is the first member's series.
+             */
+            series_id: string;
+            series_name: string;
+            series_slug: string;
+        };
+        DuplicateIssueView: {
+            /** @description `/issues/{id}/pages/0/thumb` for active issues; `null` otherwise. */
+            cover_url?: string | null;
+            decision?: components["schemas"]["DuplicateDecision"] | null;
+            file_path: string;
+            /** Format: int64 */
+            file_size: number;
+            id: string;
+            number_raw?: string | null;
+            /** Format: int32 */
+            page_count?: number | null;
+            series_name: string;
+            series_slug: string;
+            slug: string;
+            special_type?: string | null;
+            state: string;
+            title?: string | null;
+        };
+        /**
+         * @description Which grouping rule produced a duplicate group.
+         * @enum {string}
+         */
+        DuplicateKind: "hash" | "number" | "cover";
+        DuplicateListView: {
+            counts?: components["schemas"]["DuplicateCounts"] | null;
+            items: components["schemas"]["DuplicateGroupView"][];
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Group count for the current `kind` filter. First page only.
+             */
+            total?: number | null;
         };
         EditRequest: {
             /**
@@ -9489,6 +9589,9 @@ export interface components {
             last_used_at: string;
             user_agent?: string | null;
         };
+        SetDuplicateDecisionReq: {
+            decision: components["schemas"]["DuplicateDecision"];
+        };
         /**
          * @description Body for `POST /me/saved-views/{id}/icon` — pick (or clear) the icon
          *     that represents this rail in the user's home + sidebar. `None` /
@@ -10005,6 +10108,14 @@ export interface components {
              *     the master toggle resolves false returns 422.
              */
             auto_convert_cbr_on_scan?: boolean | null;
+            /**
+             * @description When true (default), a second copy of an already-ingested file in
+             *     this library is skipped with a `DuplicateContent` health row. When
+             *     false, every copy is ingested as its own issue and the Duplicates
+             *     page surfaces the exact-hash pair. Library-scoped either way
+             *     (WP-3.3): the same file in another library is never a duplicate.
+             */
+            dedupe_by_content?: boolean | null;
             file_watch_enabled?: boolean | null;
             /**
              * @description Toggle filename inference's assume-issue-one fallback
@@ -13986,6 +14097,54 @@ export interface operations {
             };
         };
     };
+    duplicates_list: {
+        parameters: {
+            query?: {
+                /** @description Grouping rule filter: `all` (default), `hash`, `number`, or `cover`. */
+                kind?: string;
+                /** @description Groups per page (1..=200, default 50). */
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DuplicateListView"];
+                };
+            };
+            /** @description invalid cursor or kind */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     health_issues_list: {
         parameters: {
             query?: {
@@ -17132,6 +17291,80 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description confirmed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    duplicates_set_decision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetDuplicateDecisionReq"];
+            };
+        };
+        responses: {
+            /** @description decision recorded */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    duplicates_clear_decision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description decision cleared; a duplicate soft-remove is undone */
             204: {
                 headers: {
                     [name: string]: unknown;

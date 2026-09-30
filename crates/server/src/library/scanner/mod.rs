@@ -1372,8 +1372,10 @@ async fn run_issue_phase(
     }
     stats.record_phase("process", process_started.elapsed());
 
+    // A Duplicates-page soft-remove (WP-3.3) is sticky: skip the restore.
     if let Some(updated) = issue::Entity::find()
         .filter(issue::Column::FilePath.eq(path.to_string_lossy().into_owned()))
+        .filter(crate::library::reconcile::not_duplicate_removed())
         .one(&state.db)
         .await?
     {

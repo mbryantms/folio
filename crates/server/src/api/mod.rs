@@ -21,6 +21,7 @@ pub mod collections;
 pub mod covers;
 pub mod creators;
 pub mod csp;
+pub mod duplicates;
 pub mod external_ids;
 pub mod extractors;
 pub mod filter_options;

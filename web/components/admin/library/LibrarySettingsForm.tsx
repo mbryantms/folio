@@ -51,6 +51,7 @@ const schema = z
       .refine((v) => validateCron(v).ok, "Invalid cron expression")
       .default(""),
     report_missing_comicinfo: z.boolean().default(false),
+    dedupe_by_content: z.boolean().default(true),
     soft_delete_days: z.number().int().min(0).max(365).default(7),
     generate_page_thumbs_on_scan: z.boolean().default(false),
     allow_archive_writeback: z.boolean().default(false),
@@ -92,6 +93,7 @@ function formValuesFromLibrary(lib: LibraryView): z.input<typeof schema> {
     ignore_globs: lib.ignore_globs,
     scan_schedule_cron: lib.scan_schedule_cron ?? "",
     report_missing_comicinfo: lib.report_missing_comicinfo,
+    dedupe_by_content: lib.dedupe_by_content,
     soft_delete_days: lib.soft_delete_days,
     generate_page_thumbs_on_scan: lib.generate_page_thumbs_on_scan,
     allow_archive_writeback: lib.allow_archive_writeback,
@@ -118,6 +120,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       ignore_globs: [],
       scan_schedule_cron: "",
       report_missing_comicinfo: false,
+      dedupe_by_content: true,
       soft_delete_days: 7,
       generate_page_thumbs_on_scan: false,
       allow_archive_writeback: false,
@@ -154,6 +157,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       await update.mutateAsync({
         ignore_globs: values.ignore_globs,
         report_missing_comicinfo: values.report_missing_comicinfo,
+        dedupe_by_content: values.dedupe_by_content,
         soft_delete_days: values.soft_delete_days,
         generate_page_thumbs_on_scan: values.generate_page_thumbs_on_scan,
         allow_archive_writeback: values.allow_archive_writeback,
@@ -242,6 +246,30 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                     <FormDescription>
                       Surface a health issue when an issue lacks ComicInfo
                       metadata.
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="dedupe_by_content"
+              render={({ field }) => (
+                <FormItem className="flex items-start justify-between gap-6">
+                  <div className="space-y-1">
+                    <FormLabel>Skip identical copies</FormLabel>
+                    <FormDescription>
+                      When on, a second copy of a file already in this library
+                      is skipped at scan time and reported as a health issue.
+                      Turn off to ingest every copy and review them on the
+                      Duplicates tab. The same file in another library is always
+                      its own issue.
                     </FormDescription>
                   </div>
                   <FormControl>

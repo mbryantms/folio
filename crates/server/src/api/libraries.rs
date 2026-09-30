@@ -206,6 +206,14 @@ pub struct UpdateLibraryReq {
     #[serde(default)]
     #[garde(skip)]
     pub report_missing_comicinfo: Option<bool>,
+    /// When true (default), a second copy of an already-ingested file in
+    /// this library is skipped with a `DuplicateContent` health row. When
+    /// false, every copy is ingested as its own issue and the Duplicates
+    /// page surfaces the exact-hash pair. Library-scoped either way
+    /// (WP-3.3): the same file in another library is never a duplicate.
+    #[serde(default)]
+    #[garde(skip)]
+    pub dedupe_by_content: Option<bool>,
     #[serde(default)]
     #[garde(skip)]
     pub file_watch_enabled: Option<bool>,
@@ -686,6 +694,9 @@ pub async fn update_settings(
     }
     if let Some(b) = req.report_missing_comicinfo {
         am.report_missing_comicinfo = Set(b);
+    }
+    if let Some(b) = req.dedupe_by_content {
+        am.dedupe_by_content = Set(b);
     }
     if let Some(b) = req.file_watch_enabled {
         am.file_watch_enabled = Set(b);

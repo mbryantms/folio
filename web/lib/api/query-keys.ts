@@ -114,6 +114,12 @@ export const queryKeys = {
   scanPreview: (libraryId: string) =>
     ["libraries", libraryId, "scan-preview"] as const,
   removed: (libraryId: string) => ["libraries", libraryId, "removed"] as const,
+  /** Prefix for every duplicates listing of a library (any kind filter). */
+  duplicatesAll: (libraryId: string) =>
+    ["libraries", libraryId, "duplicates"] as const,
+  /** Cursor-paginated duplicate groups (WP-3.3); `kind` is a server param. */
+  duplicates: (libraryId: string, kind: string) =>
+    ["libraries", libraryId, "duplicates", kind] as const,
   series: (id: string) => ["series", id] as const,
   seriesList: (filters: SeriesListFilters) =>
     ["series", "list", filters] as const,

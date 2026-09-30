@@ -326,7 +326,7 @@ scan_schedule             cron expression (default: "0 */6 * * *")
 file_watch_enabled        bool (default: true; auto-disabled if unsupported)
 default_language          ISO 639-2 (default: "eng")
 default_reading_direction ltr|rtl|ttb (default: "ltr")
-dedupe_by_content         bool (default: false)
+dedupe_by_content         bool (default: true; library-scoped — see library-scanner.md "Duplicates page")
 report_missing_comicinfo  bool (default: false; if true, generates info-level health issues)
 Server-wide configuration (env vars, per main spec §12.3):
 COMIC_SCAN_ON_STARTUP        bool, default false

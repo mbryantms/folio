@@ -43,6 +43,18 @@ struct ReconcileIssue {
     removed_at: Option<chrono::DateTime<chrono::FixedOffset>>,
 }
 
+/// Filter out issues an admin soft-removed from the Duplicates page
+/// (WP-3.3). Their file is still on disk, so the presence-driven
+/// restore rule (`(removed, present) → restore`) would undo the removal
+/// on the next scan; the `issue_duplicate_decision` row pins it. The
+/// decision row is deleted when the admin restores the issue.
+pub(crate) fn not_duplicate_removed() -> sea_orm::sea_query::SimpleExpr {
+    Expr::cust(
+        "NOT EXISTS (SELECT 1 FROM issue_duplicate_decision d \
+         WHERE d.issue_id = issues.id AND d.decision = 'remove')",
+    )
+}
+
 use super::event_log::{Action, Category, EventCollector, Severity};
 use super::scanner::stats::ScanStats;
 
@@ -56,6 +68,7 @@ pub async fn reconcile_library(
     let now = Utc::now().fixed_offset();
 
     let issues = IssueEntity::find()
+        .filter(not_duplicate_removed())
         .filter(issue::Column::LibraryId.eq(library_id))
         .all(db)
         .await?;
@@ -133,6 +146,7 @@ pub async fn reconcile_library_seen(
 
     if !scanned_series_ids.is_empty() {
         let issues = IssueEntity::find()
+            .filter(not_duplicate_removed())
             .filter(issue::Column::LibraryId.eq(library_id))
             .filter(
                 issue::Column::SeriesId
@@ -243,6 +257,7 @@ pub async fn reconcile_series(
     // check file existence — this runs on the file-watch / per-issue-scan hot
     // path. The sibling `reconcile_series_seen` already uses this projection.
     let issues = IssueEntity::find()
+        .filter(not_duplicate_removed())
         .filter(issue::Column::SeriesId.eq(series_id))
         .select_only()
         .columns([
@@ -333,6 +348,7 @@ pub async fn reconcile_series_seen(
     let now = Utc::now().fixed_offset();
 
     let issues = IssueEntity::find()
+        .filter(not_duplicate_removed())
         .filter(issue::Column::SeriesId.eq(series_id))
         .select_only()
         .columns([

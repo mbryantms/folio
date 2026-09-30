@@ -3757,6 +3757,69 @@
         }
       }
     },
+    "/api/libraries/{slug}/duplicates": {
+      "get": {
+        "operationId": "duplicates_list",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Grouping rule filter: `all` (default), `hash`, `number`, or `cover`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Groups per page (1..=200, default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DuplicateListView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid cursor or kind"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "library not found"
+          }
+        }
+      }
+    },
     "/api/libraries/{slug}/health-issues": {
       "get": {
         "operationId": "health_issues_list",
@@ -7303,6 +7366,82 @@
         "responses": {
           "204": {
             "description": "confirmed"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "issue not found"
+          }
+        }
+      }
+    },
+    "/api/series/{series_slug}/issues/{issue_slug}/duplicate-decision": {
+      "put": {
+        "operationId": "duplicates_set_decision",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetDuplicateDecisionReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "decision recorded"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "issue not found"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "duplicates_clear_decision",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "decision cleared; a duplicate soft-remove is undone"
           },
           "403": {
             "description": "admin only"
@@ -14632,6 +14771,212 @@
           "sessions": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "DuplicateCounts": {
+        "type": "object",
+        "description": "Per-kind group counts (first page only) for the filter chips. Counts are\nunsuppressed — each matches what `?kind=<k>` lists.",
+        "required": [
+          "hash",
+          "number",
+          "cover"
+        ],
+        "properties": {
+          "cover": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "hash": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "DuplicateDecision": {
+        "type": "string",
+        "description": "Admin verdict on one duplicate-group member.",
+        "enum": [
+          "keep",
+          "remove"
+        ]
+      },
+      "DuplicateGroupView": {
+        "type": "object",
+        "required": [
+          "key",
+          "kind",
+          "series_id",
+          "series_slug",
+          "series_name",
+          "issues"
+        ],
+        "properties": {
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DuplicateIssueView"
+            }
+          },
+          "key": {
+            "type": "string",
+            "description": "Stable group identifier (unique within a listing) — use as a React key."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DuplicateKind"
+          },
+          "max_cover_distance": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Largest pairwise cover distance inside the group (`cover` only)."
+          },
+          "series_id": {
+            "type": "string",
+            "description": "Series the group belongs to. For `hash` groups whose copies span\nseries this is the first member's series."
+          },
+          "series_name": {
+            "type": "string"
+          },
+          "series_slug": {
+            "type": "string"
+          }
+        }
+      },
+      "DuplicateIssueView": {
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "series_slug",
+          "series_name",
+          "file_path",
+          "file_size",
+          "state"
+        ],
+        "properties": {
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`/issues/{id}/pages/0/thumb` for active issues; `null` otherwise."
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DuplicateDecision",
+                "description": "The admin's decision so far; `null` when undecided."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "file_path": {
+            "type": "string"
+          },
+          "file_size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "number_raw": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "series_name": {
+            "type": "string"
+          },
+          "series_slug": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "special_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "DuplicateKind": {
+        "type": "string",
+        "description": "Which grouping rule produced a duplicate group.",
+        "enum": [
+          "hash",
+          "number",
+          "cover"
+        ]
+      },
+      "DuplicateListView": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "counts": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DuplicateCounts",
+                "description": "Per-kind counts for the filter chips. First page only."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DuplicateGroupView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Group count for the current `kind` filter. First page only.",
+            "minimum": 0
           }
         }
       },
@@ -22328,6 +22673,17 @@
           }
         }
       },
+      "SetDuplicateDecisionReq": {
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/DuplicateDecision"
+          }
+        }
+      },
       "SetIconReq": {
         "type": "object",
         "description": "Body for `POST /me/saved-views/{id}/icon` — pick (or clear) the icon\nthat represents this rail in the user's home + sidebar. `None` /\nmissing means \"reset to the kind-based default.\"",
@@ -23541,6 +23897,13 @@
               "null"
             ],
             "description": "When true, the scanner converts each `.cbr` it finds into a sibling\n`.cbz` in place (keeping the original as `.cbr.bak`) and ingests the\n`.cbz`. Requires `allow_archive_writeback=true` — enabling it while\nthe master toggle resolves false returns 422."
+          },
+          "dedupe_by_content": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "When true (default), a second copy of an already-ingested file in\nthis library is skipped with a `DuplicateContent` health row. When\nfalse, every copy is ingested as its own issue and the Duplicates\npage surfaces the exact-hash pair. Library-scoped either way\n(WP-3.3): the same file in another library is never a duplicate."
           },
           "file_watch_enabled": {
             "type": [

@@ -546,17 +546,29 @@ async fn stamp_cbr_confirmed(state: &AppState, lib: &library::Model) {
 /// Filters by `content_hash` rather than `id` so retagged rows (where
 /// `id` is the historical first-insert hash but diverges from the live
 /// `content_hash`) are still detected as the same logical issue.
+///
+/// **Library-scoped** (WP-3.3, audit DI-21): only rows in the *same*
+/// library count. The same file living in two libraries is two issues —
+/// one per library — not a duplicate (before WP-3.3 the second library's
+/// copy was skipped with a `DuplicateContent` health row).
+///
+/// Honours `library.dedupe_by_content`: when the flag is off, a second
+/// live copy in the same library is ingested as its own issue instead of
+/// being skipped (the Duplicates page then surfaces the pair). Move
+/// detection runs either way.
 async fn dedupe_by_content_hash<C: ConnectionTrait>(
     db: &C,
-    issue_id: &str,
-    path_str: &str,
+    lib: &library::Model,
+    content_hash: &str,
     series_id: Uuid,
     path: &Path,
     health: &mut HealthCollector,
     stats: &mut ScanStats,
 ) -> anyhow::Result<DedupeOutcome> {
+    let path_str = path.to_string_lossy();
     let prior = IssueEntity::find()
-        .filter(issue::Column::ContentHash.eq(issue_id))
+        .filter(issue::Column::LibraryId.eq(lib.id))
+        .filter(issue::Column::ContentHash.eq(content_hash))
         .order_by_asc(issue::Column::Id)
         .one(db)
         .await?;
@@ -565,8 +577,10 @@ async fn dedupe_by_content_hash<C: ConnectionTrait>(
     };
     let previous_path = std::path::Path::new(&prior.file_path);
     if prior.file_path != path_str && !previous_path.exists() {
-        remember_moved_issue_path(db, &prior.id, &prior.file_path, path_str).await?;
+        remember_moved_issue_path(db, &prior.id, &prior.file_path, &path_str).await?;
         Ok(DedupeOutcome::Moved(Box::new(prior)))
+    } else if !lib.dedupe_by_content {
+        Ok(DedupeOutcome::NotDuplicate)
     } else {
         health.emit(IssueKind::DuplicateContent {
             path_a: std::path::PathBuf::from(&prior.file_path),
@@ -846,15 +860,12 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     .map(|s| s.to_string());
 
     let now = Utc::now().fixed_offset();
-    let issue_id = hash.clone(); // dedupe_by_content default
 
     // Dedupe-by-content fires only when the per-path lookup missed.
     // `order_by_asc(Id)` inside the helper keeps the choice
     // deterministic if two rows transiently share a hash.
     if existing.is_none() {
-        match dedupe_by_content_hash(db, &issue_id, &path_str, series_id, path, health, stats)
-            .await?
-        {
+        match dedupe_by_content_hash(db, lib, &hash, series_id, path, health, stats).await? {
             DedupeOutcome::NotDuplicate => {}
             DedupeOutcome::Moved(prior) => existing = Some(*prior),
             DedupeOutcome::Duplicate => return Ok(()),
@@ -1168,6 +1179,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             }));
         events.push(e);
     } else {
+        let issue_id = allocate_issue_id(db, &hash, &path_str).await?;
         let issue_slug = if let Some(set) = slug_set {
             crate::slug::allocate_issue_slug_in_set(
                 set,
@@ -1339,6 +1351,33 @@ fn issue_label(title: Option<&str>, number_raw: Option<&str>, issue_id: &str) ->
         (Some(t), _) if !t.trim().is_empty() => t.trim().to_owned(),
         (_, Some(n)) if !n.trim().is_empty() => format!("#{}", n.trim()),
         _ => issue_id.to_owned(),
+    }
+}
+
+/// Pick the primary key for a brand-new issue row. The content hash is the
+/// default stable id (spec §5.1.2). When that id is already taken — the
+/// same bytes live in another library (WP-3.3: dedupe is library-scoped),
+/// a second copy in a `dedupe_by_content = false` library, or a retagged
+/// row whose historical id equals this file's hash — fall back to the
+/// spec's path-derived id, `blake3(path)`. The per-path lookup finds the
+/// row on every later scan, so the fallback id is as stable as the
+/// content-derived one.
+async fn allocate_issue_id<C: ConnectionTrait>(
+    db: &C,
+    content_hash: &str,
+    path_str: &str,
+) -> anyhow::Result<String> {
+    let taken = IssueEntity::find_by_id(content_hash.to_owned())
+        .select_only()
+        .column(issue::Column::Id)
+        .into_tuple::<String>()
+        .one(db)
+        .await?
+        .is_some();
+    if taken {
+        Ok(blake3::hash(path_str.as_bytes()).to_hex().to_string())
+    } else {
+        Ok(content_hash.to_owned())
     }
 }
 

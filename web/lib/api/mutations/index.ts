@@ -24,6 +24,7 @@ export {
   type ApiMutationInput,
 } from "./_core";
 export * from "./thumbnails";
+export * from "./duplicates";
 
 import type {
   AcceptMetadataResp,

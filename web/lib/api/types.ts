@@ -180,6 +180,16 @@ export type DeleteLibraryResp = Schemas["DeleteLibraryResp"];
 export type RemovedIssueView = Schemas["RemovedIssueView"];
 export type RemovedSeriesView = Schemas["RemovedSeriesView"];
 export type RemovedListView = Schemas["RemovedListView"];
+export type DuplicateKind = Schemas["DuplicateKind"];
+export type DuplicateDecision = Schemas["DuplicateDecision"];
+export type DuplicateCounts = Schemas["DuplicateCounts"];
+export type DuplicateIssueView = Schemas["DuplicateIssueView"];
+export type DuplicateGroupView = Schemas["DuplicateGroupView"];
+export type DuplicateListView = Schemas["DuplicateListView"];
+export type SetDuplicateDecisionReq = Schemas["SetDuplicateDecisionReq"];
+/** `?kind=` filter for `GET /libraries/{slug}/duplicates`. Inline: the
+ *  server documents the query param as a string (WP-3.3). */
+export type DuplicateKindFilter = "all" | DuplicateKind;
 export type QueueDepthView = Schemas["QueueDepthView"];
 export type QueueClearTarget = Schemas["QueueClearTarget"];
 export type QueueClearReq = Schemas["QueueClearReq"];

@@ -81,6 +81,10 @@ list_orphans     # GET /admin/thumbs/orphans — orphan-sweep report
 get_config       # GET /admin/auth — current auth-mode config
 test_smtp        # POST /admin/email/test — send a test email (no state mutation; emits audit via send path itself)
 
+# ── duplicates.rs ───────────────────────────────────────────
+# `list` (GET /libraries/{slug}/duplicates — read-only duplicate groups) is
+# already exempt via the admin_users.rs entry above (bare-name match).
+
 # ── health_issues.rs ────────────────────────────────────────
 list_issues      # GET /admin/health-issues — paginated health-issue feed
 get_issue        # GET /admin/health-issues/{id} — single row
