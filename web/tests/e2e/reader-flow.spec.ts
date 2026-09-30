@@ -130,6 +130,15 @@ test.describe("Reader flow", () => {
         firstPage.evaluate((el) => (el as HTMLImageElement).naturalWidth),
       )
       .toBe(100);
+    // The page image is server-rendered, so it is visible before React
+    // hydrates; a key pressed before then is lost. The chrome is a lazy
+    // client-only chunk (WP-4.4), so its presence proves both hydration and
+    // the keymap are live.
+    const readerReady = () =>
+      expect(page.getByTestId("reader-chrome")).toBeAttached({
+        timeout: 15_000,
+      });
+    await readerReady();
 
     // 5. Turn one page; the debounced progress write must reach the server.
     const progressWrite = page.waitForResponse(
@@ -154,6 +163,7 @@ test.describe("Reader flow", () => {
     //    read the page counter.
     await page.reload();
     await expect(page.locator("img[src*='/pages/']").first()).toBeVisible();
+    await readerReady();
     await page.keyboard.press("t");
     await expect(
       page.getByRole("button", { name: "Page 2 of 3; click to jump" }),
