@@ -361,6 +361,12 @@ export const queryKeys = {
     ["saved-views", "results", id, cursor ?? null] as const,
   savedViewResultsInfinite: (id: string) =>
     ["saved-views", "results-infinite", id] as const,
+  /** Issue-level (`filter_issues`) view results — WP-5.4. Same
+   *  "saved-views" prefix so blanket invalidations cover them. */
+  savedViewIssueResults: (id: string) =>
+    ["saved-views", "issue-results", id] as const,
+  savedViewIssueResultsInfinite: (id: string) =>
+    ["saved-views", "issue-results-infinite", id] as const,
   /** Filter-builder option lookups (genres / tags / credits/<role>).
    *  `kind` is the path suffix, e.g. `'genres'` or `'credits/writer'`. */
   filterOptions: (

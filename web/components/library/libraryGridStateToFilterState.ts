@@ -8,9 +8,12 @@
  * this is a one-way export at the moment the user clicks "Save as
  * view…". After save, the persisted view is owned by the builder.
  *
- * Field::CommunityRating doesn't exist on the saved-views DSL today, so
- * a non-default `ratingRange` falls onto `droppedFacets` — the UI
- * surfaces a toast and proceeds with the rest of the conditions.
+ * WP-5.4: the grid's mode picks the view entity — series mode seeds a
+ * `filter_series` view, issues mode a `filter_issues` view — and the
+ * per-user rating and read-status facets now carry over (`rating
+ * between`, `read_status in`). Facets with no equivalent on the target
+ * entity (metadata completeness is a series rollup) fall onto
+ * `droppedFacets`; the UI surfaces a toast and proceeds with the rest.
  */
 import type { FilterBuilderState } from "@/components/filters/filter-builder";
 import type { Condition, Field } from "@/lib/api/types";
@@ -18,12 +21,18 @@ import {
   CREDIT_ROLES,
   type CreditKey,
   type CreditState,
+  type LibraryGridMode,
   type MetadataCompletenessTier,
   RATING_MIN,
   RATING_MAX,
 } from "./library-grid-filters";
 
 export type LibraryGridFilterSnapshot = {
+  /** Grid mode — decides whether the seeded view lists series or
+   *  issues. Omitted → series (the pre-WP-5.4 behaviour). */
+  mode?: LibraryGridMode;
+  /** Per-user read-status chips (`unread` / `in_progress` / `read`). */
+  readStatus?: string[];
   status: string;
   metadataCompleteness: MetadataCompletenessTier | undefined;
   yearFrom: string;
@@ -60,6 +69,7 @@ export function libraryGridStateToFilterBuilderState(
 ): TranslateResult {
   const conditions: Condition[] = [];
   const dropped: string[] = [];
+  const entity = s.mode === "issues" ? "issue" : "series";
 
   if (s.trimmedQ) {
     conditions.push({
@@ -81,7 +91,10 @@ export function libraryGridStateToFilterBuilderState(
 
   // Completeness is a first-class saved-view field — carry it so a saved
   // "Needs metadata" worklist keeps filtering after the grid hands off.
-  if (s.metadataCompleteness) {
+  if (s.metadataCompleteness && entity === "issue") {
+    // Series-level rollup — no issue-view equivalent.
+    dropped.push("Metadata completeness");
+  } else if (s.metadataCompleteness) {
     conditions.push({
       group_id: 0,
       field: "metadata_completeness",
@@ -163,20 +176,37 @@ export function libraryGridStateToFilterBuilderState(
     }
   }
 
-  // Rating: the library grid filters on `user_rating` (per-user
-  // community rating). The saved-views DSL doesn't have a field for it
-  // yet, so we drop it with a user-visible note rather than silently
-  // omit it.
+  // Read status: every state selected (or none) is a no-op on the grid,
+  // so only a strict subset becomes a condition.
+  const readStatus = s.readStatus ?? [];
+  if (readStatus.length > 0 && readStatus.length < 3) {
+    conditions.push({
+      group_id: 0,
+      field: "read_status",
+      op: "in",
+      value: readStatus,
+    });
+  }
+
+  // Rating: the grid filters on the caller's own `user_rating` — the
+  // series rating in series mode, the issue rating in issues mode — which
+  // is exactly the DSL's `rating` field on each entity (WP-5.4).
   if (s.ratingRange) {
     const [min, max] = s.ratingRange;
     if (min > RATING_MIN || max < RATING_MAX) {
-      dropped.push("Rating");
+      conditions.push({
+        group_id: 0,
+        field: "rating",
+        op: "between",
+        value: [min, max],
+      });
     }
   }
 
   return {
     state: {
       name: `Library filter — ${today}`,
+      entity,
       matchMode: "all",
       conditions,
     },

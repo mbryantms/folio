@@ -5,7 +5,7 @@
 //! ops, expected JSON value shape per op, and how the field maps to SQL.
 //! Adding or changing a filterable field is a one-place edit here.
 
-use super::dsl::{Field, Op};
+use super::dsl::{Field, Op, ViewEntity};
 
 /// High-level value family. The compiler maps these to SQL operators and
 /// dispatches the value validator per `(kind, op)` pair.
@@ -27,9 +27,13 @@ pub enum FieldKind {
 }
 
 /// Where the field lives in SQL. `Series(col)` filters on a column of the
-/// `series` table. `JunctionExists{...}` compiles to an `EXISTS (SELECT 1
-/// FROM table WHERE table.series_id = series.id AND ...)` (or `NOT EXISTS`
-/// for `Excludes`). `Reading(col)` reads from the `user_series_progress`
+/// `series` table — on a series view that is the row itself, on an issue
+/// view it is the issue's parent series (joined as `series`).
+/// `Issue(col)` filters on a column of `issues` (issue views only).
+/// `JunctionExists{...}` compiles to an `EXISTS (SELECT 1 FROM table WHERE
+/// table.series_id = series.id AND ...)` on series views, or
+/// `table.issue_id = issues.id` on issue views (or `NOT EXISTS` for
+/// `Excludes`). `Reading(col)` reads from the `user_series_progress`
 /// LEFT JOIN, COALESCE'd to a sensible zero for unstarted series.
 /// `ReadingComputed(tag)` is the same JOIN but evaluates a CASE / arithmetic
 /// expression built per-tag inside `reading_computed_predicate` — used for
@@ -42,7 +46,11 @@ pub enum FieldKind {
 pub enum Source {
     /// Identifier matches a `series::Column` variant by name (snake_case).
     Series(&'static str),
-    /// `(table_name, value_column)` — both `series_id` is the join column.
+    /// Identifier matches an `issue::Column` variant by name (snake_case).
+    /// Issue views only (WP-5.4).
+    Issue(&'static str),
+    /// `(table_name, value_column)` — the join column is `series_id` for
+    /// `series_*` tables and `issue_id` for `issue_*` tables.
     /// For credits the lookup is by `(role, person)` (see `role` field).
     JunctionExists {
         table: &'static str,
@@ -64,6 +72,13 @@ pub enum Source {
     /// `collection_completeness` (`series.total_issues` vs active issue
     /// count).
     SeriesComputed(&'static str),
+    /// Derived per-user expression over the caller's `progress_records`
+    /// row for the issue (issue views only, WP-5.4). Tag `read_status` is
+    /// the same three-state rollup `GET /issues?read_status=` uses.
+    IssueComputed(&'static str),
+    /// The caller's own `user_ratings.rating` for the row — target type
+    /// `series` on series views, `issue` on issue views. NULL when unrated.
+    UserRating,
 }
 
 #[derive(Debug, Clone)]
@@ -76,14 +91,32 @@ pub struct FieldSpec {
     pub id: &'static str,
     /// Human label for the M5 field-picker; en-US for now.
     pub label: &'static str,
-    pub source: Source,
+    /// Mapping on series views (`filter_series`). `None` → the field is
+    /// not available there (422 at compile time).
+    pub source: Option<Source>,
+    /// Mapping on issue views (`filter_issues`, WP-5.4). `None` → the
+    /// field is series-only (per-series rollups like `unread_issues`).
+    pub issue_source: Option<Source>,
     pub allowed_ops: &'static [Op],
     /// For `FieldKind::Enum`: the legal scalar values. Empty for other
     /// kinds.
     pub enum_values: &'static [&'static str],
 }
 
+// Nullable-column op sets carry `is_empty` / `is_not_empty` (WP-5.4). The
+// `*_REQUIRED` / `COMPUTED_*` variants omit them: those fields are NOT NULL
+// columns or CASE / COALESCE expressions that can never be empty, so the
+// op would be a constant.
 const TEXT_OPS: &[Op] = &[
+    Op::Contains,
+    Op::NotContains,
+    Op::StartsWith,
+    Op::Equals,
+    Op::NotEquals,
+    Op::IsEmpty,
+    Op::IsNotEmpty,
+];
+const TEXT_OPS_REQUIRED: &[Op] = &[
     Op::Contains,
     Op::NotContains,
     Op::StartsWith,
@@ -91,6 +124,17 @@ const TEXT_OPS: &[Op] = &[
     Op::NotEquals,
 ];
 const NUMBER_OPS: &[Op] = &[
+    Op::Equals,
+    Op::NotEquals,
+    Op::Gt,
+    Op::Gte,
+    Op::Lt,
+    Op::Lte,
+    Op::Between,
+    Op::IsEmpty,
+    Op::IsNotEmpty,
+];
+const COMPUTED_NUMBER_OPS: &[Op] = &[
     Op::Equals,
     Op::NotEquals,
     Op::Gt,
@@ -106,9 +150,37 @@ const DATE_OPS: &[Op] = &[
     Op::Relative,
     Op::Lt,
     Op::Gt,
+    Op::IsEmpty,
+    Op::IsNotEmpty,
 ];
-const ENUM_OPS: &[Op] = &[Op::Is, Op::IsNot, Op::In, Op::NotIn];
-const MULTI_OPS: &[Op] = &[Op::IncludesAny, Op::IncludesAll, Op::Excludes];
+const DATE_OPS_REQUIRED: &[Op] = &[
+    Op::Before,
+    Op::After,
+    Op::Between,
+    Op::Relative,
+    Op::Lt,
+    Op::Gt,
+];
+const ENUM_OPS: &[Op] = &[
+    Op::Is,
+    Op::IsNot,
+    Op::In,
+    Op::NotIn,
+    Op::IsEmpty,
+    Op::IsNotEmpty,
+];
+const COMPUTED_ENUM_OPS: &[Op] = &[Op::Is, Op::IsNot, Op::In, Op::NotIn];
+const MULTI_OPS: &[Op] = &[
+    Op::IncludesAny,
+    Op::IncludesAll,
+    Op::Excludes,
+    Op::IsEmpty,
+    Op::IsNotEmpty,
+];
+
+/// `issues.special_type` values the scanner writes (spec §6.5,
+/// `scanner::process::detect_special_type`). NULL = ordinary issue.
+const SPECIAL_TYPE_VALUES: &[&str] = &["Annual", "Special", "OneShot", "TPB"];
 
 /// Status enum values come from `series.status`; kept in sync with the
 /// scanner-side default ('continuing'). Limited list so the UI can render
@@ -154,7 +226,8 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Uuid,
         id: "library",
         label: "Library",
-        source: Source::Series("library_id"),
+        source: Some(Source::Series("library_id")),
+        issue_source: Some(Source::Issue("library_id")),
         allowed_ops: &[Op::Equals, Op::NotEquals, Op::In, Op::NotIn],
         enum_values: &[],
     },
@@ -163,8 +236,9 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Text,
         id: "name",
         label: "Name",
-        source: Source::Series("name"),
-        allowed_ops: TEXT_OPS,
+        source: Some(Source::Series("name")),
+        issue_source: Some(Source::Series("name")),
+        allowed_ops: TEXT_OPS_REQUIRED,
         enum_values: &[],
     },
     FieldSpec {
@@ -172,7 +246,8 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Number,
         id: "year",
         label: "Year",
-        source: Source::Series("year"),
+        source: Some(Source::Series("year")),
+        issue_source: Some(Source::Issue("year")),
         allowed_ops: NUMBER_OPS,
         enum_values: &[],
     },
@@ -181,7 +256,8 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Number,
         id: "volume",
         label: "Volume",
-        source: Source::Series("volume"),
+        source: Some(Source::Series("volume")),
+        issue_source: Some(Source::Issue("volume")),
         allowed_ops: NUMBER_OPS,
         enum_values: &[],
     },
@@ -190,7 +266,8 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Number,
         id: "total_issues",
         label: "Total Issues",
-        source: Source::Series("total_issues"),
+        source: Some(Source::Series("total_issues")),
+        issue_source: Some(Source::Series("total_issues")),
         allowed_ops: NUMBER_OPS,
         enum_values: &[],
     },
@@ -199,7 +276,8 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Text,
         id: "publisher",
         label: "Publisher",
-        source: Source::Series("publisher"),
+        source: Some(Source::Series("publisher")),
+        issue_source: Some(Source::Issue("publisher")),
         allowed_ops: TEXT_OPS,
         enum_values: &[],
     },
@@ -208,7 +286,8 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Text,
         id: "imprint",
         label: "Imprint",
-        source: Source::Series("imprint"),
+        source: Some(Source::Series("imprint")),
+        issue_source: Some(Source::Issue("imprint")),
         allowed_ops: TEXT_OPS,
         enum_values: &[],
     },
@@ -217,8 +296,9 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Enum,
         id: "status",
         label: "Status",
-        source: Source::Series("status"),
-        allowed_ops: ENUM_OPS,
+        source: Some(Source::Series("status")),
+        issue_source: Some(Source::Series("status")),
+        allowed_ops: COMPUTED_ENUM_OPS,
         enum_values: SERIES_STATUS_VALUES,
     },
     FieldSpec {
@@ -226,7 +306,8 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Enum,
         id: "age_rating",
         label: "Age Rating",
-        source: Source::Series("age_rating"),
+        source: Some(Source::Series("age_rating")),
+        issue_source: Some(Source::Issue("age_rating")),
         allowed_ops: ENUM_OPS,
         enum_values: AGE_RATING_VALUES,
     },
@@ -235,7 +316,8 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Text,
         id: "language_code",
         label: "Language",
-        source: Source::Series("language_code"),
+        source: Some(Source::Series("language_code")),
+        issue_source: Some(Source::Issue("language_code")),
         allowed_ops: TEXT_OPS,
         enum_values: &[],
     },
@@ -244,8 +326,9 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Date,
         id: "created_at",
         label: "Created At",
-        source: Source::Series("created_at"),
-        allowed_ops: DATE_OPS,
+        source: Some(Source::Series("created_at")),
+        issue_source: Some(Source::Issue("created_at")),
+        allowed_ops: DATE_OPS_REQUIRED,
         enum_values: &[],
     },
     FieldSpec {
@@ -253,8 +336,9 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Date,
         id: "updated_at",
         label: "Updated At",
-        source: Source::Series("updated_at"),
-        allowed_ops: DATE_OPS,
+        source: Some(Source::Series("updated_at")),
+        issue_source: Some(Source::Issue("updated_at")),
+        allowed_ops: DATE_OPS_REQUIRED,
         enum_values: &[],
     },
     FieldSpec {
@@ -262,11 +346,16 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Multi,
         id: "genres",
         label: "Genres",
-        source: Source::JunctionExists {
+        source: Some(Source::JunctionExists {
             table: "series_genres",
             value_col: "genre",
             role: None,
-        },
+        }),
+        issue_source: Some(Source::JunctionExists {
+            table: "issue_genres",
+            value_col: "genre",
+            role: None,
+        }),
         allowed_ops: MULTI_OPS,
         enum_values: &[],
     },
@@ -275,11 +364,16 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Multi,
         id: "tags",
         label: "Tags",
-        source: Source::JunctionExists {
+        source: Some(Source::JunctionExists {
             table: "series_tags",
             value_col: "tag",
             role: None,
-        },
+        }),
+        issue_source: Some(Source::JunctionExists {
+            table: "issue_tags",
+            value_col: "tag",
+            role: None,
+        }),
         allowed_ops: MULTI_OPS,
         enum_values: &[],
     },
@@ -288,11 +382,16 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Multi,
         id: "writer",
         label: "Writers",
-        source: Source::JunctionExists {
+        source: Some(Source::JunctionExists {
             table: "series_credits",
             value_col: "person",
             role: Some("writer"),
-        },
+        }),
+        issue_source: Some(Source::JunctionExists {
+            table: "issue_credits",
+            value_col: "person",
+            role: Some("writer"),
+        }),
         allowed_ops: MULTI_OPS,
         enum_values: &[],
     },
@@ -301,11 +400,16 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Multi,
         id: "penciller",
         label: "Pencillers",
-        source: Source::JunctionExists {
+        source: Some(Source::JunctionExists {
             table: "series_credits",
             value_col: "person",
             role: Some("penciller"),
-        },
+        }),
+        issue_source: Some(Source::JunctionExists {
+            table: "issue_credits",
+            value_col: "person",
+            role: Some("penciller"),
+        }),
         allowed_ops: MULTI_OPS,
         enum_values: &[],
     },
@@ -314,11 +418,16 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Multi,
         id: "inker",
         label: "Inkers",
-        source: Source::JunctionExists {
+        source: Some(Source::JunctionExists {
             table: "series_credits",
             value_col: "person",
             role: Some("inker"),
-        },
+        }),
+        issue_source: Some(Source::JunctionExists {
+            table: "issue_credits",
+            value_col: "person",
+            role: Some("inker"),
+        }),
         allowed_ops: MULTI_OPS,
         enum_values: &[],
     },
@@ -327,11 +436,16 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Multi,
         id: "colorist",
         label: "Colorists",
-        source: Source::JunctionExists {
+        source: Some(Source::JunctionExists {
             table: "series_credits",
             value_col: "person",
             role: Some("colorist"),
-        },
+        }),
+        issue_source: Some(Source::JunctionExists {
+            table: "issue_credits",
+            value_col: "person",
+            role: Some("colorist"),
+        }),
         allowed_ops: MULTI_OPS,
         enum_values: &[],
     },
@@ -340,11 +454,16 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Multi,
         id: "letterer",
         label: "Letterers",
-        source: Source::JunctionExists {
+        source: Some(Source::JunctionExists {
             table: "series_credits",
             value_col: "person",
             role: Some("letterer"),
-        },
+        }),
+        issue_source: Some(Source::JunctionExists {
+            table: "issue_credits",
+            value_col: "person",
+            role: Some("letterer"),
+        }),
         allowed_ops: MULTI_OPS,
         enum_values: &[],
     },
@@ -353,11 +472,16 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Multi,
         id: "cover_artist",
         label: "Cover Artists",
-        source: Source::JunctionExists {
+        source: Some(Source::JunctionExists {
             table: "series_credits",
             value_col: "person",
             role: Some("cover_artist"),
-        },
+        }),
+        issue_source: Some(Source::JunctionExists {
+            table: "issue_credits",
+            value_col: "person",
+            role: Some("cover_artist"),
+        }),
         allowed_ops: MULTI_OPS,
         enum_values: &[],
     },
@@ -366,11 +490,16 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Multi,
         id: "editor",
         label: "Editors",
-        source: Source::JunctionExists {
+        source: Some(Source::JunctionExists {
             table: "series_credits",
             value_col: "person",
             role: Some("editor"),
-        },
+        }),
+        issue_source: Some(Source::JunctionExists {
+            table: "issue_credits",
+            value_col: "person",
+            role: Some("editor"),
+        }),
         allowed_ops: MULTI_OPS,
         enum_values: &[],
     },
@@ -379,11 +508,16 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Multi,
         id: "translator",
         label: "Translators",
-        source: Source::JunctionExists {
+        source: Some(Source::JunctionExists {
             table: "series_credits",
             value_col: "person",
             role: Some("translator"),
-        },
+        }),
+        issue_source: Some(Source::JunctionExists {
+            table: "issue_credits",
+            value_col: "person",
+            role: Some("translator"),
+        }),
         allowed_ops: MULTI_OPS,
         enum_values: &[],
     },
@@ -392,11 +526,16 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Multi,
         id: "characters",
         label: "Characters",
-        source: Source::JunctionExists {
+        source: Some(Source::JunctionExists {
             table: "series_characters",
             value_col: "character",
             role: None,
-        },
+        }),
+        issue_source: Some(Source::JunctionExists {
+            table: "issue_characters",
+            value_col: "character",
+            role: None,
+        }),
         allowed_ops: MULTI_OPS,
         enum_values: &[],
     },
@@ -405,11 +544,16 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Multi,
         id: "teams",
         label: "Teams",
-        source: Source::JunctionExists {
+        source: Some(Source::JunctionExists {
             table: "series_teams",
             value_col: "team",
             role: None,
-        },
+        }),
+        issue_source: Some(Source::JunctionExists {
+            table: "issue_teams",
+            value_col: "team",
+            role: None,
+        }),
         allowed_ops: MULTI_OPS,
         enum_values: &[],
     },
@@ -418,11 +562,16 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Multi,
         id: "locations",
         label: "Locations",
-        source: Source::JunctionExists {
+        source: Some(Source::JunctionExists {
             table: "series_locations",
             value_col: "location",
             role: None,
-        },
+        }),
+        issue_source: Some(Source::JunctionExists {
+            table: "issue_locations",
+            value_col: "location",
+            role: None,
+        }),
         allowed_ops: MULTI_OPS,
         enum_values: &[],
     },
@@ -431,8 +580,9 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Number,
         id: "read_progress",
         label: "Read Progress",
-        source: Source::Reading("percent"),
-        allowed_ops: NUMBER_OPS,
+        source: Some(Source::Reading("percent")),
+        issue_source: None,
+        allowed_ops: COMPUTED_NUMBER_OPS,
         enum_values: &[],
     },
     FieldSpec {
@@ -440,7 +590,8 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Date,
         id: "last_read",
         label: "Last Read",
-        source: Source::Reading("last_read_at"),
+        source: Some(Source::Reading("last_read_at")),
+        issue_source: None,
         allowed_ops: DATE_OPS,
         enum_values: &[],
     },
@@ -449,8 +600,9 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Number,
         id: "read_count",
         label: "Read Count",
-        source: Source::Reading("finished_count"),
-        allowed_ops: NUMBER_OPS,
+        source: Some(Source::Reading("finished_count")),
+        issue_source: None,
+        allowed_ops: COMPUTED_NUMBER_OPS,
         enum_values: &[],
     },
     // ─── library-filters-richer-1.0 M2: read_status enum rollup ──────────
@@ -459,8 +611,9 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Enum,
         id: "read_status",
         label: "Read Status",
-        source: Source::ReadingComputed("read_status"),
-        allowed_ops: ENUM_OPS,
+        source: Some(Source::ReadingComputed("read_status")),
+        issue_source: Some(Source::IssueComputed("read_status")),
+        allowed_ops: COMPUTED_ENUM_OPS,
         enum_values: READ_STATUS_VALUES,
     },
     // ─── library-filters-richer-1.0 M3: unread_issues numeric ─────────────
@@ -469,8 +622,9 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Number,
         id: "unread_issues",
         label: "Unread Issues",
-        source: Source::ReadingComputed("unread_issues"),
-        allowed_ops: NUMBER_OPS,
+        source: Some(Source::ReadingComputed("unread_issues")),
+        issue_source: None,
+        allowed_ops: COMPUTED_NUMBER_OPS,
         enum_values: &[],
     },
     // ─── library-filters-richer-1.0 M4: collection_completeness enum ─────
@@ -479,8 +633,9 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Enum,
         id: "collection_completeness",
         label: "Collection Completeness",
-        source: Source::SeriesComputed("collection_completeness"),
-        allowed_ops: ENUM_OPS,
+        source: Some(Source::SeriesComputed("collection_completeness")),
+        issue_source: None,
+        allowed_ops: COMPUTED_ENUM_OPS,
         enum_values: COLLECTION_COMPLETENESS_VALUES,
     },
     // ─── metadata-completeness enum (needs-metadata filter) ──────────────
@@ -489,9 +644,62 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Enum,
         id: "metadata_completeness",
         label: "Metadata Completeness",
-        source: Source::SeriesComputed("metadata_completeness"),
-        allowed_ops: ENUM_OPS,
+        source: Some(Source::SeriesComputed("metadata_completeness")),
+        issue_source: None,
+        allowed_ops: COMPUTED_ENUM_OPS,
         enum_values: METADATA_COMPLETENESS_VALUES,
+    },
+    // ─── WP-5.4: issue-level fields ──────────────────────────────────────
+    FieldSpec {
+        field: Field::SpecialType,
+        kind: FieldKind::Enum,
+        id: "special_type",
+        label: "Special Type",
+        source: None,
+        issue_source: Some(Source::Issue("special_type")),
+        allowed_ops: ENUM_OPS,
+        enum_values: SPECIAL_TYPE_VALUES,
+    },
+    FieldSpec {
+        field: Field::Format,
+        kind: FieldKind::Text,
+        id: "format",
+        label: "Format",
+        source: None,
+        issue_source: Some(Source::Issue("format")),
+        allowed_ops: TEXT_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
+        field: Field::StoryArc,
+        kind: FieldKind::Text,
+        id: "story_arc",
+        label: "Story Arc",
+        source: None,
+        issue_source: Some(Source::Issue("story_arc")),
+        allowed_ops: TEXT_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
+        field: Field::Title,
+        kind: FieldKind::Text,
+        id: "title",
+        label: "Issue Title",
+        source: None,
+        issue_source: Some(Source::Issue("title")),
+        allowed_ops: TEXT_OPS,
+        enum_values: &[],
+    },
+    // ─── WP-5.4: the caller's own star rating (both entities) ────────────
+    FieldSpec {
+        field: Field::Rating,
+        kind: FieldKind::Number,
+        id: "rating",
+        label: "My Rating",
+        source: Some(Source::UserRating),
+        issue_source: Some(Source::UserRating),
+        allowed_ops: NUMBER_OPS,
+        enum_values: &[],
     },
 ];
 
@@ -504,6 +712,15 @@ pub fn spec_for(field: Field) -> &'static FieldSpec {
 
 pub fn all_specs() -> &'static [FieldSpec] {
     SPECS
+}
+
+/// The SQL mapping for `field` on a view of `entity`, or `None` when the
+/// field isn't available there (e.g. `special_type` on a series view).
+pub fn source_for(spec: &FieldSpec, entity: ViewEntity) -> Option<Source> {
+    match entity {
+        ViewEntity::Series => spec.source,
+        ViewEntity::Issue => spec.issue_source,
+    }
 }
 
 #[cfg(test)]
@@ -520,11 +737,43 @@ mod tests {
         // and a matching `FieldSpec` row. Forgetting both leaves the
         // count unchanged but `spec_for` would panic at runtime — the
         // mismatch is the alarm.
-        const KNOWN_FIELD_COUNT: usize = 32;
+        const KNOWN_FIELD_COUNT: usize = 37;
         assert_eq!(SPECS.len(), KNOWN_FIELD_COUNT);
         for spec in SPECS {
             let looked_up = spec_for(spec.field);
             assert_eq!(looked_up.field, spec.field);
+            assert!(
+                spec.source.is_some() || spec.issue_source.is_some(),
+                "{:?} must be available on at least one entity",
+                spec.field
+            );
+        }
+    }
+
+    #[test]
+    fn issue_only_fields_have_no_series_mapping() {
+        for f in [
+            Field::SpecialType,
+            Field::Format,
+            Field::StoryArc,
+            Field::Title,
+        ] {
+            assert!(source_for(spec_for(f), ViewEntity::Series).is_none());
+            assert!(source_for(spec_for(f), ViewEntity::Issue).is_some());
+        }
+    }
+
+    #[test]
+    fn series_rollups_have_no_issue_mapping() {
+        for f in [
+            Field::ReadProgress,
+            Field::LastRead,
+            Field::ReadCount,
+            Field::UnreadIssues,
+            Field::CollectionCompleteness,
+            Field::MetadataCompleteness,
+        ] {
+            assert!(source_for(spec_for(f), ViewEntity::Issue).is_none());
         }
     }
 }

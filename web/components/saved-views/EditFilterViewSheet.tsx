@@ -7,6 +7,7 @@ import {
   FilterBuilder,
   type FilterBuilderState,
 } from "@/components/filters/filter-builder";
+import { entityForKind } from "@/components/filters/field-registry";
 import { PopoverPortalContainer } from "@/components/ui/popover";
 import {
   Sheet,
@@ -24,7 +25,7 @@ import type {
   SortOrder,
 } from "@/lib/api/types";
 
-/** Edit sheet for filter-series views. Pre-fills the M5 FilterBuilder
+/** Edit sheet for filter views (series or issue — the kind is fixed). Pre-fills the M5 FilterBuilder
  *  with the saved view's current state and PATCHes the change back.
  *  A right-side sheet — instead of a centered modal — gives the
  *  builder + preview grid full-height vertical space, which the
@@ -47,6 +48,7 @@ export function EditFilterViewSheet({
   const initial: Partial<FilterBuilderState> = {
     name: view.name,
     description: view.description ?? "",
+    entity: entityForKind(view.kind),
     matchMode: (view.match_mode ?? "all") as MatchMode,
     conditions: (view.conditions ?? []) as Condition[],
     sortField: (view.sort_field ?? "created_at") as SavedViewSortField,
@@ -82,6 +84,7 @@ export function EditFilterViewSheet({
               // refreshes (e.g. someone edited the same view in another tab).
               key={`${view.id}-${view.updated_at}`}
               saveLabel="Save"
+              entityLocked
               initial={initial}
               onCancel={() => onOpenChange(false)}
               onSave={async (state) => {

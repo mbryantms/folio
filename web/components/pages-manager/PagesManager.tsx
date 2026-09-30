@@ -585,6 +585,7 @@ function RailRow({
 function kindLabel(kind: SavedViewView["kind"]): string {
   switch (kind) {
     case "filter_series":
+    case "filter_issues":
       return "Filter";
     case "cbl":
       return "CBL";

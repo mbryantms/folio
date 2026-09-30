@@ -14,10 +14,13 @@ import {
 import type { Condition, Field, Op } from "@/lib/api/types";
 
 import {
-  FIELD_SPECS,
   OP_LABELS,
+  fieldLabel,
+  fieldsFor,
+  opTakesNoValue,
   specFor,
   type FieldSpec,
+  type ViewEntity,
 } from "./field-registry";
 import { TextEditor } from "./value-editors/TextEditor";
 import { NumberEditor } from "./value-editors/NumberEditor";
@@ -29,18 +32,28 @@ export type ConditionRowProps = {
   condition: Condition;
   /** Optional library scope passed to async option lookups. */
   library?: string;
+  /** Which root the view compiles against — narrows the field picker
+   *  to fields available there (WP-5.4). Defaults to series. */
+  entity?: ViewEntity;
   onChange: (next: Condition) => void;
   onRemove: () => void;
 };
 
-const FIELD_OPTIONS = FIELD_SPECS.map((s) => ({
-  value: s.id,
-  label: s.label,
-}));
+const FIELD_OPTIONS: Record<ViewEntity, { value: Field; label: string }[]> = {
+  series: fieldsFor("series").map((s) => ({
+    value: s.id,
+    label: fieldLabel(s, "series"),
+  })),
+  issue: fieldsFor("issue").map((s) => ({
+    value: s.id,
+    label: fieldLabel(s, "issue"),
+  })),
+};
 
 export function ConditionRow({
   condition,
   library,
+  entity = "series",
   onChange,
   onRemove,
 }: ConditionRowProps) {
@@ -52,7 +65,7 @@ export function ConditionRow({
   return (
     <div className="grid grid-cols-1 items-start gap-2 sm:grid-cols-[minmax(160px,1fr)_minmax(140px,1fr)_2fr_auto]">
       <Combobox
-        options={FIELD_OPTIONS}
+        options={FIELD_OPTIONS[entity]}
         value={condition.field}
         onChange={(next) => {
           const nextSpec = specFor(next as Field);
@@ -71,7 +84,15 @@ export function ConditionRow({
       />
       <Select
         value={condition.op}
-        onValueChange={(next) => onChange({ ...condition, op: next as Op })}
+        onValueChange={(next) => {
+          const op = next as Op;
+          // Value-less ops (is_empty, …) drop any stale value.
+          onChange(
+            opTakesNoValue(op)
+              ? { ...condition, op, value: undefined }
+              : { ...condition, op },
+          );
+        }}
       >
         <SelectTrigger>
           <SelectValue />
@@ -104,7 +125,7 @@ function renderValueEditor(
   library: string | undefined,
   onValueChange: (value: unknown) => void,
 ) {
-  if (condition.op === "is_true" || condition.op === "is_false") return null;
+  if (opTakesNoValue(condition.op)) return null;
 
   switch (spec.kind) {
     case "text":

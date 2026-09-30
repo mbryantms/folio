@@ -82,7 +82,9 @@ export function splitSavedViews(items: SavedViewView[]): {
   readingLists: SavedViewView[];
 } {
   return {
-    filterViews: items.filter((v) => v.kind === "filter_series"),
+    filterViews: items.filter(
+      (v) => v.kind === "filter_series" || v.kind === "filter_issues",
+    ),
     readingLists: items.filter((v) => v.kind === "cbl"),
   };
 }

@@ -184,13 +184,66 @@ describe("libraryGridStateToFilterBuilderState", () => {
     ]);
   });
 
-  it("drops `ratingRange` onto droppedFacets when narrower than the default", () => {
+  it("carries a narrowed `ratingRange` as `rating between` (WP-5.4)", () => {
     const result = libraryGridStateToFilterBuilderState(
       snapshot({ ratingRange: [2.5, 5] }),
       TODAY,
     );
-    expect(result.state.conditions).toEqual([]);
-    expect(result.droppedFacets).toEqual(["Rating"]);
+    expect(result.state.conditions).toEqual([
+      { group_id: 0, field: "rating", op: "between", value: [2.5, 5] },
+    ]);
+    expect(result.droppedFacets).toEqual([]);
+  });
+
+  it("series mode (and no mode) seeds a series view", () => {
+    expect(
+      libraryGridStateToFilterBuilderState(snapshot(), TODAY).state.entity,
+    ).toBe("series");
+    expect(
+      libraryGridStateToFilterBuilderState(snapshot({ mode: "series" }), TODAY)
+        .state.entity,
+    ).toBe("series");
+  });
+
+  it("issues mode seeds an issue view and drops series-only rollups", () => {
+    const result = libraryGridStateToFilterBuilderState(
+      snapshot({
+        mode: "issues",
+        metadataCompleteness: "needs_metadata",
+        yearFrom: "2019",
+        yearTo: "2019",
+        readStatus: ["unread"],
+      }),
+      TODAY,
+    );
+    expect(result.state.entity).toBe("issue");
+    expect(result.state.conditions).toEqual([
+      { group_id: 0, field: "year", op: "between", value: [2019, 2019] },
+      { group_id: 0, field: "read_status", op: "in", value: ["unread"] },
+    ]);
+    expect(result.droppedFacets).toEqual(["Metadata completeness"]);
+  });
+
+  it("read status: a strict subset becomes `read_status in`, all three is a no-op", () => {
+    expect(
+      libraryGridStateToFilterBuilderState(
+        snapshot({ readStatus: ["unread", "in_progress"] }),
+        TODAY,
+      ).state.conditions,
+    ).toEqual([
+      {
+        group_id: 0,
+        field: "read_status",
+        op: "in",
+        value: ["unread", "in_progress"],
+      },
+    ]);
+    expect(
+      libraryGridStateToFilterBuilderState(
+        snapshot({ readStatus: ["unread", "in_progress", "read"] }),
+        TODAY,
+      ).state.conditions,
+    ).toEqual([]);
   });
 
   it("does NOT drop `ratingRange` when it spans the full [min, max] range", () => {

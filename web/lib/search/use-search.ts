@@ -85,6 +85,7 @@ function savedViewSubtitle(kind: SavedViewView["kind"]): string {
     case "cbl":
       return "Reading list";
     case "filter_series":
+    case "filter_issues":
       return "Filter view";
     default:
       return "View";
@@ -94,7 +95,7 @@ function savedViewSubtitle(kind: SavedViewView["kind"]): string {
 /** Cached lists the saved-content palette categories (A4) filter over. */
 export interface SavedContentSources {
   /** `/me/saved-views` — all kinds; the `views` category keeps only the
-   *  user-content kinds (`filter_series` / `cbl`) and drops the `system`
+   *  user-content kinds (`filter_series` / `filter_issues` / `cbl`) and drops the `system`
    *  rails + `collection` rows (collections get their own category). */
   savedViews: SavedViewView[];
   /** `/me/collections` — collection rows, including the built-in Want to
@@ -130,7 +131,9 @@ export function buildSavedContentHits(
   const views: SearchHit[] = sources.savedViews
     .filter(
       (v) =>
-        (v.kind === "filter_series" || v.kind === "cbl") &&
+        (v.kind === "filter_series" ||
+          v.kind === "filter_issues" ||
+          v.kind === "cbl") &&
         v.name.toLowerCase().includes(needle),
     )
     .map((v) => ({

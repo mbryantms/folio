@@ -11,7 +11,9 @@
 //!
 //! Filter views compile their `conditions` JSONB through
 //! `crate::views::compile` into a single sea_query select that joins
-//! the per-user reading-state view (M2) on demand. Mixed-kind CBL and
+//! the per-user reading-state view (M2) on demand. `filter_series` views
+//! return series (`/results`, `/preview`); `filter_issues` views (WP-5.4)
+//! return issues (`/issue-results`, `/preview-issues`). Mixed-kind CBL and
 //! collection detail data lives on dedicated endpoints; the generic
 //! `/results` endpoint intentionally rejects those kinds so callers do
 //! not mistake an unsupported path for an empty result set.
@@ -34,20 +36,23 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
 
-use crate::api::series::SeriesListView;
+use crate::api::series::{IssueListView, IssueSummaryView, SeriesListView};
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::library::access;
 use crate::middleware::RequestContext;
 use crate::state::AppState;
 use crate::views::{
-    compile::{self, CompileError, CompileInput, Cursor},
-    dsl::{FilterDsl, MatchMode, SortField, SortOrder},
+    compile::{self, CompileError, CompileInput, Cursor, IssueCompileInput},
+    dsl::{FilterDsl, MatchMode, SortField, SortOrder, ViewEntity},
 };
 
 use super::error;
 use server_macros::handler;
 
 pub const KIND_FILTER_SERIES: &str = "filter_series";
+/// Issue-level filter view (WP-5.4): same DSL shape as `filter_series`,
+/// compiled against `issues` by `views::compile::compile_issues`.
+pub const KIND_FILTER_ISSUES: &str = "filter_issues";
 pub const KIND_SYSTEM: &str = "system";
 pub const KIND_CBL: &str = "cbl";
 /// User-owned manual list of mixed series + issue refs (markers +
@@ -73,6 +78,16 @@ pub const DEFAULT_HOME_PIN_ORDER: &[&str] = &[
     "00000000-0000-0000-0000-000000000002", // Recently updated series (m20261205)
 ];
 
+/// The DSL root a filter-view kind compiles against; `None` for non-filter
+/// kinds (CBL, collection, system).
+pub fn filter_entity(kind: &str) -> Option<ViewEntity> {
+    match kind {
+        KIND_FILTER_SERIES => Some(ViewEntity::Series),
+        KIND_FILTER_ISSUES => Some(ViewEntity::Issue),
+        _ => None,
+    }
+}
+
 const MAX_RESULT_LIMIT: u64 = 200;
 const MIN_RESULT_LIMIT: u64 = 1;
 /// Default home-page rail cap for users on a fresh row. Each user
@@ -95,6 +110,8 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(reorder))
         .routes(routes!(results))
         .routes(routes!(preview))
+        .routes(routes!(issue_results))
+        .routes(routes!(preview_issues))
         .routes(routes!(admin_create))
         .routes(routes!(admin_update, admin_delete))
 }
@@ -153,8 +170,8 @@ pub struct SavedViewListView {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateSavedViewReq {
-    /// `'filter_series'` or `'cbl'`. Validated server-side; mismatched
-    /// kind/body shape returns 422.
+    /// `'filter_series'`, `'filter_issues'` (WP-5.4) or `'cbl'`. Validated
+    /// server-side; mismatched kind/body shape returns 422.
     pub kind: String,
     pub name: String,
     #[serde(default)]
@@ -308,19 +325,19 @@ fn validate_create(req: &CreateSavedViewReq) -> Result<(), (StatusCode, &'static
         ));
     }
     match req.kind.as_str() {
-        KIND_FILTER_SERIES => {
+        KIND_FILTER_SERIES | KIND_FILTER_ISSUES => {
             if req.cbl_list_id.is_some() {
                 return Err((
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
-                    "filter_series view must not set cbl_list_id".into(),
+                    format!("{} view must not set cbl_list_id", req.kind),
                 ));
             }
             if req.filter.is_none() {
                 return Err((
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "validation",
-                    "filter_series view requires `filter`".into(),
+                    format!("{} view requires `filter`", req.kind),
                 ));
             }
             let limit = req.result_limit.unwrap_or(12);
@@ -352,7 +369,7 @@ fn validate_create(req: &CreateSavedViewReq) -> Result<(), (StatusCode, &'static
             return Err((
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
-                "kind must be filter_series or cbl".into(),
+                "kind must be filter_series, filter_issues or cbl".into(),
             ));
         }
     }
@@ -726,22 +743,19 @@ async fn create_inner(
         return error(status, code, &msg);
     }
     // Compile-validate the DSL on filter views before persisting.
-    if req.kind == KIND_FILTER_SERIES
+    let entity = filter_entity(&req.kind);
+    if let Some(entity) = entity
         && let Some(filter) = &req.filter
+        && let Err(e) = compile::validate(
+            filter,
+            entity,
+            req.sort_field.unwrap_or(SortField::CreatedAt),
+            req.sort_order.unwrap_or(SortOrder::Desc),
+        )
     {
-        let dummy = CompileInput {
-            dsl: filter,
-            sort_field: req.sort_field.unwrap_or(SortField::CreatedAt),
-            sort_order: req.sort_order.unwrap_or(SortOrder::Desc),
-            limit: 12,
-            cursor: None,
-            user_id: owner.unwrap_or_else(Uuid::nil),
-            visible_libraries: access::VisibleLibraries::unrestricted(),
-        };
-        if let Err(e) = compile::compile(&dummy) {
-            return compile_error_response(e);
-        }
+        return compile_error_response(e);
     }
+    let is_filter = entity.is_some();
 
     let id = Uuid::now_v7();
     let now = Utc::now().fixed_offset();
@@ -777,7 +791,7 @@ async fn create_inner(
         custom_year_start: Set(year_start),
         custom_year_end: Set(year_end),
         custom_tags: Set(req.custom_tags.clone().unwrap_or_default()),
-        match_mode: Set(if req.kind == KIND_FILTER_SERIES {
+        match_mode: Set(if is_filter {
             Some(match_mode_str(
                 req.filter
                     .as_ref()
@@ -787,7 +801,7 @@ async fn create_inner(
         } else {
             None
         }),
-        conditions: Set(if req.kind == KIND_FILTER_SERIES {
+        conditions: Set(if is_filter {
             let conds = req
                 .filter
                 .as_ref()
@@ -797,7 +811,7 @@ async fn create_inner(
         } else {
             None
         }),
-        sort_field: Set(if req.kind == KIND_FILTER_SERIES {
+        sort_field: Set(if is_filter {
             Some(
                 req.sort_field
                     .unwrap_or(SortField::CreatedAt)
@@ -807,7 +821,7 @@ async fn create_inner(
         } else {
             None
         }),
-        sort_order: Set(if req.kind == KIND_FILTER_SERIES {
+        sort_order: Set(if is_filter {
             Some(
                 req.sort_order
                     .unwrap_or(SortOrder::Desc)
@@ -817,7 +831,7 @@ async fn create_inner(
         } else {
             None
         }),
-        result_limit: Set(if req.kind == KIND_FILTER_SERIES {
+        result_limit: Set(if is_filter {
             Some(req.result_limit.unwrap_or(12))
         } else {
             None
@@ -984,20 +998,36 @@ async fn apply_update(
     row: &saved_view::Model,
     req: &UpdateSavedViewReq,
 ) -> axum::response::Response {
-    // For filter views, validate the new DSL via compile if `filter` was sent.
-    if row.kind == KIND_FILTER_SERIES
-        && let Some(filter) = &req.filter
+    // For filter views, validate the new DSL + sort via compile. The sort
+    // falls back to the stored one so an issue view can't be PATCHed onto
+    // a series-only sort (or a new filter checked against the wrong sort).
+    let entity = filter_entity(&row.kind);
+    if let Some(entity) = entity
+        && (req.filter.is_some() || req.sort_field.is_some())
     {
-        let dummy = CompileInput {
-            dsl: filter,
-            sort_field: req.sort_field.unwrap_or(SortField::CreatedAt),
-            sort_order: req.sort_order.unwrap_or(SortOrder::Desc),
-            limit: 12,
-            cursor: None,
-            user_id: Uuid::nil(),
-            visible_libraries: access::VisibleLibraries::unrestricted(),
+        let stored_filter;
+        let filter = match &req.filter {
+            Some(f) => f,
+            None => {
+                stored_filter = match dsl_from_view(row) {
+                    Ok(f) => f,
+                    Err(_) => {
+                        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                    }
+                };
+                &stored_filter
+            }
         };
-        if let Err(e) = compile::compile(&dummy) {
+        let sort_field = req
+            .sort_field
+            .or_else(|| row.sort_field.as_deref().and_then(SortField::parse))
+            .unwrap_or(SortField::CreatedAt);
+        if let Err(e) = compile::validate(
+            filter,
+            entity,
+            sort_field,
+            req.sort_order.unwrap_or(SortOrder::Desc),
+        ) {
             return compile_error_response(e);
         }
     }
@@ -1029,7 +1059,7 @@ async fn apply_update(
     if let Some(tags) = req.custom_tags.as_ref() {
         am.custom_tags = Set(tags.clone());
     }
-    if row.kind == KIND_FILTER_SERIES {
+    if entity.is_some() {
         if let Some(filter) = req.filter.as_ref() {
             am.match_mode = Set(Some(match_mode_str(filter.match_mode)));
             am.conditions = Set(Some(
@@ -1857,6 +1887,13 @@ pub async fn results(
             "collection results are available from /me/collections/{id}/entries",
         );
     }
+    if view.kind == KIND_FILTER_ISSUES {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unsupported_view_kind",
+            "issue view results are available from /me/saved-views/{id}/issue-results",
+        );
+    }
 
     let filter = match dsl_from_view(&view) {
         Ok(f) => f,
@@ -1889,6 +1926,250 @@ pub async fn results(
         visible_libraries: visible,
     };
     run_filter_query(&app, input).await
+}
+
+/// `POST /me/saved-views/preview-issues` — stateless preview of an
+/// issue-level (`filter_issues`) DSL. Same body as `/preview`.
+#[utoipa::path(
+    operation_id = "saved_views_preview_issues",    post,
+    path = "/me/saved-views/preview-issues",
+    request_body = PreviewReq,
+    responses((status = 200, body = IssueListView))
+)]
+#[handler]
+pub async fn preview_issues(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Json(req): Json<PreviewReq>,
+) -> impl IntoResponse {
+    let limit = (req.result_limit as u64).clamp(MIN_RESULT_LIMIT, MAX_RESULT_LIMIT);
+    let visible = access::for_user(&app, &user).await;
+    let input = IssueCompileInput {
+        dsl: &req.filter,
+        sort_field: req.sort_field,
+        sort_order: req.sort_order,
+        limit,
+        cursor: None,
+        user_id: user.id,
+        visible_libraries: visible,
+    };
+    run_issue_filter_query(&app, input).await
+}
+
+/// `GET /me/saved-views/{id}/issue-results` — run an issue-level
+/// (`filter_issues`) view. Other kinds are 422 `unsupported_view_kind`.
+/// `next_cursor` is opaque; pass it back verbatim.
+#[utoipa::path(
+    operation_id = "saved_views_issue_results",    get,
+    path = "/me/saved-views/{id}/issue-results",
+    params(
+        ("id" = String, Path,),
+        ("cursor" = Option<String>, Query,),
+        ("limit" = Option<u64>, Query,),
+    ),
+    responses((status = 200, body = IssueListView))
+)]
+#[handler]
+pub async fn issue_results(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(id): AxPath<Uuid>,
+    Query(q): Query<ResultsQuery>,
+) -> impl IntoResponse {
+    let view = match fetch_view(&app.db, id).await {
+        Ok(Some(v)) => v,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "view not found"),
+        Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+    };
+    if let Some(owner) = view.user_id
+        && owner != user.id
+    {
+        return error(StatusCode::FORBIDDEN, "forbidden", "not your view");
+    }
+    if view.kind != KIND_FILTER_ISSUES {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unsupported_view_kind",
+            "issue-results only serves filter_issues views",
+        );
+    }
+    let filter = match dsl_from_view(&view) {
+        Ok(f) => f,
+        Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+    };
+    let sort_field = view
+        .sort_field
+        .as_deref()
+        .and_then(SortField::parse)
+        .unwrap_or(SortField::CreatedAt);
+    let sort_order = match view.sort_order.as_deref() {
+        Some("asc") => SortOrder::Asc,
+        _ => SortOrder::Desc,
+    };
+    let view_limit = view.result_limit.unwrap_or(12) as u64;
+    let limit = q
+        .limit
+        .unwrap_or(view_limit)
+        .clamp(MIN_RESULT_LIMIT, MAX_RESULT_LIMIT);
+    let cursor = match q.cursor.as_deref() {
+        None => None,
+        Some(c) => match compile::IssueCursor::decode(c) {
+            Some(c) => Some(c),
+            None => return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor"),
+        },
+    };
+    let visible = access::for_user(&app, &user).await;
+    let input = IssueCompileInput {
+        dsl: &filter,
+        sort_field,
+        sort_order,
+        limit,
+        cursor,
+        user_id: user.id,
+        visible_libraries: visible,
+    };
+    run_issue_filter_query(&app, input).await
+}
+
+/// Projection of [`compile::compile_issues`]' select list.
+#[derive(Debug, FromQueryResult)]
+struct IssueViewRow {
+    id: String,
+    slug: String,
+    series_id: Uuid,
+    title: Option<String>,
+    number_raw: Option<String>,
+    sort_number: Option<f64>,
+    year: Option<i32>,
+    page_count: Option<i32>,
+    state: String,
+    special_type: Option<String>,
+    created_at: chrono::DateTime<chrono::FixedOffset>,
+    updated_at: chrono::DateTime<chrono::FixedOffset>,
+    series_slug: String,
+    series_name: String,
+}
+
+impl IssueViewRow {
+    fn into_summary_view(self) -> IssueSummaryView {
+        // `state` is pinned 'active' by the compiler's WHERE.
+        let cover_url =
+            (self.state == "active").then(|| format!("/issues/{}/pages/0/thumb", self.id));
+        IssueSummaryView {
+            id: self.id,
+            slug: self.slug,
+            series_id: self.series_id.to_string(),
+            series_slug: self.series_slug,
+            series_name: Some(self.series_name),
+            title: self.title,
+            number: self.number_raw,
+            sort_number: self.sort_number,
+            year: self.year,
+            page_count: self.page_count,
+            state: self.state,
+            cover_url,
+            special_type: self.special_type,
+            created_at: self.created_at.to_rfc3339(),
+            updated_at: self.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+async fn fetch_issue_view_rows(
+    app: &AppState,
+    input: &IssueCompileInput<'_>,
+) -> Result<Vec<IssueViewRow>, axum::response::Response> {
+    let stmt = compile::compile_issues(input).map_err(issue_compile_error_response)?;
+    let (sql, values) = stmt.build(PostgresQueryBuilder);
+    let raw = Statement::from_sql_and_values(app.db.get_database_backend(), sql, values);
+    IssueViewRow::find_by_statement(raw)
+        .all(&app.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "saved_views: issue query failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        })
+}
+
+/// Like [`compile_error_response`], but a malformed keyset cursor is the
+/// caller's parse error (400), not a filter-validation failure (422).
+fn issue_compile_error_response(e: CompileError) -> axum::response::Response {
+    match e {
+        CompileError::InvalidCursor => {
+            error(StatusCode::BAD_REQUEST, "validation", "invalid cursor")
+        }
+        other => compile_error_response(other),
+    }
+}
+
+/// First-page `total` for an issue view (same filters, no cursor/limit).
+async fn count_issue_view_rows(
+    app: &AppState,
+    input: &IssueCompileInput<'_>,
+) -> Result<i64, axum::response::Response> {
+    #[derive(FromQueryResult)]
+    struct Total {
+        total: i64,
+    }
+    let stmt = compile::compile_issues_count(input).map_err(issue_compile_error_response)?;
+    let (sql, values) = stmt.build(PostgresQueryBuilder);
+    let raw = Statement::from_sql_and_values(app.db.get_database_backend(), sql, values);
+    Total::find_by_statement(raw)
+        .one(&app.db)
+        .await
+        .map(|r| r.map(|t| t.total).unwrap_or(0))
+        .map_err(|e| {
+            tracing::error!(error = %e, "saved_views: issue count failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        })
+}
+
+async fn run_issue_filter_query(
+    app: &AppState,
+    input: IssueCompileInput<'_>,
+) -> axum::response::Response {
+    let mut rows = match fetch_issue_view_rows(app, &input).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    // `total` rides the first page only, like every cursor list.
+    let total = if input.cursor.is_none() {
+        match count_issue_view_rows(app, &input).await {
+            Ok(n) => Some(n),
+            Err(resp) => return resp,
+        }
+    } else {
+        None
+    };
+    // Over-fetched by one: drop the extra and key the next page off the
+    // last row actually returned, so nothing is skipped or repeated.
+    let next_cursor = if rows.len() as u64 > input.limit {
+        rows.pop();
+        rows.last().map(|r| {
+            compile::IssueCursor::for_row(
+                input.sort_field,
+                &r.id,
+                &r.series_name,
+                r.sort_number,
+                r.year,
+                &r.created_at,
+                &r.updated_at,
+            )
+            .encode()
+        })
+    } else {
+        None
+    };
+    let items = rows
+        .into_iter()
+        .map(IssueViewRow::into_summary_view)
+        .collect();
+    Json(IssueListView {
+        items,
+        next_cursor,
+        total,
+    })
+    .into_response()
 }
 
 fn dsl_from_view(view: &saved_view::Model) -> Result<FilterDsl, serde_json::Error> {
@@ -2013,6 +2294,26 @@ pub async fn resolve_metadata_batch_targets(
                     error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
                 })?;
             Ok(BatchTargets::Series(
+                rows.into_iter().map(|r| r.id).collect(),
+            ))
+        }
+        KIND_FILTER_ISSUES => {
+            let filter = dsl_from_view(&view)
+                .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;
+            let visible = access::for_user(app, user).await;
+            let input = IssueCompileInput {
+                dsl: &filter,
+                sort_field: SortField::CreatedAt,
+                sort_order: SortOrder::Desc,
+                limit: REFRESH_BATCH_CAP as u64,
+                cursor: None,
+                user_id: user.id,
+                visible_libraries: visible,
+            };
+            let mut rows = fetch_issue_view_rows(app, &input).await?;
+            // `compile_issues` over-fetches one row for pagination.
+            rows.truncate(REFRESH_BATCH_CAP);
+            Ok(BatchTargets::Issues(
                 rows.into_iter().map(|r| r.id).collect(),
             ))
         }

@@ -5,9 +5,10 @@ import type { SavedViewListView, SavedViewView } from "@/lib/api/types";
 
 import { ViewClient } from "./ViewClient";
 
-/** Saved-view detail page. Three kinds dispatch:
+/** Saved-view detail page. Kinds dispatch:
  *
  *   - `filter_series` — DSL-driven series grid via `<FilterViewDetail>`
+ *   - `filter_issues` — DSL-driven issue grid via `<IssueFilterViewDetail>`
  *   - `cbl`           — reading-list detail via `<CblViewDetail>`
  *   - `system`        — built-in rails (Continue reading / On deck) via
  *                       `<SystemViewDetail>`, rendered as a full-page grid

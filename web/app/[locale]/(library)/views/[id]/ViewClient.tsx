@@ -3,6 +3,7 @@
 import { CblViewDetail } from "@/components/saved-views/CblViewDetail";
 import { CollectionViewDetail } from "@/components/saved-views/CollectionViewDetail";
 import { FilterViewDetail } from "@/components/saved-views/FilterViewDetail";
+import { IssueFilterViewDetail } from "@/components/saved-views/IssueFilterViewDetail";
 import { SystemViewDetail } from "@/components/saved-views/SystemViewDetail";
 import type { SavedViewView } from "@/lib/api/types";
 
@@ -15,5 +16,7 @@ export function ViewClient({ view }: { view: SavedViewView }) {
   if (view.kind === "cbl") return <CblViewDetail savedView={view} />;
   if (view.kind === "collection")
     return <CollectionViewDetail savedView={view} />;
+  if (view.kind === "filter_issues")
+    return <IssueFilterViewDetail view={view} />;
   return <FilterViewDetail view={view} />;
 }

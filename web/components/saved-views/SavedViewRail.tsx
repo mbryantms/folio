@@ -18,6 +18,7 @@ import { SurpriseMeButton } from "@/components/library/SurpriseMeButton";
 import {
   useCblListWindowInfinite,
   useCollectionEntries,
+  useSavedViewIssueResults,
   useSavedViewResults,
 } from "@/lib/api/queries";
 import type { SavedViewView } from "@/lib/api/types";
@@ -135,6 +136,12 @@ function renderRailBody(
       hasMore: true,
     };
   }
+  if (view.kind === "filter_issues") {
+    return {
+      body: <IssueFilterRailBody view={view} itemStyle={itemStyle} />,
+      hasMore: true,
+    };
+  }
   if (view.kind === "collection") {
     return {
       body: <CollectionRailBody view={view} itemStyle={itemStyle} />,
@@ -220,6 +227,42 @@ function FilterRailBody({
       {items.slice(0, RAIL_PREVIEW_LIMIT).map((s) => (
         <div key={s.id} style={itemStyle} className="shrink-0">
           <SeriesCard series={s} size="md" />
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** Issue-level (`filter_issues`) rail — WP-5.4. Renders issue cards
+ *  (the same `IssueCard` the New issues rail uses) from the view's
+ *  first `issue-results` page. */
+export function IssueFilterRailBody({
+  view,
+  itemStyle,
+}: {
+  view: SavedViewView;
+  itemStyle: React.CSSProperties;
+}) {
+  const results = useSavedViewIssueResults(view.id);
+  if (results.isLoading) {
+    return (
+      <>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} style={itemStyle} className="shrink-0">
+            <IssueCardSkeleton />
+          </div>
+        ))}
+      </>
+    );
+  }
+  const items = results.data?.items ?? [];
+  if (items.length === 0)
+    return <RailEmptyState message="Nothing matches yet." />;
+  return (
+    <>
+      {items.slice(0, RAIL_PREVIEW_LIMIT).map((issue) => (
+        <div key={issue.id} style={itemStyle} className="shrink-0">
+          <IssueCard issue={issue} />
         </div>
       ))}
     </>

@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 /// Polymorphic saved view (saved-views M3). One row per view; `kind`
 /// discriminates between:
 ///
-///   - `'filter_series'` — inline filter DSL in `conditions`,
+///   - `'filter_series'` — inline filter DSL in `conditions`, over series,
+///   - `'filter_issues'` — the same DSL compiled over issues (WP-5.4),
 ///   - `'cbl'` — pointer to a `cbl_lists` row via `cbl_list_id`,
 ///   - `'system'` — global built-in rail (`system_key` populated, `user_id IS NULL`),
 ///   - `'collection'` — user-owned ordered list of mixed series + issue
@@ -20,7 +21,7 @@ pub struct Model {
     /// `None` for system views (admin-curated, visible to every user).
     #[sea_orm(nullable)]
     pub user_id: Option<Uuid>,
-    /// `'filter_series'` (M3), `'cbl'` (M4), `'system'` (built-in rail),
+    /// `'filter_series'` (M3), `'filter_issues'` (WP-5.4), `'cbl'` (M4), `'system'` (built-in rail),
     /// or `'collection'` (user-owned manual list).
     pub kind: String,
     /// Identifies the built-in rail when `kind = 'system'`

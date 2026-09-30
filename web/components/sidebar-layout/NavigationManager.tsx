@@ -802,7 +802,11 @@ function AddToSidebarDialog({
         const match = savedQ.data?.items.find((v) => v.id === entry.ref_id);
         if (match?.kind === "cbl") preciseKind = "cbl";
         else if (match?.kind === "collection") preciseKind = "collection";
-        else if (match?.kind === "filter_series") preciseKind = "filter";
+        else if (
+          match?.kind === "filter_series" ||
+          match?.kind === "filter_issues"
+        )
+          preciseKind = "filter";
       }
       items.push({
         id: `hidden:${entry.kind}:${entry.ref_id}`,

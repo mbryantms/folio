@@ -202,7 +202,7 @@ pub struct ExportCollectionEntry {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ExportSavedView {
     pub id: Uuid,
-    /// `"filter_series"` or `"cbl"`.
+    /// `"filter_series"`, `"filter_issues"` or `"cbl"`.
     pub kind: String,
     pub name: String,
     pub description: Option<String>,
