@@ -6915,10 +6915,11 @@ export interface components {
             match_mode: components["schemas"]["MatchMode"];
         };
         /**
-         * @description `width` | `height` | `original`.
+         * @description `width` | `height` | `original` | `contain`. `contain` fits the whole
+         *     page on screen (both axes) — the reader's "Fit screen" mode (WP-4.2).
          * @enum {string}
          */
-        FitMode: "width" | "height" | "original";
+        FitMode: "width" | "height" | "original" | "contain";
         /** @description Response body for the metadata-drift flush endpoint. */
         FlushMetadataDriftResp: {
             /**

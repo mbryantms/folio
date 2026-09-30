@@ -16548,11 +16548,12 @@
       },
       "FitMode": {
         "type": "string",
-        "description": "`width` | `height` | `original`.",
+        "description": "`width` | `height` | `original` | `contain`. `contain` fits the whole\npage on screen (both axes) — the reader's \"Fit screen\" mode (WP-4.2).",
         "enum": [
           "width",
           "height",
-          "original"
+          "original",
+          "contain"
         ]
       },
       "FlushMetadataDriftResp": {

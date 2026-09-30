@@ -27,13 +27,15 @@ pub enum ReadingDirection {
     Rtl,
 }
 
-/// `width` | `height` | `original`.
+/// `width` | `height` | `original` | `contain`. `contain` fits the whole
+/// page on screen (both axes) — the reader's "Fit screen" mode (WP-4.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum FitMode {
     Width,
     Height,
     Original,
+    Contain,
 }
 
 /// `single` | `double` | `webtoon`.
@@ -122,10 +124,11 @@ str_enum!(
 );
 str_enum!(
     FitMode,
-    "fit_mode must be 'width', 'height', or 'original'",
+    "fit_mode must be 'width', 'height', 'original', or 'contain'",
     Width => "width",
     Height => "height",
     Original => "original",
+    Contain => "contain",
 );
 str_enum!(
     ViewMode,
@@ -212,6 +215,7 @@ mod tests {
         assert_eq!("width".parse(), Ok(FitMode::Width));
         assert_eq!("height".parse(), Ok(FitMode::Height));
         assert_eq!("original".parse(), Ok(FitMode::Original));
+        assert_eq!("contain".parse(), Ok(FitMode::Contain));
         assert!("zoom".parse::<FitMode>().is_err());
     }
 }

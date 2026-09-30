@@ -25,6 +25,7 @@ const FIT_OPTIONS: ReadonlyArray<{ value: FitMode; label: string }> = [
   { value: "width", label: "Width" },
   { value: "height", label: "Height" },
   { value: "original", label: "Original" },
+  { value: "contain", label: "Screen" },
 ];
 
 const DIRECTION_OPTIONS: ReadonlyArray<{ value: Direction; label: string }> = [
@@ -49,6 +50,7 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
   const sepia = useReaderStore((s) => s.sepia);
   const coverSolo = useReaderStore((s) => s.coverSolo);
   const markersHidden = useReaderStore((s) => s.markersHidden);
+  const zoomPersist = useReaderStore((s) => s.zoomPersist);
   const setFitMode = useReaderStore((s) => s.setFitMode);
   const setViewMode = useReaderStore((s) => s.setViewMode);
   const setDirection = useReaderStore((s) => s.setDirection);
@@ -58,6 +60,7 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
   const setSepia = useReaderStore((s) => s.setSepia);
   const setCoverSolo = useReaderStore((s) => s.setCoverSolo);
   const setMarkersHidden = useReaderStore((s) => s.setMarkersHidden);
+  const setZoomPersist = useReaderStore((s) => s.setZoomPersist);
 
   return (
     <div className="space-y-4 text-sm">
@@ -84,6 +87,12 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
             ariaLabel="Fit mode"
           />
         </Field>
+        <SwitchRow
+          label="Keep zoom between pages"
+          description="Turning the page keeps your zoom level and starts at the top corner of the next page."
+          checked={zoomPersist}
+          onChange={setZoomPersist}
+        />
         <Field label="Direction">
           <SegmentedControl
             value={direction}
