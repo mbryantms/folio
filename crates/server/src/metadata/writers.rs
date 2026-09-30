@@ -40,6 +40,7 @@ use sea_orm::sea_query::OnConflict;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseBackend, DbErr,
     EntityTrait, ExprTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect, Statement,
+    TransactionTrait,
 };
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -1706,48 +1707,111 @@ pub struct CoverWrite<'a> {
 /// Persist a cover row + write the image bytes to disk. Honors
 /// [`CoverOverwritePolicy`] for `kind='primary' AND ordinal=0`;
 /// variants are always additive (the policy doesn't apply).
-pub async fn apply_cover<C: ConnectionTrait>(
-    db: &C,
+///
+/// Slot uniqueness is a partial index — one **active** row per
+/// `(issue_id, kind, ordinal)`, any number of inactive ones (the
+/// post-scan phash worker's `archive_extracted` hash row, previously
+/// applied covers). Replacing the active primary deactivates it and
+/// inserts the new row in **one transaction**: if the insert (or the
+/// commit) fails, the deactivation rolls back — the old cover stays
+/// served — and the file written for the new row is removed, so neither
+/// a cover-less issue nor an orphaned file is left behind.
+pub async fn apply_cover(
+    db: &sea_orm::DatabaseConnection,
     data_path: &std::path::Path,
     write: CoverWrite<'_>,
     policy: CoverOverwritePolicy,
 ) -> Result<Option<Uuid>, std::io::Error> {
     let is_primary = write.kind == "primary" && write.ordinal == 0;
 
-    // Policy gate applies only to the primary slot.
+    let txn = db.begin().await.map_err(|e| cover_db_err("begin", e))?;
+
+    // Policy gate applies only to the primary slot. The row lock
+    // serializes concurrent replaces of the same slot.
+    let mut replaced: Option<Uuid> = None;
     if is_primary {
         let existing_primary = issue_cover::Entity::find()
             .filter(issue_cover::Column::IssueId.eq(write.issue_id))
             .filter(issue_cover::Column::Kind.eq("primary"))
             .filter(issue_cover::Column::Ordinal.eq(0))
             .filter(issue_cover::Column::IsActive.eq(true))
-            .one(db)
+            .lock_exclusive()
+            .one(&txn)
             .await
-            .map_err(|e| std::io::Error::other(format!("issue_cover lookup: {e}")))?;
-        match (existing_primary.as_ref(), policy) {
-            (Some(_), CoverOverwritePolicy::Never) => return Ok(None),
-            (Some(_), CoverOverwritePolicy::WhenMissing) => return Ok(None),
-            _ => {}
+            .map_err(|e| cover_db_err("lookup", e))?;
+        if existing_primary.is_some()
+            && matches!(
+                policy,
+                CoverOverwritePolicy::Never | CoverOverwritePolicy::WhenMissing
+            )
+        {
+            return Ok(None);
         }
-        // Replacing: deactivate the existing row so unique
-        // (issue_id, kind, ordinal) doesn't fire.
-        if let Some(prev) = existing_primary {
-            let mut am: issue_cover::ActiveModel = prev.into();
-            am.is_active = Set(false);
-            am.update(db)
-                .await
-                .map_err(|e| std::io::Error::other(format!("issue_cover deactivate: {e}")))?;
-        }
+        replaced = existing_primary.map(|p| p.id);
     }
 
     let cover_id = Uuid::now_v7();
-    let rel_dir = format!("thumbs/issues/{}/covers", write.issue_id);
-    let rel_path = format!("{rel_dir}/{cover_id}.{}", write.ext);
+    let rel_path = cover_rel_path(write.issue_id, cover_id, write.ext);
     let on_disk = data_path.join(&rel_path);
     if let Some(parent) = on_disk.parent() {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&on_disk, write.bytes)?;
+
+    let written = match insert_cover_row(&txn, &write, cover_id, rel_path, replaced).await {
+        Ok(()) => txn.commit().await.map_err(|e| cover_db_err("commit", e)),
+        // `txn` drops un-committed → rolled back, deactivation included.
+        Err(e) => Err(e),
+    };
+    if let Err(e) = written {
+        // No row points at the file we just wrote; don't orphan it.
+        remove_cover_file(&on_disk);
+        return Err(e);
+    }
+    Ok(Some(cover_id))
+}
+
+fn cover_db_err(ctx: &str, e: DbErr) -> std::io::Error {
+    std::io::Error::other(format!("issue_cover {ctx}: {e}"))
+}
+
+/// Best-effort removal of a cover file written for a row that never
+/// committed. A missing file is fine; anything else is logged.
+fn remove_cover_file(path: &std::path::Path) {
+    if let Err(e) = std::fs::remove_file(path)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(
+            path = %path.display(),
+            error = %e,
+            "cover write: failed to remove the file of an uncommitted cover row",
+        );
+    }
+}
+
+/// The transactional half of [`apply_cover`]: deactivate `replaced` (the
+/// current active primary, if any) and insert the new row. The caller
+/// commits.
+async fn insert_cover_row(
+    txn: &sea_orm::DatabaseTransaction,
+    write: &CoverWrite<'_>,
+    cover_id: Uuid,
+    rel_path: String,
+    replaced: Option<Uuid>,
+) -> Result<(), std::io::Error> {
+    // Deactivate first — the partial unique index admits one active row
+    // per slot, so the insert below would collide otherwise.
+    if let Some(prev_id) = replaced {
+        issue_cover::Entity::update_many()
+            .col_expr(
+                issue_cover::Column::IsActive,
+                sea_orm::sea_query::Expr::value(false),
+            )
+            .filter(issue_cover::Column::Id.eq(prev_id))
+            .exec(txn)
+            .await
+            .map_err(|e| cover_db_err("deactivate", e))?;
+    }
 
     // metadata-providers-1.0 M9: compute perceptual hashes on the
     // bytes as we write. Decode failures don't block the cover write
@@ -1790,10 +1854,10 @@ pub async fn apply_cover<C: ConnectionTrait>(
         fetched_at: Set(now),
         is_active: Set(true),
     };
-    am.insert(db)
+    am.insert(txn)
         .await
-        .map_err(|e| std::io::Error::other(format!("issue_cover insert: {e}")))?;
-    Ok(Some(cover_id))
+        .map_err(|e| cover_db_err("insert", e))?;
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -2150,35 +2214,6 @@ async fn download_cover_image(
     })
 }
 
-/// Delete the on-disk files backing an issue's existing variant rows.
-/// Best-effort — a missing file is fine (already gone); other IO errors
-/// are logged but don't abort the caller. Only files referenced by a
-/// `local_path` are touched, never the whole cover dir (the primary
-/// cover lives there too).
-async fn wipe_variant_cover_files<C: ConnectionTrait>(
-    db: &C,
-    data_path: &std::path::Path,
-    issue_id: &str,
-) -> Result<(), sea_orm::DbErr> {
-    let prior = issue_cover::Entity::find()
-        .filter(issue_cover::Column::IssueId.eq(issue_id))
-        .filter(issue_cover::Column::Kind.eq("variant"))
-        .all(db)
-        .await?;
-    for row in &prior {
-        if row.local_path.is_empty() {
-            continue;
-        }
-        let path = data_path.join(&row.local_path);
-        if let Err(e) = std::fs::remove_file(&path)
-            && e.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::debug!(path = %path.display(), error = %e, "variant cover cleanup: remove failed");
-        }
-    }
-    Ok(())
-}
-
 /// Persist one [`issue_cover`] row per variant from a provider's
 /// `Vec<VariantCoverCandidate>`, **downloading** each image to local
 /// storage (mirroring how [`apply_cover`] stores the primary) so the
@@ -2189,37 +2224,26 @@ async fn wipe_variant_cover_files<C: ConnectionTrait>(
 /// variant still renders via hotlink and [`run_variant_cover_backfill`]
 /// can pull the bytes later. Variants with no `image_url` are skipped.
 ///
-/// Idempotency: every existing variant row for the issue is **deleted**
-/// (and its on-disk file removed) before the fresh set is written.
-/// Variants are presentational — no audit trail needed — and the
-/// `UNIQUE (issue_id, kind, ordinal)` constraint would block a re-apply
-/// if we merely deactivated. Primary cover rows are untouched
-/// (`apply_cover` owns the `kind='primary'` slot).
+/// Idempotency: the issue's whole variant set is **replaced** — the
+/// prior rows are deleted and the fresh set inserted in one transaction
+/// (downloads happen first, outside it). Variants are presentational — no
+/// audit trail needed — so deleting beats deactivating. The prior set's
+/// files are removed only after the commit; if the swap fails, the prior
+/// rows + files stay and the files just downloaded are removed instead.
+/// Primary cover rows are untouched (`apply_cover` owns the
+/// `kind='primary'` slot).
 ///
 /// Ordinals are assigned contiguously from 1 (the primary slot is
 /// ordinal 0) in provider `Vec` order, so the gallery's
 /// `ORDER BY kind, ordinal` shows variants in publisher-supplied
 /// sequence. Returns the count of variant rows inserted.
-pub async fn set_issue_variants<C: ConnectionTrait>(
-    db: &C,
+pub async fn set_issue_variants(
+    db: &sea_orm::DatabaseConnection,
     data_path: &std::path::Path,
     issue_id: &str,
     variants: &[crate::metadata::provider::VariantCoverCandidate],
     set_by: SetBy,
 ) -> Result<usize, sea_orm::DbErr> {
-    // Remove the prior set's files, then the rows. (Files first: once
-    // the rows are gone we've lost the `local_path` pointers.)
-    wipe_variant_cover_files(db, data_path, issue_id).await?;
-    issue_cover::Entity::delete_many()
-        .filter(issue_cover::Column::IssueId.eq(issue_id))
-        .filter(issue_cover::Column::Kind.eq("variant"))
-        .exec(db)
-        .await?;
-
-    if variants.is_empty() {
-        return Ok(0);
-    }
-
     let now = chrono::Utc::now().fixed_offset();
     let provider_str = match set_by {
         SetBy::Provider(s) => Some(s.as_str().to_owned()),
@@ -2235,7 +2259,8 @@ pub async fn set_issue_variants<C: ConnectionTrait>(
         | SetBy::ScannerFolderTag
         | SetBy::CrossReference => None,
     };
-    let mut inserted = 0usize;
+    let mut rows: Vec<issue_cover::ActiveModel> = Vec::new();
+    let mut new_files: Vec<std::path::PathBuf> = Vec::new();
     let mut ordinal = 1i32; // primary slot owns ordinal 0
     for v in variants {
         // Skip variants with no image URL — useless to the gallery and
@@ -2252,20 +2277,23 @@ pub async fn set_issue_variants<C: ConnectionTrait>(
 
         let stored = download_cover_image(data_path, issue_id, image_url).await;
         let (id, local_path, width, height, phash, dhash, ahash) = match stored {
-            Some(s) => (
-                s.cover_id,
-                s.rel_path,
-                Some(s.width),
-                Some(s.height),
-                Some(s.phash),
-                Some(s.dhash),
-                Some(s.ahash),
-            ),
+            Some(s) => {
+                new_files.push(data_path.join(&s.rel_path));
+                (
+                    s.cover_id,
+                    s.rel_path,
+                    Some(s.width),
+                    Some(s.height),
+                    Some(s.phash),
+                    Some(s.dhash),
+                    Some(s.ahash),
+                )
+            }
             // Soft fallback: keep the hotlink so the variant still
             // renders; the backfill job pulls the bytes on a later pass.
             None => (Uuid::now_v7(), String::new(), None, None, None, None, None),
         };
-        let am = issue_cover::ActiveModel {
+        rows.push(issue_cover::ActiveModel {
             id: Set(id),
             issue_id: Set(issue_id.to_owned()),
             kind: Set("variant".into()),
@@ -2283,12 +2311,58 @@ pub async fn set_issue_variants<C: ConnectionTrait>(
             ahash: Set(ahash),
             fetched_at: Set(now),
             is_active: Set(true),
-        };
-        am.insert(db).await?;
-        inserted += 1;
+        });
         ordinal += 1;
     }
-    Ok(inserted)
+    let inserted = rows.len();
+
+    match replace_variant_rows(db, issue_id, rows).await {
+        Ok(prior_paths) => {
+            // Committed: the prior set's files are now unreferenced.
+            for rel in prior_paths {
+                remove_cover_file(&data_path.join(rel));
+            }
+            Ok(inserted)
+        }
+        Err(e) => {
+            // Rolled back: the prior set is intact; the files downloaded
+            // for the new set have no rows.
+            for path in &new_files {
+                remove_cover_file(path);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Swap an issue's variant rows for `rows` in one transaction. Returns the
+/// non-empty `local_path`s of the rows it deleted so the caller can remove
+/// those files once the swap is durable.
+async fn replace_variant_rows(
+    db: &sea_orm::DatabaseConnection,
+    issue_id: &str,
+    rows: Vec<issue_cover::ActiveModel>,
+) -> Result<Vec<String>, sea_orm::DbErr> {
+    let txn = db.begin().await?;
+    let prior_paths: Vec<String> = issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(issue_id))
+        .filter(issue_cover::Column::Kind.eq("variant"))
+        .all(&txn)
+        .await?
+        .into_iter()
+        .map(|r| r.local_path)
+        .filter(|p| !p.is_empty())
+        .collect();
+    issue_cover::Entity::delete_many()
+        .filter(issue_cover::Column::IssueId.eq(issue_id))
+        .filter(issue_cover::Column::Kind.eq("variant"))
+        .exec(&txn)
+        .await?;
+    for am in rows {
+        am.insert(&txn).await?;
+    }
+    txn.commit().await?;
+    Ok(prior_paths)
 }
 
 /// Outcome of a variant-cover backfill sweep — surfaced via the admin
