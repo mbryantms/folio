@@ -12,12 +12,18 @@
 //!     `<MarkerOverlay>` calls on reader mount; returns every marker
 //!     across every page without pagination because issues have a
 //!     bounded page count.
-//!   - `POST /me/markers` — create. Enforces per-kind shape (`body`
-//!     required for `note`, `region` required for `highlight`),
-//!     clamps rect dims to [0, 100], and validates `page_index` against
+//!   - `POST /me/markers` — create. `Validated<CreateMarkerReq>` (garde,
+//!     422 with per-field `details`): body ≤ 10 KB, `selection.text`
+//!     ≤ 8 KB, color ≤ 32 chars, region `w`/`h` ≥ 0.5% after clamping to
+//!     [0, 100]. Then the per-kind shape (`body` required for `note`,
+//!     `region` required for `highlight`) and `page_index` against
 //!     `issues.page_count`.
 //!   - `PATCH /me/markers/{id}` — partial update (body / color /
-//!     region / selection). Same validation gates.
+//!     region / selection — `selection.text` is user-editable). Same
+//!     validation gates via `Validated<UpdateMarkerReq>`.
+//!
+//! The four write routes share the `marker_write` per-IP rate-limit
+//! bucket (WP-5.3, audit SE-5).
 //!   - `DELETE /me/markers/{id}`.
 //!
 //! All endpoints scope by `library_user_access` against the issue's
@@ -47,6 +53,7 @@ use super::error;
 use crate::api::extractors::Validated;
 use crate::auth::CurrentUser;
 use crate::library::access;
+use crate::middleware::rate_limit;
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -78,7 +85,17 @@ impl axum::response::IntoResponse for MarkerError {
 }
 
 const MAX_BODY_BYTES: usize = 10 * 1024;
-const MAX_LABEL_BYTES: usize = 280;
+/// Cap on `selection.text` — OCR output or the user's edit of it
+/// (WP-5.3; was ~1.1 KB, too tight for a full caption box).
+const MAX_SELECTION_TEXT_BYTES: usize = 8 * 1024;
+/// Cap on the palette token. The client uses short names (`yellow`,
+/// `violet`); anything longer is junk.
+const MAX_COLOR_LEN: usize = 32;
+/// Smallest region side, in percent of the page. A stray click-drag
+/// otherwise saves a zero-area highlight nothing can render or crop.
+const MIN_REGION_DIM_PCT: f64 = 0.5;
+/// `issues.id` is 64-char BLAKE3 hex; anything much longer is junk.
+const MAX_ISSUE_ID_LEN: usize = 128;
 const MAX_LIMIT: u64 = 200;
 const DEFAULT_LIMIT: u64 = 50;
 const KIND_BOOKMARK: &str = "bookmark";
@@ -91,16 +108,22 @@ const MAX_TAGS_PER_MARKER: usize = 32;
 const MAX_TAG_LEN: usize = 80;
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new()
-        .routes(routes!(list))
+    // Writes (create / update / delete / bulk-delete) share one per-IP
+    // bucket (WP-5.3, SE-5) in their own sub-router so the `route_layer`
+    // doesn't leak onto the reads.
+    let writes = OpenApiRouter::new()
         .routes(routes!(create))
-        .routes(routes!(count))
-        .routes(routes!(search))
-        .routes(routes!(tags_index))
         .routes(routes!(update))
         .routes(routes!(delete_one))
         .routes(routes!(bulk_delete))
+        .route_layer(rate_limit::MARKER_WRITE.build());
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(count))
+        .routes(routes!(search))
+        .routes(routes!(tags_index))
         .routes(routes!(list_for_issue))
+        .merge(writes)
 }
 
 // ────────────── DTOs ──────────────
@@ -223,49 +246,181 @@ pub struct MarkerTagsView {
     pub items: Vec<TagEntryView>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+/// Create a marker. Field limits are checked first (422 with per-field
+/// `error.details`); the kind-dependent rules (a note needs `body`, a
+/// highlight needs `region`) and `page_index` against the issue's page
+/// count are checked after.
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct CreateMarkerReq {
+    #[garde(length(min = 1, max = MAX_ISSUE_ID_LEN))]
     pub issue_id: String,
+    #[garde(range(min = 0))]
     pub page_index: i32,
-    /// `'bookmark' | 'note' | 'highlight'`.
+    /// `'bookmark' | 'note' | 'favorite' | 'highlight'`.
+    #[garde(custom(valid_kind))]
     pub kind: String,
     /// `{ x, y, w, h, shape }` — rect dims as 0–100 percent floats
-    /// normalized to the page's natural pixel dims. Omit for
-    /// whole-page markers.
+    /// normalized to the page's natural pixel dims; `w` and `h` must be
+    /// at least 0.5 after clamping. Omit for whole-page markers.
     #[serde(default)]
+    #[garde(custom(valid_region_opt))]
     pub region: Option<serde_json::Value>,
-    /// `{ text?, image_hash?, ocr_confidence? }`.
+    /// `{ text?, image_hash?, ocr_confidence? }`. `text` is capped at
+    /// 8 KB.
     #[serde(default)]
+    #[garde(custom(valid_selection_opt))]
     pub selection: Option<serde_json::Value>,
+    /// Markdown body, max 10 KB.
     #[serde(default)]
+    #[garde(inner(length(bytes, max = MAX_BODY_BYTES)))]
     pub body: Option<String>,
+    /// Palette token, max 32 characters.
     #[serde(default)]
+    #[garde(inner(length(chars, max = MAX_COLOR_LEN)))]
     pub color: Option<String>,
     /// Star flag. Omit / false for a regular marker.
     #[serde(default)]
+    #[garde(skip)]
     pub is_favorite: Option<bool>,
-    /// Freeform tag list. Trimmed + de-duped + lowercased server-side.
+    /// Freeform tag list. Trimmed + de-duped + lowercased server-side;
+    /// at most 32 tags of 80 characters.
     #[serde(default)]
+    #[garde(skip)]
     pub tags: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct UpdateMarkerReq {
     /// Sending `null` clears the field; omitting leaves it unchanged.
     #[serde(default, deserialize_with = "double_option")]
+    #[garde(custom(valid_body_patch))]
     pub body: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
+    #[garde(custom(valid_color_patch))]
     pub color: Option<Option<String>>,
     /// Toggle star flag. Omit to leave unchanged.
     #[serde(default)]
+    #[garde(skip)]
     pub is_favorite: Option<bool>,
     /// Replace tag list. Send `[]` to clear, omit to leave unchanged.
     #[serde(default)]
+    #[garde(skip)]
     pub tags: Option<Vec<String>>,
     #[serde(default, deserialize_with = "double_option")]
+    #[garde(custom(valid_region_patch))]
     pub region: Option<Option<serde_json::Value>>,
+    /// `{ text?, … }`. `text` is user-editable (fix an OCR typo, or
+    /// type the caption by hand) and capped at 8 KB.
     #[serde(default, deserialize_with = "double_option")]
+    #[garde(custom(valid_selection_patch))]
     pub selection: Option<Option<serde_json::Value>>,
+}
+
+// ────────────── garde validators ──────────────
+
+fn valid_kind(kind: &str, _: &()) -> garde::Result {
+    if ALL_KINDS.contains(&kind) {
+        Ok(())
+    } else {
+        Err(garde::Error::new(
+            "kind must be bookmark | note | favorite | highlight",
+        ))
+    }
+}
+
+/// Shape + minimum-size check shared by create and update. Mirrors
+/// [`normalize_region`]: numbers are clamped to [0, 100] first, so the
+/// minimum applies to what would be stored.
+fn region_problem(value: &serde_json::Value) -> Option<&'static str> {
+    let serde_json::Value::Object(obj) = value else {
+        return Some("region must be an object");
+    };
+    let mut dims = [0.0_f64; 2];
+    for (i, key) in ["x", "y", "w", "h"].into_iter().enumerate() {
+        let Some(v) = obj.get(key) else {
+            return Some("region requires x, y, w, h");
+        };
+        let Some(n) = v.as_f64() else {
+            return Some("region x/y/w/h must be numbers");
+        };
+        if i >= 2 {
+            dims[i - 2] = n.clamp(0.0, 100.0);
+        }
+    }
+    if dims.iter().any(|d| *d < MIN_REGION_DIM_PCT) {
+        return Some("region w and h must be at least 0.5% of the page");
+    }
+    match obj.get("shape") {
+        None => None,
+        Some(serde_json::Value::String(s)) if matches!(s.as_str(), "rect" | "text" | "image") => {
+            None
+        }
+        Some(serde_json::Value::String(_)) => Some("region.shape must be rect | text | image"),
+        Some(_) => Some("region.shape must be a string"),
+    }
+}
+
+fn selection_problem(value: &serde_json::Value) -> Option<&'static str> {
+    let serde_json::Value::Object(obj) = value else {
+        return Some("selection must be an object");
+    };
+    match obj.get("text") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) if s.len() > MAX_SELECTION_TEXT_BYTES => {
+            Some("selection.text too long (max 8 KB)")
+        }
+        Some(serde_json::Value::String(_)) => None,
+        Some(_) => Some("selection.text must be a string"),
+    }
+}
+
+fn as_garde(problem: Option<&'static str>) -> garde::Result {
+    problem.map_or(Ok(()), |m| Err(garde::Error::new(m)))
+}
+
+fn valid_region_opt(value: &Option<serde_json::Value>, _: &()) -> garde::Result {
+    // JSON `null` deserializes to `None` (whole-page marker).
+    as_garde(value.as_ref().and_then(region_problem))
+}
+
+fn valid_selection_opt(value: &Option<serde_json::Value>, _: &()) -> garde::Result {
+    as_garde(value.as_ref().and_then(selection_problem))
+}
+
+fn valid_region_patch(value: &Option<Option<serde_json::Value>>, _: &()) -> garde::Result {
+    as_garde(
+        value
+            .as_ref()
+            .and_then(Option::as_ref)
+            .and_then(region_problem),
+    )
+}
+
+fn valid_selection_patch(value: &Option<Option<serde_json::Value>>, _: &()) -> garde::Result {
+    as_garde(
+        value
+            .as_ref()
+            .and_then(Option::as_ref)
+            .and_then(selection_problem),
+    )
+}
+
+fn valid_body_patch(value: &Option<Option<String>>, _: &()) -> garde::Result {
+    match value {
+        Some(Some(b)) if b.len() > MAX_BODY_BYTES => {
+            Err(garde::Error::new("body too large (max 10 KB)"))
+        }
+        _ => Ok(()),
+    }
+}
+
+fn valid_color_patch(value: &Option<Option<String>>, _: &()) -> garde::Result {
+    match value {
+        Some(Some(c)) if c.chars().count() > MAX_COLOR_LEN => {
+            Err(garde::Error::new("color too long (max 32 characters)"))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Deserialize an `Option<Option<T>>` so a **present** JSON `null` becomes
@@ -600,6 +755,13 @@ fn normalize_region(
             ));
         };
         let clamped = n.clamp(0.0, 100.0);
+        if matches!(key, "w" | "h") && clamped < MIN_REGION_DIM_PCT {
+            return Err(MarkerError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation",
+                "region w and h must be at least 0.5% of the page",
+            ));
+        }
         obj.insert(
             key.to_owned(),
             serde_json::Number::from_f64(clamped)
@@ -645,14 +807,14 @@ fn normalize_selection(
     };
     if let Some(text) = obj.get("text")
         && let Some(s) = text.as_str()
-        && s.len() > MAX_LABEL_BYTES * 4
+        && s.len() > MAX_SELECTION_TEXT_BYTES
     {
-        // Generous upper bound — OCR'd text can run long but anything
-        // beyond ~1 KB suggests a runaway crop.
+        // The request DTOs' garde rules reject this first; kept as the
+        // last line of defence for any other caller.
         return Err(MarkerError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
-            "selection.text too long",
+            "selection.text too long (max 8 KB)",
         ));
     }
     Ok(Some(value))
@@ -1140,13 +1302,17 @@ pub async fn list_for_issue(
     operation_id = "markers_create",    post,
     path = "/me/markers",
     request_body = CreateMarkerReq,
-    responses((status = 201, body = MarkerView))
+    responses(
+        (status = 201, body = MarkerView),
+        (status = 422, description = "validation (per-field `error.details`)"),
+        (status = 429, description = "marker write rate limit"),
+    )
 )]
 #[handler]
 pub async fn create(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<CreateMarkerReq>,
+    Validated(req): Validated<CreateMarkerReq>,
 ) -> impl IntoResponse {
     let issue_row = match fetch_visible_issue(&app, &user, &req.issue_id).await {
         Ok(r) => r,
@@ -1251,14 +1417,18 @@ pub async fn create(
     path = "/me/markers/{id}",
     params(("id" = String, Path,)),
     request_body = UpdateMarkerReq,
-    responses((status = 200, body = MarkerView))
+    responses(
+        (status = 200, body = MarkerView),
+        (status = 422, description = "validation (per-field `error.details`)"),
+        (status = 429, description = "marker write rate limit"),
+    )
 )]
 #[handler]
 pub async fn update(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath(id): AxPath<Uuid>,
-    Json(req): Json<UpdateMarkerReq>,
+    Validated(req): Validated<UpdateMarkerReq>,
 ) -> impl IntoResponse {
     let row = match marker::Entity::find_by_id(id).one(&app.db).await {
         Ok(Some(r)) => r,

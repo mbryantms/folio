@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Copy, Sparkles, Star, X } from "lucide-react";
+import { Copy, Pencil, Sparkles, Star, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,10 @@ import { statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 
 import { ocrCroppedRegion } from "./marker-selection";
+
+/** Server cap on `selection.text` (WP-5.3): OCR output or the user's edit
+ *  of it, in UTF-8 bytes. */
+export const MAX_CAPTURED_TEXT_BYTES = 8 * 1024;
 
 /** Editor sheet for the pending marker. Shared between create flows
  *  (bookmark, note, highlight) and the edit-existing path (clicking a
@@ -80,6 +84,10 @@ export function MarkerEditor({
   // direction → western).
   const [ocrLang, setOcrLang] = React.useState("");
   const [ocrPending, setOcrPending] = React.useState(false);
+  // Whether the editable captured-text field is shown: on open when the
+  // marker already carries text, after an OCR pass, or when the user
+  // chooses to type the text by hand (WP-5.3).
+  const [capturedOpen, setCapturedOpen] = React.useState(false);
   const [isFavorite, setIsFavorite] = React.useState(false);
   const [tags, setTags] = React.useState<string[]>([]);
   const [tagInput, setTagInput] = React.useState("");
@@ -95,6 +103,7 @@ export function MarkerEditor({
       setBody(pendingMarker.body ?? "");
       setDetectedText(pendingMarker.selection?.text ?? null);
       setDetectedConfidence(pendingMarker.selection?.ocr_confidence ?? null);
+      setCapturedOpen(!!pendingMarker.selection?.text);
       setOcrLang("");
       setIsFavorite(pendingMarker.is_favorite);
       setTags(pendingMarker.tags);
@@ -156,18 +165,7 @@ export function MarkerEditor({
       close();
       return;
     }
-    const draftSelection =
-      detectedText === ""
-        ? selectionWithoutText(pendingMarker.selection)
-        : detectedText
-          ? {
-              ...(pendingMarker.selection ?? {}),
-              text: detectedText,
-              ...(detectedConfidence != null
-                ? { ocr_confidence: detectedConfidence }
-                : {}),
-            }
-          : (pendingMarker.selection ?? null);
+    const draftSelection = currentSelection();
     const draft = {
       ...pendingMarker,
       body: body.trim(),
@@ -186,6 +184,23 @@ export function MarkerEditor({
     });
   }
 
+  /** The selection to save. `detectedText === null` means the captured
+   *  text was never touched in this editor, so the marker's own selection
+   *  stands. Otherwise the local text (OCR'd here, or typed / corrected by
+   *  hand) replaces it; blank text drops the text (and its confidence)
+   *  while keeping any other selection fields. */
+  function currentSelection(): MarkerSelection | null {
+    if (!pendingMarker) return null;
+    if (detectedText === null) return pendingMarker.selection ?? null;
+    if (!detectedText.trim())
+      return selectionWithoutText(pendingMarker.selection);
+    return withCapturedText(
+      pendingMarker.selection,
+      detectedText,
+      detectedConfidence,
+    );
+  }
+
   async function handleSave() {
     if (!pendingMarker) return;
     const trimmedBody = body.trim();
@@ -193,37 +208,32 @@ export function MarkerEditor({
       toast.error("Notes need a body — type something or pick another kind.");
       return;
     }
+    if (
+      detectedText !== null &&
+      new TextEncoder().encode(detectedText).length > MAX_CAPTURED_TEXT_BYTES
+    ) {
+      toast.error("Captured text is too long (max 8 KB).");
+      return;
+    }
+    const mergedSelection = currentSelection();
 
     if (editingMarkerId) {
+      // Only send `selection` when the captured text was edited here, so
+      // a plain caption/tag edit never rewrites it.
+      const textChanged =
+        detectedText !== null &&
+        detectedText !== (pendingMarker.selection?.text ?? "");
       update.mutate(
         {
           body: trimmedBody || null,
           is_favorite: isFavorite,
           tags,
+          ...(textChanged ? { selection: mergedSelection } : {}),
         },
         { onSuccess: () => close() },
       );
       return;
     }
-
-    // If OCR ran inside this editor (not at drag time) the detected
-    // text is in local state. Merge it into the saved selection so a
-    // user-triggered "Detect text" persists alongside whatever the
-    // overlay's drag-time pass produced. An empty string is the explicit
-    // "cleared" sentinel — drop the text (and confidence) from the saved
-    // selection rather than fall back to the drag-time pass.
-    const mergedSelection =
-      detectedText === ""
-        ? selectionWithoutText(pendingMarker.selection)
-        : detectedText
-          ? {
-              ...(pendingMarker.selection ?? {}),
-              text: detectedText,
-              ...(detectedConfidence != null
-                ? { ocr_confidence: detectedConfidence }
-                : {}),
-            }
-          : (pendingMarker.selection ?? null);
 
     // Stamp the page's natural pixel size onto the region so the saved-markers
     // grid renders the crop at its true aspect (no decode, no reflow). Only
@@ -334,6 +344,7 @@ export function MarkerEditor({
       }
       setDetectedText(ocr.text);
       setDetectedConfidence(ocr.confidence);
+      setCapturedOpen(true);
       if (editingMarkerId) {
         update.mutate(
           {
@@ -365,6 +376,7 @@ export function MarkerEditor({
   function handleClearText() {
     setDetectedText("");
     setDetectedConfidence(null);
+    setCapturedOpen(false);
     if (editingMarkerId) {
       update.mutate(
         { selection: selectionWithoutText(pendingMarker?.selection) },
@@ -393,7 +405,7 @@ export function MarkerEditor({
         ? "Optional caption. The region is preserved as you drew it."
         : `Page ${pendingMarker.page_index + 1}.`;
 
-  const selectionPreview = detectedText ?? pendingMarker.selection?.text;
+  const capturedText = detectedText ?? pendingMarker.selection?.text ?? "";
   // The OCR button shows whenever there's a region to OCR — so users
   // can run it on a plain rect highlight after the fact, or re-run on
   // an existing highlight whose text needs a refresh.
@@ -402,13 +414,11 @@ export function MarkerEditor({
   // fires for western recognitions — exactly the engine whose
   // confidence is meaningful.
   const lowConfidence =
-    !!selectionPreview &&
-    detectedConfidence != null &&
-    detectedConfidence < 0.6;
+    !!capturedText && detectedConfidence != null && detectedConfidence < 0.6;
 
   async function handleCopyText() {
-    if (!selectionPreview) return;
-    if (await copyText(selectionPreview)) {
+    if (!capturedText) return;
+    if (await copyText(capturedText)) {
       toast.success("Copied");
     } else {
       toast.error("Couldn't copy to clipboard.");
@@ -431,11 +441,14 @@ export function MarkerEditor({
           <SheetDescription>{description}</SheetDescription>
         </SheetHeader>
         <div className="flex flex-1 flex-col gap-4 px-4 py-4">
-          {selectionPreview ? (
+          {capturedOpen ? (
             <div className="space-y-1">
               <div className="flex items-center justify-between gap-2">
-                <Label className="text-muted-foreground text-xs">
-                  Detected text
+                <Label
+                  htmlFor="marker-captured-text"
+                  className="text-muted-foreground text-xs"
+                >
+                  Captured text
                 </Label>
                 <span className="flex items-center gap-1">
                   <Button
@@ -459,9 +472,26 @@ export function MarkerEditor({
                   </button>
                 </span>
               </div>
-              <div className="border-border/60 bg-muted/30 max-h-32 overflow-y-auto rounded-md border p-2 text-sm whitespace-pre-wrap">
-                {selectionPreview}
-              </div>
+              {/* Editable (WP-5.3): fix an OCR typo or type the text by
+                  hand. A hand edit drops the OCR confidence — it no
+                  longer describes the text. */}
+              <Textarea
+                id="marker-captured-text"
+                value={capturedText}
+                onChange={(e) => {
+                  setDetectedText(e.target.value);
+                  setDetectedConfidence(null);
+                }}
+                rows={3}
+                className="max-h-40 text-sm"
+                aria-describedby="marker-captured-text-hint"
+              />
+              <p
+                id="marker-captured-text-hint"
+                className="text-muted-foreground text-xs"
+              >
+                Searchable, and exported with your notes. Edit freely.
+              </p>
               {lowConfidence ? (
                 <p className={`text-xs ${statusToneText("warning")}`}>
                   Low confidence — text may be inaccurate.
@@ -479,8 +509,19 @@ export function MarkerEditor({
                 disabled={ocrPending}
               >
                 <Sparkles className="mr-2 h-4 w-4" />
-                {selectionPreview ? "Re-detect text" : "Detect text (OCR)"}
+                {capturedText ? "Re-detect text" : "Detect text (OCR)"}
               </Button>
+              {!capturedOpen ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCapturedOpen(true)}
+                >
+                  <Pencil className="mr-2 h-4 w-4" />
+                  Type text
+                </Button>
+              ) : null}
               <NativeSelect
                 size="sm"
                 aria-label="OCR language"
@@ -633,6 +674,23 @@ export function MarkerEditor({
       </SheetContent>
     </Sheet>
   );
+}
+
+/** Selection with `text` replaced. `confidence` is the OCR confidence for
+ *  that text, or `null` for hand-typed / hand-corrected text — then any
+ *  stale `ocr_confidence` is dropped. Other fields (`image_hash`) are kept. */
+export function withCapturedText(
+  selection: MarkerSelection | null | undefined,
+  text: string,
+  confidence: number | null,
+): MarkerSelection {
+  const next: MarkerSelection = { ...(selection ?? {}), text };
+  if (confidence != null) {
+    next.ocr_confidence = confidence;
+  } else {
+    delete next.ocr_confidence;
+  }
+  return next;
 }
 
 /** Returns the selection with the OCR text (and its confidence) removed,
