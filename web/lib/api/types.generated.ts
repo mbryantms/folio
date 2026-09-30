@@ -2720,6 +2720,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/markers/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["markers_export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/markers/search": {
         parameters: {
             query?: never;
@@ -4282,6 +4298,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["issue_permalink"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/markers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["marker_permalink"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7981,6 +8013,48 @@ export interface components {
             fallback_suggestion?: components["schemas"]["OnDeckCard"] | null;
             source: components["schemas"]["NextUpSource"];
             target?: components["schemas"]["IssueSummaryView"] | null;
+        };
+        NotesExport: {
+            /** @description RFC 3339. */
+            exported_at: string;
+            /** @description Always `"folio-notes-export"`. */
+            format: string;
+            /** @description Series ordered by name, then year. */
+            series: components["schemas"]["NotesExportSeries"][];
+            /**
+             * Format: int64
+             * @description Number of markers in the document.
+             */
+            total: number;
+            /** Format: int32 */
+            version: number;
+        };
+        NotesExportIssue: {
+            issue: components["schemas"]["IssueRef"];
+            issue_title?: string | null;
+            /** @description Pages in reading order; only pages that carry a marker appear. */
+            pages: components["schemas"]["NotesExportPage"][];
+        };
+        NotesExportMarker: components["schemas"]["ExportMarker"] & {
+            /**
+             * @description Absolute marker permalink (`{public_url}/markers/{id}`); 303s to
+             *     the reader at this page in peek mode.
+             */
+            jump_url: string;
+        };
+        NotesExportPage: {
+            /** @description Markers on this page, oldest first. */
+            markers: components["schemas"]["NotesExportMarker"][];
+            /**
+             * Format: int32
+             * @description Zero-based page index (the reader's `?page=` value).
+             */
+            page_index: number;
+        };
+        NotesExportSeries: {
+            /** @description Issues ordered by sort number. */
+            issues: components["schemas"]["NotesExportIssue"][];
+            series: components["schemas"]["SeriesRef"];
         };
         OcrModelView: {
             /**
@@ -16221,6 +16295,48 @@ export interface operations {
             };
         };
     };
+    markers_export: {
+        parameters: {
+            query?: {
+                /** @description `md` (default) or `json` */
+                format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attachment. `format=json` returns this body; `format=md` returns `text/markdown` (`folio-notes-<date>.md`). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotesExport"];
+                };
+            };
+            /** @description unknown format */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     markers_search: {
         parameters: {
             query: {
@@ -19771,6 +19887,33 @@ export interface operations {
                 content?: never;
             };
             /** @description issue not found or not visible */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    marker_permalink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description redirect to the reader at the marker's page in peek mode, or to sign-in when there is no session */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description marker not found, not the caller's, or its issue is not visible */
             404: {
                 headers: {
                     [name: string]: unknown;

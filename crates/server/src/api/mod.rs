@@ -38,6 +38,7 @@ pub mod library_events;
 pub mod library_hash_backfill;
 pub mod log_widgets;
 pub mod markers;
+pub mod markers_export;
 pub mod meta;
 pub mod metadata_search;
 pub mod next_up;

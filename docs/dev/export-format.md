@@ -297,6 +297,71 @@ by `MAX_QUERIES_USER_EXPORT` in `perf_regressions.rs`. The document is
 built in memory — its size is bounded by a single user's activity, not
 by the library.
 
+## Notes export
+
+`GET /api/me/markers/export?format=md|json` (roadmap WP-5.1) is the
+markers-only twin of this document, for dropping notes into another
+app. It reuses the `markers` section's shape above (`ExportMarker` +
+`IssueRef`), so a marker is described the same way in both documents.
+
+- Handler: [`crates/server/src/api/markers_export.rs`](../../crates/server/src/api/markers_export.rs)
+- Tests: [`crates/server/tests/markers_export.rs`](../../crates/server/tests/markers_export.rs);
+  the Markdown layout is pinned by the snapshot
+  [`crates/server/tests/snapshots/notes_export.md`](../../crates/server/tests/snapshots/notes_export.md)
+  (rewrite with `UPDATE_SNAPSHOTS=1` after an intentional change).
+- UI: "Export" menu on `/bookmarks`
+  ([`NotesExportMenu`](../../web/components/markers/NotesExportMenu.tsx)).
+- Auth: cookie or Bearer; only the caller's markers, every kind, including
+  markers on issues since removed (same posture as `/me/export`).
+  Rate-limited at 6 / min / IP in its own bucket (`rate_limit::NOTES_EXPORT`).
+- `format` defaults to `md`; an unknown value is a 400.
+- Response headers: `text/markdown; charset=utf-8` or `application/json`,
+  `Content-Disposition: attachment; filename="folio-notes-YYYY-MM-DD.{md,json}"`.
+
+**Grouping and order.** Series by name (case-folded) then year; issues by
+`sort_number` (NULLs last); pages ascending; markers on a page oldest
+first. Only pages that carry a marker appear.
+
+**Jump URL.** Every marker carries `jump_url` =
+`{COMIC_PUBLIC_URL}/markers/{id}`, the marker permalink. That bare route
+303s to `/read/{series_slug}/{issue_slug}?page=<page_index>&peek=1` for
+the owner, 404s for anyone else or when the issue is no longer visible,
+and sends a request with no session to `/sign-in?next=/markers/{id}`.
+Going through the id rather than slugs keeps pasted links working after
+a rename. "Copy link" on a `/bookmarks` card copies the same URL.
+
+**JSON envelope**
+
+```json
+{
+  "format": "folio-notes-export",
+  "version": 1,
+  "exported_at": "2026-09-30T10:15:00+00:00",
+  "total": 5,
+  "series": [
+    {
+      "series": { "series_id": "…", "series_name": "Saga", "series_year": 2012, "library_slug": "comics" },
+      "issues": [
+        {
+          "issue": { "issue_id": "…", "content_hash": "…", "issue_number": "1", "…": "…" },
+          "issue_title": "Chapter One",
+          "pages": [
+            { "page_index": 2, "markers": [ { "id": "…", "kind": "note", "body": "…", "…": "…", "jump_url": "https://folio.example/markers/…" } ] }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Markdown layout**: `#` title, an `Exported <ts> · N markers` line,
+then `## Series (year)`, `### #number · title`, `#### Page n` (1-based),
+and per marker a line `**Kind** [★] · [Jump to page](url) [· tags: `a`, `b`]`,
+the captured text (`selection.text`) as a blockquote, and the note body
+verbatim.
+
 ## Changelog
 
 - **v1** (2026-09-29, WP-2.1) — initial shape.
+- **notes v1** (2026-09-30, WP-5.1) — notes export (`folio-notes-export` v1).

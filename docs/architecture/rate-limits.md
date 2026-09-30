@@ -29,6 +29,7 @@ Without `COMIC_TRUSTED_PROXIES` set, every request appears to come from the reve
 | `POST /auth/local/resend-verification` | 5 / hour | 3 / hour / email | 5 / 5 |
 | `POST /auth/local/reset-password` | 10 / hour | — | 10 |
 | `GET /me/export` | 6 / min | — | 6 |
+| `GET /me/markers/export` | 6 / min | — | 6 |
 
 ## Behavior on bucket exhaustion
 

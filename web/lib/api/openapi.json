@@ -5902,6 +5902,39 @@
         }
       }
     },
+    "/api/me/markers/export": {
+      "get": {
+        "operationId": "markers_export",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "description": "`md` (default) or `json`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attachment. `format=json` returns this body; `format=md` returns `text/markdown` (`folio-notes-<date>.md`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotesExport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "unknown format"
+          },
+          "401": {},
+          "429": {}
+        }
+      }
+    },
     "/api/me/markers/search": {
       "get": {
         "operationId": "markers_search",
@@ -9792,6 +9825,29 @@
           },
           "404": {
             "description": "issue not found or not visible"
+          }
+        }
+      }
+    },
+    "/markers/{id}": {
+      "get": {
+        "operationId": "marker_permalink",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "redirect to the reader at the marker's page in peek mode, or to sign-in when there is no session"
+          },
+          "404": {
+            "description": "marker not found, not the caller's, or its issue is not visible"
           }
         }
       }
@@ -18920,6 +18976,128 @@
                 "type": "null"
               }
             ]
+          }
+        }
+      },
+      "NotesExport": {
+        "type": "object",
+        "required": [
+          "format",
+          "version",
+          "exported_at",
+          "total",
+          "series"
+        ],
+        "properties": {
+          "exported_at": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "format": {
+            "type": "string",
+            "description": "Always `\"folio-notes-export\"`."
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotesExportSeries"
+            },
+            "description": "Series ordered by name, then year."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of markers in the document.",
+            "minimum": 0
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "NotesExportIssue": {
+        "type": "object",
+        "required": [
+          "issue",
+          "pages"
+        ],
+        "properties": {
+          "issue": {
+            "$ref": "#/components/schemas/IssueRef"
+          },
+          "issue_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotesExportPage"
+            },
+            "description": "Pages in reading order; only pages that carry a marker appear."
+          }
+        }
+      },
+      "NotesExportMarker": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ExportMarker"
+          },
+          {
+            "type": "object",
+            "required": [
+              "jump_url"
+            ],
+            "properties": {
+              "jump_url": {
+                "type": "string",
+                "description": "Absolute marker permalink (`{public_url}/markers/{id}`); 303s to\nthe reader at this page in peek mode."
+              }
+            }
+          }
+        ]
+      },
+      "NotesExportPage": {
+        "type": "object",
+        "required": [
+          "page_index",
+          "markers"
+        ],
+        "properties": {
+          "markers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotesExportMarker"
+            },
+            "description": "Markers on this page, oldest first."
+          },
+          "page_index": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Zero-based page index (the reader's `?page=` value)."
+          }
+        }
+      },
+      "NotesExportSeries": {
+        "type": "object",
+        "required": [
+          "series",
+          "issues"
+        ],
+        "properties": {
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotesExportIssue"
+            },
+            "description": "Issues ordered by sort number."
+          },
+          "series": {
+            "$ref": "#/components/schemas/SeriesRef"
           }
         }
       },

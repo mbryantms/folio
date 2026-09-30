@@ -24,6 +24,7 @@ import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
+import { NotesExportMenu } from "@/components/markers/NotesExportMenu";
 import { FilterPill } from "@/components/ui/filter-pill";
 import { Kbd } from "@/components/ui/kbd";
 import { Input } from "@/components/ui/input";
@@ -55,7 +56,7 @@ import {
   downloadMarkerImage,
   markerCropFilename,
 } from "@/lib/marker-crop";
-import { pageBytesUrl, readerUrl } from "@/lib/urls";
+import { markerPermalink, pageBytesUrl, readerUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
 type KindFilter = MarkerKind | "all" | "favorite";
@@ -279,6 +280,7 @@ export function MarkersList() {
                 onExit={() => selection.exit()}
               />
             ) : null}
+            <NotesExportMenu />
             <CardSizeOptions
               cardSize={cardSize}
               onCardSize={setCardSize}
@@ -815,6 +817,14 @@ function MarkerCard({
         disabled: !jumpHref,
       },
       {
+        // Permalink (WP-5.1): `/markers/{id}` 303s to the reader at this
+        // page in peek mode, so the link survives slug changes.
+        label: "Copy link",
+        onSelect: () => {
+          void copyMarkerLink(marker.id);
+        },
+      },
+      {
         // Favorite toggle. Label flips based on current state so the
         // user knows what clicking will do. The toast that fires on
         // success ("Added to favorites" / "Removed from favorites")
@@ -1037,6 +1047,18 @@ async function copyMarkerRegion(
         ? "This browser can't copy images. Try Save instead."
         : "Couldn't copy the image";
     toast.error(message);
+  }
+}
+
+/** Copy the absolute marker permalink to the clipboard. */
+export async function copyMarkerLink(id: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(
+      markerPermalink(id, window.location.origin),
+    );
+    toast.success("Link copied");
+  } catch {
+    toast.error("Couldn't copy the link");
   }
 }
 

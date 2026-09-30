@@ -292,7 +292,10 @@ a "Detect from providers" button that finds these splits for you.
 - **Markers** — four kinds, all page-anchored: bookmarks, Markdown notes,
   region highlights, and page favorites. All searchable from one
   Bookmarks surface (including full-text over note bodies and captured
-  OCR text); `]` / `[` jump between bookmarks inside the reader.
+  OCR text); `]` / `[` jump between bookmarks inside the reader. Notes
+  export to Markdown or JSON grouped series → issue → page, and every
+  marker has a permalink (`/markers/{id}`, "Copy link") that opens the
+  reader at its page.
 - **Ratings** — half-star precision on both issues and series.
 
 ## Search
