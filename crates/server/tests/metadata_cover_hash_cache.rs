@@ -203,6 +203,7 @@ async fn series_search_scores_cover_from_cache_without_download() {
         year: Some(2012),
         publisher: Some("Image Comics".into()),
         volume: None,
+        format: None,
     };
     // Two searches back to back: both score the cover from the cache.
     for _ in 0..2 {

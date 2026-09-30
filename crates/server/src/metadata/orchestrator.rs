@@ -327,6 +327,10 @@ impl RankedCandidate {
             // M5: flag whether the winning cover came from a variant.
             // Drives the dialog's "via alternate cover" badge.
             "matched_via_alternate": self.score.matched_via_alternate,
+            // WP-5.6: format penalty (0 or -FORMAT_MISMATCH_PENALTY)
+            // + whether it capped the bucket at MEDIUM.
+            "format": self.score.format,
+            "format_mismatch": self.score.format_mismatch,
         })
     }
 }
@@ -1000,6 +1004,26 @@ pub async fn run_series_search_with(
     Ok(ranked)
 }
 
+/// WP-5.6: provider query shape for a local annual. `"Annual 1"` in
+/// series `"X-Men"` → `("X-Men Annual", "1")`; a local series already
+/// named `"... Annual"` keeps its name. `None` for non-annual numbers.
+pub(crate) fn annual_query_rewrite(
+    series_name: &str,
+    issue_number: &str,
+) -> Option<(String, String)> {
+    let inner = crate::metadata::title_norm::strip_annual_prefix(issue_number)?;
+    if inner.is_empty() {
+        return None;
+    }
+    let number = crate::metadata::matcher::canonical_issue_number(inner);
+    let name = if crate::metadata::title_norm::has_annual_token(series_name) {
+        series_name.to_owned()
+    } else {
+        format!("{} Annual", series_name.trim())
+    };
+    Some((name, number))
+}
+
 /// Run an issue search across `providers`. Same shape as
 /// [`run_series_search`]; the issue-specific bits live in
 /// [`matcher::score_issue`].
@@ -1060,11 +1084,20 @@ pub async fn run_issue_search_with(
     // series *start* year. Metron filters its /api/issue/ endpoint by
     // cover_year; CV ignores it, so the fix is Metron-specific by
     // design. Captured once and reused for the narrowed + fallback query.
+    //
+    // WP-5.6: a local "Annual N" lives in its own "<Series> Annual"
+    // series on both ComicVine and Metron, numbered plain "N". Query
+    // that shape instead of asking the parent series for an issue
+    // literally numbered "Annual N" (which neither provider has).
+    let annual = annual_query_rewrite(&facts.series_name, &facts.issue_number);
+    let (query_series_name, query_issue_number) = annual
+        .clone()
+        .unwrap_or_else(|| (facts.series_name.clone(), facts.issue_number.clone()));
     let issue_query = |series_external_id: Option<String>| IssueQuery {
         series_external_id,
-        series_name: Some(facts.series_name.clone()),
+        series_name: Some(query_series_name.clone()),
         series_year: facts.series_year,
-        issue_number: facts.issue_number.clone(),
+        issue_number: query_issue_number.clone(),
         cover_year: facts.issue_year,
         limit: SEARCH_LIMIT_PER_PROVIDER,
     };
@@ -1078,11 +1111,24 @@ pub async fn run_issue_search_with(
         // Effective provider target for this issue: a covering
         // `series_provider_range` mapping wins, else the series-level
         // external id default (see `metadata::range_map`).
-        let target = series_targets.iter().find(|t| t.source == p.id());
+        //
+        // WP-5.6: for an annual only a *range* target can point at the
+        // annual series; the series-level default is the parent run,
+        // which never carries the annual, so don't narrow to it.
+        let target = series_targets
+            .iter()
+            .find(|t| t.source == p.id() && (annual.is_none() || t.via_range));
         let narrow_id = target.map(|t| t.provider_series_id.clone());
         // Gate the candidate year against the mapped sub-series year
         // when a range supplies one; otherwise the parent series year.
-        let gate_year = target.and_then(|t| t.declared_year).or(facts.series_year);
+        // An annual series starts after its parent, so gate an annual
+        // against its own cover year when known.
+        let default_gate_year = if annual.is_some() {
+            facts.issue_year.or(facts.series_year)
+        } else {
+            facts.series_year
+        };
+        let gate_year = target.and_then(|t| t.declared_year).or(default_gate_year);
         // When we narrowed to a known provider series we trust the
         // mapping and gate hard on the year. When we DIDN'T (this
         // provider has no series-level id or range for the issue), the
@@ -1367,12 +1413,32 @@ mod tests {
     use crate::metadata::matcher::Thresholds;
 
     #[test]
+    fn annual_query_rewrite_targets_the_annual_series() {
+        assert_eq!(
+            annual_query_rewrite("X-Men", "Annual 1"),
+            Some(("X-Men Annual".into(), "1".into()))
+        );
+        assert_eq!(
+            annual_query_rewrite("X-Men", "annual #01"),
+            Some(("X-Men Annual".into(), "1".into()))
+        );
+        // Local series already named "... Annual" keeps its name.
+        assert_eq!(
+            annual_query_rewrite("X-Men Annual", "Annual 3"),
+            Some(("X-Men Annual".into(), "3".into()))
+        );
+        assert_eq!(annual_query_rewrite("X-Men", "1"), None);
+        assert_eq!(annual_query_rewrite("X-Men", "Annual"), None);
+    }
+
+    #[test]
     fn stored_query_round_trips() {
         let series = StoredQuery::Series(SeriesQueryFacts {
             name: "Saga".into(),
             year: Some(2012),
             publisher: Some("Image".into()),
             volume: None,
+            format: None,
         });
         let j = serde_json::to_value(&series).unwrap();
         let back: StoredQuery = serde_json::from_value(j).unwrap();
@@ -1416,6 +1482,7 @@ mod tests {
                 cover_image_url: None,
                 deck: None,
                 alternate_cover_urls: Vec::new(),
+                format: None,
             }),
         }
     }
@@ -1506,6 +1573,7 @@ mod tests {
             cover_image_url: None,
             deck: None,
             alternate_cover_urls: Vec::new(),
+            format: None,
         }
     }
 
@@ -1515,6 +1583,7 @@ mod tests {
             year,
             publisher: None,
             volume: None,
+            format: None,
         }
     }
 
@@ -1637,6 +1706,7 @@ mod tests {
             volume: None,
             issue_number: "1".into(),
             issue_year: None,
+            format: None,
         };
         let candidates = vec![
             IssueCandidate {
@@ -1651,6 +1721,7 @@ mod tests {
                 series_external_id: None,
                 cover_image_url: None,
                 alternate_cover_urls: Vec::new(),
+                format: None,
             },
             IssueCandidate {
                 source: Source::ComicVine,
@@ -1664,6 +1735,7 @@ mod tests {
                 series_external_id: None,
                 cover_image_url: None,
                 alternate_cover_urls: Vec::new(),
+                format: None,
             },
         ];
         let out = pre_filter_issue(candidates, facts.series_year);
@@ -1688,6 +1760,7 @@ mod tests {
             series_external_id: None,
             cover_image_url: None,
             alternate_cover_urls: Vec::new(),
+            format: None,
         };
         assert_eq!(pre_filter_issue(vec![relaunch()], Some(2001)).len(), 0);
         assert_eq!(pre_filter_issue(vec![relaunch()], Some(2012)).len(), 1);

@@ -88,6 +88,7 @@ async fn orchestrator_stamps_match_outcome_on_completed_run() {
         year: Some(2012),
         publisher: Some("Image Comics".into()),
         volume: None,
+        format: None,
     };
     let run_id = start_series_run(&app, &facts).await;
     let ranked = orchestrator::run_series_search(
@@ -152,6 +153,7 @@ async fn prune_removes_rows_older_than_cutoff() {
         year: None,
         publisher: None,
         volume: None,
+        format: None,
     };
     let run_id = start_series_run(&app, &facts).await;
 

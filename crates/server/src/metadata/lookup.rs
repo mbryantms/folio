@@ -272,6 +272,24 @@ pub fn resolve(
     }
 }
 
+/// WP-5.6 matcher format hint for a candidate built from a fetched
+/// detail: the provider's explicit `series_type` / `format` (Metron),
+/// else the name / deck inference (ComicVine, whose inference is
+/// matching-only and never lands on the detail itself).
+fn detail_format_hint(detail: &GenericMetadata) -> Option<String> {
+    detail
+        .series_type
+        .clone()
+        .or_else(|| detail.format.clone())
+        .or_else(|| {
+            crate::metadata::title_norm::infer_format_from_title(
+                detail.series_name.as_deref().unwrap_or(""),
+                detail.deck.as_deref(),
+            )
+            .map(str::to_owned)
+        })
+}
+
 /// Shape a fetched series detail record as the [`SeriesCandidate`] the
 /// candidate row / dialog card expects. `name` falls back to the id so
 /// the card never renders blank.
@@ -298,6 +316,8 @@ pub fn series_candidate_from_detail(
         cover_image_url: detail.cover_image_url.clone(),
         deck: detail.deck.clone(),
         alternate_cover_urls: detail.cover_image_alt_urls.clone(),
+        // WP-5.6: format hint for the matcher.
+        format: detail_format_hint(detail),
     }
 }
 
@@ -322,6 +342,8 @@ pub fn issue_candidate_from_detail(
         series_external_id: detail.series_external_id.clone(),
         cover_image_url: detail.cover_image_url.clone(),
         alternate_cover_urls: detail.cover_image_alt_urls.clone(),
+        // WP-5.6: format hint for the matcher.
+        format: detail_format_hint(detail),
     }
 }
 

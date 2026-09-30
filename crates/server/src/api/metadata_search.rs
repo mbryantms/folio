@@ -507,6 +507,7 @@ pub async fn search_series(
         year: s.year,
         publisher: s.publisher.clone(),
         volume: s.volume,
+        format: s.series_type.clone(),
     };
     // WP-2.8: overrides replace the local facts for this run only.
     overrides.apply_to_series(&mut facts);
@@ -900,6 +901,16 @@ pub async fn search_issue(
         volume: s.volume,
         issue_number,
         issue_year: i.year,
+        format: crate::metadata::matcher::local_issue_format_hint(
+            crate::metadata::matcher::LocalIssueFormat {
+                issue_format: i.format.as_deref(),
+                special_type: i.special_type.as_deref(),
+                series_type: s.series_type.as_deref(),
+                manga: i.manga.as_deref(),
+                series_name: &s.name,
+                issue_number: i.number_raw.as_deref(),
+            },
+        ),
     };
     overrides.apply_to_issue(&mut facts);
     let year_asserted = overrides.year.is_some();
@@ -1047,6 +1058,7 @@ pub async fn lookup_series(
         year: s.year,
         publisher: s.publisher.clone(),
         volume: s.volume,
+        format: s.series_type.clone(),
     };
     run_lookup(
         &app,
@@ -1102,6 +1114,16 @@ pub async fn lookup_issue(
         volume: s.volume,
         issue_number: i.number_raw.clone().unwrap_or_default(),
         issue_year: i.year,
+        format: crate::metadata::matcher::local_issue_format_hint(
+            crate::metadata::matcher::LocalIssueFormat {
+                issue_format: i.format.as_deref(),
+                special_type: i.special_type.as_deref(),
+                series_type: s.series_type.as_deref(),
+                manga: i.manga.as_deref(),
+                series_name: &s.name,
+                issue_number: i.number_raw.as_deref(),
+            },
+        ),
     };
     run_lookup(
         &app,
@@ -1254,6 +1276,8 @@ async fn run_lookup(
             volume: 0.0,
             cover_hamming: None,
             matched_via_alternate: false,
+            format: 0.0,
+            format_mismatch: false,
         },
         bucket: crate::metadata::matcher::Confidence::High,
         payload,

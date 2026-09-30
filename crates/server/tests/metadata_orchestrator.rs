@@ -143,6 +143,7 @@ async fn run_series_search_fuses_two_providers_and_sorts_by_score() {
         year: Some(2012),
         publisher: Some("Image Comics".into()),
         volume: None,
+        format: None,
     };
     let run_id = start_series_run(&app, &facts).await;
     let ranked = orchestrator::run_series_search(
@@ -208,6 +209,7 @@ async fn run_series_search_yields_awaiting_quota_when_all_providers_exhausted() 
         year: None,
         publisher: None,
         volume: None,
+        format: None,
     };
     let run_id = start_series_run(&app, &facts).await;
     let err = orchestrator::run_series_search(
@@ -254,6 +256,7 @@ async fn run_series_search_fails_when_provider_errors_and_no_candidates() {
         year: None,
         publisher: None,
         volume: None,
+        format: None,
     };
     let run_id = start_series_run(&app, &facts).await;
     let err = orchestrator::run_series_search(
@@ -317,6 +320,7 @@ async fn run_series_search_partial_failure_still_finalizes() {
         year: Some(2012),
         publisher: None,
         volume: None,
+        format: None,
     };
     let run_id = start_series_run(&app, &facts).await;
     let ranked = orchestrator::run_series_search(
@@ -382,6 +386,7 @@ async fn run_issue_search_buckets_high_when_number_and_name_match() {
         volume: Some(1),
         issue_number: "1".into(),
         issue_year: Some(2012),
+        format: None,
     };
     let run_id = orchestrator::start_run(
         &app.state().db,
@@ -471,6 +476,7 @@ async fn run_issue_search_range_target_rescues_relaunch_from_year_gate() {
         volume: Some(1),
         issue_number: "600".into(),
         issue_year: Some(2012),
+        format: None,
     };
 
     let run_with_range = |targets: Vec<EffectiveTarget>| {
@@ -658,6 +664,7 @@ fn late_series_facts() -> SeriesQueryFacts {
         year: Some(2010),
         publisher: Some("Image Comics".into()),
         volume: None,
+        format: None,
     }
 }
 
@@ -835,6 +842,7 @@ async fn run_issue_search_relaxes_the_narrowed_year_gate_when_cover_confirms() {
         volume: Some(1),
         issue_number: "600".into(),
         issue_year: Some(2012),
+        format: None,
     };
     let targets = vec![EffectiveTarget {
         source: Source::Metron,

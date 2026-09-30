@@ -23,6 +23,10 @@
 //! tracing calls. Trivially unit-testable.
 
 use crate::metadata::provider::{IssueCandidate, SeriesCandidate};
+use crate::metadata::title_norm::{
+    FormatClass, classify_format, has_annual_token, infer_format_from_title, issue_number_key,
+    strip_annual_prefix, strip_annual_token, strip_volume_prefix,
+};
 
 /// Confidence bucket — set by [`Score::bucket`] from the numeric score.
 /// Drives the orchestrator's auto-apply / manual-review / discard
@@ -133,6 +137,17 @@ pub struct Score {
     /// match needs to be tighter to qualify since the candidate's
     /// "real" cover may differ.
     pub matched_via_alternate: bool,
+    /// WP-5.6 format component: `-FORMAT_MISMATCH_PENALTY` when the
+    /// local entity and the candidate are known to be different kinds
+    /// of publication (collected edition vs single issue, annual vs
+    /// either), else `0`. Already folded into [`Self::total`].
+    pub format: f32,
+    /// WP-5.6: true when both sides carry a known, different
+    /// [`FormatClass`](crate::metadata::title_norm::FormatClass).
+    /// [`Self::bucket`] caps such a candidate at MEDIUM — it is never
+    /// auto-applied, even on a strong cover match (a trade's cover is
+    /// usually its first issue's cover).
+    pub format_mismatch: bool,
 }
 
 impl Score {
@@ -158,11 +173,19 @@ impl Score {
         } else {
             MIN_SCORE_THRESH
         };
-        match self.cover_hamming {
+        let bucket = match self.cover_hamming {
             Some(d) if d <= STRONG_SCORE_THRESH => Confidence::High,
             Some(d) if d <= medium_ceiling => Confidence::Medium,
             Some(_) => Confidence::Low,
             None => Confidence::from_score(self.total, thresholds),
+        };
+        // WP-5.6: a known format mismatch is a *soft* penalty — it
+        // demotes HIGH to MEDIUM (review, never auto-apply) but never
+        // vetoes to LOW. Same shape as the gap-to-next-best guard.
+        if self.format_mismatch && bucket == Confidence::High {
+            Confidence::Medium
+        } else {
+            bucket
         }
     }
 }
@@ -217,6 +240,19 @@ pub const MIN_SCORE_DISTANCE: u32 = 4;
 /// matches still use [`MIN_SCORE_THRESH`] (16) as the ceiling.
 pub const MIN_ALTERNATE_SCORE_THRESH: u32 = 12;
 
+// ───────── format penalty (WP-5.6) ─────────
+
+/// Text points subtracted from [`Score::total`] when the local entity
+/// and the candidate are known to be different kinds of publication
+/// (see [`crate::metadata::title_norm::FormatClass`]). Fixed, not
+/// operator-tunable: sized so a perfect-text candidate (series 80 /
+/// issue 87.5) drops out of HIGH (default 80) but stays MEDIUM
+/// (default 60) — a soft penalty, not a veto. Unknown format on either
+/// side never penalises. Paired with the HIGH→MEDIUM cap in
+/// [`Score::bucket`] so a cover match can't auto-apply a TPB onto a
+/// single issue either.
+pub const FORMAT_MISMATCH_PENALTY: f32 = 15.0;
+
 // ───────── inputs ─────────
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -225,6 +261,12 @@ pub struct SeriesQueryFacts {
     pub year: Option<i32>,
     pub publisher: Option<String>,
     pub volume: Option<i32>,
+    /// WP-5.6: local publication-format hint (`series.series_type`),
+    /// any vocabulary [`classify_format`] understands. `None` = unknown
+    /// (no format penalty). `#[serde(default)]` so stored queries and
+    /// in-flight jobs from before WP-5.6 still deserialize.
+    #[serde(default)]
+    pub format: Option<String>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -242,6 +284,89 @@ pub struct IssueQueryFacts {
     /// without it.
     #[serde(default)]
     pub issue_year: Option<i32>,
+    /// WP-5.6: local publication-format hint, built by
+    /// [`local_issue_format_hint`]. `None` = unknown (no format
+    /// penalty).
+    #[serde(default)]
+    pub format: Option<String>,
+}
+
+/// Local columns that feed [`local_issue_format_hint`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LocalIssueFormat<'a> {
+    /// `issue.format` (ComicInfo `Format`).
+    pub issue_format: Option<&'a str>,
+    /// `issue.special_type` (scanner classification).
+    pub special_type: Option<&'a str>,
+    /// `series.series_type`.
+    pub series_type: Option<&'a str>,
+    /// `issue.manga` (`Yes` / `YesAndRightToLeft` / `No` / …).
+    pub manga: Option<&'a str>,
+    /// `series.name`.
+    pub series_name: &'a str,
+    /// `issue.number_raw` as scanned (not a search override).
+    pub issue_number: Option<&'a str>,
+}
+
+/// Build the local publication-format hint for an issue query from the
+/// columns the scanner already populates, first hit wins:
+///
+/// 1. manga (`issue.manga` = `Yes` / `YesAndRightToLeft`) → `"Manga"`,
+///    which classifies as unknown — a manga "issue" is a tankōbon
+///    volume and providers file those as either ongoing issues or
+///    trades, so neither side may be penalised;
+/// 2. `issue.format` (ComicInfo `Format`), verbatim — an explicit tag
+///    the matcher doesn't recognise stays unknown;
+/// 3. `issue.special_type` when it's `TPB` or `Annual` (`OneShot` is
+///    inferred from a missing number and `Special` says nothing about
+///    single vs collected, so both are skipped);
+/// 4. `series.series_type` when [`classify_format`] recognises it;
+/// 5. a collected / annual marker in the series name
+///    ([`infer_format_from_title`]: `"Saga TPB"`, `"X-Men Annual"`);
+/// 6. **owner default (2026-09-30):** an otherwise untagged issue whose
+///    number is plain (integer, decimal, `½`) with no `Annual` /
+///    volume marker and no suffix → `"Single"`. A `"Vol. 1"` / `"v03"`
+///    number, a suffixed number, or no number stays unknown.
+pub fn local_issue_format_hint(local: LocalIssueFormat<'_>) -> Option<String> {
+    fn non_empty(v: Option<&str>) -> Option<&str> {
+        v.map(str::trim).filter(|s| !s.is_empty())
+    }
+    if local
+        .manga
+        .is_some_and(|m| m.trim().to_ascii_lowercase().starts_with("yes"))
+    {
+        return Some("Manga".to_owned());
+    }
+    if let Some(f) = non_empty(local.issue_format) {
+        return Some(f.to_owned());
+    }
+    if let Some(st) = non_empty(local.special_type)
+        && matches!(st, "TPB" | "Annual")
+    {
+        return Some(st.to_owned());
+    }
+    if let Some(st) = non_empty(local.series_type)
+        && classify_format(st).is_some()
+    {
+        return Some(st.to_owned());
+    }
+    if let Some(label) = infer_format_from_title(local.series_name, None) {
+        return Some(label.to_owned());
+    }
+    let number = non_empty(local.issue_number)?;
+    let bare = number.trim_start_matches('#').trim();
+    let key = issue_number_key(bare);
+    let plain = strip_annual_prefix(bare).is_none()
+        && strip_volume_prefix(bare).is_none()
+        && !key.annual
+        && key.value.is_some()
+        && key.suffix.is_empty();
+    plain.then(|| "Single".to_owned())
+}
+
+/// Known-format-mismatch test shared by the series + issue scorers.
+fn formats_conflict(local: Option<FormatClass>, candidate: Option<FormatClass>) -> bool {
+    matches!((local, candidate), (Some(a), Some(b)) if a != b)
 }
 
 // ───────── public API ─────────
@@ -282,7 +407,26 @@ pub fn score_series_with_phash(
     let volume = 0.0; // SeriesCandidate doesn't carry volume; ignore.
     let (cover_hamming, matched_via_alternate) =
         best_cover_match(local_cover_phash, candidate_cover_phashes);
-    let total = name + year + publisher + issue_number + volume;
+    // WP-5.6: series-level format check. The "Annual" name token is a
+    // fallback signal on both sides (providers file annuals as their
+    // own `"<Series> Annual"` series).
+    let local_format = query
+        .format
+        .as_deref()
+        .and_then(classify_format)
+        .or_else(|| has_annual_token(&query.name).then_some(FormatClass::Annual));
+    let candidate_format = candidate
+        .format
+        .as_deref()
+        .and_then(classify_format)
+        .or_else(|| has_annual_token(&candidate.name).then_some(FormatClass::Annual));
+    let format_mismatch = formats_conflict(local_format, candidate_format);
+    let format = if format_mismatch {
+        -FORMAT_MISMATCH_PENALTY
+    } else {
+        0.0
+    };
+    let total = (name + year + publisher + issue_number + volume + format).max(0.0);
     Score {
         total,
         name,
@@ -292,6 +436,8 @@ pub fn score_series_with_phash(
         volume,
         cover_hamming,
         matched_via_alternate,
+        format,
+        format_mismatch,
     }
 }
 
@@ -310,22 +456,99 @@ pub fn score_issue_with_phash(
     local_cover_phash: Option<i64>,
     candidate_cover_phashes: &[Option<i64>],
 ) -> Score {
-    let name = W_NAME
-        * name_similarity(
-            &query.series_name,
-            candidate.series_name.as_deref().unwrap_or(""),
+    let candidate_series = candidate.series_name.as_deref().unwrap_or("");
+
+    // WP-5.6: annual awareness. Locally an annual is usually numbered
+    // "Annual 1" inside the parent series; ComicVine and Metron file it
+    // as "1" in a separate "<Series> Annual" series. Resolve "is this
+    // an annual?" per side from the number, the format, and the series
+    // name, then compare like with like.
+    let query_key = issue_number_key(&query.issue_number);
+    let local_format_raw = query.format.as_deref().and_then(classify_format);
+    let candidate_format_raw = candidate.format.as_deref().and_then(classify_format);
+    let query_number_annual = query_key.annual;
+    let local_annual = query_number_annual
+        || local_format_raw == Some(FormatClass::Annual)
+        || has_annual_token(&query.series_name);
+    let candidate_key = candidate.issue_number.as_deref().map(issue_number_key);
+    let candidate_number_annual = candidate_key.as_ref().is_some_and(|k| k.annual);
+    let candidate_annual = candidate_number_annual
+        || candidate_format_raw == Some(FormatClass::Annual)
+        || has_annual_token(candidate_series);
+
+    // Both sides annual → compare the parent titles ("X-Men" vs
+    // "X-Men Annual" are the same annual run).
+    let name = if local_annual && candidate_annual {
+        W_NAME
+            * name_similarity(
+                &strip_annual_token(&query.series_name),
+                &strip_annual_token(candidate_series),
+            )
+    } else {
+        W_NAME * name_similarity(&query.series_name, candidate_series)
+    };
+    // An annual series starts after its parent run: when both sides are
+    // annual, a candidate start year between the parent's start and
+    // this annual's cover year is a full year match.
+    let annual_year_window = local_annual
+        && candidate_annual
+        && matches!(
+            (query.series_year, query.issue_year, candidate.series_year),
+            (Some(lo), Some(hi), Some(c)) if lo <= c && c <= hi
         );
-    let year = W_YEAR * year_similarity(query.series_year, candidate.series_year);
+    let year = if annual_year_window {
+        W_YEAR
+    } else {
+        W_YEAR * year_similarity(query.series_year, candidate.series_year)
+    };
     // IssueCandidate has no publisher — let it fall through as a partial
     // match (0.5) so issue queries aren't unfairly penalized. The Apply
     // step pulls the full series detail anyway, which carries publisher.
     let publisher = W_PUBLISHER * 0.5;
     let issue_number = W_ISSUE_NUMBER
-        * issue_number_similarity(&query.issue_number, candidate.issue_number.as_deref());
+        * match candidate_key {
+            None => 0.5,
+            Some(mut ck) => {
+                let mut qk = query_key;
+                qk.annual = local_annual;
+                ck.annual = candidate_annual;
+                let raw_equal = local_annual == candidate_annual
+                    && candidate.issue_number.as_deref().map(str::trim)
+                        == Some(query.issue_number.trim());
+                if raw_equal || qk.same_issue(&ck) {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+        };
     let volume = 0.0;
     let (cover_hamming, matched_via_alternate) =
         best_cover_match(local_cover_phash, candidate_cover_phashes);
-    let total = name + year + publisher + issue_number + volume;
+
+    // WP-5.6 format penalty. An "Annual N" number is the most specific
+    // signal (it beats an inherited `series_type = ongoing`); otherwise
+    // the explicit format, then the annual resolution as a fallback.
+    let resolve = |number_annual: bool, raw: Option<FormatClass>, annual: bool| {
+        if number_annual {
+            Some(FormatClass::Annual)
+        } else {
+            raw.or_else(|| annual.then_some(FormatClass::Annual))
+        }
+    };
+    let local_format = resolve(query_number_annual, local_format_raw, local_annual);
+    let candidate_format = resolve(
+        candidate_number_annual,
+        candidate_format_raw,
+        candidate_annual,
+    );
+    let format_mismatch = formats_conflict(local_format, candidate_format);
+    let format = if format_mismatch {
+        -FORMAT_MISMATCH_PENALTY
+    } else {
+        0.0
+    };
+    let total = (name + year + publisher + issue_number + volume + format).max(0.0);
     Score {
         total,
         name,
@@ -335,6 +558,8 @@ pub fn score_issue_with_phash(
         volume,
         cover_hamming,
         matched_via_alternate,
+        format,
+        format_mismatch,
     }
 }
 
@@ -450,22 +675,56 @@ pub fn publisher_similarity(a: Option<&str>, b: Option<&str>) -> f32 {
     }
 }
 
-/// Issue-number match: 1.0 for parsed-equal numeric values ("1" == "1.0"
-/// == "01"), 0.5 when only one side is present, 0.0 for a hard mismatch.
 /// Canonicalize an issue number for provider queries + cross-provider
 /// comparison. Scanners emit zero-padded numbers ("014"), but providers store
 /// the un-padded form ("14"), so filtering/comparing the raw scan value as a
 /// string misses. Strips leading-zero padding and a trailing `.0`
-/// ("014" → "14", "1.0" → "1") while leaving fractional ("1.5") and
-/// non-numeric ("Annual 1", "½", "14AU") values as the trimmed input.
+/// ("014" → "14", "1.0" → "1") while leaving fractional ("1.5") values alone.
+///
+/// WP-5.6 extensions (the result is still a string providers can be
+/// queried with, so only unambiguous rewrites):
+/// - a leading `#` is dropped (`"#12"` → `"12"`);
+/// - `Annual` markers normalise to `"Annual N"` (`"annual #01"`,
+///   `"Ann. 1"` → `"Annual 1"`);
+/// - volume markers are dropped (`"Vol. 03"`, `"v03"` → `"3"`);
+/// - a short letter suffix is upper-cased and un-padded (`"014au"`,
+///   `"14 AU"` → `"14AU"`); dotted suffixes (`"1.NOW"`) pass through;
+/// - vulgar fractions (`"½"`) pass through unchanged — providers store
+///   them verbatim; the matcher compares them numerically via
+///   [`crate::metadata::title_norm::issue_number_key`].
 pub(crate) fn canonical_issue_number(raw: &str) -> String {
-    let t = raw.trim();
-    let Some((whole, fraction)) = t.split_once('.') else {
-        return if t.chars().all(|c| c.is_ascii_digit()) {
-            strip_integer_padding(t).to_owned()
+    let t = raw.trim().trim_start_matches('#').trim();
+    if let Some(rest) = strip_annual_prefix(t) {
+        // A bare "Annual" has no number to canonicalize (the numeric
+        // path would turn "" into "0").
+        return if rest.is_empty() {
+            "Annual".to_owned()
         } else {
-            t.to_string()
+            format!("Annual {}", canonical_issue_number(rest))
         };
+    }
+    if let Some(rest) = strip_volume_prefix(t) {
+        return canonical_issue_number(rest);
+    }
+    let Some((whole, fraction)) = t.split_once('.') else {
+        if t.chars().all(|c| c.is_ascii_digit()) {
+            return strip_integer_padding(t).to_owned();
+        }
+        // "14AU" / "014au" / "14 AU" → "14AU".
+        let digits_end = t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len());
+        let (digits, rest) = t.split_at(digits_end);
+        let suffix = rest.trim_start();
+        if !digits.is_empty()
+            && (1..=4).contains(&suffix.len())
+            && suffix.chars().all(|c| c.is_ascii_alphabetic())
+        {
+            return format!(
+                "{}{}",
+                strip_integer_padding(digits),
+                suffix.to_ascii_uppercase()
+            );
+        }
+        return t.to_string();
     };
 
     if whole.is_empty()
@@ -489,6 +748,11 @@ fn strip_integer_padding(value: &str) -> &str {
     if stripped.is_empty() { "0" } else { stripped }
 }
 
+/// Issue-number match: 1.0 for the same issue ("1" == "1.0" == "01",
+/// "½" == "0.5", "14AU" == "14.AU", "Annual 1" == "annual #01"), 0.5
+/// when the candidate side is missing, 0.0 for a hard mismatch. Uses
+/// [`crate::metadata::title_norm::issue_number_key`]; the issue scorer
+/// additionally resolves annual-ness from the series name + format.
 pub fn issue_number_similarity(query: &str, candidate: Option<&str>) -> f32 {
     let Some(candidate) = candidate else {
         return 0.5;
@@ -496,14 +760,11 @@ pub fn issue_number_similarity(query: &str, candidate: Option<&str>) -> f32 {
     if query.trim() == candidate.trim() {
         return 1.0;
     }
-    let qf: Option<f64> = query.trim().parse().ok();
-    let cf: Option<f64> = candidate.trim().parse().ok();
-    if let (Some(qf), Some(cf)) = (qf, cf)
-        && (qf - cf).abs() < f64::EPSILON
-    {
-        return 1.0;
+    if issue_number_key(query).same_issue(&issue_number_key(candidate)) {
+        1.0
+    } else {
+        0.0
     }
-    0.0
 }
 
 // ───────── helpers ─────────
@@ -559,6 +820,7 @@ mod tests {
             cover_image_url: None,
             deck: None,
             alternate_cover_urls: Vec::new(),
+            format: None,
         }
     }
 
@@ -579,6 +841,7 @@ mod tests {
             series_external_id: None,
             cover_image_url: None,
             alternate_cover_urls: Vec::new(),
+            format: None,
         }
     }
 
@@ -667,12 +930,158 @@ mod tests {
     }
 
     #[test]
+    fn canonical_issue_number_normalises_annual_volume_and_suffix() {
+        // WP-5.6.
+        assert_eq!(canonical_issue_number("#12"), "12");
+        assert_eq!(canonical_issue_number("annual #01"), "Annual 1");
+        assert_eq!(canonical_issue_number("Ann. 1"), "Annual 1");
+        assert_eq!(canonical_issue_number("Annual 2019"), "Annual 2019");
+        assert_eq!(canonical_issue_number("Vol. 03"), "3");
+        assert_eq!(canonical_issue_number("v03"), "3");
+        assert_eq!(canonical_issue_number("014au"), "14AU");
+        assert_eq!(canonical_issue_number("14 AU"), "14AU");
+        // Dotted suffixes and words are left alone.
+        assert_eq!(canonical_issue_number("1.NOW"), "1.NOW");
+        assert_eq!(canonical_issue_number("Annually"), "Annually");
+        assert_eq!(canonical_issue_number("Annual"), "Annual");
+        assert_eq!(canonical_issue_number("Venom"), "Venom");
+    }
+
+    #[test]
+    fn issue_number_similarity_uses_structured_key() {
+        assert_eq!(issue_number_similarity("½", Some("0.5")), 1.0);
+        assert_eq!(issue_number_similarity("14AU", Some("14.AU")), 1.0);
+        assert_eq!(issue_number_similarity("14AU", Some("14")), 0.0);
+        assert_eq!(issue_number_similarity("Annual 1", Some("annual #01")), 1.0);
+        assert_eq!(issue_number_similarity("Annual 1", Some("1")), 0.0);
+    }
+
+    #[test]
+    fn local_issue_format_hint_precedence() {
+        let base = LocalIssueFormat {
+            series_name: "Saga",
+            issue_number: Some("1"),
+            ..Default::default()
+        };
+        let hint = |l: LocalIssueFormat<'_>| local_issue_format_hint(l);
+        // Manga beats everything (neutral class).
+        assert_eq!(
+            hint(LocalIssueFormat {
+                issue_format: Some("TPB"),
+                special_type: Some("TPB"),
+                series_type: Some("ongoing"),
+                manga: Some("Yes"),
+                ..base
+            }),
+            Some("Manga".into())
+        );
+        assert_eq!(
+            hint(LocalIssueFormat {
+                issue_format: Some("TPB"),
+                series_type: Some("ongoing"),
+                manga: Some("No"),
+                ..base
+            }),
+            Some("TPB".into())
+        );
+        assert_eq!(
+            hint(LocalIssueFormat {
+                special_type: Some("Annual"),
+                series_type: Some("ongoing"),
+                ..base
+            }),
+            Some("Annual".into())
+        );
+        // OneShot / Special special_types are skipped.
+        assert_eq!(
+            hint(LocalIssueFormat {
+                special_type: Some("OneShot"),
+                series_type: Some("ongoing"),
+                ..base
+            }),
+            Some("ongoing".into())
+        );
+        // A collected series type wins over the plain-number default.
+        assert_eq!(
+            hint(LocalIssueFormat {
+                series_type: Some("Trade Paperback"),
+                ..base
+            }),
+            Some("Trade Paperback".into())
+        );
+        // An explicit but unrecognised Format stays verbatim (unknown).
+        assert_eq!(
+            hint(LocalIssueFormat {
+                issue_format: Some("Director's Cut"),
+                ..base
+            }),
+            Some("Director's Cut".into())
+        );
+    }
+
+    #[test]
+    fn untagged_plain_number_defaults_to_single() {
+        // Owner decision 2026-09-30.
+        let untagged = |series_name, number| {
+            local_issue_format_hint(LocalIssueFormat {
+                series_name,
+                issue_number: number,
+                ..Default::default()
+            })
+        };
+        for n in ["1", "014", "#12", "0.5", "½", "1.5", "-1"] {
+            assert_eq!(untagged("Saga", Some(n)), Some("Single".into()), "{n}");
+        }
+        // Volume / annual markers, suffixes, no number → unknown.
+        for n in [
+            "Vol. 1", "v03", "Annual 1", "14AU", "1.NOW", "Alpha", "", "  ",
+        ] {
+            assert_eq!(untagged("Saga", Some(n)), None, "{n:?}");
+        }
+        assert_eq!(untagged("Saga", None), None);
+        // A series name that says "trade" / "annual" classifies instead.
+        assert_eq!(untagged("Saga TPB", Some("1")), Some("TPB".into()));
+        assert_eq!(untagged("X-Men Annual", Some("1")), Some("Annual".into()));
+        // An unrecognised series type doesn't block the default.
+        assert_eq!(
+            local_issue_format_hint(LocalIssueFormat {
+                series_type: Some("Magazine"),
+                series_name: "Heavy Metal",
+                issue_number: Some("3"),
+                ..Default::default()
+            }),
+            Some("Single".into())
+        );
+    }
+
+    #[test]
+    fn annual_number_beats_inherited_series_type() {
+        // An "Annual 1" in an ongoing series is an annual — no
+        // mismatch against the provider's annual series.
+        let q = IssueQueryFacts {
+            series_name: "X-Men".into(),
+            series_year: Some(2019),
+            publisher: None,
+            volume: None,
+            issue_number: "Annual 1".into(),
+            issue_year: Some(2020),
+            format: Some("ongoing".into()),
+        };
+        let mut c = issue_candidate("X-Men Annual", Some(2020), "1");
+        c.format = Some("Annual Series".into());
+        let s = score_issue(&q, &c);
+        assert!(!s.format_mismatch);
+        assert_eq!(s.bucket(Thresholds::default()), Confidence::High);
+    }
+
+    #[test]
     fn series_perfect_match_scores_high() {
         let q = SeriesQueryFacts {
             name: "Saga".into(),
             year: Some(2012),
             publisher: Some("Image Comics".into()),
             volume: None,
+            format: None,
         };
         let c = series_candidate("Saga", Some(2012), Some("Image Comics"));
         let s = score_series(&q, &c);
@@ -691,6 +1100,7 @@ mod tests {
             year: Some(2012),
             publisher: Some("Image Comics".into()),
             volume: None,
+            format: None,
         };
         let c = series_candidate("Saga", Some(2014), Some("Image Comics"));
         let s = score_series(&q, &c);
@@ -708,6 +1118,7 @@ mod tests {
             volume: None,
             issue_number: "1".into(),
             issue_year: None,
+            format: None,
         };
         let c = issue_candidate("Saga", Some(2012), "1");
         let s = score_issue(&q, &c);
@@ -726,6 +1137,7 @@ mod tests {
             volume: None,
             issue_number: "1".into(),
             issue_year: None,
+            format: None,
         };
         let c = issue_candidate("Saga", Some(2012), "5");
         let s = score_issue(&q, &c);
@@ -811,6 +1223,7 @@ mod tests {
             year: Some(2012),
             publisher: None,
             volume: None,
+            format: None,
         };
         let c = series_candidate("Saga", Some(2012), None);
         let identical = score_series_with_phash(&q, &c, Some(0xABCD), &[Some(0xABCD)]);
@@ -829,6 +1242,7 @@ mod tests {
             year: Some(2012),
             publisher: None,
             volume: None,
+            format: None,
         };
         let c = series_candidate("Saga", Some(2012), None);
         let only_local = score_series_with_phash(&q, &c, Some(0x1234), &[None]);
@@ -997,6 +1411,7 @@ mod tests {
             year: Some(2012),
             publisher: None,
             volume: None,
+            format: None,
         };
         let c = series_candidate("Saga", Some(2012), None);
         let s = score_series_with_phash(&q, &c, Some(0), &[Some(0xFFFF), Some(0xF)]);

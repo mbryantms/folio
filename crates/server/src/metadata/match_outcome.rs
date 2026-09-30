@@ -151,6 +151,7 @@ mod tests {
                 cover_image_url: None,
                 deck: None,
                 alternate_cover_urls: Vec::new(),
+                format: None,
             }),
         }
     }

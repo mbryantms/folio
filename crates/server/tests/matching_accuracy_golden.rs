@@ -28,8 +28,8 @@
 
 use server::metadata::identifier::Source;
 use server::metadata::matcher::{
-    Confidence, IssueQueryFacts, SeriesQueryFacts, Thresholds, score_issue_with_phash,
-    score_series_with_phash,
+    Confidence, FORMAT_MISMATCH_PENALTY, IssueQueryFacts, LocalIssueFormat, SeriesQueryFacts,
+    Thresholds, local_issue_format_hint, score_issue_with_phash, score_series_with_phash,
 };
 use server::metadata::provider::{IssueCandidate, SeriesCandidate};
 
@@ -58,6 +58,20 @@ fn series(name: &str, year: Option<i32>, publisher: Option<&str>) -> SeriesCandi
         cover_image_url: None,
         deck: None,
         alternate_cover_urls: Vec::new(),
+        format: None,
+    }
+}
+
+/// WP-5.6: series candidate carrying a provider format hint.
+fn series_fmt(
+    name: &str,
+    year: Option<i32>,
+    publisher: Option<&str>,
+    format: &str,
+) -> SeriesCandidate {
+    SeriesCandidate {
+        format: Some(format.to_owned()),
+        ..series(name, year, publisher)
     }
 }
 
@@ -67,6 +81,20 @@ fn series_facts(name: &str, year: Option<i32>, publisher: Option<&str>) -> Serie
         year,
         publisher: publisher.map(str::to_owned),
         volume: None,
+        format: None,
+    }
+}
+
+/// WP-5.6: series facts carrying a local format hint (`series_type`).
+fn series_facts_fmt(
+    name: &str,
+    year: Option<i32>,
+    publisher: Option<&str>,
+    format: &str,
+) -> SeriesQueryFacts {
+    SeriesQueryFacts {
+        format: Some(format.to_owned()),
+        ..series_facts(name, year, publisher)
     }
 }
 
@@ -93,6 +121,20 @@ fn issue(series_name: &str, series_year: Option<i32>, issue_number: &str) -> Iss
         series_external_id: None,
         cover_image_url: None,
         alternate_cover_urls: Vec::new(),
+        format: None,
+    }
+}
+
+/// WP-5.6: issue candidate whose series carries a provider format hint.
+fn issue_fmt(
+    series_name: &str,
+    series_year: Option<i32>,
+    issue_number: &str,
+    format: &str,
+) -> IssueCandidate {
+    IssueCandidate {
+        format: Some(format.to_owned()),
+        ..issue(series_name, series_year, issue_number)
     }
 }
 
@@ -104,7 +146,40 @@ fn issue_facts(series_name: &str, series_year: Option<i32>, number: &str) -> Iss
         volume: None,
         issue_number: number.to_owned(),
         issue_year: None,
+        format: None,
     }
+}
+
+/// WP-5.6: issue facts carrying a local format hint.
+fn issue_facts_fmt(
+    series_name: &str,
+    series_year: Option<i32>,
+    number: &str,
+    format: Option<String>,
+) -> IssueQueryFacts {
+    IssueQueryFacts {
+        format,
+        ..issue_facts(series_name, series_year, number)
+    }
+}
+
+/// Local format hint exactly as production builds it
+/// (`local_issue_format_hint`), from the scanned columns.
+fn local_hint(
+    series_name: &str,
+    number: &str,
+    issue_format: Option<&str>,
+    special_type: Option<&str>,
+    manga: Option<&str>,
+) -> Option<String> {
+    local_issue_format_hint(LocalIssueFormat {
+        issue_format,
+        special_type,
+        manga,
+        series_name,
+        issue_number: Some(number),
+        ..Default::default()
+    })
 }
 
 // ───────── known-correct cases ─────────
@@ -159,6 +234,25 @@ fn known_correct_series() -> Vec<SeriesGoldenCase> {
             local_phash: None,
             candidate_phashes: vec![],
         },
+        SeriesGoldenCase {
+            // WP-5.6 TPB <-> TPB: a local trade series (`series_type`
+            // in Metron's vocabulary) against a ComicVine volume whose
+            // format was inferred from its name. Same class -> no
+            // penalty -> 80, HIGH.
+            name: "TPB series matched to TPB volume",
+            facts: series_facts_fmt("Saga", Some(2012), Some("Image Comics"), "Trade Paperback"),
+            candidate: series_fmt("Saga", Some(2012), Some("Image Comics"), "TPB"),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
+        SeriesGoldenCase {
+            // Unknown format on the candidate side never penalises.
+            name: "ongoing series vs candidate with no format signal",
+            facts: series_facts_fmt("Saga", Some(2012), Some("Image Comics"), "Ongoing Series"),
+            candidate: series("Saga", Some(2012), Some("Image Comics")),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
     ]
 }
 
@@ -179,6 +273,122 @@ fn known_correct_issues() -> Vec<IssueGoldenCase> {
             candidate: issue("Sga", Some(2015), "5"),
             local_phash: Some(0),
             candidate_phashes: vec![Some(0x3)], // 2 bits
+        },
+        // ── WP-5.6 format awareness ──
+        IssueGoldenCase {
+            // A local TPB (ComicInfo Format) against Metron's trade
+            // series of the same name. Same class -> 87.5, HIGH.
+            name: "TPB volume matched to TPB series",
+            facts: issue_facts_fmt("Saga", Some(2012), "1", Some("TPB".into())),
+            candidate: issue_fmt("Saga", Some(2012), "1", "Trade Paperback"),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
+        IssueGoldenCase {
+            // A local "Annual 1" inside the parent series against the
+            // provider's separate "<Series> Annual" series numbered "1".
+            // Annual-aware name + number + year window -> 87.5, HIGH.
+            name: "annual: local 'Annual 1' <-> provider '<Series> Annual' #1",
+            facts: IssueQueryFacts {
+                issue_year: Some(2020),
+                ..issue_facts("X-Men", Some(2019), "Annual 1")
+            },
+            candidate: issue("X-Men Annual", Some(2020), "1"),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
+        IssueGoldenCase {
+            // Padding / '#' / case variants of the annual marker, with
+            // Metron's `series_type` on the candidate.
+            name: "annual: 'annual #01' <-> Annual Series #1",
+            facts: issue_facts("Amazing Spider-Man", Some(2018), "annual #01"),
+            candidate: issue_fmt(
+                "Amazing Spider-Man Annual",
+                Some(2018),
+                "1",
+                "Annual Series",
+            ),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
+        IssueGoldenCase {
+            // Manga volume tagged TPB locally; the provider files each
+            // volume as an issue of an ongoing series. Manga is neutral
+            // (never penalised) and "Vol. 03" normalises to "3".
+            name: "manga volume 'Vol. 03' <-> ongoing-series #3",
+            facts: issue_facts_fmt(
+                "One Piece",
+                Some(2003),
+                "Vol. 03",
+                local_hint(
+                    "One Piece",
+                    "Vol. 03",
+                    Some("TPB"),
+                    None,
+                    Some("YesAndRightToLeft"),
+                ),
+            ),
+            candidate: issue_fmt("One Piece", Some(2003), "3", "Ongoing Series"),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
+        IssueGoldenCase {
+            // Same manga volume against a provider that files it as a
+            // trade: still neutral, still HIGH.
+            name: "manga volume 'v03' <-> Trade Paperback #3",
+            facts: issue_facts_fmt(
+                "One Piece",
+                Some(2003),
+                "v03",
+                local_hint("One Piece", "v03", None, None, Some("Yes")),
+            ),
+            candidate: issue_fmt("One Piece", Some(2003), "3", "Trade Paperback"),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
+        IssueGoldenCase {
+            // Owner decision 2026-09-30: untagged plain numbers default
+            // to Single, but an untagged *trade* numbered "Vol. 1" must
+            // stay unknown — so a Trade Paperback candidate still wins
+            // HIGH.
+            name: "untagged trade 'Vol. 1' is not misclassified as single",
+            facts: issue_facts_fmt(
+                "Saga",
+                Some(2012),
+                "Vol. 1",
+                local_hint("Saga", "Vol. 1", None, None, None),
+            ),
+            candidate: issue_fmt("Saga", Some(2012), "1", "Trade Paperback"),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
+        IssueGoldenCase {
+            // An untagged file in a TPB-named local series classifies
+            // collected from the name, not single from its plain number.
+            name: "untagged file in a TPB-named series is collected, not single",
+            facts: issue_facts_fmt(
+                "Saga TPB",
+                Some(2012),
+                "1",
+                local_hint("Saga TPB", "1", None, None, None),
+            ),
+            candidate: issue_fmt("Saga TPB", Some(2012), "1", "TPB"),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
+        IssueGoldenCase {
+            name: "fractional issue '½' <-> '0.5'",
+            facts: issue_facts("Amazing Spider-Man", Some(1963), "½"),
+            candidate: issue("Amazing Spider-Man", Some(1963), "0.5"),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
+        IssueGoldenCase {
+            name: "suffixed issue '14 au' <-> '14AU'",
+            facts: issue_facts("Avengers Assemble", Some(2012), "14 au"),
+            candidate: issue("Avengers Assemble", Some(2012), "14AU"),
+            local_phash: None,
+            candidate_phashes: vec![],
         },
     ]
 }
@@ -236,6 +446,15 @@ fn known_incorrect_series() -> Vec<SeriesGoldenCase> {
                 Some(0x3FFF),      // alternate = 14 bits → was MEDIUM at primary-ceiling 16
             ],
         },
+        SeriesGoldenCase {
+            // WP-5.6: an ongoing local series against a trade volume of
+            // the same name. Perfect text 80 - 15 penalty = 65 -> MEDIUM.
+            name: "ongoing series vs TPB volume",
+            facts: series_facts_fmt("Saga", Some(2012), Some("Image Comics"), "ongoing"),
+            candidate: series_fmt("Saga", Some(2012), Some("Image Comics"), "TPB"),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
     ]
 }
 
@@ -259,6 +478,71 @@ fn known_incorrect_issues() -> Vec<IssueGoldenCase> {
             candidate: issue("Saga", Some(2012), "1"),
             local_phash: Some(0),
             candidate_phashes: vec![Some(0x3FFF_FFFF)], // 30 bits
+        },
+        // ── WP-5.6 format awareness ──
+        IssueGoldenCase {
+            // Single issue vs the trade that collects it — the classic
+            // false match. Text 87.5 - 15 = 72.5 -> MEDIUM.
+            name: "TPB vs ongoing: single issue <-> Trade Paperback #1",
+            facts: issue_facts_fmt("Saga", Some(2012), "1", Some("Series".into())),
+            candidate: issue_fmt("Saga", Some(2012), "1", "Trade Paperback"),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
+        IssueGoldenCase {
+            // Same, but the trade's cover *is* issue #1's cover (2 bits).
+            // Cover alone would say HIGH; the format cap holds it at
+            // MEDIUM so it is never auto-applied.
+            name: "TPB vs ongoing: trade reuses the single's cover",
+            facts: issue_facts_fmt("Saga", Some(2012), "1", Some("Series".into())),
+            candidate: issue_fmt("Saga", Some(2012), "1", "Trade Paperback"),
+            local_phash: Some(0),
+            candidate_phashes: vec![Some(0x3)],
+        },
+        IssueGoldenCase {
+            // Reverse direction: a local trade (scanner special_type)
+            // against an ongoing series' #1.
+            name: "TPB vs ongoing: local TPB <-> Ongoing Series #1",
+            facts: issue_facts_fmt(
+                "Saga",
+                Some(2012),
+                "1",
+                local_hint("Saga", "1", None, Some("TPB"), None),
+            ),
+            candidate: issue_fmt("Saga", Some(2012), "1", "Ongoing Series"),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
+        IssueGoldenCase {
+            // Owner decision 2026-09-30: an untagged single "#3" now
+            // defaults to Single, so a trade candidate (same name, same
+            // number, even the same cover) is capped at MEDIUM.
+            name: "untagged single #3 caps a TPB candidate to MEDIUM",
+            facts: issue_facts_fmt(
+                "Saga",
+                Some(2012),
+                "3",
+                local_hint("Saga", "3", None, None, None),
+            ),
+            candidate: issue_fmt("Saga", Some(2012), "3", "Trade Paperback"),
+            local_phash: Some(0),
+            candidate_phashes: vec![Some(0x3)],
+        },
+        IssueGoldenCase {
+            // A local annual must not match the parent run's regular #1.
+            name: "annual: local 'Annual 1' <-> regular #1",
+            facts: issue_facts("X-Men", Some(2019), "Annual 1"),
+            candidate: issue("X-Men", Some(2019), "1"),
+            local_phash: None,
+            candidate_phashes: vec![],
+        },
+        IssueGoldenCase {
+            // Suffix is part of the identity: 14AU is not #14.
+            name: "suffixed issue '14AU' <-> '14'",
+            facts: issue_facts("Avengers Assemble", Some(2012), "14AU"),
+            candidate: issue("Avengers Assemble", Some(2012), "14"),
+            local_phash: None,
+            candidate_phashes: vec![],
         },
     ]
 }
@@ -357,4 +641,129 @@ fn all_known_incorrect_issues_dont_match_high() {
             score.matched_via_alternate,
         );
     }
+}
+
+// ───────── WP-5.6 format-penalty boundaries ─────────
+
+/// The penalty is soft: a perfect-text mismatch lands exactly
+/// `FORMAT_MISMATCH_PENALTY` below the match — below the default HIGH
+/// threshold but still at-or-above MEDIUM.
+#[test]
+fn format_penalty_demotes_perfect_text_to_medium_not_low() {
+    let t = Thresholds::default();
+    let facts = series_facts_fmt("Saga", Some(2012), Some("Image Comics"), "Ongoing Series");
+    let same = score_series_with_phash(
+        &facts,
+        &series_fmt("Saga", Some(2012), Some("Image Comics"), "Limited Series"),
+        None,
+        &[],
+    );
+    let tpb = score_series_with_phash(
+        &facts,
+        &series_fmt("Saga", Some(2012), Some("Image Comics"), "Trade Paperback"),
+        None,
+        &[],
+    );
+    assert!(!same.format_mismatch);
+    assert_eq!(same.format, 0.0);
+    assert_eq!(same.bucket(t), Confidence::High);
+    assert!(tpb.format_mismatch);
+    assert!((same.total - tpb.total - FORMAT_MISMATCH_PENALTY).abs() < 1e-3);
+    assert!(tpb.total < t.high);
+    assert!(tpb.total >= t.medium);
+    assert_eq!(tpb.bucket(t), Confidence::Medium);
+}
+
+/// Unknown on either side (or a neutral class like manga) never
+/// penalises.
+#[test]
+fn format_penalty_needs_both_sides_known() {
+    let cand_tpb = issue_fmt("Saga", Some(2012), "1", "Trade Paperback");
+    for local in [
+        None,
+        Some("Manga".to_owned()),
+        Some("Special".to_owned()),
+        local_hint("Saga", "1", Some("Series"), None, Some("Yes")),
+    ] {
+        let s = score_issue_with_phash(
+            &issue_facts_fmt("Saga", Some(2012), "1", local.clone()),
+            &cand_tpb,
+            None,
+            &[],
+        );
+        assert!(!s.format_mismatch, "local {local:?} must not penalise");
+        assert_eq!(s.bucket(Thresholds::default()), Confidence::High);
+    }
+    let s = score_issue_with_phash(
+        &issue_facts_fmt("Saga", Some(2012), "1", Some("TPB".into())),
+        &issue("Saga", Some(2012), "1"),
+        None,
+        &[],
+    );
+    assert!(
+        !s.format_mismatch,
+        "unknown candidate format must not penalise"
+    );
+}
+
+/// With a cover signal the mismatch caps HIGH at MEDIUM but never moves
+/// MEDIUM or LOW — the ComicTagger ladder is otherwise untouched.
+#[test]
+fn format_mismatch_caps_cover_high_only() {
+    let t = Thresholds::default();
+    let facts = issue_facts_fmt("Saga", Some(2012), "1", Some("Series".into()));
+    let cand = issue_fmt("Saga", Some(2012), "1", "Trade Paperback");
+    let at = |bits: i64| score_issue_with_phash(&facts, &cand, Some(0), &[Some(bits)]).bucket(t);
+    assert_eq!(at(0xFF), Confidence::Medium); // 8 bits: HIGH -> capped
+    assert_eq!(at(0x1FF), Confidence::Medium); // 9 bits: MEDIUM stays
+    assert_eq!(at(0xFFFF), Confidence::Medium); // 16 bits: MEDIUM stays
+    assert_eq!(at(0x1FFFF), Confidence::Low); // 17 bits: LOW stays
+}
+
+/// A total can't go negative however bad the text is.
+#[test]
+fn format_penalty_total_floors_at_zero() {
+    let s = score_series_with_phash(
+        &series_facts_fmt("Saga", None, None, "TPB"),
+        &series_fmt("Watchmen", Some(1986), Some("DC"), "Ongoing Series"),
+        None,
+        &[],
+    );
+    assert!(s.format_mismatch);
+    assert!(s.total >= 0.0);
+}
+
+/// Owner decision 2026-09-30, pinned directly: the untagged-single
+/// default fires only on plain numbers, and the resulting mismatch
+/// lands exactly in MEDIUM (text-only) against a trade.
+#[test]
+fn untagged_single_default_is_narrow_and_soft() {
+    assert_eq!(
+        local_hint("Saga", "3", None, None, None),
+        Some("Single".into())
+    );
+    assert_eq!(
+        local_hint("Saga", "½", None, None, None),
+        Some("Single".into())
+    );
+    assert_eq!(local_hint("Saga", "Vol. 1", None, None, None), None);
+    assert_eq!(local_hint("Saga", "v01", None, None, None), None);
+    assert_eq!(local_hint("Saga", "14AU", None, None, None), None);
+    assert_eq!(
+        local_hint("Saga TPB", "1", None, None, None),
+        Some("TPB".into())
+    );
+    let s = score_issue_with_phash(
+        &issue_facts_fmt(
+            "Saga",
+            Some(2012),
+            "3",
+            local_hint("Saga", "3", None, None, None),
+        ),
+        &issue_fmt("Saga", Some(2012), "3", "Trade Paperback"),
+        None,
+        &[],
+    );
+    assert!(s.format_mismatch);
+    assert_eq!(s.bucket(Thresholds::default()), Confidence::Medium);
 }
