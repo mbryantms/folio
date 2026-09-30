@@ -889,6 +889,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/server/watchers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /admin/server/watchers` — per-library file-watcher mode (inotify /
+         *     poll / disabled), filesystem, and last trigger (WP-3.1). Feeds the admin
+         *     scan dashboard. Read-only; no audit row (allow-listed in `audit-check`).
+         */
+        get: operations["server_info_watchers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/settings": {
         parameters: {
             query?: never;
@@ -7442,6 +7463,15 @@ export interface components {
             /** Format: int32 */
             soft_delete_days: number;
         };
+        LibraryWatcherView: {
+            /** @description The library's `file_watch_enabled` toggle. */
+            file_watch_enabled: boolean;
+            /** Format: uuid */
+            library_id: string;
+            library_name: string;
+            library_slug: string;
+            watcher: components["schemas"]["WatcherStatus"];
+        };
         ListResp: {
             entries: components["schemas"]["DirEntry"][];
             /**
@@ -9579,10 +9609,16 @@ export interface components {
             version: string;
             /**
              * Format: int64
-             * @description Count of libraries with `file_watch_enabled = true`. The scanner v1
-             *     codebase exposes the flag; the in-process watcher is wired separately.
+             * @description Count of libraries with `file_watch_enabled = true`.
              */
             watchers_enabled: number;
+            /**
+             * Format: int64
+             * @description Count of libraries whose file watcher is actually running (inotify
+             *     or poll mode). Lower than `watchers_enabled` when a watcher couldn't
+             *     start — `GET /admin/server/watchers` says why. (WP-3.1)
+             */
+            watchers_running: number;
         };
         SessionListView: {
             sessions: components["schemas"]["SessionView"][];
@@ -10510,6 +10546,82 @@ export interface components {
          * @enum {string}
          */
         ViewMode: "single" | "double" | "webtoon";
+        /**
+         * @description How a library is being watched.
+         * @enum {string}
+         */
+        WatchMode: "inotify" | "poll" | "disabled";
+        /** @description Live state of one library's watcher. In-memory only (single instance). */
+        WatcherStatus: {
+            /**
+             * @description Operator-facing note: why the watcher is disabled, why it fell back
+             *     to polling, or the last watch error.
+             */
+            detail?: string | null;
+            /**
+             * @description Filesystem type `statfs` reported for the root (`ext4`, `nfs`,
+             *     `cifs`, …, or `0x…` for an unrecognised magic). `None` when the
+             *     watcher is disabled or detection failed.
+             */
+            filesystem?: string | null;
+            /**
+             * Format: date-time
+             * @description Most recent relevant filesystem change seen (inotify) or detected
+             *     (poll).
+             */
+            last_event_at?: string | null;
+            /**
+             * Format: uuid
+             * @description Scan run the last trigger enqueued or joined.
+             */
+            last_scan_id?: string | null;
+            /**
+             * Format: date-time
+             * @description Most recent time the watcher handed a change set to the scanner.
+             */
+            last_trigger_at?: string | null;
+            /**
+             * @description True when the last trigger joined an already-running scan (its
+             *     directories ride the queued follow-up) instead of enqueuing one.
+             */
+            last_trigger_coalesced: boolean;
+            /**
+             * Format: int32
+             * @description Number of touched directories in that change set (0 for a
+             *     queue-overflow rescan, which scans the whole library).
+             */
+            last_trigger_dirs: number;
+            mode: components["schemas"]["WatchMode"];
+            /**
+             * Format: date-time
+             * @description When the current watcher started.
+             */
+            started_at?: string | null;
+            /**
+             * Format: int64
+             * @description Triggers since this watcher started.
+             */
+            triggers_total: number;
+        };
+        WatchersView: {
+            /**
+             * Format: int64
+             * @description Effective `scanner.watch_debounce_secs`.
+             */
+            debounce_secs: number;
+            /** @description `COMIC_WATCH_FORCE_POLL` — every watched library polls. */
+            force_poll: boolean;
+            /**
+             * @description Every library, alphabetical. Bounded by the (small) library count,
+             *     so not paginated.
+             */
+            libraries: components["schemas"]["LibraryWatcherView"][];
+            /**
+             * Format: int64
+             * @description Effective `scanner.watch_poll_interval_secs`.
+             */
+            poll_interval_secs: number;
+        };
         WsTicketResp: {
             /** Format: int64 */
             expires_in: number;
@@ -12400,6 +12512,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RestartPendingView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    server_info_watchers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchersView"];
                 };
             };
             /** @description admin only */

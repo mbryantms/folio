@@ -125,6 +125,11 @@ pub struct Inner {
     /// be `None` (last fetch errored). See
     /// [`crate::api::server_releases`].
     pub latest_release_cache: Arc<Mutex<crate::api::server_releases::ReleaseCache>>,
+    /// File-watcher registry (WP-3.1): per-library mode + last trigger, the
+    /// running watcher handles, and the supervisor nudge. Populated by
+    /// [`crate::library::watcher::spawn_supervisor`] (started in `app::serve`;
+    /// tests drive watchers directly).
+    pub watchers: Arc<crate::library::watcher::WatcherRegistry>,
 }
 
 impl AppState {
@@ -206,6 +211,7 @@ impl AppState {
             latest_release_cache: Arc::new(Mutex::new(
                 crate::api::server_releases::ReleaseCache::default(),
             )),
+            watchers: Arc::new(crate::library::watcher::WatcherRegistry::new()),
         }))
     }
 

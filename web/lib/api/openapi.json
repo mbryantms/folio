@@ -2015,6 +2015,26 @@
         }
       }
     },
+    "/api/admin/server/watchers": {
+      "get": {
+        "summary": "`GET /admin/server/watchers` — per-library file-watcher mode (inotify /\npoll / disabled), filesystem, and last trigger (WP-3.1). Feeds the admin\nscan dashboard. Read-only; no audit row (allow-listed in `audit-check`).",
+        "operationId": "server_info_watchers",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchersView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/settings": {
       "get": {
         "operationId": "admin_settings_get_all",
@@ -17742,6 +17762,35 @@
           }
         }
       },
+      "LibraryWatcherView": {
+        "type": "object",
+        "required": [
+          "library_id",
+          "library_name",
+          "library_slug",
+          "file_watch_enabled",
+          "watcher"
+        ],
+        "properties": {
+          "file_watch_enabled": {
+            "type": "boolean",
+            "description": "The library's `file_watch_enabled` toggle."
+          },
+          "library_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "library_name": {
+            "type": "string"
+          },
+          "library_slug": {
+            "type": "string"
+          },
+          "watcher": {
+            "$ref": "#/components/schemas/WatcherStatus"
+          }
+        }
+      },
       "ListResp": {
         "type": "object",
         "required": [
@@ -22567,7 +22616,8 @@
           "postgres_ok",
           "redis_ok",
           "scheduler_running",
-          "watchers_enabled"
+          "watchers_enabled",
+          "watchers_running"
         ],
         "properties": {
           "build_epoch": {
@@ -22615,7 +22665,12 @@
           "watchers_enabled": {
             "type": "integer",
             "format": "int64",
-            "description": "Count of libraries with `file_watch_enabled = true`. The scanner v1\ncodebase exposes the flag; the in-process watcher is wired separately."
+            "description": "Count of libraries with `file_watch_enabled = true`."
+          },
+          "watchers_running": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Count of libraries whose file watcher is actually running (inotify\nor poll mode). Lower than `watchers_enabled` when a watcher couldn't\nstart — `GET /admin/server/watchers` says why. (WP-3.1)"
           }
         }
       },
@@ -24654,6 +24709,126 @@
           "double",
           "webtoon"
         ]
+      },
+      "WatchMode": {
+        "type": "string",
+        "description": "How a library is being watched.",
+        "enum": [
+          "inotify",
+          "poll",
+          "disabled"
+        ]
+      },
+      "WatcherStatus": {
+        "type": "object",
+        "description": "Live state of one library's watcher. In-memory only (single instance).",
+        "required": [
+          "mode",
+          "last_trigger_dirs",
+          "last_trigger_coalesced",
+          "triggers_total"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Operator-facing note: why the watcher is disabled, why it fell back\nto polling, or the last watch error."
+          },
+          "filesystem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Filesystem type `statfs` reported for the root (`ext4`, `nfs`,\n`cifs`, …, or `0x…` for an unrecognised magic). `None` when the\nwatcher is disabled or detection failed."
+          },
+          "last_event_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Most recent relevant filesystem change seen (inotify) or detected\n(poll)."
+          },
+          "last_scan_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Scan run the last trigger enqueued or joined."
+          },
+          "last_trigger_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Most recent time the watcher handed a change set to the scanner."
+          },
+          "last_trigger_coalesced": {
+            "type": "boolean",
+            "description": "True when the last trigger joined an already-running scan (its\ndirectories ride the queued follow-up) instead of enqueuing one."
+          },
+          "last_trigger_dirs": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of touched directories in that change set (0 for a\nqueue-overflow rescan, which scans the whole library).",
+            "minimum": 0
+          },
+          "mode": {
+            "$ref": "#/components/schemas/WatchMode"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the current watcher started."
+          },
+          "triggers_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Triggers since this watcher started.",
+            "minimum": 0
+          }
+        }
+      },
+      "WatchersView": {
+        "type": "object",
+        "required": [
+          "libraries",
+          "debounce_secs",
+          "poll_interval_secs",
+          "force_poll"
+        ],
+        "properties": {
+          "debounce_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Effective `scanner.watch_debounce_secs`.",
+            "minimum": 0
+          },
+          "force_poll": {
+            "type": "boolean",
+            "description": "`COMIC_WATCH_FORCE_POLL` — every watched library polls."
+          },
+          "libraries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryWatcherView"
+            },
+            "description": "Every library, alphabetical. Bounded by the (small) library count,\nso not paginated."
+          },
+          "poll_interval_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Effective `scanner.watch_poll_interval_secs`.",
+            "minimum": 0
+          }
+        }
       },
       "WsTicketResp": {
         "type": "object",

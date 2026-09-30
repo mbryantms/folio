@@ -14,4 +14,5 @@ pub mod page_variants;
 pub mod reconcile;
 pub mod scanner;
 pub mod thumbnails;
+pub mod watcher;
 pub mod zip_lru;

@@ -19,6 +19,11 @@ pub struct Job {
     /// When true, bypass per-folder mtime checks (spec §4.4 force flag).
     /// Forwarded into the scanner via the upcoming `ScanContext`.
     pub force: bool,
+    /// Watcher-scoped scan (WP-3.1): the touched directories (absolute,
+    /// under the library root). `None` = full-library scan. Defaults to
+    /// `None` so payloads queued by older binaries still deserialize.
+    #[serde(default)]
+    pub scope: Option<Vec<String>>,
 }
 
 /// Worker handler. A scan failure is recorded durably by the scanner's finalize
@@ -37,16 +42,32 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), Error> {
         library_id = %job.library_id,
         scan_run_id = %job.scan_run_id,
         force = job.force,
+        scope_dirs = job.scope.as_ref().map_or(0, Vec::len),
         "scan job started",
     );
 
-    let scan_result = crate::library::scanner::scan_library_with_run_id(
-        &state,
-        job.library_id,
-        job.force,
-        Some(job.scan_run_id),
-    )
-    .await;
+    let scan_result = match job.scope.as_deref() {
+        Some(dirs) => {
+            let scope: Vec<std::path::PathBuf> =
+                dirs.iter().map(std::path::PathBuf::from).collect();
+            crate::library::scanner::scan_library_scoped(
+                &state,
+                job.library_id,
+                &scope,
+                Some(job.scan_run_id),
+            )
+            .await
+        }
+        None => {
+            crate::library::scanner::scan_library_with_run_id(
+                &state,
+                job.library_id,
+                job.force,
+                Some(job.scan_run_id),
+            )
+            .await
+        }
+    };
 
     // Release coalescing state regardless of success — a failed scan still
     // needs to clear the in-flight marker so the next trigger isn't blocked.

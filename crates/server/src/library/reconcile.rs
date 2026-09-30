@@ -139,6 +139,11 @@ pub async fn reconcile_library_seen(
     // 2026-05-14).
     scanned_folder_paths: &HashSet<String>,
     present_folders: &HashSet<String>,
+    // Watcher-scoped scans (WP-3.1) enumerate only part of the root. When
+    // `Some`, only series whose folder lives under one of these paths are
+    // judged against `present_folders`; everything else was simply not
+    // looked at and is left alone. `None` = full scan, whole library.
+    missing_scope: Option<&[std::path::PathBuf]>,
     stats: &mut ScanStats,
     events: &mut EventCollector,
 ) -> anyhow::Result<()> {
@@ -187,6 +192,11 @@ pub async fn reconcile_library_seen(
             continue;
         };
         if present_folders.contains(folder) {
+            continue;
+        }
+        if let Some(scope) = missing_scope
+            && !scope.iter().any(|top| Path::new(folder).starts_with(top))
+        {
             continue;
         }
         let series_label = srow.name.clone();

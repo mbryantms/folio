@@ -600,6 +600,8 @@ pub async fn create(
     };
     match am.insert(&app.db).await {
         Ok(m) => {
+            // File watcher (WP-3.1): start watching if the library opts in.
+            app.watchers.nudge();
             if req.scan_now
                 && let Err(e) = app.jobs.coalesce_scan(m.id, false).await
             {
@@ -803,6 +805,10 @@ pub async fn update_settings(
             if schedule_touched {
                 crate::jobs::scheduler::reload_library_scan(&app, &updated).await;
             }
+            // File watcher (WP-3.1): react to `file_watch_enabled`, a moved
+            // root or new ignore globs without a restart. The supervisor
+            // diffs each library's watch spec, so a no-op PATCH is free.
+            app.watchers.nudge();
             if let Some(s) = new_slug {
                 audit::record(
                     &app.db,
@@ -1237,11 +1243,13 @@ pub async fn scan_preview(
     .await
     .unwrap_or(0);
 
-    let watcher_status = if row.file_watch_enabled {
-        "enabled_unverified"
-    } else {
-        "disabled"
-    };
+    // Live watcher mode (WP-3.1): `inotify` | `poll` | `disabled`.
+    let watcher_status = app
+        .watchers
+        .status(row.id)
+        .unwrap_or_else(|| crate::library::watcher::not_running_status(row.file_watch_enabled))
+        .mode
+        .as_str();
     let mode = ScanMode::Normal;
     Json(ScanPreviewView {
         mode: mode.as_str(),
@@ -1357,6 +1365,8 @@ pub async fn delete_one(
     // ── 5. Best-effort Redis cleanup. A stale `scan:in_flight:<id>` key
     // would otherwise stay set and confuse the coalescer if a library
     // with the same UUID were ever re-created (unlikely; UUIDs are v7). ──
+    // Stop the library's file watcher (WP-3.1) on the supervisor's next sync.
+    app.watchers.nudge();
     if let Err(e) = app.jobs.purge_scan_keys(uuid).await {
         tracing::warn!(library_id = %uuid, error = %e, "delete-library: redis cleanup failed");
     }

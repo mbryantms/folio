@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { LibraryEventsList } from "@/components/admin/library/LibraryEventsList";
+import { WatchersCard } from "@/components/admin/library/WatchersCard";
 import { useScanBatch, useScanBatches } from "@/lib/api/queries";
 import { useScanEvents } from "@/lib/api/scan-events";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
@@ -96,7 +97,14 @@ export function ScanDashboardClient() {
   const sp = useSearchParams();
   const batchId = sp.get("batch");
 
-  if (!batchId) return <BatchPicker />;
+  if (!batchId) {
+    return (
+      <div className="space-y-6">
+        <WatchersCard />
+        <BatchPicker />
+      </div>
+    );
+  }
   return <BatchView batchId={batchId} />;
 }
 

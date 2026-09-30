@@ -12,12 +12,15 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use entity::library;
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, Statement};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Statement,
+};
 use serde::Serialize;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::auth::RequireAdmin;
+use crate::library::watcher::{WatchMode, WatcherStatus};
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -25,6 +28,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(info))
         .routes(routes!(restart_pending))
+        .routes(routes!(watchers))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -71,9 +75,12 @@ pub struct ServerInfoView {
     /// for now just report whether the AppState was built (i.e. the server
     /// is up).
     pub scheduler_running: bool,
-    /// Count of libraries with `file_watch_enabled = true`. The scanner v1
-    /// codebase exposes the flag; the in-process watcher is wired separately.
+    /// Count of libraries with `file_watch_enabled = true`.
     pub watchers_enabled: i64,
+    /// Count of libraries whose file watcher is actually running (inotify
+    /// or poll mode). Lower than `watchers_enabled` when a watcher couldn't
+    /// start — `GET /admin/server/watchers` says why. (WP-3.1)
+    pub watchers_running: i64,
 }
 
 #[utoipa::path(
@@ -131,6 +138,13 @@ pub async fn info(State(app): State<AppState>, _admin: RequireAdmin) -> Response
         .await
         .unwrap_or(0) as i64;
 
+    let watchers_running = app
+        .watchers
+        .statuses()
+        .values()
+        .filter(|s| s.mode != WatchMode::Disabled)
+        .count() as i64;
+
     Json(ServerInfoView {
         version,
         build_sha,
@@ -142,6 +156,7 @@ pub async fn info(State(app): State<AppState>, _admin: RequireAdmin) -> Response
         redis_ok,
         scheduler_running: true,
         watchers_enabled,
+        watchers_running,
     })
     .into_response()
 }
@@ -207,4 +222,81 @@ fn display_value(v: &serde_json::Value) -> String {
     v.as_str()
         .map(str::to_owned)
         .unwrap_or_else(|| v.to_string())
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct LibraryWatcherView {
+    pub library_id: uuid::Uuid,
+    pub library_name: String,
+    pub library_slug: String,
+    /// The library's `file_watch_enabled` toggle.
+    pub file_watch_enabled: bool,
+    pub watcher: WatcherStatus,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct WatchersView {
+    /// Every library, alphabetical. Bounded by the (small) library count,
+    /// so not paginated.
+    pub libraries: Vec<LibraryWatcherView>,
+    /// Effective `scanner.watch_debounce_secs`.
+    pub debounce_secs: u64,
+    /// Effective `scanner.watch_poll_interval_secs`.
+    pub poll_interval_secs: u64,
+    /// `COMIC_WATCH_FORCE_POLL` — every watched library polls.
+    pub force_poll: bool,
+}
+
+/// `GET /admin/server/watchers` — per-library file-watcher mode (inotify /
+/// poll / disabled), filesystem, and last trigger (WP-3.1). Feeds the admin
+/// scan dashboard. Read-only; no audit row (allow-listed in `audit-check`).
+#[utoipa::path(
+    operation_id = "server_info_watchers",    get,
+    path = "/admin/server/watchers",
+    responses(
+        (status = 200, body = WatchersView),
+        (status = 403, description = "admin only"),
+    )
+)]
+#[handler]
+pub async fn watchers(State(app): State<AppState>, _admin: RequireAdmin) -> Response {
+    let libs = match library::Entity::find()
+        .order_by_asc(library::Column::Name)
+        .all(&app.db)
+        .await
+    {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(error = %e, "watchers: library query failed");
+            return crate::api::error(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            );
+        }
+    };
+    let statuses = app.watchers.statuses();
+    let libraries = libs
+        .into_iter()
+        .map(|l| {
+            let watcher = statuses.get(&l.id).cloned().unwrap_or_else(|| {
+                crate::library::watcher::not_running_status(l.file_watch_enabled)
+            });
+            LibraryWatcherView {
+                library_id: l.id,
+                library_name: l.name,
+                library_slug: l.slug,
+                file_watch_enabled: l.file_watch_enabled,
+                watcher,
+            }
+        })
+        .collect();
+    let cfg = app.cfg();
+    Json(WatchersView {
+        libraries,
+        debounce_secs: cfg.watch_debounce_secs,
+        poll_interval_secs: cfg.watch_poll_interval_secs,
+        force_poll: cfg.watch_force_poll,
+    })
+    .into_response()
 }

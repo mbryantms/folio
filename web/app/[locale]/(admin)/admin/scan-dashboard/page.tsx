@@ -6,7 +6,7 @@ export default function ScanDashboardPage() {
     <>
       <PageHeader
         title="Scan dashboard"
-        description="Live progress across a 'Scan all' run — per-library status, overall completion, and a post-run summary of what changed."
+        description="File-watcher mode and last trigger per library, plus live progress across a 'Scan all' run — per-library status, overall completion, and a post-run summary of what changed."
       />
       <ScanDashboardClient />
     </>

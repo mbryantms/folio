@@ -157,40 +157,149 @@ pub fn enumerate_with(root: &Path, ignore: &IgnoreRules) -> std::io::Result<Enum
     let mut result = EnumerationResult::default();
 
     for child in read_dir_filtered(root, ignore)? {
-        let ft = match std::fs::metadata(&child) {
-            Ok(m) => m.file_type(),
-            Err(_) => continue,
-        };
-        if ft.is_file() {
-            // Spec §2.2: no archive files at the library root.
-            result.files_at_root.push(child);
-            continue;
-        }
-        if !ft.is_dir() {
-            continue;
-        }
+        classify_root_child(child, ignore, &mut result);
+    }
 
-        match classify_folder(&child, ignore) {
-            FolderShape::SeriesFolder => result.series_folders.push(SeriesCandidate {
-                path: child,
-                publisher_hint: None,
-            }),
-            FolderShape::PublisherContainer => {
-                classify_publisher_children(&child, ignore, &mut result);
+    Ok(result)
+}
+
+/// Classify one depth-1 child of the library root (file or folder) into
+/// `result`. Shared by the full [`enumerate_with`] walk and the
+/// watcher-scoped [`enumerate_scoped`] walk so both produce identical
+/// series candidates for the same on-disk shape.
+fn classify_root_child(child: PathBuf, ignore: &IgnoreRules, result: &mut EnumerationResult) {
+    let ft = match std::fs::metadata(&child) {
+        Ok(m) => m.file_type(),
+        Err(_) => return,
+    };
+    if ft.is_file() {
+        // Spec §2.2: no archive files at the library root.
+        result.files_at_root.push(child);
+        return;
+    }
+    if !ft.is_dir() {
+        return;
+    }
+
+    match classify_folder(&child, ignore) {
+        FolderShape::SeriesFolder => result.series_folders.push(SeriesCandidate {
+            path: child,
+            publisher_hint: None,
+        }),
+        FolderShape::PublisherContainer => {
+            classify_publisher_children(&child, ignore, result);
+        }
+        FolderShape::Empty if has_series_json(&child) => {
+            result.orphaned_series_json.push(child);
+        }
+        FolderShape::Empty => result.empty_folders.push(child),
+        FolderShape::Ambiguous(reason) => {
+            result
+                .ambiguous_folders
+                .push(AmbiguousFolder::new(child, reason, ignore));
+        }
+    }
+}
+
+/// Result of a watcher-scoped enumeration (WP-3.1). See [`enumerate_scoped`].
+#[derive(Debug, Default)]
+pub struct ScopedEnumeration {
+    /// Series folders that need a plan entry: every *new* series folder
+    /// under the scanned tops, plus every known one that contains a touched
+    /// directory. Unchanged known siblings are left out so a watcher scan
+    /// never walks a folder nothing happened in.
+    pub result: EnumerationResult,
+    /// Every series folder that exists under the scanned tops (unfiltered).
+    /// Feeds the reconcile's "folder still present" set.
+    pub present_series: Vec<PathBuf>,
+    /// The depth-1 children of the root whose subtree this pass is
+    /// authoritative for. A known series whose folder lives under one of
+    /// these tops but is not in `present_series` is gone; series under any
+    /// other top are out of scope and left untouched.
+    pub tops: Vec<PathBuf>,
+}
+
+/// Enumerate only the parts of the library a set of touched directories
+/// (from the file watcher or the network-mount poller) can have changed.
+///
+/// Each touched directory maps to its depth-1 ancestor under `root` (the
+/// "top"); only those tops are classified with the same two-layouts rules as
+/// [`enumerate_with`]. When the root itself is touched (a series or
+/// publisher folder was added, removed or renamed, or a stray file landed at
+/// the root) the root is read once — one `readdir`, no recursion — and every
+/// child that is not already the top of a known series joins the scope, as
+/// do known tops that no longer exist (so their series are reconciled away).
+///
+/// `known_series` is the set of `series.folder_path` values the library
+/// already has. Paths outside `root` are ignored.
+pub fn enumerate_scoped(
+    root: &Path,
+    ignore: &IgnoreRules,
+    scope: &[PathBuf],
+    known_series: &std::collections::HashSet<PathBuf>,
+) -> std::io::Result<ScopedEnumeration> {
+    use std::collections::BTreeSet;
+
+    let top_of = |p: &Path| -> Option<Option<PathBuf>> {
+        let rel = p.strip_prefix(root).ok()?;
+        Some(rel.components().next().map(|c| root.join(c)))
+    };
+
+    let mut tops = BTreeSet::<PathBuf>::new();
+    let mut root_touched = false;
+    for dir in scope {
+        match top_of(dir) {
+            Some(Some(top)) => {
+                tops.insert(top);
             }
-            FolderShape::Empty if has_series_json(&child) => {
-                result.orphaned_series_json.push(child);
+            Some(None) => root_touched = true,
+            None => {}
+        }
+    }
+
+    let mut result = EnumerationResult::default();
+    if root_touched {
+        let known_tops: BTreeSet<PathBuf> = known_series
+            .iter()
+            .filter_map(|s| top_of(s).flatten())
+            .collect();
+        for child in read_dir_filtered(root, ignore)? {
+            let Ok(meta) = std::fs::metadata(&child) else {
+                continue;
+            };
+            if meta.is_file() {
+                result.files_at_root.push(child);
+            } else if meta.is_dir() && !known_tops.contains(&child) {
+                tops.insert(child);
             }
-            FolderShape::Empty => result.empty_folders.push(child),
-            FolderShape::Ambiguous(reason) => {
-                result
-                    .ambiguous_folders
-                    .push(AmbiguousFolder::new(child, reason, ignore));
+        }
+        for known_top in known_tops {
+            if !known_top.exists() {
+                tops.insert(known_top);
             }
         }
     }
 
-    Ok(result)
+    for top in &tops {
+        if top.is_dir() && !ignore.should_skip_user(top) {
+            classify_root_child(top.clone(), ignore, &mut result);
+        }
+    }
+
+    let present_series = result
+        .series_folders
+        .iter()
+        .map(|c| c.path.clone())
+        .collect();
+    result.series_folders.retain(|c| {
+        !known_series.contains(&c.path) || scope.iter().any(|d| d.starts_with(&c.path))
+    });
+
+    Ok(ScopedEnumeration {
+        result,
+        present_series,
+        tops: tops.into_iter().collect(),
+    })
 }
 
 fn classify_publisher_children(
@@ -835,5 +944,62 @@ mod tests {
         let result = enumerate(root).unwrap();
         assert_eq!(result.series_folders.len(), 1);
         assert_eq!(result.series_folders[0].path, visible);
+    }
+
+    /// Watcher-scoped enumeration (WP-3.1): a change inside one series of a
+    /// publisher container plans only that series (plus brand-new ones),
+    /// while every existing series under the same top is still reported
+    /// present so the reconcile doesn't treat siblings as gone.
+    #[test]
+    fn scoped_enumeration_plans_only_touched_and_new_series() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let publisher = root.join("Marvel");
+        let xmen = publisher.join("X-Men");
+        let hulk = publisher.join("Hulk");
+        let fresh = publisher.join("Thor");
+        let flat = root.join("Saga");
+        for d in [&xmen, &hulk, &fresh, &flat] {
+            fs::create_dir_all(d).unwrap();
+            write_empty(&d.join("001.cbz"));
+        }
+        let known: std::collections::HashSet<PathBuf> = [xmen.clone(), hulk.clone(), flat.clone()]
+            .into_iter()
+            .collect();
+
+        let scoped = enumerate_scoped(
+            root,
+            &IgnoreRules::default(),
+            std::slice::from_ref(&xmen),
+            &known,
+        )
+        .unwrap();
+        let planned: Vec<_> = scoped
+            .result
+            .series_folders
+            .iter()
+            .map(|c| c.path.clone())
+            .collect();
+        assert!(planned.contains(&xmen));
+        assert!(
+            planned.contains(&fresh),
+            "new series under the top is planned"
+        );
+        assert!(
+            !planned.contains(&hulk),
+            "untouched known sibling is skipped"
+        );
+        assert!(!planned.contains(&flat), "other tops are out of scope");
+        assert_eq!(scoped.present_series.len(), 3);
+        assert_eq!(scoped.tops, vec![publisher.clone()]);
+        assert!(scoped.result.files_at_root.is_empty());
+
+        // Root touched: only unknown tops join (every top here is known),
+        // and stray root files are reported.
+        write_empty(&root.join("stray.cbz"));
+        let scoped =
+            enumerate_scoped(root, &IgnoreRules::default(), &[root.to_path_buf()], &known).unwrap();
+        assert!(scoped.tops.is_empty(), "{:?}", scoped.tops);
+        assert_eq!(scoped.result.files_at_root.len(), 1);
     }
 }

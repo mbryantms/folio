@@ -232,6 +232,10 @@ pub async fn update(
     };
     if overlay_ok {
         app.replace_cfg(next);
+        // File-watcher timing (`scanner.watch_*`) is live: the supervisor
+        // restarts any watcher whose effective debounce / poll interval
+        // changed on its next sync. Nudging unconditionally is cheap.
+        app.watchers.nudge();
         // Rebuild the email sender if any `smtp.*` row changed. We do
         // this after `replace_cfg` so the sender reads the same Config
         // snapshot the rest of the process now sees.

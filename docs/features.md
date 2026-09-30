@@ -180,9 +180,11 @@ been both moved *and* retagged still resolves to the same issue.
 - Flat (`Library/Series/`) and publisher-nested (`Library/Publisher/Series/`)
   layouts, auto-detected and mixable.
 - Per-library cron schedules, scan-on-startup, manual and scoped scans,
-  ignore globs, and full scan history. (File watching — inotify on local
-  disks, a light directory-mtime poll on NAS mounts — is on the roadmap;
-  the per-library toggle is stored but not yet wired.)
+  ignore globs, and full scan history.
+- Optional per-library **file watching**: inotify on local disks, a light
+  directory-mtime poll on NAS mounts (NFS / SMB / FUSE). Changes collapse
+  into one scan of just the changed folders; the scan dashboard shows each
+  library's watch mode and last trigger.
 - Twelve typed **library health issues** (malformed archive, empty folder,
   unsupported format, encrypted archive, …) with automatic resolution when
   the underlying problem is fixed.

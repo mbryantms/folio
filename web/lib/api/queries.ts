@@ -107,6 +107,7 @@ import type {
   OcrModelsView,
   ServerInfoView,
   RestartPendingView,
+  WatchersView,
   SessionListView,
   SortOrder,
   ThumbnailsSettingsView,
@@ -1252,6 +1253,19 @@ export function useRestartPending(opts?: { enabled?: boolean }) {
       jsonFetch<RestartPendingView>("/admin/server/restart-pending"),
     enabled,
     staleTime: 30_000,
+  });
+}
+
+/** Per-library file-watcher mode (inotify / poll / disabled) and last
+ *  trigger (WP-3.1). Shown on the scan dashboard; polled lightly since
+ *  triggers are infrequent. */
+export function useWatchers(opts?: { intervalMs?: number }) {
+  const { intervalMs = 15_000 } = opts ?? {};
+  return useQuery({
+    queryKey: queryKeys.watchers,
+    queryFn: () => jsonFetch<WatchersView>("/admin/server/watchers"),
+    refetchInterval: intervalMs,
+    staleTime: intervalMs,
   });
 }
 

@@ -76,6 +76,38 @@ pub async fn scan_library_with_run_id(
     force: bool,
     requested_scan_id: Option<Uuid>,
 ) -> anyhow::Result<ScanStats> {
+    scan_library_inner(state, library_id, force, requested_scan_id, None).await
+}
+
+/// Watcher-scoped library scan (WP-3.1). Runs the same pipeline as a
+/// non-forced full scan — `list_archives_changed_since` + the per-file
+/// size+mtime fingerprint, so nothing is hashed unless a fingerprint moved —
+/// but enumerates, plans and reconciles only the parts of the library the
+/// `scope` directories can have changed (see
+/// [`enumerate::enumerate_scoped`]). Recorded as a `kind='library'` run;
+/// `library.last_scan_at` is left alone because a scoped pass is not a full
+/// one (the scheduler and the dirty-folder preview key off it).
+#[tracing::instrument(
+    skip_all,
+    name = "scan_library_scoped",
+    fields(library_id = %library_id, scope_dirs = scope.len(), scan_id = tracing::field::Empty),
+)]
+pub async fn scan_library_scoped(
+    state: &AppState,
+    library_id: Uuid,
+    scope: &[PathBuf],
+    requested_scan_id: Option<Uuid>,
+) -> anyhow::Result<ScanStats> {
+    scan_library_inner(state, library_id, false, requested_scan_id, Some(scope)).await
+}
+
+async fn scan_library_inner(
+    state: &AppState,
+    library_id: Uuid,
+    force: bool,
+    requested_scan_id: Option<Uuid>,
+    scope: Option<&[PathBuf]>,
+) -> anyhow::Result<ScanStats> {
     let lib = library::Entity::find_by_id(library_id)
         .one(&state.db)
         .await?
@@ -109,18 +141,23 @@ pub async fn scan_library_with_run_id(
     let started = Instant::now();
     let mut stats = ScanStats::default();
     let now = Utc::now().fixed_offset();
-    let mut health =
-        HealthCollector::new(library_id, scan_id, now).with_events(state.events.clone());
+    // A scoped (watcher) pass only sees part of the library, so it must not
+    // auto-resolve health issues it never had a chance to re-emit.
+    let mut health = if scope.is_some() {
+        HealthCollector::new_scoped(library_id, scan_id, now)
+    } else {
+        HealthCollector::new(library_id, scan_id, now)
+    }
+    .with_events(state.events.clone());
     // Stamp the batch so every event under this scan lands on the batch
     // detail page's Changes manifest (M10) — `with_batch` previously had
     // no callers, leaving that card permanently empty.
     let mut events = EventCollector::new(library_id, Some(scan_id)).with_batch(batch_id);
-    events.record(
-        Category::Scan,
-        Action::Started,
-        Severity::Info,
-        "Scan started",
-    );
+    let started_msg = match scope {
+        Some(dirs) => format!("Watcher scan started ({} changed folders)", dirs.len()),
+        None => "Scan started".to_owned(),
+    };
+    events.record(Category::Scan, Action::Started, Severity::Info, started_msg);
 
     // Cooperative cancellation (D8): the cancel endpoint flips the
     // `scan_runs` row to `state='cancelled'`; `run_phases` polls for that on
@@ -138,6 +175,7 @@ pub async fn scan_library_with_run_id(
         &mut health,
         &mut events,
         cancel.clone(),
+        scope,
     )
     .await;
     let cancelled = cancel.load(Ordering::Relaxed);
@@ -150,7 +188,8 @@ pub async fn scan_library_with_run_id(
     // Bump library.last_scan_at on full, completed scans only — per-series
     // scans leave it alone so the scheduler still knows when a true
     // library-wide pass last ran, and a cancelled scan doesn't count as one.
-    if !cancelled {
+    // Watcher-scoped passes (WP-3.1) aren't full passes either.
+    if !cancelled && scope.is_none() {
         let mut lib_am: library::ActiveModel = lib.into();
         lib_am.last_scan_at = Set(Some(Utc::now().fixed_offset()));
         lib_am.update(&state.db).await?;
@@ -1445,6 +1484,7 @@ async fn run_phases(
     health: &mut HealthCollector,
     events: &mut EventCollector,
     cancel: Arc<AtomicBool>,
+    scope: Option<&[PathBuf]>,
 ) -> anyhow::Result<()> {
     use crate::library::health::IssueKind;
     let root = PathBuf::from(&lib.root_path);
@@ -1470,12 +1510,42 @@ async fn run_phases(
     let enumerate_started = Instant::now();
     let root_for_walk = root.clone();
     let ignore_for_walk = ignore.clone();
-    let layout = tokio::task::spawn_blocking(move || {
-        enumerate::enumerate_with(&root_for_walk, &ignore_for_walk)
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("enumerate task failed: {e}"))?
-    .map_err(|e| anyhow::anyhow!("enumerate {}: {e}", root.display()))?;
+    // `reconcile_scope`: `None` for a full scan (the reconcile is
+    // authoritative for the whole library); `Some(tops)` for a watcher-scoped
+    // scan, limiting the "folder vanished" sweep to the tops it enumerated.
+    let (layout, present_folders, reconcile_scope) = if let Some(scope) = scope {
+        let known: HashSet<PathBuf> = known_series_by_folder(state, lib)
+            .await?
+            .into_keys()
+            .map(PathBuf::from)
+            .collect();
+        let scope_owned = scope.to_vec();
+        let scoped = tokio::task::spawn_blocking(move || {
+            enumerate::enumerate_scoped(&root_for_walk, &ignore_for_walk, &scope_owned, &known)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("enumerate task failed: {e}"))?
+        .map_err(|e| anyhow::anyhow!("enumerate {}: {e}", root.display()))?;
+        let present: HashSet<String> = scoped
+            .present_series
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        (scoped.result, present, Some(scoped.tops))
+    } else {
+        let layout = tokio::task::spawn_blocking(move || {
+            enumerate::enumerate_with(&root_for_walk, &ignore_for_walk)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("enumerate task failed: {e}"))?
+        .map_err(|e| anyhow::anyhow!("enumerate {}: {e}", root.display()))?;
+        let present: HashSet<String> = layout
+            .series_folders
+            .iter()
+            .map(|s| s.path.to_string_lossy().into_owned())
+            .collect();
+        (layout, present, None)
+    };
     stats.record_phase("enumerate", enumerate_started.elapsed());
 
     for f in &layout.files_at_root {
@@ -1530,11 +1600,6 @@ async fn run_phases(
     .await;
 
     // ───── Phase 3: per-folder processing (§4.4 + §6) ─────
-    let present_folders: HashSet<String> = layout
-        .series_folders
-        .iter()
-        .map(|s| s.path.to_string_lossy().into_owned())
-        .collect();
     let mut scanned_series = HashSet::new();
     let mut seen_paths = HashSet::new();
     // Folder paths whose `process_planned_folder` returned `processed=true`.
@@ -1761,6 +1826,7 @@ async fn run_phases(
         &seen_paths,
         &scanned_folder_paths,
         &present_folders,
+        reconcile_scope.as_deref(),
         stats,
         events,
     )

@@ -475,6 +475,11 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
         Err(e) => tracing::error!(error = %e, "scheduler failed to start"),
     }
 
+    // File watcher supervisor (WP-3.1): one inotify watcher or directory-mtime
+    // poller per library with `file_watch_enabled`, kept in sync with the
+    // library table. Stopped by the shared shutdown token.
+    let watcher_handle = crate::library::watcher::spawn_supervisor(state.clone(), shutdown.clone());
+
     // pHash + variant-cover backfills are NOT auto-run at boot (see the
     // catchup note above). The matcher falls back to text-only for
     // not-yet-hashed covers until the operator runs
@@ -502,6 +507,9 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     // to finish draining its workers (graceful) before returning.
     if let Err(e) = monitor_handle.await {
         tracing::warn!(error = %e, "apalis monitor task failed to join cleanly");
+    }
+    if let Err(e) = watcher_handle.await {
+        tracing::warn!(error = %e, "file watcher supervisor failed to join cleanly");
     }
     tracing::info!("apalis monitor drained; shutdown complete");
 
