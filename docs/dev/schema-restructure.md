@@ -206,10 +206,28 @@ CREATE TABLE issue_cover (
     dhash                       BIGINT,  -- M9
     ahash                       BIGINT,  -- M9
     fetched_at                  TIMESTAMPTZ NOT NULL,
-    is_active                   BOOLEAN NOT NULL,
-    UNIQUE (issue_id, kind, ordinal, is_active) WHERE is_active = TRUE
+    is_active                   BOOLEAN NOT NULL
 );
+-- One ACTIVE row per slot; any number of inactive (history / hash) rows.
+CREATE UNIQUE INDEX issue_cover_active_slot_uniq
+    ON issue_cover (issue_id, kind, ordinal) WHERE is_active;
 ```
+
+> **Slot uniqueness is partial (since `m20270218_000001_issue_cover_active_unique`).**
+> The M0 migration shipped a *table-level* `UNIQUE (issue_id, kind,
+> ordinal)` instead of the partial index this design called for, so an
+> inactive row still occupied the slot. Two consequences until the fix:
+> replacing an active primary (`apply_cover` deactivate + insert) always
+> hit the constraint and left the issue with **no** active primary plus
+> an orphaned file, and every issue the post-scan phash worker had
+> touched (it keeps an inactive `archive_extracted` `primary/0` row as
+> the matcher's side-channel) refused *any* provider primary cover
+> (`cover_skipped_reason = "write_failed: …"`). The migration swaps the
+> constraint for the partial index above (`series_cover` gets the same
+> `series_cover_active_slot_uniq`). Its `down` is lossy — it collapses
+> each slot to one row (active first, else newest) before restoring the
+> table constraint. Runtime `ON CONFLICT` on this slot must name the
+> index predicate: `ON CONFLICT (issue_id, kind, ordinal) WHERE is_active`.
 
 Wins:
 
@@ -224,8 +242,14 @@ Wins:
   `ahash` as 64-bit signed ints) so the matcher can use cover
   similarity as a confidence factor.
 - **is_active flip** — `apply_cover` deactivates the prior active
-  row before inserting the new one; the deactivated row stays for
-  history (and is recoverable by an admin flip).
+  row and inserts the new one **in one transaction** (a failed insert
+  rolls the deactivation back and removes the file it just wrote); the
+  deactivated row stays for history (and is recoverable by an admin
+  flip). `set_issue_variants` likewise swaps the whole variant set in
+  one transaction and only deletes the previous set's files after the
+  commit. Deactivated primary rows still own their files on disk — the
+  WP-3.8 cleanup sweep for those files (deferred in PR #899 pending this
+  fix) is now unblocked.
 
 `series_cover` is the analogous table for series-level "banner"
 images that providers return separately from per-issue covers.
