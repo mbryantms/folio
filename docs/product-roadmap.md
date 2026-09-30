@@ -164,6 +164,8 @@ Exit: any scanner mistake is fixable in-app; hand edits reach the archive safely
 
 Exit: a 50k-issue NAS library imports in a predictable time, new files appear without cron, mismatches and duplicates are findings you can act on, and the hot list queries have measured plans.
 
+**Status (2026-09-30): all eight WPs merged.** PRs: 3.1 #902 · 3.2 #903 · 3.3 #900 · 3.4 #897 · 3.5 #898 (purge off by default) · 3.6 #904 · 3.7 #901 (`breaking-change`: `issue.user_edited` removed; `field_provenance` is the only pin store) · 3.8 #899, plus the cover-slot uniqueness fix #905 found along the way. #903's post-hash dedupe respects `dedupe_by_content`, made live by #900.
+
 | WP | Title | Effort | Audit | Scope | Files | Done when |
 |---|---|---|---|---|---|---|
 | 3.1 | File watcher | L | R14, D1, §3.6 | `notify-debouncer-full` on local mounts; `statfs` mount-type detection; directory-mtime poll on network mounts; scoped scans; coalescing; admin dashboard mode + last trigger; per-library toggle already exists; docs Triggers table made true | new `library/watcher.rs`, `jobs/scheduler.rs`, `api/server_info.rs`, admin scan dashboard, `docs/dev/library-scanner.md` | Integration test with a temp dir (inotify) and a forced-poll mode; a 1,000-file copy triggers exactly one scan; NAS path stats directories only (assert via a counting fs shim) |
@@ -179,6 +181,8 @@ Exit: a 50k-issue NAS library imports in a predictable time, new files appear wi
 
 Exit: the reader is measured on a real phone, reads well on desktop and tablet, keeps progress offline, downloads issues for offline reading, passes axe, and ships a code-split bundle with a truthful gate.
 
+**Status (2026-09-30): 4.2–4.8 merged; 4.1 is owner-run and still open.** PRs: 4.2 #911 (`breaking-change`) · 4.3 #910 · 4.4 #913 (first-load 191 → 117 KB, gate 130 KB) · 4.5 #912 · 4.6 #914 · 4.7 #908 · 4.8 #909. 4.3, 4.5 and 4.6 were stacked and landed on main through #911. WP-4.4's gate should be re-measured after 4.2/4.3/4.5/4.6, which added reader code after the gate was set; WP-4.1 needs the owner's phone and tablet.
+
 | WP | Title | Effort | Audit | Scope | Files | Done when |
 |---|---|---|---|---|---|---|
 | 4.1 | Real-device baseline | S | D8, OP-6 | Run the `docs/dev/pwa-performance.md` protocol on your phone and tablet (Lighthouse + WebPageTest + manual page-turn timing); record numbers; fix the 24 MP decode budget and webtoon mount window if they are wrong for the device | `docs/dev/pwa-performance.md` | Table filled; any tuning change has before/after numbers |
@@ -193,6 +197,8 @@ Exit: the reader is measured on a real phone, reads well on desktop and tablet, 
 ### M5 — Discovery, annotation, and matching quality (target: 3–4 weeks of sessions)
 
 Exit: notes are durable and browsable in context; issue-level queries exist; entities have pages; TPBs and annuals match correctly.
+
+**Status (2026-09-30): all seven WPs merged.** PRs: 5.1 #917 · 5.2 #919 · 5.3 #925 (replaced #922, auto-closed when its stacked base merged) · 5.4 #921 · 5.5 #920 · 5.6 #918 · 5.7 #923, plus #924 (keyset cursors on saved-view results, `/me/markers` and admin metadata runs skipped the lookahead row at every page boundary). Owner decisions (2026-09-30): the notes export keeps every owned marker but marks ones on removed/hidden issues unavailable (no jump link); marker colour is a palette name or `#RRGGBB(AA)`; regions must fit the page; DI-20 visibility also applies to marker count/search/tags. Issue views are a separate `filter_issues` kind with keyset paging, `name` = series and `title` = issue title, `rating` = the viewer's own. Entity pages 404 when nothing is visible, sit under one "Browse" sidebar entry, and the scanner rollup now links character/team/arc/publisher rows by id (backfilled by migration; file-owned `issue_arcs` are reconciled from the `story_arc` text). Matching: ComicVine format inference feeds matching only and is never written; untagged plain-numbered issues count as singles; the format-mismatch penalty is a fixed 15 that also caps HIGH to MEDIUM.
 
 | WP | Title | Effort | Audit | Scope | Files | Done when |
 |---|---|---|---|---|---|---|
@@ -259,6 +265,13 @@ Items noticed during the audit that are real but small, to be picked up opportun
 - Rail-icon picker fix: PR #876 (open).
 - Stale scanner env defaults noticed during WP-1.5: `docs/dev/library-scanner.md` and `.env.example` say `COMIC_SCAN_WORKER_COUNT` defaults to `min(cpu, 4)` and `COMIC_SCAN_HASH_BUFFER_KB` to 64; `config.rs` has `min(cpu, 8)` and 1024. Fix alongside WP-3.1.
 - `docs/dev/comic-reader-spec.md` and `library-scanner-spec.md` still describe the intended watcher and pub/sub as design; left as specs, not claims.
+- Found during M5 (2026-09-30):
+  - `/creators/{slug}` returns 200 with empty lists when nothing is visible; align it with the entity pages' 404.
+  - A single bulk-restore endpoint for marker Undo, after which the `marker_write` burst can drop from 600 to ~60.
+  - `has_favorites` smart-view filter (only notes/bookmarks/highlights exist).
+  - Issue saved views in OPDS feeds; multi-select on the issue-view detail page.
+  - `useAdminMetadataRuns` uses `useQuery` on a `next_cursor` response, so the admin Runs tab shows only the first 25 runs; convert to `useInfiniteQuery`.
+  - The arc/character/team entity pages have OPDS 1.x feeds only; no OPDS 2.0 equivalents yet.
 
 ---
 
@@ -271,3 +284,4 @@ None. Every audit item is now either scheduled (§5) or confirmed excluded (§2)
 - 2026-09-29: D1–D10 answered; D3, D4, D5 settled per §3.1–§3.3 (reading-run model with silent follow; both clean-files rules; `curator` removed).
 - 2026-09-29: M2 started; WP-2.2 (user-data import) removed at the owner's request. All nine M2 WPs opened as #885–#892 and #895 the same day.
 - 2026-09-29: exclusion list ruled on. Pulled back in and planned: relationship suggestion engine (M7), similar series (WP-7.4), GCD provider (WP-6.1), page-hash marker anchoring (WP-6.2). All other proposed exclusions confirmed excluded. An earlier edit the same day had these four backwards; corrected.
+- 2026-09-30: M3 and M5 fully merged; M4 merged except owner-run WP-4.1. M5 owner decisions recorded in the M5 status line.
