@@ -780,9 +780,12 @@ pub async fn list(
     };
 
     let mut rows = rows;
+    // Drop the lookahead row, then cursor from the last KEPT row — the next
+    // page filters strictly after the cursor, so cursoring from the
+    // lookahead would skip it.
     let next_cursor = if rows.len() as u64 > limit {
-        let extra = rows.pop();
-        extra.map(|r| encode_cursor(r.updated_at, r.id))
+        rows.pop();
+        rows.last().map(|r| encode_cursor(r.updated_at, r.id))
     } else {
         None
     };

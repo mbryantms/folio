@@ -634,20 +634,71 @@ async fn list_filters_by_kind_q_and_cursor() {
     assert_eq!(items.len(), 1);
     assert!(items[0]["body"].as_str().unwrap().contains("lasers"));
 
-    // Pagination: small limit returns a next_cursor; second page fills.
-    let (_, page1) = http(
+    // Pagination: walk every page and require the concatenation to equal
+    // the unpaged list. Regression for the cursor being built from the
+    // popped lookahead row (the next page filters strictly after it, so
+    // one marker vanished per page boundary). Two more bookmarks bring
+    // the set to 7, and four share one `updated_at` so the id tiebreaker
+    // is exercised across a boundary.
+    for p in 5..7 {
+        http(
+            &app,
+            Method::POST,
+            "/api/me/markers",
+            Some(&auth),
+            Some(serde_json::json!({
+                "issue_id": issue_id,
+                "page_index": p,
+                "kind": "bookmark",
+            })),
+        )
+        .await;
+    }
+    {
+        use sea_orm::ConnectionTrait;
+        let db = Database::connect(&app.db_url).await.unwrap();
+        db.execute_unprepared(&format!(
+            "UPDATE markers SET updated_at = '2026-01-01T00:00:00Z' \
+             WHERE user_id = '{}' AND page_index IN (1, 2, 3, 5)",
+            auth.user_id
+        ))
+        .await
+        .unwrap();
+    }
+    let ids = |v: &serde_json::Value| -> Vec<String> {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let (_, all) = http(
         &app,
         Method::GET,
-        "/api/me/markers?limit=2",
+        "/api/me/markers?limit=100",
         Some(&auth),
         None,
     )
     .await;
-    let cursor = page1["next_cursor"].as_str().unwrap().to_owned();
-    assert_eq!(page1["items"].as_array().unwrap().len(), 2);
-    let url = format!("/api/me/markers?limit=2&cursor={cursor}");
-    let (_, page2) = http(&app, Method::GET, &url, Some(&auth), None).await;
-    assert!(!page2["items"].as_array().unwrap().is_empty());
+    let expected = ids(&all);
+    assert_eq!(expected.len(), 7);
+    let mut walked = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..20 {
+        let url = match &cursor {
+            Some(c) => format!("/api/me/markers?limit=2&cursor={c}"),
+            None => "/api/me/markers?limit=2".to_owned(),
+        };
+        let (status, page) = http(&app, Method::GET, &url, Some(&auth), None).await;
+        assert_eq!(status, StatusCode::OK, "page: {page:#?}");
+        walked.extend(ids(&page));
+        match page["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_owned()),
+            None => break,
+        }
+    }
+    assert_eq!(walked, expected, "paged walk must equal the unpaged list");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

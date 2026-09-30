@@ -1164,14 +1164,13 @@
           {
             "name": "before",
             "in": "query",
-            "description": "ISO-8601 timestamp; returns rows older than this for\ncursor-style pagination.",
+            "description": "Opaque `next_cursor` from the previous page. A plain ISO-8601\ntimestamp is still accepted (legacy form: rows strictly older).",
             "required": false,
             "schema": {
               "type": [
                 "string",
                 "null"
-              ],
-              "format": "date-time"
+              ]
             }
           }
         ],
@@ -21865,7 +21864,7 @@
               "string",
               "null"
             ],
-            "description": "`started_at` of the last row — caller passes back as `before=`\nfor the next page. `None` when no more rows."
+            "description": "Opaque cursor for the last row — caller passes it back as\n`before=` for the next page. `None` when no more rows."
           },
           "runs": {
             "type": "array",

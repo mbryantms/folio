@@ -540,9 +540,9 @@ pub struct RunsListQuery {
     pub status: Option<String>,
     /// Hard cap of 100; default 25.
     pub limit: Option<u64>,
-    /// ISO-8601 timestamp; returns rows older than this for
-    /// cursor-style pagination.
-    pub before: Option<chrono::DateTime<chrono::Utc>>,
+    /// Opaque `next_cursor` from the previous page. A plain ISO-8601
+    /// timestamp is still accepted (legacy form: rows strictly older).
+    pub before: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -568,8 +568,8 @@ pub struct RunRow {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RunsListResp {
     pub runs: Vec<RunRow>,
-    /// `started_at` of the last row — caller passes back as `before=`
-    /// for the next page. `None` when no more rows.
+    /// Opaque cursor for the last row — caller passes it back as
+    /// `before=` for the next page. `None` when no more rows.
     pub next_cursor: Option<String>,
 }
 
@@ -589,8 +589,10 @@ pub async fn list_runs(
     Query(q): Query<RunsListQuery>,
 ) -> Response {
     let limit = q.limit.unwrap_or(25).clamp(1, 100);
+    // Id tiebreaker keeps the keyset total when runs share a started_at.
     let mut query = metadata_run::Entity::find()
         .order_by_desc(metadata_run::Column::StartedAt)
+        .order_by_desc(metadata_run::Column::Id)
         .limit(limit + 1);
     if let Some(lib) = q.library_id {
         query = query.filter(metadata_run::Column::LibraryId.eq(lib));
@@ -601,8 +603,26 @@ pub async fn list_runs(
     if let Some(status) = q.status.as_deref().filter(|s| !s.is_empty()) {
         query = query.filter(metadata_run::Column::Status.eq(status));
     }
-    if let Some(before) = q.before {
-        query = query.filter(metadata_run::Column::StartedAt.lt(before.fixed_offset()));
+    if let Some(before) = q.before.as_deref().filter(|s| !s.is_empty()) {
+        if let Ok((at, id)) = shared::pagination::decode_cursor::<(
+            chrono::DateTime<chrono::FixedOffset>,
+            Uuid,
+        )>(before)
+        {
+            query = query.filter(
+                sea_orm::Condition::any()
+                    .add(metadata_run::Column::StartedAt.lt(at))
+                    .add(
+                        sea_orm::Condition::all()
+                            .add(metadata_run::Column::StartedAt.eq(at))
+                            .add(metadata_run::Column::Id.lt(id)),
+                    ),
+            );
+        } else if let Ok(at) = chrono::DateTime::parse_from_rfc3339(before) {
+            query = query.filter(metadata_run::Column::StartedAt.lt(at));
+        } else {
+            return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor");
+        }
     }
     let mut rows = match query.all(&app.db).await {
         Ok(r) => r,
@@ -611,9 +631,12 @@ pub async fn list_runs(
             return error(StatusCode::BAD_GATEWAY, "internal", "internal");
         }
     };
+    // Drop the lookahead row, then cursor from the last KEPT row — the next
+    // page filters strictly after the cursor.
     let next_cursor = if rows.len() as u64 > limit {
-        let extra = rows.pop().unwrap();
-        Some(extra.started_at.to_rfc3339())
+        rows.pop();
+        rows.last()
+            .and_then(|r| shared::pagination::encode_cursor(&(r.started_at, r.id)).ok())
     } else {
         None
     };
