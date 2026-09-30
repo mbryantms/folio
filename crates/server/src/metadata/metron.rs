@@ -685,6 +685,14 @@ fn series_list_to_candidate(s: &MSeriesList) -> Option<SeriesCandidate> {
         // `images[]` / `variants[]`. Populated by M5.x follow-up
         // when the orchestrator pre-fetches top-K candidate details.
         alternate_cover_urls: Vec::new(),
+        // WP-5.6: the list response has no `series_type`; infer from
+        // the (display-year-stripped) name.
+        format: s
+            .series
+            .as_deref()
+            .map(strip_display_year)
+            .and_then(|n| crate::metadata::title_norm::infer_format_from_title(&n, None))
+            .map(str::to_owned),
     })
 }
 
@@ -710,6 +718,17 @@ fn issue_list_to_candidate(i: &MIssueListItem) -> Option<IssueCandidate> {
         // Same as series search above — variants come from the
         // issue-detail `variants[]` payload, not list responses.
         alternate_cover_urls: Vec::new(),
+        // WP-5.6: the series ref's `series_type` when Metron includes
+        // it, else inferred from the series name.
+        format: series_ref
+            .and_then(|s| s.series_type.as_ref())
+            .and_then(|t| t.name.clone())
+            .or_else(|| {
+                series_ref
+                    .and_then(|s| s.name.as_deref())
+                    .and_then(|n| crate::metadata::title_norm::infer_format_from_title(n, None))
+                    .map(str::to_owned)
+            }),
     })
 }
 
@@ -738,10 +757,17 @@ fn series_detail_to_metadata(s: MSeriesDetail) -> GenericMetadata {
             "series",
         ));
     }
+    let series_type = s.series_type.and_then(|t| t.name);
     GenericMetadata {
         series_name: s.name,
         series_sort_name: s.sort_name,
-        series_type: s.series_type.and_then(|t| t.name),
+        // WP-5.6: ComicInfo-vocabulary format from the series type
+        // (ongoing → None; see `metron_series_type_format`).
+        format: series_type
+            .as_deref()
+            .and_then(crate::metadata::title_norm::metron_series_type_format)
+            .map(str::to_owned),
+        series_type,
         volume: s.volume,
         year_began: s.year_began,
         year_end: s.year_end,
@@ -880,6 +906,11 @@ fn issue_detail_to_metadata(i: MIssueDetail) -> GenericMetadata {
         series_type: series_ref
             .and_then(|s| s.series_type.as_ref())
             .and_then(|t| t.name.clone()),
+        format: series_ref
+            .and_then(|s| s.series_type.as_ref())
+            .and_then(|t| t.name.as_deref())
+            .and_then(crate::metadata::title_norm::metron_series_type_format)
+            .map(str::to_owned),
         credits,
         characters,
         teams,
@@ -1173,6 +1204,49 @@ mod tests {
             Some("12345")
         );
         assert_eq!(by_source(Source::Gcd).map(|i| i.id.as_str()), Some("98765"));
+    }
+
+    #[test]
+    fn series_type_populates_series_type_and_format() {
+        // WP-5.6: ongoing keeps series_type but writes no Format.
+        let ongoing: MSeriesDetail = serde_json::from_value(json!({
+            "id": 1, "name": "Saga",
+            "series_type": {"id": 1, "name": "Ongoing Series"}
+        }))
+        .unwrap();
+        let m = series_detail_to_metadata(ongoing);
+        assert_eq!(m.series_type.as_deref(), Some("Ongoing Series"));
+        assert_eq!(m.format, None);
+        let tpb: MSeriesDetail = serde_json::from_value(json!({
+            "id": 2, "name": "Saga",
+            "series_type": {"id": 5, "name": "Trade Paperback"}
+        }))
+        .unwrap();
+        let m = series_detail_to_metadata(tpb);
+        assert_eq!(m.series_type.as_deref(), Some("Trade Paperback"));
+        assert_eq!(m.format.as_deref(), Some("TPB"));
+    }
+
+    #[test]
+    fn issue_list_candidate_carries_format_hint() {
+        let typed: MIssueListItem = serde_json::from_value(json!({
+            "id": 7, "number": "1",
+            "series": {"id": 3, "name": "X-Men Annual", "year_began": 2020,
+                       "series_type": {"id": 9, "name": "Annual Series"}}
+        }))
+        .unwrap();
+        let c = issue_list_to_candidate(&typed).unwrap();
+        assert_eq!(c.format.as_deref(), Some("Annual Series"));
+        // No series_type in the list payload → inferred from the name.
+        let untyped: MIssueListItem = serde_json::from_value(json!({
+            "id": 8, "number": "1",
+            "series": {"id": 4, "name": "Saga TPB", "year_began": 2012}
+        }))
+        .unwrap();
+        assert_eq!(
+            issue_list_to_candidate(&untyped).unwrap().format.as_deref(),
+            Some("TPB")
+        );
     }
 
     #[test]

@@ -53,6 +53,7 @@ fn ranked(bucket: Confidence) -> RankedCandidate {
             cover_image_url: None,
             deck: None,
             alternate_cover_urls: Vec::new(),
+            format: None,
         }),
     }
 }

@@ -410,6 +410,7 @@ pub async fn enqueue_series_search(
         year: row.year,
         publisher: row.publisher.clone(),
         volume: row.volume,
+        format: row.series_type.clone(),
     };
     let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
     if providers.is_empty() {
@@ -505,6 +506,12 @@ pub async fn enqueue_issue_search(
         volume: s.volume,
         issue_number,
         issue_year: i.year,
+        format: crate::metadata::matcher::local_issue_format_hint(
+            i.format.as_deref(),
+            i.special_type.as_deref(),
+            s.series_type.as_deref(),
+            i.manga.as_deref(),
+        ),
     };
 
     let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());

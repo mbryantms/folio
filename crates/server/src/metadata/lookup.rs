@@ -298,6 +298,8 @@ pub fn series_candidate_from_detail(
         cover_image_url: detail.cover_image_url.clone(),
         deck: detail.deck.clone(),
         alternate_cover_urls: detail.cover_image_alt_urls.clone(),
+        // WP-5.6: format hint for the matcher.
+        format: detail.series_type.clone().or_else(|| detail.format.clone()),
     }
 }
 
@@ -322,6 +324,8 @@ pub fn issue_candidate_from_detail(
         series_external_id: detail.series_external_id.clone(),
         cover_image_url: detail.cover_image_url.clone(),
         alternate_cover_urls: detail.cover_image_alt_urls.clone(),
+        // WP-5.6: format hint for the matcher.
+        format: detail.series_type.clone().or_else(|| detail.format.clone()),
     }
 }
 

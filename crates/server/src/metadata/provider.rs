@@ -137,6 +137,13 @@ pub struct SeriesCandidate {
     /// Empty for search responses that don't carry variant URLs.
     #[serde(default)]
     pub alternate_cover_urls: Vec<String>,
+    /// WP-5.6: publication-format hint for the matcher's soft format
+    /// penalty — Metron's `series_type` name when the response carries
+    /// it, else a label inferred from the name / deck
+    /// ([`crate::metadata::title_norm::infer_format_from_title`]).
+    /// `None` = unknown (never penalised).
+    #[serde(default)]
+    pub format: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -158,6 +165,10 @@ pub struct IssueCandidate {
     /// when one of its alternates matches.
     #[serde(default)]
     pub alternate_cover_urls: Vec<String>,
+    /// WP-5.6: publication-format hint of the candidate's series (see
+    /// [`SeriesCandidate::format`]).
+    #[serde(default)]
+    pub format: Option<String>,
 }
 
 // ───────── normalized detail (read by M4 Apply jobs) ─────────

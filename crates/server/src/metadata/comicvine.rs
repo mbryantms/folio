@@ -468,6 +468,8 @@ fn cv_volume_to_candidate(v: &CvVolume) -> Option<SeriesCandidate> {
         // Populated by M5.x follow-up when the orchestrator pre-fetches
         // top-K candidate details.
         alternate_cover_urls: Vec::new(),
+        // WP-5.6: CV has no volume-type field; infer from name + deck.
+        format: cv_volume_format(v).map(str::to_owned),
     })
 }
 
@@ -498,11 +500,41 @@ fn cv_issue_to_candidate(issue: &CvIssue) -> Option<IssueCandidate> {
         // CV /issues search response doesn't surface variant covers;
         // populated by detail-fetch follow-up.
         alternate_cover_urls: Vec::new(),
+        // WP-5.6: the embedded volume ref carries only its name.
+        format: issue
+            .volume
+            .as_ref()
+            .and_then(cv_volume_format)
+            .map(str::to_owned),
     })
+}
+
+/// WP-5.6: ComicVine exposes no volume type, so a volume's format is
+/// inferred from its name + deck (`"Saga TPB"`, `"X-Men Annual"`,
+/// deck `"Collects #1-6"`). `None` when nothing says so.
+fn cv_volume_format(v: &CvVolume) -> Option<&'static str> {
+    crate::metadata::title_norm::infer_format_from_title(
+        v.name.as_deref().unwrap_or(""),
+        v.deck.as_deref(),
+    )
+}
+
+/// Metron-vocabulary `series_type` for an inferred CV format label, so
+/// `series.series_type` reads the same whichever provider set it.
+fn cv_series_type(format: &str) -> Option<&'static str> {
+    match format {
+        "TPB" => Some("Trade Paperback"),
+        "Hardcover" => Some("Hard Cover"),
+        "Omnibus" => Some("Omnibus"),
+        "Graphic Novel" => Some("Graphic Novel"),
+        "Annual" => Some("Annual Series"),
+        _ => None,
+    }
 }
 
 fn cv_volume_to_metadata(v: CvVolume) -> GenericMetadata {
     let external_id = v.id.map(|n| n.to_string()).unwrap_or_default();
+    let format = cv_volume_format(&v);
     let (cover, alts) = best_image_url(&v.image);
     let mut identifiers = vec![Identifier::with_canonical_url(
         Source::ComicVine,
@@ -520,6 +552,8 @@ fn cv_volume_to_metadata(v: CvVolume) -> GenericMetadata {
     }
     GenericMetadata {
         series_name: v.name,
+        series_type: format.and_then(cv_series_type).map(str::to_owned),
+        format: format.map(str::to_owned),
         year_began: parse_year(&v.start_year),
         publisher: v.publisher.as_ref().and_then(|p| p.name.clone()),
         deck: v.deck,
@@ -647,6 +681,7 @@ fn cv_credit_to_credit(c: &CvPersonCredit) -> Option<CreditCandidate> {
 
 fn cv_issue_to_metadata(issue: CvIssue) -> GenericMetadata {
     let external_id = issue.id.map(|n| n.to_string()).unwrap_or_default();
+    let issue_format = issue.volume.as_ref().and_then(cv_volume_format);
     let (cover, alts) = best_image_url(&issue.image);
     let mut identifiers = vec![Identifier::with_canonical_url(
         Source::ComicVine,
@@ -757,6 +792,9 @@ fn cv_issue_to_metadata(issue: CvIssue) -> GenericMetadata {
         cover_image_alt_urls: alts,
         aliases: split_aliases(&issue.aliases),
         series_name: issue.volume.as_ref().and_then(|v| v.name.clone()),
+        // WP-5.6: format inferred from the parent volume's name.
+        series_type: issue_format.and_then(cv_series_type).map(str::to_owned),
+        format: issue_format.map(str::to_owned),
         series_external_id: issue
             .volume
             .as_ref()
@@ -1090,6 +1128,36 @@ mod tests {
         assert_eq!(c.year, Some(2012));
         assert_eq!(c.publisher.as_deref(), Some("Image Comics"));
         assert_eq!(c.issue_count, Some(60));
+        // WP-5.6: an ongoing name + non-"Collects" deck → no format.
+        assert_eq!(c.format, None);
+    }
+
+    #[test]
+    fn infers_cv_volume_format_from_name_and_deck() {
+        let vol = |name: &str, deck: Option<&str>| CvVolume {
+            id: Some(1),
+            name: Some(name.into()),
+            start_year: Some("2012".into()),
+            publisher: None,
+            deck: deck.map(str::to_owned),
+            description: None,
+            image: None,
+            count_of_issues: None,
+            site_detail_url: None,
+            date_last_updated: None,
+            aliases: None,
+        };
+        let c = cv_volume_to_candidate(&vol("Saga", Some("Collects #1-6."))).unwrap();
+        assert_eq!(c.format.as_deref(), Some("TPB"));
+        let m = cv_volume_to_metadata(vol("Saga", Some("Collects #1-6.")));
+        assert_eq!(m.format.as_deref(), Some("TPB"));
+        assert_eq!(m.series_type.as_deref(), Some("Trade Paperback"));
+        let m = cv_volume_to_metadata(vol("X-Men Annual", None));
+        assert_eq!(m.format.as_deref(), Some("Annual"));
+        assert_eq!(m.series_type.as_deref(), Some("Annual Series"));
+        let m = cv_volume_to_metadata(vol("Saga", None));
+        assert_eq!(m.format, None);
+        assert_eq!(m.series_type, None);
     }
 
     #[test]

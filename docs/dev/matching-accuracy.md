@@ -60,10 +60,79 @@ A search runs in this order:
    MEDIUM. Two near-identical covers in the same candidate set means
    we can't be confident which is right — the user should pick
    explicitly.
-5. **MatchOutcome classification** ([`api::metadata_search::build_match_outcome_view`](../../crates/server/src/api/metadata_search.rs))
+5. **Format awareness (WP-5.6)** — see
+   [Format / series-type awareness](#format--series-type-awareness)
+   below. A known collected-vs-single (or annual-vs-either) mismatch
+   subtracts `FORMAT_MISMATCH_PENALTY` (15) from the text `total` and
+   caps the bucket at MEDIUM. It never moves MEDIUM or LOW.
+6. **MatchOutcome classification** ([`api::metadata_search::build_match_outcome_view`](../../crates/server/src/api/metadata_search.rs))
    reduces the ranked list to one of five outcomes the dialog UX
    speaks: `single_good / multi_good / single_bad_cover /
    multi_bad_cover / no_match`.
+
+### Format / series-type awareness
+
+WP-5.6 (audit R13). Trades, annuals and manga volumes used to be
+matched as if every file were a single periodical issue.
+
+**Format classes.** Every vocabulary folds onto
+[`title_norm::FormatClass`](../../crates/server/src/metadata/title_norm.rs)
+(`Single` / `Annual` / `Collected`) through `classify_format`:
+
+| Source | Signal |
+|---|---|
+| Metron | `series_type` on series details and (when present) issue list/detail series refs: `Ongoing Series`, `Limited Series`, `One-Shot` → Single; `Annual Series` → Annual; `Trade Paperback`, `Hard Cover`, `Omnibus`, `Graphic Novel` → Collected |
+| ComicVine | CV volumes have **no type field**. `infer_format_from_title` reads the volume name (`TPB`, `TP`, `HC`, `Omnibus`, `Compendium`, `Graphic Novel`, `… Edition`, trailing `Annual`) and a deck that opens with `Collects…` |
+| Local issue | `matcher::local_issue_format_hint`, first match wins: manga flag → neutral; ComicInfo `Format`; scanner `special_type` `TPB`/`Annual`; `series.series_type` |
+| Local series | `series.series_type` |
+
+Anything unrecognised is **unknown, and unknown never penalises**. Manga
+(`issue.manga = Yes*`) is always neutral, because a manga "issue" is a
+tankōbon volume that providers file as either ongoing issues or trades.
+A `OneShot` special type is skipped too, because the scanner infers it
+from a missing number.
+
+**Penalty.** Both sides must be known and differ. Then
+`Score.format = -FORMAT_MISMATCH_PENALTY` (a fixed 15 points, not
+operator-tunable), `Score.format_mismatch = true`, and `Score::bucket`
+demotes HIGH to MEDIUM. A perfect-text mismatch therefore lands at 65
+(series) or 72.5 (issue). Both are below HIGH (80) but still MEDIUM
+(≥ 60), so the candidate stays in the review queue. The cap also applies
+when the cover decides HIGH, because a trade's cover is usually its
+first issue's cover. It is the same shape as the gap-to-next-best guard.
+The ladder constants are unchanged.
+
+**Provider apply.** `GenericMetadata.format` is now populated with a
+ComicInfo-vocabulary label (`TPB`, `Hardcover`, `Omnibus`,
+`Graphic Novel`, `Annual`, `Limited Series`, `One-Shot`). Metron
+*ongoing* and *cancelled* series map to `None`, so applying a periodical
+never rewrites every file's `Format` to `Series`. ComicVine volumes also
+fill `series_type` in Metron's vocabulary when a format is inferred.
+
+**Issue numbers.** `title_norm::issue_number_key` is the comparison key.
+It is numeric (`1` = `01` = `1.0`, `½` = `0.5` = `1/2`, `1½` = `1.5`),
+keeps the suffix distinct (`14AU` = `14.AU` = `14 au` ≠ `14`), and
+parses `Annual` (`Annual 1` = `annual #01` = `Ann. 1`) and volume
+(`Vol. 03` = `v03` = `3`) markers. `matcher::canonical_issue_number`,
+the provider-query form, gained the unambiguous subset: drop `#`,
+`Annual N` spelling, drop volume prefixes, `014au` → `14AU`. Vulgar
+fractions and dotted suffixes (`1.NOW`) pass through verbatim.
+
+**Annuals.** ComicVine and Metron file `X-Men Annual #1` as issue `1`
+of a separate `X-Men Annual` series.
+
+- The issue scorer resolves annual-ness on each side from the number,
+  the format, or an `Annual` word in the series name. When both sides
+  are annual it compares the parent titles, and a candidate start year
+  between the parent's start and this annual's cover year counts as a
+  full year match.
+- The orchestrator (`annual_query_rewrite`) searches
+  `"<Series> Annual"` + `N`. It narrows only to a `series_provider_range`
+  target, never to the parent series' default id, and year-gates on the
+  annual's cover year.
+
+**Article list.** The 23-word article list is unchanged. No fixture yet
+shows a need for a language-aware list.
 
 ### Operator-tunable settings
 
