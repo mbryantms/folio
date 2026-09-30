@@ -215,5 +215,53 @@ test.describe("Reader flow", () => {
     await expect(
       page.getByRole("link", { name: "Continue reading" }),
     ).toBeVisible();
+
+    // 9. Durable progress outbox (WP-4.5): turn a page offline, kill the
+    //    tab before anything reaches the server, come back online and
+    //    relaunch — the queued write replays from IndexedDB.
+    await page.goto(`/read/${series.slug}/${issue.slug}`);
+    await expect(page.locator("img[src*='/pages/']").first()).toBeVisible();
+    await context.setOffline(true);
+    await page.keyboard.press("ArrowRight");
+    const queued = () =>
+      page.evaluate(
+        () =>
+          new Promise<number>((resolve) => {
+            const req = indexedDB.open("folio-outbox");
+            req.onerror = () => resolve(-1);
+            req.onsuccess = () => {
+              const db = req.result;
+              if (!db.objectStoreNames.contains("entries")) {
+                db.close();
+                return resolve(0);
+              }
+              const count = db
+                .transaction("entries")
+                .objectStore("entries")
+                .count();
+              count.onsuccess = () => {
+                db.close();
+                resolve(count.result);
+              };
+            };
+          }),
+      );
+    await expect.poll(queued, { message: "write queued offline" }).toBe(1);
+    await page.close();
+    const serverPage = async () =>
+      (
+        await json<Progress>(
+          context.request.get(
+            `/api/progress?issue_id=${encodeURIComponent(issue.id)}`,
+          ),
+        )
+      ).records[0]?.page;
+    await context.setOffline(false);
+    expect(await serverPage(), "nothing reached the server offline").toBe(1);
+    const relaunched = await context.newPage();
+    await relaunched.goto("/");
+    await expect
+      .poll(serverPage, { message: "outbox replays on relaunch" })
+      .toBe(2);
   });
 });

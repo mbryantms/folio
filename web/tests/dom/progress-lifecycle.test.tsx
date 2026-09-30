@@ -85,8 +85,14 @@ it("opens a new run on restart, then echoes the run the server returns", async (
   });
   expect(api.send).toHaveBeenCalledTimes(1);
   const first = JSON.parse(api.send.mock.calls[0]![1].body as string);
-  expect(first).toMatchObject({ issue_id: "a", page: 1, restart: true });
-  expect(first.run).toBeUndefined();
+  // The restart carries the run it leaves, so the server applies it once
+  // (a replayed or duplicated restart is an ordinary write — WP-4.5).
+  expect(first).toMatchObject({
+    issue_id: "a",
+    page: 1,
+    restart: true,
+    run: 2,
+  });
 
   rerender({ page: 2 });
   await act(async () => {

@@ -51,6 +51,22 @@ self.addEventListener("message", (event) => {
     writes.then(() => event.ports[0]?.postMessage({ cleared: true })),
   );
 });
+// Durable outbox (WP-4.5): Background Sync only wakes open windows. The
+// replay itself stays in the page, which holds the CSRF cookie token and
+// the access-token refresh path; a worker-side POST could do neither.
+self.addEventListener("sync", (event: Event) => {
+  const sync = event as ExtendableEvent & { tag?: string };
+  if (sync.tag !== "folio-outbox") return;
+  sync.waitUntil(
+    self.clients
+      .matchAll({ type: "window" })
+      .then((windows) =>
+        windows.forEach((client) =>
+          client.postMessage({ type: "FOLIO_OUTBOX_REPLAY" }),
+        ),
+      ),
+  );
+});
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     Promise.all(LEGACY_CACHES.map((name) => caches.delete(name))),

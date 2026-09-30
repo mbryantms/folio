@@ -16,8 +16,12 @@ promises made by the offline fallback.
   update checks, opt-in reload in the accepting window, Later, and a settings
   update action. Another window's update never reloads the reader.
 - Progress retained until 2xx, serialized writes, hidden/pagehide/online flush,
-  and removal of pending writes on account reset. This buffer is memory-only:
-  failed writes do not survive terminating the application.
+  and removal of pending writes on account reset. Since WP-4.5 every progress
+  and reading-session write is also queued in an IndexedDB outbox
+  (`web/lib/pwa/outbox.ts`) and replayed on launch, `online`, tab-visible, a
+  retry backoff, and (Chromium) a Background Sync wake-up — so a write made
+  offline survives terminating the application. See
+  `pwa-offline-reading-plan.md` step 5 for the contract.
 - Stable manifest identity and Library/Bookmarks shortcuts, install discovery
   with browser-owned prompts or platform instructions, persistent settings UI.
 - Generated theme-color values from CSS, client chrome synchronization, dark
@@ -76,7 +80,8 @@ assets. Never capture real private library content for manifest screenshots.
 ## Automated checks
 
 - `pnpm --filter web test`: worker bypass/fallback/migration, progress retry and
-  ordering, update acceptance, development registration, wake-lock lifecycle,
+  ordering, outbox kill-and-relaunch replay and run safety
+  (`tests/dom/progress-outbox.test.tsx`), update acceptance, development registration, wake-lock lifecycle,
   safe-area regression, viewport themes, and auth destination validation.
 - `pnpm --filter web build`: verifies generated theme colors and compiles the
   actual service worker after Next. Regenerate colors with
