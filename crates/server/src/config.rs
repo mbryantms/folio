@@ -296,6 +296,19 @@ pub struct Config {
     /// `build_providers` order. Parsed via [`Config::merge_provider_preference`].
     #[serde(default)]
     pub metadata_merge_provider_preference: String,
+
+    /// Hard-purge window multiplier (roadmap WP-3.5). The daily purge
+    /// sweep ([`crate::jobs::hard_purge`]) deletes issue / empty-series
+    /// rows whose `removal_confirmed_at` is older than
+    /// `library.soft_delete_days × this` days. `0` disables purging.
+    /// Default 2. DB key `library.hard_purge_multiplier`; live (read on
+    /// every sweep).
+    #[serde(default = "default_hard_purge_multiplier")]
+    pub library_hard_purge_multiplier: u32,
+}
+
+fn default_hard_purge_multiplier() -> u32 {
+    2
 }
 
 fn default_weekly_refresh_cron() -> String {
@@ -705,6 +718,12 @@ impl Config {
         check_range("scan_hash_buffer_kb", self.scan_hash_buffer_kb, 64, 65_536)?;
         check_range("archive_work_parallel", self.archive_work_parallel, 1, 64)?;
         check_range("thumb_inline_parallel", self.thumb_inline_parallel, 1, 64)?;
+        check_range(
+            "library_hard_purge_multiplier",
+            self.library_hard_purge_multiplier,
+            0,
+            100,
+        )?;
         Ok(())
     }
 
@@ -1160,6 +1179,13 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(n) => cfg.metadata_stale_after_days = n as u32,
             None => bad_type(&row.key, "uint", &row.value),
         },
+        // ──── WP-3.5 hard purge ────
+        "library.hard_purge_multiplier" => match row.value.as_u64() {
+            // Unclamped so `Config::validate` rejects an out-of-range PATCH
+            // (dry-run 400) instead of silently saturating it.
+            Some(n) => cfg.library_hard_purge_multiplier = u32::try_from(n).unwrap_or(u32::MAX),
+            None => bad_type(&row.key, "uint", &row.value),
+        },
         "metadata.auto_apply_threshold" => match row.value.as_u64() {
             Some(n) => cfg.metadata_auto_apply_threshold = n.min(100) as u32,
             None => bad_type(&row.key, "uint", &row.value),
@@ -1346,6 +1372,7 @@ mod tests {
             metadata_match_medium_threshold: default_metadata_match_medium_threshold(),
             metadata_alternate_cover_fetch_cap: default_metadata_alternate_cover_fetch_cap(),
             metadata_merge_provider_preference: String::new(),
+            library_hard_purge_multiplier: default_hard_purge_multiplier(),
         }
     }
 

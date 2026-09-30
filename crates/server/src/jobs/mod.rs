@@ -38,6 +38,7 @@ pub mod archive_transforms;
 pub mod backfill;
 pub mod backup_prune;
 pub mod close_dangling_sessions;
+pub mod hard_purge;
 pub mod metadata_apply;
 pub mod metadata_resume;
 pub mod metadata_search;

@@ -76,7 +76,10 @@ row per change.
 - **Out-of-scan jobs** (one-off `record`, no `scan_run_id`): thumbnail
   failures (`jobs/post_scan.rs`), metadata apply (`jobs/metadata_apply.rs`),
   archive edit + sidecar writeback (`jobs/archive_edit.rs`,
-  `jobs/rewrite_sidecars.rs`).
+  `jobs/rewrite_sidecars.rs`), and the daily hard purge
+  (`jobs/hard_purge.rs`, `record_many`): one `issue`/`series` +
+  `purged` row per hard-deleted entity, with the lost markers / progress /
+  sessions / collection-entry / rating counts in `detail`.
 
 Deliberate non-overlap choices: malformed/encrypted/duplicate files stay
 **health-issue-only** (not double-logged as events); successful thumbnail

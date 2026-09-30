@@ -84,6 +84,9 @@ pub enum Action {
     Generated,
     Applied,
     Errored,
+    /// Hard-deleted by the daily purge sweep (WP-3.5) — terminal, unlike
+    /// `Removed` (soft-delete, restorable).
+    Purged,
 }
 
 impl Action {
@@ -101,6 +104,7 @@ impl Action {
             Self::Generated => "generated",
             Self::Applied => "applied",
             Self::Errored => "errored",
+            Self::Purged => "purged",
         }
     }
 }

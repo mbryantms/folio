@@ -25,6 +25,7 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     scheduler.start().await?;
     register_library_scans(&scheduler, &state).await;
     register_reconcile_sweep(&scheduler, &state).await;
+    register_hard_purge(&scheduler, &state).await;
     register_scan_runs_prune(&scheduler, &state).await;
     register_library_events_prune(&scheduler, &state).await;
     register_thumbnail_orphan_sweep(&scheduler, &state).await;
@@ -453,6 +454,45 @@ async fn register_backup_prune(scheduler: &JobScheduler, state: &AppState) {
             }
         }
         Err(e) => tracing::error!(error = %e, "scheduler: build backup_prune failed"),
+    }
+}
+
+/// Daily hard-purge sweep (roadmap WP-3.5). Runs at 04:15 UTC: after the
+/// 04:00 auto-confirm sweep (so a row confirmed today is already stamped —
+/// though it can't be purged until `soft_delete_days × multiplier` more days
+/// pass) and before the 04:30 thumbnail orphan sweep, which then reaps the
+/// purged issues' on-disk artifacts. The multiplier is read from the live
+/// config on every fire, so `library.hard_purge_multiplier = 0` disables it
+/// without a restart.
+async fn register_hard_purge(scheduler: &JobScheduler, state: &AppState) {
+    let state = state.clone();
+    let job_result = Job::new_async("0 15 4 * * *", move |_uuid, _l| {
+        let state = state.clone();
+        Box::pin(async move {
+            match crate::jobs::hard_purge::run(&state).await {
+                Ok(stats) => {
+                    if stats.issues > 0 || stats.series > 0 {
+                        tracing::info!(
+                            issues = stats.issues,
+                            series = stats.series,
+                            libraries = stats.libraries,
+                            "hard purge: deleted confirmed-removed rows"
+                        );
+                    }
+                }
+                Err(e) => tracing::error!(error = %e, "hard purge failed"),
+            }
+        })
+    });
+    match job_result {
+        Ok(job) => {
+            if let Err(e) = scheduler.add(job).await {
+                tracing::error!(error = %e, "scheduler: add hard_purge failed");
+            } else {
+                tracing::info!("hard purge registered (daily at 04:15 UTC)");
+            }
+        }
+        Err(e) => tracing::error!(error = %e, "scheduler: build hard_purge failed"),
     }
 }
 
