@@ -78,7 +78,7 @@ Shipped:
 - **Decode worker** — `web/workers/decode.ts` uses `createImageBitmap` (not WebCodecs `ImageDecoder`) per §7.2
 - **Progress endpoint** — `POST /progress` upsert + `GET /progress?since=…` delta sync, ACL-checked, `X-Progress-Api: 1` forward-compat header per §9.7
 - **Basic OPDS 1.2** — `/opds/v1` root, `/opds/v1/series` (paginated), `/opds/v1/series/{id}`, `/opds/v1/recent`, `/opds/v1/search?q=…`, `/opds/v1/issues/{id}/file` direct download. JWT only; ACL-filtered. Atom XML emission with explicit XML escaping
-- **Reader bundle budget gate** — `web/scripts/check-bundle-size.mjs` parses `next build` output and asserts `/[locale]/read/[id]` First Load JS ≤ 150 KB gzip; also greps reader sources for forbidden imports (`framer-motion`, `@tiptap/*`, `@dnd-kit/*`). Wired into `web-check` CI job. **Current: 108 KB / 150 KB**
+- **Reader bundle budget gate** — `web/scripts/check-bundle-size.mjs` parses `next build` output and asserts `/[locale]/read/[id]` First Load JS ≤ 150 KB gzip; also greps reader sources for forbidden imports (`framer-motion`, `@tiptap/*`, `@dnd-kit/*`). Wired into `web-check` CI job. **Superseded:** the gate now reads the route's client-reference manifest (not the build summary); current numbers and ceiling (117.5 KB / 130 KB after WP-4.4) live in `docs/dev/pwa-performance.md`
 - **axe-core a11y baseline** — Playwright config + sign-in-page WCAG 2.2 AA test; CI runs it after `next start`
 - **k6 soak script** — `tests/soak/k6-reader.js`: 10 VUs page through one issue for 1 hour, asserts no 5xx + p99 < 2 s
 - **Postgres test image pinned** — testcontainers-modules defaults to `postgres:11-alpine` which predates `STORED` generated columns; `with_tag("17-alpine")` matches the prod compose stack

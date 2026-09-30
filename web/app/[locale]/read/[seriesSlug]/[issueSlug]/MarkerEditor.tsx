@@ -23,7 +23,7 @@ import {
   useCreateMarker,
   useDeleteMarker,
   useUpdateMarker,
-} from "@/lib/api/mutations";
+} from "@/lib/api/mutations/markers";
 import type { MarkerSelection } from "@/lib/api/types";
 import { useReaderStore } from "@/lib/reader/store";
 import { statusToneText } from "@/lib/ui/status-tone";

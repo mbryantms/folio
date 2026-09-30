@@ -8,7 +8,7 @@ import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type * as Queries from "@/lib/api/queries";
-import type * as Mutations from "@/lib/api/mutations";
+import type * as Mutations from "@/lib/api/mutations/markers";
 
 // vi.mock factories are hoisted above imports, so anything they close over
 // must be hoisted too.
@@ -32,7 +32,7 @@ vi.mock("@/lib/api/queries", async (importOriginal) => ({
     data: { items: [{ tag: "action" }, { tag: "adventure" }] },
   }),
 }));
-vi.mock("@/lib/api/mutations", async (importOriginal) => ({
+vi.mock("@/lib/api/mutations/markers", async (importOriginal) => ({
   ...(await importOriginal<typeof Mutations>()),
   useCreateMarker: () => ({ mutate: createMutate, isPending: false }),
   useUpdateMarker: () => ({ mutate: vi.fn(), isPending: false }),

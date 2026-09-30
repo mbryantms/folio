@@ -512,13 +512,37 @@ jobs:
           pnpm --filter web run build
           elapsed=$(($(date +%s) - start))
           echo "| build | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
+      # WP-4.4: make regressions diagnosable, not just gated. The Turbopack
+      # analyzer (`--output`: static UI + data, no second build) runs first
+      # so the budget step can attribute every first-load chunk to its
+      # largest modules; the per-chunk table lands in the job summary and
+      # both go up as the `reader-bundle-report` artifact (open
+      # `analyze/index.html` from it with any static server).
+      - name: Bundle analyzer
+        if: env.WEB == 'true'
+        working-directory: web
+        run: |
+          start=$(date +%s)
+          pnpm exec next experimental-analyze --output
+          elapsed=$(($(date +%s) - start))
+          echo "| next experimental-analyze | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
       - name: Reader bundle budget
         if: env.WEB == 'true'
         run: |
           start=$(date +%s)
-          pnpm --filter web run check-bundle-size
+          pnpm --filter web run check-bundle-size --report bundle-report
           elapsed=$(($(date +%s) - start))
           echo "| check-bundle-size | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload bundle report
+        if: always() && env.WEB == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reader-bundle-report
+          path: |
+            web/bundle-report/
+            web/.next/diagnostics/analyze/
+          if-no-files-found: ignore
+          retention-days: 14
       # Playwright is intentionally not run in CI. The current specs
       # only cover two static-degradation a11y checks (sign-in,
       # forgot-password); the reader-flow walk-through that would

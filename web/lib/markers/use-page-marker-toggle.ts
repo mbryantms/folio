@@ -3,7 +3,10 @@
 import { useCallback, useMemo } from "react";
 import { toast } from "sonner";
 
-import { useCreateMarker, useDeleteMarkerById } from "@/lib/api/mutations";
+import {
+  useCreateMarker,
+  useDeleteMarkerById,
+} from "@/lib/api/mutations/markers";
 import { useIssueMarkers } from "@/lib/api/queries";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type { MarkerKind, MarkerView } from "@/lib/api/types";

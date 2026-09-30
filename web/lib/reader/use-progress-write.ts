@@ -2,7 +2,7 @@ import { useEffect, useRef, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch, getCsrfToken } from "@/lib/api/auth-refresh";
-import { invalidateRails } from "@/lib/api/mutations";
+import { invalidateRails } from "@/lib/api/mutations/rails";
 import { queryKeys } from "@/lib/api/queries";
 import { nextPersistedProgressPage } from "@/lib/reader/webtoon-window";
 

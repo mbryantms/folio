@@ -42,7 +42,9 @@ import {
 } from "@/components/ui/tooltip";
 import { useReaderWakeLock } from "@/lib/reader/use-wake-lock";
 import { usePageTextPanel } from "@/lib/reader/page-text";
-import { ReaderSettings } from "./ReaderSettings";
+// Lazy: the settings body (sliders, switches, segmented controls) only
+// loads when the popover is first opened or the gear shows intent.
+import { ReaderSettings, preloadReaderSettings } from "./lazy";
 import { ReadingProgress } from "./ReadingProgress";
 
 const AUTO_HIDE_MS = 4000;
@@ -524,6 +526,10 @@ function PageTextButton() {
   );
 }
 
+function preloadSettingsOnIntent() {
+  void preloadReaderSettings();
+}
+
 function SettingsButton({
   seriesId,
   onPinChange,
@@ -539,6 +545,11 @@ function SettingsButton({
             <button
               type="button"
               aria-label="Reader settings"
+              // Warm the lazy settings chunk on intent so the popover
+              // body is usually ready by the time it opens.
+              onPointerEnter={preloadSettingsOnIntent}
+              onFocus={preloadSettingsOnIntent}
+              onPointerDown={preloadSettingsOnIntent}
               className="focus-visible:ring-ring data-[state=open]:bg-accent/25 data-[state=open]:text-accent inline-flex h-9 w-9 items-center justify-center rounded-md text-neutral-100 transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-4"
             >
               <Settings />
