@@ -65,6 +65,7 @@ describe("ocrCroppedRegion — server-side OCR", () => {
       text: "POW!",
       confidence: 0.91,
       refinedBbox: null,
+      lang: null,
     });
     expect(mockedFetch).toHaveBeenCalledOnce();
     const [path, init] = mockedFetch.mock.calls[0]!;

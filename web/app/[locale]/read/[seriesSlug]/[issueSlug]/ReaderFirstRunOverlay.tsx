@@ -8,6 +8,7 @@ import {
   Menu,
   MousePointerClick,
   MoveHorizontal,
+  PanelTop,
   ZoomIn,
 } from "lucide-react";
 
@@ -122,6 +123,17 @@ export function ReaderFirstRunOverlay({
             <ZoomIn className="text-muted-foreground size-4 shrink-0" />
             <span>Double-tap to zoom; drag to pan while zoomed in.</span>
           </li>
+          {/* WP-4.8 (audit AC-2): the chrome starts hidden, so say how to
+              get it back — in words, not only as a desktop key chip, so
+              screen-reader and touch users hear it too. */}
+          <li className="flex items-center gap-3">
+            <PanelTop className="text-muted-foreground size-4 shrink-0" />
+            <span>
+              Controls stay hidden while you read. Tap the center or press{" "}
+              <Kbd className="h-auto min-w-5 px-1 py-0.5 text-xs">T</Kbd> to
+              show them.
+            </span>
+          </li>
         </ul>
 
         {/* Keyboard hints — desktop only. */}
@@ -130,6 +142,7 @@ export function ReaderFirstRunOverlay({
           <Hint keys={["d"]} label="View mode" />
           <Hint keys={["f"]} label="Fit" />
           <Hint keys={["t"]} label="Controls" />
+          <Hint keys={["r"]} label="Page text" />
           <Hint keys={["?"]} label="All shortcuts" />
         </div>
 
@@ -150,7 +163,7 @@ function Hint({ keys, label }: { keys: string[]; label: string }) {
   return (
     <span className="text-muted-foreground inline-flex items-center gap-1.5">
       {keys.map((k) => (
-        <Kbd key={k} className="h-auto min-w-5 px-1 py-0.5 text-[0.6875rem]">
+        <Kbd key={k} className="h-auto min-w-5 px-1 py-0.5 text-xs">
           {k}
         </Kbd>
       ))}

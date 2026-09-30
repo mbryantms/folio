@@ -46,6 +46,7 @@ export type KeybindAction =
   | "addNote"
   | "startHighlight"
   | "captureText"
+  | "togglePageText"
   | "favoritePage"
   | "toggleMarkersHidden"
   | "nextBookmark"
@@ -76,6 +77,7 @@ export const READER_KEYBIND_ACTIONS: readonly KeybindAction[] = [
   "addNote",
   "startHighlight",
   "captureText",
+  "togglePageText",
   "favoritePage",
   "toggleMarkersHidden",
   "nextBookmark",
@@ -110,6 +112,7 @@ export const KEYBIND_SCOPES: Record<KeybindAction, KeybindScope> = {
   addNote: "reader",
   startHighlight: "reader",
   captureText: "reader",
+  togglePageText: "reader",
   favoritePage: "reader",
   toggleMarkersHidden: "reader",
   nextBookmark: "reader",
@@ -138,6 +141,7 @@ export const KEYBIND_LABELS: Record<KeybindAction, string> = {
   addNote: "Add note",
   startHighlight: "Start highlight",
   captureText: "Capture text (OCR)",
+  togglePageText: "Show page text",
   favoritePage: "Favorite this page",
   toggleMarkersHidden: "Show / hide markers",
   nextBookmark: "Next bookmark",
@@ -173,6 +177,9 @@ export const KEYBIND_DEFAULTS: Record<KeybindAction, string> = {
   // `x` for text-extract — `t` is toggleChrome. Enters select-text
   // mode: detected bubbles light up for tap-to-OCR, drag still works.
   captureText: "x",
+  // `r` for read — opens the page-text panel (WP-4.8): the page's OCR
+  // text in reading order, for screen readers and small lettering.
+  togglePageText: "r",
   // `s` for star — `f` is taken by `cycleFit`. Toggles the favorite
   // flag on the current page's bookmark, creating one if needed.
   favoritePage: "s",

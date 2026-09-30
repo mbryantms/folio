@@ -83,7 +83,16 @@ const ReaderFirstRunOverlay = dynamic(
   () => import("./ReaderFirstRunOverlay").then((m) => m.ReaderFirstRunOverlay),
   { ssr: false },
 );
+// Page-text panel (WP-4.8): OCR text of the visible page for screen
+// readers. Lazy + mounted only once opened — it drives server OCR, so
+// neither its bytes nor its requests touch a reader that never opens it.
+const PageTextPanel = dynamic(
+  () => import("./PageTextPanel").then((m) => m.PageTextPanel),
+  { ssr: false },
+);
 import { MarkerOverlay } from "./MarkerOverlay";
+import { ReaderSkipLinks } from "./ReaderSkipLinks";
+import { usePageTextPanel } from "@/lib/reader/page-text";
 import { PageStrip } from "./PageStrip";
 import { PageImage } from "./PageImage";
 import { ReaderChrome } from "./ReaderChrome";
@@ -202,6 +211,16 @@ export function Reader({
   if (pendingMarkerForKeybinds !== null && !markerEditorMounted) {
     setMarkerEditorMounted(true);
   }
+  // Same mount-once recipe for the page-text panel (WP-4.8). Its open
+  // flag lives in a tiny standalone store; close it when the reader
+  // unmounts so the next issue doesn't open with the panel up.
+  const pageTextOpen = usePageTextPanel((s) => s.open);
+  const togglePageText = usePageTextPanel((s) => s.toggle);
+  const [pageTextMounted, setPageTextMounted] = useState(false);
+  if (pageTextOpen && !pageTextMounted) {
+    setPageTextMounted(true);
+  }
+  useEffect(() => () => usePageTextPanel.getState().setOpen(false), []);
 
   // First-run orientation overlay (audit C5). Read the localStorage flag
   // via useSyncExternalStore so it's SSR-safe (server snapshot = "seen",
@@ -686,6 +705,7 @@ export function Reader({
     beginAddNote,
     beginHighlight,
     beginCaptureText,
+    togglePageText,
     onQuitReader: handleQuitReader,
     onDismissEndCard: dismissEndCard,
     onCollapseChrome: () => setChromeVisible(false),
@@ -887,6 +907,10 @@ export function Reader({
       // fallback never flashes white before the reader paints.
       className="bg-reader-bg min-h-screen text-neutral-200"
     >
+      <ReaderSkipLinks
+        toggleChromeKey={bindings.toggleChrome}
+        pageTextKey={bindings.togglePageText}
+      />
       <ReaderChrome
         seriesId={seriesId}
         issueId={issueId}
@@ -1017,6 +1041,13 @@ export function Reader({
       />
       {markerEditorMounted ? (
         <MarkerEditor issueId={issueId} pageNaturalSize={pageNaturalSize} />
+      ) : null}
+      {pageTextMounted ? (
+        <PageTextPanel
+          issueId={issueId}
+          pages={viewMode === "double" ? visiblePages : [currentPage]}
+          direction={direction}
+        />
       ) : null}
       {markerModeForKeybinds !== "idle" ? (
         <MarkerModePill

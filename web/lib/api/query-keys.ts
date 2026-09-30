@@ -410,6 +410,15 @@ export const queryKeys = {
    *  Fetched when the reader enters text-capture mode. */
   issuePageTextRegions: (issueId: string, page: number) =>
     ["ocr", "text-regions", issueId, page] as const,
+  /** OCR text of one detected region, read by the reader's page-text
+   *  panel (WP-4.8). `region` is the detector box in percent coords,
+   *  stringified so equal boxes share a cache entry. */
+  issuePageRegionText: (issueId: string, page: number, region: string) =>
+    ["ocr", "region-text", issueId, page, region] as const,
+  /** Driver for the page-text panel's per-region OCR fan-out (WP-4.8);
+   *  its data is just "done" — the text lives on the region keys. */
+  issuePageText: (issueId: string, page: number) =>
+    ["ocr", "page-text", issueId, page] as const,
   /** Cheap COUNT — drives the Bookmarks sidebar badge. Cached 60s. */
   markerCount: ["markers", "count"] as const,
   /** Distinct tag rollup — drives the /bookmarks tag filter chips. */

@@ -412,7 +412,7 @@ export function PageStrip({
                   )}
                   <MarkerDots kinds={markerKindsByPage.get(i)} />
                 </span>
-                <span className="block py-0.5 text-center text-[11px] text-neutral-400">
+                <span className="block py-0.5 text-center text-xs text-neutral-400">
                   {i + 1}
                 </span>
               </button>

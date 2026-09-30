@@ -1,20 +1,24 @@
 /**
  * axe-core a11y smoke (§16.7).
  *
- * Phase 2 ships a baseline against the public sign-in page. The full
- * library → series → issue → reader walk lands once the e2e fixture
- * harness is in place (deferred — see phase-status.md).
+ * The public sign-in page is checked here. The reader pass (WP-4.8) runs
+ * inside `reader-flow.spec.ts`, because that spec owns the only seeded
+ * library: it registers the first user (the admin), scans the fixture and
+ * opens the reader, and a second spec registering in parallel would race
+ * it for the admin role. Both use the same assertion (`support/axe.ts`,
+ * WCAG 2.2 AA tags):
+ *
+ *   - reader with the chrome hidden (the default state),
+ *   - reader with the chrome shown,
+ *   - reader with the page-text panel open.
  */
-import { test, expect } from "@playwright/test";
-import AxeBuilder from "@axe-core/playwright";
+import { test } from "@playwright/test";
+import { expectNoAxeViolations } from "./support/axe";
 
 test.describe("Accessibility", () => {
   test("sign-in page has no WCAG 2.2 AA violations", async ({ page }) => {
     await page.goto("/sign-in");
     await page.waitForLoadState("networkidle");
-    const results = await new AxeBuilder({ page })
-      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
-      .analyze();
-    expect(results.violations).toEqual([]);
+    await expectNoAxeViolations(page, "sign-in");
   });
 });

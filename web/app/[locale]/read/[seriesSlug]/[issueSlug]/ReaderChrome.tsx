@@ -10,6 +10,7 @@ import {
   ImageIcon,
   Maximize2,
   Minimize2,
+  ScanText,
   Settings,
   Square,
   Star,
@@ -40,6 +41,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useReaderWakeLock } from "@/lib/reader/use-wake-lock";
+import { usePageTextPanel } from "@/lib/reader/page-text";
 import { ReaderSettings } from "./ReaderSettings";
 import { ReadingProgress } from "./ReadingProgress";
 
@@ -174,7 +176,7 @@ export function ReaderChrome({
 
         {incognito && (
           <span
-            className={`ml-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium tracking-wider uppercase ${statusTone("warning")}`}
+            className={`ml-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium tracking-wider uppercase ${statusTone("warning")}`}
             aria-label="Reading in incognito mode — progress and activity will not be saved"
           >
             <EyeOff className="h-3 w-3" />
@@ -186,6 +188,7 @@ export function ReaderChrome({
           <BookmarkToggleButton issueId={issueId} pageIndex={currentPage} />
           <FavoriteToggleButton issueId={issueId} pageIndex={currentPage} />
           <MarkerMenuButton issueId={issueId} pageIndex={currentPage} />
+          <PageTextButton />
           <SettingsButton seriesId={seriesId} onPinChange={setChromePinned} />
           <FullscreenButton />
         </span>
@@ -272,7 +275,7 @@ function PageJumpDisplay({
           className="focus:ring-ring w-14 [appearance:textfield] rounded border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-neutral-200 focus:ring-1 focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           aria-label={`Jump to page (1–${totalPages})`}
         />
-        <span className="text-neutral-600">/</span> {totalPages}
+        <span className="text-neutral-400">/</span> {totalPages}
       </span>
     );
   }
@@ -289,18 +292,18 @@ function PageJumpDisplay({
       {pairLabel ? (
         <>
           Pages {visiblePages![0]! + 1}
-          <span className="text-neutral-600">–</span>
-          {visiblePages![1]! + 1} <span className="text-neutral-600">/</span>{" "}
+          <span className="text-neutral-400">–</span>
+          {visiblePages![1]! + 1} <span className="text-neutral-400">/</span>{" "}
           {totalPages}
         </>
       ) : (
         <>
-          Page {currentPage + 1} <span className="text-neutral-600">/</span>{" "}
+          Page {currentPage + 1} <span className="text-neutral-400">/</span>{" "}
           {totalPages}
         </>
       )}
       {direction === "rtl" ? (
-        <span className="ml-2 rounded border border-neutral-700 px-1 text-[10px] tracking-wider text-neutral-400 uppercase">
+        <span className="ml-2 rounded border border-neutral-700 px-1 text-xs tracking-wider text-neutral-400 uppercase">
           RTL
         </span>
       ) : null}
@@ -503,6 +506,21 @@ function ChromeIconButton({
       </TooltipTrigger>
       <TooltipContent side="bottom">{label}</TooltipContent>
     </Tooltip>
+  );
+}
+
+/** Opens the page-text panel (WP-4.8) — the visible page's OCR text in
+ *  reading order, for screen readers and hard-to-read lettering. */
+function PageTextButton() {
+  const open = usePageTextPanel((s) => s.open);
+  const toggle = usePageTextPanel((s) => s.toggle);
+  return (
+    <ChromeIconButton
+      label={open ? "Hide page text" : "Show page text"}
+      icon={<ScanText />}
+      onClick={toggle}
+      active={open}
+    />
   );
 }
 

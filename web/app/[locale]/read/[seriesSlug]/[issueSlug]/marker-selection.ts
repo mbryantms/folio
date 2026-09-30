@@ -89,6 +89,9 @@ export type OcrResult = {
   /** Detector's snap-to-bubble rect in page pixels; `null` when the
    *  detector didn't run or nothing overlapped the region. */
   refinedBbox: { x: number; y: number; w: number; h: number } | null;
+  /** Recognizer the server resolved (`western` / `manga`) — the page-text
+   *  panel maps it to a `lang` attribute for screen readers. */
+  lang: string | null;
 };
 
 /** Run server-side OCR over the cropped region. The pipeline runs
@@ -156,6 +159,7 @@ export async function ocrCroppedRegion(
     text?: string;
     confidence?: number;
     refined_bbox?: { x: number; y: number; w: number; h: number } | null;
+    lang?: string;
   };
   try {
     payload = (await res.json()) as typeof payload;
@@ -166,7 +170,12 @@ export async function ocrCroppedRegion(
   const text = (payload.text ?? "").trim();
   if (!text) return null;
   const confidence = Number(payload.confidence ?? 0);
-  return { text, confidence, refinedBbox: payload.refined_bbox ?? null };
+  return {
+    text,
+    confidence,
+    refinedBbox: payload.refined_bbox ?? null,
+    lang: payload.lang ?? null,
+  };
 }
 
 /** Compute a SHA-256 over the cropped pixel bytes. Used for the

@@ -22,6 +22,7 @@ import {
   type APIRequestContext,
   type BrowserContext,
 } from "@playwright/test";
+import { expectNoAxeViolations } from "./support/axe";
 
 const PASSWORD = "correct-horse-battery-staple";
 
@@ -157,6 +158,47 @@ test.describe("Reader flow", () => {
     await expect(
       page.getByRole("button", { name: "Page 2 of 3; click to jump" }),
     ).toBeVisible();
+
+    // 7b. Accessibility (WP-4.8): axe-clean with the chrome shown…
+    const chrome = page.getByTestId("reader-chrome");
+    await expect(chrome).toHaveAttribute("data-state", "open");
+    // Focus inside the header pins the 4 s auto-hide for the axe run.
+    await page.getByRole("button", { name: "Exit reader" }).focus();
+    await page.waitForTimeout(400); // let the 300 ms slide-in settle
+    await expectNoAxeViolations(page, "reader, chrome shown");
+
+    // …with the page-text panel open (`r`). The fixture pages are solid
+    // colour, so the panel settles on "no text" (or on "couldn't detect"
+    // where the image ships without OCR models) — either way the panel,
+    // its status region and its controls are what axe inspects.
+    await page.keyboard.press("r");
+    const panel = page.getByRole("dialog", { name: "Page text" });
+    await expect(panel).toBeVisible();
+    await expect(panel.getByRole("status").first()).toHaveText(
+      /No text detected|Couldn't detect|Couldn't read|text block/,
+      { timeout: 90_000 },
+    );
+    await expectNoAxeViolations(page, "reader, page-text panel open");
+    // Esc closes the panel without also quitting the reader.
+    await page.keyboard.press("Escape");
+    await expect(panel).toBeHidden();
+    expect(new URL(page.url()).pathname).toContain("/read/");
+
+    // …and in the default state (chrome hidden). The first Tab stop is the
+    // skip link that reveals the chrome and moves focus into it — the
+    // keyboard route to the controls without knowing `t` (audit AC-2).
+    await page.reload();
+    await expect(page.locator("img[src*='/pages/']").first()).toBeVisible();
+    await expect(chrome).toHaveAttribute("data-state", "closed");
+    await expectNoAxeViolations(page, "reader, chrome hidden");
+    await page.keyboard.press("Tab");
+    const skip = page.getByRole("button", { name: /^Show reader controls/ });
+    await expect(skip).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(chrome).toHaveAttribute("data-state", "open");
+    await expect(
+      page.getByRole("button", { name: "Exit reader" }),
+    ).toBeFocused();
 
     // 8. Series page now offers to continue rather than start.
     await page.goto(`/series/${series.slug}`);

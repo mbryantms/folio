@@ -32,6 +32,7 @@ Default bindings — reader scope:
 | `n`     | Add note             | Opens the marker editor for a page note       |
 | `h`     | Start highlight      | Begins region selection                       |
 | `x`     | Capture text (OCR)   | Text mode: detected bubbles light up — tap one to OCR it, or drag a box |
+| `r`     | Show page text       | Opens the page-text panel: the visible page's OCR text in reading order (see [Accessibility](#accessibility)) |
 | `s`     | Favorite this page   | Toggles the star/favorite flag                |
 | `o`     | Show / hide markers  | Hides every overlay without deleting data     |
 | `]`     | Next bookmark        | Jumps to the next bookmark-kind marker        |
@@ -76,6 +77,38 @@ before the reader's page-nav handler does:
 | `Shift` + arrows    | Nudge by 5 %                              |
 
 The rect is bounds-clamped to `[0, 100]` so a nudge never pushes it off-page.
+
+## Accessibility
+
+WP-4.8 (audit AC-2..AC-5) — what a keyboard or screen-reader user gets:
+
+- **Skip links.** The first two Tab stops in the reader are visually hidden
+  until focused: *Show reader controls (T)* reveals the chrome and moves
+  focus onto its first button; *Show page text (R)* opens the page-text
+  panel. The chrome itself stays hidden and `inert` by default, so these
+  are the discoverable way in. The first-run overlay also says, in words,
+  that `t` (or a tap in the center) brings the controls back.
+- **Page-text panel** (`r`, or the chrome's *Show page text* button). A
+  non-modal side sheet listing the visible page's text in reading order
+  (rows top to bottom; within a row left-to-right, or right-to-left for
+  RTL). It reuses the server OCR surface in
+  [`ocr.md`](ocr.md): `GET …/pages/{n}/text-regions` for the detected
+  bubbles, then one `POST …/ocr` (`detect: false`) per bubble, two in
+  flight at a time, nested line-inside-block boxes collapsed so nothing is
+  read twice. Nothing runs until the panel opens — the component is a lazy
+  chunk mounted on first open — and results are cached per page and
+  region, so flipping back is instant. Because it is non-modal the reader
+  keymap keeps working with focus inside it: `←` / `→` turn the page and
+  the text follows; `Esc` closes the panel without leaving the reader.
+  Manga-recognizer text carries `lang="ja"` so screen readers switch voice.
+- **Text-capture proxies.** In text-capture mode (`x`) each detected bubble
+  gets a transparent, focusable button in reading order ("Capture text
+  region 3 of 7"); Enter runs the same tap-to-OCR capture a pointer tap
+  does. The buttons ignore pointer input so drag-select is unaffected.
+  Saved region markers already had equivalent proxies (audit E4).
+- **Axe.** The reader is covered by the Playwright axe pass (WCAG 2.2 AA
+  tags) in `web/tests/e2e/reader-flow.spec.ts`, with the chrome hidden, the
+  chrome shown, and the page-text panel open.
 
 ## Gestures
 
