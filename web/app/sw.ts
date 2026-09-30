@@ -10,6 +10,14 @@ import {
   THUMB_CACHE,
   THUMB_PATH,
 } from "../lib/pwa/cache-policy";
+import {
+  META_ACCOUNT,
+  OFFLINE_SHELL_CACHE,
+  OFFLINE_SHELL_PATH,
+  indexedOfflineDb,
+  matchOfflineAsset,
+  offlineKeyFor,
+} from "../lib/pwa/offline-store";
 
 declare global {
   interface ServiceWorkerGlobalScope extends SerwistGlobalConfig {
@@ -18,8 +26,11 @@ declare global {
 }
 declare const self: ServiceWorkerGlobalScope;
 
-// No authenticated HTML, RSC, JSON, or page bytes are cached. Offline
-// navigation renders a public fallback, not an authenticated app shell.
+// No authenticated HTML, RSC or JSON is cached. Offline navigation renders
+// the public offline-reader shell when the user has downloads (WP-4.6),
+// otherwise a public fallback — never an authenticated document. Page
+// bytes are cached only as explicit per-account downloads and served only
+// to the offline shell.
 const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
   skipWaiting: false,
@@ -33,11 +44,72 @@ const serwist = new Serwist({
         cacheName: "folio-static-v1",
         plugins: [
           new ExpirationPlugin({ maxEntries: 300, maxAgeSeconds: 30 * 86400 }),
+          // The offline shell keeps its own copy of every hashed asset it
+          // needs (lib/pwa/offline-shell.ts); use it when the runtime copy
+          // was evicted and the network is unreachable.
+          {
+            handlerDidError: async ({ request }) =>
+              caches.match(request, {
+                cacheName: OFFLINE_SHELL_CACHE,
+                ignoreSearch: true,
+              }),
+          },
         ],
       }),
     },
   ],
 });
+
+const offlineDb = indexedOfflineDb();
+
+/** Whether the device owner has at least one complete download. */
+async function hasCompleteDownload(): Promise<boolean> {
+  const account = await offlineDb.getMeta<string>(META_ACCOUNT);
+  if (!account) return false;
+  return (await offlineDb.all()).some(
+    (r) => r.account === account && r.status === "complete",
+  );
+}
+
+/**
+ * Navigation without a network: the stored offline-reader shell when the
+ * user has downloads (any other path redirects there, carrying the path
+ * so `/read/<series>/<issue>` opens the downloaded issue), else the public
+ * offline page.
+ */
+async function offlineNavigation(url: URL): Promise<Response> {
+  const shell = await Promise.resolve()
+    .then(() =>
+      caches.match(OFFLINE_SHELL_PATH, {
+        cacheName: OFFLINE_SHELL_CACHE,
+        ignoreSearch: true,
+        ignoreVary: true,
+      }),
+    )
+    .catch(() => undefined);
+  if (shell) {
+    if (url.pathname === OFFLINE_SHELL_PATH) return shell;
+    if (await hasCompleteDownload().catch(() => false)) {
+      const target = new URL(OFFLINE_SHELL_PATH, self.location.origin);
+      target.searchParams.set("from", url.pathname);
+      return Response.redirect(target.href, 302);
+    }
+  }
+  return (await serwist.matchPrecache("/offline.html")) ?? Response.error();
+}
+
+/** Requests made by the offline shell document (same-origin referrer). */
+function fromOfflineShell(request: Request): boolean {
+  try {
+    const referrer = new URL(request.referrer);
+    return (
+      referrer.origin === self.location.origin &&
+      referrer.pathname === OFFLINE_SHELL_PATH
+    );
+  } catch {
+    return false;
+  }
+}
 
 let identityEpoch = 0;
 // Serialize writes and clears so a response started before logout cannot
@@ -89,11 +161,18 @@ self.addEventListener("fetch", (event: FetchEvent) => {
   }
   if (request.mode === "navigate") {
     bypass();
+    event.respondWith(fetch(request).catch(() => offlineNavigation(url)));
+    return;
+  }
+  // Downloaded pages/thumbnails, only for the offline shell: served from
+  // the owning account's cache (any `?w=`/`?v=` variant maps to the stored
+  // tier), else the network. Every other document keeps the native loader.
+  if (offlineKeyFor(url) && fromOfflineShell(request)) {
+    bypass();
     event.respondWith(
-      fetch(request).catch(
-        async () =>
-          (await serwist.matchPrecache("/offline.html")) ?? Response.error(),
-      ),
+      matchOfflineAsset(offlineDb, caches, url)
+        .catch(() => undefined)
+        .then((hit) => hit ?? fetch(request)),
     );
     return;
   }

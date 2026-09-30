@@ -74,6 +74,11 @@ export function UserFooter({
     if (ok) {
       broadcastPrivateReset();
       await outbox.clear().catch(() => undefined);
+      // Offline downloads belong to the account: explicit sign-out removes
+      // them from the device (session expiry keeps them for offline reads).
+      await import("@/lib/pwa/downloads")
+        .then(({ getDownloadManager }) => getDownloadManager().clearAll())
+        .catch(() => undefined);
       await clearPrivateState(queryClient);
       // A hard navigation drops private state outside the query cache too.
       // eslint-disable-next-line @next/next/no-location-assign-relative-destination
