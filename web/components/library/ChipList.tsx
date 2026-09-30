@@ -1,6 +1,8 @@
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
+import type { EntitySlugs } from "@/lib/api/types";
+import { entityHrefFor } from "@/lib/entities";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,6 +24,8 @@ export function ChipList({
   variant = "secondary",
   filterField,
   creatorSlugs,
+  entitySlugs,
+  entityField,
   orientation = "vertical",
   className,
 }: {
@@ -43,6 +47,14 @@ export function ChipList({
    *  `/creators/<slug>` instead of the legacy library-grid filter.
    *  Series + issue detail endpoints both surface this map. */
   creatorSlugs?: Record<string, string>;
+  /** WP-5.5: name → slug maps from the series / issue detail endpoint.
+   *  When the chip's field (`entityField`, else `filterField`) is a
+   *  kind with a landing page (characters / teams / story_arc /
+   *  publisher) and the name has a slug, the chip links to
+   *  `/<kind>/<slug>` instead of the library-grid filter. */
+  entitySlugs?: EntitySlugs;
+  /** Entity field for chips without a library filter (e.g. story arc). */
+  entityField?: string;
   className?: string;
 }) {
   const list = items ?? [];
@@ -79,13 +91,20 @@ export function ChipList({
       ) : (
         <div className={cn("flex flex-wrap gap-1.5", horizontal && "flex-1")}>
           {list.map((item) => {
+            const entityHref = entitySlugs
+              ? entityHrefFor(
+                  entityField ?? filterField ?? "",
+                  item,
+                  entitySlugs,
+                )
+              : null;
             const chip = (
               <Badge
                 key={item}
                 variant={variant}
                 className={cn(
                   "font-normal",
-                  filterField
+                  filterField || entityHref
                     ? "hover:bg-secondary/80 cursor-pointer"
                     : "cursor-default",
                 )}
@@ -93,6 +112,13 @@ export function ChipList({
                 {item}
               </Badge>
             );
+            if (entityHref) {
+              return (
+                <Link key={item} href={entityHref} title={`Open ${item}`}>
+                  {chip}
+                </Link>
+              );
+            }
             if (!filterField) return chip;
             // Credit-role chips link to `/creators/<slug>` when the
             // parent surface (series / issue detail) hands us a slug

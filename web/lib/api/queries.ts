@@ -77,6 +77,7 @@ import type {
   IssueSort,
   PeopleListView,
   CreatorListView,
+  EntityListView,
   LibraryView,
   FsListResp,
   LogLevel,
@@ -233,6 +234,20 @@ export type CreatorsListFilters = {
   limit?: number;
   /** A–Z jump-rail bucket: a single letter `a`–`z` or `#`. */
   starts_with?: string;
+};
+
+/** URL segment of an entity landing page (WP-5.5). Doubles as the
+ *  `EntityDetailView.kind` wire value. */
+export type EntityKindPath = "characters" | "teams" | "arcs" | "publishers";
+
+/** Entity browse-index shape (`/characters` etc., WP-5.5). */
+export type EntityListFilters = {
+  cursor?: string;
+  limit?: number;
+  /** A–Z jump-rail bucket: a single letter `a`–`z` or `#`. */
+  starts_with?: string;
+  /** Case-insensitive substring filter on the name. */
+  q?: string;
 };
 
 /** Marker search shape (global-search M2 of the search-improvements
@@ -1557,6 +1572,71 @@ export function useCreatorsInfinite(
     // Back-nav from a creator detail page restores the windowed grid +
     // scroll position from cache (audit B15 / G1), same as series list.
     gcTime: 30 * 60_000,
+  });
+}
+
+/** `getNextPageParam` shared by the WP-5.5 entity hooks. Exported +
+ *  tested so a refactor can't swallow `next_cursor` and silently
+ *  truncate an entity grid. */
+export function entityNextPage(page: {
+  next_cursor?: string | null;
+}): string | undefined {
+  return page.next_cursor ?? undefined;
+}
+
+/** Entity browse index (`GET /<kind>`, WP-5.5) — cursor-paginated,
+ *  alphabetical, ACL-filtered server-side. */
+export function useEntityListInfinite(
+  kind: EntityKindPath,
+  filters: EntityListFilters = {},
+) {
+  const rest = stripCursor(filters);
+  return useInfiniteQuery({
+    queryKey: queryKeys.entityList(kind, filters),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<EntityListView>(
+        `/${kind}${buildQuery({ ...rest, cursor: pageParam })}`,
+      ),
+    getNextPageParam: entityNextPage,
+    gcTime: 30 * 60_000,
+  });
+}
+
+/** Series grid on an entity landing page (`GET /<kind>/{slug}/series`). */
+export function useEntitySeriesInfinite(
+  kind: EntityKindPath,
+  slug: string,
+  limit = 60,
+) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.entityItems(kind, slug, "series", limit),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<SeriesListView>(
+        `/${kind}/${encodeURIComponent(slug)}/series${buildQuery({ limit, cursor: pageParam })}`,
+      ),
+    getNextPageParam: entityNextPage,
+  });
+}
+
+/** Issue grid on an entity landing page (`GET /<kind>/{slug}/issues`).
+ *  Not available for publishers. */
+export function useEntityIssuesInfinite(
+  kind: EntityKindPath,
+  slug: string,
+  options: { enabled?: boolean; limit?: number } = {},
+) {
+  const limit = options.limit ?? 60;
+  return useInfiniteQuery({
+    queryKey: queryKeys.entityItems(kind, slug, "issues", limit),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<IssueListView>(
+        `/${kind}/${encodeURIComponent(slug)}/issues${buildQuery({ limit, cursor: pageParam })}`,
+      ),
+    getNextPageParam: entityNextPage,
+    enabled: options.enabled ?? true,
   });
 }
 

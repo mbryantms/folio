@@ -1118,6 +1118,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/arcs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /arcs` — alphabetical, cursor-paginated browse of every
+         *     story arc with at least one appearance visible to the caller.
+         */
+        get: operations["arcs_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/arcs/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /arcs/{slug}` — landing-page header. 404 when the slug is
+         *     unknown or the story arc has no appearance the caller can see.
+         */
+        get: operations["arcs_get_one"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/arcs/{slug}/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /arcs/{slug}/issues` — the story arc's visible issues,
+         *     cursor-paginated in arc reading order. `total` on the first page only.
+         */
+        get: operations["arcs_issues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/arcs/{slug}/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /arcs/{slug}/series` — the story arc's visible series,
+         *     alphabetical, cursor-paginated; `total` on the first page only.
+         */
+        get: operations["arcs_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/config": {
         parameters: {
             query?: never;
@@ -1361,6 +1441,86 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["cbl_lists_refresh_catalog_index"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/characters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /characters` — alphabetical, cursor-paginated browse of every
+         *     character with at least one appearance visible to the caller.
+         */
+        get: operations["characters_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/characters/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /characters/{slug}` — landing-page header. 404 when the slug is
+         *     unknown or the character has no appearance the caller can see.
+         */
+        get: operations["characters_get_one"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/characters/{slug}/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /characters/{slug}/issues` — the character's visible issues,
+         *     cursor-paginated by publication year, series, number. `total` on the first page only.
+         */
+        get: operations["characters_issues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/characters/{slug}/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /characters/{slug}/series` — the character's visible series,
+         *     alphabetical, cursor-paginated; `total` on the first page only.
+         */
+        get: operations["characters_series"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3449,6 +3609,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/publishers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /publishers` — alphabetical, cursor-paginated browse of every
+         *     publisher with at least one appearance visible to the caller.
+         */
+        get: operations["publishers_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/publishers/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /publishers/{slug}` — landing-page header. 404 when the slug is
+         *     unknown or the publisher has no appearance the caller can see.
+         */
+        get: operations["publishers_get_one"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/publishers/{slug}/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /publishers/{slug}/series` — the publisher's visible series,
+         *     alphabetical, cursor-paginated; `total` on the first page only.
+         */
+        get: operations["publishers_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series": {
         parameters: {
             query?: never;
@@ -4299,6 +4519,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/teams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /teams` — alphabetical, cursor-paginated browse of every
+         *     team with at least one appearance visible to the caller.
+         */
+        get: operations["teams_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/teams/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /teams/{slug}` — landing-page header. 404 when the slug is
+         *     unknown or the team has no appearance the caller can see.
+         */
+        get: operations["teams_get_one"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/teams/{slug}/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /teams/{slug}/issues` — the team's visible issues,
+         *     cursor-paginated by publication year, series, number. `total` on the first page only.
+         */
+        get: operations["teams_issues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/teams/{slug}/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /teams/{slug}/series` — the team's visible series,
+         *     alphabetical, cursor-paginated; `total` on the first page only.
+         */
+        get: operations["teams_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/uploads": {
         parameters: {
             query?: never;
@@ -4595,8 +4895,8 @@ export interface components {
         AppearanceView: {
             /**
              * @description Link-target id. For `cbl`/`collection` this is the **saved-view** id
-             *     (open at `/views/{id}`); for `arc` it's the arc slug (no detail route
-             *     yet — the web app renders arcs as informational chips).
+             *     (open at `/views/{id}`); for `arc` it's the arc slug (open at
+             *     `/arcs/{slug}`, WP-5.5).
              */
             id: string;
             /**
@@ -6052,6 +6352,32 @@ export interface components {
          * @description Cursor-paginated list response. `total` is populated only on the first
          *     page of paginated lists where the count is cheap; bounded lists omit it.
          */
+        CursorPage_EntityListItem: {
+            items: {
+                id: string;
+                /**
+                 * Format: int64
+                 * @description Distinct visible issues the entity appears in (0 for a
+                 *     series-level-only appearance).
+                 */
+                issue_count: number;
+                name: string;
+                /**
+                 * Format: int64
+                 * @description Distinct visible series the entity appears in.
+                 */
+                series_count: number;
+                /** @description `/<kind>/<slug>` target. */
+                slug: string;
+            }[];
+            next_cursor?: string | null;
+            /** Format: int64 */
+            total?: number | null;
+        };
+        /**
+         * @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it.
+         */
         CursorPage_LibraryEventView: {
             items: {
                 action: string;
@@ -6577,6 +6903,70 @@ export interface components {
             devices_30d: components["schemas"]["DeviceBucket"][];
             /** @description Trailing-window DAU/WAU/MAU samples per day, last 90 days. */
             series: components["schemas"]["EngagementPoint"][];
+        };
+        /**
+         * @description Header payload for an entity landing page. The series / issues grids
+         *     are fetched separately through the cursor-paginated sub-routes.
+         */
+        EntityDetailView: {
+            aliases: string[];
+            description?: string | null;
+            /**
+             * Format: int32
+             * @description Publishers only (provider data).
+             */
+            founded_year?: number | null;
+            id: string;
+            image_url?: string | null;
+            /** Format: int64 */
+            issue_count: number;
+            /** @description `"characters"` | `"teams"` | `"arcs"` | `"publishers"`. */
+            kind: string;
+            name: string;
+            /** @description Characters only (provider data). */
+            real_name?: string | null;
+            /** Format: int64 */
+            series_count: number;
+            slug: string;
+        };
+        /** @description One row of an entity browse index (`GET /characters` etc.). */
+        EntityListItem: {
+            id: string;
+            /**
+             * Format: int64
+             * @description Distinct visible issues the entity appears in (0 for a
+             *     series-level-only appearance).
+             */
+            issue_count: number;
+            name: string;
+            /**
+             * Format: int64
+             * @description Distinct visible series the entity appears in.
+             */
+            series_count: number;
+            /** @description `/<kind>/<slug>` target. */
+            slug: string;
+        };
+        /**
+         * @description Name → slug maps for the cast / arc / publisher chips on the series
+         *     and issue detail pages, so the web can link each chip to its landing
+         *     page without a per-chip round-trip. Keys are the display names as
+         *     they appear on the page; names without an entity row are absent (the
+         *     chip falls back to the library-grid filter).
+         */
+        EntitySlugs: {
+            arcs?: {
+                [key: string]: string;
+            };
+            characters?: {
+                [key: string]: string;
+            };
+            publishers?: {
+                [key: string]: string;
+            };
+            teams?: {
+                [key: string]: string;
+            };
         };
         EventIssue: {
             colorist?: string | null;
@@ -7228,6 +7618,7 @@ export interface components {
             /** Format: int32 */
             day?: number | null;
             editor?: string | null;
+            entity_slugs?: components["schemas"]["EntitySlugs"] | null;
             file_path: string;
             /**
              * Format: int64
@@ -9646,6 +10037,7 @@ export interface components {
              *     has a parsed year.
              */
             earliest_year?: number | null;
+            entity_slugs?: components["schemas"]["EntitySlugs"] | null;
             genres?: string[];
             id: string;
             imprint?: string | null;
@@ -13293,6 +13685,117 @@ export interface operations {
             };
         };
     };
+    arcs_list: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+                starts_with?: string;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_EntityListItem"];
+                };
+            };
+        };
+    };
+    arcs_get_one: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityDetailView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    arcs_issues: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueListView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    arcs_series: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesListView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     auth_config_get_public_config: {
         parameters: {
             query?: never;
@@ -13655,6 +14158,117 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CatalogEntriesView"];
                 };
+            };
+        };
+    };
+    characters_list: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+                starts_with?: string;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_EntityListItem"];
+                };
+            };
+        };
+    };
+    characters_get_one: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityDetailView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    characters_issues: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueListView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    characters_series: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesListView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -17630,6 +18244,87 @@ export interface operations {
             };
         };
     };
+    publishers_list: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+                starts_with?: string;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_EntityListItem"];
+                };
+            };
+        };
+    };
+    publishers_get_one: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityDetailView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    publishers_series: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesListView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     series_list: {
         parameters: {
             query?: never;
@@ -19891,6 +20586,117 @@ export interface operations {
                 content?: never;
             };
             /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    teams_list: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+                starts_with?: string;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_EntityListItem"];
+                };
+            };
+        };
+    };
+    teams_get_one: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityDetailView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    teams_issues: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueListView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    teams_series: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesListView"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;

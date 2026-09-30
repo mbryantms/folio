@@ -853,6 +853,107 @@ upsert_entity_helper!(
     table = "universe",
 );
 
+// ─────────────────────────────────────────────────────────────────
+// ensure_series_entity_rows — WP-5.5 entity landing pages.
+// ─────────────────────────────────────────────────────────────────
+
+/// `(entity table, SELECT of candidate display names for one series)`.
+/// Each SELECT binds the series id as `$1` and yields `nm`; names that
+/// already resolve (by `normalized_name`) are filtered out in SQL so
+/// the common case — every name known — costs one query per table and
+/// zero inserts.
+const SERIES_ENTITY_NAME_SOURCES: &[(&str, &str)] = &[
+    (
+        "character",
+        "SELECT DISTINCT j.character AS nm FROM issue_characters j \
+         JOIN issues i ON i.id = j.issue_id \
+         WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL \
+           AND NOT EXISTS (SELECT 1 FROM character e \
+                           WHERE e.normalized_name = btrim(lower(j.character)))",
+    ),
+    (
+        "team",
+        "SELECT DISTINCT j.team AS nm FROM issue_teams j \
+         JOIN issues i ON i.id = j.issue_id \
+         WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL \
+           AND NOT EXISTS (SELECT 1 FROM team e \
+                           WHERE e.normalized_name = btrim(lower(j.team)))",
+    ),
+    (
+        "story_arc",
+        // Same split rule as `metadata_rollup::split_csv`.
+        "SELECT DISTINCT btrim(x.nm) AS nm FROM issues i \
+         CROSS JOIN LATERAL regexp_split_to_table(i.story_arc, \
+             CASE WHEN i.story_arc LIKE '%;%' THEN ';' ELSE ',' END) AS x(nm) \
+         WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL \
+           AND i.story_arc IS NOT NULL AND i.story_arc <> '' \
+           AND NOT EXISTS (SELECT 1 FROM story_arc e \
+                           WHERE e.normalized_name = btrim(lower(x.nm)))",
+    ),
+    (
+        "publisher",
+        "SELECT s.publisher AS nm FROM series s \
+         WHERE s.id = $1 AND s.publisher IS NOT NULL \
+           AND NOT EXISTS (SELECT 1 FROM publisher e \
+                           WHERE e.normalized_name = btrim(lower(s.publisher)))",
+    ),
+];
+
+/// Ensure a `character` / `team` / `story_arc` / `publisher` row exists
+/// for every name this series' active issues (or the series row, for the
+/// publisher) carry, so each name has a slug for its landing page
+/// (`/characters/{slug}` …, WP-5.5). Mirrors the scanner rollup's
+/// `ensure_persons_for_series` for creators.
+///
+/// Writes **entity rows only**: junction rows, their FK columns and
+/// `field_provenance` are untouched — the read side resolves a junction
+/// row to its entity by FK, or by `normalized_name` while the FK is NULL.
+/// Inserts use `ON CONFLICT DO NOTHING` (both the `slug` and the
+/// `normalized_name` unique constraints) so concurrent series rollups
+/// racing on a shared name ("Batman") never error; a name that loses a
+/// slug race is simply picked up by the next rollup.
+pub async fn ensure_series_entity_rows<C: ConnectionTrait>(
+    db: &C,
+    series_id: Uuid,
+) -> Result<(), DbErr> {
+    #[derive(FromQueryResult)]
+    struct NameRow {
+        nm: Option<String>,
+    }
+    let backend = db.get_database_backend();
+    for &(table, sql) in SERIES_ENTITY_NAME_SOURCES {
+        let rows = NameRow::find_by_statement(Statement::from_sql_and_values(
+            backend,
+            sql,
+            [series_id.into()],
+        ))
+        .all(db)
+        .await?;
+        let mut seen = HashSet::<String>::new();
+        for row in rows {
+            let Some(raw) = row.nm else { continue };
+            let display = raw.trim();
+            let normalized = normalize(display);
+            if normalized.is_empty() || !seen.insert(normalized.clone()) {
+                continue;
+            }
+            let slug = unique_slug(db, table, display).await?;
+            db.execute_raw(Statement::from_sql_and_values(
+                backend,
+                // SAFETY: `table` is a `&'static str` literal from
+                // SERIES_ENTITY_NAME_SOURCES, never user input.
+                format!(
+                    "INSERT INTO {table} (slug, name, normalized_name) \
+                     VALUES ($1, $2, $3) ON CONFLICT DO NOTHING"
+                ),
+                [slug.into(), display.to_owned().into(), normalized.into()],
+            ))
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 // Imprint is special — requires a publisher_id parent. Hand-rolled.
 pub async fn upsert_imprint<C: ConnectionTrait>(
     db: &C,

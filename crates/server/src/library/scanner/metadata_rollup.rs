@@ -509,6 +509,10 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
     // issues are the only path that introduces unknown names, so most
     // calls do zero inserts and just refresh the issue_credits join.
     ensure_persons_for_series(db, series_id).await?;
+    // WP-5.5: same for the character / team / story-arc / publisher
+    // names, so every chip on the series + issue pages has a slug for
+    // its entity landing page. Entity rows only — no junction writes.
+    crate::metadata::writers::ensure_series_entity_rows(db, series_id).await?;
     db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE issue_credits ic \

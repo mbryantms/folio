@@ -64,6 +64,7 @@ import { AppearancesTab } from "@/components/library/AppearancesTab";
 import { IssuesPanel } from "./IssuesPanel";
 import { SeriesActions } from "./SeriesActions";
 import { SeriesSourcesFooter } from "./SeriesSourcesFooter";
+import { entityHrefFor } from "@/lib/entities";
 
 export default async function SeriesPage({
   params,
@@ -133,6 +134,9 @@ export default async function SeriesPage({
 
   const status = formatPublicationStatus(series.status);
   const readingTime = formatReadingTime(series.total_page_count ?? 0);
+  const publisherHref = series.publisher
+    ? entityHrefFor("publisher", series.publisher, series.entity_slugs)
+    : null;
   const releasedLabel = formatYearRange(
     series.earliest_year ?? series.year ?? null,
     series.latest_year ?? null,
@@ -387,6 +391,7 @@ export default async function SeriesPage({
                 label="Characters"
                 items={series.characters}
                 filterField="characters"
+                entitySlugs={series.entity_slugs ?? undefined}
               />
               <ChipList
                 orientation="horizontal"
@@ -394,6 +399,7 @@ export default async function SeriesPage({
                 label="Teams"
                 items={series.teams}
                 filterField="teams"
+                entitySlugs={series.entity_slugs ?? undefined}
               />
               <ChipList
                 orientation="horizontal"
@@ -448,7 +454,19 @@ export default async function SeriesPage({
                   columns={2}
                   items={[
                     { label: "Series name", value: series.name },
-                    { label: "Publisher", value: series.publisher },
+                    {
+                      label: "Publisher",
+                      value: publisherHref ? (
+                        <Link
+                          href={publisherHref}
+                          className="underline-offset-2 hover:underline"
+                        >
+                          {series.publisher}
+                        </Link>
+                      ) : (
+                        series.publisher
+                      ),
+                    },
                     { label: "Volume", value: series.volume },
                     { label: "Release years", value: releasedLabel },
                     {

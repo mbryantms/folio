@@ -176,6 +176,21 @@ pub async fn get_one(
     view.allow_archive_writeback = allow_archive_writeback;
     view.library_cbr_convert_confirmed = library_cbr_convert_confirmed;
     view.creator_slugs = creator_slugs;
+    // WP-5.5: chip → landing-page slugs for cast, story arcs, publisher.
+    {
+        use crate::api::entity_pages::{entity_slugs, split_csv};
+        let publishers: Vec<String> = view.publisher.iter().cloned().collect();
+        view.entity_slugs = Some(
+            entity_slugs(
+                &app,
+                &split_csv(view.characters.as_deref()),
+                &split_csv(view.teams.as_deref()),
+                &split_csv(view.story_arc.as_deref()),
+                &publishers,
+            )
+            .await,
+        );
+    }
     crate::api::series::enrich_issue_detail(&app.db, &mut view, &issue_id).await;
     view.metadata_completeness = Some(crate::api::series::assess_issue_view(&view));
     Json(view).into_response()

@@ -334,6 +334,30 @@ column was dropped by
   and `MetadataOverviewView.user_edited` became `user_pinned_fields`
   (both `string[]`, sorted).
 
+## Entity rows for scanner-minted names (WP-5.5)
+
+The M0 backfill created `character` / `team` / `story_arc` /
+`publisher` rows once. The scanner keeps writing name-only junction rows
+(`character_id` / `team_id` NULL, arcs only in the `issues.story_arc`
+CSV, `series.publisher_id` NULL), so names first seen after M0 had no
+entity row — and therefore no slug for the `/characters/{slug}` etc.
+landing pages.
+
+- `m20270305_000001_entity_pages` re-runs the entity backfill for those
+  names (base slug, or base + 8-hex `md5(normalized_name)` when the base
+  is taken) and adds `btrim(lower(name))` expression indexes on the four
+  name junctions + `series.publisher`.
+- The series rollup calls
+  `writers::ensure_series_entity_rows` (next to
+  `ensure_persons_for_series`) so new names get a row on the next scan.
+  **Entity rows only** — no junction, FK or `field_provenance` write;
+  inserts are `ON CONFLICT DO NOTHING` so concurrent rollups racing on a
+  shared name never error.
+- Reads (`api::entity_pages`) resolve a junction row to its entity by FK,
+  or by `btrim(lower(name)) = normalized_name` while the FK is NULL.
+  Arc membership is `issue_arcs` ∪ the `story_arc` CSV (split rule of
+  `metadata_rollup::split_csv`).
+
 ## ID column shapes
 
 A subtle but important detail: `entity_id` on `external_ids` and

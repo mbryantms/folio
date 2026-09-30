@@ -2559,6 +2559,179 @@
         }
       }
     },
+    "/api/arcs": {
+      "get": {
+        "summary": "`GET /arcs` — alphabetical, cursor-paginated browse of every\nstory arc with at least one appearance visible to the caller.",
+        "operationId": "arcs_list",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "starts_with",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_EntityListItem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/arcs/{slug}": {
+      "get": {
+        "summary": "`GET /arcs/{slug}` — landing-page header. 404 when the slug is\nunknown or the story arc has no appearance the caller can see.",
+        "operationId": "arcs_get_one",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDetailView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
+    "/api/arcs/{slug}/issues": {
+      "get": {
+        "summary": "`GET /arcs/{slug}/issues` — the story arc's visible issues,\ncursor-paginated in arc reading order. `total` on the first page only.",
+        "operationId": "arcs_issues",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueListView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
+    "/api/arcs/{slug}/series": {
+      "get": {
+        "summary": "`GET /arcs/{slug}/series` — the story arc's visible series,\nalphabetical, cursor-paginated; `total` on the first page only.",
+        "operationId": "arcs_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesListView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
     "/api/auth/config": {
       "get": {
         "operationId": "auth_config_get_public_config",
@@ -2864,6 +3037,179 @@
               }
             }
           }
+        }
+      }
+    },
+    "/api/characters": {
+      "get": {
+        "summary": "`GET /characters` — alphabetical, cursor-paginated browse of every\ncharacter with at least one appearance visible to the caller.",
+        "operationId": "characters_list",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "starts_with",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_EntityListItem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/characters/{slug}": {
+      "get": {
+        "summary": "`GET /characters/{slug}` — landing-page header. 404 when the slug is\nunknown or the character has no appearance the caller can see.",
+        "operationId": "characters_get_one",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDetailView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
+    "/api/characters/{slug}/issues": {
+      "get": {
+        "summary": "`GET /characters/{slug}/issues` — the character's visible issues,\ncursor-paginated by publication year, series, number. `total` on the first page only.",
+        "operationId": "characters_issues",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueListView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
+    "/api/characters/{slug}/series": {
+      "get": {
+        "summary": "`GET /characters/{slug}/series` — the character's visible series,\nalphabetical, cursor-paginated; `total` on the first page only.",
+        "operationId": "characters_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesListView"
+                }
+              }
+            }
+          },
+          "404": {}
         }
       }
     },
@@ -7364,6 +7710,133 @@
         }
       }
     },
+    "/api/publishers": {
+      "get": {
+        "summary": "`GET /publishers` — alphabetical, cursor-paginated browse of every\npublisher with at least one appearance visible to the caller.",
+        "operationId": "publishers_list",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "starts_with",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_EntityListItem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/publishers/{slug}": {
+      "get": {
+        "summary": "`GET /publishers/{slug}` — landing-page header. 404 when the slug is\nunknown or the publisher has no appearance the caller can see.",
+        "operationId": "publishers_get_one",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDetailView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
+    "/api/publishers/{slug}/series": {
+      "get": {
+        "summary": "`GET /publishers/{slug}/series` — the publisher's visible series,\nalphabetical, cursor-paginated; `total` on the first page only.",
+        "operationId": "publishers_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesListView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
     "/api/series": {
       "get": {
         "operationId": "series_list",
@@ -9825,6 +10298,179 @@
         }
       }
     },
+    "/api/teams": {
+      "get": {
+        "summary": "`GET /teams` — alphabetical, cursor-paginated browse of every\nteam with at least one appearance visible to the caller.",
+        "operationId": "teams_list",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "starts_with",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_EntityListItem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/teams/{slug}": {
+      "get": {
+        "summary": "`GET /teams/{slug}` — landing-page header. 404 when the slug is\nunknown or the team has no appearance the caller can see.",
+        "operationId": "teams_get_one",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDetailView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
+    "/api/teams/{slug}/issues": {
+      "get": {
+        "summary": "`GET /teams/{slug}/issues` — the team's visible issues,\ncursor-paginated by publication year, series, number. `total` on the first page only.",
+        "operationId": "teams_issues",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueListView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
+    "/api/teams/{slug}/series": {
+      "get": {
+        "summary": "`GET /teams/{slug}/series` — the team's visible series,\nalphabetical, cursor-paginated; `total` on the first page only.",
+        "operationId": "teams_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesListView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
     "/api/uploads": {
       "post": {
         "operationId": "uploads_create",
@@ -10515,7 +11161,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "Link-target id. For `cbl`/`collection` this is the **saved-view** id\n(open at `/views/{id}`); for `arc` it's the arc slug (no detail route\nyet — the web app renders arcs as informational chips)."
+            "description": "Link-target id. For `cbl`/`collection` this is the **saved-view** id\n(open at `/views/{id}`); for `arc` it's the arc slug (open at\n`/arcs/{slug}`, WP-5.5)."
           },
           "issue_count": {
             "type": [
@@ -13999,6 +14645,65 @@
           }
         }
       },
+      "CursorPage_EntityListItem": {
+        "type": "object",
+        "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One row of an entity browse index (`GET /characters` etc.).",
+              "required": [
+                "id",
+                "slug",
+                "name",
+                "series_count",
+                "issue_count"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "issue_count": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Distinct visible issues the entity appears in (0 for a\nseries-level-only appearance)."
+                },
+                "name": {
+                  "type": "string"
+                },
+                "series_count": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Distinct visible series the entity appears in."
+                },
+                "slug": {
+                  "type": "string",
+                  "description": "`/<kind>/<slug>` target."
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "CursorPage_LibraryEventView": {
         "type": "object",
         "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
@@ -15347,6 +16052,150 @@
               "$ref": "#/components/schemas/EngagementPoint"
             },
             "description": "Trailing-window DAU/WAU/MAU samples per day, last 90 days."
+          }
+        }
+      },
+      "EntityDetailView": {
+        "type": "object",
+        "description": "Header payload for an entity landing page. The series / issues grids\nare fetched separately through the cursor-paginated sub-routes.",
+        "required": [
+          "kind",
+          "id",
+          "slug",
+          "name",
+          "aliases",
+          "series_count",
+          "issue_count"
+        ],
+        "properties": {
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "founded_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Publishers only (provider data)."
+          },
+          "id": {
+            "type": "string"
+          },
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issue_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`\"characters\"` | `\"teams\"` | `\"arcs\"` | `\"publishers\"`."
+          },
+          "name": {
+            "type": "string"
+          },
+          "real_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Characters only (provider data)."
+          },
+          "series_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "EntityListItem": {
+        "type": "object",
+        "description": "One row of an entity browse index (`GET /characters` etc.).",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "series_count",
+          "issue_count"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "issue_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Distinct visible issues the entity appears in (0 for a\nseries-level-only appearance)."
+          },
+          "name": {
+            "type": "string"
+          },
+          "series_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Distinct visible series the entity appears in."
+          },
+          "slug": {
+            "type": "string",
+            "description": "`/<kind>/<slug>` target."
+          }
+        }
+      },
+      "EntitySlugs": {
+        "type": "object",
+        "description": "Name → slug maps for the cast / arc / publisher chips on the series\nand issue detail pages, so the web can link each chip to its landing\npage without a per-chip round-trip. Keys are the display names as\nthey appear on the page; names without an entity row are absent (the\nchip falls back to the library-grid filter).",
+        "properties": {
+          "arcs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "characters": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "publishers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "teams": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           }
         }
       },
@@ -17209,6 +18058,17 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "entity_slugs": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EntitySlugs",
+                "description": "WP-5.5: name -> entity landing-page slug maps for the character /\nteam / story-arc / publisher chips. Detail endpoints only; absent\non list payloads."
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "file_path": {
@@ -22781,6 +23641,17 @@
             ],
             "format": "int32",
             "description": "Earliest / latest publication year across the series's issues. The\nseries-level `year` is \"first release\"; `latest_year` lets the UI\nrender a range (e.g. \"2012–2018\"). Both `None` when no active issue\nhas a parsed year."
+          },
+          "entity_slugs": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EntitySlugs",
+                "description": "WP-5.5: name -> entity landing-page slug maps for the character /\nteam / story-arc / publisher chips. Detail endpoints only; absent\non list payloads."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "genres": {
             "type": "array",

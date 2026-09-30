@@ -750,6 +750,7 @@ export default async function IssuePage({
                 label="Characters"
                 items={splitCsv(issue.characters)}
                 filterField="characters"
+                entitySlugs={issue.entity_slugs ?? undefined}
               />
               <ChipList
                 orientation="horizontal"
@@ -757,6 +758,7 @@ export default async function IssuePage({
                 label="Teams"
                 items={splitCsv(issue.teams)}
                 filterField="teams"
+                entitySlugs={issue.entity_slugs ?? undefined}
               />
               <ChipList
                 orientation="horizontal"
@@ -766,12 +768,15 @@ export default async function IssuePage({
                 filterField="locations"
               />
               {/* Story arc has no series-level library filter (it's an
-                  issue-level concept), so the chip stays read-only. */}
+                  issue-level concept); chips link to the arc's landing
+                  page (WP-5.5) when it has a slug, else stay read-only. */}
               <ChipList
                 orientation="horizontal"
                 className="py-3 first:pt-0 last:pb-0"
                 label="Story arc"
                 items={splitCsv(issue.story_arc)}
+                entityField="story_arc"
+                entitySlugs={issue.entity_slugs ?? undefined}
               />
             </div>
             {!issue.characters &&
