@@ -247,6 +247,13 @@ test.describe("Reader flow", () => {
           }),
       );
     await expect.poll(queued, { message: "write queued offline" }).toBe(1);
+    // "Killed offline": the unload flush must not get out either. Unloading
+    // fires `pagehide`, whose keepalive request is handed to the browser
+    // process and escapes Playwright's per-page offline emulation, so the
+    // write reached the server anyway. Take the page's network away first.
+    await page.evaluate(() => {
+      window.fetch = () => Promise.reject(new TypeError("Failed to fetch"));
+    });
     await page.close();
     const serverPage = async () =>
       (
