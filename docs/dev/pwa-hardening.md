@@ -1,8 +1,9 @@
 # PWA hardening and verification
 
-This document tracks the accepted scope of the PWA review. Offline reading,
-notifications, and inbound file/share handling are separate features, not
-promises made by the offline fallback.
+This document tracks the accepted scope of the PWA review. Notifications and
+inbound file/share handling are separate features, not promises made by the
+offline fallback. Offline reading of explicitly downloaded issues shipped as
+WP-4.6 (`pwa-offline-reading-plan.md`, "Offline downloads").
 
 ## Implemented scope
 
@@ -12,12 +13,26 @@ promises made by the offline fallback.
 - Logout/account-change cache clearing and cross-window invalidation.
 - A small public offline document; hashed assets cache on demand. No bulk
   precache of administration/reader bundles and no authenticated HTML cache.
+  Since WP-4.6 the one stored document besides it is the **public**
+  offline-reader shell (`/downloads`, fetched without credentials) plus the
+  hashed assets it references, stored only after a user downloads an issue;
+  offline navigations get it (or a redirect to it) when a complete download
+  exists, else the offline page.
+- Page bytes are cached only as explicit per-account downloads
+  (`folio-offline-v1:<account>`), served by the worker only to the
+  `/downloads` document and only for the device owner's records. Every
+  other document keeps the native loader for page bytes. A signed-in load
+  purges other accounts' downloads; explicit sign-out removes all of them.
 - Production-only registration, stale development-worker removal, bounded
   update checks, opt-in reload in the accepting window, Later, and a settings
   update action. Another window's update never reloads the reader.
 - Progress retained until 2xx, serialized writes, hidden/pagehide/online flush,
-  and removal of pending writes on account reset. This buffer is memory-only:
-  failed writes do not survive terminating the application.
+  and removal of pending writes on account reset. Since WP-4.5 every progress
+  and reading-session write is also queued in an IndexedDB outbox
+  (`web/lib/pwa/outbox.ts`) and replayed on launch, `online`, tab-visible, a
+  retry backoff, and (Chromium) a Background Sync wake-up — so a write made
+  offline survives terminating the application. See
+  `pwa-offline-reading-plan.md` step 5 for the contract.
 - Stable manifest identity and Library/Bookmarks shortcuts, install discovery
   with browser-owned prompts or platform instructions, persistent settings UI.
 - Generated theme-color values from CSS, client chrome synchronization, dark
@@ -76,17 +91,25 @@ assets. Never capture real private library content for manifest screenshots.
 ## Automated checks
 
 - `pnpm --filter web test`: worker bypass/fallback/migration, progress retry and
-  ordering, update acceptance, development registration, wake-lock lifecycle,
+  ordering, outbox kill-and-relaunch replay and run safety
+  (`tests/dom/progress-outbox.test.tsx`), update acceptance, development registration, wake-lock lifecycle,
   safe-area regression, viewport themes, and auth destination validation.
+  Offline downloads (WP-4.6): download manager tiers/resume/quota/series
+  cursor walk/account purge/eviction (`tests/pwa/downloads.test.ts`), worker
+  shell navigation, referrer-scoped byte serving and shell precache
+  (`tests/pwa/offline-worker.test.ts`), and the eviction UI
+  (`tests/dom/downloads-list.test.tsx`).
 - `pnpm --filter web build`: verifies generated theme colors and compiles the
   actual service worker after Next. Regenerate colors with
   `node web/scripts/theme-colors.mjs` after changing background tokens.
 - `PLAYWRIGHT_BASE_URL=http://localhost:8080 pnpm --filter web exec playwright test`:
   production public-origin integration, including desktop and mobile Chromium
-  PWA tests. The PWA suite tests cold offline navigation, stale API-cache
-  rejection, thumbnail reset, and manifest identity/shortcuts. It also checks
-  that every manifest and shortcut icon is served as a PNG at its declared
-  size.
+  PWA tests. The reader-flow spec downloads an issue, goes offline, opens its
+  reader URL through the stored shell, turns a page, reconnects, and checks
+  the progress replayed. The PWA suite tests cold offline navigation, stale
+  API-cache rejection, thumbnail reset, and manifest identity/shortcuts. It
+  also checks that every manifest and shortcut icon is served as a PNG at its
+  declared size.
 - `PLAYWRIGHT_BASE_URL=http://localhost:8080 pnpm --filter web run check-pwa-assets`:
   HTTP status/MIME, `display: standalone`, the `any`/`maskable` split,
   manifest and shortcut PNG dimensions, the Apple touch icon, every startup

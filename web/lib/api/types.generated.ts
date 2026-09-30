@@ -2608,6 +2608,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/issues/{issue_id}/page-overrides": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["page_overrides_get"];
+        put: operations["page_overrides_put"];
+        post?: never;
+        delete: operations["page_overrides_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/log/widgets": {
         parameters: {
             query?: never;
@@ -8429,6 +8445,28 @@ export interface components {
             /** Format: int32 */
             ordinal: number;
         };
+        /** @description A user's spread overrides for one issue. Pages are 0-based indices. */
+        PageOverridesView: {
+            issue_id: string;
+            /** @description Shift the pairing parity by one page (fixes an offset scan). */
+            shift_pairing: boolean;
+            /**
+             * @description Pages forced to pair as ordinary single pages even when flagged
+             *     `DoublePage` or landscape. Sorted, unique, disjoint from
+             *     `spread_pages`.
+             */
+            single_pages: number[];
+            /**
+             * @description Pages forced to render solo as a two-page spread, regardless of
+             *     `DoublePage` metadata or aspect ratio. Sorted, unique.
+             */
+            spread_pages: number[];
+            /**
+             * @description RFC 3339 timestamp of the last write; `null` when the user has no
+             *     overrides for this issue.
+             */
+            updated_at?: string | null;
+        };
         PageView: {
             created_at: string;
             /**
@@ -8707,6 +8745,12 @@ export interface components {
              *     the existing user set + first-user admin bootstrap.
              */
             registration_open: boolean;
+        };
+        /** @description Replacement body for `PUT`. Omitted fields default to "no override". */
+        PutPageOverridesReq: {
+            shift_pairing?: boolean;
+            single_pages?: number[];
+            spread_pages?: number[];
         };
         QueueClearReq: {
             target: components["schemas"]["QueueClearTarget"];
@@ -16078,6 +16122,100 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IssueMarkersView"];
                 };
+            };
+        };
+    };
+    page_overrides_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOverridesView"];
+                };
+            };
+            /** @description issue not found or not visible */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    page_overrides_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutPageOverridesReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageOverridesView"];
+                };
+            };
+            /** @description issue not found or not visible */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    page_overrides_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description overrides cleared */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found or not visible */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

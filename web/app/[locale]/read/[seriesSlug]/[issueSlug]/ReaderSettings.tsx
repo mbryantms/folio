@@ -14,6 +14,15 @@ import {
   hasSeriesOverrides,
   clearSeriesOverrides,
 } from "@/lib/reader/series-overrides";
+import {
+  EMPTY_SPREAD_OVERRIDES,
+  isEmptySpreadOverrides,
+} from "@/lib/reader/spreads";
+import { useSpreadOverrides } from "@/lib/reader/use-spread-overrides";
+import {
+  useResetIssuePageOverrides,
+  useSetIssuePageOverrides,
+} from "@/lib/api/mutations";
 
 const VIEW_OPTIONS: ReadonlyArray<{ value: ViewMode; label: string }> = [
   { value: "single", label: "Single" },
@@ -136,6 +145,7 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
               checked={coverSolo}
               onChange={setCoverSolo}
             />
+            <IssueSpreadOverrides />
           </Section>
         </>
       ) : null}
@@ -262,6 +272,53 @@ function SwitchRow({
       </div>
       <Switch checked={checked} onCheckedChange={onChange} aria-label={label} />
     </div>
+  );
+}
+
+/**
+ * WP-4.3 per-issue spread controls: the "shift pairing by one" switch
+ * and a reset for every manual override on this issue (the per-page
+ * spread/single toggles live on the page strip). Saved to the server
+ * per user, so they follow the reader to other devices.
+ */
+function IssueSpreadOverrides() {
+  const issueId = useReaderStore((s) => s.issueId);
+  const overrides = useSpreadOverrides(issueId);
+  const setOverrides = useSetIssuePageOverrides(issueId);
+  const resetOverrides = useResetIssuePageOverrides(issueId);
+  if (!issueId) return null;
+  const shift = overrides?.shift_pairing ?? false;
+  const pageCount =
+    (overrides?.spread_pages.length ?? 0) +
+    (overrides?.single_pages.length ?? 0);
+  return (
+    <>
+      <SwitchRow
+        label="Shift pairing by one"
+        description="For this issue: fixes scans where every pair is off by a page. Mark single pages as spreads from the page strip."
+        checked={shift}
+        onChange={(next) =>
+          setOverrides.mutate({
+            ...(overrides ?? EMPTY_SPREAD_OVERRIDES),
+            shift_pairing: next,
+          })
+        }
+      />
+      {!isEmptySpreadOverrides(overrides) ? (
+        <button
+          type="button"
+          onClick={() => resetOverrides.mutate()}
+          disabled={resetOverrides.isPending}
+          className="inline-flex items-center gap-2 text-[11px] text-neutral-500 underline-offset-4 hover:text-neutral-200 hover:underline disabled:opacity-50"
+        >
+          <RotateCcw className="size-3" />
+          Reset spread overrides for this issue
+          {pageCount > 0
+            ? ` (${pageCount} page${pageCount === 1 ? "" : "s"})`
+            : ""}
+        </button>
+      ) : null}
+    </>
   );
 }
 

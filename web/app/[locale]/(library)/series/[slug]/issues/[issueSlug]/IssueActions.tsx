@@ -152,6 +152,7 @@ export function IssueActions({
     <>
       <IssueSettingsMenu
         issue={issue}
+        seriesName={series?.name ?? null}
         readState={readState}
         cblSavedViewId={cblSavedViewId}
         onEdit={() => setEditOpen(true)}

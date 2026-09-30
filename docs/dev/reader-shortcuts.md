@@ -245,6 +245,37 @@ resolves the initial view mode (`detectInitialViewMode` in
 User toggles always win and persist per series under
 `reader:viewMode:<series_id>` in `localStorage`.
 
+## Double-page pairing and manual spread controls
+
+In double-page view the reader walks the issue into *spread groups*
+(`web/lib/reader/spreads.ts::computeSpreadGroups`): the cover solo
+(when "First page is cover" is on), a page that reads as a spread solo,
+everything else in left/right pairs. A page reads as a spread when
+ComicInfo flags it `DoublePage` or its aspect ratio is ≥ 1.2.
+
+Offset scans and unflagged spreads defeat both signals, so each user can
+correct the pairing per issue (WP-4.3). Overrides **win over** the
+`DoublePage` flag and the aspect heuristic:
+
+| Control | Where | Effect |
+|---|---|---|
+| Per-page mode pill (`Auto` → `Spread` → `Single`) | Page strip, double view only; always shown on overridden and on-screen pages, on hover elsewhere | `Spread`: the page always renders alone. `Single`: the page pairs like an ordinary page even when flagged or landscape. |
+| "Shift pairing by one" | Settings popover → Spreads | The first page that would start a pair renders solo instead, so every later pair moves by one page (fixes an offset scan). A page that is solo anyway (next to a spread) doesn't consume the shift. |
+| "Reset spread overrides for this issue" | Settings popover → Spreads | Back to automatic pairing. |
+
+Overrides are stored server-side per `(user, issue)` in
+`issue_page_overrides` (`GET`/`PUT`/`DELETE
+/api/me/issues/{issue_id}/page-overrides`, handler
+`crates/server/src/api/page_overrides.rs`), so they follow the user to
+every device. `PUT` replaces the whole set; an all-default body deletes
+the row. The endpoints enforce the issue's library ACL and age-rating
+cap (an invisible issue is a 404). The read page prefetches the row
+during SSR so the first paint already pairs with it; the page strip,
+reader and settings popover share one TanStack query
+(`queryKeys.issuePageOverrides`) and the mutations update it
+optimistically. There is no keyboard shortcut yet; the strip pill for
+the on-screen page(s) is a tab stop.
+
 ## Direction auto-detect
 
 Five-layer resolution chain (highest-priority first), shipped in

@@ -49,7 +49,11 @@ Three view modes — **single**, **double**, and **webtoon** (continuous
 vertical scroll) — cycled with a keypress. Double-page mode pairs pages
 side-by-side and knows not to pair a page flagged `DoublePage` in
 ComicInfo, so wraparound covers and splash spreads render alone instead of
-being mangled into a fake pair.
+being mangled into a fake pair. When a scan is offset or a spread isn't
+flagged, you can fix it yourself: mark any page as a spread or a single
+from the page strip, or shift the whole issue's pairing by one page. The
+corrections are saved to your account per issue, so they follow you to
+every device.
 
 On the first open of a series, Folio picks the mode for you: webtoon when
 the median page is tall enough to clearly be a vertical strip, double when
@@ -114,6 +118,22 @@ Two modes protect your reading history:
 - **Peek** — the mode bookmark links use: glance at a marked page without
   moving your saved position or polluting On Deck, with a
   "Continue from here" banner if you decide to keep reading.
+
+### Read on a plane: offline downloads
+
+"Download for offline" in an issue's or series' actions menu stores the
+pages (at a page size you pick — Small, Medium, Large, or Original — with
+an estimated size shown against the browser's storage quota), their page
+strip thumbnails, and the issue details on the device. Downloads run in the
+background one issue at a time, can be paused and resumed, survive
+reloads, and a whole series is queued issue by issue. With no connection,
+opening the app or a reader link lands in **Downloads** (`/downloads`),
+which opens any finished download in the normal reader; pages you turn
+offline are queued and synced when you reconnect. Settings → Downloads
+lists every download with its size, removes one or all of them, and shows
+how much storage Folio is using. Downloads belong to the signed-in account
+on that browser — signing out removes them, and another account signing
+in on the same browser never sees them.
 
 ### "Up Next" that understands reading lists
 
