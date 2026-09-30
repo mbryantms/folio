@@ -891,7 +891,7 @@ impl TestApp {
             // matching-accuracy-1.0 M5 — variant fetch cap, default 3.
             metadata_alternate_cover_fetch_cap: 3,
             metadata_merge_provider_preference: String::new(),
-            library_hard_purge_multiplier: 2,
+            library_hard_purge_multiplier: 0,
         };
 
         let jobs = JobRuntime::new(&redis_url, db.clone())

@@ -432,7 +432,8 @@ the DB:
   thumbnail orphan sweep, which then reaps the purged ids' thumbs) and
   hard-`DELETE`s issues whose `removal_confirmed_at` is older than
   `library.soft_delete_days × library.hard_purge_multiplier` days
-  (global setting, default `2`, `0` disables; window floor 1 day; at
+  (global setting, **off by default** (`0`), `2` recommended when
+  enabling; window floor 1 day; at
   most 5 000 issues per library per run). See **Removal lifecycle**
   below.
 - **`series.json` re-read every scan** — there is no caching layer;
@@ -697,8 +698,12 @@ waiting for the scheduled refresh window.
 | Confirmed | both set | 04:00 auto-confirm after `soft_delete_days`, or admin `confirm-removal` | yes — a returning file still restores the row |
 | Purged | row gone | 04:15 hard-purge once confirmed for `soft_delete_days × library.hard_purge_multiplier` days | **no** |
 
-With the defaults (`soft_delete_days = 30`, multiplier `2`) a missing
-file's row survives ~90 days: 30 pending, then 60 confirmed.
+The purge is **off by default** (`library.hard_purge_multiplier = 0`):
+confirmed rows persist until an admin enables it on `/admin/server`.
+Enabling it purges rows confirmed-removed longer than
+`soft_delete_days × multiplier` days on the next 04:15 UTC run. With the
+recommended multiplier `2` and the default `soft_delete_days = 30`, a
+missing file's row survives ~90 days: 30 pending, then 60 confirmed.
 
 The purge ([`jobs/hard_purge.rs`](../../crates/server/src/jobs/hard_purge.rs)):
 
@@ -730,8 +735,8 @@ The purge ([`jobs/hard_purge.rs`](../../crates/server/src/jobs/hard_purge.rs)):
   stream, plus the `folio_library_hard_purged_total{kind}` counter.
 - **Trade-off.** The purged row's `content_hash` is what lets a
   re-appearing file de-dupe back into the same issue id; after a purge a
-  returning file is imported as a new issue with no read state. Raise the
-  multiplier (or set `0`) for collections on flaky mounts.
+  returning file is imported as a new issue with no read state. Use a
+  larger multiplier (or leave it at `0`) for collections on flaky mounts.
 
 ### File-watch (not implemented)
 
@@ -889,10 +894,10 @@ markers, a saved-view CBL slot). Two recovery paths:
 - ~~**Hard-purge of confirmed-removed rows.**~~ Shipped as roadmap
   WP-3.5 — see §Removal lifecycle. Chosen shape: one global
   `library.hard_purge_multiplier` over the existing per-library
-  `soft_delete_days` (default ×2, `0` = never) rather than a separate
-  per-library `purge_after_days`. **Upgrade note:** on the first 04:15
-  run after upgrading, rows already confirmed for longer than the window
-  are purged; set the multiplier to `0` beforehand to opt out.
+  `soft_delete_days` rather than a separate per-library
+  `purge_after_days`. **Off by default** (`0`); enabling it (×2
+  recommended) purges rows confirmed-removed longer than
+  `soft_delete_days × multiplier` days on the next 04:15 run.
 - **Scan-side audit-log emission** — scan triggers, soft-deletes from
   reconcile, and auto-confirm sweeps don't currently land in
   `audit_log`. Wire `crate::audit::record` calls into `finalize_run`

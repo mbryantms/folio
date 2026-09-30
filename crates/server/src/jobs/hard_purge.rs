@@ -11,9 +11,10 @@
 //! 3. **Purged** — this sweep (04:15) hard-`DELETE`s rows whose
 //!    `removal_confirmed_at` is older than
 //!    `soft_delete_days × library.hard_purge_multiplier` days (global
-//!    setting, default 2; `0` disables purging). The window has a floor of
-//!    [`MIN_PURGE_WINDOW_DAYS`] so a library with `soft_delete_days = 0`
-//!    never purges a row the same day it was confirmed.
+//!    setting, default `0` = off; `2` is the recommended value when
+//!    enabling). The window has a floor of [`MIN_PURGE_WINDOW_DAYS`] so a
+//!    library with `soft_delete_days = 0` never purges a row the same day
+//!    it was confirmed.
 //!
 //! **Only confirmed-removed rows are ever touched.** Both the candidate
 //! `SELECT` and the `DELETE` itself carry the full guard

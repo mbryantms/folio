@@ -301,14 +301,15 @@ pub struct Config {
     /// sweep ([`crate::jobs::hard_purge`]) deletes issue / empty-series
     /// rows whose `removal_confirmed_at` is older than
     /// `library.soft_delete_days × this` days. `0` disables purging.
-    /// Default 2. DB key `library.hard_purge_multiplier`; live (read on
-    /// every sweep).
+    /// Default 0 (off — the sweep ships disabled); 2 is the recommended
+    /// value when enabling. DB key `library.hard_purge_multiplier`; live
+    /// (read on every sweep).
     #[serde(default = "default_hard_purge_multiplier")]
     pub library_hard_purge_multiplier: u32,
 }
 
 fn default_hard_purge_multiplier() -> u32 {
-    2
+    0
 }
 
 fn default_weekly_refresh_cron() -> String {
@@ -1236,6 +1237,13 @@ pub fn restart_setting_value(cfg: &Config, key: &str) -> Option<serde_json::Valu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// WP-3.5 owner decision: the hard-purge sweep ships disabled.
+    #[test]
+    fn hard_purge_is_off_by_default() {
+        assert_eq!(default_hard_purge_multiplier(), 0);
+        assert_eq!(test_config_skeleton().library_hard_purge_multiplier, 0);
+    }
 
     /// Auth-hardening Phase B B2 (security-audit.md H-2): `Config`
     /// must not leak credentials through `{:?}` / `dbg!()` / panic

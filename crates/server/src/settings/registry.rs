@@ -281,7 +281,8 @@ pub const REGISTRY: &[SettingDef] = &[
     SettingDef {
         // Hard-purge window = `library.soft_delete_days × this` days after
         // removal is confirmed. `0` disables the daily purge sweep.
-        // Default 2. Live — read on every sweep.
+        // Default 0 (off); 2 is the recommended value when enabling.
+        // Live — read on every sweep.
         key: "library.hard_purge_multiplier",
         kind: SettingKind::Uint,
         is_secret: false,

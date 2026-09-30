@@ -50,7 +50,7 @@ export function ServerSettingsCards() {
   const logLevel = asString("observability.log_level", "info");
   const panelsMode = asString("compat.opds_panels_mode", "off");
   const zipLru = asUint("cache.zip_lru_capacity", 64);
-  const purgeMultiplier = asUint("library.hard_purge_multiplier", 2);
+  const purgeMultiplier = asUint("library.hard_purge_multiplier", 0);
   const workers = {
     scan_count: asUint("workers.scan_count", 4),
     post_scan_count: asUint("workers.post_scan_count", 2),
@@ -277,8 +277,10 @@ function PurgeCard({ initial }: { initial: number }) {
             A daily sweep permanently deletes issues whose removal was confirmed
             more than this many soft-delete windows ago, along with their
             bookmarks, notes, reading progress and ratings. If the file comes
-            back later it is imported as a new issue with no read state. Set to{" "}
-            <code>0</code> to never purge.
+            back later it is imported as a new issue with no read state. Off (
+            <code>0</code>) by default; <code>2</code> is the recommended value
+            when enabling. Once enabled, rows already past the window are purged
+            on the next 04:15 UTC run.
           </p>
         </div>
         <div className="flex justify-end">
