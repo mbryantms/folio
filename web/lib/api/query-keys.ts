@@ -158,6 +158,9 @@ export const queryKeys = {
     ["admin", "libraries", libraryId, "thumbnails-status"] as const,
   thumbnailsSettings: (libraryId: string) =>
     ["admin", "libraries", libraryId, "thumbnails-settings"] as const,
+  /** First-import content-hash backfill progress (WP-3.2). */
+  hashBackfill: (librarySlug: string) =>
+    ["admin", "libraries", librarySlug, "hash-backfill"] as const,
   users: (filters: UserListFilters) => ["admin", "users", filters] as const,
   user: (id: string) => ["admin", "users", id] as const,
   audit: (filters: AuditFilters) => ["admin", "audit", filters] as const,

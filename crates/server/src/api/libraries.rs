@@ -123,6 +123,11 @@ pub struct LibraryView {
     /// converts each `.cbr` it finds into a sibling `.cbz` in place (keeping
     /// the original as `.cbr.bak`) and ingests the `.cbz`. Default false.
     pub auto_convert_cbr_on_scan: bool,
+    /// First-import lazy-hash mode (WP-3.2): while the library has never
+    /// completed a full scan, new files ingest on size+mtime and their
+    /// full-file BLAKE3 backfills in the background
+    /// (`GET /libraries/{slug}/hash-backfill` reports progress).
+    pub trust_fingerprint_on_first_import: bool,
     /// Whether the library's `root_path` is on a writable mount. When
     /// false the admin UI disables the archive-writeback toggle and the
     /// PATCH handler refuses to enable it — rewrites can't land on a
@@ -179,6 +184,7 @@ impl From<library::Model> for LibraryView {
             archive_writeback_jpeg_quality: m.archive_writeback_jpeg_quality,
             cbr_convert_confirmed_at: m.cbr_convert_confirmed_at.map(|t| t.to_rfc3339()),
             auto_convert_cbr_on_scan: m.auto_convert_cbr_on_scan,
+            trust_fingerprint_on_first_import: m.trust_fingerprint_on_first_import,
             root_path_writable,
             metadata_publisher_blacklist: m
                 .metadata_publisher_blacklist
@@ -259,6 +265,12 @@ pub struct UpdateLibraryReq {
     #[serde(default)]
     #[garde(skip)]
     pub auto_convert_cbr_on_scan: Option<bool>,
+    /// First-import lazy-hash mode (WP-3.2). Only affects scans while the
+    /// library has never completed a full scan; flipping it afterwards is
+    /// accepted but has no effect until then.
+    #[serde(default)]
+    #[garde(skip)]
+    pub trust_fingerprint_on_first_import: Option<bool>,
     /// `.bak` retention slots, 0..=5. `0` = validated overwrite, no
     /// `.bak` (the sidecar rewrite is validated before the atomic swap,
     /// so the original is never replaced by a corrupt rewrite). CHECK
@@ -327,6 +339,12 @@ pub struct CreateLibraryReq {
     #[serde(default)]
     #[garde(skip)]
     pub generate_page_thumbs_on_scan: bool,
+    /// First-import lazy-hash mode (WP-3.2): the initial scan ingests on
+    /// size+mtime and defers the full-file BLAKE3 to a background job.
+    /// Set it here so the `scan_now` scan already benefits. Default false.
+    #[serde(default)]
+    #[garde(skip)]
+    pub trust_fingerprint_on_first_import: bool,
 }
 
 fn absolute_path(value: &str, _: &()) -> garde::Result {
@@ -593,6 +611,7 @@ pub async fn create(
         archive_writeback_jpeg_quality: Set(92),
         cbr_convert_confirmed_at: Set(None),
         auto_convert_cbr_on_scan: Set(false),
+        trust_fingerprint_on_first_import: Set(req.trust_fingerprint_on_first_import),
         metadata_publisher_blacklist: Set(serde_json::json!([])),
         filename_ignore_leading_numbers: Set(false),
         filename_assume_issue_one: Set(false),
@@ -759,6 +778,9 @@ pub async fn update_settings(
     }
     if let Some(b) = req.auto_convert_cbr_on_scan {
         am.auto_convert_cbr_on_scan = Set(b);
+    }
+    if let Some(b) = req.trust_fingerprint_on_first_import {
+        am.trust_fingerprint_on_first_import = Set(b);
     }
     if let Some(n) = req.archive_backup_retain_count {
         am.archive_backup_retain_count = Set(n);

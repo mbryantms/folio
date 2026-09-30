@@ -80,6 +80,7 @@ async fn seed_issue(app: &TestApp, file_path: &Path, pages: usize) -> String {
         filename_assume_issue_one: Set(false),
         metadata_auto_apply_strong_matches: Set(false),
         auto_convert_cbr_on_scan: Set(false),
+        trust_fingerprint_on_first_import: Set(false),
     }
     .insert(&db)
     .await
@@ -471,6 +472,7 @@ async fn worker_marks_error_on_unreadable_archive() {
         filename_assume_issue_one: Set(false),
         metadata_auto_apply_strong_matches: Set(false),
         auto_convert_cbr_on_scan: Set(false),
+        trust_fingerprint_on_first_import: Set(false),
     }
     .insert(&db)
     .await

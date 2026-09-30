@@ -80,6 +80,7 @@ const QUEUE_LABELS: { key: string; label: string }[] = [
   { key: "rewrite_issue_sidecars", label: "Sidecar rewrites" },
   { key: "archive_edit", label: "Archive edits" },
   { key: "backfill", label: "Backfills" },
+  { key: "hash_backfill", label: "Content hashing" },
 ];
 
 /** Friendly labels for every apalis queue. */
@@ -96,6 +97,7 @@ const QUEUE_LABEL_MAP: Record<string, string> = {
   rewrite_issue_sidecars: "Sidecar rewrite",
   archive_edit: "Archive edits",
   backfill: "Backfills",
+  hash_backfill: "Content hashing",
 };
 
 function queueLabel(key: string): string {

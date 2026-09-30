@@ -91,6 +91,9 @@ get_issue        # GET /admin/health-issues/{id} — single row
 backup_storage   # GET /libraries/{slug}/backup-storage — read-only .bak rollup
 page_count       # GET /issues/{id}/archive/page-count — read-only live page count
 
+# ── library_hash_backfill.rs ────────────────────────────────
+hash_backfill_status  # GET /libraries/{slug}/hash-backfill — read-only progress counts
+
 # ── libraries.rs ────────────────────────────────────────────
 list_health      # GET /libraries/{slug}/health — health-issue rollup
 list_removed     # GET /libraries/{slug}/removed — soft-deleted issue list

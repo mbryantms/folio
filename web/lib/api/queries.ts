@@ -24,6 +24,7 @@ import { apiFetch, getCsrfToken } from "./auth-refresh";
 // unchanged for every consumer.
 import { queryKeys } from "./query-keys";
 import type {
+  HashBackfillView,
   ActivityKind,
   ActivityListView,
   AppearancesView,
@@ -1005,6 +1006,28 @@ export function useThumbnailsStatus(
     refetchInterval: (query) => {
       const data = query.state.data as ThumbnailsStatusView | undefined;
       return data && data.in_flight > 0 ? intervalMs : false;
+    },
+  });
+}
+
+/**
+ * First-import lazy-hash progress (WP-3.2): how many of the library's
+ * issues still await their full-file BLAKE3. Polls while anything is
+ * pending so the settings page's progress bar advances on its own.
+ */
+export function useHashBackfill(
+  librarySlug: string,
+  opts?: { intervalMs?: number },
+) {
+  const { intervalMs = 3_000 } = opts ?? {};
+  return useQuery({
+    queryKey: queryKeys.hashBackfill(librarySlug),
+    queryFn: () =>
+      jsonFetch<HashBackfillView>(`/libraries/${librarySlug}/hash-backfill`),
+    enabled: !!librarySlug,
+    refetchInterval: (query) => {
+      const data = query.state.data as HashBackfillView | undefined;
+      return data && data.pending > 0 ? intervalMs : false;
     },
   });
 }

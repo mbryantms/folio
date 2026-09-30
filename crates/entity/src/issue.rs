@@ -162,7 +162,10 @@ pub struct Model {
     /// `comic_info_raw` instead.
     #[sea_orm(nullable)]
     pub metroninfo_present: Option<bool>,
-    /// Hash algorithm version (spec §14.2). 1 = BLAKE3.
+    /// Hash algorithm version (spec §14.2). 1 = BLAKE3 of the file bytes.
+    /// 0 = content hash **pending** (first-import lazy-hash mode, WP-3.2):
+    /// `content_hash` holds a size+mtime fingerprint placeholder until the
+    /// `hash_backfill` job stamps the real BLAKE3.
     pub hash_algorithm: i16,
 
     /// Thumbnail pipeline (M1): set when the post-scan thumbs worker has

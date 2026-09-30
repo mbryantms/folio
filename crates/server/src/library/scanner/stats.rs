@@ -30,6 +30,11 @@ pub struct ScanStats {
     /// counts toward `files_added` as well.
     #[serde(default)]
     pub files_converted: u64,
+    /// New files ingested on size+mtime alone with the full-file BLAKE3
+    /// deferred to the `hash_backfill` job (first-import lazy-hash mode,
+    /// WP-3.2). They also count toward `files_added`.
+    #[serde(default)]
+    pub files_hash_deferred: u64,
     pub series_created: u64,
     pub series_skipped_unchanged: u64,
     pub series_removed: u64,
@@ -127,6 +132,7 @@ impl ScanStats {
         self.files_encrypted += other.files_encrypted;
         self.files_duplicate += other.files_duplicate;
         self.files_converted += other.files_converted;
+        self.files_hash_deferred += other.files_hash_deferred;
         self.series_created += other.series_created;
         self.series_skipped_unchanged += other.series_skipped_unchanged;
         self.series_removed += other.series_removed;

@@ -47,6 +47,7 @@ pub mod backfill;
 pub mod backup_prune;
 pub mod close_dangling_sessions;
 pub mod hard_purge;
+pub mod hash_backfill;
 pub mod metadata_apply;
 pub mod metadata_resume;
 pub mod metadata_search;
@@ -77,6 +78,7 @@ pub struct JobRuntime {
     pub rewrite_issue_sidecars_storage: RedisStorage<rewrite_sidecars::RewriteIssueSidecarsJob>,
     pub archive_edit_storage: RedisStorage<archive_edit::ArchiveEditJob>,
     pub backfill_storage: RedisStorage<backfill::BackfillJob>,
+    pub hash_backfill_storage: RedisStorage<hash_backfill::HashBackfillJob>,
     pub redis: ConnectionManager,
 }
 
@@ -100,6 +102,7 @@ impl JobRuntime {
             storage::<rewrite_sidecars::RewriteIssueSidecarsJob>(conn.clone());
         let archive_edit_storage = storage::<archive_edit::ArchiveEditJob>(conn.clone());
         let backfill_storage = storage::<backfill::BackfillJob>(conn.clone());
+        let hash_backfill_storage = storage::<hash_backfill::HashBackfillJob>(conn.clone());
         Ok(Self {
             db,
             scan_storage,
@@ -114,6 +117,7 @@ impl JobRuntime {
             rewrite_issue_sidecars_storage,
             archive_edit_storage,
             backfill_storage,
+            hash_backfill_storage,
             redis: conn,
         })
     }
@@ -469,6 +473,15 @@ impl JobRuntime {
             .layer(metrics_layer::JobMetricsLayer::new("backfill"))
             .backend(self.backfill_storage.clone())
             .build_fn(backfill::handle);
+        // First-import lazy-hash drains (WP-3.2) — concurrency=1. Hashing is
+        // full-file I/O against the same disks the scanner and reader use
+        // (and shares their archive-work semaphore); one library at a time.
+        let hash_backfill_worker = WorkerBuilder::new("hash_backfill")
+            .concurrency(1)
+            .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new("hash_backfill"))
+            .backend(self.hash_backfill_storage.clone())
+            .build_fn(hash_backfill::handle);
 
         let shutdown_fut = {
             let token = shutdown.clone();
@@ -490,6 +503,7 @@ impl JobRuntime {
             .register(rewrite_issue_sidecars_worker)
             .register(archive_edit_worker)
             .register(backfill_worker)
+            .register(hash_backfill_worker)
             // Bound the graceful drain (OPS-3, JOBS-3): without this the monitor
             // waits indefinitely for an in-flight job, so a SIGTERM during a
             // 30-minute scan wouldn't return until the scan finished — past the
@@ -799,7 +813,7 @@ impl JobRuntime {
     /// `{type_name}:dead` and the ZSET shape are unchanged from 0.7 through the
     /// 1.0 release candidates). Returns `(queue_label, count)` for every queue.
     pub async fn dead_letter_counts(&self) -> redis::RedisResult<Vec<(&'static str, i64)>> {
-        let keys: [(&'static str, String); 12] = [
+        let keys: [(&'static str, String); 13] = [
             ("scan", self.scan_storage.get_config().dead_jobs_set()),
             (
                 "scan_series",
@@ -856,6 +870,10 @@ impl JobRuntime {
             (
                 "backfill",
                 self.backfill_storage.get_config().dead_jobs_set(),
+            ),
+            (
+                "hash_backfill",
+                self.hash_backfill_storage.get_config().dead_jobs_set(),
             ),
         ];
         let mut conn = self.redis.clone();

@@ -94,6 +94,13 @@ pub struct Model {
     /// from the page editor (`archive-rewrite-1.0` M6).
     #[serde(default)]
     pub auto_convert_cbr_on_scan: bool,
+    /// First-import lazy-hash mode (WP-3.2). While the library has never
+    /// completed a full scan (`last_scan_at IS NULL`), new files are
+    /// ingested on size+mtime alone — the issue id is BLAKE3 of the path
+    /// and the full-file BLAKE3 is deferred to the `hash_backfill` job
+    /// (`issues.hash_algorithm = 0` marks a pending row). Default false.
+    #[serde(default)]
+    pub trust_fingerprint_on_first_import: bool,
     /// Publisher names the matcher's pre-filter should drop before
     /// scoring. Comparison is case-insensitive against the
     /// title-sanitized form so "DC Comics" / "dc comics" / "DC" all
