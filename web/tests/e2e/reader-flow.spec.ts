@@ -167,16 +167,16 @@ test.describe("Reader flow", () => {
     await page.waitForTimeout(400); // let the 300 ms slide-in settle
     await expectNoAxeViolations(page, "reader, chrome shown");
 
-    // …with the page-text panel open (`r`). The fixture pages are solid
-    // colour, so the panel settles on "no text" (or on "couldn't detect"
-    // where the image ships without OCR models) — either way the panel,
-    // its status region and its controls are what axe inspects.
+    // …with the page-text panel open (`r`). The panel, its status region
+    // and its controls are what axe inspects, so any status phase will
+    // do. Don't wait for OCR to settle: a fresh smoke container downloads
+    // the detector model on first use, which has held the request past
+    // 90 s on CI runners (the OCR outcome is covered by the jsdom tests).
     await page.keyboard.press("r");
     const panel = page.getByRole("dialog", { name: "Page text" });
     await expect(panel).toBeVisible();
     await expect(panel.getByRole("status").first()).toHaveText(
-      /No text detected|Couldn't detect|Couldn't read|text block/,
-      { timeout: 90_000 },
+      /Finding text|Reading text|No text detected|Couldn't detect|Couldn't read|text block/,
     );
     await expectNoAxeViolations(page, "reader, page-text panel open");
     // Esc closes the panel without also quitting the reader.
