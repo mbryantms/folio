@@ -435,6 +435,18 @@ the DB:
   path is gone, the scanner updates the issue's primary path and records
   the old/new paths in `issue_paths`. If the old path still exists, it
   emits `DuplicateContent` and skips the new file.
+  - **Library-scoped** (WP-3.3, audit DI-21): only rows in the *same*
+    library match. The same file in two libraries is two issues, and
+    neither is flagged.
+  - **`dedupe_by_content`** is honoured: with the flag off, a second live
+    copy in the same library is ingested as its own issue (no health
+    row) and surfaces on the Duplicates page instead. Move detection
+    runs either way.
+  - **Issue id fallback**: a new row's id is the content hash unless
+    that id is already taken (other library, dedupe off, or a retagged
+    row's historical id), in which case it is `blake3(path)` — the
+    spec §5.1.2 path id. The per-path lookup keeps it stable on rescans
+    ([`allocate_issue_id`](../../crates/server/src/library/scanner/process.rs)).
 
 ## Fast-paths and bypasses
 
@@ -494,7 +506,7 @@ opaque JSON so adding variants doesn't need a migration.
 | `UnreadableArchive` | error | OS / archive-layer I/O error opening the archive. | [process.rs:244](../../crates/server/src/library/scanner/process.rs#L244) | `{ path, error }` | Check perms, replace the file. |
 | `MissingComicInfo` | info | Archive has no `ComicInfo.xml`. **Gated** on `library.report_missing_comicinfo=true` — loose libraries don't get spammed by default. | [process.rs:222](../../crates/server/src/library/scanner/process.rs#L222) | `{ path }` | Tag with ComicTagger / Mylar, or flip the per-library setting off. |
 | `MalformedComicInfo` | error | `ComicInfo.xml` exists but XML parse failed. | [process.rs:235](../../crates/server/src/library/scanner/process.rs#L235) | `{ path, error }` | Re-tag. |
-| `DuplicateContent` | warning | A new file's BLAKE3 hash matches an existing issue's id and the existing path is still present (fast-path #11). | [process.rs:314](../../crates/server/src/library/scanner/process.rs#L314) | `{ path_a, path_b }` (paths sorted alphabetically — fingerprint is order-stable). | Decide which copy to keep; renamed files whose old path is gone are handled as moves. |
+| `DuplicateContent` | warning | A new file's BLAKE3 hash matches an existing issue's `content_hash` **in the same library**, the existing path is still present, and `dedupe_by_content` is on (fast-path #11). | [process.rs:314](../../crates/server/src/library/scanner/process.rs#L314) | `{ path_a, path_b }` (paths sorted alphabetically — fingerprint is order-stable). | Decide which copy to keep; renamed files whose old path is gone are handled as moves. |
 | `UnsupportedArchiveFormat` | warning | `.cb7`: always — the [cb7.rs](../../crates/archive/src/cb7.rs) reader is a stub. `.cbr`: only when the library has `auto_convert_cbr_on_scan=false` **or** the conversion failed (not RAR/ZIP by magic bytes, encrypted, I/O error). With the flag on, the scanner converts the file to a sibling `.cbz` via [scanner/cbr_convert.rs](../../crates/server/src/library/scanner/cbr_convert.rs) and ingests that instead — no health row. | [process.rs](../../crates/server/src/library/scanner/process.rs) (`Some("cbr")` / `Some("cb7")` arms) | `{ path, ext }` | Enable `auto_convert_cbr_on_scan` on the library (needs `allow_archive_writeback`), or convert to CBZ by hand. CB7: convert to CBZ. |
 | `SkippedArchiveEntries` | warning | The archive opened, but one or more entries were dropped from the page index by a soft defense in the archive crate. One row per `reason`: `compression ratio cap` (CBZ entry claiming >200× expansion) or `image extension but non-image content` (an image-named entry whose leading bytes carry no image signature — the "`ComicInfo.xml` saved as `-0001.jpg`" publisher bug; every reader content-sniffs page candidates at open via [`archive::image_sniff`](../../crates/archive/src/image_sniff.rs)). The issue ingests with the surviving pages, so cover thumbnails, the reader and OCR all agree on page 0. | [process.rs](../../crates/server/src/library/scanner/process.rs) (translates `entries_skipped()`) | `{ path, dropped, total, reason }` | Repack the archive without the offending entry, or leave it — nothing downstream reads it. |
 
@@ -646,6 +658,7 @@ waiting for the scheduled refresh window.
 |---|---|---|---|
 | `ignore_globs` | string[] | `[]` | `globset` syntax. Validated at PATCH time — invalid patterns return 400. |
 | `report_missing_comicinfo` | bool | `false` | When true, files without `ComicInfo.xml` emit `MissingComicInfo` info-level health issues. |
+| `dedupe_by_content` | bool | `true` | When true, a second copy of a file already in *this* library is skipped with a `DuplicateContent` health row. When false, every copy is ingested and the Duplicates page lists the exact-hash group. Never cross-library. |
 | `file_watch_enabled` | bool | `false` | **Inert.** Stored and returned by the API, counted on `/admin/server/info`, but no watcher consumes it (see Triggers). Reserved for roadmap WP-3.1. |
 | `soft_delete_days` | int | `30` | Days a removed issue stays in pending state before auto-confirmation. |
 | `scan_schedule_cron` | string | `null` | 5- or 6-field cron. `null` disables scheduled scans. |
@@ -679,6 +692,41 @@ waiting for the scheduled refresh window.
 - A returning file (same content hash, same path, file back on disk) is
   auto-restored by the next scan
   ([reconcile.rs:62–68, 198–204](../../crates/server/src/library/reconcile.rs#L62-L68)).
+  **Exception:** a copy soft-removed from the Duplicates page stays
+  removed although its file is on disk — its
+  `issue_duplicate_decision` row (`decision = 'remove'`) excludes it from
+  every reconcile/restore path (`reconcile::not_duplicate_removed`).
+  Restoring it from the Removed tab or clearing the decision drops the
+  pin.
+
+### Duplicates page (WP-3.3)
+
+Admin-only, per library: `/admin/libraries/{slug}/duplicates` (also
+reachable from the admin nav "Duplicates" entry, which adds a library
+picker). Backed by [`api/duplicates.rs`](../../crates/server/src/api/duplicates.rs):
+
+- `GET /libraries/{slug}/duplicates?kind=all|hash|number|cover&limit&cursor`
+  — cursor-paginated groups; `total` + per-kind `counts` on the first
+  page only. Groups (live issues only, one library):
+  - `hash` — exact `content_hash` match;
+  - `number` — same `(series, sort_number, special_type)`, numbered
+    issues only;
+  - `cover` — primary-cover `issue_cover.phash` Hamming ≤ 8 inside one
+    series, clustered transitively.
+
+  With `kind=all` a group whose members are a subset of a stronger
+  group's (`hash` > `number` > `cover`) is suppressed. A group whose live
+  members are all marked *keep* drops off; a new undecided copy brings
+  it back. Groups are computed per request, then keyset-paginated over a
+  stable sort key, so acting on a group between page fetches never skips
+  another.
+- `PUT /series/{s}/issues/{i}/duplicate-decision` `{decision: keep|remove}`
+  — audited `admin.issue.duplicate.keep` / `.remove`. `remove` sets
+  `removed_at` (soft-remove; the file is not touched) and pins it.
+- `DELETE /series/{s}/issues/{i}/duplicate-decision` — audited
+  `admin.issue.duplicate.clear`; undoes a duplicate soft-remove when the
+  file is still on disk.
+- "Edit" opens the issue page with `?edit=1`, which pops the edit sheet.
 
 ### File-watch (not implemented)
 

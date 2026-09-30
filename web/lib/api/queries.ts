@@ -91,6 +91,8 @@ import type {
   ReadingStatsRange,
   ReadingStatsView,
   RemovedListView,
+  DuplicateKindFilter,
+  DuplicateListView,
   SavedViewListView,
   SavedViewView,
   SidebarLayoutView,
@@ -859,6 +861,39 @@ export function useRemovedItemsInfinite(libraryId: string) {
         }`,
       ),
     getNextPageParam: removedItemsNextPage,
+    enabled: !!libraryId,
+  });
+}
+
+/** `getNextPageParam` for {@link useDuplicatesInfinite}. Exported + tested
+ *  so a refactor can't swallow `next_cursor` and silently truncate the
+ *  duplicates list (WP-3.3). */
+export function duplicatesNextPage(
+  page: DuplicateListView,
+): string | undefined {
+  return page.next_cursor ?? undefined;
+}
+
+/**
+ * Cursor-paginated duplicate groups for one library (WP-3.3). `kind` is a
+ * server-side filter; `total` and the per-kind chip `counts` ride on the
+ * first page only — read them from `pages[0]`.
+ */
+export function useDuplicatesInfinite(
+  libraryId: string,
+  kind: DuplicateKindFilter,
+) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.duplicates(libraryId, kind),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
+      const qs = new URLSearchParams({ kind });
+      if (pageParam) qs.set("cursor", pageParam);
+      return jsonFetch<DuplicateListView>(
+        `/libraries/${libraryId}/duplicates?${qs.toString()}`,
+      );
+    },
+    getNextPageParam: duplicatesNextPage,
     enabled: !!libraryId,
   });
 }

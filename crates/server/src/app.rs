@@ -106,6 +106,7 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(api::libraries::routes())
         .merge(api::health_issues::routes())
         .merge(api::reconcile::routes())
+        .merge(api::duplicates::routes())
         .merge(api::scan_runs::routes())
         .merge(api::scan_batches::routes())
         .merge(api::library_events::routes())

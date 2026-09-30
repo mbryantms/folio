@@ -340,6 +340,14 @@ pub async fn restore_issue(
         tracing::error!(error = %e, issue_id = %id, "restore issue failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
+    // An explicit restore overrides a Duplicates-page soft-remove (WP-3.3):
+    // drop the pin so the next scan's reconcile treats the issue normally.
+    if let Err(e) = entity::issue_duplicate_decision::Entity::delete_by_id(id.clone())
+        .exec(&app.db)
+        .await
+    {
+        tracing::warn!(error = %e, issue_id = %id, "restore issue: clearing duplicate decision failed");
+    }
 
     record_admin_action!(
         db = &app.db,
@@ -454,6 +462,9 @@ pub async fn restore_series(
     let removed_issues: Vec<(String, String)> = match issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(row.id))
         .filter(issue::Column::RemovedAt.is_not_null())
+        // Duplicates-page soft-removes stay removed (WP-3.3); restore
+        // those one at a time from the Removed tab.
+        .filter(crate::library::reconcile::not_duplicate_removed())
         .select_only()
         .column(issue::Column::Id)
         .column(issue::Column::FilePath)

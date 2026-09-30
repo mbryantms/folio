@@ -2,7 +2,7 @@
 
 import { Loader2, PinOff, Plus, Trash2 } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createContext, useContext, useMemo, useState } from "react";
 
 import {
@@ -107,7 +107,24 @@ export function IssueActions({
   cblSavedViewId?: string | null;
 }) {
   const router = useRouter();
-  const [editOpen, setEditOpen] = useState(false);
+  // Deep-link: the admin Duplicates page's "Open editor" action navigates
+  // here with ?edit=1 to pop the edit sheet straight open (WP-3.3). Closing
+  // strips the param (replaceState, no RSC round-trip) so a refresh or
+  // back-nav doesn't re-pop it.
+  const searchParams = useSearchParams();
+  const [editOpen, setEditOpenState] = useState(
+    () => searchParams.get("edit") === "1",
+  );
+  const setEditOpen = (next: boolean) => {
+    setEditOpenState(next);
+    if (!next && typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("edit")) {
+        url.searchParams.delete("edit");
+        window.history.replaceState({}, "", url.toString());
+      }
+    }
+  };
   const [confirmForceRecreate, setConfirmForceRecreate] = useState(false);
   const [archiveEditOpen, setArchiveEditOpen] = useState(false);
   // Mount the lazy page editor on first open; keep it mounted so its close

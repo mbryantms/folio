@@ -280,6 +280,12 @@ Every series/issue/page/search/OPDS query filters via `WHERE EXISTS (SELECT 1 FR
 - Identical content across two paths (legitimate dupes after a library reorg) collapse to one issue.
 - Re-scan after a library move is free.
 
+Dedupe is **library-scoped** (WP-3.3): identical bytes in two libraries are
+two issues. The second one gets the path id `blake3(path)` because the
+content-hash id is already taken; the same fallback applies to a second
+copy in a library with `dedupe_by_content=false`, which ingests every copy
+and lists them on the admin Duplicates page instead of skipping them.
+
 Trade-off: hashing every file on first scan is I/O-heavy. Mitigation: hash is BLAKE3, parallelized across CPU cores; later scans only re-hash if `(size, mtime)` changes. The `(size, mtime)` shortcut is allowed because the threat model assumes the library root is read-only to the app.
 
 ### 5.2 Relationship tables

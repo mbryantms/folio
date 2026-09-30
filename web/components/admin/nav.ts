@@ -12,6 +12,7 @@ export type IconName =
   | "BarChart3"
   | "BookOpen"
   | "Cog"
+  | "Copy"
   | "FileClock"
   | "FileText"
   | "Gauge"
@@ -106,6 +107,9 @@ export function adminNav(localePrefix: string): NavSection[] {
           icon: "Sparkles",
           dynamicBadge: "metadata-unmatched",
         },
+        // WP-3.3 — per-library duplicate groups (also a tab on each
+        // library's admin page).
+        { href: p("/duplicates"), label: "Duplicates", icon: "Copy" },
       ],
     },
     {
