@@ -7944,6 +7944,13 @@ export interface components {
              */
             archive_writeback_jpeg_quality: number;
             /**
+             * @description CB7 twin of `auto_convert_cbr_on_scan` (WP-6.5): when true AND
+             *     `allow_archive_writeback` is also true, the scanner converts each
+             *     `.cb7` (7z) into a sibling `.cbz` (keeping the original as
+             *     `.cb7.bak`) and ingests the `.cbz`. Default false.
+             */
+            auto_convert_cb7_on_scan: boolean;
+            /**
              * @description When true AND `allow_archive_writeback` is also true, the scanner
              *     converts each `.cbr` it finds into a sibling `.cbz` in place (keeping
              *     the original as `.cbr.bak`) and ingests the `.cbz`. Default false.
@@ -10790,6 +10797,13 @@ export interface components {
              *     at the DB level; garde surfaces a friendly 422 here.
              */
             archive_writeback_jpeg_quality?: number | null;
+            /**
+             * @description When true, the scanner converts each `.cb7` (7z) it finds into a
+             *     sibling `.cbz` in place (keeping the original as `.cb7.bak`) and
+             *     ingests the `.cbz` (WP-6.5). Requires `allow_archive_writeback=true`
+             *     — enabling it while the master toggle resolves false returns 422.
+             */
+            auto_convert_cb7_on_scan?: boolean | null;
             /**
              * @description When true, the scanner converts each `.cbr` it finds into a sibling
              *     `.cbz` in place (keeping the original as `.cbr.bak`) and ingests the

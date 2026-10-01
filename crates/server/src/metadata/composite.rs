@@ -721,7 +721,7 @@ pub async fn apply_composite(
                 .await?
                 .ok_or(ApplyError::IssueGone)?;
             // WP-2.6 (f): same format gate as `apply::apply_issue` — a
-            // refused archive (CBR without conversion, CB7) takes the
+            // refused archive (CBR / CB7 without conversion) takes the
             // DB-direct branch with the reason on the outcome.
             let mut sidecar_refused: Option<String> = None;
             let writeback = match writeback_library(state, issue_row.library_id).await? {

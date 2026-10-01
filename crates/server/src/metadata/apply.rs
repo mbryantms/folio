@@ -1119,8 +1119,8 @@ pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutco
         set_by: SetBy::Provider(source),
         source_ext: detail.source_external_id.clone(),
     });
-    // WP-2.6 (f): an archive the sidecar path can't rewrite (CBR without
-    // conversion enabled, CB7, unknown extension) falls back to the
+    // WP-2.6 (f): an archive the sidecar path can't rewrite (CBR / CB7
+    // without conversion enabled, unknown extension) falls back to the
     // DB-direct apply with the reason surfaced on the outcome, instead of
     // enqueueing a job that fails at open after the run was marked
     // applied (audit DI-10).

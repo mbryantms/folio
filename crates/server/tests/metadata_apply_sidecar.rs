@@ -2020,6 +2020,154 @@ async fn apply_issue_cbr_without_conversion_falls_back_to_db_direct() {
     );
 }
 
+fn cb7_fixture(name: &str) -> std::path::PathBuf {
+    let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(name);
+    assert!(
+        p.is_file(),
+        "fixtures/{name} is committed (make-cb7-fixture.py)"
+    );
+    p
+}
+
+/// WP-6.5: a CB7 in a library that allows CB7→CBZ conversion is converted
+/// first (the `.cb7` kept as `.cb7.bak`), the row is repointed at the
+/// `.cbz`, and the sidecars are written into the new archive. Uses the
+/// solid fixture so the one-pass 7z decode is on the path.
+#[tokio::test]
+async fn sidecar_rewrite_converts_cb7_when_library_allows() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .with_auto_convert_cb7_on_scan()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Thanos")
+        .insert(&app.state().db)
+        .await;
+    let cb7 = dir.path().join("Thanos 001.cb7");
+    let cb7_bytes = std::fs::read(cb7_fixture("synthetic-3page-solid.cb7")).unwrap();
+    let issue_id = IssueSeed::new(lib_id, series_id, &cb7, &cb7_bytes, 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    server::jobs::rewrite_sidecars::handle(
+        sidecar_job(&issue_id),
+        apalis::prelude::Data::new(app.state()),
+    )
+    .await
+    .unwrap();
+
+    let cbz = cb7.with_extension("cbz");
+    assert!(cbz.exists(), "converted .cbz written");
+    assert!(!cb7.exists(), "original .cb7 moved away");
+    assert_eq!(
+        std::fs::read(cb7.with_extension("cb7.bak")).unwrap(),
+        cb7_bytes,
+        "original kept byte-for-byte as .cb7.bak"
+    );
+    let row = issue_row(&app, &issue_id).await;
+    assert_eq!(
+        row.file_path,
+        cbz.to_string_lossy(),
+        "row repointed at the .cbz"
+    );
+    assert!(row.last_sidecar_rewrite_at.is_some());
+
+    let mut a = archive::open(&cbz, archive::ArchiveLimits::default()).unwrap();
+    assert_eq!(a.pages().len(), 3, "all three fixture pages carried over");
+    let ci = String::from_utf8(a.read_entry_bytes("ComicInfo.xml").unwrap()).unwrap();
+    assert!(ci.contains("<Title>Rewritten</Title>"), "{ci}");
+    assert!(a.find("MetronInfo.xml").is_some());
+    assert!(
+        a.read_entry_bytes("notes.txt")
+            .unwrap()
+            .starts_with(b"foreign entry"),
+        "foreign entry preserved through conversion + rewrite"
+    );
+
+    // CB7 has no page-editor path: the CBR confirm gate stays untouched.
+    let libr = entity::library::Entity::find_by_id(lib_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(libr.cbr_convert_confirmed_at.is_none());
+}
+
+/// WP-6.5: a CB7 in a library that has NOT allowed CB7 conversion is
+/// refused at dispatch — even when the library *has* allowed CBR conversion
+/// (the flags are deliberately separate). The apply falls back to the
+/// DB-direct branch with the reason on the outcome and the file untouched.
+#[tokio::test]
+async fn apply_issue_cb7_without_conversion_falls_back_to_db_direct() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .with_auto_convert_cbr_on_scan()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Thanos")
+        .insert(&app.state().db)
+        .await;
+    let cb7 = dir.path().join("Thanos 001.cb7");
+    let cb7_bytes = std::fs::read(cb7_fixture("synthetic-3page.cb7")).unwrap();
+    let issue_id = IssueSeed::new(lib_id, series_id, &cb7, &cb7_bytes, 1.0)
+        .insert(&app.state().db)
+        .await;
+
+    use server::metadata::cache;
+    use server::metadata::identifier::Source;
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Issue,
+        "67890",
+        &stub_provider_payload(),
+    )
+    .await
+    .unwrap();
+    let (run_id, ordinal) = seed_issue_run(&app, &issue_id, "comicvine").await;
+
+    let outcome = apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        args(run_id, ordinal, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("apply_issue");
+
+    assert!(!outcome.enqueued_rewrite, "sidecar path refused");
+    assert_eq!(
+        outcome.sidecar_skip_reasons.len(),
+        1,
+        "{:?}",
+        outcome.sidecar_skip_reasons
+    );
+    assert!(
+        outcome.sidecar_skip_reasons[0].contains("CB7")
+            && outcome.sidecar_skip_reasons[0].contains("auto_convert_cb7_on_scan")
+            && outcome.sidecar_skip_reasons[0].contains("applied DB-direct"),
+        "{:?}",
+        outcome.sidecar_skip_reasons
+    );
+    assert!(
+        queued_rewrite_jobs(&app).await.is_empty(),
+        "no rewrite job queued"
+    );
+    assert_eq!(std::fs::read(&cb7).unwrap(), cb7_bytes, "archive untouched");
+    let row = issue_row(&app, &issue_id).await;
+    assert!(row.file_path.ends_with(".cb7"), "not converted");
+    assert_eq!(
+        row.summary.as_deref(),
+        Some("Provider summary."),
+        "provider summary landed DB-direct"
+    );
+}
+
 /// WP-2.6 (f) / audit DI-10: when the rewrite fails (here: the "archive"
 /// isn't a zip at all), none of the deferred metadata writes happen — no
 /// provider provenance, no variant rows, no `last_metadata_sync_at` — so

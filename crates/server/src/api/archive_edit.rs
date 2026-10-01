@@ -172,8 +172,9 @@ async fn preflight(
     Ok((row, lib))
 }
 
-/// CBZ/CBT rewrite in place; CBR converts to CBZ. CB7 + anything else has
-/// no writer and is rejected.
+/// CBZ/CBT rewrite in place; CBR converts to CBZ. CB7 + anything else is
+/// rejected (a CB7 only becomes an issue row after scan-time conversion to
+/// CBZ, so the page editor never needs a CB7 path).
 fn is_editable_format(path: &str) -> bool {
     std::path::Path::new(path)
         .extension()

@@ -21,6 +21,7 @@ const schema = z
     allow_archive_writeback: z.boolean().default(false),
     metadata_writeback_enabled: z.boolean().default(false),
     auto_convert_cbr_on_scan: z.boolean().default(false),
+    auto_convert_cb7_on_scan: z.boolean().default(false),
     trust_fingerprint_on_first_import: z.boolean().default(false),
   })
   .refine((v) => !v.metadata_writeback_enabled || v.allow_archive_writeback, {
@@ -32,6 +33,11 @@ const schema = z
     message:
       "CBR conversion requires Archive writeback (master toggle) to be on first.",
     path: ["auto_convert_cbr_on_scan"],
+  })
+  .refine((v) => !v.auto_convert_cb7_on_scan || v.allow_archive_writeback, {
+    message:
+      "CB7 conversion requires Archive writeback (master toggle) to be on first.",
+    path: ["auto_convert_cb7_on_scan"],
   });
 
 describe("library settings schema", () => {
@@ -126,6 +132,30 @@ describe("library settings schema", () => {
       report_missing_comicinfo: false,
       soft_delete_days: 7,
       auto_convert_cbr_on_scan: true,
+      allow_archive_writeback: true,
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects CB7 conversion without the master writeback toggle", () => {
+    const r = schema.safeParse({
+      ignore_globs: [],
+      scan_schedule_cron: "",
+      report_missing_comicinfo: false,
+      soft_delete_days: 7,
+      auto_convert_cb7_on_scan: true,
+      allow_archive_writeback: false,
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("accepts CB7 conversion when archive writeback is on", () => {
+    const r = schema.safeParse({
+      ignore_globs: [],
+      scan_schedule_cron: "",
+      report_missing_comicinfo: false,
+      soft_delete_days: 7,
+      auto_convert_cb7_on_scan: true,
       allow_archive_writeback: true,
     });
     expect(r.success).toBe(true);

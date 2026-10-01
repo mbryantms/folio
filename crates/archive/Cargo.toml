@@ -16,8 +16,11 @@ natord = { workspace = true }
 # unrar 0.5 is the pure-Rust bindings crate; license requires NOTICE attribution.
 unrar = { workspace = true }
 tar = { workspace = true }
+sevenz-rust2 = { workspace = true }
 
 [dev-dependencies]
+# `compress` only for tests: synthesize bombs / hostile names on the fly.
+sevenz-rust2 = { workspace = true, features = ["compress"] }
 tempfile = "3"
 tar = { workspace = true }
 

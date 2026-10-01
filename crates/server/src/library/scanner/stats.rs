@@ -24,10 +24,11 @@ pub struct ScanStats {
     /// is still pending, but this counter at least makes the rejections
     /// visible instead of silently rolling back the chunk.
     pub files_duplicate: u64,
-    /// Files the scanner converted from `.cbr` to a sibling `.cbz` this run
-    /// (per-library `auto_convert_cbr_on_scan`). The original is preserved
-    /// as `.cbr.bak`; the converted `.cbz` is then ingested normally and
-    /// counts toward `files_added` as well.
+    /// Files the scanner converted from `.cbr` / `.cb7` to a sibling `.cbz`
+    /// this run (per-library `auto_convert_cbr_on_scan` /
+    /// `auto_convert_cb7_on_scan`). The original is preserved as
+    /// `.cbr.bak` / `.cb7.bak`; the converted `.cbz` is then ingested
+    /// normally and counts toward `files_added` as well.
     #[serde(default)]
     pub files_converted: u64,
     /// New files ingested on size+mtime alone with the full-file BLAKE3

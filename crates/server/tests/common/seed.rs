@@ -42,6 +42,7 @@ pub struct LibrarySeed<'a> {
     pub allow_archive_writeback: bool,
     pub metadata_writeback_enabled: bool,
     pub auto_convert_cbr_on_scan: bool,
+    pub auto_convert_cb7_on_scan: bool,
     pub trust_fingerprint_on_first_import: bool,
 }
 
@@ -54,6 +55,7 @@ impl<'a> LibrarySeed<'a> {
             allow_archive_writeback: false,
             metadata_writeback_enabled: false,
             auto_convert_cbr_on_scan: false,
+            auto_convert_cb7_on_scan: false,
             trust_fingerprint_on_first_import: false,
         }
     }
@@ -78,6 +80,14 @@ impl<'a> LibrarySeed<'a> {
     pub fn with_auto_convert_cbr_on_scan(mut self) -> Self {
         self.allow_archive_writeback = true;
         self.auto_convert_cbr_on_scan = true;
+        self
+    }
+
+    /// Enable scan-time CB7→CBZ conversion (WP-6.5). Requires archive
+    /// writeback, so this also flips the master toggle on.
+    pub fn with_auto_convert_cb7_on_scan(mut self) -> Self {
+        self.allow_archive_writeback = true;
+        self.auto_convert_cb7_on_scan = true;
         self
     }
 
@@ -125,6 +135,7 @@ impl<'a> LibrarySeed<'a> {
             filename_assume_issue_one: Set(false),
             metadata_auto_apply_strong_matches: Set(false),
             auto_convert_cbr_on_scan: Set(self.auto_convert_cbr_on_scan),
+            auto_convert_cb7_on_scan: Set(self.auto_convert_cb7_on_scan),
             trust_fingerprint_on_first_import: Set(self.trust_fingerprint_on_first_import),
         }
         .insert(db)

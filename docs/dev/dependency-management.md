@@ -122,7 +122,11 @@ What is still unproven, in priority order:
    vitest static-markup only.
 3. **Metadata provider apply** end to end (wiremock covers the clients;
    the apply job runs only via direct handler calls).
-4. **CB7** — no decoder in the graph (scaffold only); nothing to test yet.
+4. **CB7** — `sevenz-rust2` bumps are covered by the archive-crate
+   fixture suite (`crates/archive/tests/cb7_fixture.rs`: non-solid, solid,
+   encrypted, bomb, traversal names) and the scan-time conversion tests,
+   but no browser e2e — a CB7 only reaches the reader after conversion to
+   CBZ.
 
 ## Where things are
 

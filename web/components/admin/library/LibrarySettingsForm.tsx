@@ -59,6 +59,7 @@ const schema = z
     allow_archive_writeback: z.boolean().default(false),
     metadata_writeback_enabled: z.boolean().default(false),
     auto_convert_cbr_on_scan: z.boolean().default(false),
+    auto_convert_cb7_on_scan: z.boolean().default(false),
     trust_fingerprint_on_first_import: z.boolean().default(false),
     archive_backup_retain_count: z.number().int().min(0).max(5).default(1),
     archive_backup_retain_days: z.number().int().min(0).max(3650).default(30),
@@ -82,6 +83,11 @@ const schema = z
     message:
       "CBR conversion requires Archive writeback (master toggle) to be on first.",
     path: ["auto_convert_cbr_on_scan"],
+  })
+  .refine((v) => !v.auto_convert_cb7_on_scan || v.allow_archive_writeback, {
+    message:
+      "CB7 conversion requires Archive writeback (master toggle) to be on first.",
+    path: ["auto_convert_cb7_on_scan"],
   });
 
 type FormValues = z.infer<typeof schema>;
@@ -103,6 +109,7 @@ function formValuesFromLibrary(lib: LibraryView): z.input<typeof schema> {
     allow_archive_writeback: lib.allow_archive_writeback,
     metadata_writeback_enabled: lib.metadata_writeback_enabled,
     auto_convert_cbr_on_scan: lib.auto_convert_cbr_on_scan,
+    auto_convert_cb7_on_scan: lib.auto_convert_cb7_on_scan,
     trust_fingerprint_on_first_import: lib.trust_fingerprint_on_first_import,
     archive_backup_retain_count: lib.archive_backup_retain_count,
     archive_backup_retain_days: lib.archive_backup_retain_days,
@@ -132,6 +139,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       allow_archive_writeback: false,
       metadata_writeback_enabled: false,
       auto_convert_cbr_on_scan: false,
+      auto_convert_cb7_on_scan: false,
       trust_fingerprint_on_first_import: false,
       archive_backup_retain_count: 1,
       archive_backup_retain_days: 30,
@@ -171,6 +179,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
         allow_archive_writeback: values.allow_archive_writeback,
         metadata_writeback_enabled: values.metadata_writeback_enabled,
         auto_convert_cbr_on_scan: values.auto_convert_cbr_on_scan,
+        auto_convert_cb7_on_scan: values.auto_convert_cb7_on_scan,
         trust_fingerprint_on_first_import:
           values.trust_fingerprint_on_first_import,
         archive_backup_retain_count: values.archive_backup_retain_count,
@@ -501,6 +510,42 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                         in place so it becomes readable. The original is kept as{" "}
                         <span className="font-mono">.cbr.bak</span>. Without
                         this, CBR files are skipped with a library-health
+                        warning.
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        disabled={masterOff}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                );
+              }}
+            />
+            <FormField
+              control={form.control}
+              name="auto_convert_cb7_on_scan"
+              render={({ field }) => {
+                const masterOff = !form.watch("allow_archive_writeback");
+                return (
+                  <FormItem
+                    className={cn(
+                      "flex items-start justify-between gap-6",
+                      masterOff && "opacity-60",
+                    )}
+                  >
+                    <div className="space-y-1">
+                      <FormLabel>Convert CB7 to CBZ on scan</FormLabel>
+                      <FormDescription>
+                        When the scanner finds a{" "}
+                        <span className="font-mono">.cb7</span> (7-Zip) comic,
+                        convert it to a <span className="font-mono">.cbz</span>{" "}
+                        in place so it becomes readable. The original is kept as{" "}
+                        <span className="font-mono">.cb7.bak</span>. Without
+                        this, CB7 files are skipped with a library-health
                         warning.
                       </FormDescription>
                     </div>
