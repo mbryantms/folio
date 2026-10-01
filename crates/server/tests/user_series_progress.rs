@@ -263,6 +263,7 @@ async fn fetch_for_series_returns_finished_count_and_percent() {
             device: Set(None),
             is_backfill: Set(false),
             run: Set(0),
+            page_hash: Set(None),
         }
         .insert(&db)
         .await
@@ -299,6 +300,7 @@ async fn last_read_at_tracks_max_heartbeat() {
         device: Set(None),
         is_backfill: Set(false),
         run: Set(0),
+        page_hash: Set(None),
     }
     .insert(&db)
     .await
@@ -430,6 +432,7 @@ async fn batch_fetch_keys_by_series_id() {
             device: Set(None),
             is_backfill: Set(false),
             run: Set(0),
+            page_hash: Set(None),
         }
         .insert(&db)
         .await
@@ -514,6 +517,7 @@ async fn finish_issue(app: &TestApp, user_id: Uuid, issue_id: &str) {
         device: Set(None),
         is_backfill: Set(false),
         run: Set(0),
+        page_hash: Set(None),
     }
     .insert(&db)
     .await

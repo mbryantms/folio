@@ -125,6 +125,7 @@ async fn seed(app: &TestApp, dir: &Path) -> (String, Uuid, Uuid, std::path::Path
             created_at: Set(now),
             updated_at: Set(now),
             hidden_from_log: Set(false),
+            page_hash: Set(None),
         }
         .insert(db)
         .await

@@ -15,6 +15,7 @@ the conflict rule those writers share (roadmap WP-1.3; audit UX-1).
 | `finished`, `finished_at` | sticky completion flag and when it flipped |
 | `run` | reading-run counter; 0 is the first read |
 | `is_backfill` | catalog/sync write, not active reading (excluded from activity stats) |
+| `page_hash` | hash of the page image at `last_page` when it was written (WP-6.2); NULL for bulk marks and pre-WP-6.2 rows |
 
 ## The reading-run rule
 
@@ -48,6 +49,53 @@ Opening a new run (`restart: true` on the write):
 Clients that do not send `run` (OPDS, KOReader, Komga shim) write into the
 current run and are subject to the same floor.
 
+## Page anchoring: when the archive changes
+
+Progress and markers (`markers.page_index`) are both `(issue, page)`
+ordinals, and both are re-anchored by one helper,
+[`reading::page_remap::reanchor_issue`](../../crates/server/src/reading/page_remap.rs),
+whenever the archive's page list changes under a stable issue id.
+
+**Capture (WP-6.2).** Every single-issue progress write (`upsert_for_run`:
+the reader, OPDS Progression, KOReader, Komga) and every marker create
+(`POST /me/markers`; markers have no other server-side write path) stores
+`page_hash`: hex BLAKE3 of the page entry's decompressed bytes
+([`reading::page_hash`](../../crates/server/src/reading/page_hash.rs)),
+read through the same `zip_lru` reader the page server streams from, so
+it hashes the image the user was actually shown. Entry names, compression
+and container format are not part of the hash. An implicit write that
+keeps the stored page reuses the stored hash rather than re-reading it.
+Capture is soft: a page that can't be read (CBR/CB7 without conversion,
+unreadable archive) stores NULL. Bulk mark read/unread (series, matching,
+CBL, multi-select) stores NULL by design: those rows anchor "first page"
+or "last page", which the ordinal fallback already preserves.
+
+**Two authorities.**
+
+| Trigger | Authority | Behaviour |
+|---|---|---|
+| Folio's page editor (`jobs::archive_edit`) | `Ordinal` | The edit's own op simulation is the exact old→new map (WP-1.2). Every anchor is then re-stamped with the hash of the image now at its ordinal — including pre-WP-6.2 rows, and including non-structural edits (a rotated page hashes differently; without the re-stamp the follow-up rescan would read its markers as drifted). Hashing runs only when the issue has anchors. |
+| Rescan finding new bytes (`scanner::process`, `content_changed`) | `Hash` | Anchors with a `page_hash` move to the page holding that image (nearest copy when the image repeats, e.g. blank pages). Anchors without a hash use the ordinal guess: identity, or truncation when the page count shrank. An anchor whose image is gone also uses the ordinal guess. The new archive is hashed only when some anchor on the issue has a hash. |
+
+**Drift notes on markers.** A marker whose page was removed lands on the
+nearest surviving page with the `page-removed` tag (WP-1.2). A marker
+whose image is gone from a replaced archive while its ordinal survived
+keeps the ordinal and gains `page-drift`. It also keeps its old hash, so
+if a later replacement restores the image the next rescan moves it back
+and clears the tag. Legacy (NULL-hash) anchors are not stamped by a
+rescan, because stamping the image at a guessed ordinal would make the
+guess permanent. They pick up a hash on their next progress write or
+archive edit. Markers have no page-moving edit path, so a legacy marker
+only gains a hash through an archive edit.
+
+Re-anchoring moves bump `updated_at`. A hash-only re-stamp does not, so
+it doesn't wake `GET /progress?since=` sync clients. Progress `percent`
+is re-based on the new page count. Progress has no tags. A drifted
+resume position just falls back to its ordinal.
+
+**Not affected:** the OCR cache key stays `content_hash` + ordinal
+(`ocr::cache::cache_key`). A content change already invalidates it.
+
 ## What this deliberately changes
 
 Before WP-1.3 the last write won. A jump back through the page strip used
@@ -61,5 +109,9 @@ reset the position.
 `explicit_writes_bypass_the_floor`, `restart_opens_a_new_run_and_clears_finished`,
 `stale_run_write_from_another_device_is_ignored`,
 `legacy_client_without_run_writes_into_the_current_run`, plus the older
-sticky-finished and bulk-mark tests. Web: `web/tests/dom/progress-lifecycle.test.tsx`
+sticky-finished and bulk-mark tests. Anchoring:
+`crates/server/tests/page_hash_anchoring.rs` (capture, reordered
+replacement, ordinal fallback for legacy rows, drift note + recovery,
+editor re-stamp), `markers_archive_edit.rs` (WP-1.2 edit map), and the
+`reading::page_remap` unit tests. Web: `web/tests/dom/progress-lifecycle.test.tsx`
 and `web/tests/reader/progress-writer.test.ts`.

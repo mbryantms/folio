@@ -356,6 +356,7 @@ async fn mark_finished(app: &TestApp, user: Uuid, issue_ids: &[String], position
             device: Set(None),
             is_backfill: Set(false),
             run: Set(0),
+            page_hash: Set(None),
         }
         .insert(&db)
         .await

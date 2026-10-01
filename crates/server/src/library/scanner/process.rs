@@ -1133,30 +1133,56 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         }
         let updated = am.update(db).await?;
 
-        // A rescan that finds *fewer* pages than before — an external
-        // replacement, not an edit Folio performed (those remap in
-        // `jobs::archive_edit`) — leaves per-user anchors past the new
-        // end dangling: the reader clamps them silently and the Bookmarks
-        // page keeps listing them. Pull them onto the last page and tag
-        // the markers so the change is visible. DB-only; never touches
-        // the archive.
-        if content_changed
-            && let (Some(prev), Some(now_pages)) = (prev_page_count, resolved_page_count)
-            && prev > 0
-            && now_pages < prev
-        {
-            let map =
-                crate::reading::page_remap::PageMap::truncation(prev as usize, now_pages as usize);
-            let o = crate::reading::page_remap::remap_issue_anchors(db, &row_id, &map).await?;
-            if o.markers_moved + o.progress_moved > 0 {
+        // New bytes under a stable issue id — a retag, a sidecar
+        // rewrite, an archive edit's follow-up rescan, or an external
+        // replacement (re-downloaded release, another tool's re-pack).
+        // Per-user anchors (markers, reading progress) must stay on the
+        // pixels they were recorded on:
+        //   1. anchors that carry a page hash (WP-6.2) are re-resolved to
+        //      wherever that image now sits, so a reordered replacement
+        //      keeps them on the right page;
+        //   2. anchors without a hash, or whose image is gone, fall back
+        //      to the ordinal guess — identity, or a truncation when the
+        //      page count shrank (WP-1.2) — with `page-removed` /
+        //      `page-drift` tags on markers so the change is visible.
+        // The archive is hashed only when some anchor has a hash to
+        // match. DB-only; never touches the archive.
+        //
+        // Drop any cached open handle first: it still points at the old
+        // inode (or a stale central directory), so the page server — and
+        // the page-hash capture that reads through it — would keep
+        // serving the replaced bytes until LRU eviction.
+        if content_changed {
+            state.zip_lru.invalidate(&row_id);
+        }
+        if content_changed && let Some(now_pages) = resolved_page_count.filter(|n| *n > 0) {
+            use crate::reading::page_remap as remap;
+            let prev = prev_page_count.filter(|p| *p > 0).unwrap_or(now_pages);
+            let map = remap::PageMap::truncation(prev as usize, now_pages as usize);
+            let new_hashes = if remap::issue_has_hashed_anchors(db, &row_id).await? {
+                crate::reading::page_hash::hash_all_pages(state, path.to_path_buf()).await
+            } else {
+                None
+            };
+            let o = remap::reanchor_issue(
+                db,
+                &row_id,
+                &map,
+                new_hashes.as_deref(),
+                remap::Authority::Hash,
+            )
+            .await?;
+            if o.markers_moved + o.progress_moved + o.markers_drifted > 0 {
                 tracing::info!(
                     issue_id = %row_id,
                     prev_page_count = prev,
                     page_count = now_pages,
                     markers_moved = o.markers_moved,
                     markers_orphaned = o.markers_orphaned,
+                    markers_drifted = o.markers_drifted,
                     progress_moved = o.progress_moved,
-                    "scan: page count shrank; anchors pulled onto the last page"
+                    resolved_by_hash = o.resolved_by_hash,
+                    "scan: archive bytes changed; per-user anchors re-resolved"
                 );
             }
         }

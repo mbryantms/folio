@@ -547,6 +547,7 @@ async fn seed_progress(app: &TestApp, user_id: Uuid, issue_ids: &[String]) {
             device: Set(None),
             is_backfill: Set(false),
             run: Set(0),
+            page_hash: Set(None),
         }
         .insert(&db)
         .await
@@ -574,6 +575,7 @@ async fn seed_all_finished(app: &TestApp, user_id: Uuid, issue_ids: &[String]) {
             device: Set(None),
             is_backfill: Set(false),
             run: Set(0),
+            page_hash: Set(None),
         }
         .insert(&db)
         .await

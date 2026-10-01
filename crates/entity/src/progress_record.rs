@@ -46,6 +46,11 @@ pub struct Model {
     /// device left open on the previous read cannot regress the new
     /// one). Explicit mark-read / mark-unread writes bypass the floor.
     pub run: i32,
+    /// Hex BLAKE3 of the page image at `last_page` when it was recorded
+    /// (WP-6.2). Lets a rescan of a replaced archive keep the resume
+    /// position on the same image; NULL falls back to the ordinal.
+    #[sea_orm(nullable)]
+    pub page_hash: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

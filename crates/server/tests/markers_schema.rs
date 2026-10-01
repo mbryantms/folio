@@ -241,6 +241,7 @@ fn marker_am(
         created_at: Set(now),
         updated_at: Set(now),
         hidden_from_log: Set(false),
+        page_hash: Set(None),
     }
 }
 

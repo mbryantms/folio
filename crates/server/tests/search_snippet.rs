@@ -381,6 +381,7 @@ async fn seed_progress(
         finished_at: Set(finished.then_some(now)),
         is_backfill: Set(false),
         run: Set(0),
+        page_hash: Set(None),
     }
     .insert(&db)
     .await

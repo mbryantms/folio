@@ -236,6 +236,7 @@ async fn retag_preserves_id_and_fks() {
         device: Set(Some("phone".into())),
         is_backfill: Set(false),
         run: Set(0),
+        page_hash: Set(None),
     }
     .insert(&state.db)
     .await

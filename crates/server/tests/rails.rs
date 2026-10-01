@@ -531,6 +531,7 @@ async fn write_progress(
         device: Set(None),
         is_backfill: Set(false),
         run: Set(0),
+        page_hash: Set(None),
     };
     if existing.is_some() {
         am.update(&db).await.unwrap();

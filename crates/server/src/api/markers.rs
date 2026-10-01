@@ -1412,6 +1412,11 @@ pub async fn create(
         None => Vec::new(),
     };
 
+    // Anchor to the page image as well as the ordinal (WP-6.2), so a
+    // rescan of a replaced archive can find this page again even if it
+    // moved. Soft: an unreadable page just stores no hash.
+    let page_hash = crate::reading::page_hash::capture(&app, &issue_row, req.page_index).await;
+
     let id = Uuid::now_v7();
     let now = Utc::now().fixed_offset();
     let am = marker::ActiveModel {
@@ -1434,6 +1439,7 @@ pub async fn create(
         created_at: Set(now),
         updated_at: Set(now),
         hidden_from_log: Set(false),
+        page_hash: Set(page_hash),
     };
     let saved = match am.insert(&app.db).await {
         Ok(m) => m,
