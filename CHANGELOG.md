@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.29.1](https://github.com/mbryantms/folio/compare/v0.29.0...v0.29.1) (2026-10-01)
+
+
+### Fixed
+
+* **web:** /browse crashed calling a client-module function from its server page ([#930](https://github.com/mbryantms/folio/issues/930)) ([567f333](https://github.com/mbryantms/folio/commit/567f33361ff29bc33031ffdf0afae1d8e303699f))
+
+
+### Dependencies
+
+* update dependency browserslist@&lt;4.28.9 to v4.29.2 ([#928](https://github.com/mbryantms/folio/issues/928)) ([5300d20](https://github.com/mbryantms/folio/commit/5300d20b0398656b431f46685346fd0aa67c0a9f))
+
 ## [0.29.0](https://github.com/mbryantms/folio/compare/v0.28.4...v0.29.0) (2026-10-01)
 
 
