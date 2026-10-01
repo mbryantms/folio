@@ -349,9 +349,10 @@ pub(crate) enum WritebackError {
     IssueGone(String),
     #[error("library {0} writeback disabled (allow_archive_writeback=false)")]
     WritebackDisabled(Uuid),
-    /// The archive can't take a sidecar rewrite: CB7 (no writer), an
-    /// unknown extension, or a CBR in a library that hasn't allowed
-    /// CBR→CBZ conversion (`auto_convert_cbr_on_scan=false`).
+    /// The archive can't take a sidecar rewrite: an unknown extension, or a
+    /// CBR / CB7 (no writer for either) in a library that hasn't allowed
+    /// conversion to CBZ (`auto_convert_cbr_on_scan` /
+    /// `auto_convert_cb7_on_scan` false).
     #[error("{0}")]
     UnsupportedFormat(String),
     #[error("cbr conversion: {0}")]
@@ -385,8 +386,15 @@ pub fn sidecar_refusal(lib: &entity::library::Model, file_path: &str) -> Option<
              (enable auto_convert_cbr_on_scan to write sidecars into RAR archives)"
                 .to_owned(),
         ),
+        "cb7" if lib.auto_convert_cb7_on_scan => None,
+        "cb7" => Some(
+            "archive is CB7 and the library does not allow CB7→CBZ conversion \
+             (enable auto_convert_cb7_on_scan to write sidecars into 7z archives)"
+                .to_owned(),
+        ),
         other => Some(format!(
-            "unsupported archive format for sidecar writeback: .{other} (CBZ/CBT, or CBR with conversion enabled)"
+            "unsupported archive format for sidecar writeback: .{other} \
+             (CBZ/CBT, or CBR/CB7 with conversion enabled)"
         )),
     }
 }
@@ -496,21 +504,29 @@ pub(crate) async fn rewrite_one_issue(
         subprocess_wall_timeout: limits.subprocess_wall_timeout,
         subprocess_rss_bytes: limits.subprocess_rss_bytes,
     };
-    let is_cbr = source_path
+    let source_ext = source_path
         .extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("cbr"));
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let is_cbr = source_ext == "cbr";
+    let is_cb7 = source_ext == "cb7";
 
-    // CBR: RAR has no writer, so convert to CBZ first (same converter the
-    // scanner's `auto_convert_cbr_on_scan` uses — the library opted into
-    // that conversion, which `sidecar_refusal` verified). The `.cbr` is
-    // kept as `<name>.cbr.bak`; the row is repointed at the `.cbz` before
-    // the sidecar rewrite runs against it, so a failure in the second
+    // CBR / CB7: RAR and 7z have no writer, so convert to CBZ first (same
+    // converter the scanner's `auto_convert_cbr_on_scan` /
+    // `auto_convert_cb7_on_scan` uses — the library opted into that
+    // conversion, which `sidecar_refusal` verified). The original is kept as
+    // `<name>.cbr.bak` / `<name>.cb7.bak`; the row is repointed at the `.cbz`
+    // before the sidecar rewrite runs against it, so a failure in the second
     // step still leaves a readable, correctly-pointed archive.
-    let archive_path = if is_cbr {
+    let archive_path = if is_cbr || is_cb7 {
         let src = source_path.clone();
         let converted = tokio::task::spawn_blocking(move || {
-            crate::library::scanner::cbr_convert::convert_cbr_to_cbz(&src, arch_limits)
+            if is_cb7 {
+                crate::library::scanner::cbr_convert::convert_cb7_to_cbz(&src, arch_limits)
+            } else {
+                crate::library::scanner::cbr_convert::convert_cbr_to_cbz(&src, arch_limits)
+            }
         })
         .await
         .map_err(|join_err| {
@@ -524,9 +540,10 @@ pub(crate) async fn rewrite_one_issue(
             ..Default::default()
         };
         am.update(&state.db).await?;
-        // First conversion in a library stamps `cbr_convert_confirmed_at`
-        // so the page editor stops prompting for the format change.
-        if lib.cbr_convert_confirmed_at.is_none() {
+        // First CBR conversion in a library stamps `cbr_convert_confirmed_at`
+        // so the page editor stops prompting for the format change (CB7 has
+        // no page-editor path, so it leaves the gate alone).
+        if is_cbr && lib.cbr_convert_confirmed_at.is_none() {
             let lib_am = entity::library::ActiveModel {
                 id: Set(lib.id),
                 cbr_convert_confirmed_at: Set(Some(Utc::now().fixed_offset())),
@@ -541,7 +558,8 @@ pub(crate) async fn rewrite_one_issue(
             issue_id = %row.id,
             from = %source_path.display(),
             to = %converted.display(),
-            "sidecar writeback: converted CBR to CBZ before rewrite",
+            ext = %source_ext,
+            "sidecar writeback: converted to CBZ before rewrite",
         );
         converted
     } else {

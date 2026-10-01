@@ -152,6 +152,7 @@ async fn seed_library_and_scan_run(app: &TestApp, state: &str) -> (Uuid, String,
         filename_assume_issue_one: Set(false),
         metadata_auto_apply_strong_matches: Set(false),
         auto_convert_cbr_on_scan: Set(false),
+        auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
     }
     .insert(&db)
@@ -517,6 +518,7 @@ async fn create_on_disk_library(app: &TestApp, root: &Path) -> Uuid {
         filename_assume_issue_one: Set(false),
         metadata_auto_apply_strong_matches: Set(false),
         auto_convert_cbr_on_scan: Set(false),
+        auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
     }
     .insert(&db)

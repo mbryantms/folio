@@ -40,8 +40,9 @@ const OPEN_FDS: &str = "folio_zip_lru_open_fds";
 /// Formats without a random-access reader (`.cbr`, `.cb7`) are not
 /// cached here: [`CachedReader::open`] returns [`ArchiveError::Malformed`]
 /// for them, which the handlers map to `archive_unreadable` exactly as
-/// before. A library that opts into `auto_convert_cbr_on_scan` gets its
-/// CBRs rewritten to CBZ at scan time (`scanner::cbr_convert`).
+/// before. A library that opts into `auto_convert_cbr_on_scan` /
+/// `auto_convert_cb7_on_scan` gets its CBRs / CB7s rewritten to CBZ at scan
+/// time (`scanner::cbr_convert`).
 pub enum CachedReader {
     Cbz(Cbz),
     Cbt(Cbt),

@@ -94,6 +94,14 @@ pub struct Model {
     /// from the page editor (`archive-rewrite-1.0` M6).
     #[serde(default)]
     pub auto_convert_cbr_on_scan: bool,
+    /// CB7 twin of `auto_convert_cbr_on_scan` (WP-6.5): when true *and*
+    /// `allow_archive_writeback` is true, the scanner converts each `.cb7`
+    /// (7z) into a sibling `.cbz` in place (keeping the original as
+    /// `.cb7.bak`) and ingests the `.cbz`. When false (default), CB7s are
+    /// skipped with an `UnsupportedArchiveFormat` health issue. A separate
+    /// flag so opting into RAR rewrites never silently extends to 7z files.
+    #[serde(default)]
+    pub auto_convert_cb7_on_scan: bool,
     /// First-import lazy-hash mode (WP-3.2). While the library has never
     /// completed a full scan (`last_scan_at IS NULL`), new files are
     /// ingested on size+mtime alone — the issue id is BLAKE3 of the path

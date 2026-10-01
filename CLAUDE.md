@@ -349,7 +349,7 @@ Default admin (first registered user becomes admin):
   becomes the canonical source; the DB is downstream cache. Legacy
   DB-direct path stays for libraries with either flag off, and for an
   archive the sidecar path refuses (`rewrite_sidecars::sidecar_refusal`:
-  CBR without `auto_convert_cbr_on_scan`, CB7) — the refusal is
+  CBR / CB7 without `auto_convert_cbr_on_scan` / `auto_convert_cb7_on_scan`) — the refusal is
   surfaced in `ApplyOutcome.sidecar_skip_reasons` (dispatch lives in
   `apply_issue` / `apply_series` / `composite`). What a rewrite keeps
   is one policy for every writer, `archive::rewrite_policy`: only junk

@@ -12,9 +12,8 @@
 //!   - `pipe_entry` / `build_pread_index` — same reasoning.
 //!
 //! Page-byte streaming is therefore wired for `.cbz` and `.cbt` (the
-//! server's `zip_lru::CachedReader` dispatches on extension); `.cbr` can
-//! be converted to `.cbz` at scan time (per-library opt-in) and `.cb7` is
-//! not implemented.
+//! server's `zip_lru::CachedReader` dispatches on extension); `.cbr` and
+//! `.cb7` can be converted to `.cbz` at scan time (per-library opt-ins).
 
 use crate::{ArchiveEntry, ArchiveError, SkippedEntry};
 use std::path::Path;

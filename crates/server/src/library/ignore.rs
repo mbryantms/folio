@@ -10,8 +10,8 @@
 //!      `globset` into a [`GlobSet`]; invalid patterns surface as 400 at the
 //!      `PATCH /libraries/{id}` boundary so the DB never holds bad globs.
 //!
-//! Recognized archive extensions live in [`is_recognized_archive_ext`]. Today
-//! that's `.cbz`; Milestone 12 adds `.cbr`, `.cb7`, `.cbt`.
+//! Recognized archive extensions live in [`is_recognized_archive_ext`]:
+//! `.cbz`, `.cbt`, `.cbr`, `.cb7`.
 
 use entity::library;
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -137,9 +137,11 @@ fn built_in_set() -> GlobSet {
 }
 
 /// Recognized comic-archive extensions per Milestone 12. `.cbz` and `.cbt`
-/// are fully supported; `.cbr` and `.cb7` are accepted by the walker so the
-/// scanner can emit a `UnsupportedArchiveFormat` health issue rather than
-/// silently ignore them — full readers land in a follow-up plan.
+/// are ingested directly; `.cbr` and `.cb7` are read-only formats the
+/// scanner converts to `.cbz` when the library opts in
+/// (`auto_convert_cbr_on_scan` / `auto_convert_cb7_on_scan`), and otherwise
+/// skips with an `UnsupportedArchiveFormat` health issue rather than
+/// silently ignoring them.
 pub fn is_recognized_archive_ext(ext: &str) -> bool {
     matches!(
         ext.to_ascii_lowercase().as_str(),
@@ -184,6 +186,7 @@ mod tests {
             filename_assume_issue_one: false,
             metadata_auto_apply_strong_matches: false,
             auto_convert_cbr_on_scan: false,
+            auto_convert_cb7_on_scan: false,
             trust_fingerprint_on_first_import: false,
         }
     }

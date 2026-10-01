@@ -132,8 +132,10 @@ takes pre-serialized XML strings and performs the atomic swap:
    (`scanner::cbr_convert::convert_cbr_to_cbz`, `.cbr` kept as
    `.cbr.bak`, `issue.file_path` repointed, `cbr_convert_confirmed_at`
    stamped) **only when the library has `auto_convert_cbr_on_scan`**;
-   otherwise — and for CB7 / unknown extensions — the sidecar path is
-   refused with a clear reason. The apply dispatch (`apply_issue`,
+   **CB7** likewise (`convert_cb7_to_cbz`, `.cb7` kept as `.cb7.bak`, no
+   `cbr_convert_confirmed_at` stamp) **only when the library has
+   `auto_convert_cb7_on_scan`** (WP-6.5); otherwise — and for unknown
+   extensions — the sidecar path is refused with a clear reason. The apply dispatch (`apply_issue`,
    composite) runs the same gate *before* choosing the path, so a refused
    archive takes the DB-direct apply with the reason in
    `ApplyOutcome.sidecar_skip_reasons` instead of queueing a job that

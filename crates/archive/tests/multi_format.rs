@@ -3,7 +3,8 @@
 //! Validates the dispatch + the CBT (tar) reader. CBR is now a real
 //! read-only reader (archive-rewrite-1.0 M6); a valid `.cbr` fixture
 //! can't be created in-repo (no RAR writer exists), so we only smoke-test
-//! that a non-RAR `.cbr` fails gracefully. CB7 is still scaffolded.
+//! that a non-RAR `.cbr` fails gracefully. CB7 has its own suite in
+//! `cb7_fixture.rs`; here we only check a bogus `.cb7` fails gracefully.
 
 use archive::{ArchiveError, ArchiveLimits, open};
 use tempfile::tempdir;
@@ -73,7 +74,7 @@ fn cbr_rejects_non_rar_gracefully() {
 }
 
 #[test]
-fn cb7_currently_returns_not_implemented() {
+fn cb7_rejects_non_7z_gracefully() {
     let tmp = tempdir().unwrap();
     let p = tmp.path().join("test.cb7");
     std::fs::write(&p, b"not a real 7z").unwrap();
@@ -85,7 +86,10 @@ fn cb7_currently_returns_not_implemented() {
         ArchiveError::Malformed(s) => s,
         other => panic!("expected Malformed, got {other:?}"),
     };
-    assert!(msg.contains("CB7 support not yet implemented"));
+    assert!(
+        !msg.contains("not yet implemented"),
+        "stub message leaked: {msg}"
+    );
 }
 
 #[test]

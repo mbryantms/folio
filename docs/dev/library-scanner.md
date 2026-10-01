@@ -262,13 +262,17 @@ without per-library configuration.
      which handles:
      - extension dispatch for `.cbr` / `.cb7`
        ([process.rs](../../crates/server/src/library/scanner/process.rs),
-       the `Some("cbr")` / `Some("cb7")` arms): `.cb7` is always
-       skipped with `UnsupportedArchiveFormat`; `.cbr` is converted
-       in place to a sibling `.cbz` (original kept as `.cbr.bak`) and
-       the `.cbz` ingested when the library has
-       `auto_convert_cbr_on_scan=true`
-       ([scanner/cbr_convert.rs](../../crates/server/src/library/scanner/cbr_convert.rs)),
-       otherwise skipped with the same health issue
+       the `ConvertibleFormat` branch): both are read-only formats
+       (RAR / 7z have no writer, and neither has random-access page
+       streaming), so each is converted in place to a sibling `.cbz`
+       (original kept as `.cbr.bak` / `.cb7.bak`) and the `.cbz`
+       ingested when the library has the format's own opt-in —
+       `auto_convert_cbr_on_scan` / `auto_convert_cb7_on_scan` — plus
+       `allow_archive_writeback` on a writable mount
+       ([scanner/cbr_convert.rs](../../crates/server/src/library/scanner/cbr_convert.rs));
+       otherwise skipped with `UnsupportedArchiveFormat`. The converter
+       picks the decoder by magic bytes (ZIP → plain rename, RAR →
+       `unrar`, 7z → `sevenz-rust2`), not by extension
      - blocking BLAKE3 hash + ComicInfo + MetronInfo parse on a
        semaphore-protected pool
        ([process.rs:197–210](../../crates/server/src/library/scanner/process.rs#L197-L210))
@@ -614,7 +618,7 @@ opaque JSON so adding variants doesn't need a migration.
 | `MissingComicInfo` | info | Archive has no `ComicInfo.xml`. **Gated** on `library.report_missing_comicinfo=true` — loose libraries don't get spammed by default. | [process.rs:222](../../crates/server/src/library/scanner/process.rs#L222) | `{ path }` | Tag with ComicTagger / Mylar, or flip the per-library setting off. |
 | `MalformedComicInfo` | error | `ComicInfo.xml` exists but XML parse failed. | [process.rs:235](../../crates/server/src/library/scanner/process.rs#L235) | `{ path, error }` | Re-tag. |
 | `DuplicateContent` | warning | A new file's BLAKE3 hash matches an existing issue's `content_hash` **in the same library**, the existing path is still present, and `dedupe_by_content` is on (fast-path #11). | [process.rs:314](../../crates/server/src/library/scanner/process.rs#L314) | `{ path_a, path_b }` (paths sorted alphabetically — fingerprint is order-stable). | Decide which copy to keep; renamed files whose old path is gone are handled as moves. |
-| `UnsupportedArchiveFormat` | warning | `.cb7`: always — the [cb7.rs](../../crates/archive/src/cb7.rs) reader is a stub. `.cbr`: only when the library has `auto_convert_cbr_on_scan=false` **or** the conversion failed (not RAR/ZIP by magic bytes, encrypted, I/O error). With the flag on, the scanner converts the file to a sibling `.cbz` via [scanner/cbr_convert.rs](../../crates/server/src/library/scanner/cbr_convert.rs) and ingests that instead — no health row. | [process.rs](../../crates/server/src/library/scanner/process.rs) (`Some("cbr")` / `Some("cb7")` arms) | `{ path, ext }` | Enable `auto_convert_cbr_on_scan` on the library (needs `allow_archive_writeback`), or convert to CBZ by hand. CB7: convert to CBZ. |
+| `UnsupportedArchiveFormat` | warning | `.cbr` / `.cb7`: only when the library has the format's flag off (`auto_convert_cbr_on_scan` / `auto_convert_cb7_on_scan`) **or** the conversion failed (not ZIP/RAR/7z by magic bytes, encrypted, an archive cap or the 7z decoder-memory cap exceeded, I/O error). With the flag on, the scanner converts the file to a sibling `.cbz` via [scanner/cbr_convert.rs](../../crates/server/src/library/scanner/cbr_convert.rs) and ingests that instead — no health row. | [process.rs](../../crates/server/src/library/scanner/process.rs) (`ConvertibleFormat` branch) | `{ path, ext }` | Enable the matching conversion flag on the library (needs `allow_archive_writeback`), or convert to CBZ by hand. |
 | `SkippedArchiveEntries` | warning | The archive opened, but one or more entries were dropped from the page index by a soft defense in the archive crate. One row per `reason`: `compression ratio cap` (CBZ entry claiming >200× expansion) or `image extension but non-image content` (an image-named entry whose leading bytes carry no image signature — the "`ComicInfo.xml` saved as `-0001.jpg`" publisher bug; every reader content-sniffs page candidates at open via [`archive::image_sniff`](../../crates/archive/src/image_sniff.rs)). The issue ingests with the surviving pages, so cover thumbnails, the reader and OCR all agree on page 0. | [process.rs](../../crates/server/src/library/scanner/process.rs) (translates `entries_skipped()`) | `{ path, dropped, total, reason }` | Repack the archive without the offending entry, or leave it — nothing downstream reads it. |
 
 ### Folder consistency checks (WP-3.4)
@@ -1042,15 +1046,19 @@ markers, a saved-view CBL slot). Two recovery paths:
 
 ## Carry-over (deferred from v1, tracked for follow-up)
 
-- **CB7 reader** — extension recognized + dispatch wired; the
-  [cb7.rs](../../crates/archive/src/cb7.rs) stub returns `Malformed`
-  so the scanner emits `UnsupportedArchiveFormat`. (CBR is done: the
-  `unrar`-backed reader in [cbr.rs](../../crates/archive/src/cbr.rs)
-  serves the page editor, and the scanner converts `.cbr` → `.cbz` in
-  place when `auto_convert_cbr_on_scan` is set.) CB7 needs a 7z decoder added first — use
-  `sevenz-rust2`; the original `sevenz-rust` pin was dropped because it is
-  abandoned and carries an unfixable extraction path-traversal advisory
-  (RUSTSEC-2026-0245 / RUSTSEC-2026-0246).
+- ~~**CB7 reader**~~ Shipped as roadmap WP-6.5: a read-only
+  `sevenz-rust2`-backed reader in [cb7.rs](../../crates/archive/src/cb7.rs)
+  (decode-only build; the abandoned `sevenz-rust`, with its unfixable
+  RUSTSEC-2026-0245 / -0246 extraction advisories, stays out of the
+  graph) and scan-time CB7 → CBZ conversion behind the per-library
+  `auto_convert_cb7_on_scan` flag — same shape as CBR. The reader enforces
+  the usual `ArchiveLimits` plus an archive-level compression-ratio cap
+  and a 256 MiB decoder-memory cap (LZMA/LZMA2 dictionary, PPMd model);
+  encrypted archives are refused as `Encrypted`; a solid archive is decoded
+  in one pass for conversion. Not done: read-in-place (see the page-byte
+  streaming item below) and BZip2-coded 7z (feature off — its
+  `libbz2-rs-sys` backend's `bzip2-1.0.6` license isn't on the
+  `deny.toml` allow-list).
 - **Volume year-vs-sequence column split** (spec §6.4) — today the raw
   `volume` value is stored as-is.
 - **Hash-mismatch supersession** (spec §6.2) — modified-in-place files
@@ -1115,7 +1123,11 @@ markers, a saved-view CBL slot). Two recovery paths:
   identical for both (tar entries are contiguous, so every CBT page has
   a pread extent). `.cbr` streams only once a library opting into
   `auto_convert_cbr_on_scan` has rewritten it to `.cbz`
-  (`scanner::cbr_convert`); `.cb7` is scaffolded only.
+  (`scanner::cbr_convert`); `.cb7` likewise only after
+  `auto_convert_cb7_on_scan` converts it. Read-in-place is deliberately
+  not offered for CB7: a solid 7z has no per-page random access (page N
+  costs decoding pages 0..N of its block), so per-request streaming would
+  be quadratic — conversion is the supported path.
 - ~~**Hard-purge of confirmed-removed rows.**~~ Shipped as roadmap
   WP-3.5 — see §Removal lifecycle. Chosen shape: one global
   `library.hard_purge_multiplier` over the existing per-library

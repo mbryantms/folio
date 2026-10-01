@@ -18900,6 +18900,7 @@
           "archive_backup_retain_days",
           "archive_writeback_jpeg_quality",
           "auto_convert_cbr_on_scan",
+          "auto_convert_cb7_on_scan",
           "trust_fingerprint_on_first_import",
           "root_path_writable",
           "metadata_publisher_blacklist",
@@ -18926,6 +18927,10 @@
             "type": "integer",
             "format": "int32",
             "description": "Encoder quality (60..=100) the page editor uses when re-encoding a\nrotated / replaced JPEG page. Default 92. PNG / WebP pages are\nrewritten losslessly and ignore this. `archive-rewrite-1.0`."
+          },
+          "auto_convert_cb7_on_scan": {
+            "type": "boolean",
+            "description": "CB7 twin of `auto_convert_cbr_on_scan` (WP-6.5): when true AND\n`allow_archive_writeback` is also true, the scanner converts each\n`.cb7` (7z) into a sibling `.cbz` (keeping the original as\n`.cb7.bak`) and ingests the `.cbz`. Default false."
           },
           "auto_convert_cbr_on_scan": {
             "type": "boolean",
@@ -25423,6 +25428,13 @@
             ],
             "format": "int32",
             "description": "Encoder quality (60..=100) for JPEG pages the editor re-encodes\n(`archive-rewrite-1.0`). CHECK constraint enforces the same range\nat the DB level; garde surfaces a friendly 422 here."
+          },
+          "auto_convert_cb7_on_scan": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "When true, the scanner converts each `.cb7` (7z) it finds into a\nsibling `.cbz` in place (keeping the original as `.cb7.bak`) and\ningests the `.cbz` (WP-6.5). Requires `allow_archive_writeback=true`\n— enabling it while the master toggle resolves false returns 422."
           },
           "auto_convert_cbr_on_scan": {
             "type": [

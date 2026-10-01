@@ -87,10 +87,11 @@
 **Decision (2026-05-15, cleanup M2):** **Ship rar + 7z support.** Bundled with D-2 since the libraries / scanner integration / error UX overlap. Too much scope for a milestone slot in the cleanup plan; needs its own driver.
 **Action:** File `~/.claude/plans/archive-formats-1.0.md` when ready to begin. Tracked via memory entry `incompleteness_cleanup_m2_done`.
 
-### D-2. CB7 archive format support — SCHEDULED 2026-05-15 (separate plan needed)
+### D-2. CB7 archive format support — CLOSED 2026-10-01 (roadmap WP-6.5)
 
 **Files:** [crates/archive/src/cb7.rs:19,37](../../crates/archive/src/cb7.rs#L19)
 **Status:** Same shape as D-1; bundled with it into the same future plan per the M2 decision.
+**Resolution (WP-6.5):** read-only `sevenz-rust2` reader + scan-time CB7→CBZ conversion behind `library.auto_convert_cb7_on_scan` (see [library-scanner.md](library-scanner.md) and [archive-writes.md](archive-writes.md)).
 
 ### D-3. Dictionary "did you mean" trigram refresh — CLOSED 2026-05-15 (deferred to search v1.1)
 
@@ -207,7 +208,7 @@ Status: ✅ shipped · ◐ partial / wired-but-deferred · ❌ stub · n/a not a
 | **S-3** ~~6× `#[allow(dead_code)]` in prod~~ | ✅ 3 kept w/ comments, 3 deleted | n/a | n/a | n/a | **Closed M1** |
 | **S-4** ~~`IssueSettingsMenu.tsx` comment~~ | n/a | ✅ comment rewritten to reflect reality | n/a | ✅ accurate | **Closed M1** |
 | **D-1** CBR archive | ❌ stub returns `Malformed` | n/a | n/a | n/a | Scheduled (separate plan) |
-| **D-2** CB7 archive | ❌ stub returns `Malformed` | n/a | n/a | n/a | Scheduled (separate plan) |
+| **D-2** ~~CB7 archive~~ | ✅ `sevenz-rust2` reader + convert-on-scan | ✅ `auto_convert_cb7_on_scan` toggle | ✅ `cb7_fixture.rs`, `scanner_cb7_convert.rs` | ✅ scanner + archive-writes docs | **Closed WP-6.5** |
 | **D-3** ~~Dictionary trigram refresh~~ | ❌ empty job body (intentional) | n/a | n/a | ✅ deferral note added | **Closed M2** (punted to search v1.1) |
 | **D-4** ~~Light / amber theme~~ | ✅ both palettes wired (`[data-theme="amber"]` added in `globals.css`) | ✅ toast dropped; description updated | ✅ amber assertion in `theme.test.ts` | ✅ inline comment updated | **Closed M6** |
 | **D-5** ~~Admin `/search` page~~ | ✅ search endpoints exist | ✅ placeholder removed | n/a | n/a | **Closed M2** (dropped) |

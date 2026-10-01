@@ -1,4 +1,5 @@
-//! Archive readers for comic-book containers (CBZ in Phase 1a; CBR/CB7/CBT/EPUB in 1b).
+//! Archive readers for comic-book containers: CBZ + CBT (read/write), CBR +
+//! CB7 (read-only; converted to CBZ on scan when a library opts in).
 //!
 //! The defense limits in [`ArchiveLimits`] (defaults from §4.1.1 of the spec)
 //! are enforced by **every** reader. A bad archive is rejected with a typed error
@@ -30,9 +31,9 @@ pub use comic_archive::ComicArchive;
 ///   - `.cbt` — full (tar reader + writer)
 ///   - `.cbr` — read-only (unrar-backed; `archive-rewrite-1.0` M6). The
 ///     page editor converts CBR → CBZ on edit since RAR can't be written.
-///   - `.cb7` — scaffolded; returns [`ArchiveError::Malformed`] with a
-///     "not implemented" message so the scanner emits an
-///     `UnsupportedArchiveFormat` health issue without crashing the walk.
+///   - `.cb7` — read-only (`sevenz-rust2`-backed; WP-6.5). Like CBR there
+///     is no writer: the scanner converts CB7 → CBZ on scan when the
+///     library opts in (`auto_convert_cb7_on_scan`).
 pub fn open(path: &Path, limits: ArchiveLimits) -> Result<Box<dyn ComicArchive>, ArchiveError> {
     let ext = path
         .extension()

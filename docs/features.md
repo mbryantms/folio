@@ -16,7 +16,7 @@ image-rich feature showcase (a suggested shot list is at the end).
 - **A reader built for comics** — single / double / webtoon modes with smart
   auto-detection, true right-to-left manga support, double-page spread
   awareness, and a page strip mini-map.
-- **A scanner that respects your files** — CBZ / CBR / CBT ingest, BLAKE3
+- **A scanner that respects your files** — CBZ / CBR / CB7 / CBT ingest, BLAKE3
   content hashing, and stable issue identity that survives retagging. It
   even repairs two classes of corrupt ZIPs that other readers reject.
 - **Metadata that matches by cover art** — ComicVine + Metron with
@@ -160,7 +160,7 @@ context-aware, in priority order:
 | `.cbz` (ZIP) | Full read + write |
 | `.cbt` (TAR) | Full read + write |
 | `.cbr` (RAR) | Read; converts to CBZ when edited (RAR can't be written) |
-| `.cb7` (7z) | Recognized; flagged as not-yet-supported in library health |
+| `.cb7` (7z) | Read; converted to CBZ on scan when the library opts in (7z can't be written); otherwise flagged in library health |
 
 Inside archives: JPEG, PNG, WebP, AVIF, GIF, and JPEG-XL pages.
 Password-protected archives are detected and flagged rather than silently

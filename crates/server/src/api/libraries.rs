@@ -123,6 +123,11 @@ pub struct LibraryView {
     /// converts each `.cbr` it finds into a sibling `.cbz` in place (keeping
     /// the original as `.cbr.bak`) and ingests the `.cbz`. Default false.
     pub auto_convert_cbr_on_scan: bool,
+    /// CB7 twin of `auto_convert_cbr_on_scan` (WP-6.5): when true AND
+    /// `allow_archive_writeback` is also true, the scanner converts each
+    /// `.cb7` (7z) into a sibling `.cbz` (keeping the original as
+    /// `.cb7.bak`) and ingests the `.cbz`. Default false.
+    pub auto_convert_cb7_on_scan: bool,
     /// First-import lazy-hash mode (WP-3.2): while the library has never
     /// completed a full scan, new files ingest on size+mtime and their
     /// full-file BLAKE3 backfills in the background
@@ -184,6 +189,7 @@ impl From<library::Model> for LibraryView {
             archive_writeback_jpeg_quality: m.archive_writeback_jpeg_quality,
             cbr_convert_confirmed_at: m.cbr_convert_confirmed_at.map(|t| t.to_rfc3339()),
             auto_convert_cbr_on_scan: m.auto_convert_cbr_on_scan,
+            auto_convert_cb7_on_scan: m.auto_convert_cb7_on_scan,
             trust_fingerprint_on_first_import: m.trust_fingerprint_on_first_import,
             root_path_writable,
             metadata_publisher_blacklist: m
@@ -265,6 +271,13 @@ pub struct UpdateLibraryReq {
     #[serde(default)]
     #[garde(skip)]
     pub auto_convert_cbr_on_scan: Option<bool>,
+    /// When true, the scanner converts each `.cb7` (7z) it finds into a
+    /// sibling `.cbz` in place (keeping the original as `.cb7.bak`) and
+    /// ingests the `.cbz` (WP-6.5). Requires `allow_archive_writeback=true`
+    /// — enabling it while the master toggle resolves false returns 422.
+    #[serde(default)]
+    #[garde(skip)]
+    pub auto_convert_cb7_on_scan: Option<bool>,
     /// First-import lazy-hash mode (WP-3.2). Only affects scans while the
     /// library has never completed a full scan; flipping it afterwards is
     /// accepted but has no effect until then.
@@ -611,6 +624,7 @@ pub async fn create(
         archive_writeback_jpeg_quality: Set(92),
         cbr_convert_confirmed_at: Set(None),
         auto_convert_cbr_on_scan: Set(false),
+        auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(req.trust_fingerprint_on_first_import),
         metadata_publisher_blacklist: Set(serde_json::json!([])),
         filename_ignore_leading_numbers: Set(false),
@@ -740,6 +754,8 @@ pub async fn update_settings(
     let new_allow = req.allow_archive_writeback.unwrap_or(prev_allow);
     let new_meta = req.metadata_writeback_enabled.unwrap_or(prev_meta);
     let new_auto_cbr = req.auto_convert_cbr_on_scan.unwrap_or(prev_auto_cbr);
+    let prev_auto_cb7 = matches!(am.auto_convert_cb7_on_scan, ActiveValue::Unchanged(true));
+    let new_auto_cb7 = req.auto_convert_cb7_on_scan.unwrap_or(prev_auto_cb7);
     if new_meta && !new_allow {
         return error(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -754,6 +770,14 @@ pub async fn update_settings(
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation.archive_writeback_dependency",
             "auto_convert_cbr_on_scan requires allow_archive_writeback=true",
+        );
+    }
+    // Same prerequisite for the CB7 (7z) twin.
+    if new_auto_cb7 && !new_allow {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation.archive_writeback_dependency",
+            "auto_convert_cb7_on_scan requires allow_archive_writeback=true",
         );
     }
     // Refuse to enable archive writeback when the library root isn't on a
@@ -778,6 +802,9 @@ pub async fn update_settings(
     }
     if let Some(b) = req.auto_convert_cbr_on_scan {
         am.auto_convert_cbr_on_scan = Set(b);
+    }
+    if let Some(b) = req.auto_convert_cb7_on_scan {
+        am.auto_convert_cb7_on_scan = Set(b);
     }
     if let Some(b) = req.trust_fingerprint_on_first_import {
         am.trust_fingerprint_on_first_import = Set(b);

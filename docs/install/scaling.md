@@ -108,7 +108,7 @@ For the record, a horizontally-scaled Folio would need at least:
 4. **Shared secrets provisioning** — pre-seed `/data/secrets/` once and
    mount it into every replica (a shared RWX volume or a secret store).
 5. **A read-write-many library mount** if any replica rewrites archives
-   (sidecar writeback, page edits, CBR→CBZ conversion).
+   (sidecar writeback, page edits, CBR/CB7→CBZ conversion).
 
 None of this exists in the codebase today, and there is no plan to add
 it. If a single instance runs out of headroom, the intended path is the
