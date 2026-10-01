@@ -38,6 +38,7 @@ import { MarkersList } from "@/components/markers/MarkersList";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
+  MarkerListView,
   AppearancesView,
   IssueListView,
   LibraryView,
@@ -87,6 +88,19 @@ export default async function SeriesPage({
   const appearancesPromise = apiGet<AppearancesView>(
     `/series/${slug}/appearances`,
   ).catch(() => null);
+  const seriesPromise = apiGet<SeriesView>(`/series/${slug}`);
+  // "Your notes" tab only shows when the caller has a marker in this
+  // series — a one-row probe of the same list the tab renders. Chained
+  // off the series fetch (it needs the id) so it overlaps the other
+  // critical fetches; non-fatal.
+  const hasNotesPromise = seriesPromise
+    .then((s) =>
+      apiGet<MarkerListView>(
+        `/me/markers?series_id=${encodeURIComponent(s.id)}&limit=1`,
+      ),
+    )
+    .then((page) => page.items.length > 0)
+    .catch(() => false);
   try {
     // All depend only on the slug (or nothing) — fetch concurrently instead
     // of stacking sequential round-trips onto TTFB.
@@ -95,7 +109,7 @@ export default async function SeriesPage({
     // long series are not capped to this preview page. The libraries list
     // resolves the breadcrumb's library segment by `series.library_id`.
     [series, firstIssuePage, resume, libraries] = await Promise.all([
-      apiGet<SeriesView>(`/series/${slug}`),
+      seriesPromise,
       apiGet<IssueListView>(`/series/${slug}/issues?limit=200`),
       apiGet<SeriesResumeView>(`/series/${slug}/resume`),
       apiGet<LibraryView[]>(`/libraries`),
@@ -108,7 +122,10 @@ export default async function SeriesPage({
     throw e;
   }
 
-  const appearances = await appearancesPromise;
+  const [appearances, hasNotes] = await Promise.all([
+    appearancesPromise,
+    hasNotesPromise,
+  ]);
   const hasAppearances =
     !!appearances &&
     appearances.reading_lists.length +
@@ -313,7 +330,7 @@ export default async function SeriesPage({
             <TabsTrigger value="appearances">Appears in</TabsTrigger>
           )}
           <TabsTrigger value="activity">Activity</TabsTrigger>
-          <TabsTrigger value="markers">Your notes</TabsTrigger>
+          {hasNotes && <TabsTrigger value="markers">Your notes</TabsTrigger>}
         </TabsList>
         {/* Keep the common, lightweight metadata tabs in one force-mounted
             grid cell so the issue list below does not jump between Credits
@@ -626,9 +643,11 @@ export default async function SeriesPage({
           </StackedTabsPanel>
           {/* WP-5.2: the caller's markers in this series (same list as
               /bookmarks, scoped server-side by series_id). */}
-          <StackedTabsPanel value="markers">
-            <MarkersList scope={{ kind: "series", seriesId: series.id }} />
-          </StackedTabsPanel>
+          {hasNotes && (
+            <StackedTabsPanel value="markers">
+              <MarkersList scope={{ kind: "series", seriesId: series.id }} />
+            </StackedTabsPanel>
+          )}
         </StableTabsPanelStack>
       </Tabs>
 
