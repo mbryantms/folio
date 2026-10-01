@@ -13,6 +13,74 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.29.0](https://github.com/mbryantms/folio/compare/v0.28.4...v0.29.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **acl:** `LibraryAccessGrantView.role` is removed from `GET /api/admin/users/{id}`; the grant view now carries `age_rating_max` instead.
+
+### Added
+
+* **acl:** enforce age-rating caps on every read surface + drop curator (WP-2.7) ([#890](https://github.com/mbryantms/folio/issues/890)) ([fcf4323](https://github.com/mbryantms/folio/commit/fcf43238537557b3b93bbd86979f9f97a1d7963e))
+* **library:** daily hard-purge of confirmed-removed issues and emptied series (WP-3.5) ([#898](https://github.com/mbryantms/folio/issues/898)) ([a63a11d](https://github.com/mbryantms/folio/commit/a63a11df24f773a57e6d9a5d5d4ca6da37e97187))
+* **library:** duplicates page with keep / soft-remove / edit, library-scoped dedupe (WP-3.3) ([#900](https://github.com/mbryantms/folio/issues/900)) ([0a2e616](https://github.com/mbryantms/folio/commit/0a2e616acd41123dcfe4ce125bb9ad9a0d878115))
+* **library:** entity landing pages for characters, teams, arcs, publishers (WP-5.5) ([#920](https://github.com/mbryantms/folio/issues/920)) ([bd83f09](https://github.com/mbryantms/folio/commit/bd83f091530a01d6023767174bbd9cd42c86ba5a))
+* **markers:** editable captured text, garde validation, write rate limit (WP-5.3) ([#925](https://github.com/mbryantms/folio/issues/925)) ([9c62a6e](https://github.com/mbryantms/folio/commit/9c62a6e6b547412d7df855c03c2569fce69951f8))
+* **markers:** notes export (Markdown/JSON) + marker permalink (WP-5.1) ([#917](https://github.com/mbryantms/folio/issues/917)) ([61c2901](https://github.com/mbryantms/folio/commit/61c2901c534b720d56034f9929e39856b5ee54ec))
+* **markers:** notes in context — series filter, Your notes tabs, reader drawer, DI-20 ACL (WP-5.2) ([#919](https://github.com/mbryantms/folio/issues/919)) ([f660dda](https://github.com/mbryantms/folio/commit/f660dda855e545459587059f2a006f3909d2ad60))
+* **metadata:** format / series-type awareness in matching (WP-5.6) ([#918](https://github.com/mbryantms/folio/issues/918)) ([bf871f8](https://github.com/mbryantms/folio/commit/bf871f839af73be268ac22f381e287e8102792fe))
+* **metadata:** hand edits reach the archive in writeback libraries ([#895](https://github.com/mbryantms/folio/issues/895)) ([f625cb0](https://github.com/mbryantms/folio/commit/f625cb0fd9b92274f36e899a72304c22f83d7cc1))
+* **metadata:** match-query override, search-by-URL, year-gate escape (WP-2.8) ([#891](https://github.com/mbryantms/folio/issues/891)) ([d1637df](https://github.com/mbryantms/folio/commit/d1637df0749b015d9360f3862955b84c478612a8))
+* **metadata:** provider resilience, Metron token auth, and budget bar (WP-2.9) ([#889](https://github.com/mbryantms/folio/issues/889)) ([89b7728](https://github.com/mbryantms/folio/commit/89b7728a55406d18479dfebe09ded0b1390c6549))
+* **progress:** reading-run model for cross-device conflicts ([#882](https://github.com/mbryantms/folio/issues/882)) ([6c2ea36](https://github.com/mbryantms/folio/commit/6c2ea36bd6fbe955e6cbb4e295648d769490f496))
+* **reader:** accessibility pass — page-text panel, OCR region proxies, skip links, axe in e2e (WP-4.8) ([#909](https://github.com/mbryantms/folio/issues/909)) ([cc4c28a](https://github.com/mbryantms/folio/commit/cc4c28a85d817ba1b07ff3f18a44fdb64219d45e))
+* **reader:** M4 reader + PWA — polish, spread controls, progress outbox, offline download (WP-4.2/4.3/4.5/4.6) ([#911](https://github.com/mbryantms/folio/issues/911)) ([5e8b048](https://github.com/mbryantms/folio/commit/5e8b0480e521f96c78fb2b7cea163ab7881d32e7))
+* **scanner:** file watcher with inotify, network-mount polling and scoped scans (WP-3.1) ([#902](https://github.com/mbryantms/folio/issues/902)) ([c565c15](https://github.com/mbryantms/folio/commit/c565c1523a5e93e6e314f47105659e7694e9efff))
+* **scanner:** first-import lazy-hash mode (WP-3.2) ([#903](https://github.com/mbryantms/folio/issues/903)) ([9cb5ece](https://github.com/mbryantms/folio/commit/9cb5ece801651fad66948a924569c17785396da5))
+* **scanner:** wire FolderNameMismatch, MixedSeriesInFolder, OrphanedSeriesJson; AmbiguousFolder skipped-subtree preview (WP-3.4) ([#897](https://github.com/mbryantms/folio/issues/897)) ([52048ee](https://github.com/mbryantms/folio/commit/52048eefc56110a8ff10c5c71f25b65eedd55082))
+* **series:** editable identity fields, pinned against rescans and applies ([#886](https://github.com/mbryantms/folio/issues/886)) ([6c5969a](https://github.com/mbryantms/folio/commit/6c5969a23403ef830012be1ae558d3fdbc1a3aff))
+* user-data export — GET /me/export + account settings button (WP-2.1) ([#887](https://github.com/mbryantms/folio/issues/887)) ([4d488dc](https://github.com/mbryantms/folio/commit/4d488dca548ce0c92f4a8827c160232be387aa1a))
+* **views:** has_notes / has_bookmarks / has_highlights filters (WP-5.7) ([#923](https://github.com/mbryantms/folio/issues/923)) ([0886bfa](https://github.com/mbryantms/folio/commit/0886bfae530144adb04e21baea8fe1df00062540))
+* **views:** issue-level smart views with is_empty ops (WP-5.4) ([#921](https://github.com/mbryantms/folio/issues/921)) ([b12b87b](https://github.com/mbryantms/folio/commit/b12b87b3328b6de92483f0c03ef9de56da7f91a4))
+* **web:** generate PWA icons, splash screens and favicons from interim brand master (WP-4.7) ([#908](https://github.com/mbryantms/folio/issues/908)) ([af12309](https://github.com/mbryantms/folio/commit/af123090e304fc6d66fe3ad9a9201419b304a38e))
+
+
+### Fixed
+
+* **api:** keyset cursors skipped the lookahead row at every page boundary ([#924](https://github.com/mbryantms/folio/issues/924)) ([8b09441](https://github.com/mbryantms/folio/commit/8b09441648f12eab91128b358c97c6c485294b69))
+* **archive-edit:** remap markers and reading progress when pages move ([#880](https://github.com/mbryantms/folio/issues/880)) ([0bb3f57](https://github.com/mbryantms/folio/commit/0bb3f57f9b786fba6d52a708376744672b0064c1))
+* **metadata:** close the user-edit precedence holes (WP-1.1) ([#877](https://github.com/mbryantms/folio/issues/877)) ([9d73568](https://github.com/mbryantms/folio/commit/9d73568da3a4b63d6cd1a8e1afbd6ce7129112d7))
+* **metadata:** scope cover-slot uniqueness to active rows; atomic cover replace ([#905](https://github.com/mbryantms/folio/issues/905)) ([15b3ad7](https://github.com/mbryantms/folio/commit/15b3ad77054ace024363e943ae6008eaa90cb42b))
+* **reader:** stream CBT pages through the page-bytes path ([#878](https://github.com/mbryantms/folio/issues/878)) ([c10ba22](https://github.com/mbryantms/folio/commit/c10ba220877fc54727b39adbc6733157ee13063f))
+* **scanner:** rescans never replace user- or provider-set values ([#888](https://github.com/mbryantms/folio/issues/888)) ([741892d](https://github.com/mbryantms/folio/commit/741892dca65e018ba34823839b1e9aee5cc2da85))
+* **tests:** add the writeback-hardening columns to the age-rating cap issue literal ([#894](https://github.com/mbryantms/folio/issues/894)) ([7f8101a](https://github.com/mbryantms/folio/commit/7f8101aaa0fee288b2440993e0190a3514da78af))
+* **web:** stop the rail icon picker clipping its scroll region and active ring ([#876](https://github.com/mbryantms/folio/issues/876)) ([a499d1e](https://github.com/mbryantms/folio/commit/a499d1ea91beaa50e888d3dbfa1a70a5cc80e80c))
+* **writeback:** WP-2.6 writeback hardening (crash-safe swap, sidecar preservation, CBR/CBT, deferred provenance, drift, lock heartbeat) ([#892](https://github.com/mbryantms/folio/issues/892)) ([700109a](https://github.com/mbryantms/folio/commit/700109a3558c8c895f565934ea762b6b291adf08))
+
+
+### Changed
+
+* **api:** load baseline, list-query indexes and issue-card projections (WP-3.6) ([#904](https://github.com/mbryantms/folio/issues/904)) ([bd56edb](https://github.com/mbryantms/folio/commit/bd56edb5905c618e657abd9cb221316ebf489153))
+* **reader:** code-split reader overlays, 191 → 117 KB first-load JS; gate 130 KB (WP-4.4) ([#913](https://github.com/mbryantms/folio/issues/913)) ([ab37be7](https://github.com/mbryantms/folio/commit/ab37be70afce4df64a86e617eae0424108958875))
+
+
+### Dependencies
+
+* update dependency @ai-sdk/provider-utils@&lt;4.0.34 to v4.0.55 ([#906](https://github.com/mbryantms/folio/issues/906)) ([44803bc](https://github.com/mbryantms/folio/commit/44803bcffcad74c3f563adc3c62f196c79507be5))
+* update dependency @tanstack/react-query to v5.103.3 ([#873](https://github.com/mbryantms/folio/issues/873)) ([b3a9dd7](https://github.com/mbryantms/folio/commit/b3a9dd7e87c9e492334b6d8f9821901013d5b63e))
+* update dependency @tanstack/react-query to v5.104.0 ([#875](https://github.com/mbryantms/folio/issues/875)) ([0c77643](https://github.com/mbryantms/folio/commit/0c77643a555e89f674da1c65bfec8396af35957b))
+* update dependency @types/node to v24.19.0 ([#871](https://github.com/mbryantms/folio/issues/871)) ([404db89](https://github.com/mbryantms/folio/commit/404db891dc0ea91ceca64cd078e774c95b3601e2))
+* update dependency pnpm to v12.7.0 ([#881](https://github.com/mbryantms/folio/issues/881)) ([8b4b570](https://github.com/mbryantms/folio/commit/8b4b5704b8d4454d7bb23c96cfc7ba301d68a561))
+* update dependency react-hook-form to v7.89.0 ([#874](https://github.com/mbryantms/folio/issues/874)) ([24315ca](https://github.com/mbryantms/folio/commit/24315ca8603dab65e2ba2ecb089dc868784ec226))
+* update dependency sharp to v0.35.5 ([#915](https://github.com/mbryantms/folio/issues/915)) ([84344b8](https://github.com/mbryantms/folio/commit/84344b8de3b4037f6f92133635d9fd630626d2c3))
+* update dependency sharp@&lt;0.35.0 to v0.35.5 ([#916](https://github.com/mbryantms/folio/issues/916)) ([87b56bb](https://github.com/mbryantms/folio/commit/87b56bb04a9b24d6f87276ea3921f9505d153003))
+
+
+### Build & CI
+
+* **migrations:** down round-trip gate + thumbs byte budget and gauge (WP-3.8) ([#899](https://github.com/mbryantms/folio/issues/899)) ([8400038](https://github.com/mbryantms/folio/commit/84000385312915bd088e0587a81c6a8159d93ff1))
+
 ## [0.28.4](https://github.com/mbryantms/folio/compare/v0.28.3...v0.28.4) (2026-09-28)
 
 
