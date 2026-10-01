@@ -104,14 +104,10 @@ pub const BUILTIN_REGISTRY: &[BuiltinDef] = &[
         icon: "Folder",
         href: "/collections",
     },
-    BuiltinDef {
-        key: "creators",
-        label: "Creators",
-        icon: "Users",
-        href: "/creators",
-    },
     // WP-5.5: one tabbed browse index for characters / teams / story
-    // arcs / publishers / creators (`/browse?tab=…`).
+    // arcs / publishers / creators (`/browse?tab=…`). Creators is a tab
+    // there, not its own entry; `/creators` stays for deep links, and a
+    // saved override row keyed `creators` is simply never emitted.
     BuiltinDef {
         key: "browse",
         label: "Browse",
