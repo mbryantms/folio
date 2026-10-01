@@ -398,52 +398,257 @@ issues by phash similarity.
 
 [`metadata/gcd.rs`](../../crates/server/src/metadata/gcd.rs) speaks the
 read-only Django REST API at `https://www.comics.org/api/`. It is the
-third provider and the least like the others:
+third provider and the least like the others. Everything below was
+checked against GCD's published OpenAPI schema
+(`/api/schema/?format=json`, rendered at `/api/schema/redoc/`) and live
+responses on 2026-10-01.
 
 - **Endpoints.** Series search is `GET /api/series/name/{name}/[year/{year}/]`
-  (`icontains`, sorted by name; Folio queries the exact-year route
-  first, then the name-only page to fill). Issue search is
-  `GET /api/series/name/{name}/issue/{number}/[year/{key-date year}/]`.
-  Details are `/api/series/{id}/`, `/api/issue/{id}/`,
-  `/api/publisher/{id}/`. Relations are hyperlinks; ids are parsed out
-  of them.
-- **Tolerant parsing.** GCD declares its API fields unstable, so the
+  (`icontains`, sorted by name). The exact-year route runs first; the
+  name-only route runs only when the year route has no exact-name hit.
+  Each route reads a second page only while no exact-name hit has
+  turned up (`SEARCH_PAGE_CAP = 2`), and exact names sort first before
+  the result is truncated. Broad issue search is
+  `GET /api/series/name/{name}/issue/{number}/[year/{key-date year}/]`,
+  widened to the year-less route when the year route has no non-variant
+  row. Narrowed issue search reads `/api/series/{id}/overview/`. Details
+  are `/api/series/{id}/`, `/api/issue/{id}/`, `/api/publisher/{id}/`.
+  Relations are hyperlinks; ids are parsed out of them.
+- **Names with `/`.** GCD's Apache front end returns 404 for an encoded
+  slash (`Batman%2FSuperman`), so a slashed title searches on its longest
+  slash-free fragment (`search_name`). `icontains` still finds the
+  series, and the matcher scores the full name.
+- **Tolerant parsing.** GCD says its API fields may change, so the
   client reads `serde_json::Value` through alias lists (`str_field`,
   `int_field`, `entity_id`) instead of typed structs. A renamed field
   falls through to its alias (or `None`), a re-typed scalar is coerced,
   an unknown field is ignored, an item with no recoverable id is
   skipped, and a missing `results` envelope reads as "no results".
-  Only a non-JSON body is `InvalidResponse`.
-  `tests/gcd_client.rs::renamed_and_unknown_fields_still_parse` pins it.
+  Only a non-JSON body is `InvalidResponse`. The schema even
+  disagrees with the wire: `longest_story` is declared a string but is
+  a `Story` object. `tests/gcd_client.rs::renamed_and_unknown_fields_still_parse`
+  pins this behaviour.
 - **Free-text credits.** GCD stores credits per *story* as text
   (`"Stan Lee (signed as …); Sol Brodsky ? (see notes)"`). The client
   maps `comic story` script/pencils/inks/colors/letters/editing onto
   the ComicInfo roles, the `cover` story's pencils/inks onto
   `CoverArtist`, and issue-level `editing` onto `Editor` only when the
-  annotation names an editor (production staff are dropped).
-  Placeholders (`None`, `?`, `typeset`, `various`) and uncertain
-  credits (trailing `?`) are omitted. Characters parse
-  `Team [Member [Alter ego]; …]; Character (first appearance)`; a
+  annotation names an editor. Production staff such as
+  `(publisher)` and `(art director)` are dropped. Placeholders (`None`,
+  `[none]`, `?`, `typeset`, `various`, `anonymous`) and uncertain
+  credits (a trailing `?` or a `(?)` group) are left out. `[as Pen Name]`
+  and `(signed as …)` keep the real name. Characters parse
+  `Team [Member [Alter ego]; …]; Character (first appearance)`. A
   bracket group with several members makes its head a **team**.
-- **Covers + search cost.** Search payloads carry no cover, so the
-  client hydrates up to 4 issue details on the narrowed path (folding
-  a variant's cover into its parent's `alternate_cover_urls`) and 2 on
-  the broad path. Series summaries + publisher names are cached in
-  Redis (`metadata:gcd:{series,publisher}:<id>`, 7 days) so an issue
-  fetch costs one request.
-- **Splitter.** `list_series_issue_numbers` reads the series detail's
-  `issue_descriptors` (one request; variants deduped). GCD splits
-  e.g. Fantastic Four (1961) at #416, so auto-split maps the legacy
-  #500+ run onto its own GCD series.
-- **CSP.** Cover images come from `https://files1.comics.org`, which is
-  in the `img-src` allowlist (`middleware/security_headers.rs`).
-- **License.** CC BY-SA 4.0; the canonical comics.org links drive the
+  `(first appearance)`, `(first full appearance)` and `(introduction)`
+  set the first-appearance flag. A plain `(death)` note sets
+  died-in-issue; `(death in flashforward)` does not.
+- **Request economy.** There are three Redis caches. The series summary
+  and publisher name are kept for 7 days. The **issue index**
+  (`id`, `number` and `descriptor` per active issue) is kept for 24 h.
+  Search results fill it at no cost, because series search returns full
+  `Series` objects. **Overview pages** are also kept for 24 h. A narrowed
+  issue search finds the issue's position among the series' distinct
+  numbers in the index. That position gives the overview page
+  (`position / 50 + 1`), which is read first, then its neighbours, up
+  to 3 pages. The candidate (cover URL, dates, main-story title) comes
+  from that row, with no issue-detail hydration. Issue details are
+  hydrated (at most 2) only if the overview can't place the issue.
+  Broad issue search no longer hydrates at all: the `IssueOnly` row
+  carries the series id, descriptor and publication date.
+- **Variants.** GCD models each variant as its own issue whose
+  `variant_of` points at the base. Searches skip variant rows. An issue
+  apply looks up same-number siblings in the cached index and fetches
+  up to 3 sibling details (`VARIANT_DETAIL_CAP`). A sibling whose
+  `variant_of` points back becomes a `VariantCoverCandidate`, with its
+  label from `variant_name` and the artist parsed from it when
+  unambiguous (`"… Color Cover - Cory Walker"`, `"Cover B by X"`,
+  `"Chris Giarrusso Cover"`). Covers are nice to have and can't be
+  downloaded anyway, so variant collection runs only while at least 50
+  of the hourly 100 requests remain (`VARIANT_BUDGET_FLOOR`).
+- **Splitter.** `list_series_issue_numbers` reads the series index
+  (variants deduped). That costs one request, or none right after a
+  search or series apply; the paginated overview would cost
+  `⌈n/50⌉`. GCD splits Fantastic Four (1961) at #416, so auto-split
+  maps the legacy #500+ run onto its own GCD series.
+- **Covers are unreachable.** Every image URL is on
+  `files1.comics.org`, which sits behind a Cloudflare managed challenge
+  (`403` + `cf-mitigated: challenge`). The challenge applies to
+  server-side fetches and to browser hotlinks, and the schema offers no
+  image endpoint. Folio does **not** try to pass the challenge.
+  `util::ssrf` classifies the response as `FetchBytesError::Challenged`,
+  and [`metadata/cover_block.rs`](../../crates/server/src/metadata/cover_block.rs)
+  then marks the host blocked for an hour, logging one `info` line.
+  Until the memo expires:
+  - cover hashing (`phash::fetch_and_hash_cover`) returns `None` without
+    a request, so GCD candidates are cover-less and the matcher falls
+    back to text scoring;
+  - `writers::fetch_cover_bytes` returns `CoverFetchError::Blocked`,
+    mapped to `ProviderError::CoverUnavailable`, which is not retryable.
+    "Apply cover" records
+    `cover_skipped_reason = "cover_unavailable: …"` and the rest of the
+    apply proceeds;
+  - variant rows keep their `source_url` with no local bytes.
+
+  `files1.comics.org` stays in the CSP `img-src` allowlist, so hotlinks
+  work again if the challenge is lifted. Until then, the web falls back
+  to the grey placeholder when a provider image fails
+  to load (`<ProviderCoverImage>`, used by the candidate card, compare
+  view, cover gallery, cover viewer and entity pages). This applies to
+  every provider. The URLs stay in the data, so the memo picks the host
+  up again by itself if the challenge is ever lifted.
+- **License.** CC BY-SA 4.0. The canonical comics.org links drive the
   attribution footer. The composer's `Notes` audit line stays
-  CV/Metron-only (its wording is the CC-BY-NC-SA one).
+  CV/Metron-only, because its wording is the CC-BY-NC-SA one.
+
+### Request cost (before → after this pass)
+
+| Operation | Before | After |
+|---|---|---|
+| Series search, local year matches GCD | 2 (year + name routes) | 1 (year route has the exact name) |
+| Broad issue search (no GCD series yet) | 3–4 (1–2 routes + 2 detail hydrations) | 1–2 (routes only) |
+| Narrowed issue search, one issue | 2–5 (series detail + up to 4 details; +1 publisher cold) | 1–3 cold (series detail, unless a search cached the index, + 1 overview page; +1 publisher cold), **0 warm** |
+| Match every issue of Invincible (2003), 145 issues | 309 | 4 (1 series + 3 overview pages) |
+| Match every issue of Fantastic Four (1961), 416 issues | 1,335 | 10 (1 series + 9 overview pages) |
+| Series apply + auto-split | 2–3 (series + publisher + series again for the splitter) | 1–2 (the splitter reads the cached index) |
+| Issue apply | 1 (+0–2 summary cold) | 1 (+0–2 summary cold) + up to 3 variant siblings while ≥ 50 of the hourly budget remain |
+
+All requests still go through the `gcd:hour` (100) and `gcd:day` (2,000)
+buckets and the 1 req/s floor.
+
+### Field audit (OpenAPI schema → Folio)
+
+Every path and schema field GCD publishes. "Used" names the Folio
+target. Fields that reach `GenericMetadata` flow through
+`metadata/writers.rs` (user-precedence rule) on DB-direct libraries, and
+through the sidecar composer on writeback libraries.
+
+**Paths**
+
+| Path | Status |
+|---|---|
+| `/api/series/name/{name}/year/{year}/` | used → series search, first route |
+| `/api/series/name/{name}/` | used → series search widening (≤ 2 pages) |
+| `/api/series/name/{name}/issue/{number}/year/{year}/` | used → broad issue search, first route |
+| `/api/series/name/{name}/issue/{number}/` | used → broad issue search widening (≤ 2 pages) |
+| `/api/series/{id}/` | used → `fetch_series`, series summary, issue index |
+| `/api/series/{series_id}/overview/` | used → narrowed issue search (24 h page cache) |
+| `/api/issue/{id}/` | used → `fetch_issue` (apply/preview), variant siblings, overview-fallback hydration |
+| `/api/publisher/{id}/` | used → publisher name (7-day cache) |
+| `/api/series/` | deliberately unused: a whole-catalog crawl (100k+ series, thousands of pages, past the daily budget). The name routes cover discovery |
+| `/api/publisher/` | deliberately unused: a whole-catalog crawl. Folio only needs publisher names by id |
+| `/api/issue/on_sale_weekly/{year}/week/{week}/` | deliberately unused: a global feed (2024 week 10 = 365 issues on 8 pages) of slim `IssueOnly` rows with no number, title or date. No Folio feature consumes upstream new releases: there is no pull list, and the `recent` refresh scope is driven by local files. Narrowing it to matched series would still mean reading every page |
+| Pagination envelope `count` / `next` / `previous` | `next` used → page walking. `count` and `previous` deliberately unused, because the walk stops on `next = null` or the cap |
+
+**`Issue`** (`/api/issue/{id}/`)
+
+| Field | Status |
+|---|---|
+| `api_url` | used → GCD issue id (`external_ids`, canonical comics.org URL) |
+| `series_name` | used → `series_name` + `year_began` (`"X (1961 series)"` split) |
+| `descriptor` | used → issue-number fallback; variant label fallback |
+| `number` | used → `issue_number` |
+| `volume` | used → `volume` (positive integers only) |
+| `variant_name` | used → `VariantCoverCandidate.label` + parsed `artist_name` |
+| `title` | used → `title` (fallback: main story's title) |
+| `publication_date` | used → `cover_date` (English month names, plus a day if printed). Year-only and non-English values fall back to `key_date` |
+| `key_date` | used → `cover_date` fallback (`YYYY-MM-00` → 1st). The lenient form gives candidates their year |
+| `price` | used → `price` (first listed price; comma decimals). The currency has no slot; non-decimal prices (`9d`) are dropped |
+| `page_count` | used → `page_count` (`"36.000"` → 36; 0 dropped) |
+| `editing` | used → `Editor` credits, plain or editor-annotated names only |
+| `indicia_publisher` | used → `publisher` fallback when the series publisher can't be resolved |
+| `brand_emblem` | used → `imprint` when it is a distinct line (`Vertigo` under DC). The publisher's own emblem, ≤ 3-character codes and emblems with digits are dropped |
+| `isbn` | used → `isbn` identifier (first valid ISBN-10/13, digits only) |
+| `barcode` | used → `upc` identifier (UPC-A ± add-on). EAN-13 becomes `gtin`, or `isbn` for a Bookland EAN when no ISBN is recorded |
+| `rating` | used → `age_rating`, normalised to the ComicInfo vocabulary (`Rated T+` → Teen, `Parental Advisory` → Teen, `Mature Readers` → Mature 17+, `Explicit` → Adults Only 18+, `Ages 12+` → Everyone 10+, `All Ages` → Everyone). Comics Code text and unknown values → none |
+| `on_sale_date` | used → `store_date`, full dates only. A partial `YYYY-MM` would invent a day |
+| `indicia_frequency` | deliberately unused: neither ComicInfo nor MetronInfo has a frequency field, and it has no matching value |
+| `notes` | used → `notes` |
+| `variant_of` | used → variant handling (skipped in searches, grouped into the base's `variants`) |
+| `series` | used → `series_external_id` (auto-split, summary lookup) |
+| `indicia_printer` | deliberately unused: no Folio, ComicInfo or MetronInfo slot |
+| `keywords` | used → `tags` (with the comic stories' keywords) |
+| `story_set` | used → per-story mapping, see `Story` |
+| `cover` | used → `cover_image_url` (kept as data; downloads blocked, see Covers) |
+
+**`IssueOnly`** (search rows)
+
+| Field | Status |
+|---|---|
+| `api_url` | used → candidate id |
+| `series_name` | used → candidate series name/year; exact-name ordering |
+| `descriptor` | used → candidate issue number |
+| `publication_date` | used → candidate cover date (month when parseable, else year) |
+| `variant_of` | used → variant rows skipped |
+| `series` | used → candidate `series_external_id` (auto-split needs no detail probe) |
+| `price`, `page_count` | deliberately unused at search: `IssueCandidate` has no slot. The apply reads them from the detail |
+
+**`SeriesOverviewItem`** (`/api/series/{id}/overview/`)
+
+| Field | Status |
+|---|---|
+| `issue_id` | used → candidate id |
+| `number` / `descriptor` | used → candidate issue number (and page matching) |
+| `publication_date`, `key_date` | used → candidate cover date |
+| `on_sale_date` | deliberately unused at search: `IssueCandidate` has no store date. The apply maps it from the detail |
+| `cover_url` | used → candidate `cover_image_url` (data; hashing skipped while the host is blocked) |
+| `longest_story` | used → candidate name (story title). Its credits, characters, genre and synopsis have no candidate slot. The apply still needs `/api/issue/{id}/`, because the overview lacks ISBN, barcode, price, rating, editing, the cover story, keywords and variants |
+
+**`Series`**
+
+| Field | Status |
+|---|---|
+| `api_url` | used → GCD series id |
+| `name` | used → `series_name`; exact-name ranking |
+| `year_began` | used → `year_began` |
+| `year_ended` | used → `year_end` |
+| `publisher` | used → `publisher` name (one cached request) |
+| `language` | used → `language_code` (lowercased ISO 639) |
+| `country` | deliberately unused: Folio, ComicInfo and MetronInfo have no country field, and `language` already carries the locale signal |
+| `active_issues` + `issue_descriptors` | used → issue index: `issue_count` (distinct numbers), splitter, overview page estimate, variant siblings |
+| `publishing_format` | used → `series_type` (Metron vocabulary: `Ongoing Series`, `Limited Series`, `One-Shot`, `Trade Paperback`, `Hard Cover`, `Graphic Novel`, `Omnibus`, `Annual Series`), `format` (ComicInfo; none for ongoing), and the WP-5.6 matcher hint, which separates the Invincible TPB series from the ongoing one. Its `was …` prefix is deliberately not mapped to `series.status`: status is reconciled from `series.json` / `<Count>` by the scanner, and no provider writes it |
+| `binding` | used → format fallback (`hardcover`; `trade paperback`) and hardcover upgrade of a collected format. `softcover` and `squarebound` alone are ignored as ambiguous |
+| `color` | deliberately unused: `GenericMetadata` has no black-and-white slot, and ComicInfo `BlackAndWhite` is scanner-owned |
+| `dimensions`, `paper_stock` | deliberately unused: physical attributes with no Folio, ComicInfo or MetronInfo field |
+| `notes` | used → `GenericMetadata.notes` on the series detail (shown in the preview; the series apply has no series-notes column) |
+
+**`Publisher`**
+
+| Field | Status |
+|---|---|
+| `name` | used → `publisher` |
+| `api_url` | used → publisher id (cache key) |
+| `country`, `year_began`, `year_ended`, `year_began_uncertain`, `year_ended_uncertain`, `year_overall_began`, `year_overall_ended`, `year_overall_began_uncertain`, `year_overall_ended_uncertain`, `notes`, `url`, `modified` | deliberately unused: Folio models a publisher as a name only (`publishers` table / `series.publisher`). There is no publisher-history, website or country field, and the 7-day name cache makes `modified` moot |
+| `brand_count`, `indicia_publisher_count`, `series_count`, `issue_count` | deliberately unused: catalogue statistics with no Folio surface |
+
+**`Story`** (inside `story_set` and `longest_story`)
+
+| Field | Status |
+|---|---|
+| `type` | used → story selection: `comic story` for credits, characters, genres and synopsis; `cover` for `CoverArtist`. Text stories, ads and letters pages are ignored |
+| `sequence_number` | used → story order |
+| `page_count` | used → main-story pick (longest comic story, first on a tie) |
+| `title` | used → `title` fallback (main story) |
+| `script` / `pencils` / `inks` / `colors` / `letters` / `editing` | used → `Writer` / `Penciller` / `Inker` / `Colorist` / `Letterer` / `Editor` credits. Cover `pencils` and `inks` → `CoverArtist` |
+| `characters` | used → `characters` + `teams` (first appearance, death) |
+| `genre` | used → `genres` (title-cased, deduped) |
+| `synopsis` | used → `description` (main story first, then other comic stories) |
+| `keywords` | used → `tags` |
+| `feature` | deliberately unused: the closest slot is ComicInfo `MainCharacterOrTeam`, which `GenericMetadata` doesn't model (it is carried through from `comic_info_raw`). Possible follow-up via the add-a-field recipe |
+| `first_line` | deliberately unused: the opening line of dialogue is not a summary, and there is no slot for it |
+| `job_number` | deliberately unused: a publisher-internal production code |
+| `notes` | deliberately unused: per-story indexer notes. The issue's `notes` are already mapped, and stacking story notes would bloat `<Notes>` |
+
+Tally: 11 paths (8 used, 3 unused). 93 fields across the six object
+schemas (not counting the four pagination envelopes): 64 used, 29
+deliberately unused. The unused fields are 16 `Publisher` catalogue
+fields, 4 `Series` physical/locale fields, 4 `Story` fields, 2 `Issue`
+indicia fields, 2 `IssueOnly` fields at search time, and the
+overview's `on_sale_date` at search time.
 
 Fixtures under `crates/server/tests/fixtures/gcd/` are recorded upstream
-responses; re-record with `curl 'https://www.comics.org/api/<route>?format=json'`
-(anonymous is fine for a handful of calls — 30/h).
+responses. Re-record with `curl 'https://www.comics.org/api/<route>?format=json'`
+(anonymous is fine for a handful of calls at 30/h; keep to 1 req/s).
 
 ## Adding a new provider
 

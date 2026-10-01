@@ -2,6 +2,7 @@
 
 import { Loader2 } from "lucide-react";
 
+import { ProviderCoverImage } from "@/components/library/ProviderCoverImage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -179,17 +180,12 @@ export function CandidateRow({
           className="mt-1 flex-none"
         />
       )}
-      {parsed.cover_image_url ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={parsed.cover_image_url}
-          alt={parsed.name ?? c.external_id}
-          loading="lazy"
-          className="h-20 w-14 shrink-0 rounded object-cover"
-        />
-      ) : (
-        <div className="bg-muted h-20 w-14 shrink-0 rounded" aria-hidden />
-      )}
+      <ProviderCoverImage
+        src={parsed.cover_image_url}
+        alt={parsed.name ?? c.external_id}
+        className="h-20 w-14 shrink-0 rounded object-cover"
+        placeholderClassName="bg-muted h-20 w-14 shrink-0 rounded"
+      />
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">

@@ -2248,6 +2248,19 @@ pub enum CoverFetchError {
     Fetch(#[from] crate::util::ssrf::FetchBytesError),
     #[error("response is not a recognised image")]
     NotAnImage,
+    /// The cover host answers non-browser requests with a bot challenge
+    /// (see [`crate::metadata::cover_block`]). Not retryable server-side.
+    #[error("{host} refuses non-browser downloads (bot challenge)")]
+    Blocked { host: String },
+}
+
+impl From<CoverFetchError> for crate::metadata::provider::ProviderError {
+    fn from(e: CoverFetchError) -> Self {
+        match e {
+            CoverFetchError::Blocked { .. } => Self::CoverUnavailable(e.to_string()),
+            other => Self::Transport(other.to_string()),
+        }
+    }
 }
 
 /// The single fetch path for provider cover images (primary covers via
@@ -2265,8 +2278,15 @@ pub enum CoverFetchError {
 ///
 /// SSRF vetting, redirect re-validation, address pinning and the 24 MiB cap
 /// are [`crate::util::ssrf::fetch_public_bytes`]'s.
+///
+/// A host known to answer with a bot challenge is refused up front with
+/// [`CoverFetchError::Blocked`] — no request, no retry — and the first
+/// challenged response marks it ([`crate::metadata::cover_block`]).
 pub async fn fetch_cover_bytes(url: &str) -> Result<Vec<u8>, CoverFetchError> {
-    let fetched = crate::util::ssrf::fetch_public_bytes(
+    if let Some(host) = crate::metadata::cover_block::blocked_host(url) {
+        return Err(CoverFetchError::Blocked { host });
+    }
+    let fetched = match crate::util::ssrf::fetch_public_bytes(
         url,
         MAX_COVER_BYTES,
         std::time::Duration::from_secs(20),
@@ -2274,7 +2294,15 @@ pub async fn fetch_cover_bytes(url: &str) -> Result<Vec<u8>, CoverFetchError> {
         2,
         true,
     )
-    .await?;
+    .await
+    {
+        Ok(f) => f,
+        Err(crate::util::ssrf::FetchBytesError::Challenged { host, .. }) => {
+            crate::metadata::cover_block::note_blocked(&host);
+            return Err(CoverFetchError::Blocked { host });
+        }
+        Err(e) => return Err(e.into()),
+    };
     if sniff_cover(&fetched.bytes).is_none() {
         return Err(CoverFetchError::NotAnImage);
     }

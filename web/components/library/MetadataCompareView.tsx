@@ -17,6 +17,7 @@
 
 import { ArrowLeft, Loader2, X } from "lucide-react";
 
+import { ProviderCoverImage } from "@/components/library/ProviderCoverImage";
 import { Button } from "@/components/ui/button";
 import type { CompositeDiffResp } from "@/lib/api/types";
 
@@ -122,20 +123,12 @@ export function MetadataCompareView({
             key={p.ordinal}
             className="border-ring/60 bg-card flex w-44 items-start gap-2 rounded-md border p-2 text-left"
           >
-            {p.cover_image_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={p.cover_image_url}
-                alt={p.title ?? p.source}
-                loading="lazy"
-                className="h-16 w-11 flex-none rounded object-cover"
-              />
-            ) : (
-              <div
-                className="bg-muted h-16 w-11 flex-none rounded"
-                aria-hidden
-              />
-            )}
+            <ProviderCoverImage
+              src={p.cover_image_url}
+              alt={p.title ?? p.source}
+              className="h-16 w-11 flex-none rounded object-cover"
+              placeholderClassName="bg-muted h-16 w-11 flex-none rounded"
+            />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1 text-xs font-medium">
                 {providerLabel(p.source)}

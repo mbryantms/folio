@@ -161,7 +161,8 @@ and the
 
 ### Grand Comics Database (GCD)
 
-Verified against the GCD source (`apps/api/` + `settings.py` in
+Verified against GCD's published OpenAPI schema (`/api/schema/`), the
+GCD source (`apps/api/` + `settings.py` in
 <https://github.com/GrandComicsDatabase/gcd-django>) and live API
 responses on 2026-10-01:
 
@@ -174,15 +175,34 @@ responses on 2026-10-01:
   1 request/second floor. GCD sends no budget headers, so the
   Providers card's budget bar shows the local daily bucket. A 429
   honours GCD's `Retry-After`.
-- **What a search costs.** Search results carry no covers, so Folio
-  fetches a few issue details per issue search (up to 4 when the series
-  is already matched to GCD, 2 otherwise). Series and publisher lookups
-  are cached for 7 days, so an apply costs about one request per issue.
+- **What a search costs.** A series search usually costs one request.
+  The name-only route runs only when the exact-year route has no
+  exact-name match, and a second results page is read only when the
+  first has no exact match. An issue search for a series that isn't
+  matched to GCD yet costs 1–2 requests, with no issue details fetched.
+  Once a series is matched, issue searches read GCD's series
+  **overview**: one request covers 50 issues and is cached for a day.
+  Matching all 145 issues of Invincible costs about 4 requests (it used
+  to cost about 309). Series and publisher lookups are cached for 7 days.
+- **What an apply costs.** An issue apply costs one request, plus up to
+  3 requests to collect variant covers (only while at least 50 of the
+  hourly 100 requests remain, so variants never starve searches). A
+  series apply costs 1–2 requests, and the follow-up "Detect from
+  providers" split reuses the cached issue list.
 - **What you get.** Per-story credits (writer, penciller, inker,
-  colorist, letterer, editor, cover artist), characters and teams
-  (with first appearances), genres, synopses, key/on-sale dates, page
-  count, price, barcode/ISBN. GCD's credit data is free text; uncertain
-  credits (`?`) and production staff are left out on purpose.
+  colorist, letterer, editor, cover artist), characters and teams (with
+  first appearances and deaths), genres, keywords as tags, the main
+  story's title and synopsis, cover month and on-sale date, page count,
+  price, age rating (GCD's free text is normalised, e.g. "Rated T+" →
+  Teen, while Comics Code approval is left empty), barcode (UPC/EAN) and
+  ISBN, volume, language, imprint (from the brand emblem when it names a
+  distinct line such as Vertigo), series type and format (ongoing vs
+  limited vs TPB/hardcover, which also helps the matcher tell a trade
+  series from the ongoing one), and variant covers with their artist
+  when the variant name gives it. GCD's credit data is free text:
+  uncertain credits (`?`) and production staff are left out on purpose.
+  The full field-by-field audit is in
+  [`metadata-providers.md`](metadata-providers.md#field-audit-openapi-schema--folio).
 - **Unstable schema.** GCD documents its API fields as subject to
   change. Folio reads them tolerantly, so a renamed or missing field
   leaves that value empty instead of failing the search. If GCD results
@@ -192,10 +212,25 @@ responses on 2026-10-01:
   (e.g. Fantastic Four (1961) ends at #416 on GCD). After a manual
   series apply from GCD, **Detect from providers** maps the uncovered
   issue range onto the right GCD series automatically.
-- **Covers.** Images come from `files1.comics.org` (allowed by the CSP).
-  The GCD image host sits behind bot protection that may refuse
-  non-browser downloads; when it does, cover hashing soft-fails and the
-  match falls back to text scoring.
+- **Covers aren't downloadable.** GCD serves every cover from
+  `files1.comics.org`, which sits behind a Cloudflare bot challenge.
+  The challenge refuses server-side downloads and browser hotlinks
+  alike, and GCD's API has no image endpoint. Folio does not try to get
+  around it. What you'll see:
+  - GCD match candidates show a grey placeholder instead of a cover.
+    The same fallback applies to any provider whose image fails to load.
+  - Cover matching treats GCD candidates as cover-less, so ranking uses
+    the text score (name, year, number, publisher, format).
+  - **Apply cover** with a GCD match skips the cover cleanly. The apply
+    records `cover_skipped_reason: "cover_unavailable: files1.comics.org
+    refuses non-browser downloads (bot challenge)"` in its outcome and
+    audit entry, and every other field still applies. To get a cover,
+    apply it from ComicVine or Metron, or keep the archive's own cover.
+  - Folio notices the challenge on the first refused request, then
+    stops contacting the image host for an hour, so there are no
+    retries and one log line per hour (`cover host answered with a bot
+    challenge`). It checks again after that, so covers start working
+    without a restart if GCD ever lifts the challenge.
 - **License.** GCD data is CC BY-SA 4.0. Folio links every GCD-sourced
   series/issue back to comics.org in the Sources footer.
 
@@ -389,7 +424,10 @@ firing, restart the server.
 
 ### Covers won't load in the MetadataMatchDialog
 
-Likely a CSP issue — Folio's `img-src` directive ships with an
+A GCD candidate always shows a grey placeholder: GCD's image host
+refuses hotlinks (see [GCD](#grand-comics-database-gcd)), and that is
+expected. For other providers it is likely a CSP issue. Folio's
+`img-src` directive ships with an
 allowlist of provider CDN hosts (CV's `comicvine.gamespot.com`,
 Metron's `static.metron.cloud`, GCD's `files1.comics.org`). If a
 candidate's `cover_image_url` is hosted somewhere else, the
