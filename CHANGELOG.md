@@ -13,6 +13,25 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.31.0](https://github.com/mbryantms/folio/compare/v0.30.0...v0.31.0) (2026-10-01)
+
+
+### Added
+
+* **archive:** CB7 support via convert-on-scan (WP-6.5, arm64 deferred) ([#937](https://github.com/mbryantms/folio/issues/937)) ([5daf423](https://github.com/mbryantms/folio/commit/5daf42354b67dba1d384801839bdfa9e1221393d))
+* **markers:** page-hash anchoring for markers and progress (WP-6.2) ([#938](https://github.com/mbryantms/folio/issues/938)) ([cac6bfa](https://github.com/mbryantms/folio/commit/cac6bfaf5fd984b2f48910db321acdadf48abadd))
+* **metadata:** GCD provider (WP-6.1) ([#936](https://github.com/mbryantms/folio/issues/936)) ([d7f8458](https://github.com/mbryantms/folio/commit/d7f8458d318011ca8f55a77d3c76732a43f7cc00))
+
+
+### Fixed
+
+* **security:** residual security items (WP-6.3) ([#935](https://github.com/mbryantms/folio/issues/935)) ([7cdb0da](https://github.com/mbryantms/folio/commit/7cdb0da2d2f6dca3099a2da2abbc36f68b5393ce))
+
+
+### Dependencies
+
+* refresh distroless runtime digests (libssl3t64 deb13u3) ([#940](https://github.com/mbryantms/folio/issues/940)) ([4ffe315](https://github.com/mbryantms/folio/commit/4ffe315f0658b837b54ce9ce0aeebe11617da0f8)), closes [#907](https://github.com/mbryantms/folio/issues/907)
+
 ## [0.30.0](https://github.com/mbryantms/folio/compare/v0.29.1...v0.30.0) (2026-10-01)
 
 
