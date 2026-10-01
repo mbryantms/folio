@@ -1,4 +1,5 @@
-import { BrowseTabs, parseBrowseTab } from "@/components/library/BrowseTabs";
+import { BrowseTabs } from "@/components/library/BrowseTabs";
+import { parseBrowseTab } from "@/components/library/browse-tabs";
 import { parseStartsWithParam } from "@/components/library/library-grid-filters";
 
 /** `/browse` — the single "Browse" sidebar destination (WP-5.5): a tabbed
