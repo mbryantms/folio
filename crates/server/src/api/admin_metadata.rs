@@ -34,6 +34,7 @@ use crate::auth::RequireAdmin;
 use crate::jobs::backfill::{self, BackfillKind};
 use crate::metadata::budget::{self, ProviderLastError, RequestBudget};
 use crate::metadata::comicvine::ComicVineClient;
+use crate::metadata::gcd::GcdClient;
 use crate::metadata::identifier::Source;
 use crate::metadata::metron::MetronClient;
 use crate::metadata::provider::{MetadataProvider, ProviderError};
@@ -58,7 +59,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ProviderView {
-    /// Stable identifier — `"comicvine"` | `"metron"` (M2).
+    /// Stable identifier — `"comicvine"` | `"metron"` (M2) | `"gcd"` (WP-6.1).
     pub id: String,
     pub label: String,
     /// `true` when an API key / credentials are set AND the master
@@ -114,7 +115,7 @@ pub async fn list_providers(State(app): State<AppState>, _admin: RequireAdmin) -
 async fn provider_views(app: &AppState) -> Vec<ProviderView> {
     let cfg = app.cfg();
     let redis = &app.jobs.redis;
-    let mut providers = Vec::with_capacity(2);
+    let mut providers = Vec::with_capacity(3);
 
     let cv_key_set = cfg
         .comicvine_api_key
@@ -164,6 +165,26 @@ async fn provider_views(app: &AppState) -> Vec<ProviderView> {
         last_error: metron_last_error,
     });
 
+    let gcd = gcd_client(app);
+    let gcd_set = gcd.is_some();
+    let (gcd_quota, gcd_budget, gcd_last_error) = match gcd {
+        Some(client) => (
+            client.quota().await.ok().map(snapshot_to_view),
+            budget::for_provider(redis, Source::Gcd).await,
+            budget::load_last_error(redis, Source::Gcd).await,
+        ),
+        None => (None, None, None),
+    };
+    providers.push(ProviderView {
+        id: Source::Gcd.as_str().to_owned(),
+        label: Source::Gcd.label().to_owned(),
+        enabled: cfg.gcd_enabled && gcd_set,
+        configured: gcd_set,
+        quota: gcd_quota,
+        budget: gcd_budget,
+        last_error: gcd_last_error,
+    });
+
     providers
 }
 
@@ -171,7 +192,7 @@ async fn provider_views(app: &AppState) -> Vec<ProviderView> {
     operation_id = "admin_metadata_providers_test",    post,
     path = "/admin/metadata/providers/{id}/test",
     params(
-        ("id" = String, Path, description = "Provider id (`comicvine` | `metron`)"),
+        ("id" = String, Path, description = "Provider id (`comicvine` | `metron` | `gcd`)"),
     ),
     responses(
         (status = 200, body = TestProviderResp),
@@ -239,6 +260,25 @@ pub async fn test_provider(
                     StatusCode::CONFLICT,
                     "metadata.disabled",
                     "Metron integration is disabled; enable it before testing",
+                );
+            }
+            let started = std::time::Instant::now();
+            let outcome = client.health_check().await;
+            (started.elapsed().as_millis() as u64, outcome)
+        }
+        Source::Gcd => {
+            let Some(client) = gcd_client(&app) else {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "metadata.no_credentials",
+                    "set a comics.org username and password before testing",
+                );
+            };
+            if !cfg.gcd_enabled {
+                return error(
+                    StatusCode::CONFLICT,
+                    "metadata.disabled",
+                    "GCD integration is disabled; enable it before testing",
                 );
             }
             let started = std::time::Instant::now();
@@ -332,6 +372,11 @@ fn comicvine_client(app: &AppState) -> ComicVineClient {
 /// `None` when neither a token nor a username + password pair is set.
 fn metron_client(app: &AppState) -> Option<MetronClient> {
     MetronClient::from_config(&app.cfg(), app.jobs.redis.clone())
+}
+
+/// `None` unless both the GCD username and password are set.
+fn gcd_client(app: &AppState) -> Option<GcdClient> {
+    GcdClient::from_config(&app.cfg(), app.jobs.redis.clone())
 }
 
 impl Clone for QuotaView {

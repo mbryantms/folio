@@ -19,6 +19,12 @@ things misbehave.
      out (see [Metron token auth](#metron-token-auth-limits-and-the-budget-bar)).
      Rate limit: 20 requests/minute (burst) + 5,000 requests/day
      (sustained; higher for OpenCollective supporters).
+   - **Grand Comics Database (GCD)**: free; register at
+     <https://www.comics.org/> and enter the account's username +
+     password. Strongest on Golden/Silver Age and non-US runs. Rate
+     limit: 2,000 requests/day with an account (30/hour anonymous);
+     Folio paces itself at ~100/hour and 1 request/second (see
+     [GCD](#grand-comics-database-gcd)).
 
 2. **Plug them in.** `/admin/metadata` → **Providers** tab. Paste
    the credentials + flip the master toggle on. The "Test" button
@@ -51,6 +57,13 @@ through `/admin/metadata` → **Settings** tab (or via
 | `metadata.metron.username` | string | — | HTTP Basic username — fallback when no token is set. |
 | `metadata.metron.password` | secret | — | AEAD-sealed at rest. Fallback with the username. |
 | `metadata.metron.enabled` | bool | false | Master toggle. |
+| `metadata.gcd.username` | string | — | comics.org account username (HTTP Basic). |
+| `metadata.gcd.password` | secret | — | AEAD-sealed at rest; trimmed on save. Both username and password are required. |
+| `metadata.gcd.enabled` | bool | false | Master toggle. GCD runs last in priority (after Metron and ComicVine). |
+
+`COMIC_GCD_USERNAME` / `COMIC_GCD_PASSWORD` / `COMIC_GCD_ENABLED` work
+as first-boot env bootstraps like the other provider keys (the DB value
+wins once saved).
 
 ### Weekly refresh + staleness (`/admin/metadata` → Settings)
 
@@ -145,6 +158,46 @@ and the
 - **Cover hashes are cached.** Candidate cover pHashes are kept for 30
   days per image URL (`metadata_cover_hash`), so re-running a search
   doesn't re-download the same covers.
+
+### Grand Comics Database (GCD)
+
+Verified against the GCD source (`apps/api/` + `settings.py` in
+<https://github.com/GrandComicsDatabase/gcd-django>) and live API
+responses on 2026-10-01:
+
+- **Auth.** HTTP Basic with a comics.org account. The API is readable
+  anonymously, but anonymous clients get **30 requests/hour**; an
+  account gets **2,000/day**. Folio requires the account so it never
+  runs on the anonymous tier. A wrong password returns 401 even on
+  read-only routes, so the **Test** button checks it.
+- **Limits.** Local pre-flight buckets: 100/hour and 2,000/day, plus a
+  1 request/second floor. GCD sends no budget headers, so the
+  Providers card's budget bar shows the local daily bucket. A 429
+  honours GCD's `Retry-After`.
+- **What a search costs.** Search results carry no covers, so Folio
+  fetches a few issue details per issue search (up to 4 when the series
+  is already matched to GCD, 2 otherwise). Series and publisher lookups
+  are cached for 7 days, so an apply costs about one request per issue.
+- **What you get.** Per-story credits (writer, penciller, inker,
+  colorist, letterer, editor, cover artist), characters and teams
+  (with first appearances), genres, synopses, key/on-sale dates, page
+  count, price, barcode/ISBN. GCD's credit data is free text; uncertain
+  credits (`?`) and production staff are left out on purpose.
+- **Unstable schema.** GCD documents its API fields as subject to
+  change. Folio reads them tolerantly, so a renamed or missing field
+  leaves that value empty instead of failing the search. If GCD results
+  suddenly come back sparse, check the Providers card's last error and
+  file an issue with the response.
+- **Series splits.** GCD splits long runs differently from ComicVine
+  (e.g. Fantastic Four (1961) ends at #416 on GCD). After a manual
+  series apply from GCD, **Detect from providers** maps the uncovered
+  issue range onto the right GCD series automatically.
+- **Covers.** Images come from `files1.comics.org` (allowed by the CSP).
+  The GCD image host sits behind bot protection that may refuse
+  non-browser downloads; when it does, cover hashing soft-fails and the
+  match falls back to text scoring.
+- **License.** GCD data is CC BY-SA 4.0. Folio links every GCD-sourced
+  series/issue back to comics.org in the Sources footer.
 
 ### Quota exhaustion
 
@@ -337,9 +390,9 @@ firing, restart the server.
 ### Covers won't load in the MetadataMatchDialog
 
 Likely a CSP issue — Folio's `img-src` directive ships with an
-allowlist of provider CDN hosts (CV's `comicvine.gamespot.com` +
-Metron's `static.metron.cloud`). If a candidate's `cover_image_url`
-is hosted somewhere else (e.g. a future GCD integration), the
+allowlist of provider CDN hosts (CV's `comicvine.gamespot.com`,
+Metron's `static.metron.cloud`, GCD's `files1.comics.org`). If a
+candidate's `cover_image_url` is hosted somewhere else, the
 browser blocks the image with a CSP violation. Check the browser
 console for "blocked by Content Security Policy" entries and add
 the host to `crates/server/src/middleware/security_headers.rs`.

@@ -1480,7 +1480,7 @@ async fn lookup_series_rejects_bad_urls_with_422_bound_to_url_field() {
 
     for (body, needle) in [
         (
-            json!({"url": "https://www.comics.org/series/1/"}),
+            json!({"url": "https://www.marvel.com/comics/series/1/"}),
             "not a supported provider host",
         ),
         (

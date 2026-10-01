@@ -204,7 +204,7 @@ impl SearchQueryView {
 /// and day buckets.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ProviderQuotaView {
-    /// `"comicvine"` | `"metron"`.
+    /// `"comicvine"` | `"metron"` | `"gcd"`.
     pub provider: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remaining_hour: Option<u32>,
@@ -365,7 +365,7 @@ pub struct LookupReq {
     #[serde(default)]
     #[garde(inner(length(chars, max = 2048)))]
     pub url: Option<String>,
-    /// `comicvine` | `metron`.
+    /// `comicvine` | `metron` | `gcd`.
     #[serde(default)]
     #[garde(inner(length(chars, max = 32)))]
     pub source: Option<String>,

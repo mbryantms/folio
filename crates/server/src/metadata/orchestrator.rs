@@ -22,6 +22,7 @@
 
 use crate::config::Config;
 use crate::metadata::comicvine::ComicVineClient;
+use crate::metadata::gcd::GcdClient;
 use crate::metadata::identifier::Source;
 use crate::metadata::matcher::{
     self, Confidence, IssueQueryFacts, Score, SeriesQueryFacts, Thresholds,
@@ -73,8 +74,10 @@ pub mod scope {
 /// orchestrator never speaks to a disabled provider.
 ///
 /// Priority: Metron first (richer + native cross-source IDs), then
-/// ComicVine. The M5 admin UI exposes a drag-reorder of this list;
-/// for now the priority is hard-coded.
+/// ComicVine, then GCD (WP-6.1 — the tightest budget and slimmest
+/// search payloads, so it runs last as the coverage backstop for
+/// Golden/Silver Age and non-US runs). The M5 admin UI exposes a
+/// drag-reorder of this list; for now the priority is hard-coded.
 pub fn build_providers(cfg: &Config, redis: ConnectionManager) -> Vec<Arc<dyn MetadataProvider>> {
     let mut out: Vec<Arc<dyn MetadataProvider>> = Vec::new();
 
@@ -97,6 +100,12 @@ pub fn build_providers(cfg: &Config, redis: ConnectionManager) -> Vec<Arc<dyn Me
             Some(base) => ComicVineClient::with_base_url(key, base, redis.clone()),
             None => ComicVineClient::new(key, redis.clone()),
         }));
+    }
+
+    if cfg.gcd_enabled
+        && let Some(client) = GcdClient::from_config(cfg, redis.clone())
+    {
+        out.push(Arc::new(client));
     }
 
     out

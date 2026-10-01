@@ -35,7 +35,16 @@ import {
 } from "@/lib/metadata/quota";
 import { statusToneText } from "@/lib/ui/status-tone";
 
-import { ProviderConfigForm } from "./ProviderConfigForm";
+import {
+  ProviderConfigForm,
+  isConfigurableProvider,
+} from "./ProviderConfigForm";
+
+const PROVIDER_DOCS: Record<string, string> = {
+  comicvine: "https://comicvine.gamespot.com/api/",
+  metron: "https://metron.cloud/",
+  gcd: "https://www.comics.org/api/",
+};
 
 export function ProvidersTab() {
   const q = useAdminMetadataProviders();
@@ -63,7 +72,7 @@ export function ProvidersTab() {
 /**
  * Request budget bar (WP-2.9): what the upstream says is left in its
  * headline window (Metron's daily budget; ComicVine's local hourly
- * bucket). Tone turns to warning under 20% — the same threshold the
+ * bucket; GCD's local daily bucket). Tone turns to warning under 20% — the same threshold the
  * search dialog uses for its note.
  */
 function BudgetBar({
@@ -187,22 +196,18 @@ function ProviderCard({ provider }: { provider: ProviderView }) {
             {test.data?.duration_ms}ms round-trip.
           </div>
         )}
-        <a
-          href={
-            provider.id === "comicvine"
-              ? "https://comicvine.gamespot.com/api/"
-              : "https://metron.cloud/"
-          }
-          target="_blank"
-          rel="noreferrer"
-          className="text-muted-foreground inline-flex items-center gap-1 text-xs hover:underline"
-        >
-          Provider docs <ExternalLink className="h-3 w-3" />
-        </a>
-        {(provider.id === "comicvine" || provider.id === "metron") && (
-          <ProviderConfigForm
-            provider={provider.id as "comicvine" | "metron"}
-          />
+        {PROVIDER_DOCS[provider.id] && (
+          <a
+            href={PROVIDER_DOCS[provider.id]}
+            target="_blank"
+            rel="noreferrer"
+            className="text-muted-foreground inline-flex items-center gap-1 text-xs hover:underline"
+          >
+            Provider docs <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
+        {isConfigurableProvider(provider.id) && (
+          <ProviderConfigForm provider={provider.id} />
         )}
       </CardContent>
     </Card>

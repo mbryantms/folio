@@ -15,6 +15,8 @@
 //! - **ComicVine** has no budget headers; its 200/h per-resource cap is
 //!   enforced upstream with no feedback, so the admin surface derives
 //!   the budget from the local bucket state via [`RequestBudget::from_bucket`].
+//! - **GCD** (WP-6.1) likewise sends no budget headers; the bar is the
+//!   local 2,000/day bucket mirroring the upstream user throttle.
 //!
 //! The last provider error is kept alongside (`metadata:last_error:<p>`)
 //! so the admin card can show *why* a provider went quiet without the
@@ -138,7 +140,7 @@ pub fn parse_metron_headers(headers: &HeaderMap) -> Vec<RequestBudget> {
 /// - ComicVine: derived from the local hourly bucket (the upstream
 ///   enforces 200/h per resource with no feedback headers).
 pub async fn for_provider(redis: &ConnectionManager, source: Source) -> Option<RequestBudget> {
-    use crate::metadata::rate_limit::{self, COMICVINE_HOUR, METRON_DAY};
+    use crate::metadata::rate_limit::{self, COMICVINE_HOUR, GCD_DAY, METRON_DAY};
     match source {
         Source::Metron => {
             if let Some(headline) = load(redis, source)
@@ -166,6 +168,18 @@ pub async fn for_provider(redis: &ConnectionManager, source: Source) -> Option<R
                 remaining,
                 ttl,
                 BudgetWindow::Hour,
+            ))
+        }
+        // GCD (WP-6.1) sends no budget headers; its binding limit is the
+        // 2,000/day user throttle, mirrored by the local day bucket.
+        Source::Gcd => {
+            let mut conn = redis.clone();
+            let (remaining, ttl) = rate_limit::snapshot(&mut conn, &GCD_DAY).await.ok()?;
+            Some(RequestBudget::from_bucket(
+                GCD_DAY.capacity,
+                remaining,
+                ttl,
+                BudgetWindow::Day,
             ))
         }
         _ => None,

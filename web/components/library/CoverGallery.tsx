@@ -268,6 +268,8 @@ function labelForProvider(p: string): string {
       return "ComicVine";
     case "metron":
       return "Metron";
+    case "gcd":
+      return "GCD";
     case "archive_extracted":
       return "Archive";
     case "user_upload":

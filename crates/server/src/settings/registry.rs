@@ -264,6 +264,27 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Bool,
         is_secret: false,
     },
+    // ───────── Grand Comics Database (WP-6.1) ─────────
+    SettingDef {
+        // comics.org account username — HTTP Basic auth on the GCD API.
+        // GCD reads are anonymous-capable but throttled to 30/hour; an
+        // account lifts that to 2,000/day.
+        key: "metadata.gcd.username",
+        kind: SettingKind::String,
+        is_secret: false,
+    },
+    SettingDef {
+        // comics.org account password — AEAD-sealed at rest.
+        key: "metadata.gcd.password",
+        kind: SettingKind::String,
+        is_secret: true,
+    },
+    SettingDef {
+        // Master toggle for GCD integration.
+        key: "metadata.gcd.enabled",
+        kind: SettingKind::Bool,
+        is_secret: false,
+    },
     // ───────── Weekly refresh + staleness (metadata-providers-1.0 M7) ─────────
     SettingDef {
         // Master toggle for the weekly metadata-refresh cron. OFF by
@@ -348,7 +369,7 @@ pub const REGISTRY: &[SettingDef] = &[
         // tiebreaker when multiple providers offer a value for the same
         // field in a composite (multi-provider) merge. e.g.
         // `"metron,comicvine"`. Empty / unset falls back to the
-        // `build_providers` order (Metron, then ComicVine). Only changes
+        // `build_providers` order (Metron, ComicVine, then GCD). Only changes
         // the DEFAULT per-field source; users still override per field
         // in the compare view.
         key: "metadata.merge.provider_preference",

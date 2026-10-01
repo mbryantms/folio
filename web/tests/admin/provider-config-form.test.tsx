@@ -117,6 +117,31 @@ describe("<ProviderConfigForm>", () => {
     expect(html).toContain("Enable Metron");
   });
 
+  it("renders the GCD form with username + password (WP-6.1)", () => {
+    settingsState = {
+      isLoading: false,
+      data: {
+        values: [
+          { key: "metadata.gcd.username", value: "bob", is_secret: false },
+          { key: "metadata.gcd.password", value: "<set>", is_secret: true },
+          { key: "metadata.gcd.enabled", value: true, is_secret: false },
+        ],
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(ProviderConfigForm, { provider: "gcd" }),
+    );
+    expect(html).toContain('id="gcd-username"');
+    expect(html).toContain('value="bob"');
+    expect(html).toContain('id="gcd-password"');
+    expect(html).toContain("(saved — type to replace)");
+    expect(html).not.toContain("<set>");
+    expect(html).not.toContain("API token");
+    expect(html).toContain("2,000 a day");
+    expect(html).toContain("Enable GCD");
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>[^<]*Save/);
+  });
+
   it("offers the token paste placeholder when no token is saved", () => {
     settingsState = {
       isLoading: false,

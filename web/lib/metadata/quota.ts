@@ -63,6 +63,7 @@ export function budgetNote(p: ProviderQuota): string | null {
 const PROVIDER_LABELS: Record<string, string> = {
   comicvine: "ComicVine",
   metron: "Metron",
+  gcd: "GCD",
 };
 
 export function providerLabel(id: string): string {

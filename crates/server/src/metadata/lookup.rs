@@ -17,9 +17,9 @@
 //! **Host validation is strict.** SSRF is moot (the provider client
 //! only ever speaks to its fixed base URL — the parsed id is the only
 //! thing that leaves this module), but a URL for an unknown host is
-//! still rejected rather than guessed at, so a pasted GCD / Marvel link
+//! still rejected rather than guessed at, so a pasted Marvel / LoCG link
 //! surfaces a clear "not a supported provider" instead of a confusing
-//! ComicVine 404.
+//! ComicVine 404. GCD (`www.comics.org`) links parse since WP-6.1.
 
 use crate::metadata::identifier::{Source, canonical_url};
 use crate::metadata::provider::{GenericMetadata, IssueCandidate, SeriesCandidate};
@@ -107,7 +107,7 @@ impl fmt::Display for LookupError {
             LookupError::MalformedUrl => write!(f, "not an absolute http(s) URL"),
             LookupError::UnsupportedHost(h) => write!(
                 f,
-                "{h} is not a supported provider host (expected comicvine.gamespot.com or metron.cloud)"
+                "{h} is not a supported provider host (expected comicvine.gamespot.com, metron.cloud or comics.org)"
             ),
             LookupError::NoIdInPath(s) => write!(
                 f,
@@ -119,7 +119,10 @@ impl fmt::Display for LookupError {
                 "Metron page URLs use a slug ({slug}); paste the numeric id from the API URL (metron.cloud/api/series/<id>/) or enter source + external_id"
             ),
             LookupError::UnknownSource(s) => {
-                write!(f, "unknown source {s:?} (expected comicvine or metron)")
+                write!(
+                    f,
+                    "unknown source {s:?} (expected comicvine, metron or gcd)"
+                )
             }
             LookupError::BadExternalId => write!(f, "external_id must be a numeric provider id"),
             LookupError::EntityMismatch(wanted, got) => write!(
@@ -134,11 +137,11 @@ impl fmt::Display for LookupError {
 
 impl std::error::Error for LookupError {}
 
-/// Providers a lookup can target. GCD / Marvel / … carry ids in
+/// Providers a lookup can target. Marvel / LoCG / … carry ids in
 /// `external_ids` but have no `MetadataProvider` client yet.
 fn lookup_source(s: &str) -> Result<Source, LookupError> {
     match s.parse::<Source>() {
-        Ok(src @ (Source::ComicVine | Source::Metron)) => Ok(src),
+        Ok(src @ (Source::ComicVine | Source::Metron | Source::Gcd)) => Ok(src),
         _ => Err(LookupError::UnknownSource(s.trim().to_owned())),
     }
 }
@@ -165,6 +168,8 @@ fn bare_numeric_id(raw: &str) -> Option<String> {
 ///   API forms `…/api/series/<id>/` / `…/api/issue/<id>/`. Metron's
 ///   public site links use slugs, which the API can't resolve — those
 ///   return [`LookupError::MetronSlug`] with a hint.
+/// - `https://www.comics.org/series/<id>/`, `…/issue/<id>/` and the API
+///   forms `…/api/series/<id>/` / `…/api/issue/<id>/` (GCD, WP-6.1).
 pub fn parse_provider_url(raw: &str) -> Result<ProviderRef, LookupError> {
     let trimmed = raw.trim();
     // Tolerate a pasted `comicvine.gamespot.com/...` without a scheme.
@@ -235,6 +240,27 @@ pub fn parse_provider_url(raw: &str) -> Result<ProviderRef, LookupError> {
                 })
             } else {
                 Err(LookupError::MetronSlug((*id_seg).to_owned()))
+            }
+        }
+        "comics.org" | "www.comics.org" => {
+            let rest: &[&str] = match segments.first() {
+                Some(&"api") => &segments[1..],
+                _ => &segments[..],
+            };
+            let entity = match rest.first() {
+                Some(&"series") => LookupEntity::Series,
+                Some(&"issue") => LookupEntity::Issue,
+                _ => return Err(LookupError::NoIdInPath(Source::Gcd)),
+            };
+            match rest.get(1) {
+                Some(id) if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) => {
+                    Ok(ProviderRef {
+                        source: Source::Gcd,
+                        entity,
+                        external_id: (*id).to_owned(),
+                    })
+                }
+                _ => Err(LookupError::NoIdInPath(Source::Gcd)),
             }
         }
         other => Err(LookupError::UnsupportedHost(other.to_owned())),
@@ -422,10 +448,35 @@ mod tests {
     }
 
     #[test]
+    fn parses_gcd_page_and_api_urls() {
+        let gcd = |entity, id: &str| ProviderRef {
+            source: Source::Gcd,
+            entity,
+            external_id: id.to_owned(),
+        };
+        assert_eq!(
+            parse_provider_url("https://www.comics.org/series/1482/").unwrap(),
+            gcd(LookupEntity::Series, "1482")
+        );
+        assert_eq!(
+            parse_provider_url("comics.org/issue/16556/").unwrap(),
+            gcd(LookupEntity::Issue, "16556")
+        );
+        assert_eq!(
+            parse_provider_url("https://www.comics.org/api/issue/16556/?format=json").unwrap(),
+            gcd(LookupEntity::Issue, "16556")
+        );
+    }
+
+    #[test]
     fn rejects_unknown_hosts_and_junk() {
         assert_eq!(
-            parse_provider_url("https://www.comics.org/series/12345/"),
-            Err(LookupError::UnsupportedHost("www.comics.org".into()))
+            parse_provider_url("https://www.marvel.com/comics/series/1/"),
+            Err(LookupError::UnsupportedHost("www.marvel.com".into()))
+        );
+        assert_eq!(
+            parse_provider_url("https://www.comics.org/publisher/78/"),
+            Err(LookupError::NoIdInPath(Source::Gcd))
         );
         assert_eq!(
             parse_provider_url("https://comicvine.gamespot.com/saga/"),
@@ -494,8 +545,16 @@ mod tests {
             metron(LookupEntity::Issue, "12")
         );
         assert_eq!(
-            resolve(LookupEntity::Series, None, Some("gcd"), Some("1")),
-            Err(LookupError::UnknownSource("gcd".into()))
+            resolve(LookupEntity::Series, None, Some("gcd"), Some("1")).unwrap(),
+            ProviderRef {
+                source: Source::Gcd,
+                entity: LookupEntity::Series,
+                external_id: "1".into(),
+            }
+        );
+        assert_eq!(
+            resolve(LookupEntity::Series, None, Some("marvel"), Some("1")),
+            Err(LookupError::UnknownSource("marvel".into()))
         );
         assert_eq!(
             resolve(

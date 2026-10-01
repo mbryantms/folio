@@ -14,7 +14,7 @@
  *     the run's `overridden` flag means what it says. The local series /
  *     issue rows are never touched.
  *   - **Paste provider URL** skips matching entirely: the server fetches
- *     that exact ComicVine / Metron record and returns a completed run
+ *     that exact ComicVine / Metron / GCD record and returns a completed run
  *     holding it as the single HIGH candidate.
  *
  * Server-side validation (422 + `error.details`) binds onto the inputs
@@ -168,7 +168,7 @@ export function MetadataQueryTools({
     if (!url) {
       lookupForm.setError("url", {
         type: "manual",
-        message: "Paste a ComicVine or Metron URL.",
+        message: "Paste a ComicVine, Metron, or GCD URL.",
       });
       return;
     }
@@ -305,7 +305,7 @@ export function MetadataQueryTools({
                       {...field}
                       disabled={busy}
                       inputMode="url"
-                      placeholder="https://comicvine.gamespot.com/…/4050-12345/ or metron.cloud/series/1234/"
+                      placeholder="https://comicvine.gamespot.com/…/4050-12345/, metron.cloud/series/1234/, or comics.org/series/1482/"
                     />
                   </FormControl>
                   <Button

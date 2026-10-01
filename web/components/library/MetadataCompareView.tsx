@@ -28,6 +28,8 @@ function providerLabel(source: string): string {
       return "ComicVine";
     case "metron":
       return "Metron";
+    case "gcd":
+      return "GCD";
     default:
       return source;
   }
