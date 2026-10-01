@@ -12,8 +12,15 @@
  * taps kept working) until the app was force-quit. The guard now
  * requires the layout-vs-visual width ratio to back the scale up.
  */
-import { describe, expect, it } from "vitest";
-import { isPinchZoomed, swipeAction } from "@/lib/reader/use-swipe";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  EDGE_BACK_INSET_PX,
+  inEdgeBackInset,
+  isEdgeTap,
+  isIosStandalone,
+  isPinchZoomed,
+  swipeAction,
+} from "@/lib/reader/use-swipe";
 
 describe("swipeAction", () => {
   it("ignores drags under the 30px threshold", () => {
@@ -62,5 +69,56 @@ describe("isPinchZoomed", () => {
   it("falls back to trusting the scale when widths are unusable", () => {
     expect(isPinchZoomed(2, 0, 390)).toBe(true);
     expect(isPinchZoomed(2, 195, 0)).toBe(true);
+  });
+});
+
+// ---- WP-4.2 / audit UX-10: iOS standalone edge-back guard ----
+
+describe("inEdgeBackInset", () => {
+  it("claims touches in the left-edge strip only", () => {
+    expect(inEdgeBackInset(0)).toBe(true);
+    expect(inEdgeBackInset(EDGE_BACK_INSET_PX - 1)).toBe(true);
+    expect(inEdgeBackInset(EDGE_BACK_INSET_PX)).toBe(false);
+    expect(inEdgeBackInset(400)).toBe(false);
+  });
+
+  it("ignores negative coordinates (touches outside the viewport)", () => {
+    expect(inEdgeBackInset(-5)).toBe(false);
+  });
+});
+
+describe("isEdgeTap", () => {
+  const start = { x: 10, y: 300, t: 1000 };
+
+  it("recognizes a short, still touch as a tap", () => {
+    expect(isEdgeTap(start, { x: 14, y: 303, t: 1150 })).toBe(true);
+  });
+
+  it("rejects a swipe (too much travel)", () => {
+    expect(isEdgeTap(start, { x: 120, y: 300, t: 1150 })).toBe(false);
+  });
+
+  it("rejects a long press", () => {
+    expect(isEdgeTap(start, { x: 10, y: 300, t: 2000 })).toBe(false);
+  });
+});
+
+describe("isIosStandalone", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("is false with no window (SSR)", () => {
+    expect(isIosStandalone()).toBe(false);
+  });
+
+  it("is true only when navigator.standalone === true (Apple WebKit)", () => {
+    vi.stubGlobal("window", { navigator: { standalone: true } });
+    expect(isIosStandalone()).toBe(true);
+    vi.stubGlobal("window", { navigator: { standalone: false } });
+    expect(isIosStandalone()).toBe(false);
+    // Android / desktop standalone PWAs have no `standalone` property.
+    vi.stubGlobal("window", { navigator: {} });
+    expect(isIosStandalone()).toBe(false);
   });
 });

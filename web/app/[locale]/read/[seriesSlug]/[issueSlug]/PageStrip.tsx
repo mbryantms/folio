@@ -2,8 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReaderStore } from "@/lib/reader/store";
-import { computeSpreadGroups, groupIndexForPage } from "@/lib/reader/spreads";
+import {
+  computeSpreadGroups,
+  groupIndexForPage,
+  nextPageSpreadMode,
+  pageSpreadMode,
+  withPageSpreadMode,
+  type PageSpreadMode,
+} from "@/lib/reader/spreads";
+import { useSpreadOverrides } from "@/lib/reader/use-spread-overrides";
 import { useIssueMarkers } from "@/lib/api/queries";
+import { useSetIssuePageOverrides } from "@/lib/api/mutations";
 import type { Direction } from "@/lib/reader/detect";
 import type { MarkerKind, PageInfo } from "@/lib/api/types";
 import { SWIPE_IGNORE_ATTR } from "@/lib/reader/use-swipe";
@@ -68,6 +77,28 @@ export function PageStrip({
   const visible = useReaderStore((s) => s.pageStripVisible);
   const viewMode = useReaderStore((s) => s.viewMode);
   const coverSolo = useReaderStore((s) => s.coverSolo);
+  // WP-4.3 manual spread controls — same query cache the reader pairs
+  // from, so a toggle here re-pairs the open spread on the same frame.
+  const spreadOverrides = useSpreadOverrides(issueId);
+  const setOverrides = useSetIssuePageOverrides(issueId);
+  const cycleSpreadMode = useCallback(
+    (page: number) => {
+      const next = nextPageSpreadMode(pageSpreadMode(spreadOverrides, page));
+      setOverrides.mutate(withPageSpreadMode(spreadOverrides, page, next));
+    },
+    [spreadOverrides, setOverrides],
+  );
+  // Wide (two-slot) thumbnail: the `double_page` flag, unless the user
+  // forced the page single; or a manual forced spread.
+  const isWideThumb = useCallback(
+    (i: number) => {
+      const mode = pageSpreadMode(spreadOverrides, i);
+      if (mode === "spread") return true;
+      if (mode === "single") return false;
+      return pages[i]?.double_page === true;
+    },
+    [spreadOverrides, pages],
+  );
 
   // Keep the thumbnail images mounted through the slide-out animation.
   // When the user hides the chrome, `visible` flips to false immediately
@@ -165,11 +196,11 @@ export function PageStrip({
     const offsets = new Array<number>(totalPages + 1);
     offsets[0] = 0;
     for (let i = 0; i < totalPages; i += 1) {
-      const w = pages[i]?.double_page === true ? 204 : 108;
+      const w = isWideThumb(i) ? 204 : 108;
       offsets[i + 1] = offsets[i]! + w;
     }
     return offsets;
-  }, [pages, totalPages]);
+  }, [isWideThumb, totalPages]);
 
   // Pages currently visible in the reader. In single/webtoon this is just
   // the current page; in double-page view it's the full spread group, so a
@@ -178,10 +209,14 @@ export function PageStrip({
   // because `computeSpreadGroups` already emits them as solo groups.
   const activePages = useMemo<readonly number[]>(() => {
     if (viewMode !== "double") return [currentPage];
-    const groups = computeSpreadGroups(pages, { coverSolo, totalPages });
+    const groups = computeSpreadGroups(pages, {
+      coverSolo,
+      totalPages,
+      overrides: spreadOverrides,
+    });
     const idx = groupIndexForPage(groups, currentPage);
     return groups[idx] ?? [currentPage];
-  }, [viewMode, coverSolo, pages, currentPage, totalPages]);
+  }, [viewMode, coverSolo, pages, currentPage, totalPages, spreadOverrides]);
 
   const updateVisibleRange = useCallback(() => {
     const el = stripRef.current;
@@ -363,7 +398,8 @@ export function PageStrip({
               visualIndex >= visibleRange.start &&
               visualIndex <= visibleRange.end;
             const shouldLoad = renderThumbs && (isActive || inViewport);
-            const isDouble = pages[i]?.double_page === true;
+            const isDouble = isWideThumb(i);
+            const spreadMode = pageSpreadMode(spreadOverrides, i);
             const button = (
               <button
                 ref={isAnchor ? activeRef : undefined}
@@ -431,14 +467,22 @@ export function PageStrip({
             // printed spread.
             const liMarginClass = !isActive
               ? ""
-              : `relative z-10 ${prevActive ? "ml-7" : "ml-5"} ${
+              : `z-10 ${prevActive ? "ml-7" : "ml-5"} ${
                   nextActive ? "mr-7" : "mr-5"
                 }`;
             return (
               <li
                 key={i}
-                className={`shrink-0 transition-[margin] duration-200 ease-out motion-reduce:transition-none ${liMarginClass}`}
+                className={`group/thumb relative shrink-0 transition-[margin] duration-200 ease-out motion-reduce:transition-none ${liMarginClass}`}
               >
+                {viewMode === "double" && shouldLoad ? (
+                  <SpreadModeToggle
+                    page={i}
+                    mode={spreadMode}
+                    active={isActive}
+                    onCycle={cycleSpreadMode}
+                  />
+                ) : null}
                 {shouldLoad ? (
                   <Tooltip>
                     <TooltipTrigger asChild>{button}</TooltipTrigger>
@@ -456,6 +500,62 @@ export function PageStrip({
         </ol>
       </nav>
     </TooltipProvider>
+  );
+}
+
+const SPREAD_MODE_LABEL: Record<PageSpreadMode, string> = {
+  auto: "Auto",
+  spread: "Spread",
+  single: "Single",
+};
+
+const SPREAD_MODE_DESCRIPTION: Record<PageSpreadMode, string> = {
+  auto: "automatic pairing",
+  spread: "forced spread (shown alone)",
+  single: "forced single page (pairs with a neighbour)",
+};
+
+/**
+ * WP-4.3 strip affordance: a small pill over a thumbnail's bottom-left
+ * corner that cycles the page's manual spread mode
+ * (auto → spread → single → auto). Double-page view only. Always shown
+ * on overridden pages and on the pages currently on screen (so touch
+ * users can reach it by navigating there); otherwise revealed on
+ * hover. Only the on-screen pages' pills are tab stops, so the strip
+ * doesn't double its tab order.
+ */
+function SpreadModeToggle({
+  page,
+  mode,
+  active,
+  onCycle,
+}: {
+  page: number;
+  mode: PageSpreadMode;
+  active: boolean;
+  onCycle: (page: number) => void;
+}) {
+  const next = nextPageSpreadMode(mode);
+  const pinned = mode !== "auto" || active;
+  return (
+    <button
+      type="button"
+      tabIndex={active ? 0 : -1}
+      onClick={(e) => {
+        e.stopPropagation();
+        onCycle(page);
+      }}
+      aria-label={`Page ${page + 1} pairing: ${SPREAD_MODE_DESCRIPTION[mode]}. Change to ${SPREAD_MODE_DESCRIPTION[next]}.`}
+      title={`Pairing: ${SPREAD_MODE_DESCRIPTION[mode]} — click for ${SPREAD_MODE_LABEL[next].toLowerCase()}`}
+      data-spread-mode={mode}
+      className={`focus-visible:ring-accent absolute bottom-7 left-1 z-20 rounded-md px-1.5 py-0.5 text-[10px] leading-none font-medium ring-1 transition-opacity duration-150 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none motion-reduce:transition-none ${
+        mode === "auto"
+          ? "bg-neutral-950/80 text-neutral-300 ring-neutral-700"
+          : "bg-accent text-accent-foreground ring-accent"
+      } ${pinned ? "opacity-100" : "opacity-0 group-hover/thumb:opacity-100"}`}
+    >
+      {SPREAD_MODE_LABEL[mode]}
+    </button>
   );
 }
 

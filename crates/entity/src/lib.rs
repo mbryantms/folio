@@ -33,6 +33,7 @@ pub mod issue_duplicate_decision;
 pub mod issue_genre;
 pub mod issue_location;
 pub mod issue_object;
+pub mod issue_page_override;
 pub mod issue_reprint;
 pub mod issue_tag;
 pub mod issue_team;

@@ -8,6 +8,7 @@ import {
   Download,
   EyeOff,
   Folder,
+  HardDriveDownload,
   History,
   Image as ImageIcon,
   Images,
@@ -68,6 +69,15 @@ const MetadataMatchDialog = dynamic(
   { ssr: false },
 );
 
+// "Download for offline" dialog (WP-4.6) — lazy, like the match dialog.
+const OfflineDownloadDialog = dynamic(
+  () =>
+    import("@/components/offline/OfflineDownloadDialog").then(
+      (m) => m.OfflineDownloadDialog,
+    ),
+  { ssr: false },
+);
+
 const WANT_TO_READ_KEY = "want_to_read";
 
 /**
@@ -88,6 +98,7 @@ const WANT_TO_READ_KEY = "want_to_read";
  */
 export function IssueSettingsMenu({
   issue,
+  seriesName,
   readState,
   cblSavedViewId,
   onEdit,
@@ -96,6 +107,8 @@ export function IssueSettingsMenu({
   onRestoreArchive,
 }: {
   issue: IssueDetailView;
+  /** Parent series name, for the offline download's label. */
+  seriesName?: string | null;
   readState: ReadState;
   /** Saved-view id of the CBL the user is reading through (when the
    *  issue page was arrived at via `?cbl=`). Forwarded onto the menu's
@@ -186,6 +199,9 @@ export function IssueSettingsMenu({
   // open/close animation still runs on later toggles (G6).
   const [metadataMounted, setMetadataMounted] = useState(false);
   if (metadataDialogOpen && !metadataMounted) setMetadataMounted(true);
+  const [offlineOpen, setOfflineOpen] = useState(false);
+  const [offlineMounted, setOfflineMounted] = useState(false);
+  if (offlineOpen && !offlineMounted) setOfflineMounted(true);
 
   // Toggling the dialog also strips ?match from the address bar (via
   // replaceState, no RSC round-trip — same idiom as IssuesPanel) so a
@@ -383,6 +399,12 @@ export function IssueSettingsMenu({
                 </a>
               </DropdownMenuItem>
             )}
+            {canRead && (
+              <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
+                <HardDriveDownload className="mr-2 h-4 w-4" />
+                Download for offline…
+              </DropdownMenuItem>
+            )}
           </DropdownMenuGroup>
 
           {isAdmin && (
@@ -458,6 +480,13 @@ export function IssueSettingsMenu({
         onOpenChange={setCollectionDialogOpen}
         target={collectionTarget}
       />
+      {offlineMounted && (
+        <OfflineDownloadDialog
+          open={offlineOpen}
+          onOpenChange={setOfflineOpen}
+          target={{ kind: "issue", issue, seriesName }}
+        />
+      )}
       {metadataMounted && (
         <MetadataMatchDialog
           open={metadataDialogOpen}
