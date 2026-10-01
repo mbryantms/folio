@@ -362,9 +362,7 @@ pub fn serialize(info: &ComicInfo) -> String {
     write_opt_str(&mut out, "SeriesGroup", &info.series_group);
     write_opt_str(&mut out, "AgeRating", &info.age_rating);
     if let Some(r) = info.community_rating {
-        // ComicInfo's schema specifies CommunityRating as a 0.0..=5.0
-        // float; emit with two decimals for stability across round-trips.
-        write_text(&mut out, "CommunityRating", &format!("{r:.2}"));
+        write_text(&mut out, "CommunityRating", &format_rating(r));
     }
     write_opt_str(
         &mut out,
@@ -508,6 +506,19 @@ fn is_typed_comic_info_field(name: &str) -> bool {
     )
 }
 
+/// `CommunityRating` text: the shortest decimal that round-trips, with a
+/// trailing `.0` on whole numbers — the same text ComicTagger writes
+/// (Python `str(float)`), so a parity round-trip doesn't turn `4.5` into
+/// `4.50` (WP-6.4). Rust's `Display` for `f64` is already the shortest
+/// round-trip form, so the output is stable across parse → serialize.
+fn format_rating(r: f64) -> String {
+    if r.is_finite() && r.fract() == 0.0 {
+        format!("{r:.1}")
+    } else {
+        format!("{r}")
+    }
+}
+
 fn write_opt_str(out: &mut String, name: &str, v: &Option<String>) {
     if let Some(s) = v.as_deref().filter(|s| !s.trim().is_empty()) {
         write_text(out, name, s);
@@ -581,12 +592,27 @@ fn escape_xml_attr(out: &mut String, s: &str) {
     }
 }
 
+/// Lenient boolean for page attributes. ComicRack / Folio write the
+/// xs:boolean form (`true` / `false`), but ComicTagger stores a Python
+/// bool and serializes it as `True` / `False` (both 1.5.x and 1.6.x), and
+/// some taggers use `Yes` / `No` or `1` / `0`. Mirrors ComicTagger 1.6's
+/// own reader (`casefold() in ("yes", "true", "1")`). Pre-fix the strict
+/// `str::parse::<bool>` dropped `True`, so a spread ComicTagger marked
+/// read back as undeclared (WP-6.4).
+fn parse_xml_bool(v: &str) -> Option<bool> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "1" => Some(true),
+        "false" | "no" | "0" => Some(false),
+        _ => None,
+    }
+}
+
 fn page_from_attrs(attrs: &BTreeMap<String, String>) -> Option<PageInfo> {
     let image: i32 = attrs.get("Image")?.parse().ok()?;
     Some(PageInfo {
         image,
         kind: attrs.get("Type").cloned(),
-        double_page: attrs.get("DoublePage").and_then(|v| v.parse().ok()),
+        double_page: attrs.get("DoublePage").and_then(|v| parse_xml_bool(v)),
         image_size: attrs.get("ImageSize").and_then(|v| v.parse().ok()),
         key: attrs.get("Key").cloned(),
         bookmark: attrs.get("Bookmark").cloned(),
@@ -1163,5 +1189,50 @@ mod tests {
         assert_eq!(info.title.as_deref(), Some("Hello"));
         assert_eq!(info.number.as_deref(), Some("5"));
         assert_eq!(info.writer.as_deref(), Some("Caf\u{FFFD}"));
+    }
+
+    #[test]
+    fn page_double_page_accepts_comictagger_python_bools() {
+        // ComicTagger (1.5.x and 1.6.x) writes `DoublePage="True"` /
+        // `"False"`; others use `Yes` / `1`. All must read as declared.
+        let xml = r#"<ComicInfo><Pages>
+    <Page Image="0" DoublePage="True" />
+    <Page Image="1" DoublePage="False" />
+    <Page Image="2" DoublePage="yes" />
+    <Page Image="3" DoublePage="0" />
+    <Page Image="4" DoublePage="true" />
+    <Page Image="5" DoublePage="maybe" />
+  </Pages></ComicInfo>"#;
+        let info = parse(xml.as_bytes()).expect("parse");
+        let got: Vec<Option<bool>> = info.pages.iter().map(|p| p.double_page).collect();
+        assert_eq!(
+            got,
+            vec![
+                Some(true),
+                Some(false),
+                Some(true),
+                Some(false),
+                Some(true),
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn community_rating_serializes_like_comictagger() {
+        let mut info = ComicInfo {
+            community_rating: Some(4.5),
+            ..Default::default()
+        };
+        assert!(serialize(&info).contains("<CommunityRating>4.5</CommunityRating>"));
+        info.community_rating = Some(4.0);
+        assert!(serialize(&info).contains("<CommunityRating>4.0</CommunityRating>"));
+        info.community_rating = Some(3.25);
+        let xml = serialize(&info);
+        assert!(
+            xml.contains("<CommunityRating>3.25</CommunityRating>"),
+            "{xml}"
+        );
+        assert_eq!(parse(xml.as_bytes()).unwrap().community_rating, Some(3.25));
     }
 }

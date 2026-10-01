@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ComicInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Title>Who's Afraid of &lt;Diffs&gt; &amp; Drift?</Title>
+  <Series>The Parity Patrol</Series>
+  <Number>3</Number>
+  <Count>12</Count>
+  <Volume>2021</Volume>
+  <AlternateSeries>Patrol Team-Up</AlternateSeries>
+  <AlternateNumber>1</AlternateNumber>
+  <AlternateCount>4</AlternateCount>
+  <Summary>The patrol rides again. "Quoted" text, an ampersand &amp; angle &lt;brackets&gt;; café, naïve, 日本語.</Summary>
+  <Notes>Fixture tagged offline by ComicTagger for Folio WP-6.4.</Notes>
+  <Year>2021</Year>
+  <Month>7</Month>
+  <Day>14</Day>
+  <Writer>Wanda Writer, Second Scribe</Writer>
+  <Penciller>Pat Penciller</Penciller>
+  <Inker>Ian Inker</Inker>
+  <Colorist>Cora Colorist</Colorist>
+  <Letterer>Lee Letterer</Letterer>
+  <CoverArtist>Cass Cover</CoverArtist>
+  <Editor>Eddie Editor</Editor>
+  <Publisher>Folio Test Comics</Publisher>
+  <Imprint>Fixture Press</Imprint>
+  <Genre>Superhero, Comedy</Genre>
+  <Web>https://comicvine.gamespot.com/the-parity-patrol-3/4000-123456/</Web>
+  <PageCount>4</PageCount>
+  <LanguageISO>en</LanguageISO>
+  <Format>Series</Format>
+  <BlackAndWhite>Yes</BlackAndWhite>
+  <Manga>No</Manga>
+  <Characters>Captain Parity, Diff Kid, The Rewriter</Characters>
+  <Teams>Parity Patrol, Legion of Lint</Teams>
+  <Locations>Fixture City, The Archive</Locations>
+  <ScanInformation>Synthetic-Folio</ScanInformation>
+  <StoryArc>The Round Trip</StoryArc>
+  <SeriesGroup>Patrol Family</SeriesGroup>
+  <AgeRating>Teen</AgeRating>
+  <CommunityRating>4.5</CommunityRating>
+  <ComicVineID>123456</ComicVineID>
+  <Pages>
+    <Page Image="0" Type="FrontCover" DoublePage="false" ImageSize="114" ImageWidth="40" ImageHeight="60"/>
+    <Page Image="1" Type="Story" DoublePage="false" ImageSize="676" Bookmark="The Round Trip" ImageWidth="40" ImageHeight="60"/>
+    <Page Image="2" DoublePage="true" ImageSize="143" ImageWidth="80" ImageHeight="60"/>
+    <Page Image="3" Type="BackCover" DoublePage="false" ImageSize="676" ImageWidth="40" ImageHeight="60"/>
+  </Pages>
+</ComicInfo>

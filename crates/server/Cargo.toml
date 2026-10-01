@@ -163,6 +163,9 @@ reqwest = { workspace = true }
 insta = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tempfile = "3"
+# Independent XML leaf walk for the ComicTagger parity test (WP-6.4) — the
+# comparison must not go through Folio's own ComicInfo parser.
+quick-xml = { workspace = true }
 tower = { workspace = true }
 serde_json = { workspace = true }
 zip = { workspace = true }

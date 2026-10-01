@@ -93,7 +93,12 @@ For each field the composer picks one of three sources:
 1. **User-pinned**: read the current DB value, ignore provider.
 2. **Provider has it**: use provider value.
 3. **Provider blank**: fall back to DB value (preserves existing XML
-   content during partial provider applies).
+   content during partial provider applies). Elements with no DB column,
+   or whose file value the scanner deliberately keeps out of the DB
+   (`MainCharacterOrTeam`, `AlternateNumber` / `AlternateCount`, a
+   year-shaped `<Volume>`), carry through from `issue.comic_info_raw`
+   instead, so a rewrite never deletes them (see
+   [ComicTagger parity](#comictagger-parity-roadmap-wp-64)).
 
 The composer emits both formats every time — ComicInfo for tooling
 compatibility, MetronInfo for the richer structured fields (per-credit
@@ -278,6 +283,89 @@ The legacy "Locally edited fields: …" footer on the issue page was
 replaced with a per-row inline release icon inside the Edit sheet — see
 the issue-page docs in `metadata-operator-guide.md` for the UX details.
 
+## ComicTagger parity (roadmap WP-6.4)
+
+ComicTagger is what most hand-tagged libraries (and Mylar3, Komga,
+Kavita) carry ComicInfo.xml from, so "the archive stays portable" means
+two things: a ComicTagger-tagged file reads into Folio without loss, and
+Folio's rewrite of it reads back into ComicTagger without loss or
+spurious diffs. One fixture pair and one test pin both directions.
+
+**Fixture.** [`fixtures/comictagger/ct-1.5.5-tagged.cbz`](../../fixtures/comictagger/)
+is a 3 KB CBZ: four real image pages (PNG cover, two JPEGs, an 80×60 PNG
+spread) whose `ComicInfo.xml` was written by **ComicTagger 1.5.5** (the
+latest stable release on PyPI; 1.6.x is still beta), offline, from `-m`
+metadata overrides — no online lookup, no API key, a throwaway
+`--config` dir. A second pass applies the page-list editor's edits
+(`DoublePage` on the spread, page types, a bookmark) through ComicTagger's
+own `comicapi` objects and CIX writer, since the CLI can't reach `<Pages>`
+and the GUI needs Qt. It covers every element ComicTagger 1.5.5's CIX
+writer emits: Title, Series, Number, Count, Volume, AlternateSeries /
+Number / Count, StoryArc, SeriesGroup, Summary, Notes, Year / Month / Day,
+the seven credit roles, Publisher, Imprint, Genre, Web, PageCount,
+LanguageISO, Format, AgeRating, CommunityRating, BlackAndWhite, Manga,
+Characters, Teams, Locations, ScanInformation and the page list (with
+ComicTagger's computed ImageSize / ImageWidth / ImageHeight). Values
+include XML specials, quotes and non-ASCII text. ComicTagger 1.5.5 does
+not write Tags, StoryArcNumber, Translator, MainCharacterOrTeam, Review
+or GTIN, so this fixture can't cover them; Folio's own round-trip tests
+(`parsers::comicinfo`, `sidecar_compose`) do. Regenerate with:
+
+```sh
+uv run --no-project --with comictagger==1.5.5 \
+    python fixtures/comictagger/make-fixture.py build
+```
+
+**Test.** [`crates/server/tests/sidecar_parity.rs`](../../crates/server/tests/sidecar_parity.rs)
+(hermetic — no ComicTagger at test time) copies the fixture into a
+writeback library, runs the real scanner, composes both sidecars from the
+database (the manual-edit / drift-flush path, `manual_writeback::enqueue_issue_rewrite`),
+runs `RewriteIssueSidecarsJob`, and then:
+
+1. diffs Folio's `ComicInfo.xml` against ComicTagger's element by element
+   with a plain quick-xml walk (not Folio's parser, so a parser blind spot
+   can't hide a loss); every difference must be in the test's
+   `KNOWN_DIFFERENCES` allowlist, and an allowlist entry that stops firing
+   fails too;
+2. compares every `<Page>` attribute (DoublePage as a boolean, see below);
+3. checks the page bytes were stream-copied, not re-encoded;
+4. checks `MetronInfo.xml` carries the same values for the fields both
+   schemas share;
+5. pins Folio's two rewritten sidecars as golden files
+   (`fixtures/comictagger/folio-rewrite.{ComicInfo,MetronInfo}.xml`;
+   re-bless with `FOLIO_PARITY_BLESS=1 cargo test -p server --test sidecar_parity`);
+6. rescans and rewrites again and requires identical XML (a fixed point —
+   no drift accumulates across scan → rewrite cycles).
+
+**Reverse direction.** `make-fixture.py verify` reads the golden Folio
+`ComicInfo.xml` with ComicTagger 1.5.5's own parser and compares it with
+ComicTagger's reading of its own file: **0 fields differ** (run it after
+every re-bless).
+
+**Fixed by WP-6.4** (each was a lossy round-trip the fixture caught):
+
+| Was | Now |
+| --- | --- |
+| `<Volume>2021</Volume>` deleted on rewrite. ComicTagger stores a ComicVine series' start year in `<Volume>`; the scanner keeps implausible volumes out of `series.volume` (`plausible_volume`) and the composer only read the series row. | The composer carries the archive's own `<Volume>` through from `comic_info_raw` when neither the series, the provider nor a user pin supplies one. MetronInfo's `<Volume>` (a volume *number*) stays empty for a year-shaped value. |
+| `<Notes>` deleted by every DB-only rewrite (a hand edit of any other field, a drift flush). | `compose_notes` keeps `issue.notes` when there is no provider — nothing was re-tagged, so ComicTagger's notes (and the `[Issue ID n]` Mylar3 reads) are still true. A provider apply still replaces them with the Folio audit line (stale-tracer rule, unchanged). |
+| `DoublePage="True"` (ComicTagger serializes a Python bool, 1.5.x and 1.6.x) parsed as *undeclared*, so the scanner re-guessed it. | `parsers::comicinfo` reads `DoublePage` case-insensitively (`true`/`yes`/`1`, `false`/`no`/`0`), as ComicTagger 1.6 does. |
+| `<CommunityRating>4.5</…>` rewritten as `4.50`. | Shortest round-trip decimal with a trailing `.0` on whole numbers — ComicTagger's (`str(float)`) text. |
+| A DB-only compose wrote `MetronInfo.xml` with **no** `<Credits>` while ComicInfo kept them. | `compose_metroninfo` falls back to the issue's per-role columns when the provider has no credits, mirroring `compose_role`. |
+
+**Known intentional differences** (the test's allowlist; keep in sync):
+
+| Element | ComicTagger 1.5.5 | Folio | Why |
+| --- | --- | --- | --- |
+| `<ComicVineID>` | absent (id only inside `<Web>`) | `123456` | Folio extracts the `4000-N` issue id from a ComicVine `<Web>` URL and writes the de-facto `<ComicVineID>` extension element (Metron-Tagger / Mylar3 spelling). ComicTagger ignores it on read. |
+| `<Page DoublePage>` | only on pages marked double, as `"True"` | on every page, `"true"` / `"false"` (declared, or inferred from the probed pixel aspect) | xs:boolean form; an explicit `false` equals the ComicInfo default and ComicTagger reads it as `False`. Cosmetic quirk: ComicTagger **1.5.5's GUI** page editor ticks "double page" on attribute *presence*, so it shows every page ticked; 1.6.x checks the value. Not fixed because the scanner can't tell an inferred `false` from a declared one (the `double_page_inferred` flag marks only inferred `true`) — backlog. |
+| Element order, XML declaration quoting, indentation | ComicTagger's tree order | Anansi schema order | Not semantic; the test compares a name → value map. |
+
+What this does **not** cover: the provider-apply path (it replaces
+`<Notes>` with the Folio audit line by design, and its values come from
+the provider, not the file), a ComicTagger 1.6.x fixture, and
+MetronInfo-schema conformance of Folio's `<Credits>` shape (ComicTagger
+1.5.5 doesn't read MetronInfo, so it is out of this parity check).
+
 ## Migration recipe
 
 To migrate a single library from DB-direct to XML-first apply:
@@ -318,6 +406,7 @@ sweep of every archive in the library.
 | **Mutex stuck after worker crash**      | TTL on the Redis key (120s sidecar / 180s edit). Worker also releases explicitly on every exit path.                                                 |
 | **Slow rewrite outlives the lock TTL** (WP-2.6 h, DI-13) | `mutex::Heartbeat` re-arms the TTL every 30 s (compare-and-`EXPIRE` on the claim token, never resurrects a lost lock) for as long as the blocking rewrite runs, in the sidecar job, the page editor and the series fan-out. A crashed holder stops beating and the TTL reaps the key as before. |
 | **User pin clobbered by provider apply** | Composer reads `field_provenance.set_by='user'` rows and prefers DB values. Bypass requires the admin-only `override_user_edits` flag + `metadata_apply_force` audit. |
+| **ComicTagger file loses data on a Folio rewrite** (WP-6.4, D9) | Real ComicTagger-tagged fixture → scan → DB-only compose → rewrite, diffed element by element against ComicTagger's XML with an explicit allowlist, golden-pinned, fixed-point checked; reverse check with ComicTagger's own parser. Test: `sidecar_parity::folio_rewrite_of_a_comictagger_file_agrees_on_every_shared_field`. |
 | **XML round-trip data loss**            | Round-trip tests for both `comicinfo.rs` (17 tests) and `metroninfo.rs` (~12 tests). Quick-xml 0.40 `GeneralRef` event handling fixed in M8 (was silently dropping `&lt;` / `&gt;`). MetronInfo `raw` holds top-level elements only, so a nested leaf can never be hoisted to the root on serialize. |
 
 ## Reviewer heuristics
@@ -369,4 +458,5 @@ branch from `apply_issue` / `apply_series` once the
 | [`server/metadata/apply.rs`](../../crates/server/src/metadata/apply.rs) — `apply_issue_via_sidecar` + `apply_series_via_sidecar` | XML-first apply dispatch; gated on the per-library flag.            |
 | [`server/metadata/drift.rs`](../../crates/server/src/metadata/drift.rs) | M6 drift query: count issues where `pin.set_at > last_rewrite_at`.  |
 | [`server/metadata/writeback_progress.rs`](../../crates/server/src/metadata/writeback_progress.rs) | M7 rollout gauge: count libraries with writeback disabled.          |
+| [`fixtures/comictagger/make-fixture.py`](../../fixtures/comictagger/make-fixture.py) | Regenerates the ComicTagger parity fixture (`build`) and runs the reverse check with ComicTagger's parser (`verify`). |
 | [`server/api/health_issues.rs`](../../crates/server/src/api/health_issues.rs) — `flush_metadata_drift` | M6 flush endpoint: composer-only re-emit of DB state to XML.        |

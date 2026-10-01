@@ -6661,6 +6661,7 @@ dependencies = [
  "notify-debouncer-full",
  "openidconnect",
  "parsers",
+ "quick-xml",
  "rand 0.10.3",
  "rayon",
  "redis",

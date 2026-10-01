@@ -140,11 +140,25 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
             &ctx.series.name,
             ctx.provider.series_name.as_deref(),
         ),
+        // The scanner rejects implausible volumes on ingest
+        // (`filename::plausible_volume`): ComicTagger stamps a ComicVine
+        // series' *start year* into `<Volume>` (`2021`), which Folio
+        // keeps out of `series.volume`. That is a display decision, not a
+        // licence to delete the element — with no series / provider value
+        // and no user pin, carry the archive's own `<Volume>` through from
+        // `comic_info_raw` (WP-6.4 ComicTagger parity).
         volume: prefer_user_int(
             ctx.is_series_pinned("volume"),
             ctx.series.volume,
             ctx.provider.volume,
-        ),
+        )
+        .or_else(|| {
+            if ctx.is_series_pinned("volume") {
+                None
+            } else {
+                comic_info_raw_i32(&ctx.issue.comic_info_raw, "volume", "Volume")
+            }
+        }),
         // ComicInfo `<Count>` reflects "total issues in the series".
         // `series.total_issues` is the scanner-managed aggregate (a
         // MAX over per-issue `comicinfo_count` values); we forward it
@@ -361,8 +375,12 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
     let mut credits: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // Provider credits — already structured as (role, name) pairs.
     // User pins on `credits` flip this to read from the issue row's
-    // per-role columns instead, mirroring the ComicInfo path.
-    if ctx.is_issue_pinned("credits") {
+    // per-role columns instead, mirroring the ComicInfo path. So does a
+    // provider with no credits at all (the DB-only compose of a manual
+    // edit / drift flush): pre-WP-6.4 that path wrote a MetronInfo with
+    // no `<Credits>` while ComicInfo (`compose_role`'s DB fallback) kept
+    // them, so the two sidecars of one archive disagreed.
+    if ctx.is_issue_pinned("credits") || ctx.provider.credits.is_empty() {
         push_role_csv(&mut credits, "Writer", ctx.issue.writer.as_deref());
         push_role_csv(&mut credits, "Penciller", ctx.issue.penciller.as_deref());
         push_role_csv(&mut credits, "Inker", ctx.issue.inker.as_deref());
@@ -534,7 +552,12 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
 /// Behaviour:
 ///   - **User-pinned**: preserve `issue.notes` verbatim, drop the
 ///     attribution. The user's text wins absolutely.
-///   - **Otherwise**: drop `issue.notes` entirely (stale historical
+///   - **No provider** (DB-only compose — manual edit, drift flush):
+///     preserve `issue.notes`. Nothing was re-tagged, so the archive's
+///     existing notes (e.g. ComicTagger's "Tagged with … [Issue ID n]"
+///     line that Mylar3 reads) are still accurate; pre-WP-6.4 a hand
+///     edit of any other field silently deleted them.
+///   - **Provider apply**: drop `issue.notes` entirely (stale historical
 ///     tracer). Emit a fresh Folio audit-trail line; append provider
 ///     notes content (if any) below.
 ///
@@ -543,6 +566,14 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
 /// CV ID out of the notes element.
 fn compose_notes(ctx: &ComposeContext) -> Option<String> {
     if ctx.is_issue_pinned("notes") {
+        return ctx
+            .issue
+            .notes
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_owned);
+    }
+    if ctx.source().is_none() {
         return ctx
             .issue
             .notes
@@ -1808,5 +1839,87 @@ mod tests {
             parts,
             vec!["Capes, Inc.".to_owned(), "Comet Twins".to_owned()]
         );
+    }
+
+    #[test]
+    fn compose_db_only_keeps_the_archive_notes() {
+        // WP-6.4: a manual edit / drift flush composes with an empty
+        // provider. Nothing was re-tagged, so ComicTagger's notes line
+        // (which Mylar3 reads for the CV id) must survive the rewrite.
+        let series = make_series("Saga");
+        let mut issue = make_issue("X");
+        issue.notes = Some(
+            "Tagged with ComicTagger 1.5.5 using info from Comic Vine on \
+             2026-05-17 21:44:24.  [Issue ID 1144240]"
+                .into(),
+        );
+        let provider = GenericMetadata::default();
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &empty_ids(),
+            series_external_ids: &empty_ids(),
+            issue_user_pins: &empty_pins(),
+            series_user_pins: &empty_pins(),
+        };
+        assert_eq!(compose_comicinfo(&ctx).notes, issue.notes);
+        assert_eq!(compose_metroninfo(&ctx).notes, issue.notes);
+    }
+
+    #[test]
+    fn compose_carries_a_year_shaped_volume_through_from_the_archive() {
+        // ComicTagger writes a ComicVine series' start year into
+        // `<Volume>`; the scanner keeps it out of `series.volume`
+        // (`plausible_volume`), but the rewrite must not delete it.
+        let mut series = make_series("Saga");
+        series.volume = None;
+        let mut issue = make_issue("X");
+        issue.comic_info_raw = serde_json::json!({ "volume": 2021, "raw": { "Volume": "2021" } });
+        let provider = GenericMetadata::default();
+        let pins = empty_pins();
+        let mut ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &empty_ids(),
+            series_external_ids: &empty_ids(),
+            issue_user_pins: &pins,
+            series_user_pins: &pins,
+        };
+        assert_eq!(compose_comicinfo(&ctx).volume, Some(2021));
+
+        // A plausible series volume (or a provider's) still wins.
+        let mut with_volume = series.clone();
+        with_volume.volume = Some(2);
+        ctx.series = &with_volume;
+        assert_eq!(compose_comicinfo(&ctx).volume, Some(2));
+
+        // A user who cleared the series volume keeps it cleared.
+        let pinned: HashSet<String> = ["volume".to_owned()].into();
+        ctx.series = &series;
+        ctx.series_user_pins = &pinned;
+        assert_eq!(compose_comicinfo(&ctx).volume, None);
+    }
+
+    #[test]
+    fn compose_metroninfo_db_only_keeps_the_issue_credits() {
+        let series = make_series("Saga");
+        let mut issue = make_issue("X");
+        issue.writer = Some("Wanda Writer, Second Scribe".into());
+        issue.editor = Some("Eddie Editor".into());
+        let provider = GenericMetadata::default();
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &empty_ids(),
+            series_external_ids: &empty_ids(),
+            issue_user_pins: &empty_pins(),
+            series_user_pins: &empty_pins(),
+        };
+        let mi = compose_metroninfo(&ctx);
+        assert_eq!(mi.writer().as_deref(), Some("Wanda Writer, Second Scribe"));
+        assert_eq!(mi.editor().as_deref(), Some("Eddie Editor"));
     }
 }
