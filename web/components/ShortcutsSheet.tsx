@@ -41,6 +41,12 @@ const GLOBAL_ALIASES: Partial<Record<KeybindAction, readonly string[]>> = {
 const ALWAYS_ON_READER: ReadonlyArray<{ keys: string[]; label: string }> = [
   { keys: ["Space"], label: "Next page (always)" },
   { keys: ["?"], label: "Show this list" },
+  // Pointer zoom (WP-4.2) — not rebindable; single + double view.
+  {
+    keys: ["Ctrl + scroll"],
+    label: "Zoom at the pointer (or pinch a trackpad)",
+  },
+  { keys: ["Double-click"], label: "Toggle 2× zoom at the pointer" },
 ];
 
 const ALWAYS_ON_GLOBAL: ReadonlyArray<{ keys: string[]; label: string }> = [

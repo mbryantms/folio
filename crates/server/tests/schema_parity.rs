@@ -64,6 +64,7 @@ fn all_entities() -> Vec<EntityCheck> {
         collect::<issue_character::Entity, issue_character::Column>(),
         collect::<issue_credit::Entity, issue_credit::Column>(),
         collect::<issue_duplicate_decision::Entity, issue_duplicate_decision::Column>(),
+        collect::<issue_page_override::Entity, issue_page_override::Column>(),
         collect::<issue_genre::Entity, issue_genre::Column>(),
         collect::<issue_location::Entity, issue_location::Column>(),
         collect::<issue_tag::Entity, issue_tag::Column>(),

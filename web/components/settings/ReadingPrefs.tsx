@@ -17,7 +17,7 @@ import { SegmentedControl } from "./SegmentedControl";
 import { SettingsSection } from "./SettingsSection";
 
 type DirectionPref = "auto" | "ltr" | "rtl";
-type FitPref = "auto" | "width" | "height" | "original";
+type FitPref = "auto" | "width" | "height" | "original" | "contain";
 type ViewPref = "auto" | "single" | "double" | "webtoon";
 type AnimationPref = "off" | "slide" | "fade";
 
@@ -32,6 +32,7 @@ const fitOptions: ReadonlyArray<{ value: FitPref; label: string }> = [
   { value: "width", label: "Fit width" },
   { value: "height", label: "Fit height" },
   { value: "original", label: "Original" },
+  { value: "contain", label: "Fit screen" },
 ];
 const viewOptions: ReadonlyArray<{ value: ViewPref; label: string }> = [
   { value: "auto", label: "Auto" },
@@ -49,7 +50,9 @@ const animationOptions: ReadonlyArray<{ value: AnimationPref; label: string }> =
 const SERIES_OVERRIDE_PREFIX = "reader:";
 
 function fitFromMe(v: string | null | undefined): FitPref {
-  return v === "width" || v === "height" || v === "original" ? v : "auto";
+  return v === "width" || v === "height" || v === "original" || v === "contain"
+    ? v
+    : "auto";
 }
 function viewFromMe(v: string | null | undefined): ViewPref {
   return v === "single" || v === "double" || v === "webtoon" ? v : "auto";

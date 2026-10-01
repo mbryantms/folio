@@ -41,6 +41,57 @@ function startedInIgnoredChrome(event: { target: EventTarget | null }) {
 }
 
 /**
+ * Opt-in attribute for the reader's page surface (the tap-zone grid and
+ * the webtoon tap layer) where the iOS standalone edge-back guard below
+ * applies. Opt-in rather than "everything under the container" so a
+ * touch on real chrome controls parked at the left edge (the exit
+ * button) keeps its click.
+ */
+export const EDGE_GUARD_ATTR = "data-edge-guard";
+
+/** Width (px) of the left-edge strip WebKit claims for its
+ *  swipe-back-to-previous-page gesture. */
+export const EDGE_BACK_INSET_PX = 24;
+
+/** Max travel / duration for a touch in the edge strip to still count as
+ *  a tap (the guard's `preventDefault` suppresses the synthesized click,
+ *  so the guard re-dispatches the tap itself). */
+const EDGE_TAP_MAX_TRAVEL_PX = 10;
+const EDGE_TAP_MAX_MS = 500;
+
+/** True when a touch starting at `clientX` falls in the left-edge strip
+ *  iOS reserves for edge-swipe-back. */
+export function inEdgeBackInset(
+  clientX: number,
+  inset: number = EDGE_BACK_INSET_PX,
+): boolean {
+  return clientX >= 0 && clientX < inset;
+}
+
+/** Whether a touch that started in the edge strip ended as a tap. */
+export function isEdgeTap(
+  start: { x: number; y: number; t: number },
+  end: { x: number; y: number; t: number },
+): boolean {
+  return (
+    end.t - start.t <= EDGE_TAP_MAX_MS &&
+    Math.hypot(end.x - start.x, end.y - start.y) <= EDGE_TAP_MAX_TRAVEL_PX
+  );
+}
+
+/**
+ * Installed iOS / iPadOS web app (Home Screen). `navigator.standalone`
+ * only exists on Apple WebKit, so this is false everywhere else —
+ * including standalone Android / desktop PWAs, which have no edge-back
+ * gesture to fight.
+ */
+export function isIosStandalone(): boolean {
+  if (typeof window === "undefined") return false;
+  const nav = window.navigator as Navigator & { standalone?: boolean };
+  return nav.standalone === true;
+}
+
+/**
  * Maps a completed horizontal drag to a page-turn. Shared by the
  * primary gesture binding and the pointer-stream fallback below so
  * both agree on threshold and reading-direction mapping.
@@ -295,4 +346,69 @@ export function useReaderGestures(opts: ReaderGestureOpts): void {
       });
     };
   }, [touchEvents, target]);
+
+  // iOS standalone edge-back guard (audit UX-10). In a Home-Screen web
+  // app WebKit turns a rightward swipe that starts at the left screen
+  // edge into history-back — which exits the reader mid-issue instead of
+  // turning to the previous page. `preventDefault` on a `touchstart` in
+  // that strip is the one lever WebKit honours to suppress it; the swipe
+  // itself still reaches the drag binding above (touchmove is not
+  // cancelled), so an edge swipe now turns the page like any other.
+  // Cancelling touchstart also swallows the synthesized click, so a
+  // plain tap in the strip is re-dispatched here as the left tap zone.
+  // Scoped to the opted-in page surface (EDGE_GUARD_ATTR) so chrome
+  // buttons at the edge keep working, and to iOS standalone only —
+  // Safari-in-browser owns its own back gesture and nothing else has one.
+  useEffect(() => {
+    if (!isIosStandalone()) return;
+    const el = target.current;
+    if (!el) return;
+    let start: { id: number; x: number; y: number; t: number } | null = null;
+    const onTouchStart = (e: TouchEvent) => {
+      start = null;
+      if (e.touches.length !== 1) return;
+      const touch = e.touches[0]!;
+      if (!inEdgeBackInset(touch.clientX)) return;
+      if (
+        !(e.target instanceof Element) ||
+        e.target.closest(`[${EDGE_GUARD_ATTR}]`) === null
+      ) {
+        return;
+      }
+      e.preventDefault();
+      start = {
+        id: touch.identifier,
+        x: touch.clientX,
+        y: touch.clientY,
+        t: e.timeStamp,
+      };
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      const s = start;
+      start = null;
+      if (!s) return;
+      const touch = Array.from(e.changedTouches).find(
+        (t) => t.identifier === s.id,
+      );
+      if (!touch) return;
+      const end = { x: touch.clientX, y: touch.clientY, t: e.timeStamp };
+      if (!isEdgeTap(s, end)) return;
+      const { enabled, viewMode, direction, onNext, onPrev } = optsRef.current;
+      if (!enabled || viewMode === "webtoon") return;
+      // Left tap zone: previous page in LTR, next in RTL.
+      if (direction === "rtl") onNext();
+      else onPrev();
+    };
+    const onTouchCancel = () => {
+      start = null;
+    };
+    el.addEventListener("touchstart", onTouchStart, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: true });
+    el.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchCancel);
+    };
+  }, [target]);
 }

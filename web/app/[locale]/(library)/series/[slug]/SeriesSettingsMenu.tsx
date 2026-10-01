@@ -6,6 +6,7 @@ import {
   Circle,
   EyeOff,
   Folder,
+  HardDriveDownload,
   Image as ImageIcon,
   Images,
   Link2,
@@ -62,6 +63,15 @@ const MetadataMatchDialog = dynamic(
   { ssr: false },
 );
 
+// "Download for offline" dialog (WP-4.6) — lazy, like the match dialog.
+const OfflineDownloadDialog = dynamic(
+  () =>
+    import("@/components/offline/OfflineDownloadDialog").then(
+      (m) => m.OfflineDownloadDialog,
+    ),
+  { ssr: false },
+);
+
 const WANT_TO_READ_KEY = "want_to_read";
 
 /**
@@ -74,6 +84,7 @@ export function SeriesSettingsMenu({
   seriesId,
   seriesSlug,
   seriesName,
+  issueCount,
   libraryId,
   firstIssue,
   readIncognitoHref,
@@ -83,6 +94,8 @@ export function SeriesSettingsMenu({
   seriesId: string;
   seriesSlug: string;
   seriesName: string;
+  /** Active issue count, for the offline-download size estimate. */
+  issueCount?: number | null;
   libraryId: string;
   /** Lowest-sorted active issue for the "Read from beginning" item. */
   firstIssue: Pick<IssueSummaryView, "slug" | "series_slug"> | null;
@@ -158,6 +171,9 @@ export function SeriesSettingsMenu({
   // open/close animation still runs on later toggles (G6).
   const [metadataMounted, setMetadataMounted] = useState(false);
   if (metadataDialogOpen && !metadataMounted) setMetadataMounted(true);
+  const [offlineOpen, setOfflineOpen] = useState(false);
+  const [offlineMounted, setOfflineMounted] = useState(false);
+  if (offlineOpen && !offlineMounted) setOfflineMounted(true);
 
   // Toggling the dialog also strips ?match from the address bar (via
   // replaceState, no RSC round-trip — same idiom as IssuesPanel) so a
@@ -303,6 +319,12 @@ export function SeriesSettingsMenu({
               <Folder className="mr-2 h-4 w-4" />
               Add to collection…
             </DropdownMenuItem>
+            {firstIssue && (
+              <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
+                <HardDriveDownload className="mr-2 h-4 w-4" />
+                Download for offline…
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               onSelect={() =>
                 void share.shareOrCopy(
@@ -413,6 +435,17 @@ export function SeriesSettingsMenu({
         onConfirm={submitMarkAllRead}
         isPending={progress.isPending}
       />
+      {offlineMounted && (
+        <OfflineDownloadDialog
+          open={offlineOpen}
+          onOpenChange={setOfflineOpen}
+          target={{
+            kind: "series",
+            series: { id: seriesId, slug: seriesSlug, name: seriesName },
+            issueCount,
+          }}
+        />
+      )}
       {metadataMounted && (
         <MetadataMatchDialog
           open={metadataDialogOpen}

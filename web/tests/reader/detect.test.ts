@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { PageInfo } from "@/lib/api/types";
-import { detectDirection, detectViewMode } from "@/lib/reader/detect";
+import {
+  detectDirection,
+  detectInitialViewMode,
+  detectViewMode,
+} from "@/lib/reader/detect";
 
 const portrait = (n: number): PageInfo[] =>
   Array.from({ length: n }, (_, i) => ({
@@ -113,5 +117,32 @@ describe("detectViewMode", () => {
       image: i,
     }));
     expect(detectViewMode(pages)).toBe("single");
+  });
+});
+
+describe("series ttb → webtoon (WP-4.2, audit UX-5)", () => {
+  it("series ttb selects webtoon regardless of page shape", () => {
+    expect(detectInitialViewMode(portrait(20), null, "ttb")).toBe("webtoon");
+    expect(detectInitialViewMode(landscape(20), null, "ttb")).toBe("webtoon");
+  });
+
+  it("series ttb beats the user's default view mode", () => {
+    expect(detectInitialViewMode(portrait(20), "double", "ttb")).toBe(
+      "webtoon",
+    );
+  });
+
+  it("falls back to the user default, then page detection", () => {
+    expect(detectInitialViewMode(tall(10), "single", "ltr")).toBe("single");
+    expect(detectInitialViewMode(tall(10), null, "rtl")).toBe("webtoon");
+    expect(detectInitialViewMode(portrait(10), null, null)).toBe("single");
+    expect(detectInitialViewMode(landscape(10), undefined)).toBe("double");
+  });
+
+  it("ttb is 'no opinion' for page-turn direction", () => {
+    expect(detectDirection(null, "rtl", null, "ttb")).toBe("rtl");
+    expect(detectDirection(null, null, "rtl", "ttb")).toBe("rtl");
+    expect(detectDirection(null, null, null, "ttb")).toBe("ltr");
+    expect(detectDirection("YesAndRightToLeft", null, null, "ttb")).toBe("rtl");
   });
 });

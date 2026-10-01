@@ -21,6 +21,9 @@
 //! server's is ignored: that device is still on the previous read and
 //! silently follows the new run on its next open. Clients that don't
 //! send `run` (OPDS / KOReader / Komga shims) write into the current run.
+//! The reader tags a restart with the run it is leaving, which makes the
+//! restart idempotent (targets `run + 1`, applied once) so the offline
+//! progress outbox (WP-4.5) can replay any queued write safely.
 //!
 //! The spec's original §9 plan to swap this for Automerge CRDT sync was
 //! reconsidered and dropped on 2026-05-15 (see spec §9 decision note).
@@ -96,6 +99,10 @@ pub struct UpsertReq {
     /// Open a new reading run at `page` (normally 0): bumps `run` and
     /// clears `finished`. The reader sends it on "Read from beginning"
     /// and when a finished issue is reopened from the cover.
+    ///
+    /// With `run: r` the restart is idempotent: it targets run `r + 1`
+    /// and is applied at most once, so a replayed write (offline
+    /// outbox, WP-4.5) never opens a second new run.
     #[serde(default)]
     pub restart: bool,
 }
@@ -246,7 +253,9 @@ pub(crate) async fn upsert_for(
 /// doc):
 ///
 /// - `restart`: open run `prev.run + 1` at `page`, `finished` cleared
-///   unless explicitly set;
+///   unless explicitly set. With a `run: r` tag the restart targets
+///   `r + 1` and is idempotent: already at `r + 1` → an ordinary write
+///   into that run; further ahead → ignored as an older run;
 /// - `run` older than the stored run: the write is ignored and the
 ///   stored record returned unchanged;
 /// - implicit write (`finished == None`): `last_page = max(prev, page)`;
@@ -272,6 +281,18 @@ pub(crate) async fn upsert_for_run(
         .await?;
     match existing {
         Some(prev) => {
+            // Idempotent restart (WP-4.5). A run-tagged restart means "open
+            // the run after `r`". When the stored run is already `r + 1`
+            // the restart landed before — a replay from the offline outbox
+            // whose first delivery's reply was lost, or another device
+            // restarted too — so it degrades to an ordinary write into
+            // that run (never a second bump). Further ahead than `r + 1`,
+            // this device is on a stale read: ignored like any older run.
+            let (restart, run) = match (restart, run) {
+                (true, Some(r)) if prev.run == r + 1 => (false, Some(prev.run)),
+                (true, Some(r)) if prev.run > r + 1 => (false, Some(r)),
+                other => other,
+            };
             if !restart && run.is_some_and(|r| r < prev.run) {
                 tracing::debug!(
                     issue_id = %issue_row.id,
@@ -317,6 +338,14 @@ pub(crate) async fn upsert_for_run(
         }
         None => {
             let next_finished = finished.unwrap_or(false);
+            // A run-tagged restart with no record yet lands on the run it
+            // asked for (`r + 1`), so a replay of the same write is
+            // recognised as already applied instead of bumping again.
+            // Untagged (legacy) restarts and ordinary writes start run 0.
+            let first_run = match (restart, run) {
+                (true, Some(r)) => r.saturating_add(1).max(0),
+                _ => 0,
+            };
             let am = ProgressAM {
                 user_id: Set(user_id),
                 issue_id: Set(issue_row.id.clone()),
@@ -327,7 +356,7 @@ pub(crate) async fn upsert_for_run(
                 updated_at: Set(now),
                 device: Set(device),
                 is_backfill: Set(false),
-                run: Set(0),
+                run: Set(first_run),
             };
             am.insert(&app.db).await
         }

@@ -1402,3 +1402,98 @@ async fn legacy_client_without_run_writes_into_the_current_run() {
         "run-less implicit write still can't regress"
     );
 }
+
+/// WP-4.5: a run-tagged restart is idempotent. The offline outbox can
+/// deliver the same restart twice (the first reply was lost); the second
+/// delivery must not open another run or drag the page back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn run_tagged_restart_replay_is_idempotent() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "u@example.com").await;
+    let issue_id = seed_issue(&app).await;
+
+    post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 19, "run": 0, "finished": true}),
+    )
+    .await;
+    let restart = serde_json::json!({"issue_id": issue_id, "page": 2, "run": 0, "restart": true});
+    let (status, json) = post_progress(&app, &auth, restart.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{json:#?}");
+    assert_eq!(json["run"].as_i64(), Some(1));
+    assert_eq!(json["page"].as_i64(), Some(2));
+    assert_eq!(json["finished"].as_bool(), Some(false));
+
+    // Read on in the new run, then the stale restart is replayed.
+    post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 6, "run": 1}),
+    )
+    .await;
+    let (status, json) = post_progress(&app, &auth, restart).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        json["run"].as_i64(),
+        Some(1),
+        "replay must not bump the run"
+    );
+    assert_eq!(json["page"].as_i64(), Some(6), "replay must not move back");
+    assert_eq!(json["finished"].as_bool(), Some(false));
+}
+
+/// WP-4.5: a restart from a run the server has already left twice is a
+/// stale device — ignored like any older-run write.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restart_from_an_older_run_is_ignored() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "u@example.com").await;
+    let issue_id = seed_issue(&app).await;
+
+    post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 5, "run": 0}),
+    )
+    .await;
+    for run in [0, 1] {
+        post_progress(
+            &app,
+            &auth,
+            serde_json::json!({"issue_id": issue_id, "page": 0, "run": run, "restart": true}),
+        )
+        .await;
+    }
+    post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 4, "run": 2}),
+    )
+    .await;
+    let (_, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({"issue_id": issue_id, "page": 0, "run": 0, "restart": true}),
+    )
+    .await;
+    assert_eq!(json["run"].as_i64(), Some(2));
+    assert_eq!(json["page"].as_i64(), Some(4));
+}
+
+/// WP-4.5: a run-tagged restart on an issue with no record lands on the
+/// run it targets, so its replay is recognised instead of bumping again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn run_tagged_restart_without_a_record_is_idempotent() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "u@example.com").await;
+    let issue_id = seed_issue(&app).await;
+
+    let restart = serde_json::json!({"issue_id": issue_id, "page": 3, "run": 0, "restart": true});
+    let (_, json) = post_progress(&app, &auth, restart.clone()).await;
+    assert_eq!(json["run"].as_i64(), Some(1));
+    assert_eq!(json["page"].as_i64(), Some(3));
+    let (_, json) = post_progress(&app, &auth, restart).await;
+    assert_eq!(json["run"].as_i64(), Some(1));
+    assert_eq!(json["page"].as_i64(), Some(3));
+}

@@ -158,3 +158,18 @@ export function formatIssueHeading(
   if (series) return series;
   return "Untitled";
 }
+
+/** Human byte size: `0 B`, `512 KB`, `1.4 MB`, `2.1 GB` (decimal units,
+ *  matching what browsers and OS storage settings report). */
+export function formatBytes(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n) || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = n;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit++;
+  }
+  const digits = unit === 0 || value >= 100 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[unit]}`;
+}

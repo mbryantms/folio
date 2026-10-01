@@ -5945,6 +5945,96 @@
         }
       }
     },
+    "/api/me/issues/{issue_id}/page-overrides": {
+      "get": {
+        "operationId": "page_overrides_get",
+        "parameters": [
+          {
+            "name": "issue_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOverridesView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "issue not found or not visible"
+          }
+        }
+      },
+      "put": {
+        "operationId": "page_overrides_put",
+        "parameters": [
+          {
+            "name": "issue_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutPageOverridesReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOverridesView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "issue not found or not visible"
+          },
+          "422": {
+            "description": "validation error"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "page_overrides_delete",
+        "parameters": [
+          {
+            "name": "issue_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "overrides cleared"
+          },
+          "404": {
+            "description": "issue not found or not visible"
+          }
+        }
+      }
+    },
     "/api/me/log/widgets": {
       "get": {
         "operationId": "log_widgets_list",
@@ -17538,11 +17628,12 @@
       },
       "FitMode": {
         "type": "string",
-        "description": "`width` | `height` | `original`.",
+        "description": "`width` | `height` | `original` | `contain`. `contain` fits the whole\npage on screen (both axes) — the reader's \"Fit screen\" mode (WP-4.2).",
         "enum": [
           "width",
           "height",
-          "original"
+          "original",
+          "contain"
         ]
       },
       "FlushMetadataDriftResp": {
@@ -20723,6 +20814,48 @@
         ],
         "description": "One page-level operation. Ordinals are 0-based positions in the page\nlist *as it stands when the op is applied* (ops are sequential)."
       },
+      "PageOverridesView": {
+        "type": "object",
+        "description": "A user's spread overrides for one issue. Pages are 0-based indices.",
+        "required": [
+          "issue_id",
+          "shift_pairing",
+          "spread_pages",
+          "single_pages"
+        ],
+        "properties": {
+          "issue_id": {
+            "type": "string"
+          },
+          "shift_pairing": {
+            "type": "boolean",
+            "description": "Shift the pairing parity by one page (fixes an offset scan)."
+          },
+          "single_pages": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "Pages forced to pair as ordinary single pages even when flagged\n`DoublePage` or landscape. Sorted, unique, disjoint from\n`spread_pages`."
+          },
+          "spread_pages": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "Pages forced to render solo as a two-page spread, regardless of\n`DoublePage` metadata or aspect ratio. Sorted, unique."
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 3339 timestamp of the last write; `null` when the user has no\noverrides for this issue."
+          }
+        }
+      },
       "PageView": {
         "type": "object",
         "required": [
@@ -21411,6 +21544,29 @@
           "registration_open": {
             "type": "boolean",
             "description": "True when local registration is open. False locks the system to\nthe existing user set + first-user admin bootstrap."
+          }
+        }
+      },
+      "PutPageOverridesReq": {
+        "type": "object",
+        "description": "Replacement body for `PUT`. Omitted fields default to \"no override\".",
+        "properties": {
+          "shift_pairing": {
+            "type": "boolean"
+          },
+          "single_pages": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "spread_pages": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
           }
         }
       },

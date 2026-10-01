@@ -14,8 +14,9 @@ import { toast } from "sonner";
 import { useReaderStore, type FitMode } from "@/lib/reader/store";
 import {
   detectDirection,
-  detectViewMode,
+  detectInitialViewMode,
   type Direction,
+  type SeriesDirection,
   type ViewMode,
 } from "@/lib/reader/detect";
 import { resolveKeybinds } from "@/lib/reader/keybinds";
@@ -30,25 +31,33 @@ import {
   computeSpreadGroups,
   firstPageOfGroup,
   groupIndexForPage,
-  isSpreadPage,
+  isEffectiveSpread,
   type SpreadGroup,
 } from "@/lib/reader/spreads";
+import { useSpreadOverrides } from "@/lib/reader/use-spread-overrides";
 import { useReaderProgressWrite } from "@/lib/reader/use-progress-write";
 import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
 import { pageBytesSrcSet, withContentVersion } from "@/lib/urls";
-import { useReaderGestures } from "@/lib/reader/use-swipe";
+import { EDGE_GUARD_ATTR, useReaderGestures } from "@/lib/reader/use-swipe";
+import { useWheelZoom } from "@/lib/reader/use-wheel-zoom";
 import { useReaderKeymap } from "@/lib/reader/use-keymap";
 import {
   DOUBLE_TAP_MS,
   DOUBLE_TAP_ZOOM,
+  ZOOM_IDENTITY,
   clampPan,
+  clampZoomPan,
   nextZoomStep,
+  sameZoom,
+  zoomAboutPoint,
+  zoomAfterPageTurn,
   zoomOriginPercent,
+  type ZoomState,
 } from "@/lib/reader/zoom";
 import { useIssueMarkers, useNextUp, usePrevUp } from "@/lib/api/queries";
 import { readerUrl } from "@/lib/urls";
 import { usePageMarkerToggle } from "@/lib/markers/use-page-marker-toggle";
-import type { NextUpView, PageInfo } from "@/lib/api/types";
+import type { NextUpView, PageInfo, PageOverridesView } from "@/lib/api/types";
 import {
   computeWebtoonWindow,
   placeholderAspectRatio,
@@ -105,6 +114,7 @@ export function Reader({
   readingMinActiveMs,
   readingMinPages,
   readingIdleMs,
+  initialPageOverrides = null,
 }: {
   issueId: string;
   seriesId: string | null;
@@ -136,8 +146,9 @@ export function Reader({
   libraryDefaultDirection: Direction | null;
   /** Parent series' `reading_direction` override. Sits in the
    *  resolution chain between ComicInfo `<Manga>` and the user pref.
-   *  See `manga-and-bulk-metadata-1.0` M2. */
-  seriesReadingDirection: Direction | null;
+   *  See `manga-and-bulk-metadata-1.0` M2. `ttb` selects webtoon view
+   *  instead (WP-4.2, `detectInitialViewMode`). */
+  seriesReadingDirection: SeriesDirection | null;
   userDefaultFitMode: FitMode | null;
   userDefaultViewMode: ViewMode | null;
   userDefaultPageStrip: boolean;
@@ -160,6 +171,9 @@ export function Reader({
   readingMinActiveMs: number;
   readingMinPages: number;
   readingIdleMs: number;
+  /** SSR prefetch of the user's manual spread controls (WP-4.3) so the
+   *  first paint already pairs with them applied. */
+  initialPageOverrides?: PageOverridesView | null;
 }) {
   const router = useRouter();
   const init = useReaderStore((s) => s.init);
@@ -407,11 +421,12 @@ export function Reader({
       seriesReadingDirection,
     ],
   );
-  // User defaults take precedence over auto-detection on first mount; per-series
-  // localStorage still wins over both (see store.init).
+  // Series `ttb` > user default > auto-detection on first mount; per-series
+  // localStorage still wins over all of them (see store.init).
   const initialViewMode = useMemo<ViewMode>(
-    () => userDefaultViewMode ?? detectViewMode(pages),
-    [pages, userDefaultViewMode],
+    () =>
+      detectInitialViewMode(pages, userDefaultViewMode, seriesReadingDirection),
+    [pages, userDefaultViewMode, seriesReadingDirection],
   );
   const initialFitMode = useMemo<FitMode>(
     () => userDefaultFitMode ?? "width",
@@ -453,9 +468,17 @@ export function Reader({
   // page indices, so a {4,5} pair never lands on {5,6} on the next flip.
   // Single + webtoon modes don't pair pages and use the raw `currentPage`
   // for navigation as before.
+  // WP-4.3: the user's manual spread controls win over `double_page` +
+  // aspect detection.
+  const spreadOverrides = useSpreadOverrides(issueId, initialPageOverrides);
   const groups = useMemo<ReadonlyArray<SpreadGroup>>(
-    () => computeSpreadGroups(pages, { coverSolo, totalPages }),
-    [pages, coverSolo, totalPages],
+    () =>
+      computeSpreadGroups(pages, {
+        coverSolo,
+        totalPages,
+        overrides: spreadOverrides,
+      }),
+    [pages, coverSolo, totalPages, spreadOverrides],
   );
   const currentGroupIdx = useMemo(
     () => groupIndexForPage(groups, currentPage),
@@ -581,16 +604,15 @@ export function Reader({
   // Esc-then-exit two-step. Marker-mode active state suppresses
   // page-nav so a highlight drag isn't interrupted; the marker
   // overlay's capture-phase handler still owns Esc in that mode.
-  // Transform zoom (audit C9). Single-page only; transient per-page
-  // (resets on page / fit / view / marker-mode change — the last so a
-  // CSS transform never desyncs the offset-positioned MarkerOverlay
-  // while drawing). `+`/`-` walk a discrete ladder and re-center; the
-  // drag-to-pan in `SinglePageView` clamps the offset to the page edges.
-  const [zoom, setZoom] = useState<{
-    scale: number;
-    offset: { x: number; y: number };
-    origin: { x: number; y: number };
-  }>({ scale: 1, offset: { x: 0, y: 0 }, origin: { x: 50, y: 50 } });
+  // Transform zoom (audit C9, WP-4.2). Single- and double-page view;
+  // resets on fit / view / marker-mode change (the last so a CSS
+  // transform never desyncs the offset-positioned MarkerOverlay while
+  // drawing) and — unless the "keep zoom between pages" preference is on
+  // — on page turn. `+`/`-` walk a discrete ladder and re-center;
+  // ctrl+wheel / trackpad pinch zooms continuously at the cursor; the
+  // drag-to-pan clamps the offset to the page edges.
+  const [zoom, setZoom] = useState<ZoomState>(ZOOM_IDENTITY);
+  const zoomPersist = useReaderStore((s) => s.zoomPersist);
   // Overflow (audit C4): a fit=height/original page rendered wider/taller
   // than the viewport. Reported up from SinglePageView; makes a drag pan
   // the page (rather than turn it) so the cropped sides are reachable.
@@ -645,32 +667,76 @@ export function Reader({
   // Pan (C4/C9). The gesture hook forwards drag movement here so panning
   // works *through* the TapZones overlay: drags bubble up to the gesture
   // container while taps stay with the zones.
+  // Overflow-pan is single-page only (a wide double-page pair scrolls
+  // natively); gating on the view also stops a stale single-view
+  // `overflowing` from hijacking drags after a switch to double.
   const panActive =
-    (zoom.scale > 1 || overflowing) && markerModeForKeybinds === "idle";
+    (zoom.scale > 1 || (viewMode === "single" && overflowing)) &&
+    markerModeForKeybinds === "idle";
   const onPanStart = useCallback(() => {
     panStartRef.current = zoomRef.current.offset;
   }, []);
   const onPan = useCallback((dx: number, dy: number) => {
     const { content, container } = panMetricsRef.current;
-    const next = clampPan(
-      { x: panStartRef.current.x + dx, y: panStartRef.current.y + dy },
-      content,
-      container,
-    );
-    setZoom((z) => ({ ...z, offset: next }));
+    const raw = {
+      x: panStartRef.current.x + dx,
+      y: panStartRef.current.y + dy,
+    };
+    setZoom((z) => ({
+      ...z,
+      // Zoomed: exact origin-aware clamp (double-tap / page-turn carry
+      // pin a non-center origin). 1× overflow: natural-size clamp.
+      offset:
+        z.scale > 1
+          ? clampZoomPan(raw, z.scale, z.origin, container)
+          : clampPan(raw, content, container),
+    }));
   }, []);
 
-  // Reset transient zoom/pan when the page / fit / view / marker-mode key
-  // changes — React's "adjust state during render" recipe (no effect, no
-  // extra paint). The marker-mode reset also sidesteps the
-  // CSS-transform-vs-offset-positioned-overlay desync while drawing.
-  const zoomResetKey = `${currentPage}|${fitMode}|${viewMode}|${markerModeForKeybinds}`;
-  const [zoomKey, setZoomKey] = useState(zoomResetKey);
-  if (zoomKey !== zoomResetKey) {
-    setZoomKey(zoomResetKey);
-    if (zoom.scale !== 1 || zoom.offset.x !== 0 || zoom.offset.y !== 0) {
-      setZoom({ scale: 1, ...RECENTER });
-    }
+  // Ctrl+wheel / trackpad-pinch zoom at the cursor (audit UX-3). The
+  // zoom surface is whichever view element carries `data-zoom-surface`;
+  // its untransformed layout box is its parent's rect origin + its own
+  // offset size (getBoundingClientRect on the surface itself would
+  // include the transform).
+  const onZoomTo = useCallback(
+    (scale: number, clientX: number, clientY: number) => {
+      const surface = gestureRef.current?.querySelector<HTMLElement>(
+        "[data-zoom-surface]",
+      );
+      const parent = surface?.parentElement;
+      if (!surface || !parent) return;
+      const r = parent.getBoundingClientRect();
+      const box = { w: surface.offsetWidth, h: surface.offsetHeight };
+      setZoom((z) =>
+        zoomAboutPoint(
+          z,
+          scale,
+          { x: clientX - r.left, y: clientY - r.top },
+          box,
+        ),
+      );
+    },
+    [],
+  );
+
+  // Reset transient zoom/pan when the fit / view / marker-mode key
+  // changes, and carry-or-reset it on a page turn (`zoomAfterPageTurn`:
+  // 1× unless "keep zoom between pages" is on) — React's "adjust state
+  // during render" recipe (no effect, no extra paint). The marker-mode
+  // reset also sidesteps the CSS-transform-vs-offset-positioned-overlay
+  // desync while drawing.
+  const zoomResetKey = `${fitMode}|${viewMode}|${markerModeForKeybinds}`;
+  const [zoomKey, setZoomKey] = useState({
+    mode: zoomResetKey,
+    page: currentPage,
+  });
+  if (zoomKey.mode !== zoomResetKey || zoomKey.page !== currentPage) {
+    const next =
+      zoomKey.mode !== zoomResetKey
+        ? ZOOM_IDENTITY
+        : zoomAfterPageTurn(zoom, zoomPersist, direction);
+    setZoomKey({ mode: zoomResetKey, page: currentPage });
+    if (!sameZoom(next, zoom)) setZoom(next);
   }
 
   useReaderKeymap({
@@ -817,17 +883,30 @@ export function Reader({
   //   - height  → always fills viewport height (overflows horizontally
   //               for wide spreads — body scrolls).
   //   - original → image at its intrinsic pixel size, no constraints.
+  //   - contain → the whole page on screen (WP-4.2): width is
+  //               `min(available width, safe viewport height × aspect)`,
+  //               with the aspect from `--page-ar` (set by PageImage), so
+  //               it up- as well as down-scales and the img box stays the
+  //               rendered art (marker overlay aligns). Double view caps
+  //               each page of a pair at half the viewport; webtoon is
+  //               width-fit by construction, so contain falls back to it.
   const fitClass =
-    fitMode === "width"
+    fitMode === "width" || (fitMode === "contain" && viewMode === "webtoon")
       ? "w-full h-auto max-w-none"
-      : fitMode === "height"
-        ? // Fit-height fills the *safe* viewport, not the raw 100vh — on an
-          // iOS PWA (status-bar-translucent + viewport-fit=cover) the top/bottom
-          // insets are non-zero, so the page sits in the safe band and the
-          // status bar / home indicator land on the black letterbox instead of
-          // the art. Off-iOS the insets are 0, so this is exactly 100dvh.
-          "h-[calc(100dvh_-_var(--safe-top)_-_var(--safe-bottom))] w-auto max-w-none"
-        : "max-w-none w-auto h-auto";
+      : fitMode === "contain"
+        ? viewMode === "double" && visiblePages.length === 2
+          ? "h-auto max-w-none w-[min(calc(50vw_-_2px),calc((100dvh_-_var(--safe-top)_-_var(--safe-bottom))*var(--page-ar,0.6667)))]"
+          : viewMode === "double"
+            ? "h-auto max-w-none w-[min(100vw,calc((100dvh_-_var(--safe-top)_-_var(--safe-bottom))*var(--page-ar,0.6667)))]"
+            : "h-auto max-w-none w-[min(100%,calc((100dvh_-_var(--safe-top)_-_var(--safe-bottom))*var(--page-ar,0.6667)))]"
+        : fitMode === "height"
+          ? // Fit-height fills the *safe* viewport, not the raw 100vh — on an
+            // iOS PWA (status-bar-translucent + viewport-fit=cover) the top/bottom
+            // insets are non-zero, so the page sits in the safe band and the
+            // status bar / home indicator land on the black letterbox instead of
+            // the art. Off-iOS the insets are 0, so this is exactly 100dvh.
+            "h-[calc(100dvh_-_var(--safe-top)_-_var(--safe-bottom))] w-auto max-w-none"
+          : "max-w-none w-auto h-auto";
   // Double-page panes need different wrapper sizing depending on fitMode.
   // In width mode each pane is forced to share the viewport row (flex-1
   // with min-w-0 so the inner img can shrink); in height/original modes
@@ -844,7 +923,7 @@ export function Reader({
     viewMode === "double" &&
     fitMode === "width" &&
     visiblePages.length === 1 &&
-    !isSpreadPage(pages[visiblePages[0]!]);
+    !isEffectiveSpread(pages, visiblePages[0]!, spreadOverrides);
 
   // Gestures: horizontal drag (swipe) for page nav. Pinch is left
   // to the browser as native pinch-to-zoom so mobile users can
@@ -877,6 +956,12 @@ export function Reader({
     panActive,
     onPanStart,
     onPan,
+  });
+  useWheelZoom({
+    target: gestureRef,
+    enabled: viewMode !== "webtoon" && markerModeForKeybinds === "idle",
+    getScale: () => zoomRef.current.scale,
+    onZoomTo,
   });
 
   return (
@@ -1007,6 +1092,9 @@ export function Reader({
             onNaturalSize={handleNaturalSize}
             pageNaturalSize={pageNaturalSize}
             transition={pageTransition}
+            zoom={zoom}
+            panMetricsRef={panMetricsRef}
+            onZoomToggle={zoomToggleAt}
           />
         ) : (
           <SinglePageView
@@ -1128,11 +1216,7 @@ function SinglePageView({
   >;
   transition: PageTransitionResult;
   /** Transform zoom + pan (audit C4/C9). Pan offset is screen-px. */
-  zoom: {
-    scale: number;
-    offset: { x: number; y: number };
-    origin: { x: number; y: number };
-  };
+  zoom: ZoomState;
   /** Whether the rendered page overflows the viewport (drives pan). */
   overflowing: boolean;
   onOverflowChange: (overflowing: boolean) => void;
@@ -1246,6 +1330,7 @@ function SinglePageView({
           ref={pageWrapRef}
           className={transition.enterAnimClass ?? undefined}
           key={`enter-${currentPage}`}
+          data-zoom-surface=""
           // Transform zoom + pan (C4/C9). `translate` first (screen px)
           // then `scale`, so the offset is in screen space and matches
           // the clamp bounds. PageImage + MarkerOverlay transform together
@@ -1340,6 +1425,9 @@ function DoublePageView({
   onNaturalSize,
   pageNaturalSize,
   transition,
+  zoom,
+  panMetricsRef,
+  onZoomToggle,
 }: {
   issueId: string;
   visiblePages: readonly number[];
@@ -1361,6 +1449,19 @@ function DoublePageView({
     Map<number, { width: number; height: number }>
   >;
   transition: PageTransitionResult;
+  /** Transform zoom + pan over the whole spread (WP-4.2). */
+  zoom: ZoomState;
+  /** Reader-owned clamp metrics; populated here from the spread row. */
+  panMetricsRef: React.RefObject<{
+    content: { w: number; h: number };
+    container: { w: number; h: number };
+  }>;
+  /** Double-tap / double-click toggle, with the tap point + spread rect. */
+  onZoomToggle: (
+    rectX: number,
+    rectY: number,
+    rect: { w: number; h: number },
+  ) => void;
 }) {
   // RTL pairs render right-to-left; reuse `flex-row-reverse` to flip ordering.
   const flexClass =
@@ -1370,6 +1471,27 @@ function DoublePageView({
   // so the flex container itself needs to span the viewport. In other
   // modes it sizes to the natural image widths.
   const containerWidthClass = paneClass.includes("flex-1") ? "w-screen" : "";
+  // Zoom (WP-4.2): the whole spread row is the zoom surface, so both
+  // pages (and their marker overlays) scale and pan together. Keep the
+  // pan clamp metrics fresh from the row's box.
+  const zoomed = zoom.scale > 1 && markerMode === "idle";
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    const measure = () => {
+      const w = row.clientWidth;
+      const h = row.clientHeight;
+      panMetricsRef.current = {
+        content: { w: w * zoom.scale, h: h * zoom.scale },
+        container: { w, h },
+      };
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(row);
+    return () => ro.disconnect();
+  }, [visiblePages, zoom.scale, panMetricsRef]);
 
   // v0.3.44: double-page slide is enter-only. Rendering the
   // outgoing spread as a pair of absolutely-positioned panes adds
@@ -1383,8 +1505,21 @@ function DoublePageView({
     <main className="relative grid min-h-screen place-items-center pt-(--safe-top) pb-(--safe-bottom)">
       <div className="relative w-full overflow-hidden">
         <div
+          ref={rowRef}
           key={`enter-${visiblePages.join("-")}`}
+          data-zoom-surface=""
           className={`${transition.enterAnimClass ?? ""} ${flexClass} ${containerWidthClass} items-center justify-center gap-1`}
+          style={
+            zoomed
+              ? {
+                  transform: `translate(${zoom.offset.x}px, ${zoom.offset.y}px) scale(${zoom.scale})`,
+                  transformOrigin: `${zoom.origin.x}% ${zoom.origin.y}%`,
+                  transition: "none",
+                  willChange: "transform",
+                  cursor: "grab",
+                }
+              : undefined
+          }
         >
           {visiblePages.map((p) => (
             <DoublePagePane
@@ -1400,6 +1535,7 @@ function DoublePageView({
               pageUrlVersion={pageUrlVersion}
               onNaturalSize={onNaturalSize(p)}
               naturalSize={pageNaturalSize.current?.get(p) ?? null}
+              zoomed={zoomed}
             />
           ))}
         </div>
@@ -1409,6 +1545,11 @@ function DoublePageView({
           onLeft={onLeftZone}
           onRight={onRightZone}
           onChrome={onChromeZone}
+          onCenterDoubleTap={(cx, cy) => {
+            const r = rowRef.current?.getBoundingClientRect();
+            if (!r) return;
+            onZoomToggle(cx - r.left, cy - r.top, { w: r.width, h: r.height });
+          }}
         />
       ) : null}
     </main>
@@ -1424,6 +1565,7 @@ function DoublePagePane({
   paneClass,
   onNaturalSize,
   naturalSize,
+  zoomed,
 }: {
   issueId: string;
   page: number;
@@ -1434,6 +1576,8 @@ function DoublePagePane({
   paneClass: string;
   onNaturalSize: (w: number, h: number) => void;
   naturalSize: { width: number; height: number } | null;
+  /** Spread is transform-zoomed: read full-res pixels, like single view. */
+  zoomed: boolean;
 }) {
   // Pane sizing depends on fitMode (passed in as `paneClass`):
   //  - "flex-1 min-w-0"  → width-fit: each pane shares the viewport row
@@ -1444,8 +1588,8 @@ function DoublePagePane({
   // descender so the SVG overlay's `absolute inset-0` covers the img box
   // exactly.
   const imgRef = useRef<HTMLImageElement>(null);
-  // FEP-1: double-page has no pinch zoom, so only original-fit opts out
-  // of variants. Each pane occupies ~half the viewport row.
+  // FEP-1: original-fit and a transform-zoomed spread opt out of
+  // variants (full-res is the point). Each pane occupies ~half the row.
   const paneFitMode = useReaderStore((s) => s.fitMode);
   return (
     <div className={`relative align-top ${paneClass}`}>
@@ -1455,7 +1599,7 @@ function DoublePagePane({
           pageUrlVersion,
         )}
         srcSet={
-          paneFitMode !== "original"
+          paneFitMode !== "original" && !zoomed
             ? pageBytesSrcSet(
                 withContentVersion(
                   `/issues/${issueId}/pages/${page}`,
@@ -1675,6 +1819,7 @@ function WebtoonView({
           aria-hidden="true"
           aria-label="Toggle controls"
           onClick={onChromeZone}
+          {...{ [EDGE_GUARD_ATTR]: "" }}
           className="pointer-events-auto fixed inset-0 z-10 cursor-pointer touch-pan-y bg-transparent"
         />
       ) : null}
@@ -1772,8 +1917,9 @@ function TapZones({
   onLeft: () => void;
   onRight: () => void;
   onChrome: () => void;
-  /** When set (single-page only), the center zone distinguishes a single
-   *  tap (chrome toggle, debounced) from a double tap (zoom at point). */
+  /** When set (single / double view), the center zone distinguishes a
+   *  single tap (chrome toggle, debounced) from a double tap (zoom at
+   *  point). */
   onCenterDoubleTap?: (clientX: number, clientY: number) => void;
 }) {
   // Single/double-click arbitration for the center zone (audit UX-7):
@@ -1804,7 +1950,11 @@ function TapZones({
     }, DOUBLE_TAP_MS);
   };
   return (
-    <div className="absolute inset-0 z-10 grid grid-cols-3" aria-hidden="true">
+    <div
+      className="absolute inset-0 z-10 grid grid-cols-3"
+      aria-hidden="true"
+      {...{ [EDGE_GUARD_ATTR]: "" }}
+    >
       <button
         type="button"
         tabIndex={-1}
