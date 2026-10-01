@@ -16,6 +16,8 @@ import type {
   AdminLogFilters,
   AuditFilters,
   CblEntriesFilters,
+  EntityKindPath,
+  EntityListFilters,
   IssueListFilters,
   IssuesCrossListFilters,
   IssueSearchFilters,
@@ -145,6 +147,17 @@ export const queryKeys = {
   /** Alphabetical creator browse index (`/creators`). Audit A11. */
   creatorsList: (filters: CreatorsListFilters) =>
     ["creators", "list", filters] as const,
+  /** Entity browse index (`/characters`, `/teams`, `/arcs`,
+   *  `/publishers`). WP-5.5. */
+  entityList: (kind: EntityKindPath, filters: EntityListFilters) =>
+    ["entities", kind, "list", filters] as const,
+  /** Entity landing-page grids (`/<kind>/{slug}/series|issues`). */
+  entityItems: (
+    kind: EntityKindPath,
+    slug: string,
+    grid: "series" | "issues",
+    limit: number,
+  ) => ["entities", kind, slug, grid, limit] as const,
   /** Marker search (`/me/markers/search`). 4th global-search category. */
   markerSearch: (filters: MarkerSearchFilters) =>
     ["markers", "search", filters] as const,

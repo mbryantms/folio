@@ -42,6 +42,8 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
+mod entities;
+
 use crate::api::collections::ensure_want_to_read_seeded;
 use crate::api::saved_views::{
     KIND_CBL, KIND_COLLECTION, KIND_FILTER_SERIES, SYSTEM_KEY_WANT_TO_READ,
@@ -127,6 +129,16 @@ pub fn routes() -> Router<AppState> {
         // handler.
         .route("/opds/v1/pages", get(pages_nav))
         .route("/opds/v1/pages/{slug}", get(page_acq))
+        // WP-5.5 — entity navigation feeds (characters / teams / story
+        // arcs / publishers) + per-entity drill-ins.
+        .route("/opds/v1/characters", get(entities::characters_nav))
+        .route("/opds/v1/characters/{slug}", get(entities::character_acq))
+        .route("/opds/v1/teams", get(entities::teams_nav))
+        .route("/opds/v1/teams/{slug}", get(entities::team_acq))
+        .route("/opds/v1/arcs", get(entities::arcs_nav))
+        .route("/opds/v1/arcs/{slug}", get(entities::arc_acq))
+        .route("/opds/v1/publishers", get(entities::publishers_nav))
+        .route("/opds/v1/publishers/{slug}", get(entities::publisher_acq))
         // M5 — PSE (Page Streaming Extension). Sig-auth only: no
         // CurrentUser extractor on the handler, the URL itself carries
         // the bearer (`?u=&exp=&sig=`). Shares the OPDS rate-limit
@@ -172,6 +184,11 @@ async fn negotiate_opds_v2(req: Request, next: Next) -> Response {
         && accept.contains("application/opds+json")
         && suffix != "issues/{id}/file"
         && !suffix.starts_with("issues/")
+        // WP-5.5 entity feeds are OPDS 1.x only (no v2 twin yet) —
+        // serve Atom rather than redirect to a 404.
+        && !["characters", "teams", "arcs", "publishers"]
+            .iter()
+            .any(|p| suffix == *p || suffix.starts_with(&format!("{p}/")))
     {
         let mut target = format!("/opds/v2/{suffix}");
         if let Some(q) = req.uri().query() {
@@ -368,7 +385,7 @@ async fn root(State(app): State<AppState>, user: CurrentUser) -> Response {
     <updated>{now}</updated>
     <link rel="subsection" href="/opds/v1/browse" type="{acq}"/>
   </entry>
-</feed>
+{entity_entries}</feed>
 "#,
         base = base,
         name = xml_escape(feed_title),
@@ -377,6 +394,7 @@ async fn root(State(app): State<AppState>, user: CurrentUser) -> Response {
         acq = ACQ_CT,
         page_entries = page_entries,
         komga_author = komga_author,
+        entity_entries = entities::root_entries(&base, &now),
     );
     atom(body)
 }

@@ -1,6 +1,7 @@
 import {
   Bookmark,
   Calendar,
+  Compass,
   Folder,
   Heart,
   Home,
@@ -34,6 +35,9 @@ export const mainNavIcons: Record<MainNavItem["icon"], LucideIcon> = {
   // Creators builtin (audit A11) — the only Browse entry whose icon is a
   // real person glyph rather than a placeholder.
   Users,
+  // "Browse" builtin (WP-5.5) — the tabbed characters / teams / arcs /
+  // publishers / creators index.
+  Compass,
   // The remaining IconName values from admin/nav.ts — not used today by the
   // library shell, but having them in the map keeps `MainNavItem.icon: IconName |
   // …` typesafe without admin nav imports needing to know about us.

@@ -46,8 +46,8 @@ pub struct AppearanceView {
     /// `"cbl"` | `"collection"` | `"arc"`.
     pub kind: String,
     /// Link-target id. For `cbl`/`collection` this is the **saved-view** id
-    /// (open at `/views/{id}`); for `arc` it's the arc slug (no detail route
-    /// yet — the web app renders arcs as informational chips).
+    /// (open at `/views/{id}`); for `arc` it's the arc slug (open at
+    /// `/arcs/{slug}`, WP-5.5).
     pub id: String,
     pub name: String,
     /// The issue's reading-order position within a `cbl`/`arc`, when the

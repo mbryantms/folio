@@ -50,6 +50,21 @@ realm="Folio"` so reader apps prompt for credentials.
 | `/opds/v1/new-this-month` | Issues `created_at >= now - 30 days` | Up to 50. Goes empty on stale libraries (distinct from `/recent`). |
 | `/opds/v1/by-creator/{writer}` | Series where any writer credit matches | URL-encode writer name. Empty result → empty feed (200 OK), not 404. |
 
+### Entity feeds (WP-5.5)
+
+Linked from the root feed. Membership, library ACL and age-rating caps
+come from the same `api::entity_pages` core as the web landing pages, so
+a feed never lists an entity (or issue) the caller can't see; an entity
+with no visible appearance 404s. OPDS 1.x only — the v2 content
+negotiation deliberately skips these paths (no `/opds/v2` twin yet).
+
+| Endpoint | Returns | Notes |
+|---|---|---|
+| `/opds/v1/characters` · `/teams` · `/arcs` · `/publishers` | Navigation feed, one subsection entry per entity | Name order, 50/page (`?page=N`). Entry summary = issue + series counts. |
+| `/opds/v1/characters/{slug}` · `/teams/{slug}` | Acquisition feed of the entity's issues | Year → series → number order. 50/page. |
+| `/opds/v1/arcs/{slug}` | Acquisition feed in arc reading order | `issue_arcs.position_in_arc` (the rollup seeds it from a numeric `story_arc_number`), else a numeric `story_arc_number`. Emits PSE `rel=next/previous` like other reading-sequence feeds. |
+| `/opds/v1/publishers/{slug}` | Series subsection entries | Same entry shape as `/by-creator`. |
+
 ### Faceted browse (M4)
 
 | Endpoint | Returns | Notes |

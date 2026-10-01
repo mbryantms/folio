@@ -6,8 +6,8 @@
  * discover and jump to the other lists it's part of.
  *
  * Reading lists and collections are the user's own (scoped server-side) and
- * open at `/views/{id}`. Story arcs are shared metadata with no detail route
- * yet, so they render as informational chips rather than links.
+ * open at `/views/{id}`. Story arcs are shared metadata and open their
+ * landing page at `/arcs/{slug}` (WP-5.5; the arc row's `id` is the slug).
  *
  * One component drives both detail pages via `variant`: the issue side shows
  * the issue's reading-order position within a list/arc; the series side shows
@@ -18,6 +18,7 @@ import Link from "next/link";
 import { BookMarked, Layers, Library, Loader2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { entityUrl } from "@/lib/entities";
 import { useIssueAppearances, useSeriesAppearances } from "@/lib/api/queries";
 import type { AppearanceView, AppearancesView } from "@/lib/api/types";
 
@@ -138,9 +139,14 @@ function AppearanceRow({
   variant: "issue" | "series";
 }) {
   const meta = metaLabel(item, variant);
-  // Reading lists and collections are saved views → navigable. Story arcs
-  // have no detail route yet, so they stay as a static row.
-  const navigable = item.kind === "cbl" || item.kind === "collection";
+  // Reading lists and collections are saved views; story arcs open their
+  // entity landing page (WP-5.5) — the arc row's `id` is its slug.
+  const href =
+    item.kind === "cbl" || item.kind === "collection"
+      ? `/views/${item.id}`
+      : item.kind === "arc"
+        ? entityUrl("arcs", item.id)
+        : null;
 
   const inner = (
     <>
@@ -151,11 +157,11 @@ function AppearanceRow({
     </>
   );
 
-  if (navigable) {
+  if (href) {
     return (
       <li>
         <Link
-          href={`/views/${item.id}`}
+          href={href}
           className="hover:bg-muted/40 flex items-center gap-3 px-3 py-2 text-sm transition-colors"
         >
           {inner}

@@ -847,6 +847,11 @@ pub struct SeriesView {
     /// happens for credits scanned between rollups.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub creator_slugs: std::collections::HashMap<String, String>,
+    /// WP-5.5: name -> entity landing-page slug maps for the character /
+    /// team / story-arc / publisher chips. Detail endpoints only; absent
+    /// on list payloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_slugs: Option<crate::api::entity_pages::EntitySlugs>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub genres: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -977,6 +982,7 @@ impl From<series::Model> for SeriesView {
             letterers: Vec::new(),
             cover_artists: Vec::new(),
             creator_slugs: std::collections::HashMap::new(),
+            entity_slugs: None,
             genres: Vec::new(),
             tags: Vec::new(),
             characters: Vec::new(),
@@ -1123,6 +1129,11 @@ pub struct IssueDetailView {
     /// Empty until the get_one handler populates it.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub creator_slugs: std::collections::HashMap<String, String>,
+    /// WP-5.5: name -> entity landing-page slug maps for the character /
+    /// team / story-arc / publisher chips. Detail endpoints only; absent
+    /// on list payloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_slugs: Option<crate::api::entity_pages::EntitySlugs>,
     /// ISO-8601 timestamp of the last in-place rewrite of this issue's
     /// archive bytes (from `metadata-sidecar-writeback-1.0` M3+ or
     /// `archive-rewrite-1.0` M2+). `None` when Folio has never
@@ -1267,6 +1278,7 @@ impl IssueDetailView {
             pages: serde_json::from_value(m.pages).unwrap_or_default(),
             comic_info_raw: m.comic_info_raw,
             creator_slugs: std::collections::HashMap::new(),
+            entity_slugs: None,
             last_rewrite_at: m.last_rewrite_at.map(|t| t.to_rfc3339()),
             last_rewrite_kind: m.last_rewrite_kind,
             last_metadata_sync_at: m.last_metadata_sync_at.map(|t| t.to_rfc3339()),
@@ -3244,6 +3256,12 @@ pub async fn get_one(
     v.characters = aggregate_csv(agg_rows.iter().map(|r| r.characters.as_deref()));
     v.teams = aggregate_csv(agg_rows.iter().map(|r| r.teams.as_deref()));
     v.locations = aggregate_csv(agg_rows.iter().map(|r| r.locations.as_deref()));
+    // WP-5.5: chip → landing-page slugs for the cast + publisher.
+    let publishers: Vec<String> = v.publisher.iter().cloned().collect();
+    v.entity_slugs = Some(
+        crate::api::entity_pages::entity_slugs(&app, &v.characters, &v.teams, &[], &publishers)
+            .await,
+    );
     v.total_page_count = (!agg_rows.is_empty()).then_some(total_pages);
     v.last_issue_added_at = last_added.map(|t| t.to_rfc3339());
     v.last_issue_updated_at = last_updated.map(|t| t.to_rfc3339());

@@ -311,6 +311,13 @@ hit ranks above a summary hit) and trigram fallback so typos still land.
 Results come back with highlighted snippets. Prefixing the query with `>`
 turns the box into a command palette with 27 actions. Creator pages give
 every writer and artist a browsable presence of their own.
+Characters, teams, story arcs, and publishers get the same treatment:
+`/characters/<slug>`, `/teams/<slug>`, `/arcs/<slug>` and
+`/publishers/<slug>` landing pages (reachable from one tabbed **Browse** index in the sidebar,
+alongside Creators) list
+every issue and series they appear in — story arcs in reading order — and
+the cast, arc, and publisher chips on series and issue pages link straight
+to them.
 
 ## Text capture (OCR)
 
@@ -342,7 +349,8 @@ archive). Auth is a per-app password with scopes (`read` or
 Beyond the catalog basics, personal feeds mirror the web app: Continue
 Reading, On Deck, History, New This Month, Want to Read, your CBL lists
 (in list order), collections, saved views, custom pages, browse facets,
-by-creator feeds, and OpenSearch.
+by-creator feeds, character / team / story-arc / publisher feeds, and
+OpenSearch.
 
 **Progress syncs both ways**, meeting real clients where they are:
 
