@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.32.0](https://github.com/mbryantms/folio/compare/v0.31.0...v0.32.0) (2026-10-01)
+
+
+### Added
+
+* **metadata:** use the full GCD API (overview, identifiers, story data, graceful covers) ([#945](https://github.com/mbryantms/folio/issues/945)) ([abb2d5e](https://github.com/mbryantms/folio/commit/abb2d5ef48b0b35cc8490825a6fc7c8b9349f090))
+
+
+### Dependencies
+
+* update dependency @ai-sdk/provider-utils@&lt;4.0.34 to v4.0.56 ([#942](https://github.com/mbryantms/folio/issues/942)) ([44dde81](https://github.com/mbryantms/folio/commit/44dde8126a2291b457973454bbbb3bed23f4f403))
+* update dependency pnpm to v12.8.1 ([#943](https://github.com/mbryantms/folio/issues/943)) ([2f9773f](https://github.com/mbryantms/folio/commit/2f9773f417654b839af954eec91e8564ccaac2b4))
+
 ## [0.31.0](https://github.com/mbryantms/folio/compare/v0.30.0...v0.31.0) (2026-10-01)
 
 
