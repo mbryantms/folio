@@ -186,10 +186,12 @@ pub async fn list(
     }
 
     let union = selects.join(" UNION ALL ");
+    // L-4 (WP-6.3): LIMIT is a bound parameter, not interpolated.
+    params.push(Value::from((limit + 1) as i64));
     let sql = format!(
         "SELECT kind, source_id, ts, summary_a, summary_b, payload FROM ({union}) u \
-         ORDER BY ts DESC, kind DESC, source_id DESC LIMIT {}",
-        limit + 1
+         ORDER BY ts DESC, kind DESC, source_id DESC LIMIT ${}",
+        params.len()
     );
 
     let rows = match Row::find_by_statement(Statement::from_sql_and_values(backend, &sql, params))

@@ -229,3 +229,115 @@ async fn bare_group_is_not_wrapped_by_the_json_layers() {
     assert!(body.len() > 32, "precondition: body above the size floor");
     serde_json::from_slice::<serde_json::Value>(&body).expect("identity JSON body");
 }
+
+// ───────── WP-6.3 / security-audit M-1: deny-by-default CORS ─────────
+//
+// The Rust binary is the single public origin, so no cross-origin browser
+// access is ever granted. `app::deny_all_cors()` answers preflights itself
+// (empty 200, no `Access-Control-Allow-*`) and leaves simple responses free
+// of CORS headers, so a foreign page can neither send a non-simple request
+// nor read a response. Non-browser clients (OPDS, KOReader, Komga shims)
+// never consult CORS and are unaffected.
+
+const EVIL_ORIGIN: &str = "https://evil.example";
+
+fn assert_no_cors_grant(resp: &axum::response::Response, ctx: &str) {
+    for h in [
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+    ] {
+        assert!(
+            resp.headers().get(&h).is_none(),
+            "{ctx}: unexpected {h} = {:?}",
+            resp.headers().get(&h)
+        );
+    }
+}
+
+#[tokio::test]
+async fn cors_preflight_from_foreign_origin_is_denied() {
+    let app = TestApp::spawn().await;
+    for path in [
+        "/api/auth/me",
+        "/api/auth/local/login",
+        "/opds/v1",
+        "/healthz",
+    ] {
+        let resp = app
+            .router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri(path)
+                    .header(header::ORIGIN, EVIL_ORIGIN)
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                    .header(
+                        header::ACCESS_CONTROL_REQUEST_HEADERS,
+                        "content-type, x-csrf-token",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Answered by the CORS layer itself — never forwarded to a handler or
+        // the Next upstream — and grants nothing.
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        assert_no_cors_grant(&resp, path);
+    }
+}
+
+#[tokio::test]
+async fn cors_cross_origin_credentialed_read_gets_no_grant() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/auth/me")
+                .header(header::ORIGIN, EVIL_ORIGIN)
+                .header(header::COOKIE, format!("__Host-comic_session={session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    // The request itself still runs (CORS is enforced by the browser on the
+    // response), but without ACAO/ACAC the foreign page can't read it.
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_no_cors_grant(&resp, "/api/auth/me");
+}
+
+#[tokio::test]
+async fn cors_layer_leaves_same_origin_and_non_browser_requests_alone() {
+    let app = TestApp::spawn().await;
+    // No Origin header (OPDS reader / KOReader / curl): plain response, no
+    // CORS headers, no Vary noise.
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/auth/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_no_cors_grant(&resp, "no-origin");
+    assert!(
+        resp.headers().get(header::VARY).is_none_or(|v| !v
+            .to_str()
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .contains("origin")),
+        "deny-all CORS must not add Vary: Origin"
+    );
+}

@@ -6567,8 +6567,9 @@ export interface components {
         DashboardResp: {
             /**
              * Format: int64
-             * @description Count of successful `metadata_apply` audit rows in the last
-             *     7 days.
+             * @description Count of manual metadata-apply audit rows in the last 7 days —
+             *     single-provider and composite, with and without
+             *     `override_user_edits` (see `MANUAL_APPLY_ACTIONS`).
              */
             applies_last_7_days: number;
             /**
@@ -15879,6 +15880,20 @@ export interface operations {
                     "application/json": components["schemas"]["CblListView"];
                 };
             };
+            /** @description per-user URL/catalog list limit reached */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description per-user CBL import quota exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     cbl_lists_check_all: {
@@ -15897,6 +15912,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CblBulkResultView"];
                 };
+            };
+            /** @description per-user CBL import quota exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -15917,6 +15939,13 @@ export interface operations {
                     "application/json": components["schemas"]["CblBulkResultView"];
                 };
             };
+            /** @description per-user CBL import quota exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     cbl_lists_upload: {
@@ -15935,6 +15964,20 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CblListView"];
                 };
+            };
+            /** @description not an XML / .cbl upload */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description per-user CBL import quota exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -16021,6 +16064,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CblBulkItemView"];
                 };
+            };
+            /** @description per-user CBL import quota exceeded */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -16180,6 +16230,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description per-user CBL import quota exceeded */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

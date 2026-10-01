@@ -28,6 +28,16 @@ Plan: [`~/.claude/plans/runtime-config-admin-1.0.md`](../../../.claude/plans/run
 | `COMIC_METRICS_TOKEN` | Bearer token gating `GET /metrics` in production/release builds; a deploy-time scrape credential baked into Prometheus config, not user-visible policy. |
 | `COMIC_METRICS_OPEN` | Explicit production opt-out for unauthenticated `/metrics`; leave unset unless a reverse proxy or network ACL protects the route. |
 
+Server-generated cryptographic keys are neither env nor DB: they are files
+under `${COMIC_DATA_PATH}/secrets/` (`pepper`, `jwt-ed25519.key`,
+`email-token.key`, `url-signing.key`, `settings-encryption.key`, and the
+optional `pepper.previous` used only during an argon2 pepper rotation —
+WP-6.3 / security audit L-1). They stay out of `app_setting` because the
+settings key itself lives there and a DB-only leak must not yield the
+pepper; they stay out of env so they never show up in `docker inspect` or
+process listings. Rotation runbook:
+[`docs/install/secrets-backup.md`](../install/secrets-backup.md#rotating-the-pepper).
+
 Compose-only keys (`REPO_OWNER`, `TAG`, `POSTGRES_PASSWORD`,
 `COMIC_LIBRARY_HOST_PATH`, `COMIC_APP_BIND`, `COMIC_WEB_BIND`) stay in
 `.env` indefinitely — they describe the deployment topology, not server

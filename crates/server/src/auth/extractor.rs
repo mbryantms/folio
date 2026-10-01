@@ -132,7 +132,7 @@ async fn resolve_app_password(app: &AppState, token: &str) -> Result<CurrentUser
         &app.db,
         &app.app_password_cache,
         token,
-        app.secrets.pepper.as_ref(),
+        app.secrets.peppers(),
     )
     .await
     .ok_or(AuthRejection::Invalid)?;

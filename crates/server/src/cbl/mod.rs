@@ -19,4 +19,5 @@ pub use parsers::cbl as parser;
 pub mod catalog;
 pub mod import;
 pub mod matcher;
+pub mod quota;
 pub mod refresh;

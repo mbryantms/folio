@@ -402,8 +402,11 @@ the host to `crates/server/src/middleware/security_headers.rs`.
 It's `blocked_by_user` — the field has `set_by='user'` in
 `field_provenance`. Admins can flip the **Override user-edited
 fields** toggle at the top of the dialog to bypass the
-precedence rule (audited as `metadata_apply_force`); non-admins
-see the field as read-only.
+precedence rule (audited as `metadata_apply_force`, or
+`metadata_composite_apply_force` from the multi-provider merge view);
+non-admins see the field as read-only, and the API rejects the flag
+from them with `403 auth.permission_denied` before anything runs
+(`api::extractors::AdminGatedOverride`).
 
 ## Disaster recovery
 

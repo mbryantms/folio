@@ -707,7 +707,8 @@ async fn apply_series_403_when_override_user_edits_requested_by_non_admin() {
     .await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let body = body_json(resp.into_body()).await;
-    assert_eq!(body["error"]["code"], "auth.forbidden");
+    // SE-3 (WP-6.3): the structural `RequireAdmin` gate's code.
+    assert_eq!(body["error"]["code"], "auth.permission_denied");
 }
 
 #[tokio::test]

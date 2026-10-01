@@ -50,6 +50,70 @@ pub fn verify(stored_hash: &str, plain: &str, pepper: &[u8]) -> Result<bool, Pas
     Ok(argon.verify_password(plain.as_bytes(), &parsed).is_ok())
 }
 
+/// The pepper set a verify runs against (security audit L-1, WP-6.3).
+///
+/// `current` is `secrets/pepper` — every new hash is written under it.
+/// `previous` is the optional `secrets/pepper.previous`, present only while a
+/// pepper rotation is in progress: hashes written before the rotation still
+/// verify against it, and the caller rehashes them under `current` on the
+/// spot (verify-and-rehash). Once the operator deletes `pepper.previous`, any
+/// hash that never got rehashed stops verifying and that user goes through
+/// `/forgot-password`. Runbook: `docs/install/secrets-backup.md`.
+#[derive(Clone, Copy)]
+pub struct Peppers<'a> {
+    pub current: &'a [u8],
+    pub previous: Option<&'a [u8]>,
+}
+
+impl<'a> Peppers<'a> {
+    /// A single, non-rotating pepper.
+    pub fn single(current: &'a [u8]) -> Self {
+        Self {
+            current,
+            previous: None,
+        }
+    }
+}
+
+/// Outcome of [`verify_rotating`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verified {
+    /// Matched under the current pepper — nothing to do.
+    Current,
+    /// Matched under the previous pepper — the caller should rehash the
+    /// plaintext with [`hash`] under the current pepper and persist it.
+    Previous,
+    /// No match.
+    No,
+}
+
+impl Verified {
+    pub fn ok(self) -> bool {
+        !matches!(self, Self::No)
+    }
+}
+
+/// Verify against the current pepper, then (when a rotation is in progress)
+/// the previous one. Runs the second argon2 verify only on a current-pepper
+/// miss, so steady-state logins cost one verify; callers that need constant
+/// time across "no user" vs "wrong password" (the login dummy path) call this
+/// too, so both paths pay the same one-or-two verifies.
+pub fn verify_rotating(
+    stored_hash: &str,
+    plain: &str,
+    peppers: Peppers<'_>,
+) -> Result<Verified, PasswordError> {
+    if verify(stored_hash, plain, peppers.current)? {
+        return Ok(Verified::Current);
+    }
+    if let Some(prev) = peppers.previous
+        && verify(stored_hash, plain, prev)?
+    {
+        return Ok(Verified::Previous);
+    }
+    Ok(Verified::No)
+}
+
 /// PHC string of a real argon2id hash, computed once per process. Used by
 /// the login handler on the missing-user path so the response time matches
 /// the wrong-password path (both run a real verify). Without this the
@@ -92,6 +156,41 @@ mod tests {
         let h = hash("hunter2", pepper).unwrap();
         assert!(verify(&h, "hunter2", pepper).unwrap());
         assert!(!verify(&h, "wrong", pepper).unwrap());
+    }
+
+    #[test]
+    fn rotating_verify_prefers_current_then_previous() {
+        let old = b"pepper-A-32bytes-XXXXXXXXXXXXXXX";
+        let new = b"pepper-B-32bytes-XXXXXXXXXXXXXXX";
+        let under_old = hash("hunter2", old).unwrap();
+        let under_new = hash("hunter2", new).unwrap();
+        let rotating = Peppers {
+            current: new,
+            previous: Some(old),
+        };
+        assert_eq!(
+            verify_rotating(&under_new, "hunter2", rotating).unwrap(),
+            Verified::Current
+        );
+        assert_eq!(
+            verify_rotating(&under_old, "hunter2", rotating).unwrap(),
+            Verified::Previous
+        );
+        assert_eq!(
+            verify_rotating(&under_old, "wrong", rotating).unwrap(),
+            Verified::No
+        );
+        // Rotation finished (previous dropped): old hashes stop verifying.
+        assert_eq!(
+            verify_rotating(&under_old, "hunter2", Peppers::single(new)).unwrap(),
+            Verified::No
+        );
+        // The rehash a caller writes on `Previous` verifies under current.
+        let rehashed = hash("hunter2", rotating.current).unwrap();
+        assert_eq!(
+            verify_rotating(&rehashed, "hunter2", Peppers::single(new)).unwrap(),
+            Verified::Current
+        );
     }
 
     #[test]

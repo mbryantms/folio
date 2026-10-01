@@ -21,7 +21,9 @@ Without `COMIC_TRUSTED_PROXIES` set, every request appears to come from the reve
 | `GET /search/autocomplete` | 30 req/s | 60 req/s | 60 / 120 |
 | `POST /libraries/{id}/scan` | 1 / 5 min | 1 / 5 min | — |
 | `POST /auth/oidc/callback`, `POST /auth/local/login` | 5 / min | — | 10 |
-| `GET /opds/*` | 60 / min | — | 60 |
+| OPDS catalog / navigation / search (`/opds/v1/*`, `/opds/v2/*` except the rows below) — bucket `opds_catalog` | 30 / min | — | 60 |
+| OPDS reading path — downloads (`…/issues/{id}/file`, Komga-shape alias), PSE pages (`/opds/pse/*`), progress writes incl. KOReader sync — bucket `opds_stream` (independent of `opds_catalog`, security audit H-3.2) | 120 / min | — | 120 |
+| CBL imports — create (upload / URL / catalog), manual refresh, manual check (`cbl::quota`; admins exempt; Redis fixed 1 h window) | — | 20 / hour | — |
 | Failed-auth (any) | 10 / min / IP | — | — |
 | `POST /csp-report` | 100 / min | — | — |
 | `POST /ws/ticket` | 30 / s | — | — |
@@ -38,9 +40,11 @@ Without `COMIC_TRUSTED_PROXIES` set, every request appears to come from the reve
 - `Content-Type: application/json` body: `{ "error": { "code": "rate_limited", "message": "...", "retry_after_seconds": N } }`.
 - Failed-auth bucket triggers a 15 min IP-only OPDS lockout (returned as 401 even with valid creds during that window).
 
+Resource cap (not a rate): a non-admin user may own at most 50 server-fetched CBL lists (`source_kind` `url` or `catalog`) — each one is re-fetched by the hourly refresh sweep when it has a schedule. Over the cap, `POST /me/cbl-lists` returns `422 cbl.remote_list_limit`; uploads don't count.
+
 ## Metrics
 
-- `folio_rate_limit_denied_total{bucket="…"}`
+- `folio_rate_limit_denied_total{bucket="…"}` (the CBL import quota reports as `bucket="cbl_import"`)
 - `comic_rate_limit_remaining{bucket="…"}` (gauge, sampled per request)
 
 Alert when `folio_rate_limit_denied_total` for any auth bucket exceeds 100/hour — likely brute force in progress.

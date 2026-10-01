@@ -491,7 +491,9 @@ pub async fn fetch_and_hash_cover<C: ConnectionTrait>(
         url,
         crate::util::ssrf::MAX_IMAGE_BYTES,
         timeout,
-        false,
+        // SE-6 (WP-6.3): provider covers are https; match the persisting
+        // fetch path (`writers::fetch_cover_bytes`).
+        true,
     )
     .await
     {

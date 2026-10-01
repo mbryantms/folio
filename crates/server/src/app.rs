@@ -256,7 +256,19 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     // The operator-facing error message names the misconfiguration
     // and the recovery paths instead of leaving them to discover the
     // pepper regeneration via log spelunking.
-    if secrets.load_report.pepper_regenerated {
+    // L-1 (WP-6.3): a pepper rotation is the one *intended* way to get a
+    // fresh pepper next to existing hashes — the operator moved the old one
+    // to `secrets/pepper.previous`, so verifies fall back to it and rehash.
+    if secrets.load_report.pepper_previous_loaded {
+        tracing::warn!(
+            regenerated = secrets.load_report.pepper_regenerated,
+            "argon2 pepper rotation in progress: secrets/pepper.previous is loaded; \
+             passwords and app passwords verified against it are rehashed under the \
+             current pepper on next use. Delete pepper.previous once the rotation \
+             window is over (see docs/install/secrets-backup.md)."
+        );
+    }
+    if secrets.load_report.pepper_regenerated && !secrets.load_report.pepper_previous_loaded {
         let count = entity::user::Entity::find()
             .filter(entity::user::Column::PasswordHash.is_not_null())
             .count(&db)
@@ -555,6 +567,20 @@ pub fn router(state: AppState) -> Router {
         // JSON log stream, the /admin/logs ring buffer, and the client.
         .layer(tower_http::catch_panic::CatchPanicLayer::custom(handle_panic))
         .layer(axum::middleware::from_fn(auth::csrf::require_csrf))
+        // M-1 (security audit) / WP-6.3: explicit deny-by-default CORS.
+        // Rust is the single public origin — the web app, its JSON API,
+        // OPDS, and the Komga/KOReader shims are all served from it — so no
+        // cross-origin browser access is ever granted. `deny_all_cors()`
+        // configures no `allow_origin` / `allow_credentials`, which means:
+        // simple requests pass through untouched (no `Access-Control-*`
+        // headers, so a cross-origin page can't read the response), and any
+        // OPTIONS preflight is answered here with an empty 200 that carries
+        // no `Access-Control-Allow-Origin` (the browser then refuses the
+        // actual request). Non-browser clients (OPDS readers, KOReader,
+        // Komga-shaped apps) never consult CORS, so they're unaffected. It
+        // sits outside CSRF so a preflight never reaches the CSRF check.
+        // Regression guards: `tests/http_layers.rs::cors_*`.
+        .layer(deny_all_cors())
         // Order matters: outermost wraps innermost. `set_context` needs to run
         // before handlers so `Request::extensions::get::<RequestContext>()`
         // works inside extractors and handlers.
@@ -614,6 +640,15 @@ pub fn router(state: AppState) -> Router {
             crate::middleware::http_metrics::track,
         ))
         .with_state(state)
+}
+
+/// The explicit, deny-by-default CORS policy (security audit M-1). A bare
+/// `CorsLayer::new()` grants nothing: no allowed origin, method, header, or
+/// credentials. It exists to make the intent explicit — anyone adding a
+/// cross-origin surface later has to change this function (and its tests)
+/// on purpose rather than inheriting an accidental default.
+pub fn deny_all_cors() -> tower_http::cors::CorsLayer {
+    tower_http::cors::CorsLayer::new()
 }
 
 /// Panic handler for `CatchPanicLayer` (OBS-3). Converts a handler/middleware

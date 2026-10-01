@@ -952,7 +952,11 @@ pub async fn entries(
 #[utoipa::path(
     operation_id = "cbl_lists_upload",    post,
     path = "/me/cbl-lists/upload",
-    responses((status = 201, body = CblListView))
+    responses(
+        (status = 201, body = CblListView),
+        (status = 415, description = "not an XML / .cbl upload"),
+        (status = 429, description = "per-user CBL import quota exceeded"),
+    )
 )]
 #[handler]
 pub async fn upload(
@@ -960,6 +964,10 @@ pub async fn upload(
     user: CurrentUser,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
+    // M-5 (WP-6.3): every import counts against the per-user hourly quota.
+    if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
+        return resp;
+    }
     let mut bytes: Option<Vec<u8>> = None;
     let mut name_override: Option<String> = None;
     let mut description: Option<String> = None;
@@ -1049,7 +1057,11 @@ pub async fn upload(
     operation_id = "cbl_lists_create_from_json",    post,
     path = "/me/cbl-lists",
     request_body = CreateCblListReq,
-    responses((status = 201, body = CblListView))
+    responses(
+        (status = 201, body = CblListView),
+        (status = 422, description = "per-user URL/catalog list limit reached"),
+        (status = 429, description = "per-user CBL import quota exceeded"),
+    )
 )]
 #[handler]
 pub async fn create_from_json(
@@ -1057,6 +1069,15 @@ pub async fn create_from_json(
     user: CurrentUser,
     Json(req): Json<CreateCblListReq>,
 ) -> impl IntoResponse {
+    // M-5 (WP-6.3): both kinds make the server fetch a remote document now
+    // and (with a schedule) on every refresh sweep — cap the standing count,
+    // then charge the hourly import quota.
+    if let Err(resp) = crate::cbl::quota::check_remote_list_cap(&app, &user).await {
+        return resp;
+    }
+    if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
+        return resp;
+    }
     match req {
         CreateCblListReq::Url {
             url,
@@ -1429,7 +1450,10 @@ pub async fn delete_one(
     operation_id = "cbl_lists_refresh_one",    post,
     path = "/me/cbl-lists/{id}/refresh",
     params(("id" = String, Path,)),
-    responses((status = 200))
+    responses(
+        (status = 200),
+        (status = 429, description = "per-user CBL import quota exceeded"),
+    )
 )]
 #[handler]
 pub async fn refresh_one(
@@ -1442,6 +1466,9 @@ pub async fn refresh_one(
         Err(resp) => return resp,
     };
     if let Err(resp) = ensure_owner(&row, &user).await {
+        return resp;
+    }
+    if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
         return resp;
     }
     match refresh::refresh(&app.db, id, RefreshTrigger::Manual, false).await {
@@ -1545,7 +1572,10 @@ fn bulk_result(items: Vec<CblBulkItemView>) -> axum::response::Response {
     operation_id = "cbl_lists_check_one",    post,
     path = "/me/cbl-lists/{id}/check",
     params(("id" = String, Path,)),
-    responses((status = 200, body = CblBulkItemView))
+    responses(
+        (status = 200, body = CblBulkItemView),
+        (status = 429, description = "per-user CBL import quota exceeded"),
+    )
 )]
 #[handler]
 pub async fn check_one(
@@ -1560,6 +1590,9 @@ pub async fn check_one(
     if let Err(resp) = ensure_owner(&row, &user).await {
         return resp;
     }
+    if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
+        return resp;
+    }
     match crate::cbl::refresh::check(&app.db, id).await {
         Ok(outcome) => Json(item_from_check(&row, &outcome)).into_response(),
         Err(e) => {
@@ -1572,10 +1605,16 @@ pub async fn check_one(
 #[utoipa::path(
     operation_id = "cbl_lists_check_all",    post,
     path = "/me/cbl-lists/check-all",
-    responses((status = 200, body = CblBulkResultView))
+    responses(
+        (status = 200, body = CblBulkResultView),
+        (status = 429, description = "per-user CBL import quota exceeded"),
+    )
 )]
 #[handler]
 pub async fn check_all(State(app): State<AppState>, user: CurrentUser) -> impl IntoResponse {
+    if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
+        return resp;
+    }
     let lists = match refreshable_lists(&app, &user).await {
         Ok(l) => l,
         Err(resp) => return resp,
@@ -1597,10 +1636,16 @@ pub async fn check_all(State(app): State<AppState>, user: CurrentUser) -> impl I
 #[utoipa::path(
     operation_id = "cbl_lists_refresh_all",    post,
     path = "/me/cbl-lists/refresh-all",
-    responses((status = 200, body = CblBulkResultView))
+    responses(
+        (status = 200, body = CblBulkResultView),
+        (status = 429, description = "per-user CBL import quota exceeded"),
+    )
 )]
 #[handler]
 pub async fn refresh_all(State(app): State<AppState>, user: CurrentUser) -> impl IntoResponse {
+    if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
+        return resp;
+    }
     let lists = match refreshable_lists(&app, &user).await {
         Ok(l) => l,
         Err(resp) => return resp,

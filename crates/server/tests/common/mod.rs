@@ -613,9 +613,22 @@ pub struct SpawnOpts {
     /// When `Some`, gates `GET /metrics` behind this bearer token
     /// (`COMIC_METRICS_TOKEN`). `None` (default) leaves it open.
     pub metrics_token: Option<String>,
+    /// When `Some`, written to `secrets/pepper.previous` before the secrets
+    /// load — simulates an in-progress argon2 pepper rotation (L-1, WP-6.3).
+    pub previous_pepper: Option<[u8; 32]>,
 }
 
 impl TestApp {
+    /// Spawn mid-pepper-rotation: `previous` is loaded as
+    /// `secrets/pepper.previous` alongside a freshly generated current pepper.
+    pub async fn spawn_with_previous_pepper(previous: [u8; 32]) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            previous_pepper: Some(previous),
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
     /// Same as [`spawn`] but flips `cfg.smtp_host` / `smtp_from` to non-empty
     /// values so the `register` handler takes the `pending_verification`
     /// branch and the recovery endpoints exercise the "SMTP configured"
@@ -811,6 +824,15 @@ impl TestApp {
         let (redis_url, redis_lease) = acquire_redis_db(redis).await;
 
         let data_dir = tempfile::tempdir().expect("tempdir");
+        if let Some(prev) = opts.previous_pepper {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = data_dir.path().join("secrets");
+            std::fs::create_dir_all(&dir).expect("secrets dir");
+            let path = dir.join("pepper.previous");
+            std::fs::write(&path, prev).expect("write pepper.previous");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                .expect("chmod pepper.previous");
+        }
         let secrets = Secrets::load(data_dir.path()).expect("load secrets");
 
         let cfg = Config {

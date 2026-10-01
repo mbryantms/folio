@@ -67,7 +67,6 @@ fn provider_write<'a>(issue_id: &'a str, ident: &'a Identifier, url: &'a str) ->
         variant_label: None,
         variant_artist_person_id: None,
         bytes: COVER_BYTES,
-        ext: "jpg",
         width: None,
         height: None,
     }
@@ -392,4 +391,161 @@ async fn failed_variant_replace_keeps_the_previous_set() {
         ],
         "the failed replace rolled back — the previous variant set survives"
     );
+}
+
+// ───────── SE-6 / WP-6.3: provider cover bytes are magic-sniffed ─────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn non_image_cover_bytes_are_refused_before_anything_is_persisted() {
+    let f = fixture().await;
+    let ident = cv("6001");
+    for junk in [
+        &b"<!doctype html><html><body>404</body></html>"[..],
+        &b"{\"error\":\"not found\"}"[..],
+        &b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>"[..],
+        &b""[..],
+    ] {
+        let mut write = provider_write(&f.issue_id, &ident, "https://cv.example/cover.jpg");
+        write.bytes = junk;
+        let err = writers::apply_cover(&f.db, &f.data_path, write, CoverOverwritePolicy::Always)
+            .await
+            .expect_err("non-image bytes must be refused");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+    assert!(primary_rows(&f.db, &f.issue_id).await.is_empty());
+    assert!(cover_files(&f.data_path, &f.issue_id).is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stored_cover_extension_comes_from_the_bytes_not_the_url() {
+    let f = fixture().await;
+    let ident = cv("6002");
+    // PNG bytes behind a `.jpg` URL: the file (and therefore the served
+    // MIME) must say png.
+    let id = writers::apply_cover(
+        &f.db,
+        &f.data_path,
+        provider_write(&f.issue_id, &ident, "https://cv.example/actually-a-png.jpg"),
+        CoverOverwritePolicy::Always,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let row = primary_rows(&f.db, &f.issue_id)
+        .await
+        .into_iter()
+        .find(|r| r.id == id)
+        .unwrap();
+    assert!(
+        row.local_path.ends_with(".png"),
+        "local_path {:?} should carry the sniffed extension",
+        row.local_path
+    );
+}
+
+#[tokio::test]
+async fn cover_fetch_refuses_plain_http_before_any_network() {
+    // ComicVine + Metron cover URLs are https; a plain-http URL is refused at
+    // pre-flight (no DNS, no connect), so this needs no network.
+    let err = writers::fetch_cover_bytes("http://comicvine.gamespot.com/a/uploads/x.jpg")
+        .await
+        .expect_err("http cover URL must be refused");
+    assert!(
+        matches!(
+            err,
+            writers::CoverFetchError::Fetch(server::util::ssrf::FetchBytesError::Ssrf(
+                server::util::ssrf::SsrfError::SchemeNotHttps
+            ))
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn sniff_cover_accepts_images_only() {
+    assert!(writers::sniff_cover(COVER_BYTES).is_some());
+    assert!(writers::sniff_cover(&[0xFF, 0xD8, 0xFF, 0xE0]).is_some());
+    assert!(writers::sniff_cover(b"<html>").is_none());
+    assert!(writers::sniff_cover(b"").is_none());
+}
+
+async fn admin_cookie(app: &TestApp) -> String {
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode, header};
+    use tower::ServiceExt;
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"email":"cover-admin@example.com","password":"correctly-horse-battery"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    resp.headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .map(|c| c.split(';').next().unwrap_or("").to_owned())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cover_endpoint_serves_sniffed_mime_and_refuses_non_image_files() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header};
+    use tower::ServiceExt;
+
+    let f = fixture().await;
+    let cookie = admin_cookie(&f._app).await;
+    let ident = cv("6003");
+    let id = writers::apply_cover(
+        &f.db,
+        &f.data_path,
+        provider_write(&f.issue_id, &ident, "https://cv.example/served.jpg"),
+        CoverOverwritePolicy::Always,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let get = || async {
+        f._app
+            .router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/issues/{}/covers/{id}", f.issue_id))
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    };
+    let resp = get().await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()[header::CONTENT_TYPE], "image/png");
+    assert_eq!(resp.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+
+    // A legacy row whose file isn't an image (stored before the write-side
+    // sniff existed) is refused rather than served as image/*.
+    let row = primary_rows(&f.db, &f.issue_id)
+        .await
+        .into_iter()
+        .find(|r| r.id == id)
+        .unwrap();
+    std::fs::write(
+        f.data_path.join(&row.local_path),
+        b"<html>not a cover</html>",
+    )
+    .unwrap();
+    assert_eq!(get().await.status(), StatusCode::NOT_FOUND);
 }

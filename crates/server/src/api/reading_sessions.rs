@@ -1635,9 +1635,12 @@ async fn compute_reread_top_issues(
         issue_filter,
         series_filter,
     );
+    // L-4 (WP-6.3): bound, not interpolated.
+    params.push(Value::from(limit));
     sql.push_str(&format!(
         " GROUP BY rs.issue_id, i.title, i.number_raw, s.id, s.name \
-         ORDER BY reads DESC, active_ms DESC LIMIT {limit}",
+         ORDER BY reads DESC, active_ms DESC LIMIT ${}",
+        params.len()
     ));
 
     #[derive(FromQueryResult)]

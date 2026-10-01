@@ -266,14 +266,16 @@ pub async fn list(
     } else {
         format!(" WHERE {}", conds.join(" AND "))
     };
+    // L-4 (WP-6.3): bound, not interpolated.
+    params.push(Value::from((limit + 1) as i64));
     let sql = format!(
         "{credits_cte} \
          SELECT a.person, a.roles, a.credit_count, p.slug \
            FROM agg a \
            LEFT JOIN person p ON p.normalized_name = btrim(lower(a.person)){where_clause} \
           ORDER BY a.person ASC \
-          LIMIT {fetch}",
-        fetch = limit + 1,
+          LIMIT ${fetch}",
+        fetch = params.len(),
     );
 
     let backend = app.db.get_database_backend();

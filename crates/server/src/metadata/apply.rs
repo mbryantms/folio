@@ -1531,7 +1531,6 @@ pub(crate) async fn write_issue_fields(
                     variant_label: None,
                     variant_artist_person_id: None,
                     bytes: &bytes,
-                    ext: cover_ext_from_url(url).unwrap_or("jpg"),
                     width: None,
                     height: None,
                 };
@@ -2203,21 +2202,6 @@ async fn write_provenance_for_applied(
     Ok(())
 }
 
-fn cover_ext_from_url(url: &str) -> Option<&'static str> {
-    let lower = url.to_lowercase();
-    if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
-        Some("jpg")
-    } else if lower.ends_with(".png") {
-        Some("png")
-    } else if lower.ends_with(".webp") {
-        Some("webp")
-    } else if lower.ends_with(".gif") {
-        Some("gif")
-    } else {
-        None
-    }
-}
-
 fn date_from_db(d: sea_orm::prelude::Date) -> NaiveDate {
     NaiveDate::from_ymd_opt(d.year(), d.month(), d.day())
         .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
@@ -2309,13 +2293,5 @@ mod tests {
             MetadataField::Title,
             &args(ApplyMode::ReplaceAll, false)
         ));
-    }
-
-    #[test]
-    fn cover_ext_picks_extension() {
-        assert_eq!(cover_ext_from_url("https://x/img.JPG"), Some("jpg"));
-        assert_eq!(cover_ext_from_url("https://x/img.png"), Some("png"));
-        assert_eq!(cover_ext_from_url("https://x/img.webp"), Some("webp"));
-        assert_eq!(cover_ext_from_url("https://x/img"), None);
     }
 }

@@ -1415,3 +1415,144 @@ async fn series_provider_range_does_not_affect_cbl_resolution() {
         "CBL resolution must be unaffected by a provider-range mapping",
     );
 }
+
+// ───────── WP-6.3 / security-audit M-5: per-user CBL import quota ─────────
+
+const TINY_CBL: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<ReadingList><Name>Quota probe</Name><Books>
+<Book Series="Tech Jacket" Number="1" Volume="2002" Year="2002" />
+</Books></ReadingList>"#;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_quota_caps_non_admin_imports_per_hour() {
+    let app = TestApp::spawn().await;
+    // First registered user is the (exempt) admin.
+    let admin = register(&app, "quota-admin@example.com").await;
+    let user = register(&app, "quota-user@example.com").await;
+
+    for i in 0..server::cbl::quota::IMPORTS_PER_HOUR {
+        let (status, body) = upload_cbl(&app, &user, "probe.cbl", TINY_CBL.as_bytes()).await;
+        assert_eq!(status, StatusCode::CREATED, "import {i}: {body:#?}");
+    }
+    // Over quota → 429 before any parse/fetch work (Retry-After is pinned
+    // in `import_quota_sets_retry_after_header`).
+    let (status, body) = upload_cbl(&app, &user, "probe.cbl", TINY_CBL.as_bytes()).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body:#?}");
+    assert_eq!(body["error"]["code"], "rate_limited");
+    // Refresh / check count against the same window.
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists",
+        Some(&user),
+        Some(serde_json::json!({"kind": "url", "url": "https://example.invalid/x.cbl"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+
+    // Admins are exempt.
+    for i in 0..=server::cbl::quota::IMPORTS_PER_HOUR {
+        let (status, body) = upload_cbl(&app, &admin, "probe.cbl", TINY_CBL.as_bytes()).await;
+        assert_eq!(status, StatusCode::CREATED, "admin import {i}: {body:#?}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_quota_sets_retry_after_header() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "ra-admin@example.com").await;
+    let user = register(&app, "ra-user@example.com").await;
+    let send = || {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/api/me/cbl-lists/check-all")
+            .header(
+                header::COOKIE,
+                format!(
+                    "__Host-comic_session={}; __Host-comic_csrf={}",
+                    user.session, user.csrf
+                ),
+            )
+            .header("X-CSRF-Token", &user.csrf)
+            .body(Body::empty())
+            .unwrap()
+    };
+    for _ in 0..server::cbl::quota::IMPORTS_PER_HOUR {
+        let resp = app.router.clone().oneshot(send()).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+    let resp = app.router.clone().oneshot(send()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    let retry: i64 = resp
+        .headers()
+        .get(header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok())
+        .expect("Retry-After header");
+    assert!(
+        retry > 0 && retry <= server::cbl::quota::WINDOW_SECS,
+        "{retry}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_list_cap_rejects_new_url_import_without_fetching() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "cap-admin@example.com").await;
+    let user = register(&app, "cap-user@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let now = chrono::Utc::now().fixed_offset();
+    for i in 0..server::cbl::quota::MAX_REMOTE_LISTS_PER_USER {
+        entity::cbl_list::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            owner_user_id: Set(Some(user.user_id)),
+            source_kind: Set("url".into()),
+            source_url: Set(Some(format!("https://example.invalid/{i}.cbl"))),
+            catalog_source_id: Set(None),
+            catalog_path: Set(None),
+            github_blob_sha: Set(None),
+            source_etag: Set(None),
+            source_last_modified: Set(None),
+            raw_sha256: Set(vec![0u8; 32]),
+            raw_xml: Set(TINY_CBL.into()),
+            parsed_name: Set(format!("list {i}")),
+            parsed_matchers_present: Set(false),
+            num_issues_declared: Set(None),
+            description: Set(None),
+            imported_at: Set(now),
+            last_refreshed_at: Set(None),
+            last_match_run_at: Set(None),
+            refresh_schedule: Set(Some("@hourly".into())),
+            created_at: Set(now),
+            updated_at: Set(now),
+            preserve_canonical_order: Set(false),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+    }
+    // `.invalid` never resolves, so a 422 (not a 400 invalid_url / 502) proves
+    // the cap fires before any outbound fetch is attempted.
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists",
+        Some(&user),
+        Some(serde_json::json!({"kind": "url", "url": "https://example.invalid/new.cbl"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+    assert_eq!(body["error"]["code"], "cbl.remote_list_limit");
+    // Uploads aren't server-fetched, so they don't count against the cap.
+    let (status, body) = upload_cbl(&app, &user, "probe.cbl", TINY_CBL.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{body:#?}");
+}
