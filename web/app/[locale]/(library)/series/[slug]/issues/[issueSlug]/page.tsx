@@ -47,6 +47,7 @@ import { Stat } from "@/components/library/Stat";
 import { UserRating } from "@/components/library/UserRating";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { MarkersList } from "@/components/markers/MarkersList";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
@@ -416,6 +417,7 @@ export default async function IssuePage({
             <TabsTrigger value="appearances">Appears in</TabsTrigger>
           )}
           {hasActivity && <TabsTrigger value="activity">Activity</TabsTrigger>}
+          <TabsTrigger value="markers">Your notes</TabsTrigger>
         </TabsList>
 
         {/* Credits and Cast are lightweight, high-traffic tabs, so they stay
@@ -822,6 +824,11 @@ export default async function IssuePage({
               />
             </StackedTabsPanel>
           )}
+          {/* WP-5.2: the caller's markers on this issue (same list as
+              /bookmarks, scoped server-side by issue_id). */}
+          <StackedTabsPanel value="markers">
+            <MarkersList scope={{ kind: "issue", issueId: issue.id }} />
+          </StackedTabsPanel>
         </StableTabsPanelStack>
       </Tabs>
 

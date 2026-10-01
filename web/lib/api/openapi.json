@@ -5769,6 +5769,15 @@
             }
           },
           {
+            "name": "series_id",
+            "in": "query",
+            "description": "series UUID",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "q",
             "in": "query",
             "required": false,

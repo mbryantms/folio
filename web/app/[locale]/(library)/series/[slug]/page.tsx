@@ -34,6 +34,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { SeriesActivityTab } from "@/components/activity/SeriesActivityTab";
+import { MarkersList } from "@/components/markers/MarkersList";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
@@ -308,6 +309,7 @@ export default async function SeriesPage({
             <TabsTrigger value="appearances">Appears in</TabsTrigger>
           )}
           <TabsTrigger value="activity">Activity</TabsTrigger>
+          <TabsTrigger value="markers">Your notes</TabsTrigger>
         </TabsList>
         {/* Keep the common, lightweight metadata tabs in one force-mounted
             grid cell so the issue list below does not jump between Credits
@@ -603,6 +605,11 @@ export default async function SeriesPage({
                 null
               }
             />
+          </StackedTabsPanel>
+          {/* WP-5.2: the caller's markers in this series (same list as
+              /bookmarks, scoped server-side by series_id). */}
+          <StackedTabsPanel value="markers">
+            <MarkersList scope={{ kind: "series", seriesId: series.id }} />
           </StackedTabsPanel>
         </StableTabsPanelStack>
       </Tabs>

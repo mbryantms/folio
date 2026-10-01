@@ -71,6 +71,9 @@ export function useReaderKeymap(opts: {
   /** Open / close the page-text panel (WP-4.8). Optional so callers
    *  that don't host the panel can omit it. */
   togglePageText?: () => void;
+  /** Open / close the marker drawer (WP-5.2). Optional like
+   *  `togglePageText`. */
+  toggleMarkerDrawer?: () => void;
   /** Called for `quitReader` when no end-card override fires. The
    *  caller decides router push, exit URL, etc. */
   onQuitReader: () => void;
@@ -111,6 +114,7 @@ export function useReaderKeymap(opts: {
     beginHighlight,
     beginCaptureText,
     togglePageText,
+    toggleMarkerDrawer,
     onQuitReader,
     onDismissEndCard,
     onCollapseChrome,
@@ -247,6 +251,9 @@ export function useReaderKeymap(opts: {
         case "togglePageText":
           togglePageText?.();
           break;
+        case "toggleMarkerDrawer":
+          toggleMarkerDrawer?.();
+          break;
         case "favoritePage":
           toggleFavorite();
           break;
@@ -307,6 +314,7 @@ export function useReaderKeymap(opts: {
     toggleMarkersHidden,
     togglePageStrip,
     togglePageText,
+    toggleMarkerDrawer,
     totalPages,
     viewMode,
     zoomIn,

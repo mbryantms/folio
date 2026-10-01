@@ -1898,6 +1898,8 @@ export function useCblRefreshLog(id: string, opts?: { limit?: number }) {
 export type MarkerListFilters = {
   kind?: MarkerKind;
   issue_id?: string;
+  /** Scope to one series (series page "Your notes" tab, WP-5.2). */
+  series_id?: string;
   q?: string;
   is_favorite?: boolean;
   /** Comma-separated tag list. Empty / undefined skips the filter. */
@@ -1919,6 +1921,7 @@ export function useMarkers(filters: MarkerListFilters = {}) {
   const params: Record<string, string> = {};
   if (filters.kind) params.kind = filters.kind;
   if (filters.issue_id) params.issue_id = filters.issue_id;
+  if (filters.series_id) params.series_id = filters.series_id;
   if (filters.q) params.q = filters.q;
   if (filters.is_favorite === true) params.is_favorite = "true";
   if (filters.tags) params.tags = filters.tags;
@@ -1941,6 +1944,7 @@ export function useMarkersInfinite(filters: MarkerListFilters = {}) {
   const params: Record<string, string> = {};
   if (rest.kind) params.kind = rest.kind;
   if (rest.issue_id) params.issue_id = rest.issue_id;
+  if (rest.series_id) params.series_id = rest.series_id;
   if (rest.q) params.q = rest.q;
   if (rest.is_favorite === true) params.is_favorite = "true";
   if (rest.tags) params.tags = rest.tags;

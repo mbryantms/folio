@@ -87,11 +87,21 @@ const CARD_SIZE_STEP = 20;
 const CARD_SIZE_DEFAULT = 140;
 const CARD_SIZE_STORAGE_KEY = "folio.bookmarks.cardSize";
 
+/** Preset server-side scope for an embedded list (WP-5.2). */
+export type MarkersListScope =
+  { kind: "series"; seriesId: string } | { kind: "issue"; issueId: string };
+
 /** Global feed for the `/bookmarks` page. Renders every kind grouped by
  *  series with a filter chip row and debounced search. Each card jumps
  *  to the reader at the right page; inline kebab handles delete (full
- *  edit lives in the reader to reuse the marker editor sheet). */
-export function MarkersList() {
+ *  edit lives in the reader to reuse the marker editor sheet).
+ *
+ *  With a `scope` (WP-5.2) the same list is embedded as the "Your notes"
+ *  tab on a series or issue page: the scope rides as a server-side filter
+ *  (`series_id` / `issue_id`), the page header and export menu are
+ *  dropped, and cards render newest-first without series grouping. */
+export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
+  const embedded = scope !== undefined;
   // One-time touch hint for the now-persistent cover kebab (audit B16).
   useCoarsePointerActionsHint();
   const [filter, setFilter] = React.useState<KindFilter>("all");
@@ -128,6 +138,8 @@ export function MarkersList() {
   // Filters (kind, favorite, tags, search) all drive server-side
   // query params, not client-side `.filter()` over the loaded page.
   const query = useMarkersInfinite({
+    series_id: scope?.kind === "series" ? scope.seriesId : undefined,
+    issue_id: scope?.kind === "issue" ? scope.issueId : undefined,
     kind: kindFilter,
     is_favorite: isFavoriteFilter ? true : undefined,
     q: debouncedSearch || undefined,
@@ -149,7 +161,9 @@ export function MarkersList() {
   // Grouped-by-series (default) ⇄ flat newest-first. The server already
   // returns markers newest-updated first, so "flat" just renders the
   // loaded order without the per-series grouping pass.
-  const [layout, setLayout] = React.useState<"grouped" | "flat">("grouped");
+  const [layout, setLayout] = React.useState<"grouped" | "flat">(
+    embedded ? "flat" : "grouped",
+  );
   const selection = useSelection(items);
   const bulkDelete = useBulkDeleteMarkers();
   const createMarker = useCreateMarker();
@@ -242,58 +256,68 @@ export function MarkersList() {
     );
   }
 
+  const headerActions = (
+    <>
+      {/* `w-full` only below `sm` — there it stacks above the buttons;
+          from `sm` up it's a fixed width so the Select + card-size
+          controls share the row instead of wrapping underneath (was
+          `w-full max-w-xs`, which claimed the whole actions row at every
+          width). */}
+      <div className="relative w-full sm:w-64">
+        <SearchIcon
+          className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2"
+          aria-hidden="true"
+        />
+        <Input
+          type="search"
+          value={rawSearch}
+          onChange={(e) => setRawSearch(e.target.value)}
+          placeholder="Filter saved markers"
+          aria-label="Filter saved markers"
+          className="pl-8"
+        />
+      </div>
+      {items.length > 0 || selection.selectMode ? (
+        <SelectModeButton
+          ref={selectButtonRef}
+          active={selection.selectMode}
+          onEnter={() => selection.enter()}
+          onExit={() => selection.exit()}
+        />
+      ) : null}
+      {embedded ? null : <NotesExportMenu />}
+      <CardSizeOptions
+        cardSize={cardSize}
+        onCardSize={setCardSize}
+        min={CARD_SIZE_MIN}
+        max={CARD_SIZE_MAX}
+        step={CARD_SIZE_STEP}
+        defaultSize={CARD_SIZE_DEFAULT}
+        fieldId="bookmarks-card-size"
+        description="Tighten or loosen the bookmarks grid. Saved per browser."
+      />
+    </>
+  );
+
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Bookmarks"
-        description={
-          markerCount.data
-            ? `${markerCount.data.total} saved across your library — every page bookmark, note, favorite, and highlight.`
-            : "Every page bookmark, note, favorite, and highlight you’ve saved across your library."
-        }
-        actions={
-          <>
-            {/* `w-full` only below `sm` — there it stacks above the
-                buttons; from `sm` up it's a fixed width so the Select +
-                card-size controls share the row instead of wrapping
-                underneath (was `w-full max-w-xs`, which claimed the whole
-                actions row at every width). */}
-            <div className="relative w-full sm:w-64">
-              <SearchIcon
-                className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2"
-                aria-hidden="true"
-              />
-              <Input
-                type="search"
-                value={rawSearch}
-                onChange={(e) => setRawSearch(e.target.value)}
-                placeholder="Filter saved markers"
-                aria-label="Filter saved markers"
-                className="pl-8"
-              />
-            </div>
-            {items.length > 0 || selection.selectMode ? (
-              <SelectModeButton
-                ref={selectButtonRef}
-                active={selection.selectMode}
-                onEnter={() => selection.enter()}
-                onExit={() => selection.exit()}
-              />
-            ) : null}
-            <NotesExportMenu />
-            <CardSizeOptions
-              cardSize={cardSize}
-              onCardSize={setCardSize}
-              min={CARD_SIZE_MIN}
-              max={CARD_SIZE_MAX}
-              step={CARD_SIZE_STEP}
-              defaultSize={CARD_SIZE_DEFAULT}
-              fieldId="bookmarks-card-size"
-              description="Tighten or loosen the bookmarks grid. Saved per browser."
-            />
-          </>
-        }
-      />
+      {embedded ? (
+        // Embedded in a series / issue tab: the tab already names the
+        // surface, so only the controls row renders (no second h1).
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {headerActions}
+        </div>
+      ) : (
+        <PageHeader
+          title="Bookmarks"
+          description={
+            markerCount.data
+              ? `${markerCount.data.total} saved across your library — every page bookmark, note, favorite, and highlight.`
+              : "Every page bookmark, note, favorite, and highlight you’ve saved across your library."
+          }
+          actions={headerActions}
+        />
+      )}
 
       <SelectionToolbar
         open={selection.selectMode}
@@ -333,8 +357,10 @@ export function MarkersList() {
             </FilterPill>
           ))}
         </div>
-        {/* Grouped-by-series ⇄ flat newest-first (audit B11). */}
+        {/* Grouped-by-series ⇄ flat newest-first (audit B11). Hidden
+            when scoped to one series / issue — grouping is moot there. */}
         <div
+          hidden={embedded}
           role="group"
           aria-label="Marker layout"
           className="bg-muted ml-auto inline-flex items-center gap-0.5 rounded-md p-0.5"
@@ -426,7 +452,7 @@ export function MarkersList() {
           Failed to load markers.
         </div>
       ) : items.length === 0 ? (
-        <EmptyState hasFilter={hasFilterOrSearch} />
+        <EmptyState hasFilter={hasFilterOrSearch} scope={scope} />
       ) : (
         <div className="space-y-8">
           {layout === "grouped" ? (
@@ -1013,11 +1039,24 @@ function MarkerCard({
   );
 }
 
-function EmptyState({ hasFilter }: { hasFilter: boolean }) {
+function EmptyState({
+  hasFilter,
+  scope,
+}: {
+  hasFilter: boolean;
+  scope?: MarkersListScope;
+}) {
   return (
     <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm">
       {hasFilter ? (
         <>No markers match the current filter.</>
+      ) : scope ? (
+        <>
+          No markers{" "}
+          {scope.kind === "series" ? "in this series" : "in this issue"} yet. In
+          the reader, press <Kbd>b</Kbd> to bookmark a page, <Kbd>n</Kbd> to add
+          a note, or <Kbd>h</Kbd> to highlight.
+        </>
       ) : (
         <>
           You haven&apos;t saved any markers yet. Open the reader and press{" "}

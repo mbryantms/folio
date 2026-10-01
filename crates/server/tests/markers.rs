@@ -1473,3 +1473,288 @@ async fn bulk_delete_validates_cap_and_allows_empty() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "validation");
 }
+
+// ───────── WP-5.2: series filter + DI-20 ACL / removed_at ─────────
+
+async fn create_bookmark(app: &TestApp, auth: &Authed, issue_id: &str, page: i32) -> String {
+    let (status, m) = http(
+        app,
+        Method::POST,
+        "/api/me/markers",
+        Some(auth),
+        Some(serde_json::json!({
+            "issue_id": issue_id,
+            "page_index": page,
+            "kind": "bookmark",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{m}");
+    m["id"].as_str().unwrap().to_owned()
+}
+
+async fn list_ids(app: &TestApp, auth: &Authed, query: &str) -> Vec<String> {
+    let (status, body) = http(
+        app,
+        Method::GET,
+        &format!("/api/me/markers{query}"),
+        Some(auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_filters_by_series_id() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "series-filter@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let (_l1, series_a, issue_a) = seed_issue(&app, "series-a").await;
+    let (_l2, series_b, issue_b) = seed_issue(&app, "series-b").await;
+    let in_a = create_bookmark(&app, &auth, &issue_a, 0).await;
+    let in_b = create_bookmark(&app, &auth, &issue_b, 1).await;
+
+    assert_eq!(
+        list_ids(&app, &auth, &format!("?series_id={series_a}")).await,
+        [in_a]
+    );
+    assert_eq!(
+        list_ids(&app, &auth, &format!("?series_id={series_b}")).await,
+        [in_b]
+    );
+    // Combines with the other filters (AND).
+    assert!(
+        list_ids(
+            &app,
+            &auth,
+            &format!("?series_id={series_a}&issue_id={issue_b}")
+        )
+        .await
+        .is_empty()
+    );
+    assert_eq!(list_ids(&app, &auth, "").await.len(), 2);
+
+    // A malformed id is a parse-shape error (400), not a silent "all".
+    let (status, _) = http(
+        &app,
+        Method::GET,
+        "/api/me/markers?series_id=not-a-uuid",
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_hides_markers_on_removed_issues() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "removed@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let (_lib, _series, live) = seed_issue(&app, "live").await;
+    let (_lib2, _series2, gone) = seed_issue(&app, "gone").await;
+    let keep = create_bookmark(&app, &auth, &live, 0).await;
+    create_bookmark(&app, &auth, &gone, 0).await;
+    assert_eq!(list_ids(&app, &auth, "").await.len(), 2);
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let row = entity::issue::Entity::find_by_id(gone.clone())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::issue::ActiveModel = row.into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(&db).await.unwrap();
+
+    assert_eq!(list_ids(&app, &auth, "").await, [keep]);
+    assert!(
+        list_ids(&app, &auth, &format!("?issue_id={gone}"))
+            .await
+            .is_empty()
+    );
+    // The marker itself is untouched — only hidden from the list.
+    assert_eq!(
+        entity::marker::Entity::find().all(&db).await.unwrap().len(),
+        2
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_rechecks_library_grant_and_age_cap() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "acl-admin@example.com").await;
+    promote_to_admin(&app, admin.user_id).await;
+    let user = register(&app, "acl-user@example.com").await;
+    let (lib, series_id, issue_id) = seed_issue(&app, "acl-lib").await;
+    grant_library(&app, user.user_id, lib).await;
+    let id = create_bookmark(&app, &user, &issue_id, 0).await;
+    assert_eq!(list_ids(&app, &user, "").await, [id]);
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+
+    // Age cap below the series rating hides it.
+    let series = entity::series::Entity::find_by_id(series_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut sam: entity::series::ActiveModel = series.into();
+    sam.age_rating = Set(Some("Mature 17+".into()));
+    sam.update(&db).await.unwrap();
+    let grant = entity::library_user_access::Entity::find_by_id((lib, user.user_id))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut gam: entity::library_user_access::ActiveModel = grant.into();
+    gam.age_rating_max = Set(Some("Teen".into()));
+    gam.update(&db).await.unwrap();
+    assert!(list_ids(&app, &user, "").await.is_empty());
+
+    // Revoking the grant hides it too.
+    entity::library_user_access::Entity::delete_by_id((lib, user.user_id))
+        .exec(&db)
+        .await
+        .unwrap();
+    assert!(list_ids(&app, &user, "").await.is_empty());
+
+    // Admins are unrestricted: their own markers on the same issue list.
+    let admin_marker = create_bookmark(&app, &admin, &issue_id, 1).await;
+    assert_eq!(list_ids(&app, &admin, "").await, [admin_marker]);
+}
+
+/// Tag a marker via PATCH so the tag index has something to count.
+async fn tag_marker(app: &TestApp, auth: &Authed, id: &str, tags: &[&str]) {
+    let (status, body) = http(
+        app,
+        Method::PATCH,
+        &format!("/api/me/markers/{id}"),
+        Some(auth),
+        Some(serde_json::json!({ "tags": tags, "body": "findable words" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+async fn count_search_tags(app: &TestApp, auth: &Authed) -> (u64, usize, Vec<(String, u64)>) {
+    let (_, c) = http(app, Method::GET, "/api/me/markers/count", Some(auth), None).await;
+    let (_, s) = http(
+        app,
+        Method::GET,
+        "/api/me/markers/search?q=findable",
+        Some(auth),
+        None,
+    )
+    .await;
+    let (_, t) = http(app, Method::GET, "/api/me/markers/tags", Some(auth), None).await;
+    (
+        c["total"].as_u64().unwrap(),
+        s["items"].as_array().unwrap().len(),
+        t["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                (
+                    e["tag"].as_str().unwrap().to_owned(),
+                    e["count"].as_u64().unwrap(),
+                )
+            })
+            .collect(),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_search_and_tags_hide_removed_issues() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "badge-removed@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let (_l1, _s1, live) = seed_issue(&app, "badge-live").await;
+    let (_l2, _s2, gone) = seed_issue(&app, "badge-gone").await;
+    let a = create_bookmark(&app, &auth, &live, 0).await;
+    let b = create_bookmark(&app, &auth, &gone, 0).await;
+    tag_marker(&app, &auth, &a, &["shared", "live"]).await;
+    tag_marker(&app, &auth, &b, &["shared", "gone"]).await;
+
+    let (count, hits, tags) = count_search_tags(&app, &auth).await;
+    assert_eq!((count, hits), (2, 2));
+    assert!(tags.contains(&("shared".into(), 2)));
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let row = entity::issue::Entity::find_by_id(gone.clone())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::issue::ActiveModel = row.into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(&db).await.unwrap();
+
+    let (count, hits, tags) = count_search_tags(&app, &auth).await;
+    assert_eq!(count, 1, "badge must match the list");
+    assert_eq!(hits, 1);
+    assert!(tags.contains(&("shared".into(), 1)), "{tags:?}");
+    assert!(tags.contains(&("live".into(), 1)), "{tags:?}");
+    assert!(!tags.iter().any(|(t, _)| t == "gone"), "{tags:?}");
+    assert_eq!(list_ids(&app, &auth, "").await.len() as u64, count);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_search_and_tags_recheck_grant_and_age_cap() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "badge-admin@example.com").await;
+    promote_to_admin(&app, admin.user_id).await;
+    let user = register(&app, "badge-user@example.com").await;
+    let (lib, series_id, issue_id) = seed_issue(&app, "badge-acl").await;
+    grant_library(&app, user.user_id, lib).await;
+    let id = create_bookmark(&app, &user, &issue_id, 0).await;
+    tag_marker(&app, &user, &id, &["capped"]).await;
+    assert_eq!(
+        count_search_tags(&app, &user).await,
+        (1, 1, vec![("capped".into(), 1)])
+    );
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    // Age cap below the (inherited) series rating hides it everywhere.
+    let series = entity::series::Entity::find_by_id(series_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut sam: entity::series::ActiveModel = series.into();
+    sam.age_rating = Set(Some("Mature 17+".into()));
+    sam.update(&db).await.unwrap();
+    let grant = entity::library_user_access::Entity::find_by_id((lib, user.user_id))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut gam: entity::library_user_access::ActiveModel = grant.into();
+    gam.age_rating_max = Set(Some("Teen".into()));
+    gam.update(&db).await.unwrap();
+    assert_eq!(count_search_tags(&app, &user).await, (0, 0, vec![]));
+
+    // Lift the cap, then revoke the grant: hidden again.
+    let grant = entity::library_user_access::Entity::find_by_id((lib, user.user_id))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut gam: entity::library_user_access::ActiveModel = grant.into();
+    gam.age_rating_max = Set(None);
+    gam.update(&db).await.unwrap();
+    assert_eq!(count_search_tags(&app, &user).await.0, 1);
+    entity::library_user_access::Entity::delete_by_id((lib, user.user_id))
+        .exec(&db)
+        .await
+        .unwrap();
+    assert_eq!(count_search_tags(&app, &user).await, (0, 0, vec![]));
+}

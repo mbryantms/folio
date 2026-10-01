@@ -123,3 +123,11 @@ export const PageTextPanel = dynamic(
   () => import("./PageTextPanel").then((m) => m.PageTextPanel),
   { ssr: false },
 );
+
+export const preloadMarkerDrawer = () => import("./MarkerDrawer");
+/** Marker drawer (WP-5.2): this issue's markers in page order. Mounted
+ *  on first open and kept mounted, like the page-text panel. */
+export const MarkerDrawer = dynamic(
+  () => import("./MarkerDrawer").then((m) => m.MarkerDrawer),
+  { ssr: false },
+);

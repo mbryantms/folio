@@ -65,6 +65,7 @@ import {
   EndOfIssueCard,
   MarkerEditor,
   MarkerModePill,
+  MarkerDrawer,
   MarkerOverlay,
   PageStrip,
   PageTextPanel,
@@ -74,6 +75,7 @@ import {
 } from "./lazy";
 import { ReaderSkipLinks } from "./ReaderSkipLinks";
 import { usePageTextPanel } from "@/lib/reader/page-text";
+import { useMarkerDrawer } from "@/lib/reader/marker-drawer";
 import { PageImage } from "./PageImage";
 
 export function Reader({
@@ -200,6 +202,14 @@ export function Reader({
     setPageTextMounted(true);
   }
   useEffect(() => () => usePageTextPanel.getState().setOpen(false), []);
+  // Same recipe for the marker drawer (WP-5.2).
+  const markerDrawerOpen = useMarkerDrawer((s) => s.open);
+  const toggleMarkerDrawer = useMarkerDrawer((s) => s.toggle);
+  const [markerDrawerMounted, setMarkerDrawerMounted] = useState(false);
+  if (markerDrawerOpen && !markerDrawerMounted) {
+    setMarkerDrawerMounted(true);
+  }
+  useEffect(() => () => useMarkerDrawer.getState().setOpen(false), []);
 
   // First-run orientation overlay (audit C5). Read the localStorage flag
   // via useSyncExternalStore so it's SSR-safe (server snapshot = "seen",
@@ -694,6 +704,7 @@ export function Reader({
     beginHighlight,
     beginCaptureText,
     togglePageText,
+    toggleMarkerDrawer,
     onQuitReader: handleQuitReader,
     onDismissEndCard: dismissEndCard,
     onCollapseChrome: () => setChromeVisible(false),
@@ -1035,6 +1046,13 @@ export function Reader({
           issueId={issueId}
           pages={viewMode === "double" ? visiblePages : [currentPage]}
           direction={direction}
+        />
+      ) : null}
+      {markerDrawerMounted ? (
+        <MarkerDrawer
+          issueId={issueId}
+          currentPage={currentPage}
+          onJump={setPage}
         />
       ) : null}
       {markerModeForKeybinds !== "idle" ? (
