@@ -62,7 +62,8 @@ vi.mock("@/lib/api/queries", () => ({
   }),
 }));
 
-import { BrowseTabs, parseBrowseTab } from "@/components/library/BrowseTabs";
+import { BrowseTabs } from "@/components/library/BrowseTabs";
+import { parseBrowseTab } from "@/components/library/browse-tabs";
 
 describe("BrowseTabs", () => {
   beforeEach(() => {

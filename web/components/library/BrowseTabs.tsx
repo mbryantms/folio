@@ -6,27 +6,13 @@ import * as React from "react";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { CreatorsIndex } from "@/components/library/CreatorsIndex";
 import { EntityIndex } from "@/components/library/EntityIndex";
+import {
+  BROWSE_TABS,
+  parseBrowseTab,
+  type BrowseTab,
+} from "@/components/library/browse-tabs";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ENTITY_KINDS } from "@/lib/entities";
-
-/** Tabs on `/browse` (WP-5.5), in display order. The four entity kinds
- *  share `EntityIndex`; creators reuse the existing `CreatorsIndex`,
- *  which already has the same search + A–Z rail + cursor-paginated
- *  card grid shape. */
-export const BROWSE_TABS = [
-  "characters",
-  "teams",
-  "arcs",
-  "publishers",
-  "creators",
-] as const;
-export type BrowseTab = (typeof BROWSE_TABS)[number];
-
-export function parseBrowseTab(raw: string | undefined | null): BrowseTab {
-  return (BROWSE_TABS as readonly string[]).includes(raw ?? "")
-    ? (raw as BrowseTab)
-    : "characters";
-}
 
 function tabLabel(tab: BrowseTab): string {
   return tab === "creators" ? "Creators" : ENTITY_KINDS[tab].plural;
