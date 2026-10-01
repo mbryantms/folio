@@ -51,6 +51,7 @@ import { MarkersList } from "@/components/markers/MarkersList";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
+  MarkerListView,
   AppearancesView,
   ExternalIdRow,
   ExternalIdsListResp,
@@ -123,6 +124,7 @@ export default async function IssuePage({
     prevIssue,
     issueExternalIds,
     appearances,
+    hasNotes,
   ] = await Promise.all([
     apiGet<SeriesView>(`/series/${seriesSlug}`).catch(() => null),
     apiGet<{ records: ProgressLike[] }>(`/progress`)
@@ -152,6 +154,13 @@ export default async function IssuePage({
     apiGet<AppearancesView>(
       `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/appearances`,
     ).catch(() => null),
+    // "Your notes" tab only shows when the caller has a marker on this
+    // issue — a one-row probe of the same list the tab renders.
+    apiGet<MarkerListView>(
+      `/me/markers?issue_id=${encodeURIComponent(issue.id)}&limit=1`,
+    )
+      .then((page) => page.items.length > 0)
+      .catch(() => false),
   ]);
   const hasActivity = (activityStats?.totals.sessions ?? 0) > 0;
   const hasAppearances =
@@ -417,7 +426,7 @@ export default async function IssuePage({
             <TabsTrigger value="appearances">Appears in</TabsTrigger>
           )}
           {hasActivity && <TabsTrigger value="activity">Activity</TabsTrigger>}
-          <TabsTrigger value="markers">Your notes</TabsTrigger>
+          {hasNotes && <TabsTrigger value="markers">Your notes</TabsTrigger>}
         </TabsList>
 
         {/* Credits and Cast are lightweight, high-traffic tabs, so they stay
@@ -831,9 +840,11 @@ export default async function IssuePage({
           )}
           {/* WP-5.2: the caller's markers on this issue (same list as
               /bookmarks, scoped server-side by issue_id). */}
-          <StackedTabsPanel value="markers">
-            <MarkersList scope={{ kind: "issue", issueId: issue.id }} />
-          </StackedTabsPanel>
+          {hasNotes && (
+            <StackedTabsPanel value="markers">
+              <MarkersList scope={{ kind: "issue", issueId: issue.id }} />
+            </StackedTabsPanel>
+          )}
         </StableTabsPanelStack>
       </Tabs>
 
