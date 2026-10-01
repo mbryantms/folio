@@ -18,6 +18,8 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useCallback, useEffect } from "react";
 
+import { ProviderCoverImage } from "@/components/library/ProviderCoverImage";
+
 export type ViewerCover = {
   /** Full-resolution image URL (same URL the thumbnail used, so it's cached). */
   src: string;
@@ -102,12 +104,14 @@ export function CoverViewer({
 
           {/* Image — fit within the safe viewport, never upscaled past the
               container. `object-contain` preserves the cover aspect. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          {/* A provider hotlink that refuses to load (GCD's challenged
+              CDN) shows the muted placeholder, not a broken image. */}
+          <ProviderCoverImage
+            key={current.src}
             src={current.src}
             alt={current.label}
             className="relative max-h-[calc(100dvh_-_var(--safe-top)_-_var(--safe-bottom)_-_4rem)] max-w-[92vw] object-contain select-none"
-            draggable={false}
+            placeholderClassName="bg-muted relative aspect-2/3 h-[60dvh] max-w-[92vw] rounded"
           />
 
           {/* Close button, top-right, clear of the status bar. */}

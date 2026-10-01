@@ -486,6 +486,11 @@ pub async fn fetch_and_hash_cover<C: ConnectionTrait>(
         Ok(None) => {}
         Err(e) => tracing::debug!(url, error = %e, "phash fetch: cache read failed"),
     }
+    // A cover host behind a bot challenge (GCD's CDN) can't be hashed —
+    // treat the candidate as cover-less without touching the network.
+    if crate::metadata::cover_block::blocked_host(url).is_some() {
+        return None;
+    }
     let fetched = match crate::util::ssrf::fetch_public_bytes_pooled(
         client,
         url,
@@ -498,6 +503,10 @@ pub async fn fetch_and_hash_cover<C: ConnectionTrait>(
     .await
     {
         Ok(fetched) => fetched,
+        Err(crate::util::ssrf::FetchBytesError::Challenged { host, .. }) => {
+            crate::metadata::cover_block::note_blocked(&host);
+            return None;
+        }
         Err(e) => {
             tracing::debug!(url, error = %e, "phash fetch: fetch failed");
             return None;

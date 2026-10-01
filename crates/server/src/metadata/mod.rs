@@ -29,6 +29,7 @@ pub mod cache;
 pub mod comicvine;
 pub mod completeness;
 pub mod composite;
+pub mod cover_block;
 pub mod cover_hash_cache;
 pub mod diff;
 pub mod drift;

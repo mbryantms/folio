@@ -960,7 +960,7 @@ impl MetadataProvider for ComicVineClient {
         // https-only + magic-sniffed (SE-6, WP-6.3).
         crate::metadata::writers::fetch_cover_bytes(url)
             .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))
+            .map_err(ProviderError::from)
     }
 }
 

@@ -353,6 +353,9 @@ fn classify(err: &ProviderError) -> (StatusCode, &'static str) {
         ProviderError::Transport(_) => (StatusCode::BAD_GATEWAY, "metadata.transport"),
         ProviderError::InvalidResponse(_) => (StatusCode::BAD_GATEWAY, "metadata.invalid_response"),
         ProviderError::Upstream(_) => (StatusCode::BAD_GATEWAY, "metadata.upstream"),
+        ProviderError::CoverUnavailable(_) => {
+            (StatusCode::BAD_GATEWAY, "metadata.cover_unavailable")
+        }
     }
 }
 

@@ -54,6 +54,17 @@ pub enum FetchBytesError {
     Transport(String),
     #[error("upstream returned status {0}")]
     HttpStatus(reqwest::StatusCode),
+    /// The host answered with a bot-protection interstitial (Cloudflare's
+    /// `cf-mitigated: challenge`) instead of the resource. Not retryable
+    /// by a server-side client — only a browser that runs the challenge
+    /// script gets through — so callers fail fast instead of retrying.
+    #[error(
+        "{host} answered with a bot challenge (status {status}); it refuses non-browser downloads"
+    )]
+    Challenged {
+        host: String,
+        status: reqwest::StatusCode,
+    },
     #[error("response exceeds {max_bytes} bytes")]
     TooLarge { max_bytes: usize },
     #[error("missing or invalid redirect location")]
@@ -104,6 +115,34 @@ fn validate_public_url(url: &str, require_https: bool) -> Result<url::Url, SsrfE
         return Err(SsrfError::PrivateAddress(ip));
     }
     Ok(parsed)
+}
+
+/// True when a non-success response is a bot-protection interstitial
+/// rather than a real error: Cloudflare marks its managed/JS challenges
+/// with `cf-mitigated: challenge` (status 403, sometimes 503/429).
+pub fn is_bot_challenge(status: reqwest::StatusCode, headers: &HeaderMap) -> bool {
+    !status.is_success()
+        && headers
+            .get("cf-mitigated")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("challenge"))
+}
+
+/// Classify a non-success status: a bot challenge gets its own variant so
+/// callers can fail fast (and remember the host) instead of retrying.
+fn status_error(
+    url: &url::Url,
+    status: reqwest::StatusCode,
+    headers: &HeaderMap,
+) -> FetchBytesError {
+    if is_bot_challenge(status, headers) {
+        FetchBytesError::Challenged {
+            host: url.host_str().unwrap_or_default().to_owned(),
+            status,
+        }
+    } else {
+        FetchBytesError::HttpStatus(status)
+    }
 }
 
 /// Fetch a public HTTP(S) URL with SSRF validation on the initial URL and every
@@ -173,7 +212,7 @@ pub async fn fetch_public_bytes(
         }
 
         if !resp.status().is_success() {
-            return Err(FetchBytesError::HttpStatus(resp.status()));
+            return Err(status_error(&current, resp.status(), resp.headers()));
         }
         if resp
             .content_length()
@@ -346,7 +385,7 @@ pub async fn fetch_public_bytes_pooled(
             .await
             .map_err(|e| FetchBytesError::Transport(e.to_string()))?;
         if !resp.status().is_success() {
-            return Err(FetchBytesError::HttpStatus(resp.status()));
+            return Err(status_error(resp.url(), resp.status(), resp.headers()));
         }
         if resp
             .content_length()

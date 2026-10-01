@@ -30,6 +30,7 @@
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 
+import { ProviderCoverImage } from "@/components/library/ProviderCoverImage";
 import {
   CoverViewer,
   type ViewerCover,
@@ -201,16 +202,16 @@ function CoverTile({
   // legacy tile used; the image itself is the tile. `src` may be a local
   // same-origin cover route or an external CDN hotlink (soft-fallback
   // rows); a plain <img> serves both without Next/Image host config.
-  const img = src ? (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
+  // Not-yet-localized rows hotlink the provider CDN, which may refuse
+  // (GCD's CDN challenges every hotlink) — fall back to the tile's
+  // muted frame instead of a broken-image glyph.
+  const img = (
+    <ProviderCoverImage
       src={src}
       alt={label}
-      loading="lazy"
       className="absolute inset-0 h-full w-full object-cover"
+      placeholderClassName="h-full w-full"
     />
-  ) : (
-    <div className="h-full w-full" aria-hidden />
   );
 
   const caption = (

@@ -57,6 +57,11 @@ pub enum ProviderError {
     /// orchestrator doesn't have a special path for. Caller may retry.
     #[error("provider error: {0}")]
     Upstream(String),
+    /// The provider's cover image can't be downloaded server-side (its
+    /// CDN answers with a bot challenge). Not retryable; the apply
+    /// records it as `cover_skipped_reason` and carries on.
+    #[error("cover unavailable: {0}")]
+    CoverUnavailable(String),
 }
 
 impl ProviderError {

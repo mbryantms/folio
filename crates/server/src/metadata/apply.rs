@@ -1556,6 +1556,11 @@ pub(crate) async fn write_issue_fields(
                     }
                 }
             }
+            // The provider's CDN refuses server-side downloads (GCD's
+            // bot challenge): a clean, non-retryable skip, not a failure.
+            Err(ProviderError::CoverUnavailable(why)) => {
+                outcome.cover_skipped_reason = Some(format!("cover_unavailable: {why}"));
+            }
             Err(e) => {
                 outcome.cover_skipped_reason = Some(format!("fetch_failed: {e}"));
             }

@@ -4,6 +4,7 @@ import * as React from "react";
 
 import { PageHeader } from "@/components/admin/PageHeader";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
+import { ProviderCoverImage } from "@/components/library/ProviderCoverImage";
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -55,12 +56,13 @@ export function EntityDetail({
         <section className="flex flex-col gap-4 sm:flex-row">
           {detail.image_url ? (
             // Provider-hosted image; not routed through next/image so the
-            // CSP img-src policy (not a loader allowlist) governs it.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            // CSP img-src policy (not a loader allowlist) governs it. A
+            // CDN that refuses the hotlink collapses to nothing.
+            <ProviderCoverImage
               src={detail.image_url}
               alt=""
               className="bg-muted h-40 w-auto self-start rounded-md object-cover"
+              placeholderClassName="hidden"
             />
           ) : null}
           <div className="min-w-0 space-y-3">
