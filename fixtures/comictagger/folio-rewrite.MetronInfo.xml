@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<MetronInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Title>Who's Afraid of &lt;Diffs&gt; &amp; Drift?</Title>
+  <Series>The Parity Patrol</Series>
+  <Publisher>Folio Test Comics</Publisher>
+  <Imprint>Fixture Press</Imprint>
+  <Number>3</Number>
+  <Year>2021</Year>
+  <Month>7</Month>
+  <Day>14</Day>
+  <Summary>The patrol rides again. "Quoted" text, an ampersand &amp; angle &lt;brackets&gt;; café, naïve, 日本語.</Summary>
+  <Notes>Fixture tagged offline by ComicTagger for Folio WP-6.4.</Notes>
+  <AgeRating>Teen</AgeRating>
+  <Language>en</Language>
+  <Manga>No</Manga>
+  <ID source="comicvine">123456</ID>
+  <StoryArcs>
+    <StoryArc>The Round Trip</StoryArc>
+  </StoryArcs>
+  <Characters>
+    <Character>Captain Parity</Character>
+    <Character>Diff Kid</Character>
+    <Character>The Rewriter</Character>
+  </Characters>
+  <Teams>
+    <Team>Parity Patrol</Team>
+    <Team>Legion of Lint</Team>
+  </Teams>
+  <Locations>
+    <Location>Fixture City</Location>
+    <Location>The Archive</Location>
+  </Locations>
+  <Genres>
+    <Genre>Superhero</Genre>
+    <Genre>Comedy</Genre>
+  </Genres>
+  <Credits>
+    <Credit role="Colorist">
+      <Creator><Name>Cora Colorist</Name></Creator>
+    </Credit>
+    <Credit role="CoverArtist">
+      <Creator><Name>Cass Cover</Name></Creator>
+    </Credit>
+    <Credit role="Editor">
+      <Creator><Name>Eddie Editor</Name></Creator>
+    </Credit>
+    <Credit role="Inker">
+      <Creator><Name>Ian Inker</Name></Creator>
+    </Credit>
+    <Credit role="Letterer">
+      <Creator><Name>Lee Letterer</Name></Creator>
+    </Credit>
+    <Credit role="Penciller">
+      <Creator><Name>Pat Penciller</Name></Creator>
+    </Credit>
+    <Credit role="Writer">
+      <Creator><Name>Wanda Writer</Name></Creator>
+    </Credit>
+    <Credit role="Writer">
+      <Creator><Name>Second Scribe</Name></Creator>
+    </Credit>
+  </Credits>
+</MetronInfo>
