@@ -565,11 +565,11 @@ async fn update_partial_diffs_preserve_invariants() {
         Method::PATCH,
         &url,
         Some(&auth),
-        Some(serde_json::json!({ "color": "amber" })),
+        Some(serde_json::json!({ "color": "violet" })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(updated["color"], "amber");
+    assert_eq!(updated["color"], "violet");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

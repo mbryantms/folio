@@ -320,7 +320,11 @@ a "Detect from providers" button that finds these splits for you.
   export to Markdown or JSON grouped series → issue → page, and every
   marker has a permalink (`/markers/{id}`, "Copy link") that opens the
   reader at its page. Series and issue pages have a "Your notes" tab, and
-  `l` in the reader lists the issue's markers in page order.
+  `l` in the reader lists the issue's markers in page order. Captured
+  (OCR) text is editable in the marker editor — fix a misread or type it
+  by hand (up to 8 KB). Marker colours are a fixed palette (yellow, green,
+  blue, red, violet) or a `#RRGGBB[AA]` hex, and regions must fit on the
+  page.
 - **Ratings** — half-star precision on both issues and series.
 
 ## Search

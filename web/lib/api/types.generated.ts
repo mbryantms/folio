@@ -6151,25 +6151,42 @@ export interface components {
              */
             trust_fingerprint_on_first_import?: boolean;
         };
+        /**
+         * @description Create a marker. Field limits are checked first (422 with per-field
+         *     `error.details`); the kind-dependent rules (a note needs `body`, a
+         *     highlight needs `region`) and `page_index` against the issue's page
+         *     count are checked after.
+         */
         CreateMarkerReq: {
+            /** @description Markdown body, max 10 KB. */
             body?: string | null;
+            /**
+             * @description A palette name (`yellow | green | blue | red | violet`) or a
+             *     `#RRGGBB` / `#RRGGBBAA` hex. Blank means "no colour".
+             */
             color?: string | null;
             /** @description Star flag. Omit / false for a regular marker. */
             is_favorite?: boolean | null;
             issue_id: string;
-            /** @description `'bookmark' | 'note' | 'highlight'`. */
+            /** @description `'bookmark' | 'note' | 'favorite' | 'highlight'`. */
             kind: string;
             /** Format: int32 */
             page_index: number;
             /**
              * @description `{ x, y, w, h, shape }` — rect dims as 0–100 percent floats
-             *     normalized to the page's natural pixel dims. Omit for
-             *     whole-page markers.
+             *     normalized to the page's natural pixel dims; `w` and `h` must be
+             *     at least 0.5 after clamping. Omit for whole-page markers.
              */
             region?: unknown;
-            /** @description `{ text?, image_hash?, ocr_confidence? }`. */
+            /**
+             * @description `{ text?, image_hash?, ocr_confidence? }`. `text` is capped at
+             *     8 KB.
+             */
             selection?: unknown;
-            /** @description Freeform tag list. Trimmed + de-duped + lowercased server-side. */
+            /**
+             * @description Freeform tag list. Trimmed + de-duped + lowercased server-side;
+             *     at most 32 tags of 80 characters.
+             */
             tags?: string[] | null;
         };
         CreatePageReq: {
@@ -10848,10 +10865,15 @@ export interface components {
         UpdateMarkerReq: {
             /** @description Sending `null` clears the field; omitting leaves it unchanged. */
             body?: string | null;
+            /** @description Same rule as on create; `null` clears. */
             color?: string | null;
             /** @description Toggle star flag. Omit to leave unchanged. */
             is_favorite?: boolean | null;
             region?: unknown;
+            /**
+             * @description `{ text?, … }`. `text` is user-editable (fix an OCR typo, or
+             *     type the caption by hand) and capped at 8 KB.
+             */
             selection?: unknown;
             /** @description Replace tag list. Send `[]` to clear, omit to leave unchanged. */
             tags?: string[] | null;
@@ -17047,6 +17069,20 @@ export interface operations {
                     "application/json": components["schemas"]["MarkerView"];
                 };
             };
+            /** @description validation (per-field `error.details`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description marker write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     markers_bulk_delete: {
@@ -17222,6 +17258,20 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["MarkerView"];
                 };
+            };
+            /** @description validation (per-field `error.details`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description marker write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -12,7 +12,7 @@ import type * as Mutations from "@/lib/api/mutations/markers";
 
 // vi.mock factories are hoisted above imports, so anything they close over
 // must be hoisted too.
-const { toast, createMutate } = vi.hoisted(() => ({
+const { toast, createMutate, updateMutate } = vi.hoisted(() => ({
   toast: Object.assign(vi.fn(), {
     error: vi.fn(),
     success: vi.fn(),
@@ -23,6 +23,7 @@ const { toast, createMutate } = vi.hoisted(() => ({
     warning: vi.fn(),
   }),
   createMutate: vi.fn(),
+  updateMutate: vi.fn(),
 }));
 vi.mock("sonner", () => ({ toast }));
 
@@ -35,7 +36,7 @@ vi.mock("@/lib/api/queries", async (importOriginal) => ({
 vi.mock("@/lib/api/mutations/markers", async (importOriginal) => ({
   ...(await importOriginal<typeof Mutations>()),
   useCreateMarker: () => ({ mutate: createMutate, isPending: false }),
-  useUpdateMarker: () => ({ mutate: vi.fn(), isPending: false }),
+  useUpdateMarker: () => ({ mutate: updateMutate, isPending: false }),
   useDeleteMarker: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
@@ -75,6 +76,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   createMutate.mockReset();
+  updateMutate.mockReset();
   toast.mockReset();
   toast.error.mockReset();
 });
@@ -155,5 +157,97 @@ describe("MarkerEditor (jsdom)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     expect(useReaderStore.getState().pendingMarker).toBeNull();
     expect(toast).not.toHaveBeenCalled();
+  });
+
+  describe("captured text (WP-5.3)", () => {
+    function openHighlight(
+      selection: {
+        text?: string;
+        ocr_confidence?: number;
+        image_hash?: string;
+      } | null,
+      editingId: string | null,
+    ) {
+      useReaderStore.getState().beginMarkerEdit(
+        {
+          kind: "highlight",
+          page_index: 2,
+          region: { x: 1, y: 1, w: 20, h: 10, shape: "text" },
+          selection,
+          body: "caption",
+          is_favorite: false,
+          tags: [],
+        },
+        editingId,
+      );
+    }
+
+    it("round-trips a hand-corrected OCR text on an existing marker", async () => {
+      openHighlight(
+        { text: "WE ARE B0RN", ocr_confidence: 0.4, image_hash: "h1" },
+        "m-1",
+      );
+      renderEditor();
+      const field = (await screen.findByLabelText(
+        "Captured text",
+      )) as HTMLTextAreaElement;
+      expect(field.value).toBe("WE ARE B0RN");
+      expect(screen.getByText(/low confidence/i)).toBeTruthy();
+
+      fireEvent.change(field, { target: { value: "We are born" } });
+      // A hand edit drops the OCR confidence (and its warning).
+      expect(screen.queryByText(/low confidence/i)).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+      expect(updateMutate.mock.calls[0]?.[0]).toEqual({
+        body: "caption",
+        is_favorite: false,
+        tags: [],
+        selection: { text: "We are born", image_hash: "h1" },
+      });
+    });
+
+    it("does not resend the selection when only the caption changed", async () => {
+      openHighlight({ text: "original", ocr_confidence: 0.9 }, "m-2");
+      renderEditor();
+      fireEvent.change(await screen.findByLabelText("Caption"), {
+        target: { value: "new caption" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+      expect(updateMutate.mock.calls[0]?.[0]).not.toHaveProperty("selection");
+    });
+
+    it("lets a new highlight's text be typed by hand", async () => {
+      openHighlight(null, null);
+      renderEditor();
+      expect(screen.queryByLabelText("Captured text")).toBeNull();
+      fireEvent.click(
+        await screen.findByRole("button", { name: /type text/i }),
+      );
+      fireEvent.change(screen.getByLabelText("Captured text"), {
+        target: { value: "typed line" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save marker" }));
+      await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
+      expect(createMutate.mock.calls[0]?.[0]).toMatchObject({
+        kind: "highlight",
+        selection: { text: "typed line" },
+      });
+    });
+
+    it("refuses captured text over 8 KB before any mutation", async () => {
+      openHighlight({ text: "short" }, "m-3");
+      renderEditor();
+      fireEvent.change(await screen.findByLabelText("Captured text"), {
+        target: { value: "x".repeat(8 * 1024 + 1) },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      expect(toast.error).toHaveBeenCalledWith(
+        "Captured text is too long (max 8 KB).",
+      );
+      expect(updateMutate).not.toHaveBeenCalled();
+    });
   });
 });
