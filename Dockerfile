@@ -77,7 +77,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # than debian12: the bookworm-based tag shipped a fixable HIGH libssl3 CVE for
 # weeks (2026-09) while the trixie tag was clean; a bookworm-built binary runs
 # on the newer glibc unchanged. Verified by the docker-smoke job.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:c31ff9abcb1910f3ab25c7957bdaf0bfe12a01eb546e8df2282f1c8f682b606c AS runtime
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:e792ab3d241a468a4fd7519ddbbebe66b49b5f365771716ea688ad40b6c6f1c2 AS runtime
 WORKDIR /app
 
 # Re-declare build-time args in the final stage so the LABEL block below
