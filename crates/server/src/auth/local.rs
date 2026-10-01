@@ -571,7 +571,9 @@ pub async fn login(
         // used here pre-M3 failed PHC parse before any argon2 work
         // (audit S-4), which let a timing channel distinguish the two.
         let dummy = password::dummy_hash(app.secrets.pepper.as_ref());
-        let _ = password::verify(dummy, &req.password, app.secrets.pepper.as_ref());
+        // `verify_rotating` so this path pays the same one-or-two argon2
+        // verifies a wrong password does while a pepper rotation is active.
+        let _ = password::verify_rotating(dummy, &req.password, app.secrets.peppers());
         super::failed_auth::record_failure_for(&app, &ctx).await;
         super::failed_auth::record_failure_for_email(&app, &email_lower).await;
         // INFO-level reason so operators tailing logs can see WHY a
@@ -619,8 +621,9 @@ pub async fn login(
             "invalid credentials",
         );
     };
-    let ok = password::verify(stored, &req.password, app.secrets.pepper.as_ref()).unwrap_or(false);
-    if !ok {
+    let verified = password::verify_rotating(stored, &req.password, app.secrets.peppers())
+        .unwrap_or(password::Verified::No);
+    if !verified.ok() {
         super::failed_auth::record_failure_for(&app, &ctx).await;
         super::failed_auth::record_failure_for_email(&app, &email_lower).await;
         tracing::info!(reason = "wrong_password", user_id = %row.id, "login rejected");
@@ -631,14 +634,42 @@ pub async fn login(
         );
     }
 
-    // Update last_login_at (best-effort).
-    let _ = UserAM {
+    // L-1 (WP-6.3): the hash only verified under `secrets/pepper.previous`
+    // — rehash it under the current pepper now that we hold the plaintext,
+    // so the user survives the eventual removal of the previous pepper.
+    let rehashed = if verified == password::Verified::Previous {
+        match password::hash(&req.password, app.secrets.pepper.as_ref()) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                tracing::warn!(error = %e, user_id = %row.id, "pepper rehash failed");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let did_rehash = rehashed.is_some();
+
+    // Update last_login_at (best-effort), plus the rehashed password.
+    let mut am = UserAM {
         id: Set(row.id),
         last_login_at: Set(Some(chrono::Utc::now().fixed_offset())),
         ..Default::default()
+    };
+    if let Some(h) = rehashed {
+        am.password_hash = Set(Some(h));
     }
-    .update(&app.db)
-    .await;
+    match am.update(&app.db).await {
+        Ok(_) if did_rehash => {
+            metrics::counter!("folio_auth_pepper_rehash_total", "kind" => "user").increment(1);
+            tracing::info!(user_id = %row.id, "password rehashed onto the current pepper");
+        }
+        Ok(_) => {}
+        Err(e) if did_rehash => {
+            tracing::warn!(error = %e, user_id = %row.id, "pepper rehash update failed");
+        }
+        Err(_) => {}
+    }
 
     issue_session(
         &app,

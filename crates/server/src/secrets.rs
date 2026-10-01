@@ -34,6 +34,11 @@ pub struct Secrets {
     pub email_token_key: Zeroizing<[u8; 32]>,
     pub url_signing_key: Zeroizing<[u8; 32]>,
     pub settings_encryption_key: Zeroizing<[u8; 32]>,
+    /// `secrets/pepper.previous` — present only while an argon2 pepper
+    /// rotation is in progress (security audit L-1, WP-6.3). Never
+    /// generated; the operator creates it by moving the old `pepper` aside.
+    /// Password verifies fall back to it and rehash under [`Self::pepper`].
+    pub pepper_previous: Option<Zeroizing<[u8; 32]>>,
     /// Per-call metadata so the caller in `app::serve` can refuse to
     /// boot when a freshly-generated pepper / settings key would
     /// silently invalidate existing DB rows (the prod-incident class
@@ -56,6 +61,8 @@ impl Secrets {
         if !pepper_existed {
             report.pepper_regenerated = true;
         }
+        let pepper_previous = load_optional_bytes::<32>(&dir.join("pepper.previous"))?;
+        report.pepper_previous_loaded = pepper_previous.is_some();
         let jwt = load_or_generate_ed25519(&dir.join("jwt-ed25519.key"), &mut report)?;
         let email = load_or_generate_bytes::<32>(&dir.join("email-token.key"), &mut report)?;
         let url = load_or_generate_bytes::<32>(&dir.join("url-signing.key"), &mut report)?;
@@ -100,8 +107,18 @@ impl Secrets {
             email_token_key: Zeroizing::new(email),
             url_signing_key: Zeroizing::new(url),
             settings_encryption_key: Zeroizing::new(settings),
+            pepper_previous: pepper_previous.map(Zeroizing::new),
             load_report: report,
         })
+    }
+
+    /// The pepper set password verifies run against: the current pepper plus,
+    /// during a rotation, the previous one.
+    pub fn peppers(&self) -> crate::auth::password::Peppers<'_> {
+        crate::auth::password::Peppers {
+            current: self.pepper.as_ref(),
+            previous: self.pepper_previous.as_ref().map(|p| p.as_ref() as &[u8]),
+        }
     }
 }
 
@@ -119,6 +136,11 @@ pub struct LoadReport {
     pub dir_was_fresh: bool,
     pub pepper_regenerated: bool,
     pub settings_key_regenerated: bool,
+    /// `secrets/pepper.previous` was present (a pepper rotation is in
+    /// progress). Lets `app::serve` accept a freshly generated `pepper` —
+    /// the rotation runbook moves the old one aside and lets the server
+    /// mint the new one.
+    pub pepper_previous_loaded: bool,
 }
 
 /// Returns `true` when this call created the directory (i.e. it didn't
@@ -162,6 +184,28 @@ fn load_or_generate_bytes<const N: usize>(
         report.regenerated += 1;
         Ok(out)
     }
+}
+
+/// Load an optional secret: `Ok(None)` when the file is absent (it is never
+/// generated), the same mode/symlink/length validation as
+/// [`load_or_generate_bytes`] when present.
+fn load_optional_bytes<const N: usize>(path: &Path) -> anyhow::Result<Option<[u8; N]>> {
+    if !secret_file_exists(path)? {
+        return Ok(None);
+    }
+    validate_existing_secret_file(path)?;
+    let bytes = fs::read(path)?;
+    if bytes.len() != N {
+        anyhow::bail!(
+            "secret file {} has wrong length (got {}, expected {})",
+            path.display(),
+            bytes.len(),
+            N
+        );
+    }
+    let mut out = [0u8; N];
+    out.copy_from_slice(&bytes);
+    Ok(Some(out))
 }
 
 fn load_or_generate_ed25519(path: &PathBuf, report: &mut LoadReport) -> anyhow::Result<SigningKey> {
@@ -346,5 +390,49 @@ mod tests {
         let again = Secrets::load(tmp.path()).unwrap();
         assert!(!again.load_report.pepper_regenerated);
         assert!(again.load_report.settings_key_regenerated);
+    }
+
+    /// L-1 / WP-6.3 rotation runbook: `mv pepper pepper.previous`, restart.
+    /// The loader mints a fresh `pepper`, keeps the old one as `previous`,
+    /// and reports the rotation so `app::serve` doesn't refuse boot.
+    #[test]
+    fn moving_pepper_aside_starts_a_rotation() {
+        let tmp = TempDir::new().unwrap();
+        let first = Secrets::load(tmp.path()).unwrap();
+        assert!(first.pepper_previous.is_none());
+        assert!(!first.load_report.pepper_previous_loaded);
+        let dir = tmp.path().join("secrets");
+        fs::rename(dir.join("pepper"), dir.join("pepper.previous")).unwrap();
+
+        let rotated = Secrets::load(tmp.path()).unwrap();
+        assert!(rotated.load_report.pepper_regenerated);
+        assert!(rotated.load_report.pepper_previous_loaded);
+        assert_eq!(
+            &rotated.pepper_previous.as_ref().unwrap()[..],
+            &first.pepper[..]
+        );
+        assert_ne!(&rotated.pepper[..], &first.pepper[..]);
+        let p = rotated.peppers();
+        assert_eq!(p.current, &rotated.pepper[..]);
+        assert_eq!(p.previous, Some(&first.pepper[..]));
+    }
+
+    #[test]
+    fn pepper_previous_is_validated_like_every_other_secret() {
+        let tmp = TempDir::new().unwrap();
+        Secrets::load(tmp.path()).unwrap();
+        let prev = tmp.path().join("secrets/pepper.previous");
+        // Wrong length.
+        fs::write(&prev, b"short").unwrap();
+        fs::set_permissions(&prev, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(Secrets::load(tmp.path()).is_err());
+        // Unsafe mode.
+        fs::write(&prev, [7u8; 32]).unwrap();
+        fs::set_permissions(&prev, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(Secrets::load(tmp.path()).is_err());
+        // Fixed.
+        fs::set_permissions(&prev, fs::Permissions::from_mode(0o600)).unwrap();
+        let ok = Secrets::load(tmp.path()).unwrap();
+        assert_eq!(&ok.pepper_previous.unwrap()[..], &[7u8; 32]);
     }
 }

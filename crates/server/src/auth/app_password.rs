@@ -175,7 +175,7 @@ pub async fn verify(
     db: &DatabaseConnection,
     cache: &AppPasswordCache,
     plaintext: &str,
-    pepper: &[u8],
+    peppers: password::Peppers<'_>,
 ) -> Option<ResolvedAppPassword> {
     if !looks_like_app_password(plaintext) {
         return None;
@@ -216,17 +216,50 @@ pub async fn verify(
         .ok()?;
     let candidates: Vec<(Uuid, String)> = rows.iter().map(|r| (r.id, r.hash.clone())).collect();
     let plaintext_owned = plaintext.to_owned();
-    let pepper_owned = pepper.to_vec();
-    let matched_id = tokio::task::spawn_blocking(move || {
-        candidates.into_iter().find_map(|(id, hash)| {
-            match password::verify(&hash, &plaintext_owned, &pepper_owned) {
-                Ok(true) => Some(id),
+    let current_owned = zeroize::Zeroizing::new(peppers.current.to_vec());
+    let previous_owned = peppers
+        .previous
+        .map(|p| zeroize::Zeroizing::new(p.to_vec()));
+    let (matched_id, rehash) = tokio::task::spawn_blocking(move || {
+        let peppers = password::Peppers {
+            current: &current_owned,
+            previous: previous_owned.as_ref().map(|p| p.as_slice()),
+        };
+        let (id, verified) = candidates.into_iter().find_map(|(id, hash)| {
+            match password::verify_rotating(&hash, &plaintext_owned, peppers) {
+                Ok(v) if v.ok() => Some((id, v)),
                 _ => None,
             }
-        })
+        })?;
+        // L-1 (WP-6.3): matched under the previous pepper → rehash under the
+        // current one while we still hold the plaintext.
+        let rehash = if verified == password::Verified::Previous {
+            password::hash(&plaintext_owned, peppers.current).ok()
+        } else {
+            None
+        };
+        Some((id, rehash))
     })
     .await
     .ok()??;
+
+    if let Some(new_hash) = rehash {
+        let am = AppPasswordAM {
+            id: Set(matched_id),
+            hash: Set(new_hash),
+            ..Default::default()
+        };
+        match am.update(db).await {
+            Ok(_) => {
+                metrics::counter!("folio_auth_pepper_rehash_total", "kind" => "app_password")
+                    .increment(1);
+                tracing::info!(app_password_id = %matched_id, "app password rehashed onto the current pepper");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, app_password_id = %matched_id, "app password pepper rehash failed");
+            }
+        }
+    }
 
     let row = rows.into_iter().find(|r| r.id == matched_id)?;
     let resolved = ResolvedAppPassword {

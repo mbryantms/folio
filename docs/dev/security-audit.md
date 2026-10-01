@@ -8,6 +8,40 @@ false positives and are noted at the bottom.
 
 ---
 
+## Status per finding
+
+Last reviewed **2026-10-01** (WP-6.3, residual security items). The
+original write-up below is kept as-is for traceability; this table is the
+source of truth for what is still open. "Fixed (earlier)" items were
+re-verified against the code during WP-6.3.
+
+| Finding | Severity | Status | Where / regression guard |
+|---|---|---|---|
+| H-1 SSRF via `POST /me/cbl-lists` (URL kind) | High | **Fixed (earlier)** — 1.0 Phase B; https-only, DNS-vetted + address-pinned fetch, per-hop redirect re-validation (`util::ssrf`) | `crates/server/src/util/ssrf.rs` unit tests; `tests/cbl_lists.rs` |
+| H-2 `Config` derives `Debug` with plaintext secrets | High | **Fixed (earlier)** — hand-written masking `Debug` impl | `crates/server/src/config.rs` (`impl Debug for Config`) |
+| H-3.1 failed-auth lockout keyed only by identifier | High | **Fixed (earlier)** — IP axis + email axis (`auth::failed_auth`) | `tests/rate_limits.rs` (`failed_auth_lockout_*`, `email_axis_lockout_*`) |
+| H-3.2 OPDS shared rate bucket | High | **Fixed (WP-6.3)** — split into `opds_catalog` (30/min, burst 60) and `opds_stream` (downloads, PSE pages, progress/KOReader sync; 120/min, burst 120) | `tests/rate_limits.rs::opds_catalog_exhaustion_does_not_throttle_the_stream_bucket` |
+| M-1 no explicit `CorsLayer` | Medium→Low | **Fixed (WP-6.3)** — `app::deny_all_cors()` (no origin/credentials/methods granted; preflights answered with no `Access-Control-Allow-*`) | `tests/http_layers.rs::cors_*` |
+| M-2 `/auth/config` exposes OIDC issuer | Medium | **Fixed (earlier)** — 1.0 Phase B4 (`PublicAuthConfigView` carries booleans only); WP-6.3 re-verified and added a whole-body "issuer string never appears" assertion | `tests/admin_auth_edit.rs`, `tests/oidc.rs::public_auth_config_advertises_oidc_when_configured` |
+| M-3 secret file permissions not re-validated | Medium | **Fixed (earlier)** — `validate_existing_secret_file` refuses symlinks and any group/other mode bit (also applies to the new `pepper.previous`) | `secrets::tests::existing_group_readable_secret_file_is_rejected` |
+| M-4 OIDC state cookie path narrower than other cookies | Medium | **Fixed (earlier)** — state cookie is `Path=/` | `crates/server/src/auth/oidc.rs` |
+| M-5 no per-user CBL import quota | Medium | **Fixed (WP-6.3)** — 20 import-class ops (create upload/URL/catalog, manual refresh/check) per user per hour (Redis, `429` + `Retry-After`), plus a standing cap of 50 server-fetched (`url`/`catalog`) lists per user (`422 cbl.remote_list_limit`); admins exempt (`cbl::quota`) | `tests/cbl_lists.rs::import_quota_*`, `remote_list_cap_*` |
+| L-1 no pepper rotation path | Low | **Fixed (WP-6.3)** — dual-pepper verify-and-rehash via `secrets/pepper.previous`; runbook in [`docs/install/secrets-backup.md`](../install/secrets-backup.md#rotating-the-pepper) | `tests/pepper_rotation.rs`, `auth::password::tests::rotating_verify_*`, `secrets::tests::moving_pepper_aside_*` |
+| L-2 email-token verifier accepts expiry up to 30 days out | Low | **Open** — not in WP-6.3 scope. Tokens are single-use and HMAC-signed; the bound is effectively a max-TTL check, not a clock-skew window. | — |
+| L-3 CBL multipart upload accepts any `Content-Type` | Low | **Fixed (earlier)** — `is_allowed_cbl_content_type` (`415` before the body is read) | `tests/cbl_lists.rs::upload_rejects_obvious_non_xml_content_type` |
+| L-4 `LIMIT` via `format!` interpolation | Low | **Fixed (WP-6.3)** — every raw-SQL `LIMIT`/`OFFSET` now a bound parameter (`people`, `creators`, `filter_options`, `entity_pages`, `reading_sessions`, `admin_activity`) | `tests/sql_limit_binding.rs` (source scan) |
+
+Findings from the 2026-09 product audit (`docs/product-audit.md` §4, SE-3 /
+SE-6) that belong to the same remediation pass:
+
+| Finding | Status | Where / regression guard |
+|---|---|---|
+| SE-3a `override_user_edits` gated by inline `user.role != "admin"` at five sites | **Fixed (WP-6.3)** — `api::extractors::AdminGatedOverride<T>` runs `RequireAdmin` whenever the body sets the flag (403 `auth.permission_denied` before the handler body); all five handlers (`apply_series`, `apply_issue`, `composite_apply_series`, `composite_apply_issue`, `batch_apply`) take it | `tests/metadata_search_api.rs::apply_series_403_when_override_user_edits_requested_by_non_admin`, `tests/metadata_composite.rs::composite_apply_override_is_admin_gated_structurally` |
+| SE-3b composite apply never audited as `_force`; dashboard counter excluded it | **Fixed (WP-6.3)** — `admin.{series,issue}.metadata_composite_apply_force` when the override is set; `applies_last_7_days` counts `admin_metadata::MANUAL_APPLY_ACTIONS` (single + composite, plain + force) | `tests/metadata_composite.rs::composite_force_apply_audits_as_force_and_counts_on_the_dashboard` |
+| SE-6 provider cover fetch allowed `http://`, no content check, MIME from URL extension | **Fixed (WP-6.3)** — `metadata::writers::fetch_cover_bytes` (https-only incl. redirect hops, magic-sniffed); `apply_cover` refuses non-image bytes and names the file from the sniffed type; the cover endpoint serves the sniffed MIME with `nosniff` and refuses a stored non-image | `tests/issue_cover_apply.rs` (`non_image_cover_bytes_*`, `stored_cover_extension_*`, `cover_fetch_refuses_plain_http_*`, `cover_endpoint_serves_sniffed_mime_*`) |
+
+---
+
 ## Release Blocker
 
 **One finding requires fixing before any multi-tenant deployment.**

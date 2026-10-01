@@ -338,7 +338,9 @@ async fn fetch_distinct_issue_csv(
         sql.push_str(&format!(" HAVING min(trim(piece)) > ${}", params.len()));
     }
 
-    sql.push_str(&format!(" ORDER BY value ASC LIMIT {}", limit + 1));
+    // L-4 (WP-6.3): bound, not interpolated.
+    params.push(Value::from(limit + 1));
+    sql.push_str(&format!(" ORDER BY value ASC LIMIT ${}", params.len()));
 
     let backend = app.db.get_database_backend();
     let stmt = Statement::from_sql_and_values(backend, sql, params);
@@ -422,7 +424,9 @@ async fn fetch_distinct_series_column(
         sql.push_str(&format!(" AND {column} > ${}", params.len()));
     }
 
-    sql.push_str(&format!(" ORDER BY value ASC LIMIT {}", limit + 1));
+    // L-4 (WP-6.3): bound, not interpolated.
+    params.push(Value::from(limit + 1));
+    sql.push_str(&format!(" ORDER BY value ASC LIMIT ${}", params.len()));
 
     let backend = app.db.get_database_backend();
     let stmt = Statement::from_sql_and_values(backend, sql, params);
@@ -529,7 +533,9 @@ async fn fetch_distinct(
     }
 
     // Fetch limit+1 to detect "more available."
-    sql.push_str(&format!(" ORDER BY value ASC LIMIT {}", limit + 1));
+    // L-4 (WP-6.3): bound, not interpolated.
+    params.push(Value::from(limit + 1));
+    sql.push_str(&format!(" ORDER BY value ASC LIMIT ${}", params.len()));
 
     let backend = app.db.get_database_backend();
     let stmt = Statement::from_sql_and_values(backend, sql, params);

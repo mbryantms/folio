@@ -1797,9 +1797,11 @@ pub struct CoverWrite<'a> {
     pub source_url: Option<&'a str>,
     pub variant_label: Option<&'a str>,
     pub variant_artist_person_id: Option<Uuid>,
+    /// Image bytes. Must carry a recognised image signature
+    /// (`archive::image_sniff`) — [`apply_cover`] refuses anything else, and
+    /// the stored file's extension (hence the served MIME) comes from the
+    /// sniffed format, never from the source URL (SE-6, WP-6.3).
     pub bytes: &'a [u8],
-    /// File extension (no leading dot) — e.g. `"webp"` / `"jpg"`.
-    pub ext: &'a str,
     /// Width / height in pixels.
     pub width: Option<i32>,
     pub height: Option<i32>,
@@ -1824,6 +1826,16 @@ pub async fn apply_cover(
     policy: CoverOverwritePolicy,
 ) -> Result<Option<Uuid>, std::io::Error> {
     let is_primary = write.kind == "primary" && write.ordinal == 0;
+
+    // SE-6 (WP-6.3): magic-sniff before anything is persisted. A provider /
+    // CDN that answers with HTML, JSON, SVG, or an error page must not land
+    // on disk to be served back as `image/*`.
+    let kind = sniff_cover(write.bytes).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "cover bytes are not a recognised image (jpeg/png/gif/webp/avif/jxl)",
+        )
+    })?;
 
     let txn = db.begin().await.map_err(|e| cover_db_err("begin", e))?;
 
@@ -1852,7 +1864,7 @@ pub async fn apply_cover(
     }
 
     let cover_id = Uuid::now_v7();
-    let rel_path = cover_rel_path(write.issue_id, cover_id, write.ext);
+    let rel_path = cover_rel_path(write.issue_id, cover_id, kind.ext());
     let on_disk = data_path.join(&rel_path);
     if let Some(parent) = on_disk.parent() {
         std::fs::create_dir_all(parent)?;
@@ -2222,23 +2234,51 @@ struct StoredCover {
     ahash: i64,
 }
 
-/// Map a cover URL to a file extension, tolerating a trailing query
-/// string (`…/foo.jpg?cache=1`). Falls back to `None` for unknown
-/// shapes; callers default to `jpg`.
-fn cover_ext_from_url(url: &str) -> Option<&'static str> {
-    let path = url.split(['?', '#']).next().unwrap_or(url);
-    let lower = path.to_ascii_lowercase();
-    if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
-        Some("jpg")
-    } else if lower.ends_with(".png") {
-        Some("png")
-    } else if lower.ends_with(".webp") {
-        Some("webp")
-    } else if lower.ends_with(".gif") {
-        Some("gif")
-    } else {
-        None
+/// Identify a cover's image container from its leading bytes. `None` for
+/// anything that isn't on the page-bytes allowlist (`archive::image_sniff`)
+/// — text, HTML, JSON, SVG, truncated bodies.
+pub fn sniff_cover(bytes: &[u8]) -> Option<archive::image_sniff::ImageKind> {
+    archive::image_sniff::sniff(&bytes[..bytes.len().min(archive::image_sniff::SNIFF_LEN)])
+}
+
+/// Why [`fetch_cover_bytes`] refused a cover.
+#[derive(Debug, thiserror::Error)]
+pub enum CoverFetchError {
+    #[error(transparent)]
+    Fetch(#[from] crate::util::ssrf::FetchBytesError),
+    #[error("response is not a recognised image")]
+    NotAnImage,
+}
+
+/// The single fetch path for provider cover images (primary covers via
+/// `MetadataProvider::fetch_cover`, variant covers + their backfill via
+/// [`download_cover_image`]). SE-6 (WP-6.3):
+///
+/// - **https only.** ComicVine (`comicvine.gamespot.com/a/uploads/…`) and
+///   Metron (`static.metron.cloud/media/…`) both serve covers over https; a
+///   plain-http URL — or a redirect hop down to http — is refused instead of
+///   being fetched in the clear and persisted.
+/// - **magic-sniffed.** The body must carry an image signature; the
+///   `Content-Type` header and URL extension are ignored (both are
+///   attacker-/CDN-controlled and were how a non-image used to be stored and
+///   served as `image/*`).
+///
+/// SSRF vetting, redirect re-validation, address pinning and the 24 MiB cap
+/// are [`crate::util::ssrf::fetch_public_bytes`]'s.
+pub async fn fetch_cover_bytes(url: &str) -> Result<Vec<u8>, CoverFetchError> {
+    let fetched = crate::util::ssrf::fetch_public_bytes(
+        url,
+        MAX_COVER_BYTES,
+        std::time::Duration::from_secs(20),
+        crate::build_info::USER_AGENT_COVER,
+        2,
+        true,
+    )
+    .await?;
+    if sniff_cover(&fetched.bytes).is_none() {
+        return Err(CoverFetchError::NotAnImage);
     }
+    Ok(fetched.bytes)
 }
 
 /// Relative path (under `data_path`) a cover is stored at. Shared with
@@ -2259,23 +2299,13 @@ async fn download_cover_image(
     issue_id: &str,
     url: &str,
 ) -> Option<StoredCover> {
-    let fetched = match crate::util::ssrf::fetch_public_bytes(
-        url,
-        MAX_COVER_BYTES,
-        std::time::Duration::from_secs(20),
-        crate::build_info::USER_AGENT_COVER,
-        2,
-        false,
-    )
-    .await
-    {
-        Ok(fetched) => fetched,
+    let bytes = match fetch_cover_bytes(url).await {
+        Ok(bytes) => bytes,
         Err(e) => {
-            tracing::debug!(url, error = %e, "cover download: transport error");
+            tracing::debug!(url, error = %e, "cover download: fetch refused");
             return None;
         }
     };
-    let bytes = fetched.bytes;
     if bytes.is_empty() || bytes.len() > MAX_COVER_BYTES {
         tracing::debug!(url, len = bytes.len(), "cover download: empty or oversize");
         return None;
@@ -2291,8 +2321,9 @@ async fn download_cover_image(
     let height = img.height() as i32;
     let (phash, dhash, ahash) = crate::metadata::phash::all_hashes(&img);
     let cover_id = Uuid::now_v7();
-    let ext = cover_ext_from_url(url).unwrap_or("jpg");
-    let rel_path = cover_rel_path(issue_id, cover_id, ext);
+    // Extension (→ served MIME) from the sniffed bytes, not the URL.
+    let kind = sniff_cover(&bytes)?;
+    let rel_path = cover_rel_path(issue_id, cover_id, kind.ext());
     let on_disk = data_path.join(&rel_path);
     if let Some(parent) = on_disk.parent()
         && let Err(e) = std::fs::create_dir_all(parent)

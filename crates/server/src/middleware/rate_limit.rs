@@ -136,13 +136,28 @@ pub const CSP_REPORT: Bucket = Bucket {
     burst: 200,
 };
 
-/// `GET /opds/*` — 60/min/IP + burst 60. OPDS clients poll lightly; the
-/// bucket exists to bound indexers and unattended catalog crawlers without
-/// throttling normal browsing.
-pub const OPDS: Bucket = Bucket {
-    name: "opds",
-    period: Duration::from_secs(1),
+/// OPDS catalog / navigation / search feeds (`/opds/v1/*`, `/opds/v2/*`
+/// minus the byte + progress routes) — 30/min/IP + burst 60. Bounds indexers
+/// and unattended catalog crawlers without throttling normal browsing (a
+/// client paging through a feed rarely sustains more than one request every
+/// two seconds). Split from [`OPDS_STREAM`] by security-audit H-3.2 /
+/// WP-6.3: one shared budget let a crawler hammering `search` / `series`
+/// starve the same IP's page reads.
+pub const OPDS_CATALOG: Bucket = Bucket {
+    name: "opds_catalog",
+    period: Duration::from_secs(2),
     burst: 60,
+};
+
+/// OPDS reading path — downloads (`…/issues/{id}/file`, the Komga-shape
+/// alias), PSE page streaming (`/opds/pse/*`), and progress writes
+/// (including the KOReader sync shim) — 120/min/IP + burst 120. A PSE
+/// reader fetches one request per page turn plus prefetch, so this needs
+/// more headroom than the catalog bucket; it is independent of it (H-3.2).
+pub const OPDS_STREAM: Bucket = Bucket {
+    name: "opds_stream",
+    period: Duration::from_millis(500),
+    burst: 120,
 };
 
 /// `POST /me/issues/{id}/ocr` — 60/min/IP + burst 60. OCR is CPU-heavy
@@ -150,7 +165,7 @@ pub const OPDS: Bucket = Bucket {
 /// detector + a Tesseract / manga-ocr inference. The Redis-backed
 /// cache covers retries on the same region for free, so the bucket
 /// only needs to bound *novel* requests from a single IP. 60/min
-/// matches the OPDS bucket — generous enough for a reader exploring
+/// matches the old shared OPDS bucket — generous enough for a reader exploring
 /// every bubble on a page, tight enough to make a runaway script
 /// noticeable.
 pub const OCR: Bucket = Bucket {

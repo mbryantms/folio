@@ -357,13 +357,29 @@ pub struct DashboardResp {
     /// `series_total - series_matched` (precomputed so the UI can
     /// render directly).
     pub series_unmatched: i64,
-    /// Count of successful `metadata_apply` audit rows in the last
-    /// 7 days.
+    /// Count of manual metadata-apply audit rows in the last 7 days —
+    /// single-provider and composite, with and without
+    /// `override_user_edits` (see `MANUAL_APPLY_ACTIONS`).
     pub applies_last_7_days: i64,
     /// Per-provider quota snapshots — only populated when the
     /// provider is configured + enabled.
     pub providers: Vec<ProviderView>,
 }
+
+/// Audit actions the dashboard's `applies_last_7_days` counts: every manual
+/// apply, single-provider and composite, including the `…_force` variants
+/// written when `override_user_edits` bypassed the user-precedence rule
+/// (SE-3, WP-6.3 — composite force applies used to be invisible here).
+pub const MANUAL_APPLY_ACTIONS: [&str; 8] = [
+    "admin.series.metadata_apply",
+    "admin.series.metadata_apply_force",
+    "admin.issue.metadata_apply",
+    "admin.issue.metadata_apply_force",
+    "admin.series.metadata_composite_apply",
+    "admin.series.metadata_composite_apply_force",
+    "admin.issue.metadata_composite_apply",
+    "admin.issue.metadata_composite_apply_force",
+];
 
 #[utoipa::path(
     operation_id = "admin_metadata_dashboard",    get,
@@ -386,12 +402,7 @@ pub async fn dashboard(State(app): State<AppState>, _admin: RequireAdmin) -> Res
 
     let seven_days_ago = chrono::Utc::now() - chrono::Duration::days(7);
     let applies_last_7_days = audit_log::Entity::find()
-        .filter(audit_log::Column::Action.is_in([
-            "admin.series.metadata_apply",
-            "admin.series.metadata_apply_force",
-            "admin.issue.metadata_apply",
-            "admin.issue.metadata_apply_force",
-        ]))
+        .filter(audit_log::Column::Action.is_in(MANUAL_APPLY_ACTIONS))
         .filter(audit_log::Column::CreatedAt.gte(seven_days_ago.fixed_offset()))
         .count(&app.db)
         .await

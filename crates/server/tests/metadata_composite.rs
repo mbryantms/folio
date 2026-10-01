@@ -357,3 +357,186 @@ async fn composite_apply_excludes_dropped_provider() {
         "Metron characters applied",
     );
 }
+
+// ───────── SE-3 / WP-6.3: override gate + `_force` audit on composite ─────────
+
+/// Register `email`; returns `(cookie header, csrf token)`.
+async fn register_cookie(app: &TestApp, email: &str) -> (String, String) {
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode, header};
+    use tower::ServiceExt;
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(
+                    r#"{{"email":"{email}","password":"correctly-horse-battery"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let cookies: Vec<String> = resp
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .map(|c| c.split(';').next().unwrap_or("").to_owned())
+        .collect();
+    let csrf = cookies
+        .iter()
+        .find_map(|c| c.strip_prefix("__Host-comic_csrf="))
+        .expect("csrf cookie")
+        .to_owned();
+    (cookies.join("; "), csrf)
+}
+
+async fn composite_apply_http(
+    app: &TestApp,
+    (cookie, csrf): &(String, String),
+    issue_id: &str,
+    run_id: Uuid,
+    override_user_edits: bool,
+) -> axum::http::Response<axum::body::Body> {
+    use axum::body::Body;
+    use axum::http::{Method, Request, header};
+    use tower::ServiceExt;
+    let row = issue::Entity::find_by_id(issue_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let body = json!({
+        "run_id": run_id,
+        "field_sources": [{"field": "description", "ordinal": 0}],
+        "included": [0],
+        "apply_cover": false,
+        "override_user_edits": override_user_edits,
+    });
+    app.router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!(
+                    "/api/series/{}/issues/{}/metadata/composite-apply",
+                    row.series_id, row.slug
+                ))
+                .header(header::COOKIE, cookie)
+                .header("x-csrf-token", csrf)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn composite_apply_override_is_admin_gated_structurally() {
+    use axum::http::StatusCode;
+    let (app, issue_id, run_id) = setup().await;
+    let _admin = register_cookie(&app, "admin@example.com").await;
+    let user = register_cookie(&app, "user@example.com").await;
+    // Give the user library access so only the override flag is in play.
+    let db = &app.state().db;
+    let row = issue::Entity::find_by_id(&issue_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let user_row = entity::user::Entity::find()
+        .filter(entity::user::Column::Email.eq("user@example.com"))
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let now = Utc::now().fixed_offset();
+    entity::library_user_access::ActiveModel {
+        user_id: Set(user_row.id),
+        library_id: Set(row.library_id),
+        age_rating_max: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+
+    let resp = composite_apply_http(&app, &user, &issue_id, run_id, true).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"]["code"], "auth.permission_denied");
+    // Nothing was applied.
+    let after = issue::Entity::find_by_id(&issue_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.summary, row.summary);
+}
+
+#[tokio::test]
+async fn composite_force_apply_audits_as_force_and_counts_on_the_dashboard() {
+    use axum::http::StatusCode;
+    let (app, issue_id, run_id) = setup().await;
+    let admin = register_cookie(&app, "admin@example.com").await;
+
+    let resp = composite_apply_http(&app, &admin, &issue_id, run_id, true).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let actions: Vec<String> = entity::audit_log::Entity::find()
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.action)
+        .collect();
+    assert!(
+        actions
+            .iter()
+            .any(|a| a == "admin.issue.metadata_composite_apply_force"),
+        "override must audit under the `_force` action: {actions:?}"
+    );
+    assert!(
+        !actions
+            .iter()
+            .any(|a| a == "admin.issue.metadata_composite_apply"),
+        "{actions:?}"
+    );
+    assert!(
+        server::api::admin_metadata::MANUAL_APPLY_ACTIONS
+            .contains(&"admin.issue.metadata_composite_apply_force")
+    );
+
+    // The dashboard's 7-day counter includes it.
+    use axum::body::Body;
+    use axum::http::{Request, header};
+    use tower::ServiceExt;
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/admin/metadata/dashboard")
+                .header(header::COOKIE, &admin.0)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["applies_last_7_days"], 1, "{body}");
+}

@@ -159,6 +159,62 @@ fn json_rejection_to_response(rej: JsonRejection) -> Response {
     respond(status, ApiErrorCode::Validation, message)
 }
 
+/// A request body carrying the admin-only `override_user_edits` flag
+/// (metadata-providers: bypassing the user-precedence rule).
+pub trait OverridesUserEdits {
+    fn override_user_edits(&self) -> bool;
+}
+
+/// JSON body whose `override_user_edits` flag is admin-gated **structurally**
+/// (SE-3, WP-6.3). The metadata apply endpoints serve every user with library
+/// access, so the handler can't take [`RequireAdmin`] outright — but the flag
+/// itself is admin-only. This extractor parses the body and, only when the
+/// flag is set, runs the same [`RequireAdmin`] extractor the `/admin/*`
+/// handlers use; a non-admin gets its 403 (`auth.permission_denied`) before
+/// the handler body runs. Replaces the five inline
+/// `if req.override_user_edits && user.role != "admin"` checks, so a new
+/// apply route can't forget the gate: taking the request type through
+/// `Json<T>` instead of this extractor is the visible deviation in review.
+///
+/// [`RequireAdmin`]: crate::auth::RequireAdmin
+#[derive(Debug, Clone)]
+pub struct AdminGatedOverride<T>(pub T);
+
+impl<S, T> FromRequest<S> for AdminGatedOverride<T>
+where
+    S: Send + Sync,
+    T: DeserializeOwned + OverridesUserEdits + Send + 'static,
+    Json<T>: FromRequest<S, Rejection = JsonRejection>,
+    crate::state::AppState: axum::extract::FromRef<S>,
+{
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        use axum::extract::FromRequestParts;
+        use axum::response::IntoResponse;
+
+        let (parts, body) = req.into_parts();
+        let mut auth_parts = parts.clone();
+        let Json(payload) = Json::<T>::from_request(Request::from_parts(parts, body), state)
+            .await
+            .map_err(json_rejection_to_response)?;
+        if payload.override_user_edits() {
+            match crate::auth::RequireAdmin::from_request_parts(&mut auth_parts, state).await {
+                Ok(_) => {}
+                Err(crate::auth::extractor::AuthRejection::Forbidden) => {
+                    return Err(respond(
+                        StatusCode::FORBIDDEN,
+                        ApiErrorCode::PermissionDenied,
+                        "override_user_edits requires admin",
+                    ));
+                }
+                Err(other) => return Err(other.into_response()),
+            }
+        }
+        Ok(AdminGatedOverride(payload))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

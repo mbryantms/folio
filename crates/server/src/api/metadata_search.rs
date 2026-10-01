@@ -32,7 +32,9 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
-use crate::api::extractors::{OptionalValidated, Validated};
+use crate::api::extractors::{
+    AdminGatedOverride, OptionalValidated, OverridesUserEdits, Validated,
+};
 use crate::api::saved_views::BatchTargets;
 use crate::auth::CurrentUser;
 use crate::jobs::{metadata_apply, metadata_search};
@@ -425,6 +427,12 @@ pub struct ApplyRequest {
     /// conflicts stay sacred.
     #[serde(default)]
     pub override_external_id_sources: Vec<String>,
+}
+
+impl OverridesUserEdits for ApplyRequest {
+    fn override_user_edits(&self) -> bool {
+        self.override_user_edits
+    }
 }
 
 fn default_fill_missing() -> ApplyMode {
@@ -1660,7 +1668,8 @@ pub async fn apply_series(
     user: CurrentUser,
     Extension(ctx): Extension<RequestContext>,
     Path(slug): Path<String>,
-    axum::Json(req): axum::Json<ApplyRequest>,
+    // SE-3 (WP-6.3): `override_user_edits` is admin-gated by the extractor.
+    AdminGatedOverride(req): AdminGatedOverride<ApplyRequest>,
 ) -> Response {
     let s = match crate::api::series::find_by_slug(&app.db, &slug).await {
         Ok(s) => s,
@@ -1671,13 +1680,6 @@ pub async fn apply_series(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
             "library access denied",
-        );
-    }
-    if req.override_user_edits && user.role != "admin" {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "override_user_edits requires admin",
         );
     }
     // Validate the run belongs to this series + the candidate exists.
@@ -2002,7 +2004,8 @@ pub async fn apply_issue(
     user: CurrentUser,
     Extension(ctx): Extension<RequestContext>,
     Path((slug, issue_slug)): Path<(String, String)>,
-    axum::Json(req): axum::Json<ApplyRequest>,
+    // SE-3 (WP-6.3): `override_user_edits` is admin-gated by the extractor.
+    AdminGatedOverride(req): AdminGatedOverride<ApplyRequest>,
 ) -> Response {
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
@@ -2012,13 +2015,6 @@ pub async fn apply_issue(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
             "library access denied",
-        );
-    }
-    if req.override_user_edits && user.role != "admin" {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "override_user_edits requires admin",
         );
     }
     let Some(run) = orchestrator::fetch_run(&app.db, req.run_id)
@@ -2232,6 +2228,12 @@ pub struct CompositeApplyRequest {
     pub override_external_id_sources: Vec<String>,
 }
 
+impl OverridesUserEdits for CompositeApplyRequest {
+    fn override_user_edits(&self) -> bool {
+        self.override_user_edits
+    }
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CompositeApplyResp {
     pub run_id: Uuid,
@@ -2282,10 +2284,16 @@ async fn audit_composite(
     entity_id: String,
     req: &CompositeApplyRequest,
 ) {
-    let action = if scope == "series" {
-        "admin.series.metadata_composite_apply"
-    } else {
-        "admin.issue.metadata_composite_apply"
+    // SE-3 (WP-6.3): an override applies under the distinct `…_force`
+    // action — same convention as `metadata_apply_force` on the single-
+    // provider path — so the bypass of the user-precedence rule is visible
+    // in the audit log's action column (and counted by the dashboard), not
+    // only in the payload.
+    let action = match (scope == "series", req.override_user_edits) {
+        (true, false) => "admin.series.metadata_composite_apply",
+        (true, true) => "admin.series.metadata_composite_apply_force",
+        (false, false) => "admin.issue.metadata_composite_apply",
+        (false, true) => "admin.issue.metadata_composite_apply_force",
     };
     let per_field: Vec<serde_json::Value> = req
         .field_sources
@@ -2329,7 +2337,8 @@ pub async fn composite_apply_series(
     user: CurrentUser,
     Extension(ctx): Extension<RequestContext>,
     Path(slug): Path<String>,
-    axum::Json(req): axum::Json<CompositeApplyRequest>,
+    // SE-3 (WP-6.3): `override_user_edits` is admin-gated by the extractor.
+    AdminGatedOverride(req): AdminGatedOverride<CompositeApplyRequest>,
 ) -> Response {
     let s = match crate::api::series::find_by_slug(&app.db, &slug).await {
         Ok(s) => s,
@@ -2340,13 +2349,6 @@ pub async fn composite_apply_series(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
             "library access denied",
-        );
-    }
-    if req.override_user_edits && user.role != "admin" {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "override_user_edits requires admin",
         );
     }
     let Some(run) = orchestrator::fetch_run(&app.db, req.run_id)
@@ -2407,7 +2409,8 @@ pub async fn composite_apply_issue(
     user: CurrentUser,
     Extension(ctx): Extension<RequestContext>,
     Path((slug, issue_slug)): Path<(String, String)>,
-    axum::Json(req): axum::Json<CompositeApplyRequest>,
+    // SE-3 (WP-6.3): `override_user_edits` is admin-gated by the extractor.
+    AdminGatedOverride(req): AdminGatedOverride<CompositeApplyRequest>,
 ) -> Response {
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
@@ -2417,13 +2420,6 @@ pub async fn composite_apply_issue(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
             "library access denied",
-        );
-    }
-    if req.override_user_edits && user.role != "admin" {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "override_user_edits requires admin",
         );
     }
     let Some(run) = orchestrator::fetch_run(&app.db, req.run_id)
@@ -3306,6 +3302,12 @@ pub struct BatchApplyReq {
     pub selected_fields: Option<Vec<String>>,
 }
 
+impl OverridesUserEdits for BatchApplyReq {
+    fn override_user_edits(&self) -> bool {
+        self.override_user_edits
+    }
+}
+
 /// One resolved apply target inside a batch. Single-candidate (strong /
 /// curated ordinals) vs composite (needs-review multi-provider merge).
 enum ApplyTarget {
@@ -3357,7 +3359,8 @@ pub async fn batch_apply(
     user: CurrentUser,
     Extension(ctx): Extension<RequestContext>,
     Path(batch_id): Path<Uuid>,
-    axum::Json(req): axum::Json<BatchApplyReq>,
+    // SE-3 (WP-6.3): `override_user_edits` is admin-gated by the extractor.
+    AdminGatedOverride(req): AdminGatedOverride<BatchApplyReq>,
 ) -> Response {
     use apalis::prelude::Storage;
 
@@ -3374,13 +3377,6 @@ pub async fn batch_apply(
     };
     if !user_can_see_batch(&app, &user, &batch).await {
         return error(StatusCode::FORBIDDEN, "forbidden", "batch not visible");
-    }
-    if req.override_user_edits && user.role != "admin" {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "override_user_edits requires admin",
-        );
     }
 
     // Child runs of this batch, keyed by id.

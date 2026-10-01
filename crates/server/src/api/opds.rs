@@ -76,7 +76,8 @@ const WWW_AUTHENTICATE_OPDS: &str = r#"Basic realm="Folio OPDS""#;
 pub(crate) const UP_NEXT_REL: &str = "https://folio.local/rels/up-next";
 
 pub fn routes() -> Router<AppState> {
-    Router::new()
+    // Catalog / navigation / search feeds — the enumeration surface.
+    let catalog = Router::new()
         .route("/opds/v1", get(root))
         // progress-writeback-2.0 M2: Komga's canonical catalog path.
         // Panels probes `/opds/v1.2/catalog` when it sees the Komga
@@ -105,15 +106,6 @@ pub fn routes() -> Router<AppState> {
         .route("/opds/v1/by-creator/{writer}", get(by_creator))
         .route("/opds/v1/search", get(search))
         .route("/opds/v1/search.xml", get(search_description))
-        .route("/opds/v1/issues/{id}/file", get(download))
-        // v0.3.39: Komga-shape download path. Panels parses this URL
-        // pattern to extract the book id it uses for progress-write
-        // PATCH calls. Always registered; the OPDS feed only emits
-        // URLs in this shape when `compat.opds_panels_mode = komga`.
-        .route(
-            "/opds/v1.2/books/{id}/file/{filename}",
-            get(download_komga_alias),
-        )
         // M4 — personal surfaces
         .route("/opds/v1/wtr", get(wtr))
         .route("/opds/v1/lists", get(cbl_lists_nav))
@@ -139,11 +131,26 @@ pub fn routes() -> Router<AppState> {
         .route("/opds/v1/arcs/{slug}", get(entities::arc_acq))
         .route("/opds/v1/publishers", get(entities::publishers_nav))
         .route("/opds/v1/publishers/{slug}", get(entities::publisher_acq))
+        // H-3.2 (security audit) / WP-6.3: catalog enumeration has its
+        // own bucket so a crawler exhausting it can't throttle page reads.
+        .layer(rate_limit::OPDS_CATALOG.build());
+
+    // Byte streams + progress writes — the reading path. Separate bucket
+    // (H-3.2): a scraper burning the catalog budget on `search` / `series`
+    // no longer starves a legitimate reader's page fetches, and vice versa.
+    let stream = Router::new()
+        .route("/opds/v1/issues/{id}/file", get(download))
+        // v0.3.39: Komga-shape download path. Panels parses this URL
+        // pattern to extract the book id it uses for progress-write
+        // PATCH calls. Always registered; the OPDS feed only emits
+        // URLs in this shape when `compat.opds_panels_mode = komga`.
+        .route(
+            "/opds/v1.2/books/{id}/file/{filename}",
+            get(download_komga_alias),
+        )
         // M5 — PSE (Page Streaming Extension). Sig-auth only: no
         // CurrentUser extractor on the handler, the URL itself carries
-        // the bearer (`?u=&exp=&sig=`). Shares the OPDS rate-limit
-        // bucket since streaming clients are part of the same throughput
-        // budget.
+        // the bearer (`?u=&exp=&sig=`).
         .route("/opds/pse/{issue_id}/{n}", get(crate::api::opds_pse::stream))
         // M7 — progress sync. `read+progress`-scoped tokens (or cookie
         // users) can PUT progress; the KOReader sync shim accepts
@@ -156,13 +163,16 @@ pub fn routes() -> Router<AppState> {
             "/opds/v1/syncs/progress/{document_hash}",
             axum::routing::put(koreader_sync_put),
         )
+        .layer(rate_limit::OPDS_STREAM.build());
+
+    catalog
+        .merge(stream)
         // M6 — content negotiation. Runs before the v1 handlers so a
         // client explicitly asking for OPDS 2.0 gets redirected before
         // we burn a DB roundtrip rendering atom they're going to
         // discard.
         .layer(middleware::from_fn(negotiate_opds_v2))
         .layer(middleware::from_fn(www_authenticate_on_401))
-        .layer(rate_limit::OPDS.build())
 }
 
 /// Content negotiation between OPDS 1.x (Atom) and OPDS 2.0 (JSON-LD).

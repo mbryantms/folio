@@ -226,3 +226,56 @@ async fn email_axis_lockout_engages_after_threshold() {
         "unrelated email must not get caught in the axis: {other:?}"
     );
 }
+
+async fn get_status(app: &TestApp, uri: &str) -> StatusCode {
+    app.router
+        .clone()
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+        .status()
+}
+
+/// Security-audit H-3.2 / WP-6.3: OPDS catalog enumeration and the reading
+/// path (downloads, PSE pages, progress) draw from separate buckets, so a
+/// crawler exhausting the catalog budget can't throttle page reads from the
+/// same IP. Unauthenticated requests still consume tokens (the governor runs
+/// before auth), which keeps the test free of credential setup: pre-limit
+/// responses are 401, the limit shows up as 429.
+#[tokio::test]
+async fn opds_catalog_exhaustion_does_not_throttle_the_stream_bucket() {
+    let app = TestApp::spawn().await;
+
+    let mut tripped = false;
+    for _ in 0..80 {
+        match get_status(&app, "/opds/v1/series").await {
+            StatusCode::TOO_MANY_REQUESTS => {
+                tripped = true;
+                break;
+            }
+            s => assert_eq!(s, StatusCode::UNAUTHORIZED),
+        }
+    }
+    assert!(
+        tripped,
+        "catalog bucket (burst 60) should trip within 80 requests"
+    );
+    // The reading path still has its full budget (401 = reached auth).
+    for uri in [
+        "/opds/v1/issues/does-not-exist/file",
+        "/opds/v2/issues/does-not-exist/file",
+        "/opds/pse/does-not-exist/0",
+    ] {
+        let s = get_status(&app, uri).await;
+        assert_ne!(
+            s,
+            StatusCode::TOO_MANY_REQUESTS,
+            "{uri} must not be throttled by the exhausted catalog bucket"
+        );
+    }
+    // The catalog stays throttled.
+    assert_eq!(
+        get_status(&app, "/opds/v1/search?q=x").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}

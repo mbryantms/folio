@@ -133,6 +133,9 @@ pub async fn list(
     // missing from the table (scanner inserted a credit since the
     // last backfill) just return `slug = NULL` and the client falls
     // back to the legacy `?library=all&credits=<name>` URL.
+    // L-4 (WP-6.3): bind LIMIT as a parameter rather than interpolating it.
+    params.push(Value::from(limit));
+    let limit_param = params.len();
     let sql = format!(
         "WITH all_credits AS ( \
            SELECT sc.person AS person, sc.role AS role, \
@@ -164,7 +167,7 @@ pub async fn list(
            FROM agg a \
            LEFT JOIN person p ON p.normalized_name = btrim(lower(a.person)) \
           ORDER BY similarity(a.person, $1) DESC, a.credit_count DESC, a.person ASC \
-          LIMIT {limit}",
+          LIMIT ${limit_param}",
     );
 
     let backend = app.db.get_database_backend();

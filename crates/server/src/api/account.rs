@@ -198,7 +198,10 @@ pub async fn update(
                 "this account has no local password",
             );
         };
-        let ok = password::verify(stored, current_pw, app.secrets.pepper.as_ref()).unwrap_or(false);
+        // Rotation-aware (L-1): a hash still under the previous pepper must
+        // verify here too; the password change below rewrites it anyway.
+        let ok = password::verify_rotating(stored, current_pw, app.secrets.peppers())
+            .is_ok_and(|v| v.ok());
         if !ok {
             return fail(
                 StatusCode::UNAUTHORIZED,

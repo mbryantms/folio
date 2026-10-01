@@ -338,6 +338,15 @@ async fn public_auth_config_advertises_oidc_when_configured() {
         body["client_id"].is_null(),
         "public surface must not leak client_id"
     );
+    // Security-audit M-2 (WP-6.3 status check): the anonymous surface must
+    // not reveal the IdP at all — not as `issuer`, nor embedded anywhere
+    // else in the body.
+    let issuer = op.issuer();
+    let raw = body.to_string();
+    assert!(
+        !raw.contains(issuer.trim_end_matches('/')),
+        "public /auth/config leaked the OIDC issuer: {raw}"
+    );
 }
 
 #[tokio::test]

@@ -484,14 +484,19 @@ pub(crate) async fn series_page(
     } else {
         paging.offset
     };
+    // L-4 (WP-6.3): LIMIT / OFFSET are bound parameters, not interpolated.
+    params.push(Value::from((paging.limit + 1) as i64));
+    let fetch_param = params.len();
+    params.push(Value::from(offset as i64));
     let sql = format!(
         "SELECT s.id, lower(s.name) AS k FROM series s \
           WHERE s.id IN ({members}) AND {svis}{keyset} \
           ORDER BY lower(s.name), s.id \
-          LIMIT {fetch} OFFSET {offset}",
+          LIMIT ${fetch} OFFSET ${offset}",
         members = series_members_one(kind, 1, 2, &acl),
         svis = series_visible(&acl),
-        fetch = paging.limit + 1,
+        fetch = fetch_param,
+        offset = fetch_param + 1,
     );
     let mut rows = SeriesKeyRow::find_by_statement(Statement::from_sql_and_values(
         app.db.get_database_backend(),
@@ -566,6 +571,10 @@ pub(crate) async fn issue_page(
     } else {
         paging.offset
     };
+    // L-4 (WP-6.3): LIMIT / OFFSET are bound parameters, not interpolated.
+    params.push(Value::from((paging.limit + 1) as i64));
+    let fetch_param = params.len();
+    params.push(Value::from(offset as i64));
     let sql = format!(
         "SELECT id, k0, k1, k2, k3 FROM ( \
             SELECT i.id AS id, {k0} AS k0, \
@@ -576,9 +585,10 @@ pub(crate) async fn issue_page(
              WHERE i.id IN (SELECT issue_id FROM ({hits}) h) \
          ) t{keyset} \
          ORDER BY k0, k1, k2, k3, id \
-         LIMIT {fetch} OFFSET {offset}",
+         LIMIT ${fetch} OFFSET ${offset}",
         hits = issue_hits_one(kind, 1, 2, &acl),
-        fetch = paging.limit + 1,
+        fetch = fetch_param,
+        offset = fetch_param + 1,
     );
     let mut rows = IssueKeyRow::find_by_statement(Statement::from_sql_and_values(
         app.db.get_database_backend(),
@@ -679,13 +689,18 @@ pub(crate) async fn list_page(
     } else {
         paging.offset
     };
+    // L-4 (WP-6.3): LIMIT / OFFSET are bound parameters, not interpolated.
+    params.push(Value::from((paging.limit + 1) as i64));
+    let fetch_param = params.len();
+    params.push(Value::from(offset as i64));
     let sql = format!(
         "{cte} SELECT e.id, e.slug, e.name, a.series_count, a.issue_count \
            FROM agg a JOIN {table} e ON e.id = a.eid{where_clause} \
           ORDER BY lower(e.name), e.slug \
-          LIMIT {fetch} OFFSET {offset}",
+          LIMIT ${fetch} OFFSET ${offset}",
         table = kind.table(),
-        fetch = paging.limit + 1,
+        fetch = fetch_param,
+        offset = fetch_param + 1,
     );
     let mut rows = ListRow::find_by_statement(Statement::from_sql_and_values(
         app.db.get_database_backend(),

@@ -4889,6 +4889,12 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "per-user URL/catalog list limit reached"
+          },
+          "429": {
+            "description": "per-user CBL import quota exceeded"
           }
         }
       }
@@ -4905,6 +4911,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "per-user CBL import quota exceeded"
           }
         }
       }
@@ -4921,6 +4930,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "per-user CBL import quota exceeded"
           }
         }
       }
@@ -4937,6 +4949,12 @@
                 }
               }
             }
+          },
+          "415": {
+            "description": "not an XML / .cbl upload"
+          },
+          "429": {
+            "description": "per-user CBL import quota exceeded"
           }
         }
       }
@@ -5040,6 +5058,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "per-user CBL import quota exceeded"
           }
         }
       }
@@ -5245,7 +5266,10 @@
           }
         ],
         "responses": {
-          "200": {}
+          "200": {},
+          "429": {
+            "description": "per-user CBL import quota exceeded"
+          }
         }
       }
     },
@@ -15266,7 +15290,7 @@
           "applies_last_7_days": {
             "type": "integer",
             "format": "int64",
-            "description": "Count of successful `metadata_apply` audit rows in the last\n7 days."
+            "description": "Count of manual metadata-apply audit rows in the last 7 days —\nsingle-provider and composite, with and without\n`override_user_edits` (see `MANUAL_APPLY_ACTIONS`)."
           },
           "providers": {
             "type": "array",

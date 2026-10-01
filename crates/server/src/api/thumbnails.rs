@@ -392,17 +392,26 @@ async fn serve_cover_file(
     {
         return (StatusCode::NOT_MODIFIED, headers).into_response();
     }
-    let file = match tokio::fs::File::open(path).await {
+    let mut file = match tokio::fs::File::open(path).await {
         Ok(f) => f,
         Err(_) => return error(StatusCode::NOT_FOUND, "not_found", "cover unavailable"),
     };
     let len = file.metadata().await.map(|m| m.len()).ok();
-    let mime = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(cover_mime)
-        .unwrap_or("image/jpeg");
+    // SE-6 (WP-6.3): the MIME comes from the stored bytes, never the file
+    // extension (which, before the write-side sniff, was derived from the
+    // provider URL). A legacy file that isn't an image is not served at all.
+    let mime = match sniff_cover_file(&mut file).await {
+        Some(kind) => kind.mime(),
+        None => {
+            tracing::warn!(path = %path.display(), "stored cover is not a recognised image; refusing to serve");
+            return error(StatusCode::NOT_FOUND, "not_found", "cover unavailable");
+        }
+    };
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
     if let Some(l) = len {
         headers.insert(header::CONTENT_LENGTH, HeaderValue::from(l));
     }
@@ -410,11 +419,19 @@ async fn serve_cover_file(
     (StatusCode::OK, headers, Body::from_stream(stream)).into_response()
 }
 
-fn cover_mime(ext: &str) -> &'static str {
-    match ext.to_ascii_lowercase().as_str() {
-        "png" => "image/png",
-        "webp" => "image/webp",
-        "gif" => "image/gif",
-        _ => "image/jpeg",
+/// Sniff the leading bytes of a stored cover, then rewind so the whole file
+/// streams. `None` for a short read error or a non-image.
+async fn sniff_cover_file(file: &mut tokio::fs::File) -> Option<archive::image_sniff::ImageKind> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let mut head = [0u8; archive::image_sniff::SNIFF_LEN];
+    let mut filled = 0;
+    while filled < head.len() {
+        match file.read(&mut head[filled..]).await {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(_) => return None,
+        }
     }
+    file.seek(std::io::SeekFrom::Start(0)).await.ok()?;
+    archive::image_sniff::sniff(&head[..filled])
 }

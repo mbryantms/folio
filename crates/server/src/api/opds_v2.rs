@@ -64,7 +64,9 @@ use super::{error, not_found};
 const NAV_CT: &str = "application/opds+json";
 
 pub fn routes() -> Router<AppState> {
-    Router::new()
+    // H-3.2 / WP-6.3: catalog feeds and the byte/progress path get separate
+    // rate-limit buckets (see `opds::routes`).
+    let catalog = Router::new()
         .route("/opds/v2", get(root))
         .route("/opds/v2/series", get(series_list))
         .route("/opds/v2/series/{id}", get(series_one))
@@ -80,7 +82,6 @@ pub fn routes() -> Router<AppState> {
         .route("/opds/v2/new-this-month", get(new_this_month))
         .route("/opds/v2/by-creator/{writer}", get(by_creator))
         .route("/opds/v2/search", get(search))
-        .route("/opds/v2/issues/{id}/file", get(super::opds::download))
         // Personal surfaces (M4 parity)
         .route("/opds/v2/wtr", get(wtr))
         .route("/opds/v2/lists", get(cbl_lists_nav))
@@ -93,13 +94,17 @@ pub fn routes() -> Router<AppState> {
         // mirror of /opds/v1/pages.
         .route("/opds/v2/pages", get(pages_nav))
         .route("/opds/v2/pages/{slug}", get(page_acq))
+        .layer(rate_limit::OPDS_CATALOG.build());
+    let stream = Router::new()
+        .route("/opds/v2/issues/{id}/file", get(super::opds::download))
         // M7 — progress write. Same handler as v1; OPDS 2.0 clients
         // posting to either path land in the same audit row.
         .route(
             "/opds/v2/issues/{id}/progress",
             axum::routing::put(super::opds::progress_put),
         )
-        .layer(rate_limit::OPDS.build())
+        .layer(rate_limit::OPDS_STREAM.build());
+    catalog.merge(stream)
 }
 
 // ────────────── handlers — catalog ──────────────
