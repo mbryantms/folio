@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.30.0](https://github.com/mbryantms/folio/compare/v0.29.1...v0.30.0) (2026-10-01)
+
+
+### Added
+
+* **sidebar:** fold Creators into the Browse entry ([#931](https://github.com/mbryantms/folio/issues/931)) ([cbf46e8](https://github.com/mbryantms/folio/commit/cbf46e873e6ff51833e0ea658234d32c9b1dfe8d))
+* **web:** show the Your notes tab only when the item has notes ([#932](https://github.com/mbryantms/folio/issues/932)) ([04fe7e5](https://github.com/mbryantms/folio/commit/04fe7e538559e4d8b26a9893eedab99a65d7161e))
+
+
+### Dependencies
+
+* update dependency pnpm to v12.8.0 ([#927](https://github.com/mbryantms/folio/issues/927)) ([a78c774](https://github.com/mbryantms/folio/commit/a78c774285dc50816fca905b115df3b4222a5e76))
+
 ## [0.29.1](https://github.com/mbryantms/folio/compare/v0.29.0...v0.29.1) (2026-10-01)
 
 
