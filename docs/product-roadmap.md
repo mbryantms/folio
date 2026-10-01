@@ -212,14 +212,21 @@ Exit: notes are durable and browsable in context; issue-level queries exist; ent
 
 ### M6 — Providers, portability, and residual security (target: 3 weeks of sessions, after M2)
 
+**Status (2026-10-01): 6.1–6.5 implemented, in review; arm64 (half of 6.5) and 6.6 deferred by the owner.** PRs: 6.1 #936 · 6.2 #938 · 6.3 #935 · 6.4 #934 · 6.5 #937 (CB7 only). Merging is manual; #937 and #938 both add migrations (prefixes 20270405 / 20270402), so whichever lands second may need a rebase. Notes from implementation:
+- **6.1:** fixtures are real anonymous GCD API recordings (2026-10-01); the provider requires an account (anonymous is 30 req/h); a 2,000/day bucket mirrors GCD's account limit and drives the budget bar; GCD gets no ComicInfo `Notes` attribution line (credited via comics.org source links). The cover host `files1.comics.org` sits behind Cloudflare bot protection and returned 403 server-side, so GCD cover matching may fall back to text scoring.
+- **6.2:** the roadmap's premise was wrong — the scanner stored no per-page hashes. Hashes (BLAKE3 of page bytes) are captured at marker/progress write and the archive is hashed only when hashed anchors need re-resolving. Unresolvable markers get a `page-drift` tag (cleared if the image returns). Also fixed: the page server's open-archive cache was never invalidated when an issue's content changed.
+- **6.3:** M-2 and L-3 were already fixed and gained assertions; H-3.2 (OPDS shared bucket) was also fixed (catalog vs stream buckets). The `override_user_edits` gate is a structural `AdminGatedOverride<T>` extractor (403 code is now `auth.permission_denied`); composite force applies audit as `…metadata_composite_apply_force` and count on the dashboard. Pepper rotation uses `secrets/pepper.previous`.
+- **6.4:** ComicTagger 1.5.5 fixture; five Folio sidecar bugs fixed (Volume dropped, Notes dropped on DB-only rewrites, `DoublePage="True"` misparsed, rating `4.50`, MetronInfo credits missing on DB-only rewrites); three intentional differences documented.
+- **6.5:** CB7 is convert-on-scan only, behind a new per-library `auto_convert_cb7_on_scan` flag (separate from the CBR flag); no in-place reading of unconverted CB7; 256 MiB decoder-memory cap.
+
 | WP | Title | Effort | Audit | Scope | Files | Done when |
 |---|---|---|---|---|---|---|
 | 6.1 | GCD provider | L | R26 → 2.9 | Third `MetadataProvider` over GCD's JSON API with tolerant deserialisation (fields are declared unstable, so unknown/missing fields must never fail a search); Basic-auth settings keys + `metadata.gcd.enabled`; CSP `img-src` allowlist entry for GCD cover hosts; `list_series_issue_numbers` (GCD is a splitter); rate bucket (~100/h, 1/s); wiremock tests from recorded fixtures; operator-guide section; budget bar entry | new `metadata/gcd.rs`, `metadata/orchestrator.rs:78-112`, `settings/registry.rs`, `middleware/security_headers.rs`, `api/admin_metadata.rs`, docs | Search and apply round-trip against recorded fixtures; a fixture with a renamed field still parses; budget bar shows GCD; golden suite unchanged |
 | 6.2 | Page-hash marker anchoring | L | R28 → 1.2 | Store a per-page content hash on markers and progress at capture (the scanner's page index already carries entry hashes); on rescan or archive replacement re-resolve `page_index` by hash before falling back to the ordinal map from WP-1.2; drift note when neither resolves; OCR cache key unaffected | migration (`markers.page_hash`, `progress_records.page_hash`), `api/markers.rs`, `api/progress.rs`, `scanner/process.rs`, `jobs/archive_edit.rs` | Test: a replaced archive with reordered pages keeps markers and the resume position on the right image; ordinal fallback test |
 | 6.3 | Residual security items | M | SE-2, SE-3, SE-6 | Explicit `CorsLayer` deny-by-default; strip issuer from anonymous `/auth/config`; per-user CBL import quota; multipart content-type check; `LIMIT` binding tidy; pepper rotation via dual-pepper verify-and-rehash; magic-sniff provider cover bytes before persisting and require https; `override_user_edits` via `RequireAdmin` and `_force` audit on composite apply; add a status column to `docs/dev/security-audit.md` | `app.rs`, `auth/*`, `api/{auth_config,cbl_lists,metadata_search}.rs`, `metadata/writers.rs`, docs | Each item has a test; audit doc shows status per finding |
 | 6.4 | ComicTagger parity fixture | S | D9, §3.4 | Real ComicTagger-tagged CBZ fixture + Folio's rewrite of it; test that both XMLs agree on every shared field; document known intentional differences | `fixtures/`, `crates/server/tests/sidecar_parity.rs`, `docs/dev/metadata-sidecar-writeback.md` | Test passes; diff list is empty or documented |
-| 6.5 | arm64 images + CB7 | M | OP-3, inventory | `linux/arm64` in `release.yml` on arm runners (release only); CB7 via `sevenz-rust2` as convert-on-scan like CBR | `.github/workflows/release.yml`, `crates/archive/src/cb7.rs`, `scanner/cbr_convert.rs` | arm64 image boots in docker-smoke; CB7 fixture converts |
-| 6.6 | Locale segment decision | S | AR-2 | Either wire a second locale end-to-end or collapse `[locale]` per the "keep i18n, wire later" memory; this WP only writes the decision and the plan | `docs/dev/i18n-completion-plan.md` | Decision recorded |
+| 6.5 | arm64 images + CB7 (**arm64 deferred 2026-10-01**) | M | OP-3, inventory | `linux/arm64` in `release.yml` on arm runners (release only); CB7 via `sevenz-rust2` as convert-on-scan like CBR | `.github/workflows/release.yml`, `crates/archive/src/cb7.rs`, `scanner/cbr_convert.rs` | arm64 image boots in docker-smoke; CB7 fixture converts |
+| 6.6 | Locale segment decision (**deferred 2026-10-01**) | S | AR-2 | Either wire a second locale end-to-end or collapse `[locale]` per the "keep i18n, wire later" memory; this WP only writes the decision and the plan | `docs/dev/i18n-completion-plan.md` | Decision recorded |
 
 ---
 
@@ -272,6 +279,15 @@ Items noticed during the audit that are real but small, to be picked up opportun
   - Issue saved views in OPDS feeds; multi-select on the issue-view detail page.
   - `useAdminMetadataRuns` uses `useQuery` on a `next_cursor` response, so the admin Runs tab shows only the first 25 runs; convert to `useInfiniteQuery`.
   - The arc/character/team entity pages have OPDS 1.x feeds only; no OPDS 2.0 equivalents yet.
+- Found during M6 (2026-10-01):
+  - Non-writeback provider apply leaves `issues.writer` and the other per-role credit columns empty: the CSV rebuild matches lowercase `'writer'` but the CV/Metron/GCD mappers write `Writer` (the `issue_credits` rows are correct).
+  - Folio's MetronInfo credit shape (`<Credit role="…"><Creator><Name>`) likely doesn't match the MetronInfo schema (`<Credit><Creator/><Roles><Role/></Roles></Credit>`); verify against the XSD.
+  - ComicTagger 1.5.5's page editor shows Folio's explicit `DoublePage="false"` as ticked (1.6 doesn't).
+  - L-2 (email-token expiry up to 30 days) is still open in `docs/dev/security-audit.md`.
+  - CBL import quota (20/h, 50 remote lists) is constant; make it a setting only if needed.
+  - BZip2-coded 7z is unsupported (`bzip2-1.0.6` licence not in `deny.toml`); compressed 7z headers decode before Folio can cap memory.
+  - No backfill of `page_hash` for existing markers; `account_export` omits `page_hash`.
+  - arm64 images (OP-3) and the locale-segment decision (WP-6.6, AR-2) deferred by the owner.
 
 ---
 
@@ -285,3 +301,4 @@ None. Every audit item is now either scheduled (§5) or confirmed excluded (§2)
 - 2026-09-29: M2 started; WP-2.2 (user-data import) removed at the owner's request. All nine M2 WPs opened as #885–#892 and #895 the same day.
 - 2026-09-29: exclusion list ruled on. Pulled back in and planned: relationship suggestion engine (M7), similar series (WP-7.4), GCD provider (WP-6.1), page-hash marker anchoring (WP-6.2). All other proposed exclusions confirmed excluded. An earlier edit the same day had these four backwards; corrected.
 - 2026-09-30: M3 and M5 fully merged; M4 merged except owner-run WP-4.1. M5 owner decisions recorded in the M5 status line.
+- 2026-10-01: M6 started; the owner deferred arm64 images (WP-6.5) and WP-6.6. WP-6.1–6.5 (CB7) opened as #934–#938.
