@@ -159,6 +159,7 @@ async fn seed_user_a(db: &DatabaseConnection, tmp: &std::path::Path, user_id: Uu
         created_at: Set(now),
         updated_at: Set(now),
         hidden_from_log: Set(false),
+        page_hash: Set(None),
     }
     .insert(db)
     .await

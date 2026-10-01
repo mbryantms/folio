@@ -25,6 +25,15 @@
 //! restart idempotent (targets `run + 1`, applied once) so the offline
 //! progress outbox (WP-4.5) can replay any queued write safely.
 //!
+//! **Page-hash anchoring (WP-6.2).** Every single-issue write
+//! (`upsert_for_run`, shared by the reader, OPDS, KOReader and Komga
+//! shims) records `page_hash`, the hash of the page image at
+//! `last_page`, so a rescan of a replaced archive keeps the resume
+//! position on the same image (`reading::page_remap`). Bulk mark
+//! read/unread writes (series, matching, CBL, multi-select) store no
+//! hash: they anchor "first page" / "last page", which the ordinal
+//! fallback already preserves.
+//!
 //! The spec's original §9 plan to swap this for Automerge CRDT sync was
 //! reconsidered and dropped on 2026-05-15 (see spec §9 decision note).
 //!
@@ -320,6 +329,11 @@ pub(crate) async fn upsert_for_run(
             };
             let next_finished_at =
                 resolve_finished_at(prev.finished, next_finished, prev.finished_at, now);
+            // Same page as stored: keep its hash instead of re-reading it.
+            let page_hash = match (&prev.page_hash, next_page == prev.last_page) {
+                (Some(h), true) => Some(h.clone()),
+                _ => crate::reading::page_hash::capture(app, issue_row, next_page).await,
+            };
             let am = ProgressAM {
                 user_id: Unchanged(user_id),
                 issue_id: Unchanged(issue_row.id.clone()),
@@ -333,6 +347,7 @@ pub(crate) async fn upsert_for_run(
                 // — clear any previously-set backfill flag.
                 is_backfill: Set(false),
                 run: Set(next_run),
+                page_hash: Set(page_hash),
             };
             am.update(&app.db).await
         }
@@ -346,6 +361,7 @@ pub(crate) async fn upsert_for_run(
                 (true, Some(r)) => r.saturating_add(1).max(0),
                 _ => 0,
             };
+            let page_hash = crate::reading::page_hash::capture(app, issue_row, page).await;
             let am = ProgressAM {
                 user_id: Set(user_id),
                 issue_id: Set(issue_row.id.clone()),
@@ -357,6 +373,7 @@ pub(crate) async fn upsert_for_run(
                 device: Set(device),
                 is_backfill: Set(false),
                 run: Set(first_run),
+                page_hash: Set(page_hash),
             };
             am.insert(&app.db).await
         }
@@ -525,6 +542,7 @@ pub async fn upsert_series(
                     device: Set(req.device.clone()),
                     is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
                     run: NotSet,
+                    page_hash: Set(None),
                 };
                 if let Err(e) = am.update(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "series-progress update failed");
@@ -544,6 +562,7 @@ pub async fn upsert_series(
                     device: Set(req.device.clone()),
                     is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
                     run: Set(0),
+                    page_hash: Set(None),
                 };
                 if let Err(e) = am.insert(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "series-progress insert failed");
@@ -669,6 +688,7 @@ pub async fn upsert_series_matching(
                     device: Set(req.device.clone()),
                     is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
                     run: NotSet,
+                    page_hash: Set(None),
                 };
                 if let Err(e) = am.update(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress update failed");
@@ -688,6 +708,7 @@ pub async fn upsert_series_matching(
                     device: Set(req.device.clone()),
                     is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
                     run: Set(0),
+                    page_hash: Set(None),
                 };
                 if let Err(e) = am.insert(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress insert failed");
@@ -876,6 +897,7 @@ pub async fn upsert_bulk(
                     device: Set(req.device.clone()),
                     is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
                     run: NotSet,
+                    page_hash: Set(None),
                 };
                 if let Err(e) = am.update(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress update failed");
@@ -895,6 +917,7 @@ pub async fn upsert_bulk(
                     device: Set(req.device.clone()),
                     is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
                     run: Set(0),
+                    page_hash: Set(None),
                 };
                 if let Err(e) = am.insert(&app.db).await {
                     tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress insert failed");
@@ -1083,6 +1106,7 @@ pub async fn upsert_series_bulk(
                         device: Set(req.device.clone()),
                         is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
                         run: NotSet,
+                        page_hash: Set(None),
                     };
                     if let Err(e) = am.update(&app.db).await {
                         tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk update failed");
@@ -1102,6 +1126,7 @@ pub async fn upsert_series_bulk(
                         device: Set(req.device.clone()),
                         is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
                         run: Set(0),
+                        page_hash: Set(None),
                     };
                     if let Err(e) = am.insert(&app.db).await {
                         tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk insert failed");

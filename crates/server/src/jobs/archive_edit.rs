@@ -551,28 +551,51 @@ pub async fn edit_one_issue(
     // reading progress) after an edited ordinal would otherwise point at
     // different pixels. Re-run the op simulation to get the old→new map
     // and apply it in the same transaction as the edit stamp. Rotate /
-    // replace / transform keep every ordinal and skip this.
-    use sea_orm::TransactionTrait;
-    let txn = state.db.begin().await?;
-    let anchors = if structural {
+    // replace / transform keep every ordinal (identity map).
+    //
+    // WP-6.2: this edit is the authority on where pages went, but it
+    // also changes page *bytes* (a rotated page hashes differently), so
+    // every anchor is re-stamped with the hash of the image now at its
+    // ordinal. Otherwise the follow-up rescan would read the rotated
+    // page's markers as drifted. The rewritten archive is hashed only
+    // when the issue has anchors to re-stamp.
+    use crate::reading::page_remap::{Authority, PageMap, issue_has_anchors, reanchor_issue};
+    let map = if structural {
         let final_ops = match job.bulk_op {
             Some(b) => b.lower(before),
             None => job.ops.clone(),
         };
         match simulate_slots(before, &final_ops) {
-            Ok(slots) => {
-                let map = crate::reading::page_remap::PageMap::from_slots(before, &slots);
-                crate::reading::page_remap::remap_issue_anchors(&txn, &row.id, &map).await?
-            }
+            Ok(slots) => Some(PageMap::from_slots(before, &slots)),
             Err(e) => {
                 // The rewrite already succeeded with these ops, so this
                 // cannot fail on bounds; log rather than abort the stamp.
                 tracing::error!(issue_id = %row.id, error = %e, "archive edit: anchor remap simulation failed");
-                Default::default()
+                None
             }
         }
     } else {
-        Default::default()
+        Some(PageMap::truncation(before, after))
+    };
+    let new_hashes = if map.is_some() && issue_has_anchors(&state.db, &row.id).await? {
+        crate::reading::page_hash::hash_all_pages(state, dst_path.clone()).await
+    } else {
+        None
+    };
+    use sea_orm::TransactionTrait;
+    let txn = state.db.begin().await?;
+    let anchors = match map {
+        Some(map) => {
+            reanchor_issue(
+                &txn,
+                &row.id,
+                &map,
+                new_hashes.as_deref(),
+                Authority::Ordinal,
+            )
+            .await?
+        }
+        None => Default::default(),
     };
     am.update(&txn).await?;
     txn.commit().await?;

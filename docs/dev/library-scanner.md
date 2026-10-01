@@ -421,6 +421,18 @@ the DB:
   it's `true`. A `force=true` scan on size+mtime-equal files re-parses
   ComicInfo but does not re-thumb
   ([process.rs:411–428](../../crates/server/src/library/scanner/process.rs#L411-L428)).
+- **Per-user anchors follow their pages on content change** (roadmap
+  WP-1.2 + WP-6.2) — when `content_changed`, the scanner drops the
+  issue's cached `zip_lru` handle (it still points at the old bytes) and
+  re-anchors every marker and progress row on the issue
+  (`reading::page_remap::reanchor_issue`, `Authority::Hash`). Anchors
+  that carry a `page_hash` move to wherever that image now sits; anchors
+  without one (written before WP-6.2), or whose image is gone, keep their
+  ordinal, or are pulled onto the last page with a `page-removed` tag when
+  the page count shrank. A marker whose image vanished while its ordinal
+  survived gets the `page-drift` tag. The new archive is hashed only when
+  some anchor on the issue has a hash to match. See
+  [reading-progress.md](reading-progress.md#page-anchoring-when-the-archive-changes).
 - **Soft-delete + return lifecycle** — files missing on disk are
   `removed_at = now()`. The row stays so user progress, bookmarks, and
   reviews aren't lost. A returning file (same content hash, same path)

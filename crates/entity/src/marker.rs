@@ -62,6 +62,12 @@ pub struct Model {
     /// reader overlay + `/bookmarks` regardless of this flag — hiding
     /// only affects activity-feed visibility.
     pub hidden_from_log: bool,
+    /// Hex BLAKE3 of the page image this marker was created on (WP-6.2).
+    /// On a rescan that finds new archive bytes, `page_index` is
+    /// re-resolved to wherever this image now sits; NULL for markers
+    /// written before page hashing (ordinal-only, WP-1.2 remap).
+    #[sea_orm(nullable)]
+    pub page_hash: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

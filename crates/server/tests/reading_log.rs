@@ -349,6 +349,7 @@ async fn mark_finished_at_inner(
         device: Set(None),
         is_backfill: Set(is_backfill),
         run: Set(0),
+        page_hash: Set(None),
     }
     .insert(&db)
     .await
@@ -419,6 +420,7 @@ async fn insert_marker(
         created_at: Set(at),
         updated_at: Set(at),
         hidden_from_log: Set(false),
+        page_hash: Set(None),
     }
     .insert(&db)
     .await

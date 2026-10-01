@@ -437,6 +437,7 @@ pub async fn seed_progress<C: ConnectionTrait>(
         device: Set(None),
         is_backfill: Set(false),
         run: Set(0),
+        page_hash: Set(None),
     }
     .insert(db)
     .await
@@ -465,6 +466,7 @@ pub async fn seed_progress_at<C: ConnectionTrait>(
         device: Set(None),
         is_backfill: Set(false),
         run: Set(0),
+        page_hash: Set(None),
     }
     .insert(db)
     .await

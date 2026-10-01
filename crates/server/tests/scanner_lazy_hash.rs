@@ -149,6 +149,7 @@ async fn add_progress(app: &TestApp, user_id: Uuid, issue_id: &str) {
         device: Set(None),
         is_backfill: Set(false),
         run: Set(0),
+        page_hash: Set(None),
     }
     .insert(&app.state().db)
     .await

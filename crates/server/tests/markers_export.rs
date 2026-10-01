@@ -131,6 +131,7 @@ async fn insert_marker(
         created_at: Set(created_at),
         updated_at: Set(created_at),
         hidden_from_log: Set(false),
+        page_hash: Set(None),
     }
     .insert(db)
     .await

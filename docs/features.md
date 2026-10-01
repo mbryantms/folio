@@ -325,7 +325,11 @@ a "Detect from providers" button that finds these splits for you.
   (OCR) text is editable in the marker editor — fix a misread or type it
   by hand (up to 8 KB). Marker colours are a fixed palette (yellow, green,
   blue, red, violet) or a `#RRGGBB[AA]` hex, and regions must fit on the
-  page.
+  page. Markers and the resume position remember the page *image*
+  they were set on: if an archive is replaced with its pages in a
+  different order, they follow their images on the next scan. A marker
+  whose image is gone stays on its page number and is tagged
+  `page-drift`.
 - **Ratings** — half-star precision on both issues and series.
 
 ## Search
