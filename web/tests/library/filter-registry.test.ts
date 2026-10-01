@@ -51,6 +51,9 @@ const ALL_FIELDS: Field[] = [
   "story_arc",
   "title",
   "rating",
+  "has_notes",
+  "has_bookmarks",
+  "has_highlights",
 ];
 
 const ALL_OPS: Op[] = [
@@ -155,6 +158,20 @@ describe("filter field registry", () => {
     expect(specFor("name").allowedOps).not.toContain("is_empty");
     expect(opTakesNoValue("is_empty")).toBe(true);
     expect(opTakesNoValue("equals")).toBe(false);
+  });
+
+  it("marker filters are boolean and offered on both entities (WP-5.7)", () => {
+    for (const f of [
+      "has_notes",
+      "has_bookmarks",
+      "has_highlights",
+    ] as Field[]) {
+      const spec = specFor(f);
+      expect(spec.kind).toBe("bool");
+      expect(spec.allowedOps).toEqual(["is_true", "is_false"]);
+      expect(fieldsFor("series").map((s) => s.id)).toContain(f);
+      expect(fieldsFor("issue").map((s) => s.id)).toContain(f);
+    }
   });
 
   it("kind <-> entity round-trips and issue labels override", () => {

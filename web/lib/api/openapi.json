@@ -17588,7 +17588,10 @@
           "format",
           "story_arc",
           "title",
-          "rating"
+          "rating",
+          "has_notes",
+          "has_bookmarks",
+          "has_highlights"
         ]
       },
       "FieldProvenanceRow": {

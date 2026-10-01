@@ -307,7 +307,8 @@ a "Detect from providers" button that finds these splits for you.
   individual issues — issue views add special type (annual / one-shot /
   TPB), format, story arc and your own rating, so "unread annuals from
   2019" is one rail — and any nullable field can be tested with
-  "is empty". Views are pinnable as rails.
+  "is empty". "Has my notes / bookmarks / highlights" filters find what
+  you've annotated at either level. Views are pinnable as rails.
 - **Custom pages** — build up to 20 of your own pages out of rails (saved
   views, On Deck, lists), each with its own sidebar entry; the sidebar
   itself is fully reorderable with custom headers and spacers.

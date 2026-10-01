@@ -705,7 +705,36 @@ fn compile_condition(cond: &Condition, ctx: &Ctx) -> Result<SeaCondition, Compil
             value_col,
             role,
         } => junction_predicate(cond, table, value_col, role, ctx),
+        Source::MarkerExists(kind) => marker_predicate(cond, kind, ctx),
     }
+}
+
+/// WP-5.7: "has my notes / bookmarks / highlights". Markers are per-user,
+/// so the EXISTS is always scoped to the viewing user (`$1`) — another
+/// user's notes never make a row match. Series views match a series with
+/// such a marker on any of its issues; markers on removed issues don't
+/// count (they're unreachable from the library). `kind` comes from the
+/// registry, never from user input.
+fn marker_predicate(
+    cond: &Condition,
+    kind: &'static str,
+    ctx: &Ctx,
+) -> Result<SeaCondition, CompileError> {
+    let owner = match ctx.entity {
+        ViewEntity::Series => "m.series_id = series.id",
+        ViewEntity::Issue => "m.issue_id = issues.id",
+    };
+    let exists = format!(
+        "EXISTS (SELECT 1 FROM markers m \
+         JOIN issues mi ON mi.id = m.issue_id AND mi.removed_at IS NULL \
+         WHERE m.user_id = $1 AND m.kind = '{kind}' AND {owner})"
+    );
+    let expr = match cond.op {
+        Op::IsTrue => Expr::cust_with_values(exists, [ctx.user_id]),
+        Op::IsFalse => Expr::cust_with_values(format!("NOT {exists}"), [ctx.user_id]),
+        _ => return Err(CompileError::OpNotAllowedForField(cond.field, cond.op)),
+    };
+    Ok(SeaCondition::all().add(expr))
 }
 
 fn series_predicate(
@@ -1157,6 +1186,7 @@ fn scalar_value(
         FieldKind::Date => Ok(Expr::val(as_text(v, bad)?)),
         FieldKind::Uuid => Ok(Expr::val(as_uuid(v, bad)?)),
         FieldKind::Multi => Err(bad("multi field requires array op")),
+        FieldKind::Bool => Err(bad("boolean field takes is_true / is_false")),
     }
 }
 
@@ -1661,6 +1691,70 @@ mod tests {
             sql.contains("ur.target_type = 'issue'") && sql.contains("IS NULL"),
             "SQL: {sql}"
         );
+    }
+
+    // ───── WP-5.7: has_notes / has_bookmarks / has_highlights ─────
+
+    #[test]
+    fn has_notes_is_user_scoped_exists_on_both_entities() {
+        let uid = Uuid::from_u128(0xabc);
+        let dsl = dsl_all(vec![cond(Field::HasNotes, Op::IsTrue, json!(null))]);
+        let series = compile(&CompileInput {
+            user_id: uid,
+            ..make(dsl.clone())
+        })
+        .unwrap()
+        .to_string(PostgresQueryBuilder);
+        assert!(
+            series.contains("EXISTS (SELECT 1 FROM markers m")
+                && series.contains("m.kind = 'note'")
+                && series.contains("m.series_id = series.id")
+                && series.contains(&uid.to_string()),
+            "SQL: {series}"
+        );
+        assert!(!series.contains("NOT EXISTS"), "SQL: {series}");
+        let input = IssueCompileInput {
+            dsl: &dsl,
+            sort_field: SortField::CreatedAt,
+            sort_order: SortOrder::Desc,
+            limit: 12,
+            cursor: None,
+            user_id: uid,
+            visible_libraries: VisibleLibraries::unrestricted(),
+        };
+        let issue = compile_issues(&input)
+            .unwrap()
+            .to_string(PostgresQueryBuilder);
+        assert!(
+            issue.contains("m.issue_id = issues.id") && issue.contains(&uid.to_string()),
+            "SQL: {issue}"
+        );
+    }
+
+    #[test]
+    fn has_bookmarks_false_and_highlights_map_to_marker_kinds() {
+        let sql = issues_sql(vec![
+            cond(Field::HasBookmarks, Op::IsFalse, json!(null)),
+            cond(Field::HasHighlights, Op::IsTrue, json!(null)),
+        ])
+        .unwrap();
+        assert!(
+            sql.contains("NOT EXISTS (SELECT 1 FROM markers m")
+                && sql.contains("m.kind = 'bookmark'")
+                && sql.contains("m.kind = 'highlight'"),
+            "SQL: {sql}"
+        );
+        // Removed issues' markers never count.
+        assert!(sql.contains("mi.removed_at IS NULL"), "SQL: {sql}");
+    }
+
+    #[test]
+    fn marker_fields_reject_non_bool_ops() {
+        let err = issues_sql(vec![cond(Field::HasNotes, Op::Equals, json!(true))]).unwrap_err();
+        assert!(matches!(
+            err,
+            CompileError::OpNotAllowedForField(Field::HasNotes, Op::Equals)
+        ));
     }
 
     #[test]

@@ -48,6 +48,7 @@ guards the mirror.
 | `read_status`                           | per-series rollup over `user_series_progress` | per-issue: `finished` → read, `last_page > 0` → in progress, else unread (same rule as `GET /issues?read_status=`) |
 | `rating`                                | caller's own series rating (`user_ratings`, `target_type='series'`) | caller's own issue rating (`target_type='issue'`) |
 | `special_type`, `format`, `story_arc`, `title` | —                             | `issues.*` (`title` = the issue's own title) |
+| `has_notes`, `has_bookmarks`, `has_highlights` (WP-5.7) | the caller has a marker of that kind on any (non-removed) issue of the series | the caller has a marker of that kind on the issue |
 | `read_progress`, `last_read`, `read_count`, `unread_issues`, `collection_completeness`, `metadata_completeness` | per-series rollups | — |
 
 ### `is_empty` / `is_not_empty`
@@ -67,6 +68,18 @@ them — the result would be a constant.
 `not_contains` / `not_equals` keep SQL three-valued semantics: rows whose
 column is NULL are excluded (combine with `is_empty` under `any` to keep
 them).
+
+### Annotation filters (WP-5.7)
+
+`has_notes` / `has_bookmarks` / `has_highlights` are boolean fields
+(`is_true` / `is_false`, no value) compiled to
+`[NOT] EXISTS (SELECT 1 FROM markers m JOIN issues mi … WHERE m.user_id =
+<viewer> AND m.kind = '<kind>' AND …)`. Markers are private, so the probe
+is **always** scoped to the viewing user — another user's notes never
+make a row match, and a shared system view evaluates per viewer. Markers
+on removed issues don't count. `favorite` markers have no filter. The
+series-level probe is served by `markers_user_series_kind_idx`
+(`m20270307`).
 
 ## The compiler
 

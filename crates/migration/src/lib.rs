@@ -111,6 +111,7 @@ mod m20270218_000001_issue_cover_active_unique;
 mod m20270220_000001_issue_page_overrides;
 mod m20270304_000001_issue_saved_views;
 mod m20270305_000001_entity_pages;
+mod m20270307_000001_markers_user_series_kind_idx;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -230,6 +231,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270220_000001_issue_page_overrides::Migration),
             Box::new(m20270304_000001_issue_saved_views::Migration),
             Box::new(m20270305_000001_entity_pages::Migration),
+            Box::new(m20270307_000001_markers_user_series_kind_idx::Migration),
         ]
     }
 }
