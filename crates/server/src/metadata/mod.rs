@@ -19,7 +19,8 @@
 //!   provider image URL (`metadata_cover_hash` table).
 //! - [`cache`] — TTL-bounded JSON cache for normalized `GenericMetadata`
 //!   payloads (`metadata_cache` table from M1 migration).
-//! - [`comicvine`] — first concrete provider impl (M1).
+//! - [`comicvine`] — first concrete provider impl (M1); [`metron`] (M2);
+//!   [`gcd`] — Grand Comics Database (WP-6.1).
 
 pub mod apply;
 pub mod auto_split;
@@ -32,6 +33,7 @@ pub mod cover_hash_cache;
 pub mod diff;
 pub mod drift;
 pub mod field;
+pub mod gcd;
 pub mod http;
 pub mod identifier;
 pub mod lookup;

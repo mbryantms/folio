@@ -1,7 +1,8 @@
 # Metadata providers
 
 The metadata-providers subsystem fetches series + issue metadata from
-external sources (currently ComicVine and Metron), ranks candidates
+external sources (ComicVine, Metron, and — since WP-6.1 — the Grand
+Comics Database), ranks candidates
 against your local entities, and applies the chosen match back to the
 DB with full provenance tracking.
 
@@ -69,7 +70,7 @@ prefix to [`Source::from_str`][source-fromstr] in
 `crates/server/src/metadata/identifier.rs`.
 
 Providers don't compete; they stack. The orchestrator fans out
-sequentially in priority order (currently Metron → ComicVine,
+sequentially in priority order (currently Metron → ComicVine → GCD,
 hard-coded in [`build_providers`][build-providers]) and merges
 ranked candidates across all of them. A single search may return
 Metron's `Saga (2012, Image)` *and* CV's `Saga (2012, Image)` as
@@ -95,7 +96,8 @@ user click → [METADATA_FETCH governor: per-IP] → enqueue job
 - **Per-provider Redis token bucket** — Lua-script atomic decrement +
   TTL refresh. Keys: `metadata:bucket:comicvine:hour`,
   `metadata:bucket:metron:min` (20), `metadata:bucket:metron:day`
-  (5,000). Survives restarts (the bucket state lives in Redis, not
+  (5,000), `metadata:bucket:gcd:hour` (100), `metadata:bucket:gcd:day`
+  (2,000). Survives restarts (the bucket state lives in Redis, not
   in-process); shared across replicas.
 
 Workers reserve N tokens before each HTTP call. Token-bucket deny
@@ -114,6 +116,8 @@ Both clients send through
 | `Retry-After` | Parsed on 429 (delta-seconds or HTTP-date) into `QuotaExceeded { retry_after_secs }`; fallback 60 s (CV `status_code=107`: 3600 s). |
 | Budget | Metron's `X-RateLimit-{Burst,Sustained}-{Limit,Remaining,Reset}` → [`metadata::budget`](../../crates/server/src/metadata/budget.rs), stored in Redis `metadata:budget:<provider>` after every response; `metadata:last_error:<provider>` records the last failure (cleared on success). ComicVine's budget is derived from the local hourly bucket. |
 | Auth (Metron) | `MetronAuth::from_config`: `Authorization: Bearer <token>` when `metadata.metron.api_token` is set, else Basic. |
+| Auth (GCD) | `GcdCredentials::from_config`: HTTP Basic from `metadata.gcd.username` + `metadata.gcd.password` (both required — the anonymous tier is 30 req/h). |
+| Budget (GCD) | No budget headers upstream; the bar is the local `gcd:day` bucket (2,000/day = the upstream user throttle). 429 carries DRF's `Retry-After`. |
 
 The bucket reservation happens **once**, before the retry loop —
 retried requests count against the same upstream window either way.
@@ -390,18 +394,73 @@ The orchestrator uses these for ranking — see "Matching engine"
 above. Future use: a deduplication sweep that finds near-duplicate
 issues by phash similarity.
 
+## Grand Comics Database (WP-6.1)
+
+[`metadata/gcd.rs`](../../crates/server/src/metadata/gcd.rs) speaks the
+read-only Django REST API at `https://www.comics.org/api/`. It is the
+third provider and the least like the others:
+
+- **Endpoints.** Series search is `GET /api/series/name/{name}/[year/{year}/]`
+  (`icontains`, sorted by name; Folio queries the exact-year route
+  first, then the name-only page to fill). Issue search is
+  `GET /api/series/name/{name}/issue/{number}/[year/{key-date year}/]`.
+  Details are `/api/series/{id}/`, `/api/issue/{id}/`,
+  `/api/publisher/{id}/`. Relations are hyperlinks; ids are parsed out
+  of them.
+- **Tolerant parsing.** GCD declares its API fields unstable, so the
+  client reads `serde_json::Value` through alias lists (`str_field`,
+  `int_field`, `entity_id`) instead of typed structs. A renamed field
+  falls through to its alias (or `None`), a re-typed scalar is coerced,
+  an unknown field is ignored, an item with no recoverable id is
+  skipped, and a missing `results` envelope reads as "no results".
+  Only a non-JSON body is `InvalidResponse`.
+  `tests/gcd_client.rs::renamed_and_unknown_fields_still_parse` pins it.
+- **Free-text credits.** GCD stores credits per *story* as text
+  (`"Stan Lee (signed as …); Sol Brodsky ? (see notes)"`). The client
+  maps `comic story` script/pencils/inks/colors/letters/editing onto
+  the ComicInfo roles, the `cover` story's pencils/inks onto
+  `CoverArtist`, and issue-level `editing` onto `Editor` only when the
+  annotation names an editor (production staff are dropped).
+  Placeholders (`None`, `?`, `typeset`, `various`) and uncertain
+  credits (trailing `?`) are omitted. Characters parse
+  `Team [Member [Alter ego]; …]; Character (first appearance)`; a
+  bracket group with several members makes its head a **team**.
+- **Covers + search cost.** Search payloads carry no cover, so the
+  client hydrates up to 4 issue details on the narrowed path (folding
+  a variant's cover into its parent's `alternate_cover_urls`) and 2 on
+  the broad path. Series summaries + publisher names are cached in
+  Redis (`metadata:gcd:{series,publisher}:<id>`, 7 days) so an issue
+  fetch costs one request.
+- **Splitter.** `list_series_issue_numbers` reads the series detail's
+  `issue_descriptors` (one request; variants deduped). GCD splits
+  e.g. Fantastic Four (1961) at #416, so auto-split maps the legacy
+  #500+ run onto its own GCD series.
+- **CSP.** Cover images come from `https://files1.comics.org`, which is
+  in the `img-src` allowlist (`middleware/security_headers.rs`).
+- **License.** CC BY-SA 4.0; the canonical comics.org links drive the
+  attribution footer. The composer's `Notes` audit line stays
+  CV/Metron-only (its wording is the CC-BY-NC-SA one).
+
+Fixtures under `crates/server/tests/fixtures/gcd/` are recorded upstream
+responses; re-record with `curl 'https://www.comics.org/api/<route>?format=json'`
+(anonymous is fine for a handful of calls — 30/h).
+
 ## Adding a new provider
 
 1. Implement `MetadataProvider` in `metadata/<name>.rs`. Look at
    `metron.rs` as the cleaner reference (CV's envelope handling is
-   noisier).
+   noisier); `gcd.rs` is the template for an upstream whose schema is
+   unstable (untyped `Value` + alias reads).
 2. Add the provider's auth credentials to the settings registry
    (`crates/server/src/settings/registry.rs`) + Config struct +
    `apply_overlay_row` (mirrors the metron entries).
 3. Add the `Source::<Name>` variant + `Source::as_str` + `Source::label`
    + `Source::from_str` aliases + `canonical_url` template.
 4. Append to `build_providers` in `orchestrator.rs` (priority order
-   is positional).
+   is positional) and add the `Source` arm to `apply::build_provider`,
+   `api/admin_metadata.rs` (`provider_views` + `test_provider`),
+   `budget::for_provider`, and the CSP `img-src` allowlist for its
+   cover host. Web: `ProviderConfigForm` + `ProvidersTab` docs link.
 5. Add a wiremock-backed integration test under
    `crates/server/tests/metadata_<name>.rs` mirroring `metadata_apply.rs`.
 6. The matcher + apply + diff + UI surfaces auto-work since they

@@ -605,6 +605,11 @@ pub struct SpawnOpts {
     /// tests exercise the real client wiring (WP-2.8).
     pub comicvine_base_url: Option<String>,
     pub metron_base_url: Option<String>,
+    /// Grand Comics Database credentials + base-URL override (WP-6.1).
+    pub gcd_username: Option<String>,
+    pub gcd_password: Option<String>,
+    pub gcd_enabled: bool,
+    pub gcd_base_url: Option<String>,
     /// When `Some`, gates `GET /metrics` behind this bearer token
     /// (`COMIC_METRICS_TOKEN`). `None` (default) leaves it open.
     pub metrics_token: Option<String>,
@@ -746,6 +751,24 @@ impl TestApp {
         .await
     }
 
+    /// Spawn with GCD credentials (WP-6.1). `base_url` points the
+    /// production provider factory at a wiremock instance.
+    pub async fn spawn_with_gcd(
+        username: impl Into<String>,
+        password: impl Into<String>,
+        enabled: bool,
+        base_url: Option<String>,
+    ) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            gcd_username: Some(username.into()),
+            gcd_password: Some(password.into()),
+            gcd_enabled: enabled,
+            gcd_base_url: base_url,
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
     /// Spawn with BOTH ComicVine + Metron configured — needed by the
     /// composite (multi-provider) merge tests so `build_provider`
     /// returns a client for each source.
@@ -879,6 +902,10 @@ impl TestApp {
             metron_enabled: opts.metron_enabled,
             comicvine_base_url: opts.comicvine_base_url.clone(),
             metron_base_url: opts.metron_base_url.clone(),
+            gcd_username: opts.gcd_username.clone(),
+            gcd_password: opts.gcd_password.clone(),
+            gcd_enabled: opts.gcd_enabled,
+            gcd_base_url: opts.gcd_base_url.clone(),
             // metadata-providers-1.0 M7: weekly refresh defaults. Off
             // in tests by default — the cron isn't relevant to most
             // suites, and the scope-resolver tests pass explicit

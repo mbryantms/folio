@@ -37,6 +37,25 @@ const providers = [
     budget: null,
     last_error: null,
   },
+  {
+    // WP-6.1: GCD's bar comes from the local 2,000/day bucket.
+    id: "gcd",
+    label: "Grand Comics Database",
+    enabled: true,
+    configured: true,
+    quota: {
+      remaining_hour: 95,
+      remaining_day: 1900,
+      seconds_until_reset: 600,
+    },
+    budget: {
+      limit: 2000,
+      remaining: 1900,
+      reset_at: "2999-01-01T00:00:00Z",
+      window: "day",
+    },
+    last_error: null,
+  },
 ];
 
 vi.mock("@/lib/api/queries", () => ({
@@ -81,7 +100,16 @@ describe("<ProvidersTab> budget bar", () => {
     expect(html).toContain('data-testid="provider-last-error"');
     expect(html).toContain("provider error: HTTP 503");
     // The unconfigured provider renders neither.
-    expect(html.match(/data-testid="provider-budget"/g)?.length).toBe(1);
+    expect(html.match(/data-testid="provider-budget"/g)?.length).toBe(2);
     expect(html).toContain("NOT CONFIGURED");
+  });
+
+  it("renders the GCD card with its budget bar, docs link, and credential form", () => {
+    const html = renderToStaticMarkup(createElement(ProvidersTab));
+    expect(html).toContain("Grand Comics Database");
+    expect(html).toContain("1,900 of 2,000 left today");
+    expect(html).toContain('href="https://www.comics.org/api/"');
+    expect(html).toContain('id="gcd-username"');
+    expect(html).toContain("Enable GCD");
   });
 });

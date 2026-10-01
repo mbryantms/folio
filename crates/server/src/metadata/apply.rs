@@ -33,6 +33,7 @@
 use crate::metadata::cache;
 use crate::metadata::comicvine::ComicVineClient;
 use crate::metadata::field::MetadataField;
+use crate::metadata::gcd::GcdClient;
 use crate::metadata::identifier::{Identifier, Source};
 use crate::metadata::metron::MetronClient;
 use crate::metadata::provider::{GenericMetadata, MetadataProvider, ProviderError, ProviderResult};
@@ -1900,6 +1901,13 @@ pub(crate) fn build_provider(
         Source::Metron => {
             let client = MetronClient::from_config(&cfg, state.jobs.redis.clone())?;
             if !cfg.metron_enabled {
+                return None;
+            }
+            Some(Arc::new(client))
+        }
+        Source::Gcd => {
+            let client = GcdClient::from_config(&cfg, state.jobs.redis.clone())?;
+            if !cfg.gcd_enabled {
                 return None;
             }
             Some(Arc::new(client))

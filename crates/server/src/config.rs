@@ -276,6 +276,23 @@ pub struct Config {
     /// intent as [`Self::comicvine_base_url`]. Default `https://metron.cloud`.
     #[serde(default)]
     pub metron_base_url: Option<String>,
+    /// Grand Comics Database (comics.org) account username — HTTP Basic
+    /// auth on the GCD API (WP-6.1). `COMIC_GCD_USERNAME` is the env
+    /// bootstrap; `metadata.gcd.username` in `app_setting` wins.
+    #[serde(default)]
+    pub gcd_username: Option<String>,
+    /// GCD account password. AEAD-sealed in `app_setting`
+    /// (`metadata.gcd.password`).
+    #[serde(default)]
+    pub gcd_password: Option<String>,
+    /// Master toggle for GCD integration.
+    #[serde(default)]
+    pub gcd_enabled: bool,
+    /// Override the GCD base URL (`COMIC_GCD_BASE_URL`); same test /
+    /// staging intent as [`Self::comicvine_base_url`]. Default
+    /// `https://www.comics.org`.
+    #[serde(default)]
+    pub gcd_base_url: Option<String>,
 
     // Weekly metadata refresh (metadata-providers-1.0 M7)
     /// Master toggle for the weekly metadata-refresh cron. **Off by
@@ -448,6 +465,10 @@ impl std::fmt::Debug for Config {
             .field("metron_enabled", &self.metron_enabled)
             .field("comicvine_base_url", &self.comicvine_base_url)
             .field("metron_base_url", &self.metron_base_url)
+            .field("gcd_username", &redact_opt(&self.gcd_username))
+            .field("gcd_password", &redact_opt(&self.gcd_password))
+            .field("gcd_enabled", &self.gcd_enabled)
+            .field("gcd_base_url", &self.gcd_base_url)
             .finish()
     }
 }
@@ -1226,6 +1247,36 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(b) => cfg.metron_enabled = b,
             None => bad_type(&row.key, "bool", &row.value),
         },
+        // ──── Grand Comics Database (WP-6.1) ────
+        "metadata.gcd.username" => match row.value.as_str() {
+            Some(s) => {
+                let trimmed = s.trim();
+                warn_if_diverges(&row.key, cfg.gcd_username.as_deref(), trimmed);
+                cfg.gcd_username = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_owned())
+                };
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "metadata.gcd.password" => match row.value.as_str() {
+            Some(s) => {
+                // Trim — same paste-leak fix as the CV API key.
+                let trimmed = s.trim();
+                warn_if_diverges(&row.key, cfg.gcd_password.as_deref(), trimmed);
+                cfg.gcd_password = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_owned())
+                };
+            }
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "metadata.gcd.enabled" => match row.value.as_bool() {
+            Some(b) => cfg.gcd_enabled = b,
+            None => bad_type(&row.key, "bool", &row.value),
+        },
         // ──── metadata-providers-1.0 M7 ────
         "metadata.weekly_refresh_enabled" => match row.value.as_bool() {
             Some(b) => cfg.metadata_weekly_refresh_enabled = b,
@@ -1449,6 +1500,10 @@ mod tests {
             metron_enabled: false,
             comicvine_base_url: None,
             metron_base_url: None,
+            gcd_username: None,
+            gcd_password: None,
+            gcd_enabled: false,
+            gcd_base_url: None,
             metadata_weekly_refresh_enabled: false,
             metadata_weekly_refresh_cron: default_weekly_refresh_cron(),
             metadata_weekly_refresh_window_days: default_weekly_refresh_window_days(),

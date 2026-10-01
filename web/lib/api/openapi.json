@@ -1039,7 +1039,7 @@
           {
             "name": "id",
             "in": "path",
-            "description": "Provider id (`comicvine` | `metron`)",
+            "description": "Provider id (`comicvine` | `metron` | `gcd`)",
             "required": true,
             "schema": {
               "type": "string"
@@ -19226,7 +19226,7 @@
               "string",
               "null"
             ],
-            "description": "`comicvine` | `metron`."
+            "description": "`comicvine` | `metron` | `gcd`."
           },
           "url": {
             "type": [
@@ -21351,7 +21351,7 @@
           },
           "provider": {
             "type": "string",
-            "description": "`\"comicvine\"` | `\"metron\"`."
+            "description": "`\"comicvine\"` | `\"metron\"` | `\"gcd\"`."
           },
           "remaining_day": {
             "type": [
@@ -21496,7 +21496,7 @@
           },
           "id": {
             "type": "string",
-            "description": "Stable identifier — `\"comicvine\"` | `\"metron\"` (M2)."
+            "description": "Stable identifier — `\"comicvine\"` | `\"metron\"` (M2) | `\"gcd\"` (WP-6.1)."
           },
           "label": {
             "type": "string"

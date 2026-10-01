@@ -4,6 +4,8 @@
 //! Metron: 20 req/min (burst) + 5,000 req/day (sustained) — the
 //! March 2026 limits; supporters get a higher sustained cap, which the
 //! upstream reports via `X-RateLimit-*` headers (see `metadata::budget`).
+//! GCD: ~100 req/hour pacing + 2,000 req/day (the upstream user tier),
+//! plus a 1 req/sec velocity floor in the client.
 //!
 //! Both providers need quota state that:
 //!   - **survives restarts** — restarting the server shouldn't reset
@@ -99,6 +101,25 @@ pub const METRON_MIN: BucketDef = BucketDef {
 pub const METRON_DAY: BucketDef = BucketDef {
     key: "metron:day",
     capacity: 5000,
+    window: Duration::from_secs(86_400),
+};
+
+// ───────── GCD (WP-6.1) ─────────
+
+/// Grand Comics Database hourly pacing bucket. GCD throttles an
+/// authenticated account at 2,000 requests/day (anonymous: 30/hour);
+/// ~100/hour keeps a burst of searches from spending the whole day in
+/// one sitting while still allowing the daily total over a working day.
+pub const GCD_HOUR: BucketDef = BucketDef {
+    key: "gcd:hour",
+    capacity: 100,
+    window: Duration::from_secs(3600),
+};
+
+/// GCD's authenticated daily throttle (`user: 2000/day` upstream).
+pub const GCD_DAY: BucketDef = BucketDef {
+    key: "gcd:day",
+    capacity: 2000,
     window: Duration::from_secs(86_400),
 };
 

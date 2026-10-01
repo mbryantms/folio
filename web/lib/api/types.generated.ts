@@ -8118,7 +8118,7 @@ export interface components {
              *     tolerated and stripped).
              */
             external_id?: string | null;
-            /** @description `comicvine` | `metron`. */
+            /** @description `comicvine` | `metron` | `gcd`. */
             source?: string | null;
             /**
              * @description ComicVine (`…/4050-<id>/`, `…/4000-<id>/`) or Metron
@@ -9071,7 +9071,7 @@ export interface components {
          */
         ProviderQuotaView: {
             budget?: components["schemas"]["RequestBudget"] | null;
-            /** @description `"comicvine"` | `"metron"`. */
+            /** @description `"comicvine"` | `"metron"` | `"gcd"`. */
             provider: string;
             /** Format: int32 */
             remaining_day?: number | null;
@@ -9116,7 +9116,7 @@ export interface components {
              *     `metadata.<provider>.enabled` toggle is on.
              */
             enabled: boolean;
-            /** @description Stable identifier — `"comicvine"` | `"metron"` (M2). */
+            /** @description Stable identifier — `"comicvine"` | `"metron"` (M2) | `"gcd"` (WP-6.1). */
             id: string;
             label: string;
             last_error?: components["schemas"]["ProviderLastError"] | null;
@@ -12221,7 +12221,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Provider id (`comicvine` | `metron`) */
+                /** @description Provider id (`comicvine` | `metron` | `gcd`) */
                 id: string;
             };
             cookie?: never;

@@ -8,7 +8,8 @@
  * key", "Metron API token") instead of forcing the operator to find
  * `metadata.comicvine.api_key` in a flat list. Metron prefers its API
  * token (WP-2.9); the username + password pair stays as the fallback
- * the server uses when no token is set. Secret values come
+ * the server uses when no token is set. GCD (WP-6.1) takes a
+ * comics.org username + password (HTTP Basic). Secret values come
  * back from `GET /admin/settings` as the sentinel string `"<set>"`
  * — the form shows a "(saved)" placeholder + leaves the input
  * empty so re-saving without typing is a no-op.
@@ -49,12 +50,31 @@ type CredentialFields =
       password: string;
       passwordAlreadySet: boolean;
       enabled: boolean;
+    }
+  | {
+      kind: "gcd";
+      username: string;
+      password: string;
+      passwordAlreadySet: boolean;
+      enabled: boolean;
     };
+
+export type ConfigurableProvider = "comicvine" | "metron" | "gcd";
+
+const PROVIDER_NAMES: Record<ConfigurableProvider, string> = {
+  comicvine: "ComicVine",
+  metron: "Metron",
+  gcd: "GCD",
+};
+
+export function isConfigurableProvider(id: string): id is ConfigurableProvider {
+  return id === "comicvine" || id === "metron" || id === "gcd";
+}
 
 export function ProviderConfigForm({
   provider,
 }: {
-  provider: "comicvine" | "metron";
+  provider: ConfigurableProvider;
 }) {
   const settings = useAdminSettings();
   const update = useUpdateSettings();
@@ -87,7 +107,9 @@ export function ProviderConfigForm({
   const formKey =
     initial.kind === "comicvine"
       ? `cv-${initial.apiKeyAlreadySet ? "1" : "0"}-${initial.enabled ? "1" : "0"}`
-      : `metron-${initial.username}-${initial.apiTokenAlreadySet ? "1" : "0"}-${initial.passwordAlreadySet ? "1" : "0"}-${initial.enabled ? "1" : "0"}`;
+      : initial.kind === "metron"
+        ? `metron-${initial.username}-${initial.apiTokenAlreadySet ? "1" : "0"}-${initial.passwordAlreadySet ? "1" : "0"}-${initial.enabled ? "1" : "0"}`
+        : `gcd-${initial.username}-${initial.passwordAlreadySet ? "1" : "0"}-${initial.enabled ? "1" : "0"}`;
 
   return (
     <ProviderForm
@@ -111,7 +133,7 @@ export function ProviderConfigForm({
 }
 
 function readInitial(
-  provider: "comicvine" | "metron",
+  provider: ConfigurableProvider,
   values: Record<string, unknown>,
 ): CredentialFields {
   const str = (k: string) =>
@@ -125,6 +147,16 @@ function readInitial(
       apiKey: raw === SECRET_SET ? "" : raw,
       apiKeyAlreadySet: raw === SECRET_SET,
       enabled: bool("metadata.comicvine.enabled"),
+    };
+  }
+  if (provider === "gcd") {
+    const gcdPass = str("metadata.gcd.password");
+    return {
+      kind: "gcd",
+      username: str("metadata.gcd.username"),
+      password: gcdPass === SECRET_SET ? "" : gcdPass,
+      passwordAlreadySet: gcdPass === SECRET_SET,
+      enabled: bool("metadata.gcd.enabled"),
     };
   }
   const passRaw = str("metadata.metron.password");
@@ -147,7 +179,7 @@ function ProviderForm({
   savedFlash,
   onSubmit,
 }: {
-  provider: "comicvine" | "metron";
+  provider: ConfigurableProvider;
   initial: CredentialFields;
   isPending: boolean;
   savedFlash: boolean;
@@ -163,10 +195,10 @@ function ProviderForm({
     initial.kind === "metron" ? initial.apiToken : "",
   );
   const [username, setUsername] = React.useState(
-    initial.kind === "metron" ? initial.username : "",
+    initial.kind === "metron" || initial.kind === "gcd" ? initial.username : "",
   );
   const [password, setPassword] = React.useState(
-    initial.kind === "metron" ? initial.password : "",
+    initial.kind === "metron" || initial.kind === "gcd" ? initial.password : "",
   );
   const [enabled, setEnabled] = React.useState(initial.enabled);
 
@@ -182,6 +214,19 @@ function ProviderForm({
       }
       if (enabled !== initial.enabled) {
         patch["metadata.comicvine.enabled"] = enabled;
+      }
+    } else if (initial.kind === "gcd") {
+      const trimmedUser = username.trim();
+      const trimmedPass = password.trim();
+      if (trimmedUser !== initial.username) {
+        patch["metadata.gcd.username"] =
+          trimmedUser === "" ? null : trimmedUser;
+      }
+      if (trimmedPass !== "" && trimmedPass !== initial.password) {
+        patch["metadata.gcd.password"] = trimmedPass;
+      }
+      if (enabled !== initial.enabled) {
+        patch["metadata.gcd.enabled"] = enabled;
       }
     } else {
       const trimmedToken = apiToken.trim();
@@ -235,6 +280,38 @@ function ProviderForm({
             }
           />
         </div>
+      ) : initial.kind === "gcd" ? (
+        <>
+          <div className="grid gap-1.5">
+            <Label htmlFor="gcd-username">Username</Label>
+            <Input
+              id="gcd-username"
+              autoComplete="off"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="comics.org account"
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="gcd-password">Password</Label>
+            <Input
+              id="gcd-password"
+              type="password"
+              autoComplete="off"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={
+                initial.passwordAlreadySet
+                  ? "(saved — type to replace)"
+                  : "comics.org password"
+              }
+            />
+            <p className="text-muted-foreground text-xs">
+              A free comics.org account lifts the API limit from 30 requests an
+              hour (anonymous) to 2,000 a day.
+            </p>
+          </div>
+        </>
       ) : (
         <>
           <div className="grid gap-1.5">
@@ -295,9 +372,7 @@ function ProviderForm({
             checked={enabled}
             onCheckedChange={setEnabled}
           />
-          <span>
-            Enable {provider === "comicvine" ? "ComicVine" : "Metron"}
-          </span>
+          <span>Enable {PROVIDER_NAMES[provider]}</span>
         </Label>
         <div className="flex items-center gap-2">
           {savedFlash && (
@@ -321,7 +396,7 @@ function ProviderForm({
 }
 
 function isDirty(
-  provider: "comicvine" | "metron",
+  provider: ConfigurableProvider,
   initial: CredentialFields,
   current: {
     apiKey: string;
@@ -339,6 +414,12 @@ function isDirty(
     if (current.apiToken !== "" && current.apiToken !== initial.apiToken) {
       return true;
     }
+    if (current.username !== initial.username) return true;
+    if (current.password !== "" && current.password !== initial.password) {
+      return true;
+    }
+  }
+  if (provider === "gcd" && initial.kind === "gcd") {
     if (current.username !== initial.username) return true;
     if (current.password !== "" && current.password !== initial.password) {
       return true;

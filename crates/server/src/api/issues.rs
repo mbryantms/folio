@@ -280,6 +280,7 @@ fn provenance_source_label(set_by: &str) -> &'static str {
         "series_json" => "series.json",
         "comicvine" => "ComicVine",
         "metron" => "Metron",
+        "gcd" => "Grand Comics Database",
         "scanner_inference" => "Scanner (filename)",
         "scanner_folder_tag" => "Scanner (folder)",
         "cross_reference" => "Cross-reference",

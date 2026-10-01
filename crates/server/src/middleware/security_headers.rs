@@ -145,7 +145,7 @@ pub fn build_csp(template: &CspTemplate, nonce: Option<&str>) -> HeaderValue {
         "default-src 'self'; \
          script-src {script_src}; \
          style-src {style_src}; \
-         img-src 'self' data: blob: https://comicvine.gamespot.com https://static.comicvine.gamespot.com https://comicvine1.cbsistatic.com https://static.metron.cloud; \
+         img-src 'self' data: blob: https://comicvine.gamespot.com https://static.comicvine.gamespot.com https://comicvine1.cbsistatic.com https://static.metron.cloud https://files1.comics.org; \
          font-src 'self'; \
          connect-src {connect_src}; \
          frame-src 'none'; \
@@ -316,7 +316,7 @@ mod tests {
         let csp = csp_str(Some("anonce"));
         for directive in [
             "default-src 'self'",
-            "img-src 'self' data: blob: https://comicvine.gamespot.com https://static.comicvine.gamespot.com https://comicvine1.cbsistatic.com https://static.metron.cloud",
+            "img-src 'self' data: blob: https://comicvine.gamespot.com https://static.comicvine.gamespot.com https://comicvine1.cbsistatic.com https://static.metron.cloud https://files1.comics.org",
             "font-src 'self'",
             "frame-src 'none'",
             "frame-ancestors 'none'",

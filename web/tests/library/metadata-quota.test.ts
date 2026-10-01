@@ -90,7 +90,8 @@ describe("providerLabel", () => {
   it("maps known ids and falls back to the raw id", () => {
     expect(providerLabel("comicvine")).toBe("ComicVine");
     expect(providerLabel("metron")).toBe("Metron");
-    expect(providerLabel("gcd")).toBe("gcd");
+    expect(providerLabel("gcd")).toBe("GCD");
+    expect(providerLabel("marvel")).toBe("marvel");
   });
 });
 
