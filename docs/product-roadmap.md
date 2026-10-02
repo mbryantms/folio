@@ -358,9 +358,9 @@ Items noticed during the audit that are real but small, to be picked up opportun
 
 ## 8. Open decisions still needed from you
 
-- **BZip2-compressed 7z (from M6):** supporting it needs the `bzip2-1.0.6` licence added to `deny.toml`. Tracked until you decide whether to allow that licence.
+None. Everything is scheduled (§5), tracked in §7, deferred, or confirmed excluded (§2).
 
-Everything else is scheduled (§5), tracked in §7, or confirmed excluded (§2).
+**Declined for now, revisit later:** BZip2-compressed 7z support (from M6) needs the `bzip2-1.0.6` licence allowed in `deny.toml`. The owner chose not to allow it on 2026-10-02; BZip2-coded 7z archives stay unsupported until that changes. To reverse: allow the licence in `deny.toml`, enable the 7z decoder's bzip2 feature, and add a BZip2 CB7 fixture to the convert-on-scan tests.
 
 ## 9. Decision history
 
@@ -371,4 +371,5 @@ Everything else is scheduled (§5), tracked in §7, or confirmed excluded (§2).
 - 2026-10-01: M6 started and merged the same day; the owner deferred arm64 images (WP-6.5) and WP-6.6. WP-6.1–6.5 (CB7) landed as #934–#938.
 - 2026-10-01: M7 implemented the same day as a stacked chain #946 → #947 → #948 → #949, awaiting review.
 - 2026-10-02: M7b (relationship taxonomy and detection, WP-7.5–7.8) decided after reviewing a proposed taxonomy; adopted and excluded items listed under M7b.
+- 2026-10-02: the owner declined the `bzip2-1.0.6` licence for now (BZip2 7z stays unsupported; recorded in §8 so it can be revisited).
 - 2026-10-02: M7 merged (#946–#949) and M7b merged (#955–#958). M8 (cleanup and hardening, WP-8.1–8.5) decided from the M5–M7b gap review; items with no evidence source stay tracked in §7. Deferred items (WP-4.1, arm64, WP-6.6, GCD bonds, issue-level story continuation) stay deferred.
