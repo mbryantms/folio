@@ -425,7 +425,9 @@ per-list opt-out to preserve curated orders).
 - A complete admin area: users, libraries, scan monitoring with live
   progress, job queues, server logs, an append-only **audit log** of every
   admin action, runtime configuration edited from the UI (SMTP, auth
-  policy, workers — no container restarts), metadata dashboard, and stats.
+  policy, workers — no container restarts), metadata dashboard, duplicates,
+  a **relationship-suggestion review queue** (accept / edit kind / reject,
+  bulk-accept the high-confidence ones), and stats.
 - One Docker Compose stack; the Rust binary is the single public origin.
   Reverse-proxy templates for Caddy, nginx, and Traefik, a Kubernetes
   guide, Prometheus metrics at `/metrics`, and backup docs.

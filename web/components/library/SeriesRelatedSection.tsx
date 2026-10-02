@@ -11,8 +11,10 @@
  *    ("Sequel of", "Collected in", …).
  *
  * Everyone who can see the series sees the block (the API already drops
- * series the viewer can't see); admins also get add / remove. Renders
- * nothing when there are no relationships and the viewer can't edit.
+ * series the viewer can't see); admins also get add / remove and the
+ * WP-7.3 "Suggested" chips (pending engine suggestions, one-click accept /
+ * reject). Renders nothing when there are no relationships and the viewer
+ * can't edit.
  */
 
 import { ChevronRight, Loader2, Plus, Trash2 } from "lucide-react";
@@ -20,6 +22,7 @@ import Link from "next/link";
 import * as React from "react";
 
 import { Cover } from "@/components/Cover";
+import { SeriesSuggestedRelationships } from "@/components/library/SeriesSuggestedRelationships";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -61,25 +64,11 @@ import type {
   SeriesRelationshipView,
   SeriesView,
 } from "@/lib/api/types";
+import { RELATIONSHIP_KINDS } from "@/lib/relationships";
 import { seriesUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
-/** Kinds in the order the add-form offers them, with the sentence the
- *  admin is completing ("This series is a sequel of …"). */
-export const RELATIONSHIP_KINDS: Array<{
-  value: RelationshipKind;
-  label: string;
-}> = [
-  { value: "sequel_of", label: "Sequel of" },
-  { value: "prequel_of", label: "Prequel of" },
-  { value: "spin_off_of", label: "Spin-off of" },
-  { value: "has_spin_off", label: "Has spin-off" },
-  { value: "crossover_with", label: "Crossover with" },
-  { value: "collects", label: "Collects" },
-  { value: "collected_in", label: "Collected in" },
-  { value: "same_universe", label: "Same universe as" },
-  { value: "see_also", label: "See also" },
-];
+export { RELATIONSHIP_KINDS };
 
 /** Group direct relationships by kind, keeping the add-form's kind order. */
 export function groupRelationships(rels: SeriesRelationshipView[]): Array<{
@@ -145,6 +134,13 @@ export function SeriesRelatedSection({
       </div>
 
       {chain.length > 1 && <ReadingOrder chain={chain} currentId={seriesId} />}
+
+      {isAdmin && (
+        <SeriesSuggestedRelationships
+          seriesSlug={seriesSlug}
+          seriesId={seriesId}
+        />
+      )}
 
       {groups.length > 0 ? (
         <div className="space-y-4">

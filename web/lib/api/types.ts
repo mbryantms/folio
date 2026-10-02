@@ -824,6 +824,20 @@ export type AcceptRelationshipSuggestionResp =
   Schemas["AcceptRelationshipSuggestionResp"];
 export type RunRelationshipSuggestionsResp =
   Schemas["RunRelationshipSuggestionsResp"];
+export type BulkAcceptRelationshipSuggestionsReq =
+  Schemas["BulkAcceptRelationshipSuggestionsReq"];
+export type BulkRejectRelationshipSuggestionsReq =
+  Schemas["BulkRejectRelationshipSuggestionsReq"];
+export type BulkReviewFailureCode = Schemas["BulkReviewFailureCode"];
+export type BulkReviewFailureView = Schemas["BulkReviewFailureView"];
+export type BulkReviewRelationshipSuggestionsResp =
+  Schemas["BulkReviewRelationshipSuggestionsResp"];
+export type ReopenRelationshipSuggestionResp =
+  Schemas["ReopenRelationshipSuggestionResp"];
+/** `status` query param of `GET /admin/relationship-suggestions` (WP-7.3).
+ *  Inline: the Rust side is a query-only enum (no ToSchema). `all` is every
+ *  status except `stale`. */
+export type SuggestionStatusFilter = SuggestionStatus | "all";
 export type IssueCoversResp = Schemas["IssueCoversResp"];
 export type IssueCoverRow = Schemas["IssueCoverRow"];
 // M5 preview pane / proposed-diff

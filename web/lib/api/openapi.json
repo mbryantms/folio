@@ -1462,7 +1462,7 @@
           {
             "name": "status",
             "in": "query",
-            "description": "`pending` (default), `accepted`, `rejected`, `modified` or `all`",
+            "description": "`pending` (default), `accepted`, `rejected`, `modified`, `stale`, or `all` (every status except `stale`)",
             "required": false,
             "schema": {
               "type": "string"
@@ -1521,6 +1521,75 @@
           },
           "403": {
             "description": "admin only"
+          }
+        }
+      }
+    },
+    "/api/admin/relationship-suggestions/bulk-accept": {
+      "post": {
+        "operationId": "relationship_suggestions_bulk_accept",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkAcceptRelationshipSuggestionsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "batch committed; per-item refusals listed in `failed`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkReviewRelationshipSuggestionsResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "library not found"
+          },
+          "422": {
+            "description": "neither or both of `ids` / `bucket`, a bucket other than `high`, `library_id` without `bucket`, or more than 500 ids"
+          }
+        }
+      }
+    },
+    "/api/admin/relationship-suggestions/bulk-reject": {
+      "post": {
+        "operationId": "relationship_suggestions_bulk_reject",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkRejectRelationshipSuggestionsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "batch committed; per-item refusals listed in `failed`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkReviewRelationshipSuggestionsResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "422": {
+            "description": "no ids, or more than 500"
           }
         }
       }
@@ -1645,6 +1714,46 @@
           },
           "409": {
             "description": "already reviewed"
+          }
+        }
+      }
+    },
+    "/api/admin/relationship-suggestions/{id}/reopen": {
+      "post": {
+        "operationId": "relationship_suggestions_reopen",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "suggestion id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "rejection cleared: the suggestion is pending again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReopenRelationshipSuggestionResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed id"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "suggestion not found"
+          },
+          "409": {
+            "description": "not rejected"
           }
         }
       }
@@ -12653,6 +12762,40 @@
           "day"
         ]
       },
+      "BulkAcceptRelationshipSuggestionsReq": {
+        "type": "object",
+        "description": "Bulk accept: explicit `ids`, **or** a bucket selection. Exactly one of\n`ids` / `bucket` must be set.\n\n- `ids`: 1–500 suggestion ids, processed in order (duplicates once).\n- `bucket`: only `\"high\"` — the pending high-confidence rows (optionally\n  one `library_id`), highest confidence first, at most 500 per request.\n  The response's `remaining` says how many are left; send the request\n  again to take the next batch. Medium / low rows are only bulk-accepted\n  by explicit ids, after a reviewer has looked at them.",
+        "properties": {
+          "bucket": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SuggestionBucket"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "library_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Bucket mode only: restrict to one library."
+          }
+        }
+      },
       "BulkAddMembersReq": {
         "type": "object",
         "description": "Body for `POST /me/collections/{id}/members/bulk-add`. Each\nmember follows the same `(entry_kind, ref_id)` shape as the\nsingle-add endpoint. Multi-select toolbar (`<SelectionToolbar>`'s\n\"Add to collection…\" action) builds this from the user's\n`selectedIds` set.\n\nPlan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M3).",
@@ -12993,6 +13136,22 @@
           "replace"
         ]
       },
+      "BulkRejectRelationshipSuggestionsReq": {
+        "type": "object",
+        "description": "Bulk reject: 1–500 explicit ids (no bucket mode — a reviewer picks them).",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
       "BulkRemoveMembersReq": {
         "type": "object",
         "description": "Body for `POST /me/collections/{id}/members/bulk-remove`. Identifies\neach member by its `(entry_kind, ref_id)` pair — the same shape the\nbulk-add endpoint accepts — so the UI doesn't have to round-trip\nto look up the `collection_entries.id` PK for each row.\n\nPlan: `~/.claude/plans/multi-select-bulk-actions-1.0.md` (M4).",
@@ -13034,6 +13193,82 @@
             "format": "int32",
             "description": "Rows removed from the collection.",
             "minimum": 0
+          }
+        }
+      },
+      "BulkReviewFailureCode": {
+        "type": "string",
+        "description": "Why one item of a bulk request was skipped.",
+        "enum": [
+          "not_found",
+          "already_reviewed",
+          "stale",
+          "conflict",
+          "invalid"
+        ]
+      },
+      "BulkReviewFailureView": {
+        "type": "object",
+        "required": [
+          "id",
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/BulkReviewFailureCode"
+          },
+          "id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "BulkReviewRelationshipSuggestionsResp": {
+        "type": "object",
+        "description": "Result of one bulk batch. The batch commits as a whole; per-item\nrefusals land in `failed` instead of failing the request.",
+        "required": [
+          "requested",
+          "succeeded",
+          "failed",
+          "created"
+        ],
+        "properties": {
+          "created": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Accept only: edge pairs newly inserted (an accept whose edge\nalready existed doesn't count).",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkReviewFailureView"
+            }
+          },
+          "remaining": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Bucket mode only: pending rows still in the bucket after this batch.",
+            "minimum": 0
+          },
+          "requested": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Distinct ids processed.",
+            "minimum": 0
+          },
+          "succeeded": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ids accepted (or rejected), in processing order."
           }
         }
       },
@@ -23210,6 +23445,18 @@
           }
         }
       },
+      "ReopenRelationshipSuggestionResp": {
+        "type": "object",
+        "description": "`POST /{id}/reopen` result: the row, now pending again.",
+        "required": [
+          "suggestion"
+        ],
+        "properties": {
+          "suggestion": {
+            "$ref": "#/components/schemas/RelationshipSuggestionView"
+          }
+        }
+      },
       "ReorderEntriesReq": {
         "type": "object",
         "required": [
@@ -25386,12 +25633,13 @@
       },
       "SuggestionStatus": {
         "type": "string",
-        "description": "Review state. Transitions are one-way out of `pending`.",
+        "description": "Review state. Reviews (`accepted` / `rejected` / `modified`) are one-way\nout of `pending`, except [`reopen`] (`rejected` → `pending`). `stale` is\nset and cleared by the engine itself, not by a reviewer.",
         "enum": [
           "pending",
           "accepted",
           "rejected",
-          "modified"
+          "modified",
+          "stale"
         ]
       },
       "SyncStatusResp": {
