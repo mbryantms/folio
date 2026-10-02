@@ -73,6 +73,20 @@ pub struct ScanStats {
 }
 
 impl ScanStats {
+    /// True when the scan changed what the catalogue holds (ingested,
+    /// re-ingested, removed or restored anything). Gates the WP-7.4
+    /// similar-series cache invalidation so no-op cron / watcher passes
+    /// keep the cache warm.
+    pub fn mutated(&self) -> bool {
+        self.files_added
+            + self.files_updated
+            + self.series_created
+            + self.series_removed
+            + self.issues_removed
+            + self.issues_restored
+            > 0
+    }
+
     /// Record time in a **serial** phase (single observer; wall-clock).
     pub fn record_phase(&mut self, phase: impl Into<String>, elapsed: Duration) {
         let ms = elapsed.as_millis() as u64;

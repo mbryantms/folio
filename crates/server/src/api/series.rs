@@ -720,6 +720,8 @@ pub async fn update_series(
                 )
                 .await;
             }
+            // WP-7.4: publisher / imprint feed the similar-series scores.
+            app.similarity.invalidate_all();
             // WP-2.10: identity fields ride in every issue's ComicInfo /
             // MetronInfo, so in a writeback library the whole series is
             // rewritten (one job per active issue, then a single

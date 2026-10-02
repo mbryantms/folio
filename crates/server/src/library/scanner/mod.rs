@@ -655,6 +655,12 @@ async fn finalize_run(
     result: &anyhow::Result<()>,
     cancelled: bool,
 ) -> anyhow::Result<()> {
+    // WP-7.4: a scan that changed the catalogue (or failed part-way,
+    // possibly after writing) can move any series' neighbours — drop the
+    // similar-series cache. Every scan kind funnels through here.
+    if result.is_err() || stats.mutated() {
+        state.similarity.invalidate_all();
+    }
     stats.elapsed_ms = started.elapsed().as_millis() as u64;
     stats.finalize_rates();
     let stats_json = serde_json::to_value(&stats)?;

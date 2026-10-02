@@ -11,11 +11,14 @@ import {
   ProgressIssueCard,
   ProgressIssueCardSkeleton,
 } from "@/components/library/ProgressIssueCard";
+import { SeriesCardSkeleton } from "@/components/library/SeriesCard";
+import { SimilarSeriesCard } from "@/components/library/SimilarSeriesCard";
 import type { OnDeckCard as OnDeckCardData } from "@/lib/api/types";
 import {
   useContinueReading,
   useOnDeck,
   useRecentIssues,
+  useSimilarRailInfinite,
 } from "@/lib/api/queries";
 
 /**
@@ -131,6 +134,55 @@ export function RecentIssuesRailBody({
   );
 }
 
+/**
+ * Similar-series rail body (WP-7.4, opt-in built-in rail). Neighbours of
+ * the series the user read most recently, minus anything already
+ * started; each card says why it matched. First page only — the rail's
+ * "View all" detail page walks the cursor (`SystemViewDetail`).
+ */
+export function SimilarSeriesRailBody({
+  itemStyle,
+}: {
+  itemStyle: React.CSSProperties;
+}) {
+  const q = useSimilarRailInfinite();
+  if (q.isLoading) {
+    return (
+      <>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} style={itemStyle} className="shrink-0">
+            <SeriesCardSkeleton />
+          </div>
+        ))}
+      </>
+    );
+  }
+  const items = q.data?.pages[0]?.items ?? [];
+  if (items.length === 0) return null;
+  return (
+    <>
+      {items.map((item) => (
+        <div key={item.series.id} style={itemStyle} className="shrink-0">
+          <SimilarSeriesCard item={item} />
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** "Because you read <seed>" — shown beside the similar rail's title.
+ *  Shares the rail body's query cache entry. */
+export function SimilarRailSeedNote() {
+  const q = useSimilarRailInfinite();
+  const seed = q.data?.pages[0]?.seed;
+  if (!seed) return null;
+  return (
+    <span className="text-muted-foreground truncate text-sm">
+      Because you read {seed.name}
+    </span>
+  );
+}
+
 /** Stable React key for an On Deck card. The card kind decides which id
  *  uniquely identifies the row (series_id vs cbl_list_id) — the issue id
  *  alone isn't enough because the same issue can appear under both kinds
@@ -157,6 +209,9 @@ export function useSystemRailIsEmpty(systemKey: string): boolean {
   const cr = useContinueReading({ enabled: systemKey === "continue_reading" });
   const od = useOnDeck({ enabled: systemKey === "on_deck" });
   const ri = useRecentIssues({ enabled: systemKey === "new_issues" });
+  const sim = useSimilarRailInfinite({
+    enabled: systemKey === "similar_series",
+  });
   if (systemKey === "continue_reading") {
     return !cr.isLoading && (cr.data?.items.length ?? 0) === 0;
   }
@@ -165,6 +220,9 @@ export function useSystemRailIsEmpty(systemKey: string): boolean {
   }
   if (systemKey === "new_issues") {
     return !ri.isLoading && (ri.data?.items.length ?? 0) === 0;
+  }
+  if (systemKey === "similar_series") {
+    return !sim.isLoading && (sim.data?.pages[0]?.items.length ?? 0) === 0;
   }
   return false;
 }

@@ -2792,6 +2792,10 @@ async fn manual_rewrite_after_edit(
     ctx: &RequestContext,
 ) -> crate::metadata::manual_writeback::IssueEnqueue {
     use crate::metadata::manual_writeback::{Actor, IssueEnqueue, enqueue_issue_rewrite};
+    // WP-7.4: the edit may have changed credits / cast / genres the
+    // similar-series scores read. Every committed issue edit (PATCH and
+    // bulk) passes through here.
+    app.similarity.invalidate_all();
     let actor = Actor {
         id: Some(user.id),
         ip: ctx.ip_string(),

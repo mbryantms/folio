@@ -130,6 +130,10 @@ pub struct Inner {
     /// [`crate::library::watcher::spawn_supervisor`] (started in `app::serve`;
     /// tests drive watchers directly).
     pub watchers: Arc<crate::library::watcher::WatcherRegistry>,
+    /// WP-7.4: per-series "similar series" neighbour cache (unfiltered;
+    /// ACL applied per request). Invalidated by scans, metadata applies
+    /// and manual metadata edits. See [`crate::similarity`].
+    pub similarity: Arc<crate::similarity::SimilarityCache>,
 }
 
 impl AppState {
@@ -212,6 +216,7 @@ impl AppState {
                 crate::api::server_releases::ReleaseCache::default(),
             )),
             watchers: Arc::new(crate::library::watcher::WatcherRegistry::new()),
+            similarity: Arc::new(crate::similarity::SimilarityCache::new()),
         }))
     }
 

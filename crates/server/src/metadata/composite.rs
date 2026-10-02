@@ -617,6 +617,18 @@ pub async fn apply_composite(
     state: &AppState,
     args: CompositeApplyArgs,
 ) -> Result<ApplyOutcome, ApplyError> {
+    let outcome = apply_composite_impl(state, args).await;
+    // WP-7.4: see `apply::apply_series`.
+    if outcome.is_ok() {
+        state.similarity.invalidate_all();
+    }
+    outcome
+}
+
+async fn apply_composite_impl(
+    state: &AppState,
+    args: CompositeApplyArgs,
+) -> Result<ApplyOutcome, ApplyError> {
     let run = load_run(&state.db, args.run_id).await?;
     let scope = match run.scope.as_str() {
         orchestrator::scope::SERIES => MergeScope::Series,

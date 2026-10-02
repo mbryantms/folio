@@ -72,6 +72,8 @@ import type {
   PageListView,
   PreviewReq,
   RecentIssuesView,
+  SimilarSeriesListView,
+  SimilarSeriesRailView,
   RefreshLogListView,
   IssueListView,
   IssueSearchView,
@@ -2262,6 +2264,45 @@ export function useRecentIssues(opts?: { enabled?: boolean }) {
     queryKey: queryKeys.recentIssues,
     queryFn: () => jsonFetch<RecentIssuesView>("/me/recent-issues"),
     enabled: opts?.enabled ?? true,
+    staleTime: 60_000,
+  });
+}
+
+/** WP-7.4 — content-based neighbours of one series (shared creators,
+ *  characters, teams, arcs, genres, tags, publisher), each with the
+ *  "because" list that earned the match. Cursor-paginated; the series
+ *  page rail walks pages as the user scrolls to its end. */
+export function useSimilarSeriesInfinite(
+  seriesSlug: string,
+  opts?: { enabled?: boolean; limit?: number },
+) {
+  const limit = opts?.limit ?? 20;
+  return useInfiniteQuery({
+    queryKey: queryKeys.similarSeries(seriesSlug),
+    enabled: (opts?.enabled ?? true) && !!seriesSlug,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<SimilarSeriesListView>(
+        `/series/${encodeURIComponent(seriesSlug)}/similar${buildQuery({ limit, cursor: pageParam })}`,
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** WP-7.4 optional home rail: neighbours of the series the user read
+ *  most recently, minus series they've already started. The response
+ *  names the seed (`seed`) so the rail can say "Because you read …". */
+export function useSimilarRailInfinite(opts?: { enabled?: boolean }) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.similarRail,
+    enabled: opts?.enabled ?? true,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<SimilarSeriesRailView>(
+        `/me/similar-series${buildQuery({ limit: 20, cursor: pageParam })}`,
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
     staleTime: 60_000,
   });
 }
