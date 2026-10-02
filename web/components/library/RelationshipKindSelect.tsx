@@ -138,7 +138,10 @@ export function RelationshipKindSelect({
             viewportClassName={KIND_LIST_MAX_H}
             data-testid="relationship-kind-scroll"
           >
-            <CommandList className="max-h-none overflow-visible">
+            {/* `pr-2.5` reserves the ScrollArea's overlay scrollbar gutter
+                (`w-2.5`) so sticky group headings and highlighted rows
+                stop short of the scrollbar instead of painting over it. */}
+            <CommandList className="max-h-none overflow-visible pr-2.5">
               <CommandEmpty>No matching relationship.</CommandEmpty>
               {groups.map((g) => (
                 <CommandGroup
