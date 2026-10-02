@@ -4181,6 +4181,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/external-relationships": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["series_external_relationships_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/external-relationships/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["series_external_relationships_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/issues": {
         parameters: {
             query?: never;
@@ -6470,6 +6502,30 @@ export interface components {
             /** @description One of `'issue'`, `'series'`, `'cbl'`. */
             target_kind: string;
         };
+        /**
+         * @description `POST /series/{slug}/external-relationships` body: "this series `kind`
+         *     the provider series".
+         */
+        CreateExternalRelationshipReq: {
+            kind: components["schemas"]["RelationshipKind"];
+            /** @description Display name (1–300 characters). */
+            name: string;
+            /** @description The provider's numeric series id. */
+            provider_series_id: string;
+            qualifier?: components["schemas"]["RelationshipQualifier"] | null;
+            source: components["schemas"]["ExternalSource"];
+            /** Format: int32 */
+            year?: number | null;
+        };
+        /**
+         * @description `POST` result: exactly one of `external` (the stored external link) or
+         *     `relationship` (the provider series is already in the library, so an
+         *     ordinary relationship pair was created instead).
+         */
+        CreateExternalRelationshipResp: {
+            external?: components["schemas"]["SeriesExternalRelationshipView"] | null;
+            relationship?: components["schemas"]["SeriesRelationshipView"] | null;
+        };
         CreateLibraryReq: {
             default_language?: string;
             default_reading_direction?: string;
@@ -7784,6 +7840,27 @@ export interface components {
             entity_type: string;
             rows: components["schemas"]["ExternalIdRow"][];
         };
+        /**
+         * @description A local series a link resolved to (shown instead of "not in your
+         *     library" until the next suggestion run promotes it).
+         */
+        ExternalLocalSeries: {
+            id: string;
+            name: string;
+            slug: string;
+            /** Format: int32 */
+            year?: number | null;
+        };
+        /**
+         * @description Who made an external row.
+         * @enum {string}
+         */
+        ExternalSetBy: "user" | "provider";
+        /**
+         * @description The providers an external row may point at.
+         * @enum {string}
+         */
+        ExternalSource: "metron" | "comicvine" | "gcd";
         /**
          * @description All filterable fields. Per-field metadata (kind, allowed ops, SQL
          *     column) lives in [`super::registry`]. Adding a field is a two-step:
@@ -10567,6 +10644,39 @@ export interface components {
             position: number;
             series: components["schemas"]["SeriesView"];
         };
+        /**
+         * @description One relationship to a provider series that isn't in the library, from
+         *     the requested series' point of view: "this series `kind` *name*".
+         */
+        SeriesExternalRelationshipView: {
+            /**
+             * Format: float
+             * @description 0–1 for provider links; `null` for user links.
+             */
+            confidence?: number | null;
+            created_at: string;
+            group: components["schemas"]["RelationshipGroup"];
+            /** @description Row id — pass to `DELETE /series/{slug}/external-relationships/{id}`. */
+            id: string;
+            kind: components["schemas"]["RelationshipKind"];
+            /** @description "Continued by", "Collected in", … (tie-in role folded in). */
+            kind_label: string;
+            local_series?: components["schemas"]["ExternalLocalSeries"] | null;
+            /** @description The provider's series name (falls back to the id). */
+            name: string;
+            provider_series_id: string;
+            qualifier?: components["schemas"]["RelationshipQualifier"] | null;
+            qualifier_label?: string | null;
+            /** @description `provider` (from provider data) or `user` (added by an admin). */
+            set_by: components["schemas"]["ExternalSetBy"];
+            source: components["schemas"]["ExternalSource"];
+            /** @description "Metron", "ComicVine", "GCD". */
+            source_label: string;
+            /** @description Canonical provider page (attribution link). */
+            url?: string | null;
+            /** Format: int32 */
+            year?: number | null;
+        };
         SeriesListView: {
             items: components["schemas"]["SeriesView"][];
             next_cursor?: string | null;
@@ -10666,6 +10776,13 @@ export interface components {
              *     position 0.
              */
             chain: components["schemas"]["SeriesChainEntry"][];
+            /**
+             * @description WP-7.8: relationships to provider series that aren't in the library
+             *     ("Continued by: Saga (2018), not in your library"), oldest first.
+             *     Provider links whose target is already local are left out (the
+             *     suggestion engine proposes those).
+             */
+            external: components["schemas"]["SeriesExternalRelationshipView"][];
             /**
              * @description Direct series relationships, oldest first. Bounded by curation (each
              *     edge is admin-created or an accepted suggestion), so not paginated.
@@ -20527,6 +20644,112 @@ export interface operations {
                 content?: never;
             };
             /** @description series / link not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_external_relationships_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateExternalRelationshipReq"];
+            };
+        };
+        responses: {
+            /** @description the same link already existed; returned unchanged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateExternalRelationshipResp"];
+                };
+            };
+            /** @description external link stored, or (already in the library) a relationship pair created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateExternalRelationshipResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the target is local and the kind contradicts an existing relationship */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description invalid provider id / name / year / qualifier */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_external_relationships_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                /** @description external relationship row id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description user link deleted, or provider link dismissed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description malformed id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series / external relationship not found */
             404: {
                 headers: {
                     [name: string]: unknown;

@@ -623,7 +623,9 @@ const MAX_QUERIES_SERIES: u64 = 20; // observed ≈ 7
 const MAX_QUERIES_ADMIN_STATS: u64 = 20; // observed ≈ 6
 // PERF-12 (audit 2026-07): guards for the endpoints PERF-1/PERF-8 fixed —
 // a future re-introduced per-member probe or serialized lookup ships loud.
-const MAX_QUERIES_SERIES_DETAIL: u64 = 15; // observed ≈ 13
+// WP-7.8: +1 — `relationship_count` includes external (not-in-library)
+// links: one indexed lookup on `series_external_relationship`.
+const MAX_QUERIES_SERIES_DETAIL: u64 = 17; // observed 16 (15 before WP-7.8)
 const MAX_QUERIES_ISSUE_DETAIL: u64 = 20; // observed ≈ 9 (parallel try_join set)
 // The pre-PERF-1 shape cost ~3 queries per member (~300 for the 100-member
 // batch below). The existence probes are batched, but the inserts are still

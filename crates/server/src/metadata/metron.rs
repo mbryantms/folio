@@ -51,8 +51,8 @@ use crate::metadata::identifier::{Identifier, Source};
 use crate::metadata::matcher::canonical_issue_number;
 use crate::metadata::provider::{
     ConditionalFetch, CreditCandidate, EntityCandidate, GenericMetadata, IssueCandidate,
-    IssueQuery, MetadataProvider, ProviderError, ProviderResult, QuotaSnapshot, ReprintCandidate,
-    SeriesCandidate, SeriesQuery, VariantCoverCandidate,
+    IssueQuery, MetadataProvider, ProviderError, ProviderResult, ProviderSeriesRef, QuotaSnapshot,
+    ReprintCandidate, SeriesCandidate, SeriesQuery, VariantCoverCandidate,
 };
 use crate::metadata::rate_limit::{self, BucketDef, Reservation};
 use async_trait::async_trait;
@@ -406,6 +406,14 @@ struct MNamedRef {
     name: Option<String>,
 }
 
+/// One entry of a series' `associated` list.
+#[derive(Debug, Deserialize)]
+struct MAssociated {
+    id: Option<i64>,
+    /// Display label: name plus the start year, "Saga (2012)".
+    series: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct MSeriesType {
     #[allow(dead_code)]
@@ -446,8 +454,14 @@ struct MSeriesDetail {
     issue_count: Option<i32>,
     #[serde(default)]
     genres: Vec<MGenre>,
+    /// WP-7.8: Metron's linked series — `[{id, series: "Saga (2012)"}]`,
+    /// untyped and symmetric (a Django self-M2M). Pre-WP-7.8 this was read
+    /// as `{id, name}`, so it always came back empty.
     #[serde(default)]
-    associated: Vec<MNamedRef>,
+    associated: Vec<MAssociated>,
+    /// The series' alternative names (Metron's alias field).
+    #[serde(default)]
+    alt_names: Vec<String>,
     cv_id: Option<i64>,
     gcd_id: Option<i64>,
     #[serde(default)]
@@ -659,6 +673,35 @@ fn strip_display_year(name: &str) -> String {
     trimmed.to_owned()
 }
 
+/// A Metron `associated` entry as a [`ProviderSeriesRef`]: the label's
+/// trailing "(YYYY)" becomes `year`. Entries without an id or label are
+/// dropped.
+fn associated_to_ref(a: &MAssociated) -> Option<ProviderSeriesRef> {
+    let id = a.id?.to_string();
+    let label = a.series.as_deref()?.trim();
+    if label.is_empty() {
+        return None;
+    }
+    let name = strip_display_year(label);
+    let year = if name.len() < label.len() {
+        label
+            .trim_end_matches(')')
+            .rsplit('(')
+            .next()
+            .and_then(|y| y.trim().parse::<i32>().ok())
+    } else {
+        None
+    };
+    Some(ProviderSeriesRef {
+        source: Source::Metron,
+        url: crate::metadata::identifier::canonical_url(Source::Metron, "series", &id),
+        id,
+        label: label.to_owned(),
+        name,
+        year,
+    })
+}
+
 fn series_list_to_candidate(s: &MSeriesList) -> Option<SeriesCandidate> {
     let id = s.id?;
     let external_id = id.to_string();
@@ -774,7 +817,17 @@ fn series_detail_to_metadata(s: MSeriesDetail) -> GenericMetadata {
         description: s.desc,
         publisher: s.publisher.as_ref().and_then(|p| p.name.clone()),
         imprint: s.imprint.as_ref().and_then(|p| p.name.clone()),
-        aliases: s.associated.iter().filter_map(|a| a.name.clone()).collect(),
+        // WP-7.8: aliases come from `alt_names`; `associated` lists *other*
+        // series (collected editions, annuals, relaunches) and travels as
+        // `related_series`.
+        aliases: s
+            .alt_names
+            .iter()
+            .map(|n| n.trim())
+            .filter(|n| !n.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        related_series: s.associated.iter().filter_map(associated_to_ref).collect(),
         genres: s.genres.into_iter().filter_map(|g| g.name).collect(),
         identifiers,
         source_provider: Some(Source::Metron),
@@ -1173,7 +1226,12 @@ mod tests {
             "desc": "Sci-fi epic.",
             "issue_count": 60,
             "genres": [{"id": 1, "name": "Science-Fiction"}],
-            "associated": [{"id": 9, "name": "Saga: Compendium"}],
+            "associated": [
+                {"id": 9, "series": "Saga Compendium (2019)"},
+                {"id": 10, "series": "Saga TPB"},
+                {"series": "no id"}
+            ],
+            "alt_names": ["Saga (Image)", "  "],
             "cv_id": 12345,
             "gcd_id": 98765,
             "resource_url": "https://metron.cloud/series/saga-2012/",
@@ -1184,7 +1242,18 @@ mod tests {
         assert_eq!(m.series_name.as_deref(), Some("Saga"));
         assert_eq!(m.year_began, Some(2012));
         assert_eq!(m.publisher.as_deref(), Some("Image Comics"));
-        assert_eq!(m.aliases, vec!["Saga: Compendium"]);
+        // WP-7.8: aliases come from `alt_names` only — never `associated`.
+        assert_eq!(m.aliases, vec!["Saga (Image)"]);
+        assert_eq!(m.related_series.len(), 2);
+        let compendium = &m.related_series[0];
+        assert_eq!(compendium.source, Source::Metron);
+        assert_eq!(compendium.id, "9");
+        assert_eq!(compendium.label, "Saga Compendium (2019)");
+        assert_eq!(compendium.name, "Saga Compendium");
+        assert_eq!(compendium.year, Some(2019));
+        assert!(compendium.url.as_deref().is_some_and(|u| u.contains("9")));
+        let tpb = &m.related_series[1];
+        assert_eq!((tpb.name.as_str(), tpb.year), ("Saga TPB", None));
         // 3 identifiers: Metron self + CV + GCD.
         assert_eq!(m.identifiers.len(), 3);
         let by_source = |s: Source| m.identifiers.iter().find(|i| i.source == s);
@@ -1313,6 +1382,26 @@ mod tests {
         assert!(!ids.contains(&Source::Isbn));
         assert_eq!(m.characters.len(), 1);
         assert_eq!(m.story_arcs.len(), 1);
+    }
+
+    #[test]
+    fn issue_reprints_carry_label_and_metron_id() {
+        // WP-7.8: wire shape `[{id, issue: "<series> #N"}]`.
+        let detail: MIssueDetail = serde_json::from_value(json!({
+            "id": 900,
+            "reprints": [
+                {"id": 456, "issue": "Saga (2012) #1"},
+                {"issue": "Saga (2012) #2"},
+                {"id": 7}
+            ]
+        }))
+        .unwrap();
+        let m = issue_detail_to_metadata(detail);
+        assert_eq!(m.reprints.len(), 2, "entries without a label are dropped");
+        assert_eq!(m.reprints[0].label, "Saga (2012) #1");
+        assert_eq!(m.reprints[0].identifiers[0].source, Source::Metron);
+        assert_eq!(m.reprints[0].identifiers[0].id, "456");
+        assert!(m.reprints[1].identifiers.is_empty());
     }
 
     #[test]

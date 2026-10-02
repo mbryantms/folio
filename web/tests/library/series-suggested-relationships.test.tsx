@@ -33,6 +33,7 @@ vi.mock("@/lib/api/queries", () => ({
       relationships: [],
       arcs: [],
       chain: [],
+      external: [],
     } satisfies SeriesRelationshipsResp,
     isLoading: false,
   }),
@@ -52,6 +53,7 @@ vi.mock("@/lib/api/queries", () => ({
 vi.mock("@/lib/api/mutations", () => ({
   useCreateSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteExternalRelationship: () => ({ mutate: vi.fn(), isPending: false }),
   useUpdateSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
   useAcceptRelationshipSuggestion: () => ({
     mutate: m.accept,

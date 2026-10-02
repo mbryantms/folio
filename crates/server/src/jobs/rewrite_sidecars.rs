@@ -135,6 +135,17 @@ pub struct PostRewriteWrites {
     /// Stamp `issue.last_metadata_sync_at = now` after the rewrite.
     #[serde(default)]
     pub bump_sync: bool,
+    /// WP-7.8: provider reprints to persist via `writers::set_issue_reprints`
+    /// (neither XML schema carries them). Empty = leave the existing set
+    /// alone. The apply already ran the user-precedence decision.
+    #[serde(default)]
+    pub reprints: Vec<crate::metadata::provider::ReprintCandidate>,
+    /// Provider the reprint rows (and their `reprints` provenance) are
+    /// attributed to.
+    #[serde(default)]
+    pub reprints_source: Option<crate::metadata::identifier::Source>,
+    #[serde(default)]
+    pub reprints_source_external_id: Option<String>,
 }
 
 pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Result<(), Error> {
@@ -317,6 +328,23 @@ pub async fn apply_post_rewrite_writes(state: &AppState, issue_id: &str, post: &
         .await
     {
         tracing::warn!(issue_id, error = %e, "sidecar writeback: variant covers write failed");
+    }
+    if let (false, Some(source)) = (post.reprints.is_empty(), post.reprints_source) {
+        let res = async {
+            let specs = writers::reprint_specs(&state.db, issue_id, &post.reprints).await?;
+            writers::set_issue_reprints(
+                &state.db,
+                issue_id,
+                specs,
+                SetBy::Provider(source),
+                post.reprints_source_external_id.clone(),
+            )
+            .await
+        }
+        .await;
+        if let Err(e) = res {
+            tracing::warn!(issue_id, error = %e, "sidecar writeback: reprints write failed");
+        }
     }
     if post.bump_sync {
         let am = issue::ActiveModel {

@@ -6,7 +6,9 @@ directed edges to other series — or to a story arc: sequels, narrative
 prequels, publication continuations, spin-offs, tie-ins, annuals,
 collected editions, reprints, translations, adaptations and a catch-all
 "see also". The suggestion engine (WP-7.2) and its review UI (WP-7.3) build
-on this layer.
+on this layer. WP-7.8 adds provider links (Metron `associated`, issue
+reprints) and **external targets** — relationships to provider series that
+aren't in the library (see "Provider links and external targets").
 
 ## Schema
 
@@ -219,11 +221,13 @@ caller that traverses `same_universe` should pass a small `max_depth`.
 | `PATCH` | `/api/series/{slug}/relationships/{id}` | `RequireAdmin` | `200` → the updated edge from `{slug}`'s side |
 | `DELETE` | `/api/series/{slug}/relationships/{id}` | `RequireAdmin` | `204` |
 | `GET` | `/api/arcs/{slug}/tie-ins` | any user who can see the arc | `CursorPage<ArcTieInView>` (`cursor`, `limit` 1–100, default 60; `total` on the first page), ordered by role — prelude, main story, tie-in (or unset), aftermath — then oldest first (WP-7.7) |
+| `POST` | `/api/series/{slug}/external-relationships` | `RequireAdmin` | WP-7.8: `201` `CreateExternalRelationshipResp` (`external` set, or `relationship` when the provider series is already local) / `200` existing |
+| `DELETE` | `/api/series/{slug}/external-relationships/{id}` | `RequireAdmin` | WP-7.8: `204` (a user link is deleted, a provider link dismissed) |
 | `GET` | `/api/series/{slug}/same-universe` | any user who can see the series | `CursorPage<SameUniverseItem>` (`cursor`, `limit` 1–60, default 24; `total` on the first page) — derived, see "Same universe" below (WP-7.7; `crates/server/src/api/series_same_universe.rs`) |
 
 `GET /api/series/{slug}` also carries `relationship_count` (WP-7.7): the
 direct series edges plus arc edges the caller can see (the same filters as
-the relationships `GET`), so the series page's Related tab label shows a
+the relationships `GET`) plus, since WP-7.8, the listed external links, so the series page's Related tab label shows a
 count without loading the relationships. Detail only; list payloads omit
 it.
 
@@ -255,7 +259,16 @@ it.
     { "position": -1, "series": { /* SeriesView */ } },
     { "position": 0,  "series": { /* this series */ } },
     { "position": 1,  "series": { /* SeriesView */ } }
-  ]
+  ],
+  "external": [{               // WP-7.8: provider series not in the library
+    "id": "…", "kind": "continued_by", "kind_label": "Continued by", "group": "publication",
+    "qualifier": null, "qualifier_label": null,
+    "source": "metron", "source_label": "Metron", "provider_series_id": "2311",
+    "name": "Saga", "year": 2018, "url": "https://metron.cloud/series/2311/",
+    "set_by": "provider",      // | "user"
+    "confidence": 0.6, "created_at": "…",
+    "local_series": null       // { id, slug, name, year } for a user link matched locally, not yet promoted
+  }]
 }
 
 // POST body: "this series <kind> target". Exactly one of target / target_arc.
@@ -454,6 +467,7 @@ minus a leading "the"), never pairwise.
 | **Collected edition** (`collected_edition`): issues whose `Format` / `special_type` / series type / series name marks a TPB, HC, omnibus or graphic novel; their title, notes and a "Collects…"/"Reprints…" summary are parsed for `Name #lo-hi` (or `issues lo-hi`) citations; an unnamed citation means the edition's own title minus format words. WP-7.6 rolls citations up **per (edition, target) pair** | `collects` (edition → collected series) | `to_range` = the cited ranges merged ("1-6,9-10"), `from_range` = the citing issues, `coverage` = `full` when the merged ranges leave no gap, else `partial` | issue coverage in the library ≥ 80% 0.85 · ≥ 50% 0.7 · some 0.55 · none 0.4 · −0.1 for an unnamed citation · −0.1 when the name is ambiguous and nothing is covered (the pair takes its best citation) |
 | **Reprint roll-up** (`reprint_rollup`, WP-7.6): `issue_reprints` rows (issue → reprinted issue, both in the library, different series) grouped per series pair. Label-only rows are skipped | `collects` when the reprinting series is a collected edition (format / `special_type` / series type / name marker), else `reprints` | `to_range` = reprinted numbers compacted ("1-6,9"), `from_range` = the reprinting issues, `coverage` = `full` when every target issue the library holds inside the reprinted span is linked, `partial` otherwise, `unknown` without numbers | `collects` 0.85 (0.9 with ≥ 3 issues) · `reprints` 0.65 (0.7 with ≥ 2) |
 | **Shared provider volume** (`provider_volume`): local series of the same language whose first issue's ComicInfo `comicvine_series_id` / `metron_series_id`, or whose series-level `external_ids`, name the same provider series (2–12 claimants) | `continues` when issue ranges are disjoint and ordered, else `see_also` (overlapping numbers: probably duplicate copies) | `qualifier` (below) | 0.8 · `see_also` 0.6 (0.55 without issue numbers) |
+| **Provider associated** (`provider_associated`, WP-7.8): a live provider row of `series_external_relationship` (Metron series `associated`) on A whose provider series resolves to local series B (`external_ids`, or the cached id bridge — see "Provider links and external targets") | the local series types / names refine Metron's untyped link (`relationships::external::provider_kind`): a collected edition (TPB / HC / GN / omnibus) vs a periodical (ongoing / limited / one-shot) → `collects` (edition → singles); an annual vs a periodical → `annual_of`; else `see_also`. When the local rows say nothing, the kind recorded at apply time from the provider's own types is used | — | `see_also` 0.6 · refined 0.72 (0.66 when the periodical side is only unknown, not explicitly a periodical). A `see_also` from this source is dropped when another source already gives the pair a specific kind; annual pairs drop it like the continuation sources |
 | **Provider range** (`provider_range`): a `series_provider_range` row on A pointing at provider series P while another local series B is matched to P | `see_also` | — | 0.7. Not `continues`: the range sits inside A, and B usually duplicates those issues |
 | **Annual** (`annual`, WP-7.6): a series named "X Annual" / "X Annuals" (before a year / volume), with Metron series type "Annual Series" (stored in `series.series_type`), or whose issues are ≥ 80% `Format` / `special_type` Annual → main series X by base name, same publisher (unknown allowed), overlapping or adjacent years; the volume whose years contain the annual's wins | `annual_of` | — | name signal 0.9, type / format signal 0.8 · −0.15 when only adjacent / overlapping · −0.35 when years are unknown · −0.15 when several volumes fit equally · −0.1 when a publisher is unknown. The name-continuation / provider `continues` / `see_also` candidate on the same pair is dropped (an annual isn't the next volume) |
 | **Alternate edition** (`alternate_edition`, WP-7.6): same base title once an edition marker is stripped — Deluxe (Edition), Director's Cut, Remastered, Colo(u)rized, Artist's / Gallery / Special / Treasury Edition, Absolute, Unlimited — and overlapping years or issue range inside the original's; the edition can't predate the original | `alternate_edition_of` (self-inverse) | — | 0.6 · "Unlimited" 0.4 · +0.05 with both overlaps · −0.05 several candidates · −0.05 unknown publisher. "Absolute" counts only for a collected edition ("Absolute Carnage" is an event); a collected edition of a singles run is left to the collects sources |
@@ -754,9 +768,10 @@ heuristic versions; a second run marked none.
   name prefix ("Venom: Lethal Protector") is as often a mini-series of the
   same line. `side_story_of` and `companion_to` have even less signal.
   These stay manual.
-- `issue_reprints` is not filled from providers yet (WP-7.8 wires Metron
-  reprints), so the reprint roll-up finds nothing on most libraries today;
-  label-only reprint rows (`reprinted_issue_id` NULL) are skipped.
+- `issue_reprints` is filled from Metron issue `reprints` since WP-7.8
+  (only for issues matched and applied from Metron); label-only reprint
+  rows (`reprinted_issue_id` NULL) are skipped by the roll-up until the
+  reprinted issue is scanned in and resolved.
 - Translation evidence needs `series.language_code` to be right; a library
   tagged entirely in one language (the dev library: `en` / `eng` / `EN`)
   yields none. Without years, only alias evidence gives a direction.
@@ -766,6 +781,136 @@ heuristic versions; a second run marked none.
 - The derived "same universe" query and its section are WP-7.7.
 - Cross-library suggestions are out of scope by design (see above).
 - Bulk accept has no kind override (accept-as-modified is per row).
+
+## Provider links and external targets (WP-7.8)
+
+Only Metron exposes structured links: series `associated` (untyped,
+symmetric) and issue `reprints`. GCD's REST API serves neither bonds nor
+reprints (deferred until it does), ComicVine has no volume-to-volume links.
+The provider-side fix (Metron `associated` was always parsed empty; aliases
+now come from `alt_names`; reprints are now persisted) is in
+`docs/dev/metadata-providers.md` ("Metron links"). Reprints feed the WP-7.6
+reprint roll-up unchanged.
+
+### Schema
+
+`series_external_relationship` (migration
+`m20270508_000001_series_external_relationship`, entity
+`entity::series_external_relationship`) — "this series `kind` a provider
+series", one-directional (no inverse half: there's no local series to hold
+it):
+
+| column | type | notes |
+|---|---|---|
+| `id` | `uuid` PK | |
+| `from_series_id` | `uuid` FK → `series` ON DELETE CASCADE | |
+| `kind`, `qualifier` | `text` | the 31 kinds; qualifier CHECK as `series_relationship` |
+| `source` | `text` | `metron` / `comicvine` / `gcd` |
+| `provider_series_id` | `text` | 1–64 chars |
+| `provider_series_name`, `provider_series_url`, `provider_year` | | display + attribution link |
+| `set_by` | `text` | `user` / `provider` |
+| `confidence` | `real` NULL | provider rows |
+| `evidence` | `jsonb` | `{ "source": "metron", "field": "associated", "ids": [own id, linked id], "label", "series_type" }` |
+| `created_by` | `uuid` NULL FK → `users` | user rows |
+| `promoted_series_id` | `uuid` NULL FK → `series` ON DELETE SET NULL | provider row matched locally |
+| `dismissed_at`, `dismissed_by` | NULL | provider row an admin removed (rejection memory) |
+| `first_set_at`, `last_synced_at` | `timestamptz` | |
+
+Unique `(from_series_id, kind, source, provider_series_id)`; index on
+`(source, provider_series_id)` for promotion. The same migration adds
+`issue_reprints.reprinted_source` / `reprinted_external_id` (provider id of
+a reprinted issue that isn't local yet). Down drops both (round-trip test
+`crates/server/tests/migration_series_external_relationship.rs`).
+
+### Writes (`crates/server/src/relationships/external.rs`)
+
+- `record_provider_links(conn, series, source, own_id, own_type, links)` —
+  the series apply (both the DB-direct and the sidecar-writeback path, via
+  `write_series_scalar_fields`; links aren't a ComicInfo / MetronInfo
+  field) upserts one `provider` row per linked series, kind from
+  `provider_kind` (the linked series' type comes from its cached Metron
+  detail, else from a local series matched to it, else from its name). A
+  **user** row or a **dismissed** row with the same key is left alone;
+  provider rows of that source the provider stopped listing are deleted.
+  Not gated by the preview pane's `selected_fields`.
+- `create_user_link` / `remove_link` — the admin API. Removing a user row
+  deletes it; removing a provider row **dismisses** it (hidden, never
+  re-created by a later apply, ignored by the engine). An admin adding a
+  link with the same key as a provider row claims it (`set_by → user`,
+  un-dismissed).
+
+### Promotion
+
+A row's provider series **resolves** to a local series through
+`external_ids` (same source + id) or the **id bridge**: the provider's
+cached detail of that series (`metadata_cache`) lists other providers' ids
+(Metron's `cv_id` / `gcd_id`), and a local series is matched under one of
+them (`resolve_where`; removed series and the row's own series don't
+count; a direct match wins). On resolution:
+
+- a **user** row becomes a manual pair (`create_pair_scoped`, same kind and
+  qualifier, `created_by` kept) and is deleted; a contradicting kind
+  (`PairError::Conflict`) leaves the row and logs a warning;
+- a **provider** row is marked `promoted_series_id`; the suggestion
+  engine's `provider_associated` source proposes the pair (suggestions
+  only — the same dedupe, rejection memory, cap and stale rules as every
+  source). The mark clears when the match goes away.
+
+Promotion runs from `writers::set_external_id` the moment a series gains a
+provider id (`promote_for_provider_id`, also through the bridge), after
+`record_provider_links`, and per library before every suggestion run
+(`promote_library`, which also resolves label-only reprints). Reads
+resolve lazily too, so a missed hook degrades gracefully: the `GET` hides a
+resolved provider row and lists a resolved user row with `local_series`
+until the next run promotes it.
+
+### Read side and admin API
+
+`GET /api/series/{slug}/relationships` → `external`
+(`api::series_external_relationships::external_views`): the series' live
+rows, oldest first, minus dismissed rows and provider rows whose target
+resolves locally. ACL: the series' own 404 gate; `local_series` only when
+the caller can see that series (otherwise the row reads as external — it's
+provider data, nothing leaks).
+
+`POST /api/series/{slug}/external-relationships` (`RequireAdmin`):
+`{ kind, qualifier?, source, provider_series_id (digits, ≤ 12), name
+(1–300), year? (1800–2200) }`; 422 with field `details`; idempotent (`200`
+for an existing user link, no audit row); when the provider series is
+already local the pair is created right away (`201` with `relationship`,
+`409` on a contradiction). `DELETE …/{id}` (`RequireAdmin`): `204`; `404`
+for another series' row or an already-dismissed one. Audit:
+`admin.series.external_relationship.create` (payload: kind, qualifier,
+source, provider id, name, year, `promoted_relationship_id`) and
+`…delete` (payload incl. `set_by` and `dismissed`).
+
+### Related tab
+
+External links render in their kind's group and heading
+(`groupRelationships` puts them in the slot's `external` list), after the
+local cards, as compact muted text rows — "Saga (2018) — not in your
+library" plus the provider pill link (the `ProviderBadges` style, opens
+the provider page). No cover: cover-size-aware cards are for local series
+only. A resolved user link reads "in your library" and links to the local
+series. Admins get a remove button behind an `AlertDialog` (which says a
+provider link won't come back). The add dialog's target toggle has a third
+mode, **Not in library** (provider select + numeric id + name + optional
+year; only the qualifier of the scope applies), posting to
+`/external-relationships` (`useCreateExternalRelationship`,
+`useDeleteExternalRelationship`).
+
+### Gaps (WP-7.8)
+
+- **GCD bonds** are deferred: the GCD REST API exposes no series bonds or
+  reprint links. ComicVine has no volume links.
+- External links are read from Metron series details only; a series
+  matched to ComicVine / GCD alone gets none.
+- Promotion from the `set_external_id` hook runs without `AppState`, so a
+  pair it creates doesn't invalidate the similar-series cache (it
+  refreshes on its own TTL / the next write).
+- The reprint hook resolves pending rows by a **direct** provider-id match
+  only; the cv / gcd bridge for reprints runs at apply time.
+- External links aren't exported to OPDS feeds.
 
 ## Web
 
@@ -983,6 +1128,28 @@ groups contiguous runs and a later page never reopens an earlier group.
   inverse labels, chip accept / reject, admin gating) and
   `web/tests/api/relationship-suggestions.test.ts` (next-page + query-string
   helpers, accept / bulk invalidation, bulk toast summary).
+- WP-7.8: `crates/server/tests/provider_links.rs` — reprints persisted on
+  a DB-direct apply (Metron-id resolution, label + pending provider id,
+  provenance), resolved by the `set_external_id` hook and by the
+  suggestion run when the hook was missed, rolled up to a `collects`
+  suggestion; user pin / override / fill vs replace; the writeback path
+  (written only after the rewrite job, pin respected); `associated` →
+  external rows with kinds refined by series type, evidence, no aliases;
+  local pair → `provider_associated` suggestion (`collects`, `annual_of`);
+  writeback series apply records links; provider-row promotion → suggestion
+  (and un-marking), through the cached id bridge; user-row promotion → a
+  manual pair (hook and suggestion run); the `GET` `external` list with
+  ACL and `relationship_count`; admin create (validation, idempotency,
+  promote-on-create) / delete (dismissal survives a re-apply), audit and
+  403; the cache schema-version miss. Unit tests: `metron.rs`
+  (`associated` labels, `alt_names` → aliases, reprint parsing),
+  `relationships::external` (`provider_kind`, sources).
+  `crates/server/tests/migration_series_external_relationship.rs`: down →
+  up → CHECKs / unique / cascade → down → up. Web:
+  `web/tests/library/series-related-section.test.tsx` (external rows in
+  their group, provider link, local link, admin remove, empty state) and
+  `web/tests/dom/relationship-form.test.tsx` ("Not in library" target,
+  client checks, POST body, 422 binding).
 - E2E: `web/tests/e2e/relationship-review.spec.ts` — opt-in (needs
   `E2E_ADMIN_EMAIL` / `E2E_ADMIN_PASSWORD` for an existing admin and at
   least one suggestion; it queues a run and skips if none appear). It never

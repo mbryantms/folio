@@ -393,6 +393,33 @@ async fn put_external_id<C: ConnectionTrait>(
         )
         .exec(db)
         .await?;
+    // WP-7.8 promotion hooks: a provider id just landed on a local entity,
+    // so anything that was waiting for that provider record resolves now —
+    // external series links (`series_external_relationship`) and label-only
+    // reprints. The suggestion run repeats both per library, so a missed
+    // hook only delays them.
+    match entity_type {
+        "series" => {
+            if let Ok(series_id) = Uuid::parse_str(entity_id) {
+                crate::relationships::external::promote_for_provider_id(
+                    db,
+                    series_id,
+                    identifier.source.as_str(),
+                    &identifier.id,
+                )
+                .await?;
+            }
+        }
+        "issue" => {
+            resolve_pending_reprints(
+                db,
+                None,
+                Some((identifier.source.as_str(), identifier.id.as_str())),
+            )
+            .await?;
+        }
+        _ => {}
+    }
     Ok(match reclaimed_from {
         Some(from) => SetExternalIdOutcome::Reclaimed { from },
         None => SetExternalIdOutcome::Set,
@@ -1417,11 +1444,24 @@ pub async fn set_issue_universes<C: ConnectionTrait>(
     Ok(())
 }
 
-/// Per-reprint: (reprinted_issue_id, reprinted_label).
-/// At least one of the two must be `Some` (DB-level CHECK
-/// constraint mirrors this).
-pub type ReprintSpec = (Option<String>, Option<String>);
+/// One reprint of an issue (WP-7.8). At least one of `reprinted_issue_id`
+/// / `reprinted_label` must be set (the DB CHECK mirrors this). The
+/// provider id (`reprinted_source` + `reprinted_external_id`) is kept even
+/// when the reprinted issue isn't in the library, so
+/// [`resolve_pending_reprints`] can fill `reprinted_issue_id` once it is.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReprintSpec {
+    pub reprinted_issue_id: Option<String>,
+    pub reprinted_label: Option<String>,
+    pub reprinted_source: Option<String>,
+    pub reprinted_external_id: Option<String>,
+}
 
+/// Replace an issue's reprint set. Rows with neither a target nor a label
+/// are dropped, duplicates (same target + label) collapse. Writes the
+/// `reprints` field provenance. User precedence is the caller's decision
+/// (the apply path checks the `reprints` provenance first, like every other
+/// junction).
 pub async fn set_issue_reprints<C: ConnectionTrait>(
     db: &C,
     issue_id: &str,
@@ -1433,22 +1473,28 @@ pub async fn set_issue_reprints<C: ConnectionTrait>(
         .filter(issue_reprint::Column::IssueId.eq(issue_id))
         .exec(db)
         .await?;
-    if !reprints.is_empty() {
-        let rows: Vec<issue_reprint::ActiveModel> = reprints
-            .into_iter()
-            .filter(|(target, label)| target.is_some() || label.is_some())
-            .map(
-                |(reprinted_issue_id, reprinted_label)| issue_reprint::ActiveModel {
-                    id: Set(Uuid::now_v7()),
-                    issue_id: Set(issue_id.into()),
-                    reprinted_issue_id: Set(reprinted_issue_id),
-                    reprinted_label: Set(reprinted_label),
-                },
-            )
-            .collect();
-        if !rows.is_empty() {
-            issue_reprint::Entity::insert_many(rows).exec(db).await?;
-        }
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let rows: Vec<issue_reprint::ActiveModel> = reprints
+        .into_iter()
+        .filter(|r| r.reprinted_issue_id.is_some() || r.reprinted_label.is_some())
+        .filter(|r| r.reprinted_issue_id.as_deref() != Some(issue_id))
+        .filter(|r| {
+            seen.insert((
+                r.reprinted_issue_id.clone().unwrap_or_default(),
+                r.reprinted_label.clone().unwrap_or_default(),
+            ))
+        })
+        .map(|r| issue_reprint::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            issue_id: Set(issue_id.into()),
+            reprinted_issue_id: Set(r.reprinted_issue_id),
+            reprinted_label: Set(r.reprinted_label),
+            reprinted_source: Set(r.reprinted_source),
+            reprinted_external_id: Set(r.reprinted_external_id),
+        })
+        .collect();
+    if !rows.is_empty() {
+        issue_reprint::Entity::insert_many(rows).exec(db).await?;
     }
     write_field_provenance(
         db,
@@ -1460,6 +1506,138 @@ pub async fn set_issue_reprints<C: ConnectionTrait>(
     )
     .await?;
     Ok(())
+}
+
+#[derive(Debug, FromQueryResult)]
+struct ResolvedIssueRow {
+    entity_id: String,
+}
+
+/// The local issue a provider issue id points at: a direct `external_ids`
+/// match, else the **id bridge** — the provider's cached detail for that
+/// issue (`metadata_cache`) lists its other providers' ids (Metron carries
+/// `cv_id` / `gcd_id`), and a local issue matched under one of those counts.
+/// No network call. Removed issues don't count.
+pub async fn resolve_provider_issue<C: ConnectionTrait>(
+    db: &C,
+    source: &str,
+    external_id: &str,
+) -> Result<Option<String>, DbErr> {
+    let sql = "SELECT x.entity_id FROM external_ids x \
+                 JOIN issues i ON i.id = x.entity_id AND i.removed_at IS NULL \
+                WHERE x.entity_type = 'issue' AND x.source = $1 AND x.external_id = $2 \
+               UNION ALL \
+               SELECT x.entity_id FROM metadata_cache c \
+                 CROSS JOIN LATERAL jsonb_array_elements( \
+                     CASE WHEN jsonb_typeof(c.payload->'identifiers') = 'array' \
+                          THEN c.payload->'identifiers' ELSE '[]'::jsonb END) AS ident(v) \
+                 JOIN external_ids x ON x.entity_type = 'issue' \
+                                    AND x.source = ident.v->>'source' \
+                                    AND x.external_id = ident.v->>'id' \
+                 JOIN issues i ON i.id = x.entity_id AND i.removed_at IS NULL \
+                WHERE c.provider = $1 AND c.entity = 'issue' AND c.external_id = $2 \
+                LIMIT 1";
+    Ok(
+        ResolvedIssueRow::find_by_statement(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            sql,
+            [source.into(), external_id.into()],
+        ))
+        .one(db)
+        .await?
+        .map(|r| r.entity_id),
+    )
+}
+
+/// Provider reprint candidates → [`ReprintSpec`]s for `issue_id`: the label
+/// is always kept; the reprinted issue is resolved to a local issue through
+/// [`resolve_provider_issue`] using the candidate's identifiers (first
+/// match wins); the first identifier is kept as the pending provider id.
+pub async fn reprint_specs<C: ConnectionTrait>(
+    db: &C,
+    issue_id: &str,
+    candidates: &[crate::metadata::provider::ReprintCandidate],
+) -> Result<Vec<ReprintSpec>, DbErr> {
+    let mut out = Vec::with_capacity(candidates.len());
+    for c in candidates {
+        let label = Some(c.label.trim().to_owned()).filter(|l| !l.is_empty());
+        let mut target = None;
+        for ident in &c.identifiers {
+            if let Some(id) = resolve_provider_issue(db, ident.source.as_str(), &ident.id).await?
+                && id != issue_id
+            {
+                target = Some(id);
+                break;
+            }
+        }
+        let first = c.identifiers.first();
+        out.push(ReprintSpec {
+            reprinted_issue_id: target,
+            reprinted_label: label,
+            reprinted_source: first.map(|i| i.source.as_str().to_owned()),
+            reprinted_external_id: first.map(|i| i.id.clone()),
+        });
+    }
+    Ok(out)
+}
+
+/// Fill `reprinted_issue_id` on label-only reprint rows whose provider id
+/// now resolves to a local issue (WP-7.8): the reprinted issue was scanned
+/// in and matched after the apply that recorded the reprint. Scoped to the
+/// reprinting issues of `library_id`, or to rows pointing at
+/// `(source, external_id)` when given. Direct `external_ids` matches only;
+/// a row whose resolved target would duplicate an existing row of the same
+/// issue is left alone. Returns the rows updated. Called by the
+/// relationship-suggestion run (before the reprint roll-up) and by
+/// [`set_external_id`] when an issue gains a provider id.
+pub async fn resolve_pending_reprints<C: ConnectionTrait>(
+    db: &C,
+    library_id: Option<Uuid>,
+    provider_id: Option<(&str, &str)>,
+) -> Result<u64, DbErr> {
+    let mut values: Vec<sea_orm::Value> = Vec::new();
+    let mut filters = Vec::new();
+    if let Some(lib) = library_id {
+        values.push(lib.into());
+        filters.push(format!(
+            "EXISTS (SELECT 1 FROM issues f WHERE f.id = rp.issue_id AND f.library_id = ${})",
+            values.len()
+        ));
+    }
+    if let Some((source, ext)) = provider_id {
+        values.push(source.into());
+        values.push(ext.into());
+        filters.push(format!(
+            "rp.reprinted_source = ${} AND rp.reprinted_external_id = ${}",
+            values.len() - 1,
+            values.len()
+        ));
+    }
+    let extra = if filters.is_empty() {
+        String::new()
+    } else {
+        format!(" AND {}", filters.join(" AND "))
+    };
+    let sql = format!(
+        "UPDATE issue_reprints rp SET reprinted_issue_id = x.entity_id \
+           FROM external_ids x \
+          WHERE rp.reprinted_issue_id IS NULL AND rp.reprinted_external_id IS NOT NULL \
+            AND x.entity_type = 'issue' AND x.source = rp.reprinted_source \
+            AND x.external_id = rp.reprinted_external_id \
+            AND x.entity_id <> rp.issue_id \
+            AND EXISTS (SELECT 1 FROM issues t WHERE t.id = x.entity_id AND t.removed_at IS NULL) \
+            AND NOT EXISTS (SELECT 1 FROM issue_reprints d \
+                             WHERE d.issue_id = rp.issue_id AND d.reprinted_issue_id = x.entity_id \
+                               AND COALESCE(d.reprinted_label, '') = COALESCE(rp.reprinted_label, '')){extra}"
+    );
+    let res = db
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            sql,
+            values,
+        ))
+        .await?;
+    Ok(res.rows_affected())
 }
 
 /// Genre + tag setters — these are pure string sets (no entity table).

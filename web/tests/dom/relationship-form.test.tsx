@@ -4,7 +4,8 @@
  * (`RelationshipKindSelect`) and the add / edit form
  * (`RelationshipForm`) — scope fields per kind, the PATCH body, the
  * Series | Story arc target toggle, and server 422 field errors bound to
- * their inputs via `applyServerErrors`.
+ * their inputs via `applyServerErrors`. WP-7.8: the "Not in library"
+ * target (provider + id + name + year → `POST /external-relationships`).
  */
 import {
   act,
@@ -22,6 +23,7 @@ const m = vi.hoisted(() => ({
   seriesPages: undefined as unknown,
   update: vi.fn(),
   create: vi.fn(),
+  createExternal: vi.fn(),
 }));
 
 vi.mock("@/lib/api/queries", () => ({
@@ -32,12 +34,17 @@ vi.mock("@/lib/api/queries", () => ({
 vi.mock("@/lib/api/mutations", () => ({
   useUpdateSeriesRelationship: () => ({ mutate: m.update, isPending: false }),
   useCreateSeriesRelationship: () => ({ mutate: m.create, isPending: false }),
+  useCreateExternalRelationship: () => ({
+    mutate: m.createExternal,
+    isPending: false,
+  }),
 }));
 
 import { RelationshipKindSelect } from "@/components/library/RelationshipKindSelect";
 import {
   RelationshipForm,
   TargetPicker,
+  externalBody,
   patchBody,
 } from "@/components/library/RelationshipFormDialog";
 import { ApiMutationError } from "@/lib/api/mutations/_core";
@@ -101,6 +108,7 @@ beforeEach(() => {
   m.seriesPages = undefined;
   m.update.mockReset();
   m.create.mockReset();
+  m.createExternal.mockReset();
 });
 
 function openPicker(name = "Relationship") {
@@ -288,6 +296,10 @@ describe("<RelationshipForm> edit", () => {
           from_range: "",
           to_range: "",
           note: "  ",
+          source: "metron",
+          provider_series_id: "",
+          name: "",
+          year: "",
         },
         CATALOGUE,
       ),
@@ -359,5 +371,120 @@ describe("<TargetPicker>", () => {
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ id: "s9", name: "Saga Deluxe (2020)" }),
     );
+  });
+});
+
+describe("<RelationshipForm> add — not in library (WP-7.8)", () => {
+  it("swaps the target picker for provider fields and posts an external link", async () => {
+    render(
+      <RelationshipForm seriesSlug="saga-2" seriesId="s2" onDone={() => {}} />,
+    );
+    openPicker();
+    fireEvent.click(screen.getByRole("option", { name: /Continues/ }));
+    fireEvent.click(screen.getByRole("radio", { name: "Not in library" }));
+    // Provider fields replace the series picker; ranges / note / coverage
+    // don't apply to an external link, the qualifier does.
+    expect(
+      screen.queryByRole("button", { name: "Choose a series" }),
+    ).toBeNull();
+    expect(screen.getByLabelText("Provider series id")).toBeTruthy();
+    expect(screen.queryByLabelText("This series’ issues")).toBeNull();
+    expect(screen.queryByLabelText("Note")).toBeNull();
+    expect(screen.getByText("Qualifier")).toBeTruthy();
+
+    // Client-side checks first: no request with a bad id / missing name.
+    fireEvent.change(screen.getByLabelText("Provider series id"), {
+      target: { value: "abc" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    });
+    expect(m.createExternal).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("Enter the provider's numeric series id"),
+    ).toBeTruthy();
+    expect(screen.getByText("Enter the series name")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Provider series id"), {
+      target: { value: " 2311 " },
+    });
+    fireEvent.change(screen.getByLabelText("Series name"), {
+      target: { value: "Saga" },
+    });
+    fireEvent.change(screen.getByLabelText("Year"), {
+      target: { value: "2018" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    });
+    expect(m.create).not.toHaveBeenCalled();
+    expect(m.createExternal).toHaveBeenCalledOnce();
+    expect(m.createExternal.mock.calls[0]![0]).toEqual({
+      kind: "continues",
+      qualifier: null,
+      source: "metron",
+      provider_series_id: "2311",
+      name: "Saga",
+      year: 2018,
+    });
+  });
+
+  it("binds a server 422 to the provider fields", async () => {
+    m.createExternal.mockImplementation(
+      (_input: unknown, opts: { onError: (e: unknown) => void }) =>
+        opts.onError(
+          new ApiMutationError("name: too long", 422, [
+            { field: "name", message: "must be at most 300 characters" },
+          ]),
+        ),
+    );
+    render(
+      <RelationshipForm seriesSlug="saga-2" seriesId="s2" onDone={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "Not in library" }));
+    fireEvent.change(screen.getByLabelText("Provider series id"), {
+      target: { value: "12" },
+    });
+    fireEvent.change(screen.getByLabelText("Series name"), {
+      target: { value: "X" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    });
+    expect(
+      screen.getByLabelText("Series name").getAttribute("aria-invalid"),
+    ).toBe("true");
+    expect(screen.getByText("must be at most 300 characters")).toBeTruthy();
+  });
+
+  it("externalBody drops a qualifier the kind doesn't take", () => {
+    const base = {
+      kind: "sequel_of" as const,
+      target_type: "external" as const,
+      target: null,
+      target_arc: null,
+      qualifier: "relaunch" as const,
+      coverage: "" as const,
+      from_range: "",
+      to_range: "",
+      note: "",
+      source: "gcd" as const,
+      provider_series_id: "77",
+      name: " Saga ",
+      year: "",
+    };
+    expect(externalBody(base, CATALOGUE)).toEqual({
+      ok: true,
+      body: {
+        kind: "sequel_of",
+        qualifier: null,
+        source: "gcd",
+        provider_series_id: "77",
+        name: "Saga",
+        year: null,
+      },
+    });
+    const bad = externalBody({ ...base, year: "18" }, CATALOGUE);
+    expect(bad.ok).toBe(false);
   });
 });

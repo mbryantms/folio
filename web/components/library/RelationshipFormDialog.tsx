@@ -6,10 +6,13 @@
  * reflows around an inline form.
  *
  * - **Add** (`mode="create"`): the grouped kind picker, a target toggle
- *   "Series | Story arc" (arc only for arc-capable kinds — `tie_in_to`)
- *   with a typeahead for each (`/series?q=` and `/arcs?q=`, both
- *   cursor-paginated with "More results"), then the scope the kind takes.
- *   `POST /series/{slug}/relationships`.
+ *   "Series | Story arc | Not in library" (arc only for arc-capable kinds —
+ *   `tie_in_to`) with a typeahead for each (`/series?q=` and `/arcs?q=`,
+ *   both cursor-paginated with "More results"), then the scope the kind
+ *   takes. `POST /series/{slug}/relationships`. WP-7.8: "Not in library"
+ *   links a provider series the library doesn't have (provider + numeric
+ *   id + name + optional year; qualifier only) —
+ *   `POST /series/{slug}/external-relationships`.
  * - **Edit** (`mode="edit"`): kind (an arc edge keeps arc-capable kinds),
  *   from / to ranges, coverage (only for kinds that allow it), qualifier /
  *   role (the kind's allowed set from the catalogue) and note.
@@ -25,7 +28,7 @@
 import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
 import { Loader2 } from "lucide-react";
 import * as React from "react";
-import { useForm, useWatch, type Path } from "react-hook-form";
+import { useForm, useFormContext, useWatch, type Path } from "react-hook-form";
 
 import { RelationshipKindSelect } from "@/components/library/RelationshipKindSelect";
 import { Button } from "@/components/ui/button";
@@ -69,6 +72,7 @@ import {
 } from "@/components/ui/select";
 import { applyServerErrors } from "@/lib/api/form-errors";
 import {
+  useCreateExternalRelationship,
   useCreateSeriesRelationship,
   useUpdateSeriesRelationship,
 } from "@/lib/api/mutations";
@@ -78,6 +82,7 @@ import {
   useSeriesListInfinite,
 } from "@/lib/api/queries";
 import type {
+  ExternalSource,
   RelationshipCatalogue,
   RelationshipCoverage,
   RelationshipKind,
@@ -90,7 +95,7 @@ export type TargetRef = { id: string; name: string; detail?: string | null };
 
 export type RelationshipFormValues = {
   kind: RelationshipKind;
-  target_type: "series" | "arc";
+  target_type: "series" | "arc" | "external";
   target: TargetRef | null;
   target_arc: TargetRef | null;
   qualifier: RelationshipQualifier | "";
@@ -98,7 +103,23 @@ export type RelationshipFormValues = {
   from_range: string;
   to_range: string;
   note: string;
+  /** WP-7.8 "Not in library" target: provider, its numeric series id,
+   *  display name and optional year (field names match the request). */
+  source: ExternalSource;
+  provider_series_id: string;
+  name: string;
+  year: string;
 };
+
+/** Providers an external link may point at. */
+export const EXTERNAL_SOURCES: ReadonlyArray<{
+  value: ExternalSource;
+  label: string;
+}> = [
+  { value: "metron", label: "Metron" },
+  { value: "comicvine", label: "ComicVine" },
+  { value: "gcd", label: "GCD" },
+];
 
 /** Server field names the form owns (anything else lands on the root). */
 const FORM_FIELDS: ReadonlyArray<Path<RelationshipFormValues>> = [
@@ -110,6 +131,10 @@ const FORM_FIELDS: ReadonlyArray<Path<RelationshipFormValues>> = [
   "from_range",
   "to_range",
   "note",
+  "source",
+  "provider_series_id",
+  "name",
+  "year",
 ];
 
 /** The relationship being edited (one row of the Related tab). */
@@ -169,6 +194,67 @@ function defaults(edit?: EditableRelationship): RelationshipFormValues {
     from_range: edit?.from_range ?? "",
     to_range: edit?.to_range ?? "",
     note: edit?.note ?? "",
+    source: "metron",
+    provider_series_id: "",
+    name: "",
+    year: "",
+  };
+}
+
+/** The `POST /external-relationships` body for the "Not in library"
+ *  target, or the client-side field errors that block it. */
+export function externalBody(
+  values: RelationshipFormValues,
+  catalogue: RelationshipCatalogue | undefined,
+):
+  | {
+      ok: true;
+      body: {
+        kind: RelationshipKind;
+        qualifier: RelationshipQualifier | null;
+        source: ExternalSource;
+        provider_series_id: string;
+        name: string;
+        year: number | null;
+      };
+    }
+  | {
+      ok: false;
+      errors: Array<{ field: Path<RelationshipFormValues>; message: string }>;
+    } {
+  const errors: Array<{
+    field: Path<RelationshipFormValues>;
+    message: string;
+  }> = [];
+  const id = values.provider_series_id.trim();
+  const name = values.name.trim();
+  const yearText = values.year.trim();
+  const year = yearText ? Number(yearText) : null;
+  if (!/^\d{1,12}$/.test(id)) {
+    errors.push({
+      field: "provider_series_id",
+      message: "Enter the provider's numeric series id",
+    });
+  }
+  if (!name) errors.push({ field: "name", message: "Enter the series name" });
+  if (
+    year !== null &&
+    !(Number.isInteger(year) && year >= 1800 && year <= 2200)
+  ) {
+    errors.push({ field: "year", message: "Enter a year like 2018" });
+  }
+  if (errors.length > 0) return { ok: false, errors };
+  const scope = scopeForKind(catalogue, values.kind, values);
+  return {
+    ok: true,
+    body: {
+      kind: values.kind,
+      qualifier: scope.qualifier || null,
+      source: values.source,
+      provider_series_id: id,
+      name,
+      year,
+    },
   };
 }
 
@@ -212,7 +298,7 @@ export function RelationshipFormDialog({
           <DialogDescription>
             {edit
               ? `${seriesName ?? "This series"} → ${edit.otherName}. Both directions update together.`
-              : "Link a series or story arc. The reverse link is added on the other series automatically."}
+              : "Link a series, a story arc, or a series you don’t have yet. A series link gets its reverse link on the other series automatically."}
           </DialogDescription>
         </DialogHeader>
         <PopoverPortalContainer value={portal}>
@@ -250,8 +336,10 @@ export function RelationshipForm({
 }) {
   const catalogue = useRelationshipKinds();
   const create = useCreateSeriesRelationship(seriesSlug);
+  const createExternal = useCreateExternalRelationship(seriesSlug);
   const update = useUpdateSeriesRelationship(seriesSlug);
-  const pending = create.isPending || update.isPending;
+  const pending =
+    create.isPending || update.isPending || createExternal.isPending;
   const form = useForm<RelationshipFormValues>({
     defaultValues: defaults(edit),
   });
@@ -262,13 +350,17 @@ export function RelationshipForm({
   const allowsCoverage = info?.allows_coverage ?? false;
   const allowsArc = info?.allows_arc_target ?? false;
   const isTieIn = kind === "tie_in_to" || kind === "has_tie_in";
+  const isExternal = !edit && targetType === "external";
 
   const onKind = (k: RelationshipKind) => {
     form.setValue("kind", k, { shouldDirty: true });
     const scope = scopeForKind(catalogue.data, k, form.getValues());
     form.setValue("qualifier", scope.qualifier, { shouldDirty: true });
     form.setValue("coverage", scope.coverage, { shouldDirty: true });
-    if (!kindInfo(catalogue.data, k)?.allows_arc_target) {
+    if (
+      !kindInfo(catalogue.data, k)?.allows_arc_target &&
+      form.getValues("target_type") === "arc"
+    ) {
       form.setValue("target_type", "series");
     }
     form.clearErrors();
@@ -282,6 +374,17 @@ export function RelationshipForm({
         { id: edit.id, body: patchBody(values, catalogue.data) },
         { onSuccess: onDone, onError },
       );
+      return;
+    }
+    if (values.target_type === "external") {
+      const ext = externalBody(values, catalogue.data);
+      if (!ext.ok) {
+        for (const e of ext.errors) {
+          form.setError(e.field, { type: "validate", message: e.message });
+        }
+        return;
+      }
+      createExternal.mutate(ext.body, { onSuccess: onDone, onError });
       return;
     }
     const arc = values.target_type === "arc" && allowsArc;
@@ -344,14 +447,17 @@ export function RelationshipForm({
             <RadioGroupPrimitive.Root
               aria-label="Target"
               orientation="horizontal"
-              value={allowsArc ? targetType : "series"}
+              value={targetType === "arc" && !allowsArc ? "series" : targetType}
               onValueChange={(v) => {
-                form.setValue("target_type", v as "series" | "arc");
+                form.setValue(
+                  "target_type",
+                  v as "series" | "arc" | "external",
+                );
                 form.clearErrors(["target", "target_arc"]);
               }}
               className="bg-muted text-muted-foreground inline-flex h-9 items-center rounded-md p-1 text-sm"
             >
-              {(["series", "arc"] as const).map((t) => {
+              {(["series", "arc", "external"] as const).map((t) => {
                 const disabled = t === "arc" && !allowsArc;
                 return (
                   <RadioGroupPrimitive.Item
@@ -365,12 +471,18 @@ export function RelationshipForm({
                     }
                     className="ring-offset-background focus-visible:ring-ring data-[state=checked]:bg-background data-[state=checked]:text-foreground rounded-sm px-3 py-1 font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:shadow"
                   >
-                    {t === "series" ? "Series" : "Story arc"}
+                    {t === "series"
+                      ? "Series"
+                      : t === "arc"
+                        ? "Story arc"
+                        : "Not in library"}
                   </RadioGroupPrimitive.Item>
                 );
               })}
             </RadioGroupPrimitive.Root>
-            {targetType === "arc" && allowsArc ? (
+            {isExternal ? (
+              <ExternalTargetFields />
+            ) : targetType === "arc" && allowsArc ? (
               <FormField
                 control={form.control}
                 name="target_arc"
@@ -417,7 +529,7 @@ export function RelationshipForm({
           </div>
         )}
 
-        {(qualifiers.length > 0 || allowsCoverage) && (
+        {(qualifiers.length > 0 || (allowsCoverage && !isExternal)) && (
           <div className="grid gap-4 sm:grid-cols-2">
             {qualifiers.length > 0 && (
               <FormField
@@ -453,7 +565,7 @@ export function RelationshipForm({
                 )}
               />
             )}
-            {allowsCoverage && (
+            {allowsCoverage && !isExternal && (
               <FormField
                 control={form.control}
                 name="coverage"
@@ -488,54 +600,58 @@ export function RelationshipForm({
           </div>
         )}
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <FormField
-            control={form.control}
-            name="from_range"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>This series&rsquo; issues</FormLabel>
-                <FormControl>
-                  <Input {...field} maxLength={100} placeholder="e.g. 1-6" />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="to_range"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>
-                  {targetType === "arc" ? "Arc parts" : "Their issues"}
-                </FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    maxLength={100}
-                    placeholder="e.g. 1-6,Annual 1"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
+        {!isExternal && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField
+              control={form.control}
+              name="from_range"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>This series&rsquo; issues</FormLabel>
+                  <FormControl>
+                    <Input {...field} maxLength={100} placeholder="e.g. 1-6" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="to_range"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    {targetType === "arc" ? "Arc parts" : "Their issues"}
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      maxLength={100}
+                      placeholder="e.g. 1-6,Annual 1"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+        )}
 
-        <FormField
-          control={form.control}
-          name="note"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Note</FormLabel>
-              <FormControl>
-                <Input {...field} maxLength={500} placeholder="Optional" />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        {!isExternal && (
+          <FormField
+            control={form.control}
+            name="note"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Note</FormLabel>
+                <FormControl>
+                  <Input {...field} maxLength={500} placeholder="Optional" />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
 
         {rootError ? (
           <p role="alert" className="text-destructive text-sm">
@@ -569,6 +685,100 @@ export function RelationshipForm({
         </DialogFooter>
       </form>
     </Form>
+  );
+}
+
+/** WP-7.8 "Not in library" target: which provider series this series
+ *  relates to. Provider + numeric id identify it (the link back and, once
+ *  the series is scanned in and matched, the promotion to an ordinary
+ *  relationship); name and year are what the Related tab shows. */
+function ExternalTargetFields() {
+  const { control } = useFormContext<RelationshipFormValues>();
+  return (
+    <div className="space-y-3">
+      <p className="text-muted-foreground text-xs">
+        A series you don&rsquo;t have. It shows in the Related tab as &ldquo;not
+        in your library&rdquo; with a link to the provider, and becomes a normal
+        relationship once that series is added and matched.
+      </p>
+      <div className="grid gap-4 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)]">
+        <FormField
+          control={control}
+          name="source"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Provider</FormLabel>
+              <Select value={field.value} onValueChange={field.onChange}>
+                <FormControl>
+                  <SelectTrigger aria-label="Provider">
+                    <SelectValue />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent>
+                  {EXTERNAL_SOURCES.map((s) => (
+                    <SelectItem key={s.value} value={s.value}>
+                      {s.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={control}
+          name="provider_series_id"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Provider series id</FormLabel>
+              <FormControl>
+                <Input
+                  {...field}
+                  inputMode="numeric"
+                  maxLength={12}
+                  placeholder="e.g. 2311"
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </div>
+      <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,7rem)]">
+        <FormField
+          control={control}
+          name="name"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Series name</FormLabel>
+              <FormControl>
+                <Input {...field} maxLength={300} placeholder="e.g. Saga" />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={control}
+          name="year"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Year</FormLabel>
+              <FormControl>
+                <Input
+                  {...field}
+                  inputMode="numeric"
+                  maxLength={4}
+                  placeholder="Optional"
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </div>
+    </div>
   );
 }
 

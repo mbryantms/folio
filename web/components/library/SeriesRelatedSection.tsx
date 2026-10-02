@@ -14,6 +14,10 @@
  *    coverage / qualifier / note as secondary text.
  *  - **Part of event** — the series → story-arc edges with their role
  *    ("Tie-in to Secret Wars", "Prelude to …").
+ *  - **Not in your library** (WP-7.8) — links to provider series the
+ *    library doesn't have (Metron `associated`, or added by an admin),
+ *    listed in their kind's group as compact, muted text rows with a
+ *    provider link ("Continued by: Saga (2018) — not in your library").
  *
  * Covers render at `coverWidth` — the issue grid's effective column width
  * for the page's card-size slider (`useGridColumnWidth`), so every cover
@@ -43,10 +47,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
+import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useDeleteSeriesRelationship } from "@/lib/api/mutations";
+import {
+  useDeleteExternalRelationship,
+  useDeleteSeriesRelationship,
+} from "@/lib/api/mutations";
 import {
   useMe,
   useRelationshipKinds,
@@ -58,6 +65,7 @@ import type {
   RelationshipKind,
   SeriesArcRelationshipView,
   SeriesChainEntry,
+  SeriesExternalRelationshipView,
   SeriesRelationshipView,
   SeriesView,
 } from "@/lib/api/types";
@@ -77,10 +85,13 @@ const DEFAULT_GROUP_ORDER: RelationshipGroup[] = [
 ];
 
 /** Group direct relationships by UI group, then by display label (a
- *  tie-in role gives "Prelude to" its own heading), in catalogue order. */
+ *  tie-in role gives "Prelude to" its own heading), in catalogue order.
+ *  WP-7.8: external (not-in-library) links join the slot of their kind
+ *  label as `external`, so a group can hold only external rows. */
 export function groupRelationships(
   rels: SeriesRelationshipView[],
   catalogue?: RelationshipCatalogue,
+  externals: SeriesExternalRelationshipView[] = [],
 ): Array<{
   group: RelationshipGroup;
   label: string;
@@ -88,11 +99,20 @@ export function groupRelationships(
     kind: RelationshipKind;
     label: string;
     items: SeriesRelationshipView[];
+    external: SeriesExternalRelationshipView[];
   }>;
 }> {
   const order = catalogue?.groups.map((g) => g.group) ?? DEFAULT_GROUP_ORDER;
-  const sorted = [...rels].sort(
-    (a, b) => kindOrder(catalogue, a.kind) - kindOrder(catalogue, b.kind),
+  type Row =
+    { local: SeriesRelationshipView } | { ext: SeriesExternalRelationshipView };
+  const kindOf = (r: Row) => ("local" in r ? r.local : r.ext);
+  const rows: Row[] = [
+    ...rels.map((local) => ({ local })),
+    ...externals.map((ext) => ({ ext })),
+  ].sort(
+    (a, b) =>
+      kindOrder(catalogue, kindOf(a).kind) -
+      kindOrder(catalogue, kindOf(b).kind),
   );
   return order
     .map((group) => {
@@ -100,11 +120,17 @@ export function groupRelationships(
         kind: RelationshipKind;
         label: string;
         items: SeriesRelationshipView[];
+        external: SeriesExternalRelationshipView[];
       }> = [];
-      for (const r of sorted.filter((r) => r.group === group)) {
-        const slot = kinds.find((k) => k.label === r.kind_label);
-        if (slot) slot.items.push(r);
-        else kinds.push({ kind: r.kind, label: r.kind_label, items: [r] });
+      for (const r of rows.filter((r) => kindOf(r).group === group)) {
+        const v = kindOf(r);
+        let slot = kinds.find((k) => k.label === v.kind_label);
+        if (!slot) {
+          slot = { kind: v.kind, label: v.kind_label, items: [], external: [] };
+          kinds.push(slot);
+        }
+        if ("local" in r) slot.items.push(r.local);
+        else slot.external.push(r.ext);
       }
       return {
         group,
@@ -176,6 +202,7 @@ export function SeriesRelatedSection({
   const isAdmin = me.data?.role === "admin";
   const query = useSeriesRelationships(seriesSlug);
   const remove = useDeleteSeriesRelationship(seriesSlug);
+  const removeExternal = useDeleteExternalRelationship(seriesSlug);
   const catalogue = useRelationshipKinds();
   const [formOpen, setFormOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<EditableRelationship | null>(
@@ -191,11 +218,18 @@ export function SeriesRelatedSection({
     returnFocus.capture();
     setConfirmRemove(t);
   };
+  const [confirmRemoveExternal, setConfirmRemoveExternal] =
+    React.useState<SeriesExternalRelationshipView | null>(null);
+  const askRemoveExternal = (row: SeriesExternalRelationshipView) => {
+    returnFocus.capture();
+    setConfirmRemoveExternal(row);
+  };
 
   const rels = query.data?.relationships ?? [];
   const arcs = query.data?.arcs ?? [];
   const chain = query.data?.chain ?? [];
-  const groups = groupRelationships(rels, catalogue.data);
+  const externals = query.data?.external ?? [];
+  const groups = groupRelationships(rels, catalogue.data, externals);
 
   if (query.isLoading) return <RelatedSkeleton coverWidth={coverWidth} />;
   if (query.isError) {
@@ -205,7 +239,11 @@ export function SeriesRelatedSection({
       </p>
     );
   }
-  const empty = rels.length === 0 && arcs.length === 0 && chain.length === 0;
+  const empty =
+    rels.length === 0 &&
+    arcs.length === 0 &&
+    chain.length === 0 &&
+    externals.length === 0;
 
   const openAdd = () => {
     returnFocus.capture();
@@ -269,46 +307,55 @@ export function SeriesRelatedSection({
                   <h4 className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
                     {k.label}
                   </h4>
-                  <ul className="flex flex-wrap gap-4">
-                    {k.items.map((r) => {
-                      const caption = scopeCaption(r);
-                      return (
-                        <li key={r.id} className="group/rel relative">
-                          <RelatedCard series={r.series} width={coverWidth}>
-                            {r.source === "suggested" && (
-                              <Badge
-                                variant="secondary"
-                                className="font-normal"
-                              >
-                                Suggested
-                              </Badge>
+                  {k.items.length > 0 && (
+                    <ul className="flex flex-wrap gap-4">
+                      {k.items.map((r) => {
+                        const caption = scopeCaption(r);
+                        return (
+                          <li key={r.id} className="group/rel relative">
+                            <RelatedCard series={r.series} width={coverWidth}>
+                              {r.source === "suggested" && (
+                                <Badge
+                                  variant="secondary"
+                                  className="font-normal"
+                                >
+                                  Suggested
+                                </Badge>
+                              )}
+                              {caption && (
+                                <p
+                                  className="text-muted-foreground line-clamp-3 text-xs"
+                                  title={caption}
+                                >
+                                  {caption}
+                                </p>
+                              )}
+                            </RelatedCard>
+                            {isAdmin && (
+                              <EditRemoveButtons
+                                label={`${r.kind_label.toLowerCase()} ${r.series.name}`}
+                                onEdit={() => openEdit(editableFromSeries(r))}
+                                onRemove={() =>
+                                  askRemove({
+                                    id: r.id,
+                                    otherSlug: r.series.slug,
+                                    label: `${r.kind_label} ${r.series.name}`,
+                                  })
+                                }
+                              />
                             )}
-                            {caption && (
-                              <p
-                                className="text-muted-foreground line-clamp-3 text-xs"
-                                title={caption}
-                              >
-                                {caption}
-                              </p>
-                            )}
-                          </RelatedCard>
-                          {isAdmin && (
-                            <EditRemoveButtons
-                              label={`${r.kind_label.toLowerCase()} ${r.series.name}`}
-                              onEdit={() => openEdit(editableFromSeries(r))}
-                              onRemove={() =>
-                                askRemove({
-                                  id: r.id,
-                                  otherSlug: r.series.slug,
-                                  label: `${r.kind_label} ${r.series.name}`,
-                                })
-                              }
-                            />
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                  {k.external.length > 0 && (
+                    <ExternalRows
+                      rows={k.external}
+                      isAdmin={isAdmin}
+                      onRemove={askRemoveExternal}
+                    />
+                  )}
                 </div>
               ))}
             </div>
@@ -401,7 +448,131 @@ export function SeriesRelatedSection({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <AlertDialog
+        open={confirmRemoveExternal !== null}
+        onOpenChange={(o) => {
+          if (!o) setConfirmRemoveExternal(null);
+        }}
+      >
+        <AlertDialogContent onCloseAutoFocus={returnFocus.onCloseAutoFocus}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove external link?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Removes &ldquo;{confirmRemoveExternal?.kind_label}{" "}
+              {confirmRemoveExternal ? externalName(confirmRemoveExternal) : ""}
+              &rdquo;.
+              {confirmRemoveExternal?.set_by === "provider"
+                ? ` It came from ${confirmRemoveExternal.source_label}; a later metadata update won't bring it back.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removeExternal.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={removeExternal.isPending}
+              onClick={() => {
+                if (!confirmRemoveExternal) return;
+                removeExternal.mutate(
+                  { id: confirmRemoveExternal.id },
+                  { onSuccess: () => setConfirmRemoveExternal(null) },
+                );
+              }}
+            >
+              {removeExternal.isPending ? (
+                <>
+                  <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Removing
+                </>
+              ) : (
+                "Remove"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
+  );
+}
+
+/** "Saga (2018)". */
+export function externalName(e: SeriesExternalRelationshipView): string {
+  return e.year != null ? `${e.name} (${e.year})` : e.name;
+}
+
+/** WP-7.8: links to provider series that aren't in the library — compact,
+ *  muted text rows (no cover: there is nothing local to show), each with
+ *  the provider attribution link. A user link whose target was matched
+ *  locally since (not yet promoted by the next suggestion run) links to
+ *  the local series instead. */
+function ExternalRows({
+  rows,
+  isAdmin,
+  onRemove,
+}: {
+  rows: SeriesExternalRelationshipView[];
+  isAdmin: boolean;
+  onRemove: (e: SeriesExternalRelationshipView) => void;
+}) {
+  return (
+    <ul className="space-y-1 text-sm" aria-label="Not in your library">
+      {rows.map((e) => (
+        <li
+          key={e.id}
+          className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5"
+          data-testid="external-relationship"
+        >
+          <span className="text-foreground/80 min-w-0 font-medium break-words">
+            {externalName(e)}
+          </span>
+          {e.local_series ? (
+            <Link
+              href={seriesUrl(e.local_series)}
+              className="focus-visible:ring-ring rounded-sm text-xs underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:outline-none"
+            >
+              in your library
+            </Link>
+          ) : (
+            <span className="text-xs">— not in your library</span>
+          )}
+          {e.qualifier_label && (
+            <span className="text-xs">· {e.qualifier_label}</span>
+          )}
+          {e.url ? (
+            <a
+              href={e.url}
+              target="_blank"
+              rel="noreferrer"
+              className={cn(
+                badgeVariants({ variant: "outline" }),
+                "text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring focus-visible:ring-offset-background font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none",
+              )}
+              title={`${e.source_label} · ${e.provider_series_id}`}
+            >
+              {e.source_label}
+            </a>
+          ) : (
+            <Badge
+              variant="outline"
+              className="text-muted-foreground font-medium"
+            >
+              {e.source_label}
+            </Badge>
+          )}
+          {isAdmin && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground hover:text-foreground h-6 w-6"
+              aria-label={`Remove ${e.kind_label.toLowerCase()} ${externalName(e)}`}
+              onClick={() => onRemove(e)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 

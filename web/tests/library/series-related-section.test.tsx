@@ -6,6 +6,7 @@
  * event" with their role, sizes covers to `coverWidth`, gates the admin
  * affordances (add / edit / remove), shows an empty state, and shows a
  * skeleton — never the raw group key — before the kind catalogue loads.
+ * WP-7.8: external ("not in your library") links in their kind's group.
  */
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -33,6 +34,8 @@ vi.mock("@/lib/api/queries", () => ({
 vi.mock("@/lib/api/mutations", () => ({
   useCreateSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteExternalRelationship: () => ({ mutate: vi.fn(), isPending: false }),
+  useCreateExternalRelationship: () => ({ mutate: vi.fn(), isPending: false }),
   useUpdateSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
   useAcceptRelationshipSuggestion: () => ({
     mutate: vi.fn(),
@@ -131,6 +134,7 @@ const full: SeriesRelationshipsResp = {
     { position: 0, series: vol2 },
     { position: 1, series: vol3 },
   ],
+  external: [],
 };
 
 const CATALOGUE = {
@@ -157,7 +161,13 @@ describe("<SeriesRelatedSection>", () => {
   it("shows an empty state to readers when there are no relationships", () => {
     role = "user";
     catalogue = CATALOGUE;
-    data = { series_id: "s2", relationships: [], arcs: [], chain: [] };
+    data = {
+      series_id: "s2",
+      relationships: [],
+      arcs: [],
+      chain: [],
+      external: [],
+    };
     const html = render();
     expect(html).toContain("No related series linked yet");
     expect(html).not.toContain("Add relationship");
@@ -166,7 +176,13 @@ describe("<SeriesRelatedSection>", () => {
   it("offers the add affordance to admins even when empty", () => {
     role = "admin";
     catalogue = CATALOGUE;
-    data = { series_id: "s2", relationships: [], arcs: [], chain: [] };
+    data = {
+      series_id: "s2",
+      relationships: [],
+      arcs: [],
+      chain: [],
+      external: [],
+    };
     const html = render();
     expect(html).toContain("Add relationship");
     expect(html).toContain("No related series yet");
@@ -241,6 +257,79 @@ describe("<SeriesRelatedSection>", () => {
   });
 });
 
+const EXTERNAL = [
+  {
+    id: "x1",
+    kind: "continued_by",
+    kind_label: "Continued by",
+    group: "publication",
+    source: "metron",
+    source_label: "Metron",
+    provider_series_id: "2311",
+    name: "Saga",
+    year: 2018,
+    url: "https://metron.cloud/series/2311/",
+    set_by: "provider",
+    confidence: 0.6,
+    created_at: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "x2",
+    kind: "has_annual",
+    kind_label: "Has annual",
+    group: "publication",
+    source: "comicvine",
+    source_label: "ComicVine",
+    provider_series_id: "9",
+    name: "Saga Annual",
+    year: null,
+    url: null,
+    set_by: "user",
+    confidence: null,
+    created_at: "2026-01-01T00:00:00Z",
+    local_series: { id: "s9", slug: "saga-annual", name: "Saga Annual" },
+  },
+] as unknown as SeriesRelationshipsResp["external"];
+
+describe("<SeriesRelatedSection> external links (WP-7.8)", () => {
+  it("lists them in their kind's group as muted text rows with a provider link", () => {
+    role = "user";
+    catalogue = CATALOGUE;
+    data = { ...full, external: EXTERNAL };
+    const html = render(100);
+    // Same "Continued by" heading as the local Vol 3 card, once.
+    expect(html.match(/>Continued by</g)?.length).toBe(1);
+    expect(html).toContain("Saga (2018)");
+    expect(html).toContain("— not in your library");
+    expect(html).toContain('href="https://metron.cloud/series/2311/"');
+    expect(html).toContain('target="_blank"');
+    // A resolved user link points at the local series instead.
+    expect(html).toContain('href="/series/saga-annual"');
+    expect(html).toContain("in your library");
+    // Compact rows: no extra covers (6 cards as before).
+    expect(html.match(/width:100px/g)?.length).toBe(6);
+    expect(html.match(/data-testid="external-relationship"/g)?.length).toBe(2);
+    // Readers can't remove them.
+    expect(html).not.toContain("Remove continued by Saga (2018)");
+  });
+
+  it("gives admins a remove button and counts them against the empty state", () => {
+    role = "admin";
+    catalogue = CATALOGUE;
+    data = {
+      series_id: "s2",
+      relationships: [],
+      arcs: [],
+      chain: [],
+      external: EXTERNAL,
+    };
+    const html = render();
+    expect(html).not.toContain("No related series yet");
+    expect(html).toContain("Publication history");
+    expect(html).toContain('aria-label="Remove continued by Saga (2018)"');
+  });
+});
+
 describe("helpers", () => {
   it("groups by UI group, then kind, in catalogue order", () => {
     const groups = groupRelationships(full.relationships);
@@ -269,6 +358,19 @@ describe("helpers", () => {
       "Story",
       "Publication history",
     ]);
+  });
+
+  it("puts external links in the slot of their kind label", () => {
+    const groups = groupRelationships(full.relationships, undefined, EXTERNAL);
+    const publication = groups.find((g) => g.group === "publication")!;
+    const continued = publication.kinds.find(
+      (k) => k.label === "Continued by",
+    )!;
+    expect(continued.items.map((r) => r.id)).toEqual(["r3"]);
+    expect(continued.external.map((r) => r.id)).toEqual(["x1"]);
+    const annual = publication.kinds.find((k) => k.label === "Has annual")!;
+    expect(annual.items).toEqual([]);
+    expect(annual.external.map((r) => r.id)).toEqual(["x2"]);
   });
 
   it("captions chain positions", () => {

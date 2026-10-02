@@ -538,6 +538,40 @@ pub fn build_merged_detail(
 
     // Identifiers are additive — union across ALL included providers.
     merged.identifiers = union_identifiers(details);
+    // WP-7.8: provider links and reprints have no preview row either; like
+    // identifiers they're additive. Links: union by (source, id). Reprints:
+    // the most-preferred provider that has any (only Metron does today),
+    // attributed to it.
+    for d in details {
+        for l in &d.detail.related_series {
+            if !merged
+                .related_series
+                .iter()
+                .any(|m| m.source == l.source && m.id == l.id)
+            {
+                merged.related_series.push(l.clone());
+            }
+        }
+    }
+    let reprint_donor = preference
+        .iter()
+        .filter_map(|p| {
+            details
+                .iter()
+                .find(|d| d.source == *p && !d.detail.reprints.is_empty())
+        })
+        .next()
+        .or_else(|| details.iter().find(|d| !d.detail.reprints.is_empty()));
+    if let Some(pd) = reprint_donor {
+        merged.reprints = pd.detail.reprints.clone();
+        prov.insert(
+            MetadataField::Reprints.key(),
+            ProvSource {
+                set_by: SetBy::Provider(pd.source),
+                source_ext: pd.detail.source_external_id.clone(),
+            },
+        );
+    }
     // Attribution: pick the highest-preference included source so the
     // sidecar audit line still fires.
     merged.source_provider = preference
@@ -617,10 +651,12 @@ pub async fn apply_composite(
     state: &AppState,
     args: CompositeApplyArgs,
 ) -> Result<ApplyOutcome, ApplyError> {
+    let run_id = args.run_id;
     let outcome = apply_composite_impl(state, args).await;
     // WP-7.4: see `apply::apply_series`.
-    if outcome.is_ok() {
+    if let Ok(o) = &outcome {
         state.similarity.invalidate_all();
+        crate::metadata::apply::queue_relationship_suggest(state, run_id, o).await;
     }
     outcome
 }

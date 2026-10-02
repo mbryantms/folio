@@ -19,6 +19,14 @@ pub struct Model {
     pub reprinted_issue_id: Option<String>,
     #[sea_orm(nullable)]
     pub reprinted_label: Option<String>,
+    /// Provider of `reprinted_external_id` (`metron`, …) — WP-7.8. Lets a
+    /// label-only row resolve to `reprinted_issue_id` once the reprinted
+    /// issue is scanned in and matched.
+    #[sea_orm(nullable)]
+    pub reprinted_source: Option<String>,
+    /// The reprinted issue's provider id.
+    #[sea_orm(nullable)]
+    pub reprinted_external_id: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -187,6 +187,9 @@ pub enum EvidenceSource {
     Supplement,
     /// WP-7.6: same work in another language.
     Translation,
+    /// WP-7.8: a provider's linked series (Metron `associated`), both in
+    /// the library (through `series_external_relationship`).
+    ProviderAssociated,
 }
 
 /// A suggestion's target: a series, or (WP-7.6, `tie_in_to` only) a story

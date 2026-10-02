@@ -66,6 +66,7 @@ pub mod saved_views;
 pub mod scan_batches;
 pub mod scan_runs;
 pub mod series;
+pub mod series_external_relationships;
 pub mod series_relationships;
 pub mod series_same_universe;
 pub mod series_similar;

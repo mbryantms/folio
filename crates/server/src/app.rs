@@ -160,6 +160,7 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(api::external_ids::routes())
         .merge(api::provider_ranges::routes())
         .merge(api::series_relationships::routes())
+        .merge(api::series_external_relationships::routes())
         .merge(api::series_same_universe::routes())
         .merge(api::relationship_suggestions::routes())
         .merge(api::covers::routes());

@@ -1591,6 +1591,135 @@ pub async fn provider_ranges<C: ConnectionTrait>(
         .collect())
 }
 
+// ───── provider links (Metron `associated`) → see_also / collects / annual_of (WP-7.8) ─────
+
+#[derive(Debug, FromQueryResult)]
+struct AssocSeries {
+    id: Uuid,
+    name: String,
+    year: Option<i32>,
+    series_type: Option<String>,
+}
+
+/// Provider links between two series of the library: a live
+/// (`set_by = 'provider'`, not dismissed) `series_external_relationship`
+/// row of A whose provider series resolves to local series B
+/// ([`crate::relationships::external::resolve_where`]: direct
+/// `external_ids` match or the cached id bridge). Metron's `associated` is
+/// untyped, so the kind comes from the two **local** series types / names
+/// ([`crate::relationships::external::provider_kind`]): `collects` (edition
+/// → singles) or `annual_of` when the types say so, else `see_also`.
+pub async fn provider_associated<C: ConnectionTrait>(
+    conn: &C,
+    library_id: Uuid,
+) -> Result<Vec<Candidate>, DbErr> {
+    use crate::relationships::external;
+    let resolved = external::resolve_where(
+        conn,
+        "e.set_by = 'provider' AND e.dismissed_at IS NULL AND e.from_series_id IN \
+           (SELECT id FROM series WHERE library_id = $1 AND removed_at IS NULL)",
+        vec![library_id.into()],
+    )
+    .await?;
+    if resolved.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<Uuid> = resolved.iter().map(|r| r.ext_id).collect();
+    let rows: HashMap<Uuid, entity::series_external_relationship::Model> = {
+        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+        entity::series_external_relationship::Entity::find()
+            .filter(entity::series_external_relationship::Column::Id.is_in(ids))
+            .all(conn)
+            .await?
+            .into_iter()
+            .map(|r| (r.id, r))
+            .collect()
+    };
+    let mut series_ids: Vec<Uuid> = resolved.iter().map(|r| r.series_id).collect();
+    series_ids.extend(rows.values().map(|r| r.from_series_id));
+    let series: HashMap<Uuid, AssocSeries> = AssocSeries::find_by_statement(stmt(
+        conn,
+        "SELECT id, name, year, series_type FROM series \
+          WHERE id = ANY($1) AND library_id = $2 AND removed_at IS NULL",
+        vec![series_ids.into(), library_id.into()],
+    ))
+    .all(conn)
+    .await?
+    .into_iter()
+    .map(|s| (s.id, s))
+    .collect();
+    let mut out = Vec::new();
+    for r in resolved
+        .into_iter()
+        .take(usize::try_from(SOURCE_ROW_LIMIT).unwrap_or(5000))
+    {
+        let (Some(row), Some(b)) = (rows.get(&r.ext_id), series.get(&r.series_id)) else {
+            continue;
+        };
+        let Some(a) = series.get(&row.from_series_id) else {
+            continue;
+        };
+        let (mut kind, mut confidence) = external::provider_kind(
+            a.series_type.as_deref(),
+            &a.name,
+            b.series_type.as_deref(),
+            &b.name,
+        );
+        // The local rows say nothing (types not applied, no name marker):
+        // fall back to the kind recorded at apply time from the provider's
+        // own series types.
+        if kind == RelationshipKind::SeeAlso
+            && let Ok(stored) = row.kind.parse::<RelationshipKind>()
+            && stored != RelationshipKind::SeeAlso
+        {
+            kind = stored;
+            confidence = row
+                .confidence
+                .unwrap_or(external::ASSOCIATED_TYPED_ONE_SIDE);
+        }
+        let provider = provider_label(&row.source).to_owned();
+        let ids: Vec<serde_json::Value> = row
+            .evidence
+            .get("ids")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_else(|| vec![json!(row.provider_series_id)]);
+        let how = match kind {
+            RelationshipKind::Collects => {
+                format!(" ({} is a collected edition)", label(&a.name, a.year))
+            }
+            RelationshipKind::CollectedIn => {
+                format!(" ({} is a collected edition)", label(&b.name, b.year))
+            }
+            RelationshipKind::AnnualOf => format!(" ({} is an annual)", label(&a.name, a.year)),
+            RelationshipKind::HasAnnual => format!(" ({} is an annual)", label(&b.name, b.year)),
+            _ => String::new(),
+        };
+        out.push(Candidate {
+            from: a.id,
+            to: b.id.into(),
+            kind,
+            confidence,
+            source: EvidenceSource::ProviderAssociated,
+            reason: format!(
+                "{provider} lists {} and {} as associated series{how}",
+                label(&a.name, a.year),
+                label(&b.name, b.year)
+            ),
+            evidence: json!({
+                "source": "provider_associated",
+                "provider": row.source,
+                "field": "associated",
+                "ids": ids,
+                "provider_series_id": row.provider_series_id,
+                "provider_series_name": row.provider_series_name,
+            }),
+            scope: Scope::default(),
+        });
+    }
+    Ok(out)
+}
+
 /// Every source, in a fixed order, with per-source counts for the run
 /// report. A failing source is logged and skipped so one bad query can't
 /// sink the rest; its name comes back in the third element so the caller
@@ -1638,6 +1767,7 @@ pub async fn collect_all<C: ConnectionTrait>(
     run!("reprint_rollup", reprint_rollup(conn, library_id));
     run!("provider_volume", provider_volumes(conn, library_id));
     run!("provider_range", provider_ranges(conn, library_id));
+    run!("provider_associated", provider_associated(conn, library_id));
     // Name-based detectors share one catalogue query (WP-7.6).
     match detectors::Catalogue::load(conn, library_id).await {
         Ok(cat) => {
@@ -1690,10 +1820,41 @@ pub async fn collect_all<C: ConnectionTrait>(
                 RelationshipKind::Continues | RelationshipKind::SeeAlso
             ) && matches!(
                 c.source,
-                EvidenceSource::NameContinuation | EvidenceSource::ProviderVolume
+                EvidenceSource::NameContinuation
+                    | EvidenceSource::ProviderVolume
+                    | EvidenceSource::ProviderAssociated
             ) && annual_pairs.contains(&(c.from, c.to)))
         });
     }
+    // WP-7.8: an untyped provider link that stayed `see_also` adds nothing
+    // when another source already says what the pair is (collects,
+    // continues, …): drop it rather than queue a second, vaguer row.
+    let typed_pairs: std::collections::HashSet<(Uuid, Uuid)> = all
+        .iter()
+        .filter(|c| c.kind != RelationshipKind::SeeAlso)
+        .filter_map(|c| {
+            let to = c.to.series()?;
+            Some(if c.from < to {
+                (c.from, to)
+            } else {
+                (to, c.from)
+            })
+        })
+        .collect();
+    all.retain(|c: &Candidate| {
+        if c.source != EvidenceSource::ProviderAssociated || c.kind != RelationshipKind::SeeAlso {
+            return true;
+        }
+        let Some(to) = c.to.series() else {
+            return true;
+        };
+        let key = if c.from < to {
+            (c.from, to)
+        } else {
+            (to, c.from)
+        };
+        !typed_pairs.contains(&key)
+    });
     (all, counts, failed)
 }
 
