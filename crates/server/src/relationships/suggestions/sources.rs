@@ -903,15 +903,26 @@ pub async fn collected_editions<C: ConnectionTrait>(
     conn: &C,
     library_id: Uuid,
 ) -> Result<Vec<Candidate>, DbErr> {
+    // The series-level marker (type or a format word in the name) is
+    // evaluated once per series in a MATERIALIZED CTE. Written as one OR in
+    // the join filter, Postgres ran the regex once per *issue* row: 50,000
+    // times at stress scale, ~390 ms of the whole ~900 ms run (WP-8.3).
     let sql = format!(
         r#"
+        WITH s AS MATERIALIZED (
+            SELECT id, name, normalized_name, series_type,
+                   (series_type IS NOT NULL
+                    OR normalized_name ~ '(^| )(tpb|tp|hc|ogn|omnibus|hardcover|compendium)( |$)|trade paperback|graphic novel|collected edition|deluxe edition|library edition')
+                       AS marked
+              FROM series
+             WHERE removed_at IS NULL
+        )
         SELECT i.series_id, s.name AS series_name, s.normalized_name AS series_norm,
                s.series_type, i.format, i.special_type, i.title, i.notes, i.summary, i.sort_number
           FROM issues i
-          JOIN series s ON s.id = i.series_id AND s.removed_at IS NULL
+          JOIN s ON s.id = i.series_id
          WHERE i.library_id = $1 AND i.removed_at IS NULL
-           AND (i.format IS NOT NULL OR i.special_type IS NOT NULL OR s.series_type IS NOT NULL
-                OR s.normalized_name ~ '(^| )(tpb|tp|hc|ogn|omnibus|hardcover|compendium)( |$)|trade paperback|graphic novel|collected edition|deluxe edition|library edition')
+           AND (i.format IS NOT NULL OR i.special_type IS NOT NULL OR s.marked)
          LIMIT {COLLECTED_ROW_LIMIT}
         "#
     );

@@ -16,9 +16,17 @@
 #      drives every endpoint in scripts/perf/endpoints.txt over HTTP, so
 #      the plans are for the exact SQL the handlers emit — not a
 #      hand-maintained copy that can drift.
-#   6. scripts/perf/explain_report.py splits the Postgres log per
+#   6. Phase 2 (M7, WP-8.3; PERF_M7=0 skips it): seeds arcs, universes,
+#      series groups, AlternateSeries and curated links
+#      (scripts/perf/seed_relationships.sql), times full
+#      `relationship_suggest` job runs over the library, bulk-accepts the
+#      high-confidence suggestions, and drives scripts/perf/endpoints-m7.txt
+#      (similar cold + warm, relationships, same universe, arc tie-ins, the
+#      admin suggestion queue) the same way.
+#   7. scripts/perf/explain_report.py splits the Postgres log per
 #      endpoint and flags any `Seq Scan` on a table with more than
-#      PERF_SEQSCAN_MIN_ROWS rows. Exit status 1 when one is found.
+#      PERF_SEQSCAN_MIN_ROWS rows. Exit status 1 when one is found
+#      (`job-*` labels — whole-library batch jobs — are reported, not gated).
 #
 # Knobs (env):
 #   PERF_SERIES            series count (default 2500 → 50,000 issues)
@@ -34,6 +42,7 @@
 #                          the same endpoints (PERF_OHA_DURATION=15s,
 #                          PERF_OHA_CONCURRENCY=16, PERF_OHA_IMAGE when no
 #                          local `oha` binary) → oha-<label>.txt
+#   PERF_M7=0              skip phase 2 (the M7 relationship / similarity set)
 #   PERF_SERVER_BIN        run this server binary instead of building the
 #                          working tree (e.g. an origin/main build, for a
 #                          before/after comparison against the same DB)
@@ -143,9 +152,12 @@ DATA="$REPO/perf-out/data-$PG_CONTAINER"
 mkdir -p "$DATA"
 start_server() {
     # cwd = $OUT so the debug binary's dotenvy never picks up a repo .env.
+    # `exec` makes $SERVER_PID the server itself: killing only the wrapping
+    # subshell used to orphan the binary, which kept consuming jobs from a
+    # reused Redis on the next PERF_KEEP run.
     (
         cd "$OUT"
-        env -i PATH="$PATH" HOME="$HOME" \
+        exec env -i PATH="$PATH" HOME="$HOME" \
             COMIC_DATABASE_URL="$DB_URL" \
             COMIC_REDIS_URL="redis://127.0.0.1:$REDIS_PORT" \
             COMIC_LIBRARY_PATH="$REPO/fixtures" \
@@ -156,7 +168,7 @@ start_server() {
             COMIC_LOCAL_REGISTRATION_OPEN=true \
             COMIC_RATE_LIMIT_ENABLED=false \
             COMIC_WEB_UPSTREAM_URL="http://127.0.0.1:9" \
-            COMIC_LOG_LEVEL=warn \
+            COMIC_LOG_LEVEL="warn,server::relationships::suggestions=debug" \
             RUST_LOG=warn \
             "$BIN" >"$OUT/server.log" 2>&1
     ) &
@@ -193,7 +205,9 @@ api() { curl -sSf -b "$COOKIES" -H "X-CSRF-Token: $CSRF" -H 'Content-Type: appli
 
 # ── scan ────────────────────────────────────────────────────────────────
 issues=$(psqlq -tAc "select count(*) from issues where removed_at is null")
+SCANNED=0
 if [ "$issues" -lt "$EXPECTED" ]; then
+    SCANNED=1
     LIB_SLUG=$(psqlq -tAc "select slug from libraries where root_path = '$FIXTURE'")
     if [ -z "$LIB_SLUG" ]; then
         LIB_SLUG=$(api -X POST "$API/api/libraries" \
@@ -248,30 +262,145 @@ psqlq -c "alter system set auto_explain.log_min_duration = 0" \
 sleep 1
 
 marker() { psqlq -tAc "select 'perf-marker:$1'" >/dev/null; }
-# Warm once (catalog / plan caches), then record the second request.
-while IFS='|' read -r label path; do
-    label="${label//[[:space:]]/}"; path="${path//[[:space:]]/}"
-    [ -z "$label" ] || [ "${label:0:1}" = "#" ] && continue
-    url=${path//\{series_slug\}/$SERIES_SLUG}
-    url=${url//\{issue_id\}/$ISSUE_ID}
-    url=${url//\{view_id\}/$VIEW_ID}
-    url=${url//\{cbl_id\}/$CBL_ID}
-    url=${url//\{collection_id\}/$COLLECTION_ID}
-    url=${url//\{library_id\}/$LIB_ID}
-    if [[ "$url" == *"{cursor:"* ]]; then
-        # {cursor:<label>} → next_cursor of that endpoint's first page.
-        ref=$(echo "$url" | sed -E 's/.*\{cursor:([^}]*)\}.*/\1/')
-        cur=$(jq -j '.next_cursor // empty' "$OUT/resp-$ref.json" | jq -sRr @uri)
-        url=$(echo "$url" | sed -E "s/\{cursor:[^}]*\}/$cur/")
+explain_on() {
+    psqlq -c "alter system set auto_explain.log_min_duration = 0" -c "select pg_reload_conf()" >/dev/null
+    sleep 1
+}
+explain_off() {
+    psqlq -c "alter system set auto_explain.log_min_duration = -1" -c "select pg_reload_conf()" >/dev/null
+    sleep 1
+}
+# drive_endpoints <file>: `label | path [| cold]` per line. Each endpoint
+# gets one warm-up request (catalog / plan caches), then a measured one
+# bracketed by markers. `cold` skips the warm-up, so the measured request
+# is the first one — e.g. an in-process cache miss.
+drive_endpoints() {
+    local label path mode url ref cur code t0 t1
+    while IFS='|' read -r label path mode; do
+        label="${label//[[:space:]]/}"; path="${path//[[:space:]]/}"; mode="${mode//[[:space:]]/}"
+        [ -z "$label" ] || [ "${label:0:1}" = "#" ] && continue
+        url=${path//\{series_slug\}/$SERIES_SLUG}
+        url=${url//\{issue_id\}/$ISSUE_ID}
+        url=${url//\{view_id\}/$VIEW_ID}
+        url=${url//\{cbl_id\}/$CBL_ID}
+        url=${url//\{collection_id\}/$COLLECTION_ID}
+        url=${url//\{library_id\}/$LIB_ID}
+        url=${url//\{large_slug\}/${LARGE_SLUG:-}}
+        url=${url//\{typical_slug\}/${TYPICAL_SLUG:-}}
+        url=${url//\{chain_slug\}/${CHAIN_SLUG:-}}
+        url=${url//\{hub_slug\}/${HUB_SLUG:-}}
+        url=${url//\{mega_arc_slug\}/${MEGA_ARC_SLUG:-}}
+        url=${url//\{arc_slug\}/${ARC_SLUG:-}}
+        if [[ "$url" == *"{cursor:"* ]]; then
+            # {cursor:<label>} → next_cursor of that endpoint's first page.
+            ref=$(echo "$url" | sed -E 's/.*\{cursor:([^}]*)\}.*/\1/')
+            cur=$(jq -j '.next_cursor // empty' "$OUT/resp-$ref.json" | jq -sRr @uri)
+            if [ -z "$cur" ]; then
+                log "skipping $label: $ref has no next page"
+                continue
+            fi
+            url=$(echo "$url" | sed -E "s/\{cursor:[^}]*\}/$cur/")
+        fi
+        [ "$mode" = "cold" ] || api "$API$url" >/dev/null 2>&1 || true
+        marker "begin:$label"
+        t0=$(date +%s%N)
+        code=$(curl -sS -o "$OUT/resp-$label.json" -w '%{http_code}' -b "$COOKIES" "$API$url")
+        t1=$(date +%s%N)
+        marker "end:$label"
+        printf '%s|%s|%s|%s\n' "$label" "$code" "$(( (t1 - t0) / 1000000 ))" "$url" >>"$OUT/requests.txt"
+    done <"$1"
+}
+drive_endpoints scripts/perf/endpoints.txt
+
+# ── phase 2: M7 relationships / similarity (WP-8.3) ─────────────────────
+if [ "${PERF_M7:-1}" = "1" ]; then
+    explain_off
+    job_lines() { grep -c 'relationship suggestions: run complete' "$OUT/server.log" || true; }
+    if [ "$SCANNED" = "1" ]; then
+        # The scan's finalize step queued a run; let it finish so the
+        # measured runs below are the only ones in flight.
+        log "M7: waiting for the post-scan relationship_suggest run"
+        for _ in $(seq 1 600); do
+            [ "$(job_lines)" -ge 1 ] && break
+            sleep 1
+        done
     fi
-    api "$API$url" >/dev/null 2>&1 || true
-    marker "begin:$label"
+    log "M7: seeding arcs, universes, series groups, AlternateSeries, curated links"
+    psqlq -f scripts/perf/seed_relationships.sql >/dev/null
+    psqlq -c "vacuum analyze" >/dev/null
+    psqlq -tAc "select relname, reltuples::bigint from pg_class c join pg_namespace n on n.oid=c.relnamespace
+                where n.nspname='public' and c.relkind='r' order by 2 desc" >"$OUT/reltuples.txt"
+
+    # run_job <label> <explain 0|1>: one on-demand relationship_suggest run
+    # over the library; wall = trigger → "run complete" log line. The job's
+    # own report (elapsed_ms, counts) and per-source timings land in
+    # job-<label>.log.
+    run_job() {
+        local label=$1 before lines t0 t1 elapsed
+        before=$(job_lines)
+        lines=$(wc -l <"$OUT/server.log")
+        if [ "$2" = "1" ]; then explain_on; marker "begin:$label"; fi
+        t0=$(date +%s%N)
+        api -X POST "$API/api/admin/relationship-suggestions/run?library_id=$LIB_ID" >/dev/null
+        for _ in $(seq 1 18000); do
+            [ "$(job_lines)" -gt "$before" ] && break
+            sleep 0.1
+        done
+        t1=$(date +%s%N)
+        if [ "$2" = "1" ]; then marker "end:$label"; explain_off; fi
+        tail -n +"$((lines + 1))" "$OUT/server.log" | grep 'relationship suggestions' >"$OUT/job-$label.log" || true
+        elapsed=$(grep 'run complete' "$OUT/job-$label.log" | tail -1 | grep -oE '"elapsed_ms":[0-9]+' | cut -d: -f2)
+        printf '%s|202|%s|POST /api/admin/relationship-suggestions/run (job elapsed_ms=%s)\n' \
+            "$label" "$(( (t1 - t0) / 1000000 ))" "${elapsed:-?}" >>"$OUT/requests.txt"
+        log "M7: $label — $(( (t1 - t0) / 1000000 )) ms wall, job elapsed_ms=${elapsed:-?}"
+    }
+    run_job job-suggest-first 0
+    # A few hundred accepted relationships: accept the high bucket (≤ 500).
     t0=$(date +%s%N)
-    code=$(curl -sS -o "$OUT/resp-$label.json" -w '%{http_code}' -b "$COOKIES" "$API$url")
+    api -X POST "$API/api/admin/relationship-suggestions/bulk-accept" -d '{"bucket":"high"}' \
+        >"$OUT/resp-bulk-accept-high.json"
     t1=$(date +%s%N)
-    marker "end:$label"
-    printf '%s|%s|%s|%s\n' "$label" "$code" "$(( (t1 - t0) / 1000000 ))" "$url" >>"$OUT/requests.txt"
-done <scripts/perf/endpoints.txt
+    printf '%s|200|%s|POST /api/admin/relationship-suggestions/bulk-accept {"bucket":"high"} (created=%s)\n' \
+        bulk-accept-high "$(( (t1 - t0) / 1000000 ))" "$(jq -r .created "$OUT/resp-bulk-accept-high.json")" \
+        >>"$OUT/requests.txt"
+    # …then a reviewer's worth more by explicit ids (mega-event tie-ins
+    # first, then by confidence) so the arc / relationships reads have a few
+    # hundred accepted edges behind them.
+    IDS=$(psqlq -tAc "select coalesce(json_agg(id), '[]') from (
+                        select sug.id from series_relationship_suggestion sug
+                        left join story_arc a on a.id = sug.to_arc_id
+                        where sug.status = 'pending'
+                        order by (a.slug = 'perf-arc-1') desc nulls last, sug.confidence desc, sug.id
+                        limit 400) x")
+    t0=$(date +%s%N)
+    api -X POST "$API/api/admin/relationship-suggestions/bulk-accept" -d "{\"ids\":$IDS}" \
+        >"$OUT/resp-bulk-accept-ids.json"
+    t1=$(date +%s%N)
+    printf '%s|200|%s|POST /api/admin/relationship-suggestions/bulk-accept {"ids":[400]} (created=%s)\n' \
+        bulk-accept-ids "$(( (t1 - t0) / 1000000 ))" "$(jq -r .created "$OUT/resp-bulk-accept-ids.json")" \
+        >>"$OUT/requests.txt"
+    run_job job-suggest-rerun 0
+    run_job job-suggest-explain 1
+    psqlq -c "analyze" >/dev/null
+
+    # Resolve the M7 placeholders (ords match seed_relationships.sql).
+    ord_slug() {
+        psqlq -tAc "select slug from (select slug, row_number() over (order by normalized_name, id) o
+                    from series where removed_at is null) x where o = $1"
+    }
+    LARGE_SLUG=$(ord_slug 7)
+    TYPICAL_SLUG=$(ord_slug 1230)
+    CHAIN_SLUG=$(ord_slug 2083)
+    HUB_SLUG=$(ord_slug 2450)
+    MEGA_ARC_SLUG=perf-arc-1
+    ARC_SLUG=perf-arc-50
+    psqlq -tAc "select 'relationship rows', count(*) from series_relationship
+                union all select 'suggestions ' || status, count(*) from series_relationship_suggestion group by status
+                union all select 'issue_arcs', count(*) from issue_arcs
+                union all select 'series_universes', count(*) from series_universes" >"$OUT/m7-dataset.txt"
+    explain_on
+    drive_endpoints scripts/perf/endpoints-m7.txt
+fi
 
 psqlq -c "alter system set auto_explain.log_min_duration = -1" -c "select pg_reload_conf()" >/dev/null
 docker logs --since "$LOG_SINCE" "$PG_CONTAINER" >"$OUT/postgres.log" 2>&1

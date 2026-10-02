@@ -628,13 +628,18 @@ const MAX_QUERIES_ADMIN_STATS: u64 = 20; // observed ≈ 6
 const MAX_QUERIES_SERIES_DETAIL: u64 = 17; // observed 16 (15 before WP-7.8)
 const MAX_QUERIES_ISSUE_DETAIL: u64 = 20; // observed ≈ 9 (parallel try_join set)
 // The pre-PERF-1 shape cost ~3 queries per member (~300 for the 100-member
-// batch below). The existence probes are batched, but the inserts are still
-// one statement per member by design (the two partial-unique indexes can't be
-// an `insert_many` ON CONFLICT target — see `collections::bulk_add_members`),
-// so this is O(members): observed 104 for 100 members. The old bound of 15
-// was never actually enforced — the app pool had sqlx statement logging off
-// since the shared-Postgres harness (#208), so every count here read 0.
-const MAX_QUERIES_BULK_ADD: u64 = 110;
+// batch below); PERF-1 batched the existence probes but still inserted one
+// row per statement (observed 104 for 100 members, bound 110). WP-8.3 made
+// the whole add one set-based statement (existence + dedupe + positions +
+// both partial-unique inserts), so the count is member-count-independent:
+// session lookup + ownership check + that one statement.
+const MAX_QUERIES_BULK_ADD: u64 = 5; // observed 3 (was 104)
+// WP-8.3: `GET /series/{slug}/relationships` is unpaginated by design (links
+// are curated). The guard seeds ~500 direct links plus a 6-deep chain each
+// way on one series: every edge, chain node and card must come from a fixed
+// number of set-based queries — a per-edge hydrate would add ~500.
+const MAX_QUERIES_RELATIONSHIPS: u64 = 15; // observed 12
+const RELATIONSHIPS_WALL: Duration = Duration::from_secs(5);
 // WP-2.1: the export is 10 section reads + 1 pinned-view hydrate + 3
 // identity batches (issues / series / libraries) + the user row + auth.
 // A per-row hydrate over the 100-entry collection would add ~100.
@@ -798,9 +803,9 @@ async fn realistic_dataset_endpoints_respond_correctly() {
     );
 
     // ── collections bulk-add — PERF-1 replaced the per-member existence
-    // probe (~2N queries) with two batched `is_in` checks + one
-    // insert_many. The bound is intentionally member-count-independent:
-    // all 100 seeded issues go in one call.
+    // probe (~2N queries) with two batched `is_in` checks; WP-8.3 folded
+    // those and the per-member inserts into one set-based statement. The
+    // bound is member-count-independent: all 100 seeded issues go in one call.
     let (status, created, _) = post(
         &app,
         &user,
@@ -837,6 +842,9 @@ async fn realistic_dataset_endpoints_respond_correctly() {
         MAX_QUERIES_BULK_ADD,
         "/api/me/collections/{id}/members/bulk-add (100 members)",
     );
+
+    // ── /series/{slug}/relationships with ~500 links + chain (WP-8.3).
+    relationships_guard(&app, &user, &counter).await;
 
     // ── /me/export — one query per section plus IN-batched identity
     // hydration (issues → series → libraries). The 100-member collection
@@ -901,6 +909,87 @@ async fn realistic_dataset_endpoints_respond_correctly() {
         snap.taken(),
         MAX_QUERIES_ON_DECK_AT_SCALE,
         "/api/me/on-deck @scale",
+    );
+}
+
+/// `GET /series/{slug}/relationships` over a hub series with 500 direct
+/// links (480 self-inverse `see_also` / `same_universe` / `crossover_with`
+/// edges + the two chain links) and a 6-deep reading-order chain on each
+/// side. Edges are stored as inverse pairs, like the write path does.
+async fn relationships_guard(app: &TestApp, user: &Authed, counter: &AtomicU64) {
+    const DIRECT: usize = 480;
+    const CHAIN_SIDE: usize = 6;
+    let (lib_id, series) = seed_library(app, "rel", 1 + DIRECT + 2 * CHAIN_SIDE, 0).await;
+    grant_access(app, user.user_id, lib_id).await;
+    let hub = series[0].0;
+    let linked: Vec<Uuid> = series[1..=DIRECT].iter().map(|(id, _)| *id).collect();
+    let before: Vec<Uuid> = series[1 + DIRECT..1 + DIRECT + CHAIN_SIDE]
+        .iter()
+        .map(|(id, _)| *id)
+        .collect();
+    let after: Vec<Uuid> = series[1 + DIRECT + CHAIN_SIDE..]
+        .iter()
+        .map(|(id, _)| *id)
+        .collect();
+
+    let mut from: Vec<String> = Vec::new();
+    let mut to: Vec<String> = Vec::new();
+    let mut kind: Vec<String> = Vec::new();
+    let mut pair = |a: Uuid, b: Uuid, k: &str, inv: &str| {
+        for (f, t, kk) in [(a, b, k), (b, a, inv)] {
+            from.push(f.to_string());
+            to.push(t.to_string());
+            kind.push(kk.to_owned());
+        }
+    };
+    for (i, id) in linked.iter().enumerate() {
+        let k = ["see_also", "same_universe", "crossover_with"][i % 3];
+        pair(hub, *id, k, k);
+    }
+    // hub sequel_of before[0] sequel_of before[1] …; hub has_sequel after[0] …
+    let mut prev = hub;
+    for id in &before {
+        pair(prev, *id, "sequel_of", "has_sequel");
+        prev = *id;
+    }
+    let mut prev = hub;
+    for id in &after {
+        pair(prev, *id, "has_sequel", "sequel_of");
+        prev = *id;
+    }
+    let db = Database::connect(&app.db_url).await.unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        "INSERT INTO series_relationship (id, from_series_id, to_series_id, kind, source) \
+         SELECT gen_random_uuid(), f::uuid, t::uuid, k, 'manual' \
+           FROM unnest($1::text[], $2::text[], $3::text[]) AS x(f, t, k)",
+        [from.into(), to.into(), kind.into()],
+    ))
+    .await
+    .unwrap();
+
+    let path = "/api/series/rel-0/relationships";
+    let snap = QueryCount::snapshot(counter);
+    let (status, body, elapsed) = get(app, user, path).await;
+    assert_eq!(status, StatusCode::OK, "relationships: {body}");
+    assert_eq!(
+        body["relationships"].as_array().map(Vec::len),
+        Some(DIRECT + 2),
+        "every direct link is listed"
+    );
+    assert_eq!(
+        body["chain"].as_array().map(Vec::len),
+        Some(2 * CHAIN_SIDE + 1),
+        "the chain walks six hops each way"
+    );
+    assert!(
+        elapsed < RELATIONSHIPS_WALL,
+        "{path} took {elapsed:?} with ~500 links (>{RELATIONSHIPS_WALL:?})",
+    );
+    assert_query_count(
+        snap.taken(),
+        MAX_QUERIES_RELATIONSHIPS,
+        "/api/series/{slug}/relationships (~500 links)",
     );
 }
 

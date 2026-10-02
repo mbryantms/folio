@@ -1,0 +1,37 @@
+# label | path [| cold] — phase 2 of scripts/perf/perf-explain.sh (WP-8.3):
+# the M7/M7b relationship and similarity surfaces over the
+# seed_relationships.sql data. `cold` = no warm-up request first, so the
+# measured request is an in-process cache miss (similar series).
+# Placeholders: {large_slug} (1,000 credits, 300 characters, 40 arcs)
+# {typical_slug} {chain_slug} (middle of a six-series sequel chain)
+# {hub_slug} (200 curated links) {mega_arc_slug} (~420 series)
+# {arc_slug} {library_id}.
+
+# Similar series: cold (scoring queries) then warm (neighbour cache).
+similar-large-cold      | /api/series/{large_slug}/similar      | cold
+similar-large-warm      | /api/series/{large_slug}/similar
+similar-typical-cold    | /api/series/{typical_slug}/similar    | cold
+similar-typical-warm    | /api/series/{typical_slug}/similar
+# Home rail variant (seeded from the caller's reading history).
+similar-home-rail       | /api/me/similar-series
+
+# Relationships GET (unpaginated): chain walk, and the 200-link hub.
+relationships-chain     | /api/series/{chain_slug}/relationships
+relationships-hub       | /api/series/{hub_slug}/relationships
+relationships-typical   | /api/series/{typical_slug}/relationships
+
+# Derived same-universe section (universe + series-group arms).
+same-universe           | /api/series/{typical_slug}/same-universe
+same-universe-page2     | /api/series/{typical_slug}/same-universe?cursor={cursor:same-universe}
+
+# Arc tie-ins (mega-event after the high-bucket accept; a typical arc).
+arc-tie-ins-mega        | /api/arcs/{mega_arc_slug}/tie-ins
+arc-tie-ins-mega-page2  | /api/arcs/{mega_arc_slug}/tie-ins?cursor={cursor:arc-tie-ins-mega}
+arc-tie-ins-typical     | /api/arcs/{arc_slug}/tie-ins
+
+# Admin suggestion queue.
+suggestions-pending     | /api/admin/relationship-suggestions?limit=50
+suggestions-page2       | /api/admin/relationship-suggestions?limit=50&cursor={cursor:suggestions-pending}
+suggestions-library     | /api/admin/relationship-suggestions?library_id={library_id}&bucket=medium&limit=50
+suggestions-all         | /api/admin/relationship-suggestions?status=all&limit=50
+suggestions-series      | /api/series/{typical_slug}/relationship-suggestions

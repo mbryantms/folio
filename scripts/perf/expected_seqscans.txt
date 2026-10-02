@@ -1,0 +1,4 @@
+# label | table | why the seq scan is the right plan — read by explain_report.py.
+# Entries are reviewed exceptions to the ≥ 5,000-row seq-scan gate; keep
+# them few and specific. Removing one is always safe (the gate re-arms).
+similar-large-cold | series_tags | stress-fixture series each carry all 8 tags, so the overlap's tag arm joins every series_tags row (20,000 of 20,000); real libraries' tags are sparse and take series_tags_pkey

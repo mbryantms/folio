@@ -18,6 +18,15 @@ tables holding at least --info-rows rows (default 1,000; at stress scale
 that is `series`, 2,500 rows / ~150 pages) are listed but don't fail: the
 planner legitimately prefers them, e.g. as the build side of a hash join
 that touches 10 % of the table.
+
+`scripts/perf/expected_seqscans.txt` lists reviewed `label|table|reason`
+exceptions: plans whose large-table seq scan is right for the fixture
+data (e.g. the similar-series tag arm, where every stress-fixture series
+carries all eight tags). They are listed as info, marked `[expected]`.
+
+Labels starting with `job-` are whole-library batch jobs (the M7
+`relationship_suggest` run): scanning the library is their job, so their
+seq scans are listed but never fail the gate.
 """
 
 from __future__ import annotations
@@ -81,6 +90,13 @@ def main() -> int:
         if "|" in ln:
             name, n = ln.split("|", 1)
             tuples[name.strip()] = int(float(n.strip() or 0))
+    expected: set[tuple[str, str]] = set()
+    allow = Path(__file__).with_name("expected_seqscans.txt")
+    if allow.exists():
+        for ln in allow.read_text().splitlines():
+            if ln.strip() and not ln.lstrip().startswith("#"):
+                lbl, tbl, _reason = (x.strip() for x in ln.split("|", 2))
+                expected.add((lbl, tbl))
     requests = []
     for ln in (out / "requests.txt").read_text().splitlines():
         label, code, wall, url = ln.split("|", 3)
@@ -109,12 +125,17 @@ def main() -> int:
         for st in sts:
             for tbl in SEQ.findall(st.text):
                 n = tuples.get(tbl, 0)
-                if n >= args.min_rows:
+                if n >= args.min_rows and (label, tbl) in expected:
+                    info.append(f"{tbl} ({n:,} rows) [expected]")
+                elif n >= args.min_rows:
                     flagged.append(f"{tbl} ({n:,} rows)")
                 elif n >= args.info_rows:
                     info.append(f"{tbl} ({n:,} rows)")
         flagged = sorted(set(flagged))
         info = sorted(set(info))
+        if label.startswith("job-") and flagged:
+            info = sorted(set(info) | {f"{f} [batch]" for f in flagged})
+            flagged = []
         flagged_any |= bool(flagged)
         slowest = max(sts, key=lambda s: s.ms, default=None)
         with (plans / f"{label}.txt").open("w") as fh:
