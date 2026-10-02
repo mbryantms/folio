@@ -27,6 +27,7 @@ import Link from "next/link";
 import * as React from "react";
 
 import { Cover } from "@/components/Cover";
+import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import {
   RelationshipFormDialog,
   type EditableRelationship,
@@ -62,6 +63,7 @@ import type {
 } from "@/lib/api/types";
 import { SERIES_CARD_SIZE } from "@/lib/library/series-card-size";
 import { kindOrder, scopeCaption } from "@/lib/relationships";
+import { useReturnFocus } from "@/lib/ui/use-return-focus";
 import { seriesUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
@@ -182,6 +184,13 @@ export function SeriesRelatedSection({
   const [confirmRemove, setConfirmRemove] = React.useState<RemoveTarget | null>(
     null,
   );
+  // The dialogs are controlled (opened from per-card buttons), so focus
+  // has to be handed back to the opener explicitly on close.
+  const returnFocus = useReturnFocus();
+  const askRemove = (t: RemoveTarget) => {
+    returnFocus.capture();
+    setConfirmRemove(t);
+  };
 
   const rels = query.data?.relationships ?? [];
   const arcs = query.data?.arcs ?? [];
@@ -199,10 +208,12 @@ export function SeriesRelatedSection({
   const empty = rels.length === 0 && arcs.length === 0 && chain.length === 0;
 
   const openAdd = () => {
+    returnFocus.capture();
     setEditing(null);
     setFormOpen(true);
   };
   const openEdit = (e: EditableRelationship) => {
+    returnFocus.capture();
     setEditing(e);
     setFormOpen(true);
   };
@@ -262,7 +273,7 @@ export function SeriesRelatedSection({
                     {k.items.map((r) => {
                       const caption = scopeCaption(r);
                       return (
-                        <li key={r.id} className="relative">
+                        <li key={r.id} className="group/rel relative">
                           <RelatedCard series={r.series} width={coverWidth}>
                             {r.source === "suggested" && (
                               <Badge
@@ -286,7 +297,7 @@ export function SeriesRelatedSection({
                               label={`${r.kind_label.toLowerCase()} ${r.series.name}`}
                               onEdit={() => openEdit(editableFromSeries(r))}
                               onRemove={() =>
-                                setConfirmRemove({
+                                askRemove({
                                   id: r.id,
                                   otherSlug: r.series.slug,
                                   label: `${r.kind_label} ${r.series.name}`,
@@ -311,7 +322,7 @@ export function SeriesRelatedSection({
           isAdmin={isAdmin}
           onEdit={(a) => openEdit(editableFromArc(a))}
           onRemove={(a) =>
-            setConfirmRemove({
+            askRemove({
               id: a.id,
               otherSlug: seriesSlug,
               arcSlug: a.arc.slug,
@@ -340,6 +351,7 @@ export function SeriesRelatedSection({
           seriesId={seriesId}
           seriesName={seriesName}
           edit={editing ?? undefined}
+          onCloseAutoFocus={returnFocus.onCloseAutoFocus}
         />
       )}
 
@@ -349,7 +361,7 @@ export function SeriesRelatedSection({
           if (!o) setConfirmRemove(null);
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent onCloseAutoFocus={returnFocus.onCloseAutoFocus}>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove relationship?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -408,7 +420,10 @@ function EditRemoveButtons({
     <div
       className={cn(
         "flex gap-1",
-        floating && "absolute top-1 right-1 rounded-md",
+        // Over a cover: revealed on the card's hover / keyboard focus for
+        // mouse users; always shown on touch (no hover to reveal it).
+        floating &&
+          "absolute top-1 right-1 rounded-md transition-opacity pointer-fine:opacity-0 pointer-fine:group-focus-within/rel:opacity-100 pointer-fine:group-hover/rel:opacity-100",
       )}
     >
       <Button
@@ -447,7 +462,7 @@ function PartOfEvent({
   onRemove: (a: SeriesArcRelationshipView) => void;
 }) {
   return (
-    <div className="space-y-2" aria-labelledby="part-of-event-heading">
+    <section className="space-y-3" aria-labelledby="part-of-event-heading">
       <h3
         id="part-of-event-heading"
         className="text-foreground text-sm font-medium"
@@ -462,7 +477,7 @@ function PartOfEvent({
               <span className="text-muted-foreground">{a.kind_label}</span>
               <Link
                 href={`/arcs/${encodeURIComponent(a.arc.slug)}`}
-                className="font-medium hover:underline"
+                className="focus-visible:ring-ring rounded-sm font-medium hover:underline focus-visible:ring-2 focus-visible:outline-none"
               >
                 {a.arc.name}
               </Link>
@@ -488,7 +503,7 @@ function PartOfEvent({
           );
         })}
       </ul>
-    </div>
+    </section>
   );
 }
 
@@ -502,13 +517,17 @@ function ReadingOrder({
   coverWidth: number;
 }) {
   return (
-    <div className="space-y-2">
-      <h3 className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-        Reading order
-      </h3>
-      <ol
-        aria-label="Reading order"
-        className="flex items-start gap-1 overflow-x-auto pb-1"
+    <div className="space-y-3">
+      <h3 className="text-foreground text-sm font-medium">Reading order</h3>
+      {/* The shared rail (not a bare `overflow-x-auto` list): it keeps ring
+          room around every card so the current series' highlight ring and
+          focus rings aren't clipped, hides the native scrollbar like every
+          other strip, and centres the current series on load. */}
+      <HorizontalScrollRail
+        as="ol"
+        trackLabel="Reading order"
+        trackClassName="items-start gap-1"
+        anchorAlign="center"
       >
         {chain.map((entry, i) => {
           const current = entry.series.id === currentId;
@@ -517,6 +536,7 @@ function ReadingOrder({
               key={entry.series.id}
               className="flex shrink-0 items-start gap-1"
               aria-current={current ? "true" : undefined}
+              data-rail-current={current ? "true" : undefined}
             >
               {i > 0 && (
                 <ChevronRight
@@ -535,7 +555,7 @@ function ReadingOrder({
             </li>
           );
         })}
-      </ol>
+      </HorizontalScrollRail>
     </div>
   );
 }
@@ -556,7 +576,9 @@ function RelatedCard({
   return (
     <Link
       href={seriesUrl(series)}
-      className="group flex flex-col gap-1.5"
+      // Focus ring sits outside the card (offset) so the cover keeps the
+      // grid's exact width; every container of these cards leaves ring room.
+      className="group ring-offset-background focus-visible:ring-ring flex flex-col gap-1.5 rounded-md focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
       style={{ width: `${width}px` }}
       data-testid="related-card"
     >

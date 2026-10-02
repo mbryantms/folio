@@ -79,6 +79,7 @@ import type {
 } from "@/lib/api/types";
 import { useSelection } from "@/lib/selection/use-selection";
 import { kindLabel } from "@/lib/relationships";
+import { useReturnFocus } from "@/lib/ui/use-return-focus";
 import { seriesUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
@@ -148,6 +149,8 @@ export function RelationshipSuggestionsPanel() {
   const [libraryId, setLibraryId] = React.useState<string | null>(null);
   const [confirmHigh, setConfirmHigh] = React.useState(false);
   const [confirmBulkReject, setConfirmBulkReject] = React.useState(false);
+  // Controlled confirms (no trigger): hand focus back to the opener.
+  const returnFocus = useReturnFocus();
 
   const query = useRelationshipSuggestionsInfinite({
     status,
@@ -233,7 +236,10 @@ export function RelationshipSuggestionsPanel() {
             size="sm"
             className="ml-auto"
             disabled={bulkPending}
-            onClick={() => setConfirmHigh(true)}
+            onClick={() => {
+              returnFocus.capture();
+              setConfirmHigh(true);
+            }}
           >
             <Sparkles className="mr-1 size-3.5" />
             Accept all high-confidence ({highCount.toLocaleString()})
@@ -323,7 +329,10 @@ export function RelationshipSuggestionsPanel() {
             id: "reject",
             label: "Reject",
             icon: X,
-            onClick: () => setConfirmBulkReject(true),
+            onClick: () => {
+              returnFocus.capture();
+              setConfirmBulkReject(true);
+            },
             disabled: bulkPending || selection.count === 0,
             destructive: true,
           },
@@ -375,7 +384,7 @@ export function RelationshipSuggestionsPanel() {
       ) : null}
 
       <AlertDialog open={confirmHigh} onOpenChange={setConfirmHigh}>
-        <AlertDialogContent>
+        <AlertDialogContent onCloseAutoFocus={returnFocus.onCloseAutoFocus}>
           <AlertDialogHeader>
             <AlertDialogTitle>
               Accept all high-confidence suggestions?
@@ -408,7 +417,7 @@ export function RelationshipSuggestionsPanel() {
       </AlertDialog>
 
       <AlertDialog open={confirmBulkReject} onOpenChange={setConfirmBulkReject}>
-        <AlertDialogContent>
+        <AlertDialogContent onCloseAutoFocus={returnFocus.onCloseAutoFocus}>
           <AlertDialogHeader>
             <AlertDialogTitle>
               Reject {selection.count} suggestion
@@ -442,7 +451,10 @@ export function RelationshipSuggestionsPanel() {
 function ArcEnd({ suggestion }: { suggestion: RelationshipSuggestionView }) {
   const t = suggestionTarget(suggestion);
   return (
-    <Link href={t.href} className="group flex min-w-0 items-center gap-2">
+    <Link
+      href={t.href}
+      className="group ring-offset-background focus-visible:ring-ring flex min-w-0 items-center gap-2 rounded-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
+    >
       <span className="min-w-0">
         <span className="line-clamp-2 text-sm font-medium group-hover:underline">
           {t.name}
@@ -461,7 +473,7 @@ function SeriesEnd({
   return (
     <Link
       href={seriesUrl(series)}
-      className="group flex min-w-0 items-center gap-2"
+      className="group ring-offset-background focus-visible:ring-ring flex min-w-0 items-center gap-2 rounded-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
     >
       <div className="w-10 shrink-0">
         <Cover
@@ -560,7 +572,9 @@ function SuggestionRow({
       </div>
       <div className="border-border space-y-2 border-t px-4 py-3">
         <p className="text-muted-foreground text-sm">{s.reason}</p>
-        <div className="flex flex-wrap items-center gap-2">
+        {/* `items-start`: the actions stay level with the Evidence toggle
+            instead of re-centering beside the expanded evidence block. */}
+        <div className="flex flex-wrap items-start gap-2">
           {sources.length > 0 ? (
             <Collapsible className="w-full sm:w-auto sm:flex-1">
               <CollapsibleTrigger asChild>

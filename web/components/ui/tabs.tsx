@@ -28,7 +28,12 @@ const TabsList = React.forwardRef<
       // `[&>*]:shrink-0` keeps each trigger at its intrinsic width so
       //   long labels ("Cast & Setting") stay readable inside the
       //   scrollable strip.
-      "bg-muted text-muted-foreground justify-[safe_center] flex h-9 w-full items-center overflow-x-auto rounded-md p-1 md:inline-flex md:w-fit md:overflow-visible",
+      // md+: content-width, but capped at the parent and still scrollable
+      //   — a long strip (the series page's 7-8 tabs beside the sidebar
+      //   at 768px) otherwise pushed the whole page into horizontal
+      //   scroll. The `p-1` leaves room for the triggers' focus ring
+      //   (ring-2 + offset-2) inside the scroller.
+      "bg-muted text-muted-foreground justify-[safe_center] flex h-9 w-full max-w-full items-center overflow-x-auto rounded-md p-1 md:inline-flex md:w-fit",
       "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0",
       className,
     )}

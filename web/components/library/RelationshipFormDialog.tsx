@@ -22,12 +22,20 @@
  * mutation hook still toasts the summary.
  */
 
+import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
 import { Loader2 } from "lucide-react";
 import * as React from "react";
 import { useForm, useWatch, type Path } from "react-hook-form";
 
 import { RelationshipKindSelect } from "@/components/library/RelationshipKindSelect";
 import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   Dialog,
   DialogContent,
@@ -51,6 +59,7 @@ import {
   PopoverPortalContainer,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -75,7 +84,6 @@ import type {
   RelationshipQualifier,
 } from "@/lib/api/types";
 import { kindInfo } from "@/lib/relationships";
-import { cn } from "@/lib/utils";
 
 /** A picked target: a series or a story arc (id + display name). */
 export type TargetRef = { id: string; name: string; detail?: string | null };
@@ -171,6 +179,7 @@ export function RelationshipFormDialog({
   seriesId,
   seriesName,
   edit,
+  onCloseAutoFocus,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -179,12 +188,17 @@ export function RelationshipFormDialog({
   seriesName?: string;
   /** Set to edit an existing relationship; omit to add one. */
   edit?: EditableRelationship;
+  /** Radix close-focus hook — the dialog is controlled (no trigger), so
+   *  the caller hands focus back to the button that opened it
+   *  (`useReturnFocus`). */
+  onCloseAutoFocus?: (e: Event) => void;
 }) {
   const [portal, setPortal] = React.useState<HTMLElement | null>(null);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         ref={setPortal}
+        onCloseAutoFocus={onCloseAutoFocus}
         // The dialog itself never scrolls: pickers portal into it (so the
         // modal focus trap keeps their search inputs live) and must be
         // able to overflow it. Only the form body below scrolls, and only
@@ -202,7 +216,10 @@ export function RelationshipFormDialog({
           </DialogDescription>
         </DialogHeader>
         <PopoverPortalContainer value={portal}>
-          <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
+          {/* `-m-1 p-1`: ring room on all four sides, so the focus rings
+              of the first field and the footer buttons (ring-2 + offset-2)
+              aren't shaved off by this scroller's edges. */}
+          <div className="-m-1 min-h-0 flex-1 overflow-y-auto p-1">
             {open ? (
               <RelationshipForm
                 // Fresh form state per opened row.
@@ -322,40 +339,37 @@ export function RelationshipForm({
 
         {!edit && (
           <div className="space-y-2">
-            <div
-              role="radiogroup"
+            {/* Segmented "Series | Story arc" toggle on Radix RadioGroup:
+                roving focus + arrow keys, a ring-token focus ring. */}
+            <RadioGroupPrimitive.Root
               aria-label="Target"
+              orientation="horizontal"
+              value={allowsArc ? targetType : "series"}
+              onValueChange={(v) => {
+                form.setValue("target_type", v as "series" | "arc");
+                form.clearErrors(["target", "target_arc"]);
+              }}
               className="bg-muted text-muted-foreground inline-flex h-9 items-center rounded-md p-1 text-sm"
             >
               {(["series", "arc"] as const).map((t) => {
                 const disabled = t === "arc" && !allowsArc;
-                const active = targetType === t && !disabled;
                 return (
-                  <button
+                  <RadioGroupPrimitive.Item
                     key={t}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
+                    value={t}
                     disabled={disabled}
                     title={
                       disabled
                         ? "Only “Tie-in to” can target a story arc"
                         : undefined
                     }
-                    onClick={() => {
-                      form.setValue("target_type", t);
-                      form.clearErrors(["target", "target_arc"]);
-                    }}
-                    className={cn(
-                      "rounded-sm px-3 py-1 font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-                      active && "bg-background text-foreground shadow",
-                    )}
+                    className="ring-offset-background focus-visible:ring-ring data-[state=checked]:bg-background data-[state=checked]:text-foreground rounded-sm px-3 py-1 font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:shadow"
                   >
                     {t === "series" ? "Series" : "Story arc"}
-                  </button>
+                  </RadioGroupPrimitive.Item>
                 );
               })}
-            </div>
+            </RadioGroupPrimitive.Root>
             {targetType === "arc" && allowsArc ? (
               <FormField
                 control={form.control}
@@ -567,6 +581,11 @@ function useDebounced<T>(value: T, ms: number): T {
   return v;
 }
 
+/** Result list height: the room Radix reports for the popover minus the
+ *  search row, capped at 18rem (the old fixed `max-h-72`). */
+const TARGET_LIST_MAX_H =
+  "max-h-[min(18rem,calc(var(--radix-popover-content-available-height,18rem)-2.75rem))]";
+
 /** Typeahead over `/series?q=` or `/arcs?q=` (both cursor-paginated;
  *  "More results" walks the next page instead of silently capping). */
 export function TargetPicker({
@@ -630,69 +649,82 @@ export function TargetPicker({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-[min(380px,calc(100vw-2rem))] p-0"
         align="start"
+        // One scroller only (the themed ScrollArea below), like the kind
+        // picker: the popover itself never scrolls.
+        className="w-[min(380px,calc(100vw-2rem))] overflow-hidden p-0"
       >
-        <div className="border-border border-b p-2">
-          <Input
-            autoFocus
+        {/* cmdk for arrow-key / Enter navigation and the highlighted-row
+            styling; results are server-filtered, so cmdk's own filter is
+            off. */}
+        <Command shouldFilter={false}>
+          <CommandInput
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onValueChange={setText}
             placeholder={`Search ${kind === "series" ? "series" : "story arcs"}…`}
             aria-label={`Search ${kind === "series" ? "series" : "story arcs"}`}
           />
-        </div>
-        <div className="max-h-72 overflow-auto">
-          {q.length === 0 ? (
-            <p className="text-muted-foreground p-3 text-xs">
-              Type a name to search.
-            </p>
-          ) : search.isLoading ? (
-            <p className="text-muted-foreground flex items-center gap-2 p-3 text-xs">
-              <Loader2 className="h-3 w-3 animate-spin" /> Searching…
-            </p>
-          ) : items.length === 0 ? (
-            <p className="text-muted-foreground p-3 text-xs">
-              No {noun} matched.
-            </p>
-          ) : (
-            <ul className="divide-border divide-y">
-              {items.map((t) => (
-                <li key={t.id}>
-                  <button
+          <ScrollArea
+            type="auto"
+            viewportClassName={TARGET_LIST_MAX_H}
+            data-testid="relationship-target-scroll"
+          >
+            {/* `pr-2.5` keeps highlighted rows clear of the overlay
+                scrollbar (`w-2.5`). */}
+            <CommandList className="max-h-none overflow-visible pr-2.5">
+              {q.length === 0 ? (
+                <p className="text-muted-foreground px-3 py-6 text-center text-sm">
+                  Type a name to search.
+                </p>
+              ) : search.isLoading ? (
+                <p className="text-muted-foreground flex items-center justify-center gap-2 px-3 py-6 text-sm">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching…
+                </p>
+              ) : items.length === 0 ? (
+                <p className="text-muted-foreground px-3 py-6 text-center text-sm">
+                  No {noun} matched.
+                </p>
+              ) : (
+                <CommandGroup>
+                  {items.map((t) => (
+                    <CommandItem
+                      key={t.id}
+                      value={t.id}
+                      onSelect={() => {
+                        onChange(t);
+                        setOpen(false);
+                      }}
+                      // The publisher / count line follows the highlighted
+                      // row's foreground (muted on accent is unreadable).
+                      className="data-[selected=true]:*:text-accent-foreground flex-col items-start gap-0.5"
+                    >
+                      <span className="font-medium">{t.name}</span>
+                      {t.detail ? (
+                        <span className="text-muted-foreground text-xs">
+                          {t.detail}
+                        </span>
+                      ) : null}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+              {search.hasNextPage && (
+                <div className="border-border border-t p-1">
+                  <Button
                     type="button"
-                    className="hover:bg-accent flex w-full flex-col gap-0.5 px-3 py-2 text-left text-sm"
-                    onClick={() => {
-                      onChange(t);
-                      setOpen(false);
-                    }}
+                    variant="ghost"
+                    size="sm"
+                    className="w-full"
+                    disabled={search.isFetchingNextPage}
+                    onClick={() => void search.fetchNextPage()}
                   >
-                    <span className="font-medium">{t.name}</span>
-                    {t.detail ? (
-                      <span className="text-muted-foreground text-xs">
-                        {t.detail}
-                      </span>
-                    ) : null}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {search.hasNextPage && (
-            <div className="border-border border-t p-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="w-full"
-                disabled={search.isFetchingNextPage}
-                onClick={() => void search.fetchNextPage()}
-              >
-                {search.isFetchingNextPage ? "Loading…" : "More results"}
-              </Button>
-            </div>
-          )}
-        </div>
+                    {search.isFetchingNextPage ? "Loading…" : "More results"}
+                  </Button>
+                </div>
+              )}
+            </CommandList>
+          </ScrollArea>
+        </Command>
       </PopoverContent>
     </Popover>
   );

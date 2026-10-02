@@ -13,13 +13,14 @@ import type { RelationshipCatalogue } from "@/lib/api/types";
 
 const m = vi.hoisted(() => ({
   catalogue: undefined as unknown,
+  seriesPages: undefined as unknown,
   update: vi.fn(),
   create: vi.fn(),
 }));
 
 vi.mock("@/lib/api/queries", () => ({
   useRelationshipKinds: () => ({ data: m.catalogue }),
-  useSeriesListInfinite: () => ({ data: undefined, isLoading: false }),
+  useSeriesListInfinite: () => ({ data: m.seriesPages, isLoading: false }),
   useEntityListInfinite: () => ({ data: undefined, isLoading: false }),
 }));
 vi.mock("@/lib/api/mutations", () => ({
@@ -30,6 +31,7 @@ vi.mock("@/lib/api/mutations", () => ({
 import { RelationshipKindSelect } from "@/components/library/RelationshipKindSelect";
 import {
   RelationshipForm,
+  TargetPicker,
   patchBody,
 } from "@/components/library/RelationshipFormDialog";
 import { ApiMutationError } from "@/lib/api/mutations/_core";
@@ -90,6 +92,7 @@ const CATALOGUE = {
 
 beforeEach(() => {
   m.catalogue = CATALOGUE;
+  m.seriesPages = undefined;
   m.update.mockReset();
   m.create.mockReset();
 });
@@ -316,5 +319,40 @@ describe("<RelationshipForm> add", () => {
     });
     expect(m.create).not.toHaveBeenCalled();
     expect(screen.getByText("Choose a story arc")).toBeTruthy();
+  });
+});
+
+describe("<TargetPicker>", () => {
+  it("is a keyboard-navigable command list in the themed scroll area", async () => {
+    m.seriesPages = {
+      pages: [
+        {
+          items: [
+            { id: "s1", name: "Saga", year: 2012, publisher: "Image" },
+            { id: "s9", name: "Saga Deluxe", year: 2020, publisher: "Image" },
+          ],
+        },
+      ],
+    };
+    const onChange = vi.fn();
+    render(<TargetPicker kind="series" value={null} onChange={onChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose a series" }));
+    const input = screen.getByPlaceholderText("Search series…");
+    fireEvent.change(input, { target: { value: "saga" } });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 250));
+    });
+    // Rows are cmdk options inside the ScrollArea (one scroller, themed
+    // scrollbar), not hand-rolled buttons in a native `overflow-auto`.
+    const scroll = screen.getByTestId("relationship-target-scroll");
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(2);
+    for (const o of options) expect(scroll.contains(o)).toBe(true);
+    // Arrow keys move the highlight; Enter picks it.
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s9", name: "Saga Deluxe (2020)" }),
+    );
   });
 });
