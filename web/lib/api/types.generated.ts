@@ -5590,7 +5590,8 @@ export interface components {
          * @description Bulk accept: explicit `ids`, **or** a bucket selection. Exactly one of
          *     `ids` / `bucket` must be set.
          *
-         *     - `ids`: 1–500 suggestion ids, processed in order (duplicates once).
+         *     - `ids`: 1–500 suggestion ids, processed in order (duplicates once),
+         *       optionally with a `kind` override for the whole selection (WP-8.2).
          *     - `bucket`: only `"high"` — the pending high-confidence rows (optionally
          *       one `library_id`), highest confidence first, at most 500 per request.
          *       The response's `remaining` says how many are left; send the request
@@ -5600,6 +5601,7 @@ export interface components {
         BulkAcceptRelationshipSuggestionsReq: {
             bucket?: components["schemas"]["SuggestionBucket"] | null;
             ids?: string[] | null;
+            kind?: components["schemas"]["RelationshipKind"] | null;
             /**
              * Format: uuid
              * @description Bucket mode only: restrict to one library.
@@ -11109,9 +11111,11 @@ export interface components {
         SimilarReason: {
             kind: components["schemas"]["SimilarReasonKind"];
             /**
-             * @description Relationships only: the kind's display label, lower-cased
-             *     ("sequel to", "continued by"; WP-7.5), so clients don't need the
-             *     kind catalogue to caption a reason.
+             * @description Relationships: the kind's display label, lower-cased ("sequel to",
+             *     "continued by"; WP-7.5), so clients don't need the kind catalogue
+             *     to caption a reason. Arcs (WP-8.2): `"both tie in to"` when the
+             *     shared arc comes from accepted tie-in edges rather than issue
+             *     tagging. Absent otherwise.
              */
             label?: string | null;
             /** @description Display name of the shared entity (or the related series). */
@@ -13595,7 +13599,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description neither or both of `ids` / `bucket`, a bucket other than `high`, `library_id` without `bucket`, or more than 500 ids */
+            /** @description neither or both of `ids` / `bucket`, a bucket other than `high`, `library_id` without `bucket`, `kind` without `ids`, or more than 500 ids */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -13746,7 +13750,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description suggestion marked rejected; it will not be proposed again */
+            /** @description suggestion (pending or stale) marked rejected; it will not be proposed again */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -13776,7 +13780,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description already reviewed */
+            /** @description already reviewed (accepted / rejected / modified) */
             409: {
                 headers: {
                     [name: string]: unknown;

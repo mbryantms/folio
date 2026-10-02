@@ -10,6 +10,14 @@
 //! two small set-based queries (provider claims, shared creators) bounded by
 //! the catalogue's candidate groups.
 //!
+//! WP-8.2: the **edition** detectors (alternate edition, facsimile,
+//! translation) run over [`Catalogue::with_other_libraries`] — this
+//! library's series plus the other libraries' series that share a lookup
+//! key with one of them — so a trade or translation filed in another
+//! library still pairs. Annuals and supplements stay within the library.
+//! The noise rule ([`specific_title`]) drops a name match whose shared
+//! title is only the publisher's own name.
+//!
 //! Confidence numbers are documented in `docs/dev/series-relationships.md`
 //! ("Evidence sources and confidence").
 
@@ -33,11 +41,13 @@ const TRANSLATION_GROUP_MAX: usize = 12;
 #[derive(Debug, FromQueryResult)]
 struct CatRow {
     id: Uuid,
+    library_id: Uuid,
     name: String,
     normalized_name: String,
     year: Option<i32>,
     year_end: Option<i32>,
     publisher: Option<String>,
+    imprint: Option<String>,
     series_type: Option<String>,
     language_code: String,
     aliases: serde_json::Value,
@@ -56,6 +66,9 @@ struct CatRow {
 #[derive(Debug, Clone)]
 pub struct Series {
     pub id: Uuid,
+    /// WP-8.2: the edition detectors run over a catalogue that may hold
+    /// series of other libraries.
+    pub library_id: Uuid,
     pub name: String,
     pub norm: String,
     /// [`match_key`] of the normalized name.
@@ -64,6 +77,8 @@ pub struct Series {
     pub year_end: Option<i32>,
     /// Lowercased, trimmed; `None` when unknown.
     pub publisher: Option<String>,
+    /// Lowercased, trimmed; `None` when unknown (WP-8.2 noise rule).
+    pub imprint: Option<String>,
     pub series_type: Option<String>,
     /// ISO 639-1 where known ([`norm_lang`]); empty when unknown.
     pub lang: String,
@@ -143,79 +158,89 @@ pub struct Catalogue {
 }
 
 impl Catalogue {
-    /// One set-based query: series + per-series issue aggregates.
+    /// One set-based query: the library's live series + per-series issue
+    /// aggregates.
     pub async fn load<C: ConnectionTrait>(conn: &C, library_id: Uuid) -> Result<Self, DbErr> {
-        let sql = format!(
-            r#"
-            SELECT s.id, s.name, s.normalized_name, s.year, s.year_end,
-                   nullif(lower(btrim(s.publisher)), '') AS publisher, s.series_type,
-                   s.language_code, s.aliases, s.alternate_names,
-                   a.n AS n_issues, a.lo, a.hi, a.iy_min, a.iy_max, a.formats,
-                   a.annual_n AS annual_issues, a.first_number
-              FROM series s
-              -- Per-series index lookups (issues_series_sortnum_idx): robust
-              -- to missing statistics, unlike a join on a grouped subquery.
-              CROSS JOIN LATERAL (
-                  SELECT count(*) AS n, min(i.sort_number) AS lo, max(i.sort_number) AS hi,
-                         min(i.year) AS iy_min, max(i.year) AS iy_max,
-                         array_remove(array_agg(DISTINCT i.format)
-                                      || array_agg(DISTINCT i.special_type), NULL) AS formats,
-                         count(*) FILTER (WHERE i.special_type = 'Annual'
-                                             OR lower(i.format) IN ('annual', 'annuals', 'annual series'))
-                             AS annual_n,
-                         (array_agg(i.number_raw ORDER BY i.sort_number NULLS LAST, i.id))[1]
-                             AS first_number
-                    FROM issues i
-                   WHERE i.series_id = s.id AND i.removed_at IS NULL
-              ) a
-             WHERE s.library_id = $1 AND s.removed_at IS NULL
-             ORDER BY s.id
-             LIMIT {CATALOGUE_LIMIT}
-            "#
-        );
-        let rows = CatRow::find_by_statement(stmt(conn, &sql, vec![library_id.into()]))
-            .all(conn)
-            .await?;
-        let series: Vec<Series> = rows
+        let rows = load_rows(conn, "s.library_id = $1", vec![library_id.into()]).await?;
+        Ok(Self::from_series(
+            rows.into_iter().map(Series::from).collect(),
+        ))
+    }
+
+    /// Series by id (any library), same shape as [`Self::load`].
+    async fn load_ids<C: ConnectionTrait>(conn: &C, ids: Vec<Uuid>) -> Result<Vec<Series>, DbErr> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = load_rows(conn, "s.id = ANY($1)", vec![ids.into()]).await?;
+        Ok(rows.into_iter().map(Series::from).collect())
+    }
+
+    /// WP-8.2: the catalogue the **edition** detectors (alternate edition,
+    /// facsimile, translation) run over — this library's series plus the
+    /// series of other libraries that could pair with one of them. Two
+    /// steps keep it bounded: a light name-only scan of the other
+    /// libraries (no issue aggregates) picks the series whose lookup keys
+    /// ([`index_keys`]), normalized name or aliases meet this library's,
+    /// then only those get the full per-series aggregates. Every series a
+    /// detector could compare against a series of this library shares one
+    /// of those keys, so a pair is seen the same way from either
+    /// library's run.
+    pub async fn with_other_libraries<C: ConnectionTrait>(
+        &self,
+        conn: &C,
+        library_id: Uuid,
+    ) -> Result<Self, DbErr> {
+        let mut keys: HashSet<String> = HashSet::new();
+        let mut norms: HashSet<&str> = HashSet::new();
+        let mut aliases: HashSet<&str> = HashSet::new();
+        for s in &self.series {
+            keys.extend(index_keys(&s.norm));
+            norms.insert(s.norm.as_str());
+            aliases.extend(s.aliases.iter().map(String::as_str));
+        }
+        let light = LightRow::find_by_statement(stmt(
+            conn,
+            &format!(
+                "SELECT id, normalized_name, aliases, alternate_names FROM series \
+                  WHERE library_id <> $1 AND removed_at IS NULL \
+                  ORDER BY id LIMIT {CATALOGUE_LIMIT}"
+            ),
+            vec![library_id.into()],
+        ))
+        .all(conn)
+        .await?;
+        let wanted: Vec<Uuid> = light
             .into_iter()
-            .map(|r| {
-                let mut aliases = strings(&r.aliases);
-                aliases.extend(strings(&r.alternate_names));
-                aliases.sort();
-                aliases.dedup();
-                Series {
-                    id: r.id,
-                    key: match_key(&r.normalized_name),
-                    name: r.name,
-                    norm: r.normalized_name,
-                    year: r.year,
-                    year_end: r.year_end,
-                    publisher: r.publisher,
-                    series_type: r.series_type,
-                    lang: norm_lang(&r.language_code),
-                    aliases,
-                    n_issues: r.n_issues,
-                    lo: r.lo,
-                    hi: r.hi,
-                    iy_min: r.iy_min,
-                    iy_max: r.iy_max,
-                    formats: r.formats.unwrap_or_default(),
-                    annual_issues: r.annual_issues,
-                    first_number: r.first_number,
-                }
+            .filter(|r| {
+                index_keys(&r.normalized_name)
+                    .iter()
+                    .any(|k| keys.contains(k))
+                    || aliases.contains(r.normalized_name.as_str())
+                    || strings(&r.aliases)
+                        .iter()
+                        .chain(strings(&r.alternate_names).iter())
+                        .any(|a| norms.contains(a.as_str()))
             })
+            .map(|r| r.id)
             .collect();
+        let mut series = self.series.clone();
+        series.extend(Self::load_ids(conn, wanted).await?);
+        Ok(Self::from_series(series))
+    }
+
+    fn from_series(series: Vec<Series>) -> Self {
         let mut by_key: HashMap<String, Vec<usize>> = HashMap::new();
         let mut by_norm: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, s) in series.iter().enumerate() {
             by_key.entry(s.key.clone()).or_default().push(i);
             by_norm.entry(s.norm.clone()).or_default().push(i);
         }
-        Ok(Self {
+        Self {
             series,
             by_key,
             by_norm,
-        })
+        }
     }
 
     fn with_key(&self, key: &str) -> impl Iterator<Item = &Series> {
@@ -233,6 +258,157 @@ impl Catalogue {
             .flatten()
             .map(|&i| &self.series[i])
     }
+}
+
+#[derive(Debug, FromQueryResult)]
+struct LightRow {
+    id: Uuid,
+    normalized_name: String,
+    aliases: serde_json::Value,
+    alternate_names: serde_json::Value,
+}
+
+/// The catalogue query, filtered by `filter` over `s` (`series`).
+async fn load_rows<C: ConnectionTrait>(
+    conn: &C,
+    filter: &str,
+    values: Vec<Value>,
+) -> Result<Vec<CatRow>, DbErr> {
+    let sql = format!(
+        r#"
+        SELECT s.id, s.library_id, s.name, s.normalized_name, s.year, s.year_end,
+               nullif(lower(btrim(s.publisher)), '') AS publisher,
+               nullif(lower(btrim(s.imprint)), '') AS imprint, s.series_type,
+               s.language_code, s.aliases, s.alternate_names,
+               a.n AS n_issues, a.lo, a.hi, a.iy_min, a.iy_max, a.formats,
+               a.annual_n AS annual_issues, a.first_number
+          FROM series s
+          -- Per-series index lookups (issues_series_sortnum_idx): robust
+          -- to missing statistics, unlike a join on a grouped subquery.
+          CROSS JOIN LATERAL (
+              SELECT count(*) AS n, min(i.sort_number) AS lo, max(i.sort_number) AS hi,
+                     min(i.year) AS iy_min, max(i.year) AS iy_max,
+                     array_remove(array_agg(DISTINCT i.format)
+                                  || array_agg(DISTINCT i.special_type), NULL) AS formats,
+                     count(*) FILTER (WHERE i.special_type = 'Annual'
+                                         OR lower(i.format) IN ('annual', 'annuals', 'annual series'))
+                         AS annual_n,
+                     (array_agg(i.number_raw ORDER BY i.sort_number NULLS LAST, i.id))[1]
+                         AS first_number
+                FROM issues i
+               WHERE i.series_id = s.id AND i.removed_at IS NULL
+          ) a
+         WHERE {filter} AND s.removed_at IS NULL
+         ORDER BY s.id
+         LIMIT {CATALOGUE_LIMIT}
+        "#
+    );
+    CatRow::find_by_statement(stmt(conn, &sql, values))
+        .all(conn)
+        .await
+}
+
+impl From<CatRow> for Series {
+    fn from(r: CatRow) -> Self {
+        let mut aliases = strings(&r.aliases);
+        aliases.extend(strings(&r.alternate_names));
+        aliases.sort();
+        aliases.dedup();
+        Series {
+            id: r.id,
+            library_id: r.library_id,
+            key: match_key(&r.normalized_name),
+            name: r.name,
+            norm: r.normalized_name,
+            year: r.year,
+            year_end: r.year_end,
+            publisher: r.publisher,
+            imprint: r.imprint,
+            series_type: r.series_type,
+            lang: norm_lang(&r.language_code),
+            aliases,
+            n_issues: r.n_issues,
+            lo: r.lo,
+            hi: r.hi,
+            iy_min: r.iy_min,
+            iy_max: r.iy_max,
+            formats: r.formats.unwrap_or_default(),
+            annual_issues: r.annual_issues,
+            first_number: r.first_number,
+        }
+    }
+}
+
+/// Every key a name-based detector may look a series up by: its
+/// [`match_key`], its title minus an edition marker, and — for a
+/// facsimile — its title minus the facsimile words (with and without a
+/// trailing issue number). Used to pick the other libraries' series that
+/// could pair with this library's (WP-8.2).
+fn index_keys(norm: &str) -> Vec<String> {
+    let tokens: Vec<&str> = norm.split(' ').filter(|w| !w.is_empty()).collect();
+    let mut keys = vec![match_key(norm)];
+    if let Some((_, _, k)) = edition_marker_of(&tokens) {
+        keys.push(k);
+    }
+    if tokens.contains(&"facsimile") {
+        let t: Vec<&str> = tokens
+            .iter()
+            .copied()
+            .filter(|t| !matches!(*t, "facsimile" | "edition"))
+            .collect();
+        keys.push(match_key(&t.join(" ")));
+        if t.len() >= 2 {
+            keys.push(match_key(&t[..t.len() - 1].join(" ")));
+        }
+    }
+    keys.retain(|k| !k.is_empty());
+    keys
+}
+
+/// Words that never make a title specific (WP-8.2 noise rule), on top of
+/// the series' own publisher and imprint names.
+const GENERIC_TITLE_WORDS: &[&str] = &[
+    "the",
+    "a",
+    "an",
+    "of",
+    "and",
+    "comics",
+    "comic",
+    "publishing",
+    "publications",
+    "press",
+    "studios",
+    "entertainment",
+    "books",
+    "group",
+    "inc",
+    "none",
+];
+
+/// WP-8.2 noise rule: does the shared title `key` say more than the
+/// publisher's own name? Publisher-generic tokens are both series'
+/// publisher and imprint names plus [`GENERIC_TITLE_WORDS`]; a match whose
+/// remaining shared tokens are empty ("Marvel Holiday Special" → "Marvel")
+/// is dropped.
+fn specific_title(key: &str, a: &Series, b: &Series) -> bool {
+    let mut generic: HashSet<String> = GENERIC_TITLE_WORDS
+        .iter()
+        .map(|w| (*w).to_owned())
+        .collect();
+    for name in [&a.publisher, &a.imprint, &b.publisher, &b.imprint]
+        .into_iter()
+        .flatten()
+    {
+        generic.extend(
+            entity::series::normalize_name(name)
+                .split(' ')
+                .filter(|w| !w.is_empty())
+                .map(str::to_owned),
+        );
+    }
+    key.split(' ')
+        .any(|t| !t.is_empty() && !generic.contains(t))
 }
 
 /// Position of `phrase` (consecutive tokens) in `tokens`.
@@ -330,6 +506,8 @@ pub fn annuals(cat: &Catalogue) -> Vec<Candidate> {
             .with_key(&key)
             .filter(|m| m.id != s.id && annual_signal(m).is_none())
             .filter(|m| same_publisher(s, m) != Some(false))
+            // WP-8.2 noise rule ("Marvel Annual" → "Marvel" is not a pair).
+            .filter(|m| specific_title(&key, s, m))
             .map(|m| {
                 let gap = match (s.start(), m.start()) {
                     (Some(a), Some(b)) => (a - b).abs(),
@@ -466,10 +644,14 @@ const EDITION_MARKERS: &[(&[&str], &str, EditionStrength)] = &[
 
 /// The edition marker in `s`'s name and the base title's key.
 fn edition_marker(s: &Series) -> Option<(&'static str, EditionStrength, String)> {
-    let tokens = s.tokens();
+    edition_marker_of(&s.tokens())
+}
+
+/// [`edition_marker`] over a normalized name's tokens.
+fn edition_marker_of(tokens: &[&str]) -> Option<(&'static str, EditionStrength, String)> {
     for (phrase, label, strength) in EDITION_MARKERS {
-        if let Some(at) = find_phrase(&tokens, phrase) {
-            let mut rest = without(&tokens, at, phrase.len());
+        if let Some(at) = find_phrase(tokens, phrase) {
+            let mut rest = without(tokens, at, phrase.len());
             rest.retain(|w| w != "edition");
             let key = match_key(&rest.join(" "));
             if !key.is_empty() {
@@ -506,6 +688,10 @@ pub fn alternate_editions(cat: &Catalogue) -> Vec<Candidate> {
             .with_key(&key)
             .filter(|b| b.id != s.id && edition_marker(b).is_none() && !is_facsimile(b))
             .filter(|b| same_publisher(s, b) != Some(false))
+            // WP-8.2 noise rule: the shared title must say more than the
+            // publisher's own name ("Marvel Deluxe" isn't an edition of
+            // "Marvel").
+            .filter(|b| specific_title(&key, s, b))
             .filter(|b| !(s.collected() && !b.collected()))
             .filter(|b| match (s.start(), b.start()) {
                 // An edition can't predate the work.
@@ -522,7 +708,16 @@ pub fn alternate_editions(cat: &Catalogue) -> Vec<Candidate> {
                     (Some(e), Some(o)) => e - o,
                     _ => i32::MAX,
                 };
-                (years || content).then_some((years, content, gap, b))
+                // WP-8.2: "Unlimited" is as often an anthology with its own
+                // numbering ("X-Men Unlimited" #1–14, 2005) as an edition.
+                // Overlapping years alone (X-Men #157–207, 2004) or low
+                // issue numbers alone (The X-Men #1–66, 1969) match by
+                // accident; it needs both.
+                let fits = match strength {
+                    EditionStrength::Weak => years && content,
+                    EditionStrength::Strong | EditionStrength::Absolute => years || content,
+                };
+                fits.then_some((years, content, gap, b))
             })
             .collect();
         if cands.is_empty() {
@@ -748,6 +943,9 @@ pub fn supplements(cat: &Catalogue) -> Vec<Candidate> {
             .with_key(&key)
             .filter(|p| p.id != s.id && supplement_marker(p).is_none())
             .filter(|p| same_publisher(s, p) != Some(false))
+            // WP-8.2 noise rule: "Marvel Holiday Special" shares only the
+            // publisher's name with "Marvel (2020)".
+            .filter(|p| specific_title(&key, s, p))
             .map(|p| {
                 let within = matches!((s.start(), p.start(), p.end()), (Some(y), Some(a), Some(b)) if a <= y && y <= b);
                 let gap = match (s.start(), p.start()) {
@@ -865,32 +1063,61 @@ pub async fn translations<C: ConnectionTrait>(
     library_id: Uuid,
     cat: &Catalogue,
 ) -> Result<Vec<Candidate>, DbErr> {
-    let idx: HashMap<Uuid, &Series> = cat.series.iter().map(|s| (s.id, s)).collect();
     let differs =
         |a: &Series, b: &Series| !a.lang.is_empty() && !b.lang.is_empty() && a.lang != b.lang;
     let mut out = Vec::new();
 
-    // (a) shared provider series across languages.
+    // (a) shared provider series across languages. WP-8.2: series of other
+    // libraries join through their series-level `external_ids` (indexed);
+    // their issues' ComicInfo ids aren't scanned per run.
     let claims = provider_claims_cte();
     let lang = lang_sql("s.language_code");
     let sql = format!(
         r#"
         {claims}
+        ), elsewhere AS (
+            SELECT s.id AS series_id, e.source, e.external_id AS pid
+              FROM external_ids e
+              JOIN series s ON s.id::text = e.entity_id
+             WHERE e.entity_type = 'series' AND e.source IN ('comicvine', 'metron', 'gcd')
+               AND s.library_id <> $1 AND s.removed_at IS NULL
+               AND (e.source, e.external_id) IN (SELECT source, pid FROM claims)
+        ), allc AS (
+            SELECT series_id, source, pid FROM claims
+            UNION
+            SELECT series_id, source, pid FROM elsewhere
         ), multi AS (
             SELECT c.source, c.pid
-              FROM claims c JOIN series s ON s.id = c.series_id
+              FROM allc c JOIN series s ON s.id = c.series_id
              GROUP BY 1, 2
             HAVING count(*) BETWEEN 2 AND {TRANSLATION_GROUP_MAX}
                AND count(DISTINCT {lang}) > 1
         )
         SELECT c.source, c.pid, c.series_id
-          FROM claims c JOIN multi USING (source, pid)
+          FROM allc c JOIN multi USING (source, pid)
          ORDER BY c.source, c.pid, c.series_id
         "#
     );
     let rows = ClaimRow::find_by_statement(stmt(conn, &sql, vec![library_id.into()]))
         .all(conn)
         .await?;
+    // Claimants the catalogue doesn't hold yet (other libraries).
+    let missing: Vec<Uuid> = {
+        let have: HashSet<Uuid> = cat.series.iter().map(|s| s.id).collect();
+        rows.iter()
+            .map(|r| r.series_id)
+            .filter(|id| !have.contains(id))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect()
+    };
+    let extra = Catalogue::load_ids(conn, missing).await?;
+    let idx: HashMap<Uuid, &Series> = cat
+        .series
+        .iter()
+        .chain(extra.iter())
+        .map(|s| (s.id, s))
+        .collect();
     for group in rows.chunk_by(|a, b| a.source == b.source && a.pid == b.pid) {
         let members: Vec<&Series> = group
             .iter()
@@ -1035,12 +1262,14 @@ mod tests {
         let norm = entity::series::normalize_name(name);
         Series {
             id: Uuid::now_v7(),
+            library_id: Uuid::nil(),
             name: name.into(),
             key: match_key(&norm),
             norm,
             year: Some(2010),
             year_end: None,
             publisher: Some("marvel".into()),
+            imprint: None,
             series_type: None,
             lang: "en".into(),
             aliases: Vec::new(),
@@ -1076,6 +1305,97 @@ mod tests {
         );
         assert!(annual_signal(&series("Deadpool Bi-Annual")).is_none_or(|x| x.1 == "deadpool bi"));
         assert!(annual_signal(&series("Daredevil")).is_none());
+    }
+
+    fn by(cat: &[Series]) -> Catalogue {
+        Catalogue::from_series(cat.to_vec())
+    }
+
+    fn pairs(c: &[Candidate], cat: &Catalogue) -> Vec<(String, String)> {
+        let name = |id: Uuid| {
+            cat.series
+                .iter()
+                .find(|s| s.id == id)
+                .map(|s| s.name.clone())
+                .unwrap_or_default()
+        };
+        c.iter()
+            .map(|c| (name(c.from), c.to.series().map(name).unwrap_or_default()))
+            .collect()
+    }
+
+    #[test]
+    fn noise_rule_drops_publisher_only_matches() {
+        // WP-8.2: "Marvel Holiday Special" shares only the publisher's name
+        // with "Marvel (2020)"; "Fantastic Four: Wedding Special" shares a
+        // real title.
+        let mut holiday = series("Marvel Holiday Special");
+        holiday.year = None;
+        holiday.iy_min = None;
+        holiday.iy_max = None;
+        let cat = by(&[
+            holiday,
+            series("Marvel"),
+            series("Fantastic Four: Wedding Special"),
+            series("Fantastic Four"),
+        ]);
+        assert_eq!(
+            pairs(&supplements(&cat), &cat),
+            vec![(
+                "Fantastic Four: Wedding Special".to_owned(),
+                "Fantastic Four".to_owned()
+            )]
+        );
+        // The imprint counts as publisher-generic too.
+        let mut a = series("Marvel Universe Deluxe");
+        a.imprint = Some("marvel universe".into());
+        let cat = by(&[a, series("Marvel Universe")]);
+        assert!(alternate_editions(&cat).is_empty());
+        let x = series("X-Men");
+        assert!(specific_title("x men", &x, &x));
+        assert!(!specific_title("marvel", &x, &x));
+        assert!(!specific_title("the marvel comics", &x, &x));
+    }
+
+    #[test]
+    fn unlimited_needs_the_original_numbers() {
+        // "X-Men Unlimited" (#1-14, 2005) next to X-Men (#157-207, 2004):
+        // overlapping years alone no longer make it an edition.
+        let mut unl = series("X-Men Unlimited");
+        (unl.year, unl.iy_min, unl.iy_max, unl.lo, unl.hi) =
+            (Some(2005), Some(2005), Some(2006), Some(1.0), Some(14.0));
+        let mut xm = series("X-Men");
+        (xm.year, xm.iy_min, xm.iy_max, xm.lo, xm.hi) =
+            (Some(2004), Some(2004), Some(2008), Some(157.0), Some(207.0));
+        let cat = by(&[unl.clone(), xm.clone()]);
+        assert!(alternate_editions(&cat).is_empty());
+        // Nor do numbers inside an older run's alone (The X-Men #1-66,
+        // 1963-1970).
+        let mut old = series("The X-Men");
+        (old.year, old.iy_min, old.iy_max, old.lo, old.hi) =
+            (Some(1963), Some(1963), Some(1970), Some(1.0), Some(66.0));
+        assert!(alternate_editions(&by(&[unl.clone(), old])).is_empty());
+        // Overlapping years and the original's numbers: still a (weak) match.
+        (unl.lo, unl.hi) = (Some(160.0), Some(162.0));
+        let cat = by(&[unl, xm]);
+        let c = alternate_editions(&cat);
+        assert_eq!(c.len(), 1);
+        assert!(c[0].confidence < 0.55, "{}", c[0].confidence);
+        // A strong marker still matches on years alone.
+        let mut dc = series("House of M Director's Cut");
+        dc.lo = Some(1.0);
+        let mut hom = series("House of M");
+        (hom.lo, hom.hi) = (Some(1.0), Some(8.0));
+        assert_eq!(alternate_editions(&by(&[dc, hom])).len(), 1);
+    }
+
+    #[test]
+    fn index_keys_cover_editions_and_facsimiles() {
+        let k = index_keys("house of m directors cut");
+        assert!(k.contains(&"house of m".to_owned()), "{k:?}");
+        let k = index_keys("rom 1 facsimile edition");
+        assert!(k.contains(&"rom".to_owned()), "{k:?}");
+        assert_eq!(index_keys("saga"), vec!["saga".to_owned()]);
     }
 
     #[test]

@@ -893,3 +893,173 @@ async fn accepted_relationships_are_a_signal() {
     let (_, body) = get(&app, &format!("/api/series/{relaunch}/similar"), &admin).await;
     assert_eq!(ids(&body), Vec::<String>::new(), "{body}");
 }
+
+/// WP-8.2: two series with accepted `tie_in_to` edges to the same story
+/// arc are similar ("both tie in to …"), and the signal doesn't stack on
+/// the `issue_arcs` / `series_arcs` arc signal for the same arc.
+#[tokio::test]
+async fn accepted_arc_tie_ins_are_a_signal_without_double_counting() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let state = app.state();
+    let db = state.db.clone();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = seed_library(&db, tmp.path()).await;
+    filler(&db, lib, 8).await;
+    let journal = series(&db, lib, "Secret Wars Journal").await;
+    let hulk = series(&db, lib, "Planet Hulk").await;
+    let gauntlet = series(&db, lib, "Infinity Gauntlet").await;
+    // "Secret Wars": tagged on both series AND accepted tie-ins on both.
+    arc(&db, journal, "Secret Wars").await;
+    arc(&db, hulk, "Secret Wars").await;
+    // "Infinity": accepted tie-ins only (no issue tagging).
+    arc(&db, gauntlet, "Infinity").await;
+    exec(
+        &db,
+        "DELETE FROM series_arcs WHERE series_id = $1",
+        vec![gauntlet.into()],
+    )
+    .await;
+    let arc_id = |name: &'static str| {
+        let db = db.clone();
+        async move {
+            entity::story_arc::Entity::find()
+                .filter(entity::story_arc::Column::NormalizedName.eq(name.to_lowercase()))
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap()
+                .id
+        }
+    };
+    let secret_wars = arc_id("Secret Wars").await;
+    let infinity = arc_id("Infinity").await;
+    for (s, a) in [
+        (journal, secret_wars),
+        (hulk, secret_wars),
+        (journal, infinity),
+        (gauntlet, infinity),
+    ] {
+        server::relationships::create_arc_edge(
+            &db,
+            s,
+            a,
+            server::relationships::RelationshipKind::TieInTo,
+            server::relationships::RelationshipSource::Suggested,
+            Some(0.8),
+            None,
+            &server::relationships::Scope::default(),
+        )
+        .await
+        .unwrap();
+    }
+
+    let (status, body) = get(&app, &format!("/api/series/{journal}/similar"), &admin).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let items = body["items"].as_array().unwrap();
+    let item = |id: Uuid| {
+        items
+            .iter()
+            .find(|i| i["series"]["id"] == id.to_string())
+            .unwrap_or_else(|| panic!("{id} listed: {body}"))
+            .clone()
+    };
+    let g = item(gauntlet);
+    let reason = &g["because"][0];
+    assert_eq!(reason["kind"], "arc");
+    assert_eq!(reason["name"], "Infinity");
+    assert_eq!(reason["label"], "both tie in to", "{g}");
+    // Planet Hulk shares "Secret Wars" through tagging AND tie-ins: it
+    // counts once (the max), so it scores exactly what Infinity Gauntlet's
+    // single tie-in arc scores (same document frequency, 2).
+    let h = item(hulk);
+    assert_eq!(h["because"].as_array().unwrap().len(), 1, "{h}");
+    assert_eq!(h["score"], g["score"], "no double count: {h} vs {g}");
+}
+
+/// WP-8.2: promoting an external ("not in library") link to a series
+/// relationship drops the similar-series cache — from the external-ids
+/// endpoint that matched the target, and from the suggestion job's
+/// promotion pass.
+#[tokio::test]
+async fn promoting_an_external_link_invalidates_the_cache() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let state = app.state();
+    let db = state.db.clone();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = seed_library(&db, tmp.path()).await;
+    filler(&db, lib, 4).await;
+    let alpha = series(&db, lib, "Alpha").await;
+    let beta = series(&db, lib, "Beta").await;
+    let gamma = series(&db, lib, "Gamma").await;
+    let uri = format!("/api/series/{alpha}/similar");
+    for (pid, name) in [("4242", "Beta"), ("5151", "Gamma")] {
+        let (status, body) = send(
+            &app,
+            Method::POST,
+            &format!("/api/series/{alpha}/external-relationships"),
+            &admin,
+            Some(serde_json::json!({
+                "kind": "see_also",
+                "source": "metron",
+                "provider_series_id": pid,
+                "name": name,
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+    let (_, body) = get(&app, &uri, &admin).await;
+    assert_eq!(ids(&body), Vec::<String>::new());
+    assert!(!state.similarity.is_empty(), "cached");
+
+    // (1) The external-ids endpoint matches Beta to Metron 4242: the
+    // writer's promotion hook creates the pair, the handler drops the
+    // cache.
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        &format!("/api/series/{beta}/external-ids"),
+        &admin,
+        Some(serde_json::json!({ "source": "metron", "external_id": "4242" })),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body}");
+    assert!(state.similarity.is_empty(), "promotion clears the cache");
+    let (_, body) = get(&app, &uri, &admin).await;
+    assert_eq!(ids(&body), vec![beta.to_string()], "{body}");
+
+    // (2) Gamma's id lands without the hook (a raw insert, as a missed
+    // hook); the suggestion job's promotion pass creates the pair and the
+    // job drops the cache.
+    exec(
+        &db,
+        "INSERT INTO external_ids (entity_type, entity_id, source, external_id, set_by) \
+         VALUES ('series', $1, 'metron', '5151', 'user')",
+        vec![gamma.to_string().into()],
+    )
+    .await;
+    let (_, body) = get(&app, &uri, &admin).await;
+    assert_eq!(ids(&body), vec![beta.to_string()], "still cached");
+    let generation = state.similarity.generation();
+    let report = server::jobs::relationship_suggest::run_with_state(&state, lib)
+        .await
+        .unwrap();
+    assert_eq!(report.promoted_pairs, 1, "{report:?}");
+    assert!(state.similarity.generation() > generation);
+    let (_, body) = get(&app, &uri, &admin).await;
+    let mut got = ids(&body);
+    got.sort();
+    let mut want = vec![beta.to_string(), gamma.to_string()];
+    want.sort();
+    assert_eq!(got, want, "{body}");
+
+    // A run that promotes nothing leaves the cache alone.
+    let generation = state.similarity.generation();
+    let report = server::jobs::relationship_suggest::run_with_state(&state, lib)
+        .await
+        .unwrap();
+    assert_eq!(report.promoted_pairs, 0);
+    assert_eq!(state.similarity.generation(), generation);
+}

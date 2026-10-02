@@ -257,7 +257,7 @@ async fn persist_applied_series_external_ids(
     run_id: uuid::Uuid,
 ) {
     use crate::metadata::identifier::Identifier;
-    use crate::metadata::writers::{SetBy, set_external_id};
+    use crate::metadata::writers::{SetBy, set_external_id_promoting};
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     let applied = entity::metadata_run_candidate::Entity::find()
@@ -267,12 +267,13 @@ async fn persist_applied_series_external_ids(
         .await
         .unwrap_or_default();
     let series_id_str = series_id.to_string();
+    let mut promoted_pairs = 0;
     for c in applied {
         let Some(source) = crate::metadata::apply::parse_source(&c.source) else {
             continue;
         };
         let identifier = Identifier::with_canonical_url(source, c.external_id.clone(), "series");
-        if let Err(e) = set_external_id(
+        match set_external_id_promoting(
             &state.db,
             "series",
             &series_id_str,
@@ -281,13 +282,23 @@ async fn persist_applied_series_external_ids(
         )
         .await
         {
-            tracing::warn!(
-                series_id = %series_id,
-                source = source.as_str(),
-                error = %e,
-                "failed to persist applied series external id"
-            );
+            Ok((_, n)) => promoted_pairs += n,
+            Err(e) => {
+                tracing::warn!(
+                    series_id = %series_id,
+                    source = source.as_str(),
+                    error = %e,
+                    "failed to persist applied series external id"
+                );
+            }
         }
+    }
+    // WP-8.2: the id just written can promote another series' external
+    // link to a series relationship (`promote_for_provider_id`). This runs
+    // after the apply's own cache invalidation, so drop the similar-series
+    // cache again when it did.
+    if promoted_pairs > 0 {
+        state.similarity.invalidate_all();
     }
 }
 

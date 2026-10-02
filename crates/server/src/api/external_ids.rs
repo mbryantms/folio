@@ -337,16 +337,29 @@ async fn upsert_user_identifier(
         id: id_value.to_owned(),
         url,
     };
-    match writers::set_external_id(&app.db, entity_type, entity_id, &identifier, SetBy::User).await
+    match writers::set_external_id_promoting(
+        &app.db,
+        entity_type,
+        entity_id,
+        &identifier,
+        SetBy::User,
+    )
+    .await
     {
-        Ok(writers::SetExternalIdOutcome::SkippedConflict { .. }) => {
+        Ok((writers::SetExternalIdOutcome::SkippedConflict { .. }, _)) => {
             return error(
                 StatusCode::CONFLICT,
                 "metadata.external_id_taken",
                 "that identifier is already assigned to another item — remove it there first",
             );
         }
-        Ok(_) => {}
+        Ok((_, promoted_pairs)) => {
+            // WP-8.2: an external link promoted to a series relationship
+            // is a similar-series signal.
+            if promoted_pairs > 0 {
+                app.similarity.invalidate_all();
+            }
+        }
         Err(e) => {
             tracing::warn!(error = %e, "external_id set failed");
             return error(

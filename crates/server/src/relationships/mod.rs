@@ -417,6 +417,15 @@ impl RelationshipKind {
     pub fn allows_arc_target(self) -> bool {
         self == Self::TieInTo
     }
+
+    /// The suggestion engine may pair series in **different** libraries
+    /// for this kind (WP-8.2): the edition kinds — `collects`, `reprints`,
+    /// `alternate_edition_of`, `translation_of` and their inverses — since
+    /// trades and translations often live in a library of their own. Story
+    /// and publication kinds stay within one library.
+    pub fn may_cross_libraries(self) -> bool {
+        self.group() == RelationshipGroup::Editions
+    }
 }
 
 impl fmt::Display for RelationshipKind {
@@ -1411,6 +1420,20 @@ mod tests {
         assert_eq!(K::Continues.group(), G::Publication);
         assert_eq!(K::Reprints.group(), G::Editions);
         assert_eq!(K::ReimaginedAs.group(), G::Advanced);
+        // WP-8.2: only the edition kinds may pair series across libraries.
+        let crossing: Vec<K> = K::ALL
+            .into_iter()
+            .filter(|k| k.may_cross_libraries() && k.is_canonical())
+            .collect();
+        assert_eq!(
+            crossing,
+            vec![
+                K::Collects,
+                K::Reprints,
+                K::AlternateEditionOf,
+                K::TranslationOf
+            ]
+        );
         // Catalogue order is grouped (one contiguous run per group).
         let order: Vec<G> = K::ALL.iter().map(|k| k.group()).collect();
         let mut runs = order.clone();

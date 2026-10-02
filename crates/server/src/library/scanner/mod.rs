@@ -2150,14 +2150,21 @@ async fn process_planned_folder(
     // writer is idempotent and user-pinned values are protected. Side
     // effect is small (a few INSERT/UPDATE per series) so even a
     // re-scan with no folder-name change is cheap.
-    if let Some(folder_leaf) = folder.file_name().and_then(|n| n.to_str())
-        && let Err(e) = process::write_series_folder_tags(&state.db, series_id, folder_leaf).await
-    {
-        tracing::warn!(
-            error = %e,
-            folder = %folder.display(),
-            "scanner: failed to persist series folder-tag external_ids"
-        );
+    if let Some(folder_leaf) = folder.file_name().and_then(|n| n.to_str()) {
+        match process::write_series_folder_tags(&state.db, series_id, folder_leaf).await {
+            // WP-8.2: a folder-tag id can promote an external link to a
+            // series relationship even on a scan that changes nothing else
+            // (so `finalize_run` wouldn't invalidate).
+            Ok(promoted_pairs) if promoted_pairs > 0 => state.similarity.invalidate_all(),
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    folder = %folder.display(),
+                    "scanner: failed to persist series folder-tag external_ids"
+                );
+            }
+        }
     }
 
     state.events.emit(ScanEvent::SeriesUpdated {
