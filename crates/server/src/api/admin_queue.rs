@@ -50,6 +50,7 @@ const DEAD_QUEUES: &[&str] = &[
     "archive_edit",
     "backfill",
     "hash_backfill",
+    "relationship_suggest",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize, utoipa::ToSchema)]
@@ -73,6 +74,8 @@ pub struct QueueDepthView {
     pub backfill: i64,
     /// Pending first-import content-hash drains (one per library; WP-3.2).
     pub hash_backfill: i64,
+    /// Pending relationship-suggestion runs (one per library; WP-7.2).
+    pub relationship_suggest: i64,
     /// Sum across all queues — convenient for the topbar pill.
     pub total: i64,
 }
@@ -497,6 +500,7 @@ fn dead_keys(app: &AppState, queue: &str) -> Option<(String, String)> {
         "archive_edit" => keys!(j.archive_edit_storage),
         "backfill" => keys!(j.backfill_storage),
         "hash_backfill" => keys!(j.hash_backfill_storage),
+        "relationship_suggest" => keys!(j.relationship_suggest_storage),
         _ => None,
     }
 }
@@ -598,6 +602,7 @@ async fn retry_one(app: &AppState, queue: &str, task_id: &str) -> anyhow::Result
         "archive_edit" => try_retry!(app.jobs.archive_edit_storage),
         "backfill" => try_retry!(app.jobs.backfill_storage),
         "hash_backfill" => try_retry!(app.jobs.hash_backfill_storage),
+        "relationship_suggest" => try_retry!(app.jobs.relationship_suggest_storage),
         _ => return Ok(false),
     };
     if !pushed {
@@ -658,6 +663,7 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
     let mut archive_edit = app.jobs.archive_edit_storage.clone();
     let mut backfill = app.jobs.backfill_storage.clone();
     let mut hash_backfill = app.jobs.hash_backfill_storage.clone();
+    let mut relationship_suggest = app.jobs.relationship_suggest_storage.clone();
 
     let (
         scan_n,
@@ -673,6 +679,7 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
         archive_edit_n,
         backfill_n,
         hash_backfill_n,
+        relationship_suggest_n,
     ) = tokio::try_join!(
         scan.len(),
         scan_series.len(),
@@ -687,6 +694,7 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
         archive_edit.len(),
         backfill.len(),
         hash_backfill.len(),
+        relationship_suggest.len(),
     )?;
 
     let total = scan_n
@@ -701,7 +709,8 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
         + sidecars_n
         + archive_edit_n
         + backfill_n
-        + hash_backfill_n;
+        + hash_backfill_n
+        + relationship_suggest_n;
     Ok(QueueDepthView {
         scan: scan_n,
         scan_series: scan_series_n,
@@ -716,6 +725,7 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
         archive_edit: archive_edit_n,
         backfill: backfill_n,
         hash_backfill: hash_backfill_n,
+        relationship_suggest: relationship_suggest_n,
         total,
     })
 }

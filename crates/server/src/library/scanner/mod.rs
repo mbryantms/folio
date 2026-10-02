@@ -1254,6 +1254,12 @@ async fn run_series_phases(
     let _ = crate::jobs::post_scan::enqueue_post_scan_for_series(state, lib.id, series_id).await;
     // WP-3.2: settle any lazily-ingested rows (no-op probe otherwise).
     let _ = crate::jobs::hash_backfill::enqueue_if_pending(state, lib.id).await;
+    // WP-7.2: re-propose series relationships when the scan changed
+    // anything. The job is library-wide but bounded (set-based queries,
+    // 1000-row cap) and deduped per library.
+    if scan_changed_library(stats) {
+        let _ = crate::jobs::relationship_suggest::enqueue(state, lib.id).await;
+    }
     stats.record_phase("thumbnail_enqueue", thumbnail_enqueue_started.elapsed());
     // Saved-views M4: previously-missing CBL entries may now match
     // newly-scanned issues in this series.
@@ -1884,6 +1890,11 @@ async fn run_phases(
     // BLAKE3 for new rows; hand them to the background drain. A single
     // indexed probe when nothing is pending.
     let _ = crate::jobs::hash_backfill::enqueue_if_pending(state, lib.id).await;
+    // WP-7.2: relationship suggestions from the (possibly) new evidence.
+    // Skipped for a no-op rescan; deduped per library.
+    if scan_changed_library(stats) {
+        let _ = crate::jobs::relationship_suggest::enqueue(state, lib.id).await;
+    }
     stats.record_phase("thumbnail_enqueue", thumbnail_enqueue_started.elapsed());
     // Saved-views M4: re-resolve CBL entries that were previously missing.
     // Best-effort, in a spawned task so the scan finalize path isn't blocked.
@@ -1899,6 +1910,18 @@ async fn run_phases(
     .await;
 
     Ok(())
+}
+
+/// Did this scan change anything relationship suggestions are derived from
+/// (series or issue rows, hence their ComicInfo fields and junctions)? A
+/// rescan that found nothing new skips the suggestion run.
+fn scan_changed_library(stats: &ScanStats) -> bool {
+    stats.files_added > 0
+        || stats.files_updated > 0
+        || stats.series_created > 0
+        || stats.series_removed > 0
+        || stats.issues_removed > 0
+        || stats.issues_restored > 0
 }
 
 /// Walk every `cbl_lists` row and re-run the matcher. Fire-and-forget;

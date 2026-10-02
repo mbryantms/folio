@@ -144,3 +144,8 @@ edit                # POST /issues/{id}/archive/edit — enqueues ArchiveEditJob
 backups             # GET /issues/{id}/archive/backups — read-only listing of .bak files
 upload              # POST /uploads — transient image staging (data_dir/uploads/<uuid>), not a mutation on domain data
 
+
+# ── relationship_suggestions.rs (WP-7.2) ────────────────────
+# `list` (GET /admin/relationship-suggestions) is already exempt via the
+# admin_users.rs entry above (bare-name match).
+list_for_series     # GET /series/{slug}/relationship-suggestions — read-only pending suggestions for one series

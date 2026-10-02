@@ -72,6 +72,7 @@ pub mod series_location;
 pub mod series_object;
 pub mod series_provider_range;
 pub mod series_relationship;
+pub mod series_relationship_suggestion;
 pub mod series_tag;
 pub mod series_team;
 pub mod series_universe;

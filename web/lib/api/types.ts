@@ -811,6 +811,19 @@ export type SeriesChainEntry = Schemas["SeriesChainEntry"];
 export type SeriesRelationshipsResp = Schemas["SeriesRelationshipsResp"];
 export type CreateSeriesRelationshipReq =
   Schemas["CreateSeriesRelationshipReq"];
+// WP-7.2 relationship suggestions
+export type SuggestionBucket = Schemas["SuggestionBucket"];
+export type SuggestionStatus = Schemas["SuggestionStatus"];
+export type SuggestionBucketCounts = Schemas["SuggestionBucketCounts"];
+export type RelationshipSuggestionView = Schemas["RelationshipSuggestionView"];
+export type RelationshipSuggestionListView =
+  Schemas["RelationshipSuggestionListView"];
+export type AcceptRelationshipSuggestionReq =
+  Schemas["AcceptRelationshipSuggestionReq"];
+export type AcceptRelationshipSuggestionResp =
+  Schemas["AcceptRelationshipSuggestionResp"];
+export type RunRelationshipSuggestionsResp =
+  Schemas["RunRelationshipSuggestionsResp"];
 export type IssueCoversResp = Schemas["IssueCoversResp"];
 export type IssueCoverRow = Schemas["IssueCoverRow"];
 // M5 preview pane / proposed-diff

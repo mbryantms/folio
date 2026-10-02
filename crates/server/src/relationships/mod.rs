@@ -18,6 +18,8 @@
 //! the sequel, so *to* comes first in reading order. See
 //! `docs/dev/series-relationships.md`.
 
+pub mod suggestions;
+
 use chrono::Utc;
 use entity::series_relationship as rel;
 use sea_orm::{
