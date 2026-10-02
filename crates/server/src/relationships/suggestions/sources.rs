@@ -1178,13 +1178,20 @@ pub async fn character_density<C: ConnectionTrait>(
 
 /// Every source, in a fixed order, with per-source counts for the run
 /// report. A failing source is logged and skipped so one bad query can't
-/// sink the rest.
+/// sink the rest; its name comes back in the third element so the caller
+/// can tell "no candidates" from "couldn't look" (stale marking is skipped
+/// for the latter).
 pub async fn collect_all<C: ConnectionTrait>(
     conn: &C,
     library_id: Uuid,
-) -> (Vec<Candidate>, HashMap<&'static str, usize>) {
+) -> (
+    Vec<Candidate>,
+    HashMap<&'static str, usize>,
+    Vec<&'static str>,
+) {
     let mut all = Vec::new();
     let mut counts = HashMap::new();
+    let mut failed = Vec::new();
     macro_rules! run {
         ($name:literal, $f:expr) => {{
             let started = std::time::Instant::now();
@@ -1204,6 +1211,7 @@ pub async fn collect_all<C: ConnectionTrait>(
                     tracing::warn!(library_id = %library_id, source = $name, error = %e,
                         "relationship suggestions: source failed");
                     counts.insert($name, 0);
+                    failed.push($name);
                 }
             }
         }};
@@ -1216,7 +1224,7 @@ pub async fn collect_all<C: ConnectionTrait>(
     run!("provider_volume", provider_volumes(conn, library_id));
     run!("provider_range", provider_ranges(conn, library_id));
     run!("character_density", character_density(conn, library_id));
-    (all, counts)
+    (all, counts, failed)
 }
 
 #[cfg(test)]

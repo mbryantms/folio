@@ -1,17 +1,21 @@
-//! Relationship suggestions (WP-7.2): the minimal admin API over
-//! [`crate::relationships::suggestions`]. WP-7.3 adds the review UI and
-//! bulk accept on top of the same service functions.
+//! Relationship suggestions: the admin API over
+//! [`crate::relationships::suggestions`] (WP-7.2), plus the review-UI
+//! additions of WP-7.3 (bulk accept / reject, reopen, the `stale` filter).
 //!
 //! | method | path | |
 //! |---|---|---|
 //! | `GET`  | `/admin/relationship-suggestions` | cursor-paginated list (`status`, `bucket`, `library_id`) |
 //! | `POST` | `/admin/relationship-suggestions/{id}/accept` | body `{ "kind"?: RelationshipKind }` |
 //! | `POST` | `/admin/relationship-suggestions/{id}/reject` | |
+//! | `POST` | `/admin/relationship-suggestions/{id}/reopen` | rejected → pending |
+//! | `POST` | `/admin/relationship-suggestions/bulk-accept` | `{ "ids": [...] }` or `{ "bucket": "high", "library_id"? }` |
+//! | `POST` | `/admin/relationship-suggestions/bulk-reject` | `{ "ids": [...] }` |
 //! | `POST` | `/admin/relationship-suggestions/run` | enqueue a run (`?library_id=` or every library) |
 //! | `GET`  | `/series/{slug}/relationship-suggestions` | pending suggestions touching one series |
 //!
 //! All admin-only (`RequireAdmin`); mutations write
-//! `admin.relationship_suggestion.{accept,reject,run}` audit rows.
+//! `admin.relationship_suggestion.{accept,reject,reopen,bulk_accept,bulk_reject,run}`
+//! audit rows — **one** per bulk batch.
 
 use axum::{
     Extension, Json,
@@ -48,6 +52,9 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(run))
         .routes(routes!(accept))
         .routes(routes!(reject))
+        .routes(routes!(reopen))
+        .routes(routes!(bulk_accept))
+        .routes(routes!(bulk_reject))
         .routes(routes!(list_for_series))
 }
 
@@ -101,7 +108,7 @@ pub struct RelationshipSuggestionListView {
     pub bucket_counts: Option<SuggestionBucketCounts>,
 }
 
-/// `status` filter: one status, or `all`.
+/// `status` filter: one status, or `all` (every status except `stale`).
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SuggestionStatusFilter {
@@ -110,6 +117,7 @@ pub enum SuggestionStatusFilter {
     Accepted,
     Rejected,
     Modified,
+    Stale,
     All,
 }
 
@@ -120,6 +128,7 @@ impl SuggestionStatusFilter {
             Self::Accepted => Some(SuggestionStatus::Accepted),
             Self::Rejected => Some(SuggestionStatus::Rejected),
             Self::Modified => Some(SuggestionStatus::Modified),
+            Self::Stale => Some(SuggestionStatus::Stale),
             Self::All => None,
         }
     }
@@ -184,13 +193,88 @@ pub struct RunRelationshipSuggestionsResp {
     pub already_queued: Vec<String>,
 }
 
+/// Bulk accept: explicit `ids`, **or** a bucket selection. Exactly one of
+/// `ids` / `bucket` must be set.
+///
+/// - `ids`: 1–500 suggestion ids, processed in order (duplicates once).
+/// - `bucket`: only `"high"` — the pending high-confidence rows (optionally
+///   one `library_id`), highest confidence first, at most 500 per request.
+///   The response's `remaining` says how many are left; send the request
+///   again to take the next batch. Medium / low rows are only bulk-accepted
+///   by explicit ids, after a reviewer has looked at them.
+#[derive(Debug, Default, Deserialize, garde::Validate, utoipa::ToSchema)]
+pub struct BulkAcceptRelationshipSuggestionsReq {
+    #[garde(length(min = 1, max = suggestions::MAX_BULK))]
+    #[serde(default)]
+    pub ids: Option<Vec<Uuid>>,
+    #[garde(skip)]
+    #[serde(default)]
+    pub bucket: Option<SuggestionBucket>,
+    /// Bucket mode only: restrict to one library.
+    #[garde(skip)]
+    #[serde(default)]
+    pub library_id: Option<Uuid>,
+}
+
+/// Bulk reject: 1–500 explicit ids (no bucket mode — a reviewer picks them).
+#[derive(Debug, Default, Deserialize, garde::Validate, utoipa::ToSchema)]
+pub struct BulkRejectRelationshipSuggestionsReq {
+    #[garde(length(min = 1, max = suggestions::MAX_BULK))]
+    pub ids: Vec<Uuid>,
+}
+
+/// Why one item of a bulk request was skipped.
+#[derive(Debug, Clone, Copy, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BulkReviewFailureCode {
+    NotFound,
+    /// Already accepted / rejected / modified.
+    AlreadyReviewed,
+    /// The engine no longer proposes it.
+    Stale,
+    /// Contradicts an existing directional relationship.
+    Conflict,
+    /// `create_pair` refused for another reason.
+    Invalid,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BulkReviewFailureView {
+    pub id: String,
+    pub code: BulkReviewFailureCode,
+    pub message: String,
+}
+
+/// Result of one bulk batch. The batch commits as a whole; per-item
+/// refusals land in `failed` instead of failing the request.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BulkReviewRelationshipSuggestionsResp {
+    /// Distinct ids processed.
+    pub requested: u32,
+    /// Ids accepted (or rejected), in processing order.
+    pub succeeded: Vec<String>,
+    pub failed: Vec<BulkReviewFailureView>,
+    /// Accept only: edge pairs newly inserted (an accept whose edge
+    /// already existed doesn't count).
+    pub created: u32,
+    /// Bucket mode only: pending rows still in the bucket after this batch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining: Option<u64>,
+}
+
+/// `POST /{id}/reopen` result: the row, now pending again.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ReopenRelationshipSuggestionResp {
+    pub suggestion: RelationshipSuggestionView,
+}
+
 const DEFAULT_LIMIT: u64 = 50;
 
 #[utoipa::path(
     operation_id = "relationship_suggestions_list", get,
     path = "/admin/relationship-suggestions",
     params(
-        ("status" = Option<String>, Query, description = "`pending` (default), `accepted`, `rejected`, `modified` or `all`"),
+        ("status" = Option<String>, Query, description = "`pending` (default), `accepted`, `rejected`, `modified`, `stale`, or `all` (every status except `stale`)"),
         ("bucket" = Option<String>, Query, description = "`high`, `medium` or `low`"),
         ("library_id" = Option<String>, Query, description = "only suggestions in this library"),
         ("cursor" = Option<String>, Query,),
@@ -411,6 +495,263 @@ pub async fn reject(
         Ok(mut v) if !v.is_empty() => Json(v.remove(0)).into_response(),
         Ok(_) => readback_failed(),
         Err(e) => internal(&e),
+    }
+}
+
+#[utoipa::path(
+    operation_id = "relationship_suggestions_reopen", post,
+    path = "/admin/relationship-suggestions/{id}/reopen",
+    params(("id" = String, Path, description = "suggestion id")),
+    responses(
+        (status = 200, body = ReopenRelationshipSuggestionResp, description = "rejection cleared: the suggestion is pending again"),
+        (status = 400, description = "malformed id"),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "suggestion not found"),
+        (status = 409, description = "not rejected"),
+    )
+)]
+#[handler]
+pub async fn reopen(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Path(id): Path<String>,
+) -> Response {
+    let Ok(id) = Uuid::parse_str(&id) else {
+        return bad_id();
+    };
+    let (before, after) = match suggestions::reopen(&app.db, id).await {
+        Ok(r) => r,
+        Err(e) => return review_error(e),
+    };
+    // The row's review stamp is cleared; the audit row keeps it.
+    record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.relationship_suggestion.reopen",
+        target = ("relationship_suggestion", id.to_string()),
+        payload = serde_json::json!({
+            "from_series_id": after.from_series_id.to_string(),
+            "to_series_id": after.to_series_id.to_string(),
+            "kind": after.kind,
+            "previous_status": before.status,
+            "rejected_at": before.reviewed_at.map(|t| t.to_rfc3339()),
+            "rejected_by": before.reviewed_by.map(|u| u.to_string()),
+        }),
+    );
+    match hydrate(&app, vec![after]).await {
+        Ok(mut v) if !v.is_empty() => Json(ReopenRelationshipSuggestionResp {
+            suggestion: v.remove(0),
+        })
+        .into_response(),
+        Ok(_) => readback_failed(),
+        Err(e) => internal(&e),
+    }
+}
+
+#[utoipa::path(
+    operation_id = "relationship_suggestions_bulk_accept", post,
+    path = "/admin/relationship-suggestions/bulk-accept",
+    request_body = BulkAcceptRelationshipSuggestionsReq,
+    responses(
+        (status = 200, body = BulkReviewRelationshipSuggestionsResp, description = "batch committed; per-item refusals listed in `failed`"),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "library not found"),
+        (status = 422, description = "neither or both of `ids` / `bucket`, a bucket other than `high`, `library_id` without `bucket`, or more than 500 ids"),
+    )
+)]
+#[handler]
+pub async fn bulk_accept(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Validated(req): Validated<BulkAcceptRelationshipSuggestionsReq>,
+) -> Response {
+    if let Err(resp) = validate_bulk_accept(&req) {
+        return resp;
+    }
+    let (ids, mode) = match (&req.ids, req.bucket) {
+        (Some(ids), _) => (ids.clone(), "ids"),
+        (None, Some(bucket)) => {
+            if let Some(lib) = req.library_id {
+                match library::Entity::find_by_id(lib).one(&app.db).await {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        return respond(
+                            StatusCode::NOT_FOUND,
+                            ApiErrorCode::NotFound,
+                            "library not found",
+                        );
+                    }
+                    Err(e) => return internal(&e),
+                }
+            }
+            match suggestions::pending_ids_in_bucket(
+                &app.db,
+                bucket,
+                req.library_id,
+                suggestions::MAX_BULK,
+            )
+            .await
+            {
+                Ok((ids, _)) => (ids, "bucket"),
+                Err(e) => return internal(&e),
+            }
+        }
+        (None, None) => unreachable!("validate_bulk_accept requires ids or bucket"),
+    };
+    let out = match suggestions::bulk_accept(&app.db, &ids, actor.id).await {
+        Ok(o) => o,
+        Err(e) => return internal(&e),
+    };
+    if out.created > 0 {
+        // One invalidation per batch (WP-7.4 similar series).
+        app.similarity.invalidate_all();
+    }
+    let remaining = match req.bucket {
+        Some(bucket) if req.ids.is_none() => {
+            match suggestions::pending_ids_in_bucket(&app.db, bucket, req.library_id, 0).await {
+                Ok((_, total)) => Some(total),
+                Err(e) => return internal(&e),
+            }
+        }
+        _ => None,
+    };
+    let resp = bulk_resp(&ids, &out, remaining);
+    record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.relationship_suggestion.bulk_accept",
+        payload = serde_json::json!({
+            "mode": mode,
+            "bucket": req.bucket.map(SuggestionBucket::as_str),
+            "library_id": req.library_id.map(|l| l.to_string()),
+            "requested": resp.requested,
+            "accepted": resp.succeeded.len(),
+            "created": resp.created,
+            "failed": resp.failed.len(),
+            "accepted_ids": resp.succeeded,
+            "failures": resp.failed.iter().map(|f| serde_json::json!({
+                "id": f.id, "code": f.code,
+            })).collect::<Vec<_>>(),
+            "remaining": resp.remaining,
+        }),
+    );
+    Json(resp).into_response()
+}
+
+#[utoipa::path(
+    operation_id = "relationship_suggestions_bulk_reject", post,
+    path = "/admin/relationship-suggestions/bulk-reject",
+    request_body = BulkRejectRelationshipSuggestionsReq,
+    responses(
+        (status = 200, body = BulkReviewRelationshipSuggestionsResp, description = "batch committed; per-item refusals listed in `failed`"),
+        (status = 403, description = "admin only"),
+        (status = 422, description = "no ids, or more than 500"),
+    )
+)]
+#[handler]
+pub async fn bulk_reject(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Validated(req): Validated<BulkRejectRelationshipSuggestionsReq>,
+) -> Response {
+    let out = match suggestions::bulk_reject(&app.db, &req.ids, actor.id).await {
+        Ok(o) => o,
+        Err(e) => return internal(&e),
+    };
+    let resp = bulk_resp(&req.ids, &out, None);
+    record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.relationship_suggestion.bulk_reject",
+        payload = serde_json::json!({
+            "requested": resp.requested,
+            "rejected": resp.succeeded.len(),
+            "failed": resp.failed.len(),
+            "rejected_ids": resp.succeeded,
+            "failures": resp.failed.iter().map(|f| serde_json::json!({
+                "id": f.id, "code": f.code,
+            })).collect::<Vec<_>>(),
+        }),
+    );
+    Json(resp).into_response()
+}
+
+/// Cross-field rules for [`bulk_accept`] (garde covers the id count).
+#[allow(clippy::result_large_err)]
+fn validate_bulk_accept(req: &BulkAcceptRelationshipSuggestionsReq) -> Result<(), Response> {
+    let field = |field: &str, message: &str| shared::error::FieldError {
+        field: field.to_owned(),
+        message: message.to_owned(),
+    };
+    let mut errs = Vec::new();
+    match (&req.ids, req.bucket) {
+        (Some(_), Some(_)) => errs.push(field("bucket", "send either `ids` or `bucket`, not both")),
+        (None, None) => errs.push(field("ids", "send `ids` or `bucket`")),
+        (None, Some(b)) if b != SuggestionBucket::High => errs.push(field(
+            "bucket",
+            "only the `high` bucket can be bulk-accepted; pick medium / low rows by id",
+        )),
+        _ => {}
+    }
+    if req.library_id.is_some() && req.ids.is_some() {
+        errs.push(field("library_id", "`library_id` only applies to `bucket`"));
+    }
+    if errs.is_empty() {
+        return Ok(());
+    }
+    let summary = errs
+        .iter()
+        .map(|e| format!("{}: {}", e.field, e.message))
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(super::respond_with_field_errors(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        ApiErrorCode::Validation,
+        summary,
+        errs,
+    ))
+}
+
+fn bulk_resp(
+    ids: &[Uuid],
+    out: &suggestions::BulkOutcome,
+    remaining: Option<u64>,
+) -> BulkReviewRelationshipSuggestionsResp {
+    let distinct: HashSet<&Uuid> = ids.iter().take(suggestions::MAX_BULK).collect();
+    BulkReviewRelationshipSuggestionsResp {
+        requested: u32::try_from(distinct.len()).unwrap_or(u32::MAX),
+        succeeded: out.succeeded.iter().map(|r| r.id.to_string()).collect(),
+        failed: out
+            .failed
+            .iter()
+            .map(|f| BulkReviewFailureView {
+                id: f.id.to_string(),
+                code: failure_code(&f.error),
+                message: f.error.to_string(),
+            })
+            .collect(),
+        created: u32::try_from(out.created).unwrap_or(u32::MAX),
+        remaining,
+    }
+}
+
+fn failure_code(e: &ReviewError) -> BulkReviewFailureCode {
+    match e {
+        ReviewError::NotFound => BulkReviewFailureCode::NotFound,
+        ReviewError::AlreadyReviewed {
+            status: SuggestionStatus::Stale,
+        } => BulkReviewFailureCode::Stale,
+        ReviewError::AlreadyReviewed { .. } => BulkReviewFailureCode::AlreadyReviewed,
+        ReviewError::Pair(crate::relationships::PairError::Conflict { .. }) => {
+            BulkReviewFailureCode::Conflict
+        }
+        ReviewError::Pair(_) | ReviewError::Db(_) => BulkReviewFailureCode::Invalid,
     }
 }
 

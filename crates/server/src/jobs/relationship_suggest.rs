@@ -17,7 +17,7 @@
 //!
 //! **Observability.** A `relationship_suggest` tracing span with the run
 //! counts, plus a `library_events` row (category `series`, action
-//! `generated`) whenever the run inserted or changed suggestions.
+//! `generated`) whenever the run inserted, changed or staled suggestions.
 
 use crate::library::event_log::{self, Action, Category, NewEvent, Severity};
 use crate::relationships::suggestions::{self, RunReport};
@@ -110,7 +110,7 @@ pub async fn run(db: &DatabaseConnection, library_id: Uuid) -> anyhow::Result<Ru
         });
     }
     let report = suggestions::generate_for_library(db, library_id).await?;
-    if report.inserted + report.updated > 0 {
+    if report.inserted + report.updated + report.marked_stale > 0 {
         event_log::record(
             db,
             NewEvent::new(
@@ -119,9 +119,10 @@ pub async fn run(db: &DatabaseConnection, library_id: Uuid) -> anyhow::Result<Ru
                 Action::Generated,
                 Severity::Info,
                 format!(
-                    "Relationship suggestions: {} new, {} updated{}",
+                    "Relationship suggestions: {} new, {} updated, {} stale{}",
                     report.inserted,
                     report.updated,
+                    report.marked_stale,
                     if report.capped > 0 {
                         format!(
                             " ({} over the per-run cap of {})",

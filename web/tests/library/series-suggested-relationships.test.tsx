@@ -1,0 +1,207 @@
+// @vitest-environment jsdom
+/**
+ * <SeriesSuggestedRelationships> — WP-7.3 admin chips on the series page.
+ * Chips read from this series' point of view (the inverse kind when the
+ * series is the suggestion's `to` end), carry the reason in a tooltip,
+ * and accept / reject in one click. Not rendered for non-admins (the
+ * Related block gates it) or when nothing is pending.
+ */
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import type {
+  RelationshipSuggestionView,
+  SeriesRelationshipsResp,
+  SeriesView,
+} from "@/lib/api/types";
+
+const m = vi.hoisted(() => ({
+  role: "admin" as "admin" | "user",
+  items: [] as RelationshipSuggestionView[],
+  hasNextPage: false,
+  enabled: [] as boolean[],
+  accept: vi.fn(),
+  reject: vi.fn(),
+}));
+
+vi.mock("@/lib/api/queries", () => ({
+  useMe: () => ({ data: { role: m.role } }),
+  useSeriesRelationships: () => ({
+    data: {
+      series_id: "this",
+      relationships: [],
+      chain: [],
+    } satisfies SeriesRelationshipsResp,
+    isLoading: false,
+  }),
+  useSeriesListInfinite: () => ({ data: undefined, isLoading: false }),
+  useSeriesRelationshipSuggestions: (_slug: string, enabled: boolean) => {
+    m.enabled.push(enabled);
+    return {
+      data: { pages: [{ items: m.items, next_cursor: null }] },
+      isLoading: false,
+      error: null,
+      hasNextPage: m.hasNextPage,
+      isFetchingNextPage: false,
+      fetchNextPage: vi.fn(),
+    };
+  },
+}));
+vi.mock("@/lib/api/mutations", () => ({
+  useCreateSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
+  useAcceptRelationshipSuggestion: () => ({
+    mutate: m.accept,
+    isPending: false,
+  }),
+  useRejectRelationshipSuggestion: () => ({
+    mutate: m.reject,
+    isPending: false,
+  }),
+}));
+
+import { SeriesRelatedSection } from "@/components/library/SeriesRelatedSection";
+import {
+  SeriesSuggestedRelationships,
+  fromPerspective,
+} from "@/components/library/SeriesSuggestedRelationships";
+
+function series(id: string, name: string, year: number): SeriesView {
+  return {
+    id,
+    slug: `${name.toLowerCase().replace(/\s+/g, "-")}-${year}`,
+    name,
+    year,
+    library_id: "lib",
+    status: "continuing",
+    language_code: "en",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    cover_url: null,
+  } as SeriesView;
+}
+
+const self = series("this", "Daredevil", 2014);
+const older = series("older", "Daredevil", 2011);
+const omnibus = series("omni", "Daredevil Omnibus", 2020);
+
+function sug(
+  id: string,
+  from: SeriesView,
+  to: SeriesView,
+  kind: RelationshipSuggestionView["kind"],
+  label: string,
+): RelationshipSuggestionView {
+  return {
+    id,
+    from_series: from,
+    to_series: to,
+    kind,
+    kind_label: label,
+    confidence: 0.9,
+    bucket: "high",
+    reason: `reason ${id}`,
+    evidence: {
+      sources: [],
+    } as unknown as RelationshipSuggestionView["evidence"],
+    status: "pending",
+    accepted_kind: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    reviewed_at: null,
+    reviewed_by: null,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  m.role = "admin";
+  m.hasNextPage = false;
+  m.enabled.length = 0;
+  m.items = [
+    // This series is the subject: "Sequel of Daredevil (2011)".
+    sug("g1", self, older, "sequel_of", "Sequel of"),
+    // This series is the object of "Omnibus collects Daredevil": reads as
+    // "Collected in Daredevil Omnibus".
+    sug("g2", omnibus, self, "collects", "Collects"),
+  ];
+});
+
+describe("fromPerspective", () => {
+  it("inverts the kind when the series is the `to` end", () => {
+    expect(fromPerspective(m.items[0]!, "this")).toMatchObject({
+      kind: "sequel_of",
+      label: "Sequel of",
+      other: { id: "older" },
+    });
+    expect(fromPerspective(m.items[1]!, "this")).toMatchObject({
+      kind: "collected_in",
+      label: "Collected in",
+      other: { id: "omni" },
+    });
+  });
+});
+
+describe("<SeriesSuggestedRelationships>", () => {
+  it("renders one chip per pending suggestion with accept / reject", () => {
+    render(
+      <SeriesSuggestedRelationships
+        seriesSlug="daredevil-2014"
+        seriesId="this"
+      />,
+    );
+    expect(screen.getByText("Suggested")).toBeTruthy();
+    const accept = screen.getByRole("button", {
+      name: "Accept: Sequel of Daredevil (2011)",
+    });
+    fireEvent.click(accept);
+    expect(m.accept).toHaveBeenCalledWith({ id: "g1" });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Reject: Collected in Daredevil Omnibus (2020)",
+      }),
+    );
+    expect(m.reject).toHaveBeenCalledWith({ id: "g2" });
+    expect(
+      screen
+        .getByRole("link", { name: /Daredevil Omnibus/ })
+        .getAttribute("href"),
+    ).toBe("/series/daredevil-omnibus-2020");
+  });
+
+  it("renders nothing when nothing is pending", () => {
+    m.items = [];
+    const { container } = render(
+      <SeriesSuggestedRelationships
+        seriesSlug="daredevil-2014"
+        seriesId="this"
+      />,
+    );
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("walks the next page with Show more", () => {
+    m.hasNextPage = true;
+    render(
+      <SeriesSuggestedRelationships
+        seriesSlug="daredevil-2014"
+        seriesId="this"
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Show more" })).toBeTruthy();
+  });
+
+  it("is admin-only inside the Related block", () => {
+    m.role = "user";
+    const { container } = render(
+      <SeriesRelatedSection seriesSlug="daredevil-2014" seriesId="this" />,
+    );
+    expect(container.innerHTML).toBe("");
+    expect(m.enabled).toEqual([]);
+    m.role = "admin";
+    render(
+      <SeriesRelatedSection seriesSlug="daredevil-2014" seriesId="this" />,
+    );
+    expect(screen.getByTestId("suggested-relationships")).toBeTruthy();
+  });
+});

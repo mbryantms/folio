@@ -11,8 +11,14 @@
 //! - **Canonical rows.** Self-inverse kinds are stored with
 //!   `from < to`; directional kinds only as `sequel_of` / `spin_off_of` /
 //!   `collects` ([`canonicalize`]). The DB CHECKs mirror this.
-//! - **Rejection memory.** A `(from, to, kind)` whose row is not `pending`
-//!   is never rewritten or re-proposed; rows are never deleted.
+//! - **Rejection memory.** A `(from, to, kind)` whose row is reviewed
+//!   (`accepted` / `rejected` / `modified`) is never rewritten or
+//!   re-proposed; rows are never deleted. [`reopen`] moves a rejected row
+//!   back to `pending` (WP-7.3).
+//! - **Stale rows.** A pending row a run no longer produces is marked
+//!   `stale` (WP-7.3); a later run that produces it again revives it to
+//!   `pending`. Skipped when any evidence source failed, so a transient
+//!   error can't empty the review queue.
 //! - **Existing edges** with the same kind (or its inverse, which would
 //!   contradict on accept) are not suggested.
 //! - **Cap.** At most [`MAX_SUGGESTIONS_PER_RUN`] rows are written per run
@@ -97,7 +103,9 @@ impl FromStr for SuggestionBucket {
     }
 }
 
-/// Review state. Transitions are one-way out of `pending`.
+/// Review state. Reviews (`accepted` / `rejected` / `modified`) are one-way
+/// out of `pending`, except [`reopen`] (`rejected` → `pending`). `stale` is
+/// set and cleared by the engine itself, not by a reviewer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SuggestionStatus {
@@ -107,6 +115,10 @@ pub enum SuggestionStatus {
     Rejected,
     /// Accepted with a different kind (`accepted_kind`).
     Modified,
+    /// Pending, but the latest run no longer produced it (its evidence
+    /// went away). Hidden from the default review list; revived to
+    /// `pending` if a later run produces it again.
+    Stale,
 }
 
 impl SuggestionStatus {
@@ -116,6 +128,7 @@ impl SuggestionStatus {
             Self::Accepted => "accepted",
             Self::Rejected => "rejected",
             Self::Modified => "modified",
+            Self::Stale => "stale",
         }
     }
 }
@@ -128,6 +141,7 @@ impl FromStr for SuggestionStatus {
             "accepted" => Ok(Self::Accepted),
             "rejected" => Ok(Self::Rejected),
             "modified" => Ok(Self::Modified),
+            "stale" => Ok(Self::Stale),
             _ => Err(()),
         }
     }
@@ -291,6 +305,14 @@ pub struct RunReport {
     pub updated: usize,
     /// Pending rows re-proposed unchanged.
     pub unchanged: usize,
+    /// Stale rows produced again and moved back to `pending` (also counted
+    /// in `updated`).
+    pub revived: usize,
+    /// Pending rows this run did not produce, now `stale`.
+    pub marked_stale: usize,
+    /// Evidence sources that errored. When non-empty, stale marking is
+    /// skipped (their candidates are missing, not gone).
+    pub failed_sources: Vec<String>,
     pub elapsed_ms: u64,
 }
 
@@ -323,8 +345,9 @@ pub async fn generate_for_library<C: ConnectionTrait>(
         ..Default::default()
     };
 
-    let (candidates, counts) = sources::collect_all(conn, library_id).await;
+    let (candidates, counts, failed) = sources::collect_all(conn, library_id).await;
     report.by_source = counts.into_iter().map(|(k, v)| (k.to_owned(), v)).collect();
+    report.failed_sources = failed.into_iter().map(str::to_owned).collect();
     let proposals = merge(candidates);
     report.proposals = proposals.len();
 
@@ -349,7 +372,7 @@ pub async fn generate_for_library<C: ConnectionTrait>(
         "SELECT g.from_series_id, g.to_series_id, g.kind \
            FROM series_relationship_suggestion g \
            JOIN series s ON s.id = g.from_series_id \
-          WHERE s.library_id = $1 AND g.status <> 'pending'",
+          WHERE s.library_id = $1 AND g.status NOT IN ('pending', 'stale')",
         [Value::from(library_id)],
     ))
     .all(conn)
@@ -359,7 +382,26 @@ pub async fn generate_for_library<C: ConnectionTrait>(
         .map(|e| (e.from_series_id, e.to_series_id, e.kind))
         .collect();
 
+    // Stale rows (to count revivals: the upsert flips them to pending).
+    let stale = KeyRow::find_by_statement(Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "SELECT g.from_series_id, g.to_series_id, g.kind \
+           FROM series_relationship_suggestion g \
+           JOIN series s ON s.id = g.from_series_id \
+          WHERE s.library_id = $1 AND g.status = 'stale'",
+        [Value::from(library_id)],
+    ))
+    .all(conn)
+    .await?;
+    let stale_set: HashSet<(Uuid, Uuid, String)> = stale
+        .into_iter()
+        .map(|e| (e.from_series_id, e.to_series_id, e.kind))
+        .collect();
+
     let mut keep: Vec<Proposal> = Vec::with_capacity(proposals.len().min(MAX_SUGGESTIONS_PER_RUN));
+    // Every proposal still produced this run (kept or capped): pending rows
+    // outside this set go stale.
+    let mut produced: Vec<(Uuid, Uuid, RelationshipKind)> = Vec::with_capacity(proposals.len());
     for p in proposals {
         // Inverse rows are always stored, so checking the forward
         // orientation for both the kind and its inverse covers "already
@@ -374,9 +416,13 @@ pub async fn generate_for_library<C: ConnectionTrait>(
             report.skipped_reviewed += 1;
             continue;
         }
+        produced.push((p.from, p.to, p.kind));
         if keep.len() >= MAX_SUGGESTIONS_PER_RUN {
             report.capped += 1;
             continue;
+        }
+        if stale_set.contains(&same) {
+            report.revived += 1;
         }
         keep.push(p);
     }
@@ -393,6 +439,15 @@ pub async fn generate_for_library<C: ConnectionTrait>(
     }
     // Rows the upsert matched but left alone: pending + identical.
     report.unchanged = keep.len().saturating_sub(report.inserted + report.updated);
+    if report.failed_sources.is_empty() {
+        report.marked_stale = mark_stale(conn, library_id, &produced).await?;
+    } else {
+        tracing::warn!(
+            library_id = %library_id,
+            failed = ?report.failed_sources,
+            "relationship suggestions: a source failed, not marking stale rows"
+        );
+    }
     report.elapsed_ms = started.elapsed().as_millis() as u64;
     tracing::info!(
         library_id = %library_id,
@@ -403,16 +458,19 @@ pub async fn generate_for_library<C: ConnectionTrait>(
         skipped_existing_edge = report.skipped_existing_edge,
         skipped_reviewed = report.skipped_reviewed,
         capped = report.capped,
+        revived = report.revived,
+        marked_stale = report.marked_stale,
         elapsed_ms = report.elapsed_ms,
         "relationship suggestions: run complete"
     );
     Ok(report)
 }
 
-/// `INSERT … ON CONFLICT DO UPDATE … WHERE status = 'pending'`. A reviewed
-/// row conflicts and is left untouched (the `WHERE` guard also covers a
-/// review that lands between the pre-filter and this statement). Returns
-/// one row per inserted or *changed* pending row.
+/// `INSERT … ON CONFLICT DO UPDATE … WHERE status IN ('pending', 'stale')`.
+/// A reviewed row conflicts and is left untouched (the `WHERE` guard also
+/// covers a review that lands between the pre-filter and this statement);
+/// a stale row is revived to `pending`. Returns one row per inserted,
+/// *changed* or revived row.
 async fn upsert_chunk<C: ConnectionTrait>(
     conn: &C,
     chunk: &[Proposal],
@@ -436,9 +494,11 @@ async fn upsert_chunk<C: ConnectionTrait>(
                bucket     = EXCLUDED.bucket,
                reason     = EXCLUDED.reason,
                evidence   = EXCLUDED.evidence,
+               status     = 'pending',
                updated_at = now()
-         WHERE series_relationship_suggestion.status = 'pending'
-           AND (series_relationship_suggestion.confidence IS DISTINCT FROM EXCLUDED.confidence
+         WHERE series_relationship_suggestion.status IN ('pending', 'stale')
+           AND (series_relationship_suggestion.status = 'stale'
+             OR series_relationship_suggestion.confidence IS DISTINCT FROM EXCLUDED.confidence
              OR series_relationship_suggestion.reason     IS DISTINCT FROM EXCLUDED.reason
              OR series_relationship_suggestion.evidence   IS DISTINCT FROM EXCLUDED.evidence)
         RETURNING (xmax = 0) AS inserted, true AS changed
@@ -460,13 +520,54 @@ async fn upsert_chunk<C: ConnectionTrait>(
     .await
 }
 
-// ───── review (WP-7.3 builds on these) ─────
+/// Mark the library's pending rows that are not in `produced` as `stale`.
+/// Returns how many rows changed. Keyed on the suggestion's `from` series'
+/// library, like every other library-scoped query here.
+async fn mark_stale<C: ConnectionTrait>(
+    conn: &C,
+    library_id: Uuid,
+    produced: &[(Uuid, Uuid, RelationshipKind)],
+) -> Result<usize, DbErr> {
+    let from: Vec<String> = produced.iter().map(|k| k.0.to_string()).collect();
+    let to: Vec<String> = produced.iter().map(|k| k.1.to_string()).collect();
+    let kind: Vec<String> = produced.iter().map(|k| k.2.as_str().to_owned()).collect();
+    let res = conn
+        .execute_raw(Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            r#"
+            UPDATE series_relationship_suggestion g
+               SET status = 'stale', updated_at = now()
+              FROM series s
+             WHERE s.id = g.from_series_id
+               AND s.library_id = $1
+               AND g.status = 'pending'
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM unnest($2::text[], $3::text[], $4::text[]) AS k(f, t, kd)
+                    WHERE k.f::uuid = g.from_series_id
+                      AND k.t::uuid = g.to_series_id
+                      AND k.kd = g.kind)
+            "#,
+            [
+                Value::from(library_id),
+                Value::from(from),
+                Value::from(to),
+                Value::from(kind),
+            ],
+        ))
+        .await?;
+    Ok(usize::try_from(res.rows_affected()).unwrap_or(usize::MAX))
+}
+
+// ───── review ─────
 
 /// Why [`accept`] / [`reject`] refused.
 #[derive(Debug)]
 pub enum ReviewError {
     NotFound,
-    /// Already accepted / rejected / modified — reviews are one-way.
+    /// Not in the state the action needs: already accepted / rejected /
+    /// modified (reviews are one-way), stale, or — for [`reopen`] — not
+    /// rejected.
     AlreadyReviewed {
         status: SuggestionStatus,
     },
@@ -485,6 +586,12 @@ impl fmt::Display for ReviewError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotFound => f.write_str("suggestion not found"),
+            Self::AlreadyReviewed {
+                status: SuggestionStatus::Stale,
+            } => f.write_str("suggestion is stale (the engine no longer proposes it)"),
+            Self::AlreadyReviewed {
+                status: SuggestionStatus::Pending,
+            } => f.write_str("suggestion is still pending"),
             Self::AlreadyReviewed { status } => {
                 write!(f, "suggestion already reviewed ({})", status.as_str())
             }
@@ -599,6 +706,154 @@ where
     Ok(out)
 }
 
+/// Reopen a rejected suggestion (`rejected` → `pending`): the manual
+/// "clear the rejection" spec §5.7 asks for. The row is kept (append-only:
+/// only the status moves) and its review stamp is cleared, so it reads as
+/// pending again; the audit row written by the caller keeps who rejected it
+/// and when. Returns the row before and after. Anything but `rejected` is
+/// [`ReviewError::AlreadyReviewed`] (409).
+pub async fn reopen<C>(conn: &C, id: Uuid) -> Result<(sug::Model, sug::Model), ReviewError>
+where
+    C: ConnectionTrait + TransactionTrait,
+{
+    use sea_orm::{ActiveModelTrait, Set};
+    let txn = conn.begin().await?;
+    let row = sug::Entity::find_by_id(id)
+        .lock_exclusive()
+        .one(&txn)
+        .await?
+        .ok_or(ReviewError::NotFound)?;
+    let status = row.status.parse().unwrap_or(SuggestionStatus::Pending);
+    if status != SuggestionStatus::Rejected {
+        return Err(ReviewError::AlreadyReviewed { status });
+    }
+    let before = row.clone();
+    let mut am: sug::ActiveModel = row.into();
+    am.status = Set(SuggestionStatus::Pending.as_str().to_owned());
+    am.accepted_kind = Set(None);
+    am.reviewed_at = Set(None);
+    am.reviewed_by = Set(None);
+    am.updated_at = Set(Utc::now().fixed_offset());
+    let after = am.update(&txn).await?;
+    txn.commit().await?;
+    Ok((before, after))
+}
+
+/// Hard cap on one bulk request (explicit ids, or the rows a bucket
+/// selects). Larger backlogs take several requests; each is its own
+/// batch with its own audit row.
+pub const MAX_BULK: usize = 500;
+
+/// One item of a bulk review that was skipped.
+#[derive(Debug)]
+pub struct BulkFailure {
+    pub id: Uuid,
+    pub error: ReviewError,
+}
+
+/// What [`bulk_accept`] / [`bulk_reject`] did.
+#[derive(Debug, Default)]
+pub struct BulkOutcome {
+    /// Accepted (or rejected) rows, in request order.
+    pub succeeded: Vec<sug::Model>,
+    /// Edge pairs newly inserted (accept only; `created = true`).
+    pub created: usize,
+    /// Per-item refusals (not found, already reviewed / stale, conflicting
+    /// edge). The rest of the batch still commits.
+    pub failed: Vec<BulkFailure>,
+}
+
+/// Accept many suggestions in **one** transaction, each [`accept`] in its
+/// own savepoint: a per-item refusal (not found, already reviewed, stale,
+/// contradicting edge) rolls back only that item and is reported in
+/// [`BulkOutcome::failed`]. A database error aborts the whole batch
+/// (nothing commits). Duplicate ids are processed once. At most
+/// [`MAX_BULK`] ids.
+///
+/// The caller writes one audit row for the batch and, when
+/// `created > 0`, calls `AppState::similarity.invalidate_all()` once.
+pub async fn bulk_accept<C>(conn: &C, ids: &[Uuid], actor: Uuid) -> Result<BulkOutcome, DbErr>
+where
+    C: ConnectionTrait + TransactionTrait,
+{
+    let txn = conn.begin().await?;
+    let mut out = BulkOutcome::default();
+    let mut seen = HashSet::new();
+    for &id in ids.iter().take(MAX_BULK) {
+        if !seen.insert(id) {
+            continue;
+        }
+        match accept(&txn, id, actor, None).await {
+            Ok(o) => {
+                if o.pair.created {
+                    out.created += 1;
+                }
+                out.succeeded.push(o.suggestion);
+            }
+            Err(ReviewError::Db(e)) => return Err(e),
+            Err(error) => out.failed.push(BulkFailure { id, error }),
+        }
+    }
+    txn.commit().await?;
+    Ok(out)
+}
+
+/// Reject many suggestions in one transaction; same per-item savepoint and
+/// failure reporting as [`bulk_accept`].
+pub async fn bulk_reject<C>(conn: &C, ids: &[Uuid], actor: Uuid) -> Result<BulkOutcome, DbErr>
+where
+    C: ConnectionTrait + TransactionTrait,
+{
+    let txn = conn.begin().await?;
+    let mut out = BulkOutcome::default();
+    let mut seen = HashSet::new();
+    for &id in ids.iter().take(MAX_BULK) {
+        if !seen.insert(id) {
+            continue;
+        }
+        match reject(&txn, id, actor).await {
+            Ok(row) => out.succeeded.push(row),
+            Err(ReviewError::Db(e)) => return Err(e),
+            Err(error) => out.failed.push(BulkFailure { id, error }),
+        }
+    }
+    txn.commit().await?;
+    Ok(out)
+}
+
+/// Ids of the pending suggestions in `bucket` (optionally one library),
+/// highest confidence first, at most `limit`, plus how many match in
+/// total (`limit = 0` only counts). Drives bulk accept's bucket mode.
+pub async fn pending_ids_in_bucket<C: ConnectionTrait>(
+    conn: &C,
+    bucket: SuggestionBucket,
+    library_id: Option<Uuid>,
+    limit: usize,
+) -> Result<(Vec<Uuid>, u64), DbErr> {
+    let filter = SuggestionFilter {
+        status: Some(SuggestionStatus::Pending),
+        bucket: Some(bucket),
+        library_id,
+        series_id: None,
+    };
+    let cond = filter_condition(&filter).add(sug::Column::Bucket.eq(bucket.as_str()));
+    let total = sug::Entity::find().filter(cond.clone()).count(conn).await?;
+    if limit == 0 {
+        return Ok((Vec::new(), total));
+    }
+    let ids: Vec<Uuid> = sug::Entity::find()
+        .select_only()
+        .column(sug::Column::Id)
+        .filter(cond)
+        .order_by_desc(sug::Column::Confidence)
+        .order_by_asc(sug::Column::Id)
+        .limit(limit as u64)
+        .into_tuple()
+        .all(conn)
+        .await?;
+    Ok((ids, total))
+}
+
 async fn set_status<C: ConnectionTrait>(
     conn: &C,
     row: sug::Model,
@@ -620,6 +875,8 @@ async fn set_status<C: ConnectionTrait>(
 /// Filters for [`list`]. `None` means "any".
 #[derive(Debug, Clone, Default)]
 pub struct SuggestionFilter {
+    /// `None` = every status **except** `stale` (stale rows only show when
+    /// asked for by name).
     pub status: Option<SuggestionStatus>,
     pub bucket: Option<SuggestionBucket>,
     /// Series' library (both ends share it — suggestions are same-library).
@@ -653,8 +910,9 @@ pub struct SuggestionPage {
 
 fn filter_condition(filter: &SuggestionFilter) -> Condition {
     let mut cond = Condition::all();
-    if let Some(s) = filter.status {
-        cond = cond.add(sug::Column::Status.eq(s.as_str()));
+    match filter.status {
+        Some(s) => cond = cond.add(sug::Column::Status.eq(s.as_str())),
+        None => cond = cond.add(sug::Column::Status.ne(SuggestionStatus::Stale.as_str())),
     }
     if let Some(lib) = filter.library_id {
         cond = cond.add(

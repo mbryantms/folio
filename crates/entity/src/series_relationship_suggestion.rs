@@ -3,8 +3,9 @@
 //! rationale (canonical direction, append-only status transitions).
 //!
 //! Written only by `server::relationships::suggestions` (the engine's
-//! upsert plus `accept` / `reject`). Never delete rows: a rejected row is
-//! what keeps the suggestion from coming back.
+//! upsert and stale marking, plus `accept` / `reject` / `reopen`). Never
+//! delete rows: a rejected row is what keeps the suggestion from coming
+//! back.
 
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -28,7 +29,8 @@ pub struct Model {
     pub reason: String,
     /// Structured evidence (spec §5.7): `{ "sources": [ { "source": …, … } ] }`.
     pub evidence: Json,
-    /// `pending | accepted | rejected | modified`.
+    /// `pending | accepted | rejected | modified | stale` (`stale`: no
+    /// longer produced by the engine; WP-7.3, `m20270503`).
     pub status: String,
     /// Kind actually created when accepted with an override (`modified`).
     #[sea_orm(nullable)]

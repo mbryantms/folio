@@ -2,6 +2,10 @@
 //! canonical dedupe, rejection memory, existing-edge dedupe, accept via
 //! `create_pair`, the per-run cap on a few-thousand-series library, the
 //! admin gate, and audit rows.
+//!
+//! WP-7.3: bulk accept / reject (one audit row per batch, per-item
+//! failures, one similarity invalidation), reopen, and stale marking /
+//! revival.
 
 mod common;
 
@@ -1155,6 +1159,26 @@ async fn non_admins_get_403_everywhere() {
             None,
         ),
         (
+            Method::POST,
+            format!("/api/admin/relationship-suggestions/{id}/reopen"),
+            None,
+        ),
+        (
+            Method::POST,
+            "/api/admin/relationship-suggestions/bulk-accept".to_owned(),
+            Some(serde_json::json!({ "bucket": "high" })),
+        ),
+        (
+            Method::POST,
+            "/api/admin/relationship-suggestions/bulk-accept".to_owned(),
+            Some(serde_json::json!({ "ids": [id] })),
+        ),
+        (
+            Method::POST,
+            "/api/admin/relationship-suggestions/bulk-reject".to_owned(),
+            Some(serde_json::json!({ "ids": [id] })),
+        ),
+        (
             Method::GET,
             format!("/api/series/{saga_slug}/relationship-suggestions"),
             None,
@@ -1290,4 +1314,493 @@ async fn cap_is_respected_on_a_large_library() {
     // A rerun stays bounded and doesn't grow past the cap of new rows.
     let again = relationship_suggest::run(&db, lib).await.unwrap();
     assert!(again.inserted <= MAX_SUGGESTIONS_PER_RUN);
+}
+
+// ───── WP-7.3 ─────
+
+async fn rename_series(db: &DatabaseConnection, id: Uuid, name: &str) {
+    SeriesAM {
+        id: Unchanged(id),
+        name: Set(name.into()),
+        normalized_name: Set(normalize_name(name)),
+        ..Default::default()
+    }
+    .update(db)
+    .await
+    .unwrap();
+}
+
+async fn status_of(db: &DatabaseConnection, id: Uuid) -> String {
+    sug::Entity::find_by_id(id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+        .status
+}
+
+#[tokio::test]
+async fn bulk_accept_by_ids_is_one_batch_with_partial_failures() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let f = fixture(&app, &db).await;
+    relationship_suggest::run(&db, f.lib).await.unwrap();
+    let all = rows(&db).await;
+    let dd = find(&all, f.dd_2014, f.dd_2011, "sequel_of").unwrap().id;
+    let thor = find(&all, f.thor_2018, f.thor_2014, "sequel_of")
+        .unwrap()
+        .id;
+    let (a, b) = ordered(f.ff_1998, f.ff_2012);
+    let ff = find(&all, a, b, "see_also").unwrap().id;
+
+    // ff: already rejected. thor: contradicted by a manual edge.
+    let (status, _) = call_json(
+        &app,
+        Method::POST,
+        &format!("/api/admin/relationship-suggestions/{ff}/reject"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let txn = sea_orm::TransactionTrait::begin(&db).await.unwrap();
+    relationships::create_pair(
+        &txn,
+        f.thor_2014,
+        f.thor_2018,
+        RelationshipKind::SequelOf,
+        RelationshipSource::Manual,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+
+    let missing = Uuid::now_v7();
+    let generation = app.state().similarity.generation();
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        "/api/admin/relationship-suggestions/bulk-accept",
+        &admin,
+        Some(serde_json::json!({ "ids": [dd, thor, ff, missing, dd] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["requested"], 4, "duplicates are processed once");
+    assert_eq!(body["succeeded"], serde_json::json!([dd.to_string()]));
+    assert_eq!(body["created"], 1);
+    assert!(body.get("remaining").is_none(), "ids mode has no remaining");
+    let failed = body["failed"].as_array().unwrap();
+    let code = |id: Uuid| {
+        failed
+            .iter()
+            .find(|f| f["id"] == id.to_string())
+            .map(|f| f["code"].as_str().unwrap().to_owned())
+    };
+    assert_eq!(code(thor).as_deref(), Some("conflict"));
+    assert_eq!(code(ff).as_deref(), Some("already_reviewed"));
+    assert_eq!(code(missing).as_deref(), Some("not_found"));
+
+    // The good item committed; the failed ones rolled back to their
+    // savepoints without sinking the batch.
+    assert_eq!(status_of(&db, dd).await, "accepted");
+    assert_eq!(status_of(&db, thor).await, "pending");
+    assert!(
+        rel::Entity::find()
+            .filter(rel::Column::FromSeriesId.eq(f.dd_2014))
+            .filter(rel::Column::ToSeriesId.eq(f.dd_2011))
+            .filter(rel::Column::Kind.eq("sequel_of"))
+            .filter(rel::Column::Source.eq("suggested"))
+            .one(&db)
+            .await
+            .unwrap()
+            .is_some(),
+        "accepted via create_pair"
+    );
+    assert_eq!(
+        app.state().similarity.generation(),
+        generation + 1,
+        "one invalidation per batch"
+    );
+
+    // Exactly one audit row for the batch, none per item.
+    assert_eq!(
+        audit_count(&db, "admin.relationship_suggestion.bulk_accept").await,
+        1
+    );
+    assert_eq!(
+        audit_count(&db, "admin.relationship_suggestion.accept").await,
+        0
+    );
+    let audit = entity::audit_log::Entity::find()
+        .filter(entity::audit_log::Column::Action.eq("admin.relationship_suggestion.bulk_accept"))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(audit.payload["mode"], "ids");
+    assert_eq!(audit.payload["accepted"], 1);
+    assert_eq!(audit.payload["failed"], 3);
+    assert_eq!(
+        audit.payload["accepted_ids"],
+        serde_json::json!([dd.to_string()])
+    );
+
+    // A batch that creates nothing doesn't invalidate.
+    let generation = app.state().similarity.generation();
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        "/api/admin/relationship-suggestions/bulk-accept",
+        &admin,
+        Some(serde_json::json!({ "ids": [dd] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["failed"][0]["code"], "already_reviewed");
+    assert_eq!(app.state().similarity.generation(), generation);
+    assert_eq!(
+        audit_count(&db, "admin.relationship_suggestion.bulk_accept").await,
+        2
+    );
+}
+
+#[tokio::test]
+async fn bulk_accept_high_bucket_and_validation() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let f = fixture(&app, &db).await;
+    relationship_suggest::run(&db, f.lib).await.unwrap();
+    let high: Vec<Uuid> = rows(&db)
+        .await
+        .into_iter()
+        .filter(|r| r.bucket == "high" && r.status == "pending")
+        .map(|r| r.id)
+        .collect();
+    assert!(!high.is_empty(), "fixture has high-confidence suggestions");
+    let others = rows(&db)
+        .await
+        .into_iter()
+        .filter(|r| r.bucket != "high")
+        .count();
+
+    // Validation: 422 for neither / both / non-high bucket / library_id
+    // with ids / too many ids / empty ids; 404 for an unknown library.
+    for body in [
+        serde_json::json!({}),
+        serde_json::json!({ "ids": [high[0]], "bucket": "high" }),
+        serde_json::json!({ "bucket": "medium" }),
+        serde_json::json!({ "ids": [high[0]], "library_id": f.lib }),
+        serde_json::json!({ "ids": [] }),
+        serde_json::json!({ "ids": (0..501).map(|_| Uuid::now_v7()).collect::<Vec<_>>() }),
+    ] {
+        let (status, resp) = call_json(
+            &app,
+            Method::POST,
+            "/api/admin/relationship-suggestions/bulk-accept",
+            &admin,
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body} → {resp}");
+        assert!(resp["error"]["details"].is_array(), "{resp}");
+    }
+    let (status, _) = call_json(
+        &app,
+        Method::POST,
+        "/api/admin/relationship-suggestions/bulk-accept",
+        &admin,
+        Some(serde_json::json!({ "bucket": "high", "library_id": Uuid::now_v7() })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        audit_count(&db, "admin.relationship_suggestion.bulk_accept").await,
+        0
+    );
+
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        "/api/admin/relationship-suggestions/bulk-accept",
+        &admin,
+        Some(serde_json::json!({ "bucket": "high", "library_id": f.lib })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["requested"], high.len() as u64);
+    let succeeded = body["succeeded"].as_array().unwrap().len();
+    let failed = body["failed"].as_array().unwrap().len();
+    assert_eq!(succeeded + failed, high.len());
+    assert_eq!(
+        body["remaining"], failed as u64,
+        "only refusals stay pending"
+    );
+    assert_eq!(
+        audit_count(&db, "admin.relationship_suggestion.bulk_accept").await,
+        1
+    );
+    // Medium / low rows untouched.
+    assert_eq!(
+        rows(&db)
+            .await
+            .iter()
+            .filter(|r| r.bucket != "high" && r.status == "pending")
+            .count(),
+        others
+    );
+}
+
+#[tokio::test]
+async fn bulk_reject_writes_one_audit_row() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let f = fixture(&app, &db).await;
+    relationship_suggest::run(&db, f.lib).await.unwrap();
+    let ids: Vec<Uuid> = rows(&db).await.iter().take(3).map(|r| r.id).collect();
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        "/api/admin/relationship-suggestions/bulk-reject",
+        &admin,
+        Some(serde_json::json!({ "ids": [ids[0], ids[1], ids[2], Uuid::now_v7()] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["succeeded"].as_array().unwrap().len(), 3);
+    assert_eq!(body["failed"][0]["code"], "not_found");
+    for id in &ids {
+        assert_eq!(status_of(&db, *id).await, "rejected");
+    }
+    assert_eq!(
+        audit_count(&db, "admin.relationship_suggestion.bulk_reject").await,
+        1
+    );
+    assert_eq!(
+        audit_count(&db, "admin.relationship_suggestion.reject").await,
+        0
+    );
+    let (status, _) = call_json(
+        &app,
+        Method::POST,
+        "/api/admin/relationship-suggestions/bulk-reject",
+        &admin,
+        Some(serde_json::json!({ "ids": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn reopen_clears_a_rejection() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let f = fixture(&app, &db).await;
+    relationship_suggest::run(&db, f.lib).await.unwrap();
+    let before = rows(&db).await.len();
+    let thor = find(&rows(&db).await, f.thor_2018, f.thor_2014, "sequel_of")
+        .unwrap()
+        .id;
+
+    // Only a rejected row can be reopened.
+    let (status, _) = call_json(
+        &app,
+        Method::POST,
+        &format!("/api/admin/relationship-suggestions/{thor}/reopen"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, _) = call_json(
+        &app,
+        Method::POST,
+        &format!("/api/admin/relationship-suggestions/{thor}/reject"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        &format!("/api/admin/relationship-suggestions/{thor}/reopen"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["suggestion"]["status"], "pending");
+    assert!(body["suggestion"]["reviewed_at"].is_null());
+    let row = sug::Entity::find_by_id(thor)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, "pending");
+    assert_eq!(row.reviewed_by, None);
+    assert_eq!(rows(&db).await.len(), before, "append-only: no row deleted");
+
+    assert_eq!(
+        audit_count(&db, "admin.relationship_suggestion.reopen").await,
+        1
+    );
+    let audit = entity::audit_log::Entity::find()
+        .filter(entity::audit_log::Column::Action.eq("admin.relationship_suggestion.reopen"))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(audit.payload["previous_status"], "rejected");
+    assert_eq!(audit.payload["rejected_by"], admin.user_id.to_string());
+
+    // The engine treats it as pending again (refreshed, not skipped).
+    let report = relationship_suggest::run(&db, f.lib).await.unwrap();
+    assert_eq!(report.skipped_reviewed, 0, "{report:?}");
+    assert_eq!(status_of(&db, thor).await, "pending");
+
+    // Unknown / malformed ids.
+    let (status, _) = call_json(
+        &app,
+        Method::POST,
+        &format!(
+            "/api/admin/relationship-suggestions/{}/reopen",
+            Uuid::now_v7()
+        ),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = call_json(
+        &app,
+        Method::POST,
+        "/api/admin/relationship-suggestions/nope/reopen",
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn stale_rows_are_hidden_and_revive_when_produced_again() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let f = fixture(&app, &db).await;
+    let first = relationship_suggest::run(&db, f.lib).await.unwrap();
+    assert_eq!(first.marked_stale, 0, "{first:?}");
+    let thor = find(&rows(&db).await, f.thor_2018, f.thor_2014, "sequel_of")
+        .unwrap()
+        .id;
+    let pending_before = rows(&db)
+        .await
+        .iter()
+        .filter(|r| r.status == "pending")
+        .count();
+
+    // The evidence goes away: Thor (2018) is renamed, so the name
+    // continuation no longer fires.
+    rename_series(&db, f.thor_2018, "Mighty Thor Reborn").await;
+    let report = relationship_suggest::run(&db, f.lib).await.unwrap();
+    assert!(report.failed_sources.is_empty(), "{report:?}");
+    assert!(report.marked_stale >= 1, "{report:?}");
+    assert_eq!(status_of(&db, thor).await, "stale");
+
+    // Hidden from the default list and from `all`; shown by `stale`.
+    let listed = |body: &serde_json::Value| -> Vec<String> {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    for q in ["", "&status=all", "&status=pending"] {
+        let (status, body) = call_json(
+            &app,
+            Method::GET,
+            &format!(
+                "/api/admin/relationship-suggestions?limit=200&library_id={}{q}",
+                f.lib
+            ),
+            &admin,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(!listed(&body).contains(&thor.to_string()), "{q}");
+    }
+    let (_, body) = call_json(
+        &app,
+        Method::GET,
+        &format!(
+            "/api/admin/relationship-suggestions?status=stale&library_id={}",
+            f.lib
+        ),
+        &admin,
+        None,
+    )
+    .await;
+    assert!(listed(&body).contains(&thor.to_string()));
+    assert!(
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["status"] == "stale")
+    );
+
+    // A stale row can't be accepted (409) and is not rejection memory.
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        &format!("/api/admin/relationship-suggestions/{thor}/accept"),
+        &admin,
+        Some(serde_json::json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body["error"]["message"].as_str().unwrap().contains("stale"),
+        "{body}"
+    );
+
+    // The evidence comes back: the same row revives to pending.
+    rename_series(&db, f.thor_2018, "Thor").await;
+    let report = relationship_suggest::run(&db, f.lib).await.unwrap();
+    assert_eq!(report.revived, 1, "{report:?}");
+    assert_eq!(report.inserted, 0, "the row is reused, not re-inserted");
+    assert_eq!(report.marked_stale, 0, "{report:?}");
+    assert_eq!(status_of(&db, thor).await, "pending");
+    assert_eq!(
+        rows(&db)
+            .await
+            .iter()
+            .filter(|r| r.status == "pending")
+            .count(),
+        pending_before
+    );
+
+    // Reviewed rows never go stale.
+    let (status, _) = call_json(
+        &app,
+        Method::POST,
+        &format!("/api/admin/relationship-suggestions/{thor}/reject"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    rename_series(&db, f.thor_2018, "Mighty Thor Reborn").await;
+    relationship_suggest::run(&db, f.lib).await.unwrap();
+    assert_eq!(status_of(&db, thor).await, "rejected");
 }

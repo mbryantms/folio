@@ -619,6 +619,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/relationship-suggestions/bulk-accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["relationship_suggestions_bulk_accept"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/relationship-suggestions/bulk-reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["relationship_suggestions_bulk_reject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/relationship-suggestions/run": {
         parameters: {
             query?: never;
@@ -661,6 +693,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["relationship_suggestions_reject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/relationship-suggestions/{id}/reopen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["relationship_suggestions_reopen"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5432,6 +5480,26 @@ export interface components {
          */
         BudgetWindow: "minute" | "hour" | "day";
         /**
+         * @description Bulk accept: explicit `ids`, **or** a bucket selection. Exactly one of
+         *     `ids` / `bucket` must be set.
+         *
+         *     - `ids`: 1–500 suggestion ids, processed in order (duplicates once).
+         *     - `bucket`: only `"high"` — the pending high-confidence rows (optionally
+         *       one `library_id`), highest confidence first, at most 500 per request.
+         *       The response's `remaining` says how many are left; send the request
+         *       again to take the next batch. Medium / low rows are only bulk-accepted
+         *       by explicit ids, after a reviewer has looked at them.
+         */
+        BulkAcceptRelationshipSuggestionsReq: {
+            bucket?: components["schemas"]["SuggestionBucket"] | null;
+            ids?: string[] | null;
+            /**
+             * Format: uuid
+             * @description Bucket mode only: restrict to one library.
+             */
+            library_id?: string | null;
+        };
+        /**
          * @description Body for `POST /me/collections/{id}/members/bulk-add`. Each
          *     member follows the same `(entry_kind, ref_id)` shape as the
          *     single-add endpoint. Multi-select toolbar (`<SelectionToolbar>`'s
@@ -5607,6 +5675,10 @@ export interface components {
         };
         /** @enum {string} */
         BulkMode: "skip_if_set" | "replace";
+        /** @description Bulk reject: 1–500 explicit ids (no bucket mode — a reviewer picks them). */
+        BulkRejectRelationshipSuggestionsReq: {
+            ids: string[];
+        };
         /**
          * @description Body for `POST /me/collections/{id}/members/bulk-remove`. Identifies
          *     each member by its `(entry_kind, ref_id)` pair — the same shape the
@@ -5638,6 +5710,41 @@ export interface components {
              * @description Rows removed from the collection.
              */
             removed: number;
+        };
+        /**
+         * @description Why one item of a bulk request was skipped.
+         * @enum {string}
+         */
+        BulkReviewFailureCode: "not_found" | "already_reviewed" | "stale" | "conflict" | "invalid";
+        BulkReviewFailureView: {
+            code: components["schemas"]["BulkReviewFailureCode"];
+            id: string;
+            message: string;
+        };
+        /**
+         * @description Result of one bulk batch. The batch commits as a whole; per-item
+         *     refusals land in `failed` instead of failing the request.
+         */
+        BulkReviewRelationshipSuggestionsResp: {
+            /**
+             * Format: int32
+             * @description Accept only: edge pairs newly inserted (an accept whose edge
+             *     already existed doesn't count).
+             */
+            created: number;
+            failed: components["schemas"]["BulkReviewFailureView"][];
+            /**
+             * Format: int64
+             * @description Bucket mode only: pending rows still in the bucket after this batch.
+             */
+            remaining?: number | null;
+            /**
+             * Format: int32
+             * @description Distinct ids processed.
+             */
+            requested: number;
+            /** @description Ids accepted (or rejected), in processing order. */
+            succeeded: string[];
         };
         BulkSkip: {
             issue_id: string;
@@ -9760,6 +9867,10 @@ export interface components {
             removed_at: string;
             slug: string;
         };
+        /** @description `POST /{id}/reopen` result: the row, now pending again. */
+        ReopenRelationshipSuggestionResp: {
+            suggestion: components["schemas"]["RelationshipSuggestionView"];
+        };
         ReorderEntriesReq: {
             entry_ids: string[];
         };
@@ -10714,10 +10825,12 @@ export interface components {
             medium: number;
         };
         /**
-         * @description Review state. Transitions are one-way out of `pending`.
+         * @description Review state. Reviews (`accepted` / `rejected` / `modified`) are one-way
+         *     out of `pending`, except [`reopen`] (`rejected` → `pending`). `stale` is
+         *     set and cleared by the engine itself, not by a reviewer.
          * @enum {string}
          */
-        SuggestionStatus: "pending" | "accepted" | "rejected" | "modified";
+        SuggestionStatus: "pending" | "accepted" | "rejected" | "modified" | "stale";
         SyncStatusResp: {
             last_metadata_sync_at?: string | null;
             /**
@@ -13004,7 +13117,7 @@ export interface operations {
     relationship_suggestions_list: {
         parameters: {
             query?: {
-                /** @description `pending` (default), `accepted`, `rejected`, `modified` or `all` */
+                /** @description `pending` (default), `accepted`, `rejected`, `modified`, `stale`, or `all` (every status except `stale`) */
                 status?: string;
                 /** @description `high`, `medium` or `low` */
                 bucket?: string;
@@ -13037,6 +13150,89 @@ export interface operations {
             };
             /** @description admin only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    relationship_suggestions_bulk_accept: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkAcceptRelationshipSuggestionsReq"];
+            };
+        };
+        responses: {
+            /** @description batch committed; per-item refusals listed in `failed` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkReviewRelationshipSuggestionsResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description neither or both of `ids` / `bucket`, a bucket other than `high`, `library_id` without `bucket`, or more than 500 ids */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    relationship_suggestions_bulk_reject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkRejectRelationshipSuggestionsReq"];
+            };
+        };
+        responses: {
+            /** @description batch committed; per-item refusals listed in `failed` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkReviewRelationshipSuggestionsResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no ids, or more than 500 */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13179,6 +13375,57 @@ export interface operations {
                 content?: never;
             };
             /** @description already reviewed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    relationship_suggestions_reopen: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description suggestion id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description rejection cleared: the suggestion is pending again */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReopenRelationshipSuggestionResp"];
+                };
+            };
+            /** @description malformed id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description suggestion not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not rejected */
             409: {
                 headers: {
                     [name: string]: unknown;

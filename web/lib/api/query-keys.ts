@@ -341,6 +341,19 @@ export const queryKeys = {
   /** WP-7.1: direct relationships + sequel/prequel chain for a series. */
   seriesRelationships: (slug: string) =>
     ["series", slug, "relationships"] as const,
+  /** WP-7.3: prefix for every admin relationship-suggestion listing. */
+  relationshipSuggestionsAll: ["admin", "relationship-suggestions"] as const,
+  /** WP-7.3 review page listing (server-side status / bucket / library
+   *  filters, cursor-paginated). */
+  relationshipSuggestions: (filters: {
+    status: string;
+    bucket: string | null;
+    libraryId: string | null;
+  }) => ["admin", "relationship-suggestions", filters] as const,
+  /** WP-7.3 pending suggestions touching one series (admin chips on the
+   *  series page). */
+  seriesRelationshipSuggestions: (slug: string) =>
+    ["series", slug, "relationship-suggestions"] as const,
   /** Cover gallery for an issue (M5.2). */
   issueCovers: (issueId: string) => ["issues", issueId, "covers"] as const,
   // ── M6 admin surface ──

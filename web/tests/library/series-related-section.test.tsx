@@ -16,10 +16,22 @@ vi.mock("@/lib/api/queries", () => ({
   useMe: () => ({ data: { role } }),
   useSeriesRelationships: () => ({ data, isLoading: false }),
   useSeriesListInfinite: () => ({ data: undefined, isLoading: false }),
+  useSeriesRelationshipSuggestions: () => ({
+    data: undefined,
+    isLoading: false,
+  }),
 }));
 vi.mock("@/lib/api/mutations", () => ({
   useCreateSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
+  useAcceptRelationshipSuggestion: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+  useRejectRelationshipSuggestion: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
 }));
 
 import {

@@ -210,7 +210,7 @@ source; `citations.rs` = the "Collects X #1-6" parser), the job in
 | `bucket` | `text` | `high` (≥ 0.8) / `medium` (≥ 0.55) / `low` |
 | `reason` | `text` | human-readable, one clause per source |
 | `evidence` | `jsonb` | `{ "sources": [ { "source": "story_arc", "confidence": 0.65, "reason": "…", …source fields } ] }` |
-| `status` | `text` | `pending` / `accepted` / `rejected` / `modified` |
+| `status` | `text` | `pending` / `accepted` / `rejected` / `modified` / `stale` (`stale` added by `m20270503_000001_relationship_suggestion_stale`, WP-7.3) |
 | `accepted_kind` | `text` NULL | the kind actually created when accepted with an override (`modified`) |
 | `created_at`, `updated_at` | `timestamptz` | |
 | `reviewed_at` | `timestamptz` NULL | |
@@ -224,7 +224,10 @@ directional kinds are stored in one direction only (`sequel_of`,
 every candidate onto that form before the upsert.
 
 Rows are **never deleted** (spec §5.7); only the series FK cascade removes
-them. Status leaves `pending` once and never comes back.
+them. Only the status moves: a review (`accepted` / `rejected` /
+`modified`) leaves `pending` once; the one way back is an admin
+**reopening** a rejection (WP-7.3). `stale` is the engine's own state, not
+a review (see "Review UI" below).
 
 ### Evidence sources and confidence
 
@@ -265,18 +268,21 @@ Per run, after merging:
    stored as pairs, one lookup covers both orientations.
 2. Drop a proposal whose row is already `accepted` / `rejected` /
    `modified`. A rejected suggestion never reappears; re-suggesting needs
-   the row's status cleared by hand (spec §5.7).
+   the rejection cleared by hand (spec §5.7) — the WP-7.3 **reopen**
+   action. `stale` rows are not rejection memory.
 3. Keep the top **1000** by confidence (`MAX_SUGGESTIONS_PER_RUN`; ties by
    ids, so it's deterministic). The rest count as `capped` in the report
    and come back on a later run once reviews free up room.
 4. Upsert: new rows insert as `pending`; a still-pending row gets its
-   confidence, bucket, reason and evidence refreshed when they changed. The
-   `ON CONFLICT … WHERE status = 'pending'` guard means a review racing the
-   run is never overwritten.
-
-Pending rows whose evidence disappeared are **not** retracted (there is no
-status for that, and rows are append-only). They stay pending until
-reviewed; see "Gaps" below.
+   confidence, bucket, reason and evidence refreshed when they changed, and
+   a `stale` row is revived to `pending`. The
+   `ON CONFLICT … WHERE status IN ('pending', 'stale')` guard means a review
+   racing the run is never overwritten.
+5. Stale marking (WP-7.3): every `pending` row of the library that this run
+   did not produce (kept **or** capped) becomes `stale`. Skipped entirely
+   when any evidence source errored (`RunReport.failed_sources`), so a
+   transient SQL error can't empty the review queue. The report counts
+   `revived` and `marked_stale`.
 
 ### Hooking and observability
 
@@ -298,7 +304,7 @@ reviewed; see "Gaps" below.
 - **Runtime**: the stress test (3,000 series, 7,496 proposals) runs in
   about 0.25 s. The real dev library (2,573 series) takes about 0.45 s.
 
-### Service API (for WP-7.3)
+### Service API
 
 ```rust
 // crate::relationships::suggestions
@@ -316,6 +322,18 @@ pub async fn list<C: ConnectionTrait>(
 // SuggestionFilter { status, bucket, library_id, series_id } (all Option)
 // SuggestionPage { items, next_cursor, total /* first page */, bucket_counts /* first page */ }
 // jobs::relationship_suggest::{enqueue(&AppState, library_id) -> bool, run(&DatabaseConnection, library_id)}
+
+// WP-7.3
+pub async fn reopen<C: ConnectionTrait + TransactionTrait>(conn: &C, id: Uuid)
+    -> Result<(Model /* before */, Model /* after */), ReviewError>;   // rejected → pending
+pub async fn bulk_accept<C: ConnectionTrait + TransactionTrait>(conn: &C, ids: &[Uuid], actor: Uuid)
+    -> Result<BulkOutcome, DbErr>;   // BulkOutcome { succeeded, created, failed: Vec<BulkFailure { id, error }> }
+pub async fn bulk_reject<C: ConnectionTrait + TransactionTrait>(conn: &C, ids: &[Uuid], actor: Uuid)
+    -> Result<BulkOutcome, DbErr>;
+pub async fn pending_ids_in_bucket<C: ConnectionTrait>(
+    conn: &C, bucket: SuggestionBucket, library_id: Option<Uuid>, limit: usize,
+) -> Result<(Vec<Uuid>, u64 /* total matching */), DbErr>;
+pub const MAX_BULK: usize = 500;
 ```
 
 - `accept` runs in one transaction (a savepoint when `conn` is already a
@@ -335,10 +353,13 @@ pub async fn list<C: ConnectionTrait>(
 
 | method | path | body / query | result |
 |---|---|---|---|
-| `GET` | `/api/admin/relationship-suggestions` | `status` (`pending` default / `accepted` / `rejected` / `modified` / `all`), `bucket`, `library_id`, `cursor`, `limit` (1–200, default 50) | `RelationshipSuggestionListView` |
+| `GET` | `/api/admin/relationship-suggestions` | `status` (`pending` default / `accepted` / `rejected` / `modified` / `stale` / `all` = every status except `stale`), `bucket`, `library_id`, `cursor`, `limit` (1–200, default 50) | `RelationshipSuggestionListView` |
 | `GET` | `/api/series/{slug}/relationship-suggestions` | `cursor`, `limit` | pending suggestions with the series on either end |
 | `POST` | `/api/admin/relationship-suggestions/{id}/accept` | `{ "kind"?: RelationshipKind }` (send `{}` to accept as suggested) | `AcceptRelationshipSuggestionResp` |
 | `POST` | `/api/admin/relationship-suggestions/{id}/reject` | none | `RelationshipSuggestionView` |
+| `POST` | `/api/admin/relationship-suggestions/{id}/reopen` | none | `ReopenRelationshipSuggestionResp` `{ suggestion }` (WP-7.3) |
+| `POST` | `/api/admin/relationship-suggestions/bulk-accept` | `{ "ids": [...] }` (1–500) **or** `{ "bucket": "high", "library_id"? }` | `BulkReviewRelationshipSuggestionsResp` (WP-7.3) |
+| `POST` | `/api/admin/relationship-suggestions/bulk-reject` | `{ "ids": [...] }` (1–500) | `BulkReviewRelationshipSuggestionsResp` (WP-7.3) |
 | `POST` | `/api/admin/relationship-suggestions/run` | `?library_id=` | `202` `{ "enqueued": [...], "already_queued": [...] }` |
 
 ```jsonc
@@ -371,23 +392,105 @@ malformed body.
 
 **Audit**: `admin.relationship_suggestion.accept` (target
 `relationship_suggestion`, payload carries the edge ids, kinds and
-`created`), `admin.relationship_suggestion.reject`, and
+`created`), `admin.relationship_suggestion.reject`,
+`admin.relationship_suggestion.reopen` (payload keeps the cleared
+`rejected_at` / `rejected_by`), `admin.relationship_suggestion.bulk_accept`
+and `…bulk_reject` (**one row per batch**, see below), and
 `admin.relationship_suggestion.run`. Accepted edges show up in the series
 page's "Related" block with the "Suggested" badge (`source = suggested`,
 `confidence` set).
 
-### Gaps (not in WP-7.2)
+### Review UI and bulk accept (WP-7.3)
 
-- **Stale pending suggestions** stay pending when their evidence disappears
-  (series renamed, character data cleaned up, heuristic tightened). WP-7.3
-  could hide rows whose `updated_at` predates the library's last run, but
-  only if the upsert also bumped `updated_at` on unchanged rows (it doesn't
-  today, to avoid rewriting up to 1000 rows per scan).
+**Admin page** `/admin/relationships` (nav: Content → Relationships;
+`web/components/admin/relationships/RelationshipSuggestionsPanel.tsx`):
+
+- The queue is `GET /api/admin/relationship-suggestions` through
+  `useRelationshipSuggestionsInfinite` (IntersectionObserver sentinel).
+  Library (select), status (Pending / Accepted / Modified / Rejected /
+  Stale / All) and confidence bucket (High / Medium / Low, counts from the
+  first page's `bucket_counts`) are **server params** — nothing is filtered
+  client-side.
+- Each row: both covers and names (linked), the kind label, confidence %,
+  bucket, status, the reason, and a collapsible **Evidence** list (one entry
+  per source with its fields).
+- Pending rows: **Accept**, **Edit kind** (popover with all nine kinds,
+  read "*from* is … *to*"; a different kind accepts as `modified`) and
+  **Reject**. Rejected rows: **Reopen**. Reviewed rows show the review date.
+- **Run now** queues the engine for the selected library (or every library).
+- **Accept all high-confidence (N)** sits behind an `AlertDialog` and sends
+  bucket mode for the current library filter.
+- **Select…** enters multi-select (`useSelection` + `SelectionToolbar`) on
+  pending rows: bulk **Accept**, and bulk **Reject** behind an
+  `AlertDialog`.
+
+**Series page chips** (`SeriesSuggestedRelationships`, admins only, inside
+the Related block): pending suggestions touching the series from
+`GET /api/series/{slug}/relationship-suggestions` (cursor-paginated, "Show
+more"), read from this series' side (a row stored as "*other* `sequel_of`
+*this*" shows "Prequel of *other*"), the reason and confidence in a
+tooltip, one-click accept / reject.
+
+Every accept path (single, chip, bulk) invalidates both series'
+`seriesRelationships`, the `["similar"]` rails and every suggestion list;
+bulk accept invalidates all series' relationship blocks (it doesn't know
+which series changed).
+
+**Bulk semantics** (`POST …/bulk-accept`, `…/bulk-reject`):
+
+- **Bounded.** Exactly one of `ids` (1–500, duplicates processed once) or
+  `{ "bucket": "high", "library_id"? }`. Bucket mode takes the top 500
+  pending high rows by confidence and returns `remaining` (pending high rows
+  left after the batch); send it again for the next batch — each request is
+  its own batch with its own audit row. Medium / low rows can only be
+  bulk-accepted by explicit ids, after someone looked at them. Bulk reject
+  takes ids only. Anything else is `422` with field `details`; an unknown
+  `library_id` is `404`.
+- **One transaction, a savepoint per item.** Each item runs the normal
+  `accept` / `reject` (which opens a savepoint inside the outer
+  transaction). A per-item refusal — `not_found`, `already_reviewed`,
+  `stale`, `conflict` (contradicts an existing directional edge, including
+  one an earlier item of the same batch created), `invalid` — rolls back
+  only that item and is reported in `failed[]`; the rest commits. A
+  database error aborts the whole batch (`500`, nothing commits).
+- **One audit row per batch**: `admin.relationship_suggestion.bulk_accept`
+  (payload `mode`, `bucket`, `library_id`, `requested`, `accepted`,
+  `created`, `failed`, `accepted_ids`, `failures[{id, code}]`,
+  `remaining`) or `…bulk_reject` (`requested`, `rejected`, `failed`,
+  `rejected_ids`, `failures`). No per-item `accept` / `reject` rows.
+- **One similarity invalidation** (`state.similarity.invalidate_all()`)
+  per batch, only when `created > 0`.
+
+```jsonc
+// BulkReviewRelationshipSuggestionsResp
+{ "requested": 5, "succeeded": ["…", "…"], "created": 2,
+  "failed": [{ "id": "…", "code": "conflict", "message": "conflicts with existing `prequel_of` relationship" }],
+  "remaining": 40 }   // bucket mode only
+```
+
+**Reopen** (`POST …/{id}/reopen`): `rejected` → `pending` only (anything
+else is `409`). The row is kept; its `reviewed_at` / `reviewed_by` /
+`accepted_kind` are cleared so it reads as pending again, and the audit row
+keeps who rejected it and when. The next run refreshes it like any pending
+row — or marks it `stale` if the engine no longer proposes it.
+
+**Stale** (`m20270503_000001_relationship_suggestion_stale` extends the
+status CHECK): set by the engine on pending rows a run no longer produces
+(series renamed, character data cleaned up, heuristic tightened, or an
+admin linked the pair by hand), and cleared back to `pending` when a later
+run produces the row again (same row id). Stale rows are hidden from the
+default list and from `status=all`; `status=stale` shows them. Accepting or
+rejecting a stale row is `409` ("stale"). Stale is not rejection memory and
+never touches reviewed rows. On the dev library the first run with stale
+marking retired 31 low `same_universe` rows left over from earlier
+heuristic versions; a second run marked none.
+
+### Gaps
+
 - No `spin_off_of` source: nothing in the DB distinguishes a spin-off from
   a crossover or same-universe title.
 - Cross-library suggestions are out of scope by design (see above).
-- No review UI, bulk accept, or "clear a rejection" action; those are
-  WP-7.3.
+- Bulk accept has no kind override (accept-as-modified is per row).
 
 ## Web
 
@@ -405,6 +508,14 @@ Hooks: `useSeriesRelationships` (`queryKeys.seriesRelationships`),
 `useCreateSeriesRelationship` and `useDeleteSeriesRelationship`. Both
 mutations invalidate the relationship lists of the current series and the
 other series.
+
+For admins the block also shows the WP-7.3 **Suggested** chips
+(`web/components/library/SeriesSuggestedRelationships.tsx`). The review
+hooks live in `web/lib/api/mutations/relationship-suggestions.ts`
+(`useAcceptRelationshipSuggestion`, `useRejectRelationshipSuggestion`,
+`useReopenRelationshipSuggestion`, `useBulkAccept…`, `useBulkReject…`,
+`useRunRelationshipSuggestions`); kind labels and inverses are in
+`web/lib/relationships.ts`.
 
 ## Tests
 
@@ -427,3 +538,23 @@ other series.
   and the 1000 cap on a 3,000-series stress library.
 - `relationships::suggestions` unit tests: canonical forms, merge and
   corroboration, buckets, the citation parser and the base-name helpers.
+- WP-7.3, same integration file: bulk accept by ids (one audit row, no
+  per-item rows, partial failures `conflict` / `already_reviewed` /
+  `not_found` reported while the good item commits, one similarity
+  invalidation, none when nothing was created), bucket mode (`remaining`,
+  medium / low untouched) and its 422 / 404 validation, bulk reject (one
+  audit row), reopen (409 unless rejected, review stamp cleared, audit
+  payload, engine treats it as pending), stale marking / hiding / revival
+  (and reviewed rows never go stale), and 403 on every new endpoint.
+- Web: `web/tests/admin/relationship-suggestions-panel.test.tsx` (filters
+  as server params, row actions, reopen, evidence, accept-all-high confirm,
+  multi-select bulk accept, run now),
+  `web/tests/library/series-suggested-relationships.test.tsx` (perspective /
+  inverse labels, chip accept / reject, admin gating) and
+  `web/tests/api/relationship-suggestions.test.ts` (next-page + query-string
+  helpers, accept / bulk invalidation, bulk toast summary).
+- E2E: `web/tests/e2e/relationship-review.spec.ts` — opt-in (needs
+  `E2E_ADMIN_EMAIL` / `E2E_ADMIN_PASSWORD` for an existing admin and at
+  least one suggestion; it queues a run and skips if none appear). It never
+  registers, so it can't race `reader-flow.spec.ts` for the first-user admin
+  role; in docker-smoke (no creds, one-series fixture) it skips.

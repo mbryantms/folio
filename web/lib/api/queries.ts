@@ -2392,7 +2392,10 @@ import type {
   IssueCoversResp,
   ProviderCoverageResp,
   ProviderRangesListResp,
+  RelationshipSuggestionListView,
   SeriesRelationshipsResp,
+  SuggestionBucket,
+  SuggestionStatusFilter,
   SyncStatusResp,
 } from "./types";
 
@@ -2701,6 +2704,76 @@ export function useSeriesRelationships(seriesSlug: string) {
         `/series/${encodeURIComponent(seriesSlug)}/relationships`,
       ),
     enabled: !!seriesSlug,
+    staleTime: 30_000,
+  });
+}
+
+/** `getNextPageParam` for the relationship-suggestion lists (WP-7.3).
+ *  Exported + tested so a refactor can't swallow `next_cursor` and
+ *  silently truncate the review queue. */
+export function relationshipSuggestionsNextPage(
+  page: RelationshipSuggestionListView,
+): string | undefined {
+  return page.next_cursor ?? undefined;
+}
+
+/** Build the `GET /admin/relationship-suggestions` query string. Every
+ *  filter is a server param (the list is cursor-paginated; a client-side
+ *  filter would lie once the first page is truncated). */
+export function relationshipSuggestionsPath(
+  filters: {
+    status: SuggestionStatusFilter;
+    bucket: SuggestionBucket | null;
+    libraryId: string | null;
+  },
+  cursor?: string | null,
+): string {
+  const qs = new URLSearchParams({ status: filters.status, limit: "50" });
+  if (filters.bucket) qs.set("bucket", filters.bucket);
+  if (filters.libraryId) qs.set("library_id", filters.libraryId);
+  if (cursor) qs.set("cursor", cursor);
+  return `/admin/relationship-suggestions?${qs.toString()}`;
+}
+
+/**
+ * WP-7.3 review queue: relationship suggestions, highest confidence first.
+ * `total` and `bucket_counts` ride on the first page only — read them from
+ * `pages[0]`.
+ */
+export function useRelationshipSuggestionsInfinite(filters: {
+  status: SuggestionStatusFilter;
+  bucket: SuggestionBucket | null;
+  libraryId: string | null;
+}) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.relationshipSuggestions(filters),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<RelationshipSuggestionListView>(
+        relationshipSuggestionsPath(filters, pageParam),
+      ),
+    getNextPageParam: relationshipSuggestionsNextPage,
+  });
+}
+
+/** WP-7.3: pending suggestions touching one series (admin-only endpoint;
+ *  pass `enabled = false` for everyone else). */
+export function useSeriesRelationshipSuggestions(
+  seriesSlug: string,
+  enabled: boolean,
+) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.seriesRelationshipSuggestions(seriesSlug),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
+      const qs = new URLSearchParams({ limit: "20" });
+      if (pageParam) qs.set("cursor", pageParam);
+      return jsonFetch<RelationshipSuggestionListView>(
+        `/series/${encodeURIComponent(seriesSlug)}/relationship-suggestions?${qs.toString()}`,
+      );
+    },
+    getNextPageParam: relationshipSuggestionsNextPage,
+    enabled: enabled && !!seriesSlug,
     staleTime: 30_000,
   });
 }

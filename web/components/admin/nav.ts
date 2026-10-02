@@ -25,6 +25,7 @@ export type IconName =
   | "Library"
   | "ListChecks"
   | "Mail"
+  | "Network"
   | "Palette"
   | "PanelLeft"
   | "ScanLine"
@@ -111,6 +112,12 @@ export function adminNav(localePrefix: string): NavSection[] {
         // WP-3.3 — per-library duplicate groups (also a tab on each
         // library's admin page).
         { href: p("/duplicates"), label: "Duplicates", icon: "Copy" },
+        // WP-7.3 — relationship-suggestion review queue.
+        {
+          href: p("/relationships"),
+          label: "Relationships",
+          icon: "Network",
+        },
       ],
     },
     {

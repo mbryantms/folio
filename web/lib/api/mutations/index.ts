@@ -30,6 +30,7 @@ export * from "./hash-backfill";
 export * from "./markers";
 export { invalidateRails } from "./rails";
 export * from "./page-overrides";
+export * from "./relationship-suggestions";
 
 import type {
   AcceptMetadataResp,
