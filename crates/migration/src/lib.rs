@@ -121,6 +121,7 @@ mod m20270504_000001_similar_series_rail;
 mod m20270505_000001_relationship_taxonomy;
 mod m20270506_000001_relationship_suggestion_scope;
 mod m20270508_000001_series_external_relationship;
+mod m20270601_000001_canonical_credit_roles;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -250,6 +251,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270505_000001_relationship_taxonomy::Migration),
             Box::new(m20270506_000001_relationship_suggestion_scope::Migration),
             Box::new(m20270508_000001_series_external_relationship::Migration),
+            Box::new(m20270601_000001_canonical_credit_roles::Migration),
         ]
     }
 }

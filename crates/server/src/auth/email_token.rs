@@ -46,7 +46,25 @@ pub enum TokenPurpose {
     PasswordReset,
 }
 
+/// Clock-skew allowance on top of a purpose's TTL when the verifier
+/// bounds `expires_at` from above (L-2): an issuer whose clock runs up to
+/// five minutes ahead of the verifier still validates.
+pub const MAX_CLOCK_SKEW: Duration = Duration::from_secs(300);
+
 impl TokenPurpose {
+    /// The lifetime the issuer gives a token of this purpose. Verify-email
+    /// is 24 h (users may not check mail the same day); password reset is
+    /// 1 h (a credential operation). The verifier rejects any token whose
+    /// `expires_at` lies further out than `now + ttl + MAX_CLOCK_SKEW`:
+    /// a genuine token can't, so it was minted with a longer TTL (or a
+    /// leaked key) — previously anything up to 30 days passed (L-2).
+    pub const fn ttl(self) -> Duration {
+        match self {
+            Self::EmailVerification => Duration::from_secs(24 * 60 * 60),
+            Self::PasswordReset => Duration::from_secs(60 * 60),
+        }
+    }
+
     fn byte(self) -> u8 {
         match self {
             Self::EmailVerification => 1,
@@ -209,8 +227,12 @@ pub fn verify_claims(
     if now > expires_at {
         return Err(TokenError::Expired);
     }
-    // 60-second future window. Beyond that, something's wrong.
-    if expires_at > now + (86_400 * 30 + 60) {
+    // L-2: a genuine token expires at most `ttl` after issuance, so its
+    // `expires_at` can't lie further out than `now + ttl` plus clock skew.
+    // Beyond that it was minted with a longer lifetime than this purpose
+    // allows — reject.
+    let max_ahead = purpose.ttl().as_secs() + MAX_CLOCK_SKEW.as_secs();
+    if expires_at > now.saturating_add(max_ahead) {
         return Err(TokenError::FromFuture);
     }
 
@@ -308,6 +330,88 @@ mod tests {
         assert!(matches!(
             verify(TokenPurpose::EmailVerification, &too_short, &key()),
             Err(TokenError::Malformed)
+        ));
+    }
+
+    /// Sign an arbitrary payload the way `issue_inner` does, so a test can
+    /// forge an `expires_at` `issue()` would never produce.
+    fn signed_with_expiry(purpose: TokenPurpose, uid: Uuid, expires_at: u64) -> String {
+        let mut payload = vec![purpose.byte()];
+        payload.extend_from_slice(uid.as_bytes());
+        if purpose == TokenPurpose::PasswordReset {
+            payload.extend_from_slice(Uuid::now_v7().as_bytes());
+        }
+        payload.extend_from_slice(&expires_at.to_be_bytes());
+        let mut mac = HmacSha256::new_from_slice(&key()).unwrap();
+        mac.update(&payload);
+        payload.extend_from_slice(&mac.finalize().into_bytes());
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload)
+    }
+
+    fn now_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    #[test]
+    fn issuer_ttls_match_the_documented_lifetimes() {
+        assert_eq!(
+            TokenPurpose::EmailVerification.ttl(),
+            Duration::from_secs(24 * 3600)
+        );
+        assert_eq!(TokenPurpose::PasswordReset.ttl(), Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn full_ttl_tokens_verify_for_each_purpose() {
+        let uid = Uuid::now_v7();
+        for purpose in [TokenPurpose::EmailVerification, TokenPurpose::PasswordReset] {
+            let tok = issue(purpose, uid, purpose.ttl(), &key());
+            assert_eq!(verify(purpose, &tok, &key()).unwrap(), uid, "{purpose:?}");
+            // An issuer clock a little ahead (within the skew) still passes.
+            let ahead = now_secs() + purpose.ttl().as_secs() + MAX_CLOCK_SKEW.as_secs() - 5;
+            let tok = signed_with_expiry(purpose, uid, ahead);
+            assert!(verify(purpose, &tok, &key()).is_ok(), "{purpose:?}");
+        }
+    }
+
+    /// L-2: a validly-signed token whose expiry lies beyond the purpose's
+    /// TTL + skew is rejected — the old 30-day ceiling accepted these.
+    #[test]
+    fn expiry_beyond_purpose_ttl_rejected() {
+        let uid = Uuid::now_v7();
+        for purpose in [TokenPurpose::EmailVerification, TokenPurpose::PasswordReset] {
+            let too_far = now_secs() + purpose.ttl().as_secs() + MAX_CLOCK_SKEW.as_secs() + 60;
+            let tok = signed_with_expiry(purpose, uid, too_far);
+            assert!(
+                matches!(verify(purpose, &tok, &key()), Err(TokenError::FromFuture)),
+                "{purpose:?}"
+            );
+        }
+        // A reset token with a 2-hour lifetime: inside the old 30-day
+        // window, outside the 1-hour reset TTL.
+        let tok = issue(
+            TokenPurpose::PasswordReset,
+            uid,
+            Duration::from_secs(2 * 3600),
+            &key(),
+        );
+        assert!(matches!(
+            verify(TokenPurpose::PasswordReset, &tok, &key()),
+            Err(TokenError::FromFuture)
+        ));
+        // A verify-email token with a 7-day lifetime.
+        let tok = issue(
+            TokenPurpose::EmailVerification,
+            uid,
+            Duration::from_secs(7 * 86_400),
+            &key(),
+        );
+        assert!(matches!(
+            verify(TokenPurpose::EmailVerification, &tok, &key()),
+            Err(TokenError::FromFuture)
         ));
     }
 

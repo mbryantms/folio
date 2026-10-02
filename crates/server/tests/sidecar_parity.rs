@@ -107,9 +107,10 @@ const KNOWN_DIFFERENCES: &[(&str, Known, &str)] = &[(
 ///
 /// - ComicTagger serializes a Python bool (`"True"`); Folio writes the
 ///   xs:boolean form (`"true"`).
-/// - Folio writes `DoublePage` on every page — declared, or inferred from
-///   the probed pixel aspect when the file didn't say — so pages
-///   ComicTagger left unmarked come back as `DoublePage="false"`.
+/// - Folio omits `DoublePage="false"` (WP-8.1: ComicTagger 1.5.5's page
+///   editor ticks the box on attribute presence) except on a landscape
+///   page, where it keeps a declared `false` so the next scan doesn't
+///   infer a spread.
 ///
 /// Every other page attribute must match exactly.
 fn normalize_pages(pages: &[BTreeMap<String, String>]) -> Vec<BTreeMap<String, String>> {
@@ -291,6 +292,91 @@ async fn scan_and_rewrite(app: &TestApp, lib_id: uuid::Uuid, path: &Path) -> (St
     (ci, mi)
 }
 
+// ───────── MetronInfo credit shape ─────────
+
+/// Structural check of `<Credits>` against the MetronInfo XSD (v1.0 /
+/// v1.1 `creditsType` / `creditType`, Metron-Project/metroninfo):
+/// `<Credit>` has no attributes and exactly a `<Creator>` (simple text
+/// content, optional `id`) and a `<Roles>` of `<Role>` values from the
+/// `roleValues` enumeration. No Rust XSD validator is a dependency, so
+/// this is the schema's credit grammar spelled out over a raw quick-xml
+/// walk (not Folio's parser, which also accepts the legacy shape).
+fn assert_metron_credit_shape(xml: &str) {
+    let mut reader = Reader::from_str(xml);
+    let mut path: Vec<String> = Vec::new();
+    let mut credits = 0;
+    // Per-credit: (creator text, role values, child element names).
+    let mut creator = String::new();
+    let mut roles: Vec<String> = Vec::new();
+    let mut children: Vec<String> = Vec::new();
+    let mut text = String::new();
+    loop {
+        match reader.read_event().unwrap() {
+            Event::Start(e) => {
+                let name = e.name().as_ref().to_string();
+                let parent = path.last().map(String::as_str);
+                match (parent, name.as_str()) {
+                    (Some("Credits"), "Credit") => {
+                        assert_eq!(
+                            e.attributes().count(),
+                            0,
+                            "<Credit> takes no attributes (legacy `role=`)\n{xml}"
+                        );
+                        creator.clear();
+                        roles.clear();
+                        children.clear();
+                    }
+                    (Some("Credit"), child) => children.push(child.to_owned()),
+                    (Some("Roles"), r) => assert_eq!(r, "Role", "{xml}"),
+                    (Some("Creator"), c) => {
+                        panic!("<Creator> is simple content, found <{c}>\n{xml}")
+                    }
+                    _ => {}
+                }
+                path.push(name);
+                text.clear();
+            }
+            Event::Text(t) => text.push_str(&quick_xml::escape::unescape(&t).unwrap()),
+            Event::GeneralRef(r) => {
+                let ent: &str = &r;
+                text.push_str(quick_xml::escape::resolve_predefined_entity(ent).unwrap_or("?"));
+            }
+            Event::End(_) => {
+                let name = path.pop().unwrap();
+                match name.as_str() {
+                    "Creator" => creator = text.trim().to_owned(),
+                    "Role" => roles.push(text.trim().to_owned()),
+                    "Credit" => {
+                        credits += 1;
+                        children.sort();
+                        assert_eq!(children, ["Creator", "Roles"], "{xml}");
+                        assert!(!creator.is_empty(), "{xml}");
+                        assert!(!roles.is_empty(), "{xml}");
+                        for r in &roles {
+                            assert!(
+                                parsers::metroninfo::METRON_ROLES.contains(&r.as_str()),
+                                "<Role>{r}</Role> is outside the schema's roleValues\n{xml}"
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+                text.clear();
+            }
+            Event::Empty(e) => {
+                let name = e.name().as_ref().to_string();
+                assert!(
+                    name != "Credit" && name != "Creator",
+                    "empty <{name}/> in credits\n{xml}"
+                );
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    assert!(credits >= 7, "every ComicTagger credit is present\n{xml}");
+}
+
 // ───────── the test ─────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -402,8 +488,20 @@ async fn folio_rewrite_of_a_comictagger_file_agrees_on_every_shared_field() {
     assert_eq!(mi.locations, csv("Locations"));
     assert_eq!(mi.genres, csv("Genre"));
     assert_eq!(mi.story_arcs, csv("StoryArc"));
+    // Credits: every ComicInfo role column ComicTagger wrote comes back
+    // from MetronInfo (CoverArtist travels as the schema's `Cover`).
     assert_eq!(mi.writer().as_deref(), Some(f["Writer"].as_str()));
+    assert_eq!(mi.penciller().as_deref(), Some(f["Penciller"].as_str()));
+    assert_eq!(mi.inker().as_deref(), Some(f["Inker"].as_str()));
+    assert_eq!(mi.colorist().as_deref(), Some(f["Colorist"].as_str()));
+    assert_eq!(mi.letterer().as_deref(), Some(f["Letterer"].as_str()));
+    assert_eq!(
+        mi.cover_artist().as_deref(),
+        Some(f["CoverArtist"].as_str())
+    );
     assert_eq!(mi.editor().as_deref(), Some(f["Editor"].as_str()));
+    // …in the MetronInfo schema's credit shape (WP-8.1).
+    assert_metron_credit_shape(&metron_xml);
 
     // 5. Golden pin of Folio's rewrite (reviewable diff on any composer /
     //    serializer change; input to `make-fixture.py verify`).

@@ -289,17 +289,20 @@ pub struct CreditCandidate {
 /// Returns the canonical name when the role maps cleanly; returns
 /// `None` for roles ComicInfo can't represent (`"journalist"`,
 /// `"other"`, `"production"`, …). MetronInfo's structured
-/// `<Credit role="…">` element can still carry the original — that's
-/// orthogonal to this mapping.
+/// `<Credit><Roles><Role>` can still carry the original (when it is in
+/// the schema's role enumeration) — that's orthogonal to this mapping.
+/// For the junction **storage** form see [`canonical_credit_role`].
 pub fn canonicalize_role(raw: &str) -> Option<&'static str> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;
     }
-    // Lower-cased + whitespace-collapsed key so " Cover Artist " and
-    // "cover artist" hit the same arm.
+    // Lower-cased + whitespace-collapsed key so " Cover Artist ",
+    // "cover artist" and the DB's own snake_case `cover_artist` (and
+    // `editor-in-chief`) hit the same arm.
     let key: String = trimmed
         .to_ascii_lowercase()
+        .replace(['_', '-'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
@@ -331,6 +334,52 @@ pub fn canonicalize_role(raw: &str) -> Option<&'static str> {
         // junction still carry them.
         _ => None,
     }
+}
+
+/// The canonical **storage** form of a credit role — the lowercase
+/// snake_case key the `issue_credits` / `series_credits` junctions, the
+/// per-role CSV read-cache rebuild
+/// ([`crate::metadata::writers::rebuild_issue_csv_cache`]), the scanner
+/// (`CreditRole::as_str`), the filters and the web UI all match on:
+/// `writer`, `penciller`, `inker`, `colorist`, `letterer`,
+/// `cover_artist`, `editor`, `translator`.
+///
+/// Every provider / ComicInfo spelling [`canonicalize_role`] knows
+/// (`Writer`, `CoverArtist`, `Cover Artist`, `cover`, `penciler`,
+/// `artist`, …) folds onto one of those eight. A role outside that set
+/// (`journalist`, `Production`, `Ink Assists`) is kept, lowercased and
+/// whitespace-collapsed into snake_case (`ink_assists`), so the
+/// junction still carries it. Idempotent: a canonical value maps to
+/// itself. Returns `None` for an empty / whitespace-only role.
+///
+/// WP-8.1: the provider mappers emit the ComicInfo PascalCase names, so
+/// before this every non-writeback provider apply wrote `Writer` rows
+/// the lowercase CSV rebuild never matched. The migration
+/// `m20270601_000001_canonical_credit_roles` carries the same table in
+/// SQL for existing rows — keep the two in sync.
+pub fn canonical_credit_role(raw: &str) -> Option<String> {
+    if let Some(ci) = canonicalize_role(raw) {
+        let key = match ci {
+            "Writer" => "writer",
+            "Penciller" => "penciller",
+            "Inker" => "inker",
+            "Colorist" => "colorist",
+            "Letterer" => "letterer",
+            "CoverArtist" => "cover_artist",
+            "Editor" => "editor",
+            "Translator" => "translator",
+            other => return Some(other.to_ascii_lowercase()),
+        };
+        return Some(key.to_owned());
+    }
+    let key = raw
+        .trim()
+        .to_lowercase()
+        .replace(['_', '-'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("_");
+    (!key.is_empty()).then_some(key)
 }
 
 /// One named non-credit entity (character / team / location /
@@ -519,6 +568,42 @@ mod tests {
         assert!(m.series_name.is_none());
         assert!(m.credits.is_empty());
         assert!(m.identifiers.is_empty());
+    }
+
+    #[test]
+    fn canonical_credit_role_folds_every_spelling_onto_the_storage_key() {
+        for (raw, want) in [
+            ("Writer", "writer"),
+            ("writer", "writer"),
+            (" WRITER ", "writer"),
+            ("Script", "writer"),
+            ("Penciller", "penciller"),
+            ("penciler", "penciller"),
+            ("Artist", "penciller"),
+            ("Inker", "inker"),
+            ("Colorist", "colorist"),
+            ("colourist", "colorist"),
+            ("Letterer", "letterer"),
+            ("CoverArtist", "cover_artist"),
+            ("Cover Artist", "cover_artist"),
+            ("cover_artist", "cover_artist"),
+            ("Cover", "cover_artist"),
+            ("Editor", "editor"),
+            ("Editor In Chief", "editor"),
+            ("editor-in-chief", "editor"),
+            ("Translator", "translator"),
+            // Outside the eight: kept, snake_cased.
+            ("journalist", "journalist"),
+            ("Production", "production"),
+            ("Ink Assists", "ink_assists"),
+            ("unknown", "unknown"),
+        ] {
+            assert_eq!(canonical_credit_role(raw).as_deref(), Some(want), "{raw}");
+            // Idempotent.
+            assert_eq!(canonical_credit_role(want).as_deref(), Some(want), "{want}");
+        }
+        assert_eq!(canonical_credit_role(""), None);
+        assert_eq!(canonical_credit_role("  "), None);
     }
 
     #[test]

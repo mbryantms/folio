@@ -579,3 +579,94 @@ async fn starts_with_buckets_by_name() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+async fn seed_person(app: &TestApp, name: &str, slug: &str) {
+    use sea_orm::ConnectionTrait;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    db.execute_raw(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DbBackend::Postgres,
+        "INSERT INTO person (slug, name, normalized_name) VALUES ($1, $2, lower($2))",
+        [slug.into(), name.into()],
+    ))
+    .await
+    .unwrap();
+}
+
+/// WP-8.1: `/creators/{slug}` 404s when none of the creator's credits is
+/// visible to the caller — like the arc / character / team pages — instead
+/// of a 200 with empty rails that confirms the name exists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn detail_404s_when_nothing_is_visible() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    promote_to_admin(&app, admin.user_id).await;
+
+    let lib_a = seed_library(&app, "a").await;
+    let lib_b = seed_library(&app, "b").await;
+    let sa = seed_series(&app, lib_a, "Visible").await;
+    let sb = seed_series(&app, lib_b, "Hidden").await;
+    add_series_credit(&app, sa, "writer", "Allowed Author").await;
+    let ib = seed_issue(&app, lib_b, sb, 1).await;
+    add_issue_credit(&app, ib, "writer", "Hidden Author").await;
+    seed_person(&app, "Allowed Author", "allowed-author").await;
+    seed_person(&app, "Hidden Author", "hidden-author").await;
+    seed_person(&app, "Uncredited Person", "uncredited-person").await;
+
+    // Admin sees both creators.
+    for slug in ["allowed-author", "hidden-author"] {
+        let (status, json) = http(
+            &app,
+            Method::GET,
+            &format!("/api/creators/{slug}"),
+            Some(&admin),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{slug}: {json:#?}");
+        assert_eq!(json["roles"], serde_json::json!(["writer"]), "{json:#?}");
+    }
+
+    // A reader granted only library A.
+    let reader = register(&app, "reader@example.com").await;
+    grant_access(&app, reader.user_id, lib_a).await;
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/creators/allowed-author",
+        Some(&reader),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{json:#?}");
+    assert_eq!(json["rails"][0]["series"][0]["name"], "Visible");
+    let (status, json) = http(
+        &app,
+        Method::GET,
+        "/api/creators/hidden-author",
+        Some(&reader),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{json:#?}");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    // A reader with no grants at all: 404 too.
+    let nobody = register(&app, "nobody@example.com").await;
+    let (status, _) = http(
+        &app,
+        Method::GET,
+        "/api/creators/allowed-author",
+        Some(&nobody),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A person row with no credits anywhere, and an unknown slug.
+    for slug in ["uncredited-person", "no-such-creator"] {
+        let (status, _) = http(
+            &app,
+            Method::GET,
+            &format!("/api/creators/{slug}"),
+            Some(&admin),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{slug}");
+    }
+}
