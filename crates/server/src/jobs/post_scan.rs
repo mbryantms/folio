@@ -15,9 +15,9 @@
 //!   - `post_scan_dictionary` — same shape as `post_scan_search`; the
 //!     "did you mean" trigram dictionary refresh hooks here when it ships.
 //!
-//! `relationship_suggestion` and `story_arc_auto_build` slots from the spec
-//! are intentionally NOT registered yet — they own tables that don't exist
-//! in the current schema.
+//! The spec's `relationship_suggestion` slot is its own queue
+//! ([`crate::jobs::relationship_suggest`], WP-7.2), enqueued by the scanner
+//! next to these. `story_arc_auto_build` is still not registered.
 
 use crate::library::event_log::{self, Action, Category, NewEvent, Severity};
 use crate::library::events::ScanEvent;

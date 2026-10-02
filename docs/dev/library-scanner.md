@@ -374,6 +374,13 @@ downstream work that has real post-scan value:
   library has rows whose content hash is still pending (first-import
   lazy-hash mode), enqueue the `hash_backfill` drain. Runs after series
   scans too, so a restart that abandoned a drain resumes on the next scan.
+- `relationship_suggest::enqueue` (WP-7.2) — when the scan changed
+  anything (files added/updated, series created/removed, issues
+  removed/restored), queue a relationship-suggestion run for the library.
+  Deduped per library by the Redis key `relsuggest:queued:<library_id>`;
+  runs after series-scoped and watcher-scoped scans too, and stays bounded
+  because the job is library-wide, set-based and capped at 1000 rows. See
+  [series-relationships.md § Suggestion engine](series-relationships.md#suggestion-engine-wp-72).
 - `spawn_cbl_rematch_all` ([mod.rs:1389](../../crates/server/src/library/scanner/mod.rs#L1389))
   — saved-views: when the scan added/restored issues, re-resolve
   previously-missing CBL entries fire-and-forget.

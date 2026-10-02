@@ -61,6 +61,7 @@ pub mod ratings;
 pub mod reading_log;
 pub mod reading_sessions;
 pub mod reconcile;
+pub mod relationship_suggestions;
 pub mod saved_views;
 pub mod scan_batches;
 pub mod scan_runs;

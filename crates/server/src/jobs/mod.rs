@@ -55,6 +55,7 @@ pub mod metrics_layer;
 pub mod orphan_sweep;
 pub mod post_scan;
 pub mod prune_auth_sessions;
+pub mod relationship_suggest;
 pub mod rewrite_sidecars;
 pub mod scan;
 pub mod scan_series;
@@ -79,6 +80,7 @@ pub struct JobRuntime {
     pub archive_edit_storage: RedisStorage<archive_edit::ArchiveEditJob>,
     pub backfill_storage: RedisStorage<backfill::BackfillJob>,
     pub hash_backfill_storage: RedisStorage<hash_backfill::HashBackfillJob>,
+    pub relationship_suggest_storage: RedisStorage<relationship_suggest::RelationshipSuggestJob>,
     pub redis: ConnectionManager,
 }
 
@@ -103,6 +105,8 @@ impl JobRuntime {
         let archive_edit_storage = storage::<archive_edit::ArchiveEditJob>(conn.clone());
         let backfill_storage = storage::<backfill::BackfillJob>(conn.clone());
         let hash_backfill_storage = storage::<hash_backfill::HashBackfillJob>(conn.clone());
+        let relationship_suggest_storage =
+            storage::<relationship_suggest::RelationshipSuggestJob>(conn.clone());
         Ok(Self {
             db,
             scan_storage,
@@ -118,6 +122,7 @@ impl JobRuntime {
             archive_edit_storage,
             backfill_storage,
             hash_backfill_storage,
+            relationship_suggest_storage,
             redis: conn,
         })
     }
@@ -482,6 +487,15 @@ impl JobRuntime {
             .layer(metrics_layer::JobMetricsLayer::new("hash_backfill"))
             .backend(self.hash_backfill_storage.clone())
             .build_fn(hash_backfill::handle);
+        // Relationship suggestions (WP-7.2) — concurrency=1. A run is a
+        // handful of set-based queries per library; serializing keeps two
+        // post-scan runs from upserting the same rows concurrently.
+        let relationship_suggest_worker = WorkerBuilder::new("relationship_suggest")
+            .concurrency(1)
+            .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new("relationship_suggest"))
+            .backend(self.relationship_suggest_storage.clone())
+            .build_fn(relationship_suggest::handle);
 
         let shutdown_fut = {
             let token = shutdown.clone();
@@ -504,6 +518,7 @@ impl JobRuntime {
             .register(archive_edit_worker)
             .register(backfill_worker)
             .register(hash_backfill_worker)
+            .register(relationship_suggest_worker)
             // Bound the graceful drain (OPS-3, JOBS-3): without this the monitor
             // waits indefinitely for an in-flight job, so a SIGTERM during a
             // 30-minute scan wouldn't return until the scan finished — past the
@@ -813,7 +828,7 @@ impl JobRuntime {
     /// `{type_name}:dead` and the ZSET shape are unchanged from 0.7 through the
     /// 1.0 release candidates). Returns `(queue_label, count)` for every queue.
     pub async fn dead_letter_counts(&self) -> redis::RedisResult<Vec<(&'static str, i64)>> {
-        let keys: [(&'static str, String); 13] = [
+        let keys: [(&'static str, String); 14] = [
             ("scan", self.scan_storage.get_config().dead_jobs_set()),
             (
                 "scan_series",
@@ -874,6 +889,12 @@ impl JobRuntime {
             (
                 "hash_backfill",
                 self.hash_backfill_storage.get_config().dead_jobs_set(),
+            ),
+            (
+                "relationship_suggest",
+                self.relationship_suggest_storage
+                    .get_config()
+                    .dead_jobs_set(),
             ),
         ];
         let mut conn = self.redis.clone();

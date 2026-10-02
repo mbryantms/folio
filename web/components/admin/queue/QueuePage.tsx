@@ -81,6 +81,7 @@ const QUEUE_LABELS: { key: string; label: string }[] = [
   { key: "archive_edit", label: "Archive edits" },
   { key: "backfill", label: "Backfills" },
   { key: "hash_backfill", label: "Content hashing" },
+  { key: "relationship_suggest", label: "Relationship suggestions" },
 ];
 
 /** Friendly labels for every apalis queue. */
@@ -98,6 +99,7 @@ const QUEUE_LABEL_MAP: Record<string, string> = {
   archive_edit: "Archive edits",
   backfill: "Backfills",
   hash_backfill: "Content hashing",
+  relationship_suggest: "Relationship suggestions",
 };
 
 function queueLabel(key: string): string {

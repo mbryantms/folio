@@ -603,6 +603,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/relationship-suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["relationship_suggestions_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/relationship-suggestions/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["relationship_suggestions_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/relationship-suggestions/{id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["relationship_suggestions_accept"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/relationship-suggestions/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["relationship_suggestions_reject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/saved-views": {
         parameters: {
             query?: never;
@@ -4504,6 +4568,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/relationship-suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["relationship_suggestions_for_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/relationships": {
         parameters: {
             query?: never;
@@ -4786,6 +4866,22 @@ export interface components {
              *     un-accepting. The issue's completeness tier reads `accepted` while set.
              */
             metadata_review_accepted_at?: string | null;
+        };
+        AcceptRelationshipSuggestionReq: {
+            kind?: components["schemas"]["RelationshipKind"] | null;
+        };
+        AcceptRelationshipSuggestionResp: {
+            /** @description `false` when the edge already existed (nothing new was inserted). */
+            created: boolean;
+            inverse_id: string;
+            /** @description The kind created (`from kind to`). */
+            kind: components["schemas"]["RelationshipKind"];
+            /**
+             * @description The `from → to` edge row (pass to
+             *     `DELETE /series/{slug}/relationships/{id}` to undo).
+             */
+            relationship_id: string;
+            suggestion: components["schemas"]["RelationshipSuggestionView"];
         };
         AccountReq: {
             /**
@@ -9294,6 +9390,11 @@ export interface components {
             post_scan_thumbs: number;
             /**
              * Format: int64
+             * @description Pending relationship-suggestion runs (one per library; WP-7.2).
+             */
+            relationship_suggest: number;
+            /**
+             * Format: int64
              * @description Pending sidecar-XML rewrite jobs (writeback path; UX-16).
              */
             rewrite_issue_sidecars: number;
@@ -9579,6 +9680,48 @@ export interface components {
          * @enum {string}
          */
         RelationshipSource: "manual" | "suggested";
+        RelationshipSuggestionListView: {
+            bucket_counts?: components["schemas"]["SuggestionBucketCounts"] | null;
+            items: components["schemas"]["RelationshipSuggestionView"][];
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Matching suggestions across all pages. First page only.
+             */
+            total?: number | null;
+        };
+        /**
+         * @description One suggestion, both series hydrated like library-grid cards (covers
+         *     for the review UI). Reads "`from_series` `kind` `to_series`".
+         */
+        RelationshipSuggestionView: {
+            accepted_kind?: components["schemas"]["RelationshipKind"] | null;
+            bucket: components["schemas"]["SuggestionBucket"];
+            /**
+             * Format: float
+             * @description 0–1.
+             */
+            confidence: number;
+            created_at: string;
+            /** @description Structured evidence: `{ "sources": [ { "source": "story_arc", "confidence": 0.65, "reason": "…", … } ] }`. */
+            evidence: Record<string, never>;
+            from_series: components["schemas"]["SeriesView"];
+            id: string;
+            /**
+             * @description Canonical kind: `sequel_of`, `spin_off_of`, `collects`,
+             *     `crossover_with`, `same_universe` or `see_also`.
+             */
+            kind: components["schemas"]["RelationshipKind"];
+            /** @description Display label for `kind` ("Sequel of", …). */
+            kind_label: string;
+            /** @description Human-readable explanation (one clause per evidence source). */
+            reason: string;
+            reviewed_at?: string | null;
+            reviewed_by?: string | null;
+            status: components["schemas"]["SuggestionStatus"];
+            to_series: components["schemas"]["SeriesView"];
+            updated_at: string;
+        };
         RemovedIssueView: {
             file_path: string;
             id: string;
@@ -9740,6 +9883,12 @@ export interface components {
             ordinal: number;
             /** Format: uuid */
             run_id: string;
+        };
+        RunRelationshipSuggestionsResp: {
+            /** @description Libraries skipped because a run was already queued. */
+            already_queued: string[];
+            /** @description Libraries a run was queued for. */
+            enqueued: string[];
         };
         RunRow: {
             error_summary?: string | null;
@@ -10550,6 +10699,25 @@ export interface components {
              */
             special_type?: string | null;
         };
+        /**
+         * @description Confidence bucket shown to reviewers (spec §5.7 "grouped by confidence").
+         * @enum {string}
+         */
+        SuggestionBucket: "high" | "medium" | "low";
+        /** @description Bucket counts for the review UI's confidence tabs (first page only). */
+        SuggestionBucketCounts: {
+            /** Format: int64 */
+            high: number;
+            /** Format: int64 */
+            low: number;
+            /** Format: int64 */
+            medium: number;
+        };
+        /**
+         * @description Review state. Transitions are one-way out of `pending`.
+         * @enum {string}
+         */
+        SuggestionStatus: "pending" | "accepted" | "rejected" | "modified";
         SyncStatusResp: {
             last_metadata_sync_at?: string | null;
             /**
@@ -12826,6 +12994,192 @@ export interface operations {
             };
             /** @description admin only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    relationship_suggestions_list: {
+        parameters: {
+            query?: {
+                /** @description `pending` (default), `accepted`, `rejected`, `modified` or `all` */
+                status?: string;
+                /** @description `high`, `medium` or `low` */
+                bucket?: string;
+                /** @description only suggestions in this library */
+                library_id?: string;
+                cursor?: string;
+                /** @description 1..=200, default 50 */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipSuggestionListView"];
+                };
+            };
+            /** @description bad cursor or query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    relationship_suggestions_run: {
+        parameters: {
+            query?: {
+                /** @description one library; omit for every library */
+                library_id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description runs queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRelationshipSuggestionsResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    relationship_suggestions_accept: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description suggestion id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptRelationshipSuggestionReq"];
+            };
+        };
+        responses: {
+            /** @description edge pair created (or already present) and suggestion marked accepted / modified */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcceptRelationshipSuggestionResp"];
+                };
+            };
+            /** @description malformed id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description suggestion not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description already reviewed, or contradicts an existing relationship */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    relationship_suggestions_reject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description suggestion id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description suggestion marked rejected; it will not be proposed again */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipSuggestionView"];
+                };
+            };
+            /** @description malformed id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description suggestion not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description already reviewed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -20960,6 +21314,53 @@ export interface operations {
                 content?: never;
             };
             /** @description series / range not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    relationship_suggestions_for_series: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                /** @description 1..=200, default 50 */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description pending suggestions with this series on either end */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipSuggestionListView"];
+                };
+            };
+            /** @description bad cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
             404: {
                 headers: {
                     [name: string]: unknown;

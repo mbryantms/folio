@@ -1455,6 +1455,200 @@
         }
       }
     },
+    "/api/admin/relationship-suggestions": {
+      "get": {
+        "operationId": "relationship_suggestions_list",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`pending` (default), `accepted`, `rejected`, `modified` or `all`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "bucket",
+            "in": "query",
+            "description": "`high`, `medium` or `low`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "library_id",
+            "in": "query",
+            "description": "only suggestions in this library",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1..=200, default 50",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationshipSuggestionListView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "bad cursor or query"
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
+    "/api/admin/relationship-suggestions/run": {
+      "post": {
+        "operationId": "relationship_suggestions_run",
+        "parameters": [
+          {
+            "name": "library_id",
+            "in": "query",
+            "description": "one library; omit for every library",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "runs queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunRelationshipSuggestionsResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "library not found"
+          }
+        }
+      }
+    },
+    "/api/admin/relationship-suggestions/{id}/accept": {
+      "post": {
+        "operationId": "relationship_suggestions_accept",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "suggestion id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptRelationshipSuggestionReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "edge pair created (or already present) and suggestion marked accepted / modified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptRelationshipSuggestionResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed id"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "suggestion not found"
+          },
+          "409": {
+            "description": "already reviewed, or contradicts an existing relationship"
+          }
+        }
+      }
+    },
+    "/api/admin/relationship-suggestions/{id}/reject": {
+      "post": {
+        "operationId": "relationship_suggestions_reject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "suggestion id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "suggestion marked rejected; it will not be proposed again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationshipSuggestionView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed id"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "suggestion not found"
+          },
+          "409": {
+            "description": "already reviewed"
+          }
+        }
+      }
+    },
     "/api/admin/saved-views": {
       "post": {
         "operationId": "saved_views_admin_create",
@@ -10388,6 +10582,61 @@
         }
       }
     },
+    "/api/series/{slug}/relationship-suggestions": {
+      "get": {
+        "operationId": "relationship_suggestions_for_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1..=200, default 50",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "pending suggestions with this series on either end",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationshipSuggestionListView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "bad cursor"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/relationships": {
       "get": {
         "operationId": "series_relationships_list",
@@ -11004,6 +11253,52 @@
               "null"
             ],
             "description": "RFC3339 time the issue is marked \"metadata complete\", or `null` after\nun-accepting. The issue's completeness tier reads `accepted` while set."
+          }
+        }
+      },
+      "AcceptRelationshipSuggestionReq": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipKind",
+                "description": "Accept as a different kind (read \"from `kind` to\"). Omit to accept\nthe suggested kind. A different kind records the suggestion as\n`modified`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "AcceptRelationshipSuggestionResp": {
+        "type": "object",
+        "required": [
+          "suggestion",
+          "relationship_id",
+          "inverse_id",
+          "kind",
+          "created"
+        ],
+        "properties": {
+          "created": {
+            "type": "boolean",
+            "description": "`false` when the edge already existed (nothing new was inserted)."
+          },
+          "inverse_id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RelationshipKind",
+            "description": "The kind created (`from kind to`)."
+          },
+          "relationship_id": {
+            "type": "string",
+            "description": "The `from → to` edge row (pass to\n`DELETE /series/{slug}/relationships/{id}` to undo)."
+          },
+          "suggestion": {
+            "$ref": "#/components/schemas/RelationshipSuggestionView"
           }
         }
       },
@@ -21928,6 +22223,7 @@
           "archive_edit",
           "backfill",
           "hash_backfill",
+          "relationship_suggest",
           "total"
         ],
         "properties": {
@@ -21975,6 +22271,11 @@
           "post_scan_thumbs": {
             "type": "integer",
             "format": "int64"
+          },
+          "relationship_suggest": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pending relationship-suggestion runs (one per library; WP-7.2)."
           },
           "rewrite_issue_sidecars": {
             "type": "integer",
@@ -22673,6 +22974,131 @@
           "suggested"
         ]
       },
+      "RelationshipSuggestionListView": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "bucket_counts": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SuggestionBucketCounts",
+                "description": "Per-bucket counts for the current filter minus `bucket`. First page\nonly."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelationshipSuggestionView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Matching suggestions across all pages. First page only.",
+            "minimum": 0
+          }
+        }
+      },
+      "RelationshipSuggestionView": {
+        "type": "object",
+        "description": "One suggestion, both series hydrated like library-grid cards (covers\nfor the review UI). Reads \"`from_series` `kind` `to_series`\".",
+        "required": [
+          "id",
+          "from_series",
+          "to_series",
+          "kind",
+          "kind_label",
+          "confidence",
+          "bucket",
+          "reason",
+          "evidence",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "accepted_kind": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipKind",
+                "description": "Kind actually created when accepted with an override (`modified`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bucket": {
+            "$ref": "#/components/schemas/SuggestionBucket"
+          },
+          "confidence": {
+            "type": "number",
+            "format": "float",
+            "description": "0–1."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "object",
+            "description": "Structured evidence: `{ \"sources\": [ { \"source\": \"story_arc\", \"confidence\": 0.65, \"reason\": \"…\", … } ] }`."
+          },
+          "from_series": {
+            "$ref": "#/components/schemas/SeriesView"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RelationshipKind",
+            "description": "Canonical kind: `sequel_of`, `spin_off_of`, `collects`,\n`crossover_with`, `same_universe` or `see_also`."
+          },
+          "kind_label": {
+            "type": "string",
+            "description": "Display label for `kind` (\"Sequel of\", …)."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Human-readable explanation (one clause per evidence source)."
+          },
+          "reviewed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reviewed_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/SuggestionStatus"
+          },
+          "to_series": {
+            "$ref": "#/components/schemas/SeriesView"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
       "RemovedIssueView": {
         "type": "object",
         "required": [
@@ -23102,6 +23528,29 @@
           "run_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "RunRelationshipSuggestionsResp": {
+        "type": "object",
+        "required": [
+          "enqueued",
+          "already_queued"
+        ],
+        "properties": {
+          "already_queued": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Libraries skipped because a run was already queued."
+          },
+          "enqueued": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Libraries a run was queued for."
           }
         }
       },
@@ -24899,6 +25348,51 @@
             "description": "Spec §6.5 tag (`\"Annual\"`, `\"OneShot\"`, `\"TPB\"`, `\"Special\"`) when the\nscanner classified it; `None` for plain point/unnumbered issues."
           }
         }
+      },
+      "SuggestionBucket": {
+        "type": "string",
+        "description": "Confidence bucket shown to reviewers (spec §5.7 \"grouped by confidence\").",
+        "enum": [
+          "high",
+          "medium",
+          "low"
+        ]
+      },
+      "SuggestionBucketCounts": {
+        "type": "object",
+        "description": "Bucket counts for the review UI's confidence tabs (first page only).",
+        "required": [
+          "high",
+          "medium",
+          "low"
+        ],
+        "properties": {
+          "high": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "low": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "medium": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "SuggestionStatus": {
+        "type": "string",
+        "description": "Review state. Transitions are one-way out of `pending`.",
+        "enum": [
+          "pending",
+          "accepted",
+          "rejected",
+          "modified"
+        ]
       },
       "SyncStatusResp": {
         "type": "object",
