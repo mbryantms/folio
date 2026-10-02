@@ -162,6 +162,17 @@ async fn seed_markers(fx: &Fixture) -> Vec<Value> {
         .exec(db)
         .await
         .unwrap();
+    // One marker hidden from the reading log (no API sets it).
+    marker::Entity::update_many()
+        .col_expr(
+            marker::Column::HiddenFromLog,
+            sea_orm::sea_query::Expr::value(true),
+        )
+        .filter(marker::Column::IssueId.eq(fx.issue.clone()))
+        .filter(marker::Column::PageIndex.eq(3))
+        .exec(db)
+        .await
+        .unwrap();
     let (s, list) = http(
         &fx.app,
         Method::GET,
@@ -206,6 +217,7 @@ const KEPT: &[&str] = &[
     "body",
     "color",
     "page_hash",
+    "hidden_from_log",
     "created_at",
 ];
 
@@ -217,6 +229,10 @@ async fn restore_brings_back_every_marker_in_one_request() {
     assert!(
         snapshots.iter().any(|m| m["page_hash"] == HASH_A),
         "the per-issue list exposes page_hash"
+    );
+    assert!(
+        snapshots.iter().any(|m| m["hidden_from_log"] == true),
+        "the per-issue list exposes hidden_from_log"
     );
     bulk_delete(&fx, &snapshots).await;
 

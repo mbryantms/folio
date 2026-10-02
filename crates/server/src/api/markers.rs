@@ -175,6 +175,9 @@ pub struct MarkerView {
     /// back on `POST /me/markers/restore` so the restored marker keeps
     /// its image anchor.
     pub page_hash: Option<String>,
+    /// Hidden from the reading-log feed. Carried so Undo restores the
+    /// marker exactly (WP-8.4).
+    pub hidden_from_log: bool,
     pub created_at: String,
     pub updated_at: String,
     /// Hydrated for the global `/me/markers` feed so the index page can
@@ -584,6 +587,7 @@ fn to_view(m: marker::Model) -> MarkerView {
         body: m.body,
         color: m.color,
         page_hash: m.page_hash,
+        hidden_from_log: m.hidden_from_log,
         created_at: m.created_at.to_rfc3339(),
         updated_at: m.updated_at.to_rfc3339(),
         series_name: None,
@@ -1760,6 +1764,10 @@ pub struct RestoreMarkerItem {
     #[garde(custom(valid_page_hash_opt))]
     #[schema(pattern = "^[0-9a-f]{64}$")]
     pub page_hash: Option<String>,
+    /// The deleted marker's reading-log visibility. Defaults to `false`.
+    #[serde(default)]
+    #[garde(skip)]
+    pub hidden_from_log: bool,
     /// The original creation time (RFC 3339). Defaults to now; a future
     /// timestamp is clamped to now.
     #[serde(default)]
@@ -1939,7 +1947,7 @@ pub async fn restore(
             created_at: Set(created),
             // A restore is a change sync clients must see.
             updated_at: Set(now),
-            hidden_from_log: Set(false),
+            hidden_from_log: Set(r.item.hidden_from_log),
             page_hash: Set(r.item.page_hash),
         });
     }

@@ -60,6 +60,7 @@ function marker(over: Partial<MarkerView>): MarkerView {
     body: "a note",
     color: "#336699",
     page_hash: HASH,
+    hidden_from_log: true,
     created_at: "2026-09-01T10:00:00+00:00",
     updated_at: "2026-09-02T10:00:00+00:00",
     series_name: "Hydrated",
@@ -82,6 +83,7 @@ describe("markerToRestoreItem", () => {
       is_favorite: true,
       tags: ["sfx", "plot"],
       page_hash: HASH,
+      hidden_from_log: true,
       created_at: "2026-09-01T10:00:00+00:00",
     });
     // Hydration-only fields never go back to the server.

@@ -305,6 +305,8 @@ export type MarkerView = {
   color?: string | null;
   /** WP-6.2 page-image anchor; carried through Undo (WP-8.4). */
   page_hash?: string | null;
+  /** Hidden from the reading-log feed; carried through Undo (WP-8.4). */
+  hidden_from_log: boolean;
   created_at: string;
   updated_at: string;
   series_name?: string | null;

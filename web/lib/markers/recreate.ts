@@ -7,7 +7,8 @@
  *
  * Every field the server keeps is carried, so Undo restores the *row*,
  * not just its content: the original `id` (links to `/markers/{id}`
- * keep working), `created_at`, and the WP-6.2 `page_hash` anchor, plus
+ * keep working), `created_at`, the WP-6.2 `page_hash` anchor and the
+ * reading-log `hidden_from_log` flag, plus
  * placement, content, colour, favourite flag and tags.
  */
 import type { MarkerView, RestoreMarkerItem } from "@/lib/api/types";
@@ -25,6 +26,7 @@ export function markerToRestoreItem(m: MarkerView): RestoreMarkerItem {
     is_favorite: m.is_favorite,
     tags: m.tags,
     page_hash: m.page_hash ?? null,
+    hidden_from_log: m.hidden_from_log,
     created_at: m.created_at,
   };
 }

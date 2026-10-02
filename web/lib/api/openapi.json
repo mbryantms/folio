@@ -20992,6 +20992,7 @@
           "kind",
           "is_favorite",
           "tags",
+          "hidden_from_log",
           "created_at",
           "updated_at"
         ],
@@ -21011,6 +21012,10 @@
           },
           "created_at": {
             "type": "string"
+          },
+          "hidden_from_log": {
+            "type": "boolean",
+            "description": "Hidden from the reading-log feed. Carried so Undo restores the\nmarker exactly (WP-8.4)."
           },
           "id": {
             "type": "string"
@@ -24709,6 +24714,10 @@
             ],
             "format": "date-time",
             "description": "The original creation time (RFC 3339). Defaults to now; a future\ntimestamp is clamped to now."
+          },
+          "hidden_from_log": {
+            "type": "boolean",
+            "description": "The deleted marker's reading-log visibility. Defaults to `false`."
           },
           "id": {
             "type": "string",

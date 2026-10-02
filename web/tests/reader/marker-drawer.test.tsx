@@ -29,6 +29,7 @@ function marker(overrides: Partial<MarkerView>): MarkerView {
     selection: null,
     body: null,
     color: null,
+    hidden_from_log: false,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...overrides,

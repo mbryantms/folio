@@ -27,6 +27,7 @@ const { PERSISTED } = vi.hoisted(() => ({
     body: "keep me",
     color: "violet",
     page_hash: "b".repeat(64),
+    hidden_from_log: false,
     created_at: "2026-09-01T10:00:00+00:00",
     updated_at: "2026-09-01T10:00:00+00:00",
   },

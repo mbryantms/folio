@@ -8754,6 +8754,11 @@ export interface components {
             body?: string | null;
             color?: string | null;
             created_at: string;
+            /**
+             * @description Hidden from the reading-log feed. Carried so Undo restores the
+             *     marker exactly (WP-8.4).
+             */
+            hidden_from_log: boolean;
             id: string;
             /**
              * @description Star flag. Any marker can be favorited; the /bookmarks
@@ -10310,6 +10315,8 @@ export interface components {
              *     timestamp is clamped to now.
              */
             created_at?: string | null;
+            /** @description The deleted marker's reading-log visibility. Defaults to `false`. */
+            hidden_from_log?: boolean;
             /**
              * Format: uuid
              * @description The deleted marker's id. Restored under the same id, so a link to

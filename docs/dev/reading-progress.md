@@ -115,7 +115,8 @@ shows for it. Markers tagged `page-removed` are skipped: their ordinal is
 a guessed neighbour of a page that no longer exists.
 
 Restored markers (`POST /me/markers/restore`, the Undo of a delete) keep
-the `page_hash` the client snapshotted; a snapshot without one is filled
+the `page_hash` the client snapshotted (along with their id, `created_at`,
+content and `hidden_from_log`); a snapshot without one is filled
 by the same backfill.
 
 The account export (`GET /me/export`) carries `page_hash` on every
