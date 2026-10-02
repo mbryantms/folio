@@ -855,13 +855,16 @@ async fn accepted_relationships_are_a_signal() {
     assert_eq!(ids(&body), vec![original.to_string()], "{body}");
     let reason = &body["items"][0]["because"][0];
     assert_eq!(reason["kind"], "relationship");
-    // Read from the neighbour's side: 2011 is the prequel of 2014.
-    assert_eq!(reason["role"], "prequel_of");
+    // Read from the neighbour's side: 2011 "has sequel" 2014 (WP-7.5:
+    // `has_sequel` is the inverse of `sequel_of`), with the label carried.
+    assert_eq!(reason["role"], "has_sequel");
+    assert_eq!(reason["label"], "has sequel");
     assert_eq!(reason["name"], "Daredevil 2014 (2020)");
 
     let (_, body) = get(&app, &format!("/api/series/{original}/similar"), &admin).await;
     assert_eq!(ids(&body), vec![relaunch.to_string()], "{body}");
     assert_eq!(body["items"][0]["because"][0]["role"], "sequel_of");
+    assert_eq!(body["items"][0]["because"][0]["label"], "sequel to");
     assert_eq!(
         body["items"][0]["because"][0]["name"],
         "Daredevil 2011 (2020)"

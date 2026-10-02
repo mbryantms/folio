@@ -14,6 +14,7 @@ use super::entity_pages::{
     self as ep, EntityDetailView, EntityKind, EntityListItem, EntityListQuery, EntityPageQuery,
 };
 use super::series::{IssueListView, SeriesListView};
+use super::series_relationships::ArcTieInView;
 use crate::auth::CurrentUser;
 use crate::state::AppState;
 use server_macros::handler;
@@ -27,6 +28,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(get_one))
         .routes(routes!(series))
         .routes(routes!(issues))
+        .routes(routes!(tie_ins))
 }
 
 /// `GET /arcs` — alphabetical, cursor-paginated browse of every
@@ -119,4 +121,39 @@ pub async fn issues(
     Query(q): Query<EntityPageQuery>,
 ) -> Response {
     ep::issues_handler(&app, &user, KIND, &slug, q).await
+}
+
+/// `GET /arcs/{slug}/tie-ins` — series linked to this story arc by a
+/// `tie_in_to` relationship (WP-7.5), oldest first, cursor-paginated;
+/// `total` on the first page only. 404 when the arc isn't visible to the
+/// caller; tying-in series the caller can't see are left out.
+#[utoipa::path(
+    operation_id = "arcs_tie_ins",    get,
+    path = "/arcs/{slug}/tie-ins",
+    params(
+        ("slug" = String, Path,),
+        ("cursor" = Option<String>, Query,),
+        ("limit" = Option<u64>, Query,),
+    ),
+    responses(
+        (status = 200, body = CursorPage<ArcTieInView>),
+        (status = 400, description = "invalid cursor"),
+        (status = 404,),
+    )
+)]
+#[handler]
+pub async fn tie_ins(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(slug): AxPath<String>,
+    Query(q): Query<EntityPageQuery>,
+) -> Response {
+    super::series_relationships::arc_tie_ins_handler(
+        &app,
+        &user,
+        &slug,
+        q.cursor.as_deref(),
+        q.limit,
+    )
+    .await
 }

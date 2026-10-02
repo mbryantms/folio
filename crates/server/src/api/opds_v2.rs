@@ -589,11 +589,11 @@ async fn series_one(
     }
     // WP-7.1: one `related` link per series relationship the caller can
     // see, pointing at the related series' feed.
-    for (kind, other) in crate::api::series_relationships::visible_related(&app, &user, s.id).await
-    {
+    for link in crate::api::series_relationships::visible_related(&app, &user, s.id).await {
+        let (kind, other) = (link.kind, &link.series);
         let title = match other.year {
-            Some(y) => format!("{}: {} ({y})", kind.label(), other.name),
-            None => format!("{}: {}", kind.label(), other.name),
+            Some(y) => format!("{}: {} ({y})", link.label, other.name),
+            None => format!("{}: {}", link.label, other.name),
         };
         links.push(json!({
             "rel": "related",

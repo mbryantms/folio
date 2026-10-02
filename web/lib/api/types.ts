@@ -811,6 +811,20 @@ export type SeriesChainEntry = Schemas["SeriesChainEntry"];
 export type SeriesRelationshipsResp = Schemas["SeriesRelationshipsResp"];
 export type CreateSeriesRelationshipReq =
   Schemas["CreateSeriesRelationshipReq"];
+// WP-7.5 relationship taxonomy, scope and arc targets
+export type RelationshipGroup = Schemas["RelationshipGroup"];
+export type RelationshipQualifier = Schemas["RelationshipQualifier"];
+export type RelationshipCoverage = Schemas["RelationshipCoverage"];
+export type RelationshipCatalogue = Schemas["RelationshipCatalogue"];
+export type RelationshipKindInfo = Schemas["RelationshipKindInfo"];
+export type RelationshipGroupInfo = Schemas["RelationshipGroupInfo"];
+export type RelationshipQualifierInfo = Schemas["RelationshipQualifierInfo"];
+export type RelationshipArcRef = Schemas["RelationshipArcRef"];
+export type SeriesArcRelationshipView = Schemas["SeriesArcRelationshipView"];
+export type UpdateSeriesRelationshipReq =
+  Schemas["UpdateSeriesRelationshipReq"];
+export type ArcTieInView = Schemas["ArcTieInView"];
+export type ArcTieInListView = Schemas["CursorPage_ArcTieInView"];
 // WP-7.2 relationship suggestions
 export type SuggestionBucket = Schemas["SuggestionBucket"];
 export type SuggestionStatus = Schemas["SuggestionStatus"];

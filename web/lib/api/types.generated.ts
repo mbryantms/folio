@@ -1310,6 +1310,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/arcs/{slug}/tie-ins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /arcs/{slug}/tie-ins` — series linked to this story arc by a
+         *     `tie_in_to` relationship (WP-7.5), oldest first, cursor-paginated;
+         *     `total` on the first page only. 404 when the arc isn't visible to the
+         *     caller; tying-in series the caller can't see are left out.
+         */
+        get: operations["arcs_tie_ins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/config": {
         parameters: {
             query?: never;
@@ -3814,6 +3836,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/relationship-kinds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["relationship_kinds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series": {
         parameters: {
             query?: never;
@@ -4661,7 +4699,7 @@ export interface paths {
         delete: operations["series_relationships_delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        patch: operations["series_relationships_update"];
         trace?: never;
     };
     "/api/series/{slug}/restore": {
@@ -5213,6 +5251,23 @@ export interface components {
              *     clients).
              */
             selected_fields?: string[] | null;
+        };
+        /** @description One series tying in to an arc (`GET /arcs/{slug}/tie-ins`). */
+        ArcTieInView: {
+            created_at: string;
+            from_range?: string | null;
+            /** @description The relationship row id. */
+            id: string;
+            kind: components["schemas"]["RelationshipKind"];
+            /** @description "Tie-in to", "Prelude to", "Aftermath of", "Main story of". */
+            kind_label: string;
+            note?: string | null;
+            qualifier?: components["schemas"]["RelationshipQualifier"] | null;
+            qualifier_label?: string | null;
+            /** @description The tying-in series. */
+            series: components["schemas"]["SeriesView"];
+            source: components["schemas"]["RelationshipSource"];
+            to_range?: string | null;
         };
         AuditEntryView: {
             action: string;
@@ -6482,11 +6537,22 @@ export interface components {
             sort_field?: components["schemas"]["SortField"] | null;
             sort_order?: components["schemas"]["SortOrder"] | null;
         };
+        /** @description `POST` body. Exactly one of `target` / `target_arc`. */
         CreateSeriesRelationshipReq: {
+            coverage?: components["schemas"]["RelationshipCoverage"] | null;
+            /** @description Issue range on this series' side ("1-6", "1-6,Annual 1"; ≤ 100). */
+            from_range?: string | null;
             /** @description Read as "this series `kind` target" (e.g. `sequel_of`). */
             kind: components["schemas"]["RelationshipKind"];
+            /** @description Free text (≤ 500). */
+            note?: string | null;
+            qualifier?: components["schemas"]["RelationshipQualifier"] | null;
             /** @description The other series — slug or UUID. */
-            target: string;
+            target?: string | null;
+            /** @description A story arc instead of a series — slug or UUID (`tie_in_to` only). */
+            target_arc?: string | null;
+            /** @description Issue range on the target's side (≤ 100). */
+            to_range?: string | null;
         };
         /**
          * @description Body for admin create-user (3.8 / audit D9). The server generates the
@@ -6602,6 +6668,31 @@ export interface components {
                 state: string;
                 top_series_name?: string | null;
                 user_id: string;
+            }[];
+            next_cursor?: string | null;
+            /** Format: int64 */
+            total?: number | null;
+        };
+        /**
+         * @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it.
+         */
+        CursorPage_ArcTieInView: {
+            items: {
+                created_at: string;
+                from_range?: string | null;
+                /** @description The relationship row id. */
+                id: string;
+                kind: components["schemas"]["RelationshipKind"];
+                /** @description "Tie-in to", "Prelude to", "Aftermath of", "Main story of". */
+                kind_label: string;
+                note?: string | null;
+                qualifier?: components["schemas"]["RelationshipQualifier"] | null;
+                qualifier_label?: string | null;
+                /** @description The tying-in series. */
+                series: components["schemas"]["SeriesView"];
+                source: components["schemas"]["RelationshipSource"];
+                to_range?: string | null;
             }[];
             next_cursor?: string | null;
             /** Format: int64 */
@@ -9776,12 +9867,73 @@ export interface components {
             /** @description `"string" | "bool" | "uint" | "duration"`. */
             kind: string;
         };
+        /** @description A story arc as a relationship target. */
+        RelationshipArcRef: {
+            id: string;
+            name: string;
+            /** @description `/arcs/{slug}` target. */
+            slug: string;
+        };
         /**
-         * @description The kind of a directed relationship edge. Wire + DB form is snake_case
-         *     (`sequel_of`, …); the DB CHECK in the migration mirrors this list.
+         * @description The relationship kind catalogue (WP-7.5): groups in display order and
+         *     every kind in picker order (grouped, each pair adjacent).
+         */
+        RelationshipCatalogue: {
+            groups: components["schemas"]["RelationshipGroupInfo"][];
+            kinds: components["schemas"]["RelationshipKindInfo"][];
+        };
+        /**
+         * @description How much of the target a collection / reprint covers.
          * @enum {string}
          */
-        RelationshipKind: "sequel_of" | "prequel_of" | "spin_off_of" | "has_spin_off" | "crossover_with" | "collects" | "collected_in" | "same_universe" | "see_also";
+        RelationshipCoverage: "full" | "partial" | "unknown";
+        /**
+         * @description UI group of a kind (WP-7.5): the picker's section headings.
+         * @enum {string}
+         */
+        RelationshipGroup: "story" | "publication" | "editions" | "advanced";
+        RelationshipGroupInfo: {
+            group: components["schemas"]["RelationshipGroup"];
+            /** @description "Story", "Publication history", "Editions & contents", "Advanced". */
+            label: string;
+        };
+        /**
+         * @description The kind of a directed relationship edge. Wire + DB form is snake_case
+         *     (`sequel_of`, …); the DB CHECK in `m20270505_000001_relationship_taxonomy`
+         *     mirrors this list. Every kind has an inverse (self-inverse kinds are
+         *     their own); [`Self::ALL`] is the catalogue order (grouped, each
+         *     directional pair adjacent).
+         * @enum {string}
+         */
+        RelationshipKind: "sequel_of" | "has_sequel" | "prequel_of" | "has_prequel" | "spin_off_of" | "has_spin_off" | "side_story_of" | "has_side_story" | "tie_in_to" | "has_tie_in" | "crossover_with" | "companion_to" | "same_universe" | "see_also" | "continues" | "continued_by" | "annual_of" | "has_annual" | "supplement_to" | "has_supplement" | "collects" | "collected_in" | "reprints" | "reprinted_in" | "alternate_edition_of" | "translation_of" | "has_translation" | "adaptation_of" | "adapted_as" | "reimagining_of" | "reimagined_as";
+        /** @description One kind of the catalogue. */
+        RelationshipKindInfo: {
+            /** @description May target a story arc (`tie_in_to`). */
+            allows_arc_target: boolean;
+            /** @description `coverage` is accepted (collects / reprints and inverses). */
+            allows_coverage: boolean;
+            group: components["schemas"]["RelationshipGroup"];
+            /** @description The reverse edge's kind (itself when `symmetric`). */
+            inverse: components["schemas"]["RelationshipKind"];
+            inverse_label: string;
+            kind: components["schemas"]["RelationshipKind"];
+            /** @description Read "this series *label* other" ("Sequel to"). */
+            label: string;
+            /** @description Accepted `qualifier` values (empty = none). */
+            qualifiers: components["schemas"]["RelationshipQualifierInfo"][];
+            /** @description Self-inverse (`crossover_with`, `see_also`, …). */
+            symmetric: boolean;
+        };
+        /**
+         * @description Continuation qualifier (`continues` / `continued_by`) or tie-in role
+         *     (`tie_in_to` / `has_tie_in`). The DB CHECK binds each set to its kinds.
+         * @enum {string}
+         */
+        RelationshipQualifier: "relaunch" | "retitle" | "merge" | "split" | "numbering" | "main" | "tie_in" | "prelude" | "aftermath";
+        RelationshipQualifierInfo: {
+            label: string;
+            value: components["schemas"]["RelationshipQualifier"];
+        };
         /**
          * @description Where an edge came from.
          * @enum {string}
@@ -9815,11 +9967,17 @@ export interface components {
             from_series: components["schemas"]["SeriesView"];
             id: string;
             /**
-             * @description Canonical kind: `sequel_of`, `spin_off_of`, `collects`,
-             *     `crossover_with`, `same_universe` or `see_also`.
+             * @description The kind read from `to_series`' side (WP-7.5), so a series page can
+             *     caption a suggestion without the kind catalogue.
+             */
+            inverse_kind: components["schemas"]["RelationshipKind"];
+            inverse_kind_label: string;
+            /**
+             * @description Canonical kind (one direction of each directional pair —
+             *     `continues`, `sequel_of`, `collects`, … — or a self-inverse kind).
              */
             kind: components["schemas"]["RelationshipKind"];
-            /** @description Display label for `kind` ("Sequel of", …). */
+            /** @description Display label for `kind` ("Continues", …). */
             kind_label: string;
             /** @description Human-readable explanation (one clause per evidence source). */
             reason: string;
@@ -10324,7 +10482,25 @@ export interface components {
             /** Format: uuid */
             run_id: string;
         };
-        /** @description One step of the sequel/prequel reading-order chain. */
+        /** @description A series → story-arc edge ("this series is a tie-in to *arc*"). */
+        SeriesArcRelationshipView: {
+            arc: components["schemas"]["RelationshipArcRef"];
+            /** Format: float */
+            confidence?: number | null;
+            created_at: string;
+            from_range?: string | null;
+            group: components["schemas"]["RelationshipGroup"];
+            id: string;
+            kind: components["schemas"]["RelationshipKind"];
+            /** @description "Tie-in to", "Prelude to", … (the role folded in). */
+            kind_label: string;
+            note?: string | null;
+            qualifier?: components["schemas"]["RelationshipQualifier"] | null;
+            qualifier_label?: string | null;
+            source: components["schemas"]["RelationshipSource"];
+            to_range?: string | null;
+        };
+        /** @description One step of the reading-order chain. */
         SeriesChainEntry: {
             /**
              * Format: int32
@@ -10395,29 +10571,48 @@ export interface components {
              * @description Suggestion confidence (0–1); `null` for manual edges.
              */
             confidence?: number | null;
+            coverage?: components["schemas"]["RelationshipCoverage"] | null;
             created_at: string;
-            /** @description Row id — pass to `DELETE /series/{slug}/relationships/{id}`. */
+            /** @description Issue range on this series' side ("1-6"). */
+            from_range?: string | null;
+            group: components["schemas"]["RelationshipGroup"];
+            /** @description Row id — pass to `PATCH` / `DELETE /series/{slug}/relationships/{id}`. */
             id: string;
             kind: components["schemas"]["RelationshipKind"];
-            /** @description Display label for `kind` ("Sequel of", "Collected in", …). */
+            /**
+             * @description Display label for `kind` ("Sequel to", "Collected in", …), with a
+             *     tie-in role folded in ("Prelude to").
+             */
             kind_label: string;
+            note?: string | null;
+            qualifier?: components["schemas"]["RelationshipQualifier"] | null;
+            /** @description Display label for `qualifier` ("Relaunch"). */
+            qualifier_label?: string | null;
             /**
              * @description The other series, hydrated like a library-grid card (cover, issue
              *     count, …).
              */
             series: components["schemas"]["SeriesView"];
             source: components["schemas"]["RelationshipSource"];
+            /** @description Issue range on the other series' side. */
+            to_range?: string | null;
         };
         SeriesRelationshipsResp: {
             /**
-             * @description Sequel/prequel chain through this series in reading order (depth
-             *     ≤ 6 each way). Empty when the series has no sequel/prequel edges;
-             *     otherwise includes this series at position 0.
+             * @description Series → story-arc edges (tie-ins), oldest first; only arcs the
+             *     caller can see.
+             */
+            arcs: components["schemas"]["SeriesArcRelationshipView"][];
+            /**
+             * @description Reading-order chain through this series (`sequel_of` / `has_sequel`
+             *     and `continues` / `continued_by`, depth ≤ 6 each way). Empty when
+             *     the series has no such edges; otherwise includes this series at
+             *     position 0.
              */
             chain: components["schemas"]["SeriesChainEntry"][];
             /**
-             * @description Direct relationships, oldest first. Bounded by curation (each edge
-             *     is admin-created or an accepted suggestion), so not paginated.
+             * @description Direct series relationships, oldest first. Bounded by curation (each
+             *     edge is admin-created or an accepted suggestion), so not paginated.
              */
             relationships: components["schemas"]["SeriesRelationshipView"][];
             series_id: string;
@@ -10724,6 +10919,12 @@ export interface components {
         /** @description One shared entity explaining a match. */
         SimilarReason: {
             kind: components["schemas"]["SimilarReasonKind"];
+            /**
+             * @description Relationships only: the kind's display label, lower-cased
+             *     ("sequel to", "continued by"; WP-7.5), so clients don't need the
+             *     kind catalogue to caption a reason.
+             */
+            label?: string | null;
             /** @description Display name of the shared entity (or the related series). */
             name: string;
             /**
@@ -11386,6 +11587,18 @@ export interface components {
             result_limit?: number | null;
             sort_field?: components["schemas"]["SortField"] | null;
             sort_order?: components["schemas"]["SortOrder"] | null;
+        };
+        /**
+         * @description `PATCH` body. Every field is optional: omit to keep, `null` to clear
+         *     (scope fields). Read from the `{slug}` series' side.
+         */
+        UpdateSeriesRelationshipReq: {
+            coverage?: components["schemas"]["RelationshipCoverage"] | null;
+            from_range?: string | null;
+            kind?: components["schemas"]["RelationshipKind"] | null;
+            note?: string | null;
+            qualifier?: components["schemas"]["RelationshipQualifier"] | null;
+            to_range?: string | null;
         };
         /**
          * @description Body for `PATCH /series/{id}`. `match_key` is the §7.4 sticky override
@@ -14657,6 +14870,43 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SeriesListView"];
                 };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    arcs_tie_ins: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_ArcTieInView"];
+                };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             404: {
                 headers: {
@@ -19406,6 +19656,25 @@ export interface operations {
             };
         };
     };
+    relationship_kinds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelationshipCatalogue"];
+                };
+            };
+        };
+    };
     series_list: {
         parameters: {
             query?: never;
@@ -21668,7 +21937,7 @@ export interface operations {
                     "application/json": components["schemas"]["SeriesRelationshipView"];
                 };
             };
-            /** @description edge (and its inverse) created */
+            /** @description edge (and its inverse) created; an arc target answers `SeriesArcRelationshipView` */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -21698,7 +21967,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description self-relationship / invalid body */
+            /** @description self-relationship / scope invalid for the kind / invalid body */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -21743,6 +22012,69 @@ export interface operations {
             };
             /** @description series / relationship not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_relationships_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                /** @description relationship row id (either half) */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSeriesRelationshipReq"];
+            };
+        };
+        responses: {
+            /** @description updated edge from `{slug}`'s side (an arc edge answers `SeriesArcRelationshipView`); a kind change returns the new row id */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesRelationshipView"];
+                };
+            };
+            /** @description malformed id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series / relationship not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the new kind contradicts or duplicates an existing relationship */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description scope invalid for the kind / arc edge given a non-arc kind */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

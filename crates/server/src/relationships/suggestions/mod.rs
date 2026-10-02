@@ -9,8 +9,10 @@
 //!
 //! Invariants:
 //! - **Canonical rows.** Self-inverse kinds are stored with
-//!   `from < to`; directional kinds only as `sequel_of` / `spin_off_of` /
-//!   `collects` ([`canonicalize`]). The DB CHECKs mirror this.
+//!   `from < to`; directional kinds only in their canonical direction
+//!   (`sequel_of`, `continues`, `collects`, …; never `has_*` / `*_by` /
+//!   `*_in` / `*_as` — [`RelationshipKind::is_canonical`], [`canonicalize`]).
+//!   The DB CHECKs mirror this.
 //! - **Rejection memory.** A `(from, to, kind)` whose row is reviewed
 //!   (`accepted` / `rejected` / `modified`) is never rewritten or
 //!   re-proposed; rows are never deleted. [`reopen`] moves a rejected row
@@ -20,7 +22,10 @@
 //!   `pending`. Skipped when any evidence source failed, so a transient
 //!   error can't empty the review queue.
 //! - **Existing edges** with the same kind (or its inverse, which would
-//!   contradict on accept) are not suggested.
+//!   contradict on accept) are not suggested. `sequel_of` and `continues`
+//!   count as equivalent for this (WP-7.5): an existing `sequel_of` edge
+//!   satisfies a `continues` suggestion for the same ordered pair and vice
+//!   versa, and the same holds for reviewed rows (rejection memory).
 //! - **Cap.** At most [`MAX_SUGGESTIONS_PER_RUN`] rows are written per run
 //!   (highest confidence first).
 //! - **Scope.** Suggestions only link series in the **same library**; every
@@ -177,19 +182,33 @@ pub struct Candidate {
     pub evidence: serde_json::Value,
 }
 
-/// Fold a `(from, to, kind)` onto the stored canonical form: directional
-/// kinds become `sequel_of` / `spin_off_of` / `collects` (swapping ends for
-/// their inverses), self-inverse kinds order the ends so `from < to`.
+/// Fold a `(from, to, kind)` onto the stored canonical form: a
+/// non-canonical directional kind (`has_sequel`, `continued_by`,
+/// `collected_in`, …) becomes its inverse with the ends swapped;
+/// self-inverse kinds order the ends so `from < to`.
 pub fn canonicalize(
     from: Uuid,
     to: Uuid,
     kind: RelationshipKind,
 ) -> (Uuid, Uuid, RelationshipKind) {
+    if !kind.is_canonical() {
+        (to, from, kind.inverse())
+    } else if kind.is_self_inverse() && to < from {
+        (to, from, kind)
+    } else {
+        (from, to, kind)
+    }
+}
+
+/// Kinds that satisfy a suggestion of `kind` for the same ordered pair
+/// (itself, plus `sequel_of` ⇔ `continues`, WP-7.5): an existing edge or a
+/// reviewed row of any of them means "already decided".
+pub fn equivalent_kinds(kind: RelationshipKind) -> Vec<RelationshipKind> {
     use RelationshipKind as K;
     match kind {
-        K::PrequelOf | K::HasSpinOff | K::CollectedIn => (to, from, kind.inverse()),
-        K::CrossoverWith | K::SameUniverse | K::SeeAlso if to < from => (to, from, kind),
-        _ => (from, to, kind),
+        K::SequelOf | K::Continues => vec![K::SequelOf, K::Continues],
+        K::HasSequel | K::ContinuedBy => vec![K::HasSequel, K::ContinuedBy],
+        other => vec![other],
     }
 }
 
@@ -357,7 +376,7 @@ pub async fn generate_for_library<C: ConnectionTrait>(
         "SELECT r.from_series_id, r.to_series_id, r.kind \
            FROM series_relationship r \
            JOIN series s ON s.id = r.from_series_id \
-          WHERE s.library_id = $1",
+          WHERE s.library_id = $1 AND r.to_series_id IS NOT NULL",
         [Value::from(library_id)],
     ))
     .all(conn)
@@ -405,14 +424,19 @@ pub async fn generate_for_library<C: ConnectionTrait>(
     for p in proposals {
         // Inverse rows are always stored, so checking the forward
         // orientation for both the kind and its inverse covers "already
-        // related this way" and "would contradict on accept".
+        // related this way" and "would contradict on accept". Equivalent
+        // kinds (`sequel_of` ⇔ `continues`) count as the same decision.
         let same = (p.from, p.to, p.kind.as_str().to_owned());
-        let inv = (p.from, p.to, p.kind.inverse().as_str().to_owned());
-        if edge_set.contains(&same) || edge_set.contains(&inv) {
+        let key = |k: RelationshipKind| (p.from, p.to, k.as_str().to_owned());
+        let equivalents = equivalent_kinds(p.kind);
+        if equivalents
+            .iter()
+            .any(|k| edge_set.contains(&key(*k)) || edge_set.contains(&key(k.inverse())))
+        {
             report.skipped_existing_edge += 1;
             continue;
         }
-        if reviewed_set.contains(&same) {
+        if equivalents.iter().any(|k| reviewed_set.contains(&key(*k))) {
             report.skipped_reviewed += 1;
             continue;
         }
@@ -1032,9 +1056,17 @@ mod tests {
     #[test]
     fn canonical_forms() {
         let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
-        assert_eq!(canonicalize(a, b, K::PrequelOf), (b, a, K::SequelOf));
+        assert_eq!(canonicalize(a, b, K::HasSequel), (b, a, K::SequelOf));
+        assert_eq!(canonicalize(a, b, K::PrequelOf), (a, b, K::PrequelOf));
+        assert_eq!(canonicalize(a, b, K::HasPrequel), (b, a, K::PrequelOf));
+        assert_eq!(canonicalize(a, b, K::ContinuedBy), (b, a, K::Continues));
         assert_eq!(canonicalize(a, b, K::HasSpinOff), (b, a, K::SpinOffOf));
         assert_eq!(canonicalize(a, b, K::CollectedIn), (b, a, K::Collects));
+        assert_eq!(canonicalize(b, a, K::CompanionTo), (a, b, K::CompanionTo));
+        for k in K::ALL {
+            let (_, _, c) = canonicalize(a, b, k);
+            assert!(c.is_canonical(), "{k} folds onto a canonical kind");
+        }
         assert_eq!(canonicalize(b, a, K::SeeAlso), (a, b, K::SeeAlso));
         assert_eq!(
             canonicalize(a, b, K::CrossoverWith),
@@ -1058,6 +1090,24 @@ mod tests {
         assert_eq!(p.bucket, SuggestionBucket::Medium);
         assert_eq!(p.evidence["sources"].as_array().unwrap().len(), 2);
         assert!(p.reason.starts_with("AlternateSeries"));
+    }
+
+    #[test]
+    fn sequel_and_continues_are_equivalent_for_dedupe() {
+        assert_eq!(
+            equivalent_kinds(K::Continues),
+            vec![K::SequelOf, K::Continues]
+        );
+        assert_eq!(
+            equivalent_kinds(K::SequelOf),
+            vec![K::SequelOf, K::Continues]
+        );
+        assert_eq!(
+            equivalent_kinds(K::ContinuedBy),
+            vec![K::HasSequel, K::ContinuedBy]
+        );
+        assert_eq!(equivalent_kinds(K::PrequelOf), vec![K::PrequelOf]);
+        assert_eq!(equivalent_kinds(K::Collects), vec![K::Collects]);
     }
 
     #[test]

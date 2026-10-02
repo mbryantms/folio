@@ -65,11 +65,15 @@ pub struct RelationshipSuggestionView {
     pub id: String,
     pub from_series: SeriesView,
     pub to_series: SeriesView,
-    /// Canonical kind: `sequel_of`, `spin_off_of`, `collects`,
-    /// `crossover_with`, `same_universe` or `see_also`.
+    /// Canonical kind (one direction of each directional pair —
+    /// `continues`, `sequel_of`, `collects`, … — or a self-inverse kind).
     pub kind: RelationshipKind,
-    /// Display label for `kind` ("Sequel of", …).
+    /// Display label for `kind` ("Continues", …).
     pub kind_label: String,
+    /// The kind read from `to_series`' side (WP-7.5), so a series page can
+    /// caption a suggestion without the kind catalogue.
+    pub inverse_kind: RelationshipKind,
+    pub inverse_kind_label: String,
     /// 0–1.
     pub confidence: f32,
     pub bucket: SuggestionBucket,
@@ -856,6 +860,8 @@ async fn hydrate(
                 to_series: views.get(&r.to_series_id.to_string())?.clone(),
                 kind,
                 kind_label: kind.label().to_owned(),
+                inverse_kind: kind.inverse(),
+                inverse_kind_label: kind.inverse().label().to_owned(),
                 confidence: r.confidence,
                 bucket: r.bucket.parse().unwrap_or(SuggestionBucket::Low),
                 reason: r.reason,

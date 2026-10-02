@@ -25,11 +25,13 @@ const m = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api/queries", () => ({
+  useRelationshipKinds: () => ({ data: undefined }),
   useMe: () => ({ data: { role: m.role } }),
   useSeriesRelationships: () => ({
     data: {
       series_id: "this",
       relationships: [],
+      arcs: [],
       chain: [],
     } satisfies SeriesRelationshipsResp,
     isLoading: false,
@@ -91,6 +93,8 @@ function sug(
   to: SeriesView,
   kind: RelationshipSuggestionView["kind"],
   label: string,
+  inverse: RelationshipSuggestionView["kind"],
+  inverseLabel: string,
 ): RelationshipSuggestionView {
   return {
     id,
@@ -98,6 +102,8 @@ function sug(
     to_series: to,
     kind,
     kind_label: label,
+    inverse_kind: inverse,
+    inverse_kind_label: inverseLabel,
     confidence: 0.9,
     bucket: "high",
     reason: `reason ${id}`,
@@ -119,11 +125,27 @@ beforeEach(() => {
   m.hasNextPage = false;
   m.enabled.length = 0;
   m.items = [
-    // This series is the subject: "Sequel of Daredevil (2011)".
-    sug("g1", self, older, "sequel_of", "Sequel of"),
+    // This series is the subject: "Sequel to Daredevil (2011)".
+    sug(
+      "g1",
+      self,
+      older,
+      "sequel_of",
+      "Sequel to",
+      "has_sequel",
+      "Has sequel",
+    ),
     // This series is the object of "Omnibus collects Daredevil": reads as
     // "Collected in Daredevil Omnibus".
-    sug("g2", omnibus, self, "collects", "Collects"),
+    sug(
+      "g2",
+      omnibus,
+      self,
+      "collects",
+      "Collects",
+      "collected_in",
+      "Collected in",
+    ),
   ];
 });
 
@@ -131,7 +153,7 @@ describe("fromPerspective", () => {
   it("inverts the kind when the series is the `to` end", () => {
     expect(fromPerspective(m.items[0]!, "this")).toMatchObject({
       kind: "sequel_of",
-      label: "Sequel of",
+      label: "Sequel to",
       other: { id: "older" },
     });
     expect(fromPerspective(m.items[1]!, "this")).toMatchObject({
@@ -152,7 +174,7 @@ describe("<SeriesSuggestedRelationships>", () => {
     );
     expect(screen.getByText("Suggested")).toBeTruthy();
     const accept = screen.getByRole("button", {
-      name: "Accept: Sequel of Daredevil (2011)",
+      name: "Accept: Sequel to Daredevil (2011)",
     });
     fireEvent.click(accept);
     expect(m.accept).toHaveBeenCalledWith({ id: "g1" });

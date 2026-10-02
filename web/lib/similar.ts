@@ -10,7 +10,8 @@ export function reasonLabel(r: SimilarReason): string {
     return `${humanize(r.role ?? "creator")} ${r.name}`;
   }
   if (r.kind === "relationship") {
-    return `${humanize(r.role ?? "related to")} ${r.name}`;
+    // WP-7.5: the server sends the kind's label ("sequel to").
+    return `${r.label ?? humanize(r.role ?? "related to")} ${r.name}`;
   }
   return `${r.kind} ${r.name}`;
 }

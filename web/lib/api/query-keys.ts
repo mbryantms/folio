@@ -341,6 +341,8 @@ export const queryKeys = {
   /** WP-7.1: direct relationships + sequel/prequel chain for a series. */
   seriesRelationships: (slug: string) =>
     ["series", slug, "relationships"] as const,
+  /** WP-7.5: the relationship kind catalogue (static per server build). */
+  relationshipKinds: ["relationship-kinds"] as const,
   /** WP-7.3: prefix for every admin relationship-suggestion listing. */
   relationshipSuggestionsAll: ["admin", "relationship-suggestions"] as const,
   /** WP-7.3 review page listing (server-side status / bucket / library

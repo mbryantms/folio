@@ -423,7 +423,7 @@ pub async fn story_arcs<C: ConnectionTrait>(
         .collect())
 }
 
-// ───── name continuation → sequel_of ─────
+// ───── name continuation → continues (WP-7.5: publication continuity) ─────
 
 #[derive(Debug, FromQueryResult)]
 struct NameRow {
@@ -497,7 +497,7 @@ pub async fn name_continuation<C: ConnectionTrait>(
         let vol = |name: &str, v: i32, year: Option<i32>| label(&format!("{name} vol. {v}"), year);
         let (kind, c, why) = match (r.prev_ord, r.ord, r.prev_year, r.year) {
             (Some(a), Some(b), _, _) if b == a + 1 => (
-                RelationshipKind::SequelOf,
+                RelationshipKind::Continues,
                 0.9,
                 format!(
                     "{} follows {} — same title, next volume",
@@ -506,7 +506,7 @@ pub async fn name_continuation<C: ConnectionTrait>(
                 ),
             ),
             (Some(a), Some(b), _, _) if b > a => (
-                RelationshipKind::SequelOf,
+                RelationshipKind::Continues,
                 0.65,
                 format!(
                     "{} follows {} — same title; the volumes in between aren't in the library",
@@ -515,7 +515,7 @@ pub async fn name_continuation<C: ConnectionTrait>(
                 ),
             ),
             (_, _, Some(py), Some(y)) if y > py => (
-                RelationshipKind::SequelOf,
+                RelationshipKind::Continues,
                 if r.prev_ord.is_some() && r.ord.is_some() {
                     // Year order and volume order disagree.
                     0.45
@@ -808,7 +808,7 @@ fn fmt_num(n: f64) -> String {
     }
 }
 
-// ───── provider volume ids → sequel_of / see_also ─────
+// ───── provider volume ids → continues / see_also ─────
 
 #[derive(Debug, FromQueryResult)]
 struct ProviderRow {
@@ -836,7 +836,7 @@ struct ProviderRow {
 /// index-only pick) is read, plus the series-level ids.
 ///
 /// Members of a shared id are ordered by first issue number; adjacent
-/// members whose issue ranges are disjoint and ordered are `sequel_of`
+/// members whose issue ranges are disjoint and ordered are `continues`
 /// (the provider sees one continuous run); overlapping ranges are
 /// `see_also` (likely duplicates or variant files of the same run).
 pub async fn provider_volumes<C: ConnectionTrait>(
@@ -906,7 +906,7 @@ pub async fn provider_volumes<C: ConnectionTrait>(
             let disjoint = matches!((r.prev_hi, r.lo), (Some(ph), Some(lo)) if ph < lo);
             let (kind, c, why) = if disjoint {
                 (
-                    RelationshipKind::SequelOf,
+                    RelationshipKind::Continues,
                     0.8,
                     format!(
                         "{this} and {prev} both match {provider} series {}; issues {} continue {}",
@@ -986,7 +986,7 @@ struct RangeRow {
 /// A `series_provider_range` row says "the provider files issues lo–hi of
 /// local series A under provider series P". When another local series B is
 /// itself matched to P, A's range and B are the same run seen two ways:
-/// suggest `see_also`. Not `sequel_of`: the range sits *inside* A (A isn't
+/// suggest `see_also`. Not `continues`: the range sits *inside* A (A isn't
 /// read entirely before or after B), and B usually duplicates those issues
 /// rather than continuing them.
 pub async fn provider_ranges<C: ConnectionTrait>(

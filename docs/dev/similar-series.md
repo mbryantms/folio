@@ -29,13 +29,18 @@ where a reason is `{ kind, role?, name, weight }`:
   `publisher`, `imprint`, `relationship`.
 - `role`: the credit role for creators (`writer`, `penciller`, …); the
   relationship kind, read from the neighbour's side, for relationships
-  (`prequel_of` when the neighbour comes before this series); the
-  `name` of a relationship reason is this series with its year, e.g.
-  "prequel of Agents of Atlas (2009)".
+  (`has_sequel` / `continued_by` when the neighbour comes before this
+  series — WP-7.5 split `prequel_of` off as a narrative prequel); the
+  `name` of a relationship reason is this series with its year.
+- `label` (relationships only, WP-7.5): the kind's display label,
+  lower-cased — e.g. "continued by Agents of Atlas (2020)" — so the web
+  needn't map kinds itself. Arc-target edges never contribute (the signal
+  joins on `to_series_id`).
 - `weight`: that entity's contribution (before the per-kind cap).
 
-The web renders up to three reasons as a caption: "Because: writer Ed
-Brubaker, character Bucky Barnes, arc Winter Soldier"
+The web renders up to three reasons as a caption (a relationship reason
+uses `label`): "Because: writer Ed Brubaker, character Bucky Barnes, arc
+Winter Soldier"
 ([`web/lib/similar.ts`](../../web/lib/similar.ts)).
 
 ## Signals and weights
@@ -180,7 +185,8 @@ From the running branch against the dev library:
   the 2007 series: Agents of Atlas (2007) 9.33 (prequel of Agents of
   Atlas (2009), writer Jeff Parker, penciller Leonard Kirk), X-Men vs.
   Agents of Atlas (2010) 6.00 (writer Jeff Parker, penciller Gabriel
-  Hardman), Avengers vs. Atlas (2010) 4.61.
+  Hardman), Avengers vs. Atlas (2010) 4.61. (Captured before WP-7.5; the
+  reason label now reads "has sequel Agents of Atlas (2009)".)
 - **Home rail** for the test account: "Because you read Monstress":
   X-23 (2011) (writer Marjorie Liu, penciller Sana Takeda), NYX: No Way
   Home (2008), Black Widow (2010), all through writer Marjorie Liu.

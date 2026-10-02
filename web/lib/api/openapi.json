@@ -3035,6 +3035,55 @@
         }
       }
     },
+    "/api/arcs/{slug}/tie-ins": {
+      "get": {
+        "summary": "`GET /arcs/{slug}/tie-ins` — series linked to this story arc by a\n`tie_in_to` relationship (WP-7.5), oldest first, cursor-paginated;\n`total` on the first page only. 404 when the arc isn't visible to the\ncaller; tying-in series the caller can't see are left out.",
+        "operationId": "arcs_tie_ins",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_ArcTieInView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid cursor"
+          },
+          "404": {}
+        }
+      }
+    },
     "/api/auth/config": {
       "get": {
         "operationId": "auth_config_get_public_config",
@@ -8323,6 +8372,22 @@
         }
       }
     },
+    "/api/relationship-kinds": {
+      "get": {
+        "operationId": "relationship_kinds",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationshipCatalogue"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/series": {
       "get": {
         "operationId": "series_list",
@@ -10808,7 +10873,7 @@
             }
           },
           "201": {
-            "description": "edge (and its inverse) created",
+            "description": "edge (and its inverse) created; an arc target answers `SeriesArcRelationshipView`",
             "content": {
               "application/json": {
                 "schema": {
@@ -10827,7 +10892,7 @@
             "description": "contradicts an existing relationship"
           },
           "422": {
-            "description": "self-relationship / invalid body"
+            "description": "self-relationship / scope invalid for the kind / invalid body"
           }
         }
       }
@@ -10866,6 +10931,65 @@
           },
           "404": {
             "description": "series / relationship not found"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "series_relationships_update",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "relationship row id (either half)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSeriesRelationshipReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "updated edge from `{slug}`'s side (an arc edge answers `SeriesArcRelationshipView`); a kind change returns the new row id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesRelationshipView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed id"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series / relationship not found"
+          },
+          "409": {
+            "description": "the new kind contradicts or duplicates an existing relationship"
+          },
+          "422": {
+            "description": "scope invalid for the kind / arc edge given a non-arc kind"
           }
         }
       }
@@ -12071,6 +12195,75 @@
               "type": "string"
             },
             "description": "M5 preview-pane opt-in: when present, only the named fields\n(by `MetadataField::key()`) are applied; everything else is\nskipped. When absent, the legacy \"apply every eligible field\"\nbehaviour applies (preserves backward compat for older\nclients)."
+          }
+        }
+      },
+      "ArcTieInView": {
+        "type": "object",
+        "description": "One series tying in to an arc (`GET /arcs/{slug}/tie-ins`).",
+        "required": [
+          "id",
+          "kind",
+          "kind_label",
+          "source",
+          "created_at",
+          "series"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "from_range": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "description": "The relationship row id."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RelationshipKind"
+          },
+          "kind_label": {
+            "type": "string",
+            "description": "\"Tie-in to\", \"Prelude to\", \"Aftermath of\", \"Main story of\"."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "qualifier": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipQualifier"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qualifier_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series": {
+            "$ref": "#/components/schemas/SeriesView",
+            "description": "The tying-in series."
+          },
+          "source": {
+            "$ref": "#/components/schemas/RelationshipSource"
+          },
+          "to_range": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -15089,18 +15282,71 @@
       },
       "CreateSeriesRelationshipReq": {
         "type": "object",
+        "description": "`POST` body. Exactly one of `target` / `target_arc`.",
         "required": [
-          "target",
           "kind"
         ],
         "properties": {
+          "coverage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipCoverage",
+                "description": "Collects / reprints (and inverses) only."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "from_range": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue range on this series' side (\"1-6\", \"1-6,Annual 1\"; ≤ 100)."
+          },
           "kind": {
             "$ref": "#/components/schemas/RelationshipKind",
             "description": "Read as \"this series `kind` target\" (e.g. `sequel_of`)."
           },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Free text (≤ 500)."
+          },
+          "qualifier": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipQualifier",
+                "description": "Continuation qualifier (`continues` / `continued_by`) or tie-in role\n(`tie_in_to` / `has_tie_in`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "target": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "The other series — slug or UUID."
+          },
+          "target_arc": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A story arc instead of a series — slug or UUID (`tie_in_to` only)."
+          },
+          "to_range": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue range on the target's side (≤ 100)."
           }
         }
       },
@@ -15377,6 +15623,101 @@
                 },
                 "user_id": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CursorPage_ArcTieInView": {
+        "type": "object",
+        "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One series tying in to an arc (`GET /arcs/{slug}/tie-ins`).",
+              "required": [
+                "id",
+                "kind",
+                "kind_label",
+                "source",
+                "created_at",
+                "series"
+              ],
+              "properties": {
+                "created_at": {
+                  "type": "string"
+                },
+                "from_range": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string",
+                  "description": "The relationship row id."
+                },
+                "kind": {
+                  "$ref": "#/components/schemas/RelationshipKind"
+                },
+                "kind_label": {
+                  "type": "string",
+                  "description": "\"Tie-in to\", \"Prelude to\", \"Aftermath of\", \"Main story of\"."
+                },
+                "note": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "qualifier": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/RelationshipQualifier"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "qualifier_label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "series": {
+                  "$ref": "#/components/schemas/SeriesView",
+                  "description": "The tying-in series."
+                },
+                "source": {
+                  "$ref": "#/components/schemas/RelationshipSource"
+                },
+                "to_range": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               }
             }
@@ -23186,20 +23527,203 @@
           }
         }
       },
+      "RelationshipArcRef": {
+        "type": "object",
+        "description": "A story arc as a relationship target.",
+        "required": [
+          "id",
+          "slug",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string",
+            "description": "`/arcs/{slug}` target."
+          }
+        }
+      },
+      "RelationshipCatalogue": {
+        "type": "object",
+        "description": "The relationship kind catalogue (WP-7.5): groups in display order and\nevery kind in picker order (grouped, each pair adjacent).",
+        "required": [
+          "groups",
+          "kinds"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelationshipGroupInfo"
+            }
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelationshipKindInfo"
+            }
+          }
+        }
+      },
+      "RelationshipCoverage": {
+        "type": "string",
+        "description": "How much of the target a collection / reprint covers.",
+        "enum": [
+          "full",
+          "partial",
+          "unknown"
+        ]
+      },
+      "RelationshipGroup": {
+        "type": "string",
+        "description": "UI group of a kind (WP-7.5): the picker's section headings.",
+        "enum": [
+          "story",
+          "publication",
+          "editions",
+          "advanced"
+        ]
+      },
+      "RelationshipGroupInfo": {
+        "type": "object",
+        "required": [
+          "group",
+          "label"
+        ],
+        "properties": {
+          "group": {
+            "$ref": "#/components/schemas/RelationshipGroup"
+          },
+          "label": {
+            "type": "string",
+            "description": "\"Story\", \"Publication history\", \"Editions & contents\", \"Advanced\"."
+          }
+        }
+      },
       "RelationshipKind": {
         "type": "string",
-        "description": "The kind of a directed relationship edge. Wire + DB form is snake_case\n(`sequel_of`, …); the DB CHECK in the migration mirrors this list.",
+        "description": "The kind of a directed relationship edge. Wire + DB form is snake_case\n(`sequel_of`, …); the DB CHECK in `m20270505_000001_relationship_taxonomy`\nmirrors this list. Every kind has an inverse (self-inverse kinds are\ntheir own); [`Self::ALL`] is the catalogue order (grouped, each\ndirectional pair adjacent).",
         "enum": [
           "sequel_of",
+          "has_sequel",
           "prequel_of",
+          "has_prequel",
           "spin_off_of",
           "has_spin_off",
+          "side_story_of",
+          "has_side_story",
+          "tie_in_to",
+          "has_tie_in",
           "crossover_with",
+          "companion_to",
+          "same_universe",
+          "see_also",
+          "continues",
+          "continued_by",
+          "annual_of",
+          "has_annual",
+          "supplement_to",
+          "has_supplement",
           "collects",
           "collected_in",
-          "same_universe",
-          "see_also"
+          "reprints",
+          "reprinted_in",
+          "alternate_edition_of",
+          "translation_of",
+          "has_translation",
+          "adaptation_of",
+          "adapted_as",
+          "reimagining_of",
+          "reimagined_as"
         ]
+      },
+      "RelationshipKindInfo": {
+        "type": "object",
+        "description": "One kind of the catalogue.",
+        "required": [
+          "kind",
+          "inverse",
+          "label",
+          "inverse_label",
+          "group",
+          "symmetric",
+          "qualifiers",
+          "allows_coverage",
+          "allows_arc_target"
+        ],
+        "properties": {
+          "allows_arc_target": {
+            "type": "boolean",
+            "description": "May target a story arc (`tie_in_to`)."
+          },
+          "allows_coverage": {
+            "type": "boolean",
+            "description": "`coverage` is accepted (collects / reprints and inverses)."
+          },
+          "group": {
+            "$ref": "#/components/schemas/RelationshipGroup"
+          },
+          "inverse": {
+            "$ref": "#/components/schemas/RelationshipKind",
+            "description": "The reverse edge's kind (itself when `symmetric`)."
+          },
+          "inverse_label": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RelationshipKind"
+          },
+          "label": {
+            "type": "string",
+            "description": "Read \"this series *label* other\" (\"Sequel to\")."
+          },
+          "qualifiers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelationshipQualifierInfo"
+            },
+            "description": "Accepted `qualifier` values (empty = none)."
+          },
+          "symmetric": {
+            "type": "boolean",
+            "description": "Self-inverse (`crossover_with`, `see_also`, …)."
+          }
+        }
+      },
+      "RelationshipQualifier": {
+        "type": "string",
+        "description": "Continuation qualifier (`continues` / `continued_by`) or tie-in role\n(`tie_in_to` / `has_tie_in`). The DB CHECK binds each set to its kinds.",
+        "enum": [
+          "relaunch",
+          "retitle",
+          "merge",
+          "split",
+          "numbering",
+          "main",
+          "tie_in",
+          "prelude",
+          "aftermath"
+        ]
+      },
+      "RelationshipQualifierInfo": {
+        "type": "object",
+        "required": [
+          "value",
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/RelationshipQualifier"
+          }
+        }
       },
       "RelationshipSource": {
         "type": "string",
@@ -23258,6 +23782,8 @@
           "to_series",
           "kind",
           "kind_label",
+          "inverse_kind",
+          "inverse_kind_label",
           "confidence",
           "bucket",
           "reason",
@@ -23299,13 +23825,20 @@
           "id": {
             "type": "string"
           },
+          "inverse_kind": {
+            "$ref": "#/components/schemas/RelationshipKind",
+            "description": "The kind read from `to_series`' side (WP-7.5), so a series page can\ncaption a suggestion without the kind catalogue."
+          },
+          "inverse_kind_label": {
+            "type": "string"
+          },
           "kind": {
             "$ref": "#/components/schemas/RelationshipKind",
-            "description": "Canonical kind: `sequel_of`, `spin_off_of`, `collects`,\n`crossover_with`, `same_universe` or `see_also`."
+            "description": "Canonical kind (one direction of each directional pair —\n`continues`, `sequel_of`, `collects`, … — or a self-inverse kind)."
           },
           "kind_label": {
             "type": "string",
-            "description": "Display label for `kind` (\"Sequel of\", …)."
+            "description": "Display label for `kind` (\"Continues\", …)."
           },
           "reason": {
             "type": "string",
@@ -24603,9 +25136,87 @@
           }
         }
       },
+      "SeriesArcRelationshipView": {
+        "type": "object",
+        "description": "A series → story-arc edge (\"this series is a tie-in to *arc*\").",
+        "required": [
+          "id",
+          "kind",
+          "kind_label",
+          "group",
+          "source",
+          "created_at",
+          "arc"
+        ],
+        "properties": {
+          "arc": {
+            "$ref": "#/components/schemas/RelationshipArcRef"
+          },
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "from_range": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "group": {
+            "$ref": "#/components/schemas/RelationshipGroup"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RelationshipKind"
+          },
+          "kind_label": {
+            "type": "string",
+            "description": "\"Tie-in to\", \"Prelude to\", … (the role folded in)."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "qualifier": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipQualifier"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qualifier_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/RelationshipSource"
+          },
+          "to_range": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "SeriesChainEntry": {
         "type": "object",
-        "description": "One step of the sequel/prequel reading-order chain.",
+        "description": "One step of the reading-order chain.",
         "required": [
           "position",
           "series"
@@ -24720,6 +25331,7 @@
           "id",
           "kind",
           "kind_label",
+          "group",
           "source",
           "created_at",
           "series"
@@ -24733,19 +25345,64 @@
             "format": "float",
             "description": "Suggestion confidence (0–1); `null` for manual edges."
           },
+          "coverage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipCoverage",
+                "description": "Collects / reprints only."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "created_at": {
             "type": "string"
           },
+          "from_range": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue range on this series' side (\"1-6\")."
+          },
+          "group": {
+            "$ref": "#/components/schemas/RelationshipGroup"
+          },
           "id": {
             "type": "string",
-            "description": "Row id — pass to `DELETE /series/{slug}/relationships/{id}`."
+            "description": "Row id — pass to `PATCH` / `DELETE /series/{slug}/relationships/{id}`."
           },
           "kind": {
             "$ref": "#/components/schemas/RelationshipKind"
           },
           "kind_label": {
             "type": "string",
-            "description": "Display label for `kind` (\"Sequel of\", \"Collected in\", …)."
+            "description": "Display label for `kind` (\"Sequel to\", \"Collected in\", …), with a\ntie-in role folded in (\"Prelude to\")."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "qualifier": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipQualifier",
+                "description": "Continuation qualifier or tie-in role."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qualifier_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Display label for `qualifier` (\"Relaunch\")."
           },
           "series": {
             "$ref": "#/components/schemas/SeriesView",
@@ -24753,6 +25410,13 @@
           },
           "source": {
             "$ref": "#/components/schemas/RelationshipSource"
+          },
+          "to_range": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue range on the other series' side."
           }
         }
       },
@@ -24761,22 +25425,30 @@
         "required": [
           "series_id",
           "relationships",
+          "arcs",
           "chain"
         ],
         "properties": {
+          "arcs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesArcRelationshipView"
+            },
+            "description": "Series → story-arc edges (tie-ins), oldest first; only arcs the\ncaller can see."
+          },
           "chain": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SeriesChainEntry"
             },
-            "description": "Sequel/prequel chain through this series in reading order (depth\n≤ 6 each way). Empty when the series has no sequel/prequel edges;\notherwise includes this series at position 0."
+            "description": "Reading-order chain through this series (`sequel_of` / `has_sequel`\nand `continues` / `continued_by`, depth ≤ 6 each way). Empty when\nthe series has no such edges; otherwise includes this series at\nposition 0."
           },
           "relationships": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SeriesRelationshipView"
             },
-            "description": "Direct relationships, oldest first. Bounded by curation (each edge\nis admin-created or an accepted suggestion), so not paginated."
+            "description": "Direct series relationships, oldest first. Bounded by curation (each\nedge is admin-created or an accepted suggestion), so not paginated."
           },
           "series_id": {
             "type": "string"
@@ -25385,6 +26057,13 @@
         "properties": {
           "kind": {
             "$ref": "#/components/schemas/SimilarReasonKind"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Relationships only: the kind's display label, lower-cased\n(\"sequel to\", \"continued by\"; WP-7.5), so clients don't need the\nkind catalogue to caption a reason."
           },
           "name": {
             "type": "string",
@@ -26934,6 +27613,61 @@
               {
                 "type": "null"
               }
+            ]
+          }
+        }
+      },
+      "UpdateSeriesRelationshipReq": {
+        "type": "object",
+        "description": "`PATCH` body. Every field is optional: omit to keep, `null` to clear\n(scope fields). Read from the `{slug}` series' side.",
+        "properties": {
+          "coverage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "from_range": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipKind",
+                "description": "New kind (a change re-creates the pair; arc edges stay `tie_in_to`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "qualifier": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipQualifier"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to_range": {
+            "type": [
+              "string",
+              "null"
             ]
           }
         }

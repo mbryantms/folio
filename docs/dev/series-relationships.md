@@ -1,59 +1,141 @@
 # Series relationships
 
-WP-7.1 of the product roadmap (spec §5.2 / Phase 7). Series carry typed,
-directed edges to other series: sequels, prequels, spin-offs, crossovers,
-collected editions, shared universes and a catch-all "see also". The
-suggestion engine (WP-7.2) and its review UI (WP-7.3) build on this layer.
+WP-7.1 of the product roadmap (spec §5.2 / Phase 7), with the taxonomy,
+arc targets and scoped links of WP-7.5 (roadmap M7b). Series carry typed,
+directed edges to other series — or to a story arc: sequels, narrative
+prequels, publication continuations, spin-offs, tie-ins, annuals,
+collected editions, reprints, translations, adaptations and a catch-all
+"see also". The suggestion engine (WP-7.2) and its review UI (WP-7.3) build
+on this layer.
 
 ## Schema
 
-`series_relationship` (migration `m20270501_000001_series_relationship`,
-entity `crates/entity/src/series_relationship.rs`):
+`series_relationship` (migrations `m20270501_000001_series_relationship`
+and `m20270505_000001_relationship_taxonomy`, entity
+`crates/entity/src/series_relationship.rs`):
 
 | column | type | notes |
 |---|---|---|
 | `id` | `uuid` PK | |
 | `from_series_id` | `uuid` FK → `series` ON DELETE CASCADE | the subject: "*from* is a sequel of *to*" |
-| `to_series_id` | `uuid` FK → `series` ON DELETE CASCADE | indexed (`series_relationship_to_series`) |
+| `to_series_id` | `uuid` NULL FK → `series` ON DELETE CASCADE | indexed (`series_relationship_to_series`); NULL for an arc edge |
+| `to_arc_id` | `uuid` NULL FK → `story_arc` ON DELETE CASCADE | WP-7.5 arc target; indexed (`series_relationship_to_arc`, partial) |
 | `kind` | `text` | CHECK in the kind list below |
 | `source` | `text` default `'manual'` | CHECK `manual` / `suggested` |
 | `confidence` | `real` NULL | 0.0–1.0 (CHECK); set for accepted suggestions, NULL for manual edges |
 | `created_by` | `uuid` NULL FK → `users` ON DELETE SET NULL | the admin who made the edge |
 | `created_at` | `timestamptz` default `now()` | |
+| `from_range` | `text` NULL | issue range on the *from* side (`1-6`, `1-6,Annual 1`); ≤ 100 chars (CHECK) |
+| `to_range` | `text` NULL | issue range on the *to* side; ≤ 100 chars |
+| `coverage` | `text` NULL | `full` / `partial` / `unknown`; only on `collects` / `collected_in` / `reprints` / `reprinted_in` (CHECK) |
+| `qualifier` | `text` NULL | continuation qualifier (`relaunch` / `retitle` / `merge` / `split` / `numbering`) on `continues` / `continued_by`, or tie-in role (`main` / `tie_in` / `prelude` / `aftermath`) on `tie_in_to` / `has_tie_in` (CHECK binds each set to its kinds) |
+| `note` | `text` NULL | free text, ≤ 500 chars |
 
-Constraints: `UNIQUE (from_series_id, to_series_id, kind)` and
-`CHECK (from_series_id <> to_series_id)`. Deleting a series removes both
-halves of every pair it took part in (the FK cascade).
+Constraints:
 
-## Kinds and inverses
+- `series_relationship_target_chk`: `num_nonnulls(to_series_id, to_arc_id) = 1`.
+- `series_relationship_arc_kind_chk`: an arc target is only `tie_in_to`.
+- Partial unique indexes (they replaced `UNIQUE (from, to, kind)`):
+  `series_relationship_series_uniq (from_series_id, to_series_id, kind) WHERE to_series_id IS NOT NULL`
+  and `series_relationship_arc_uniq (from_series_id, to_arc_id, kind) WHERE to_arc_id IS NOT NULL`.
+- `CHECK (from_series_id <> to_series_id)`.
 
-Every edge is stored **together with its inverse**, so "what is related to
-X" is a single `WHERE from_series_id = X` with no `UNION`.
+Deleting a series removes both halves of every pair it took part in, and
+deleting a story arc removes its tie-in rows (the FK cascades).
 
-| kind | inverse | reads as |
-|---|---|---|
-| `sequel_of` | `prequel_of` | *from* continues *to*; *to* is read first |
-| `prequel_of` | `sequel_of` | *from* is read before *to* |
-| `spin_off_of` | `has_spin_off` | *from* was spun off from *to* |
-| `has_spin_off` | `spin_off_of` | *from* spawned *to* |
-| `collects` | `collected_in` | *from* (a TPB / omnibus series) collects *to* |
-| `collected_in` | `collects` | *from* is collected in *to* |
-| `crossover_with` | itself | |
-| `same_universe` | itself | |
-| `see_also` | itself | |
+## Kinds and inverses (WP-7.5 taxonomy)
 
-`has_spin_off` isn't in the roadmap's original kind list; it was added so
-`spin_off_of` has a distinct inverse. A self-inverse kind stores the reverse
-row with the same kind (`A see_also B` + `B see_also A`).
+Every series → series edge is stored **together with its inverse**, so
+"what is related to X" is a single `WHERE from_series_id = X` with no
+`UNION`. A self-inverse kind stores the reverse row with the same kind
+(`A see_also B` + `B see_also A`). Every kind belongs to one UI group; a
+pair's two halves share it.
 
-A directional kind contradicts its own inverse on the same ordered pair:
-asking for `A sequel_of B` while `A prequel_of B` exists is refused
-(`PairError::Conflict`, HTTP 409).
+| group | kind | inverse | label (from the subject's side) |
+|---|---|---|---|
+| Story | `sequel_of` | `has_sequel` | Sequel to / Has sequel |
+| Story | `prequel_of` | `has_prequel` | Prequel to / Has prequel — a *narrative* prequel: written later, set earlier |
+| Story | `spin_off_of` | `has_spin_off` | Spin-off of / Has spin-off |
+| Story | `side_story_of` | `has_side_story` | Side story of / Has side story |
+| Story | `tie_in_to` | `has_tie_in` | Tie-in to / Has tie-in (role folded in: "Prelude to", "Aftermath of", "Main story of"; "Has prelude", …) |
+| Story | `crossover_with` | itself | Crossover with |
+| Story | `companion_to` | itself | Companion to |
+| Story | `same_universe` | itself | Same universe as (manual; WP-7.6 derives it) |
+| Story | `see_also` | itself | See also |
+| Publication history | `continues` | `continued_by` | Continues / Continued by (qualifier: relaunch, retitle, merge, split, numbering) |
+| Publication history | `annual_of` | `has_annual` | Annual of / Has annual |
+| Publication history | `supplement_to` | `has_supplement` | Supplement to / Has supplement |
+| Editions & contents | `collects` | `collected_in` | Collects / Collected in (coverage) |
+| Editions & contents | `reprints` | `reprinted_in` | Reprints / Reprinted in (coverage) |
+| Editions & contents | `alternate_edition_of` | itself | Alternate edition of |
+| Editions & contents | `translation_of` | `has_translation` | Translation of / Has translation |
+| Advanced | `adaptation_of` | `adapted_as` | Adaptation of / Adapted as (comic-to-comic) |
+| Advanced | `reimagining_of` | `reimagined_as` | Reimagining of / Reimagined as |
+
+`prequel_of` is **no longer** the inverse of `sequel_of` (it was in WP-7.1);
+see "Migration" below for how existing rows moved.
+
+**Contradictions.** A directional kind contradicts its own inverse on the
+same ordered pair: asking for `A sequel_of B` while `A has_sequel B` exists
+is refused (`PairError::Conflict`, HTTP 409). The two reading-order
+families count as one (`RelationshipKind::contradictions`): `A continues B`
+also contradicts `A has_sequel B`, and `A sequel_of B` contradicts
+`A continued_by B`.
 
 The typed enum is `server::relationships::RelationshipKind` (serde
-snake_case + `ToSchema`, with `inverse()`, `label()`, `as_str()`), next to
-`RelationshipSource` (`manual | suggested`). The DB CHECK mirrors the enum:
-adding a kind needs both a migration and the enum variant.
+snake_case + `ToSchema`, with `inverse()`, `label()`, `display_label(qualifier)`,
+`group()`, `qualifiers()`, `allows_coverage()`, `allows_arc_target()`,
+`is_canonical()`, `as_str()`), next to `RelationshipGroup`
+(`story | publication | editions | advanced`), `RelationshipQualifier`,
+`RelationshipCoverage` and `RelationshipSource` (`manual | suggested`). The
+DB CHECK mirrors the enum: adding a kind needs both a migration and the enum
+variant.
+
+The **catalogue** is served at `GET /api/relationship-kinds`
+(`RelationshipCatalogue { groups: [{group, label}], kinds: [{kind, inverse,
+label, inverse_label, group, symmetric, qualifiers: [{value, label}],
+allows_coverage, allows_arc_target}] }`), so the web never hard-codes kinds.
+
+## Scope (WP-7.5)
+
+Optional on any series edge, read from the *from* side:
+
+- `from_range` / `to_range`: issue-number ranges (`1-6`, `1-6,Annual 1`).
+  Validated lightly: ≤ 100 chars, no control characters; blank → NULL.
+- `coverage`: `full | partial | unknown`, only for `collects` /
+  `collected_in` / `reprints` / `reprinted_in`. Any other kind → 422.
+- `qualifier`: `continues` / `continued_by` take a continuation qualifier;
+  `tie_in_to` / `has_tie_in` take a role. Any other kind, or a qualifier
+  from the wrong set → 422.
+- `note`: ≤ 500 chars, any kind.
+
+The inverse row **mirrors** the scope: ranges swapped, the same coverage,
+qualifier and note (`Scope::mirrored`). `relationships::Scope::validate`
+returns field-level issues (`[{field, message}]`), which the API returns as
+the canonical 422 `error.details`.
+
+## Arc targets (WP-7.5)
+
+A relationship can target a story arc instead of a series: "this series is
+a tie-in to *Secret Invasion*". Arc edges are **one-directional** rows (no
+inverse row — an arc isn't a series), only `tie_in_to` (with an optional
+role), and never part of the reading-order chain or the similar-series
+signal (both join on `to_series_id`).
+
+- `relationships::create_arc_edge(conn, from, arc_id, kind, source,
+  confidence, created_by, &scope)` (idempotent like `create_pair`).
+- `relationships::arc_edges(conn, series_id)`: a series' arc edges.
+- `relationships::arc_tie_ins(conn, arc_id)`: every series tying in to an
+  arc (unfiltered; the HTTP route applies the ACL).
+
+**Visibility** follows the M5 arc entity pages: an arc is visible when the
+caller can see at least one appearance of it — a visible issue in
+`issue_arcs` or a visible series in `series_arcs` (library grant +
+age-rating cap; `entity_pages::visible_arc_ids`). `GET
+/api/series/{slug}/relationships` lists only visible arcs, and `GET
+/api/arcs/{slug}/tie-ins` answers 404 for an arc the caller can't see
+(`entity_pages::resolve_visible_for_user`, the same gate as
+`/arcs/{slug}`).
 
 ## Write surface
 
@@ -61,32 +143,44 @@ adding a kind needs both a migration and the enum variant.
 insert or delete `series_relationship` rows directly.
 
 ```rust
-pub async fn create_pair<C: ConnectionTrait>(
-    conn: &C, from: Uuid, to: Uuid, kind: RelationshipKind,
-    source: RelationshipSource, confidence: Option<f32>, created_by: Option<Uuid>,
-) -> Result<PairOutcome, PairError>;           // PairOutcome { forward, inverse, created }
-
-pub async fn delete_pair<C: ConnectionTrait>(
-    conn: &C, from: Uuid, to: Uuid, kind: RelationshipKind,
-) -> Result<Option<series_relationship::Model>, DbErr>;  // deleted forward row
-
-pub async fn delete_pair_by_id<C: ConnectionTrait>(conn: &C, id: Uuid)
-    -> Result<Option<series_relationship::Model>, DbErr>;  // either half's id
+pub async fn create_pair<C>(conn, from, to, kind, source, confidence, created_by)
+    -> Result<PairOutcome, PairError>;           // no scope
+pub async fn create_pair_scoped<C>(conn, from, to, kind, source, confidence, created_by, &Scope)
+    -> Result<PairOutcome, PairError>;           // PairOutcome { forward, inverse, created }
+pub async fn create_arc_edge<C>(conn, from, arc_id, kind, source, confidence, created_by, &Scope)
+    -> Result<ArcEdgeOutcome, PairError>;        // { row, created }
+pub async fn update_edge<C>(conn, forward: Model, kind, Scope)
+    -> Result<UpdateOutcome, PairError>;         // { before, forward, inverse, kind_changed }
+pub async fn delete_pair<C>(conn, from, to, kind) -> Result<Option<Model>, DbErr>;
+pub async fn delete_pair_by_id<C>(conn, id) -> Result<Option<Model>, DbErr>;  // either half, or an arc edge
+pub async fn row_from_perspective<C>(conn, row, series_id) -> Result<Option<Model>, DbErr>;
+// PairError { SelfEdge, Conflict { existing }, Duplicate { kind }, InvalidConfidence,
+//             ArcKind { kind }, InvalidScope(Vec<ScopeIssue>), Db }
 ```
 
 - Pass a `DatabaseTransaction` so both halves land, or vanish, together.
-- `create_pair` is **idempotent**: an existing pair comes back with
-  `created = false` (a missing inverse half is re-created). Both inserts are
-  `ON CONFLICT DO NOTHING`, so concurrent creates are safe. WP-7.2's
-  suggestion-accept path calls it with `RelationshipSource::Suggested` and
-  the suggestion's confidence.
-- `create_pair` does not check that the series exist (the FK does) or that
-  the caller may see them (the HTTP layer does).
+- `create_pair*` is **idempotent**: an existing pair comes back with
+  `created = false` and its scope **unchanged** (edit scope with
+  `update_edge`); a missing inverse half is re-created. Both inserts are
+  `ON CONFLICT … WHERE to_series_id IS NOT NULL DO NOTHING`, so concurrent
+  creates are safe. WP-7.2's suggestion-accept path calls `create_pair`
+  with `RelationshipSource::Suggested` and the suggestion's confidence.
+- `update_edge` keeps the halves in sync: a scope edit updates both rows in
+  place (the inverse gets the mirrored scope); a **kind change is delete +
+  create** of the pair (new ids; source, confidence and creator kept), so
+  the contradiction rule applies to the new kind, and turning the edge into
+  a pair that already exists is `PairError::Duplicate` (409). Arc edges
+  stay `tie_in_to` and are updated in place. Run it in a transaction so a
+  refused create rolls the delete back.
+- Neither checks that the series exist (the FK does) or that the caller may
+  see them (the HTTP layer does).
 
 ## Traversal
 
 ```rust
 pub const MAX_TRAVERSAL_DEPTH: u32 = 6;
+pub const CHAIN_BEFORE: [RelationshipKind; 2] = [SequelOf, Continues];
+pub const CHAIN_AFTER:  [RelationshipKind; 2] = [HasSequel, ContinuedBy];
 pub async fn traverse<C>(conn, start, kinds: &[RelationshipKind], max_depth: u32)
     -> Result<Vec<TraversalNode>, DbErr>;      // { series_id, depth, parent_id }
 pub async fn chain<C>(conn, start) -> Result<Vec<ChainNode>, DbErr>;
@@ -95,93 +189,164 @@ pub async fn direct<C>(conn, series_id) -> Result<Vec<series_relationship::Model
 ```
 
 `traverse` is a raw-SQL recursive CTE (one of the spec's sanctioned raw-SQL
-escape hatches). It follows edges whose kind is in `kinds`, clamps depth to
-6, and is **cycle-safe**: each recursive row carries its visited path and
-never re-enters a node on it. Each node is reported once, at its shortest
-depth, with the `parent_id` it was reached through. The start series is
-never returned.
+escape hatches). It follows series edges whose kind is in `kinds` (arc
+edges are skipped), clamps depth to 6, and is **cycle-safe**: each
+recursive row carries its visited path and never re-enters a node on it.
+Each node is reported once, at its shortest depth, with the `parent_id` it
+was reached through. The start series is never returned.
 
-`chain` builds the reading order: it walks `sequel_of` edges for what comes
-before (negative positions) and `prequel_of` edges for what comes after
-(positive positions), up to 6 hops each way, with the start series at
-position 0. Positions can repeat when the chain branches (two sequels of
-the same book). A node that a cycle puts on both sides is kept on the
-"before" side only.
+`chain` builds the reading order (WP-7.5): it walks narrative sequels and
+publication continuity together — `sequel_of` / `continues` for what comes
+before (negative positions) and `has_sequel` / `continued_by` for what
+comes after (positive positions), mixed freely along a path, up to 6 hops
+each way, with the start series at position 0. A narrative `prequel_of`
+is **not** a chain edge (it is shown in its own group). Positions can
+repeat when the chain branches (two sequels of the same book). A node that
+a cycle puts on both sides is kept on the "before" side only.
 
 Dense self-inverse graphs (`same_universe` across a whole publisher) make
 path enumeration expensive at depth 6. The chain only follows
-sequel/prequel edges, so this doesn't affect the series page. A caller that
-traverses `same_universe` should pass a small `max_depth`.
+sequel/continuation edges, so this doesn't affect the series page. A
+caller that traverses `same_universe` should pass a small `max_depth`.
 
 ## HTTP API (`api` group; `crates/server/src/api/series_relationships.rs`)
 
 | method | path | who | result |
 |---|---|---|---|
+| `GET` | `/api/relationship-kinds` | any signed-in user | `RelationshipCatalogue` |
 | `GET` | `/api/series/{slug}/relationships` | any user who can see the series | `SeriesRelationshipsResp` |
-| `POST` | `/api/series/{slug}/relationships` | `RequireAdmin` | `201` new / `200` existing → `SeriesRelationshipView` |
+| `POST` | `/api/series/{slug}/relationships` | `RequireAdmin` | `201` new / `200` existing → `SeriesRelationshipView` (or `SeriesArcRelationshipView` for an arc target) |
+| `PATCH` | `/api/series/{slug}/relationships/{id}` | `RequireAdmin` | `200` → the updated edge from `{slug}`'s side |
 | `DELETE` | `/api/series/{slug}/relationships/{id}` | `RequireAdmin` | `204` |
+| `GET` | `/api/arcs/{slug}/tie-ins` | any user who can see the arc | `CursorPage<ArcTieInView>` (`cursor`, `limit` 1–100, default 60; `total` on the first page) |
 
 ```jsonc
-// GET
+// GET /api/series/{slug}/relationships
 {
   "series_id": "…",
   "relationships": [{
-    "id": "…",                 // row id; pass to DELETE
-    "kind": "sequel_of",       // from this series' point of view
-    "kind_label": "Sequel of",
+    "id": "…",                 // row id; pass to PATCH / DELETE
+    "kind": "continues",       // from this series' point of view
+    "kind_label": "Continues", // tie-in roles folded in ("Prelude to")
+    "group": "publication",
     "source": "manual",        // | "suggested"
     "confidence": null,        // 0–1 for suggested
     "created_at": "…",
-    "series": { /* SeriesView, hydrated like a grid card: slug, name, year, cover_url, issue_count, … */ }
+    "from_range": null, "to_range": "1-6",
+    "coverage": null,          // collects / reprints only
+    "qualifier": "relaunch", "qualifier_label": "Relaunch",
+    "note": null,
+    "series": { /* SeriesView, hydrated like a grid card */ }
   }],
-  "chain": [                   // empty when there are no sequel/prequel edges
+  "arcs": [{                   // series → arc edges (visible arcs only)
+    "id": "…", "kind": "tie_in_to", "kind_label": "Prelude to", "group": "story",
+    "qualifier": "prelude", "qualifier_label": "Prelude", "from_range": null, "to_range": null, "note": null,
+    "source": "manual", "confidence": null, "created_at": "…",
+    "arc": { "id": "…", "slug": "secret-invasion", "name": "Secret Invasion" }
+  }],
+  "chain": [                   // empty when there are no sequel/continuation edges
     { "position": -1, "series": { /* SeriesView */ } },
     { "position": 0,  "series": { /* this series */ } },
     { "position": 1,  "series": { /* SeriesView */ } }
   ]
 }
 
-// POST body: "this series <kind> target"
-{ "target": "saga-2012" /* slug or UUID */, "kind": "sequel_of" }
+// POST body: "this series <kind> target". Exactly one of target / target_arc.
+{ "target": "saga-2012" /* slug or UUID */, "kind": "collects",
+  "from_range": "1", "to_range": "1-6", "coverage": "full", "note": "Vol. 1" }
+{ "target_arc": "secret-invasion" /* slug or UUID */, "kind": "tie_in_to", "qualifier": "prelude" }
+
+// PATCH body: every field optional; omit = keep, null = clear (scope fields).
+{ "kind": "reprints", "note": null }
 ```
 
-Errors: `422 validation` for a self edge, a blank target or a malformed
-body; `404` when the series or target is missing; `409 conflict` for a
-contradicting directional kind; `403` for non-admin writes. A duplicate
-POST is **not** an error: it returns the existing forward row with `200`
-and writes no audit row.
+Errors: `422 validation` (with field `details`) for a self edge, a missing
+or doubled target, scope that doesn't fit the kind (`coverage`,
+`qualifier`), an over-long range / note, an arc target with a non-arc kind
+(`kind`), or a malformed body; `404` when the series, target or arc is
+missing; `409 conflict` for a contradicting directional kind, or a PATCH
+kind change that would duplicate an existing pair; `403` for non-admin
+writes; `400` for a malformed id. A duplicate POST is **not** an error: it
+returns the existing forward row with `200`, unchanged, and writes no audit
+row.
 
-`DELETE` takes either half's id (it must touch `{slug}`) and removes both
-halves.
+`PATCH` and `DELETE` take either half's id (it must touch `{slug}`); PATCH
+reads the body from `{slug}`'s side (an inverse-half id is swapped for its
+partner), DELETE removes both halves. A PATCH kind change answers with the
+**new** row id.
 
 **Permissions and ACL.** `GET` answers 404 when the caller can't see the
 series. Related series are filtered to those the caller can see too:
 library grant and age-rating cap (`VisibleLibraries::series_ok`), and
-non-admins never see removed series. The chain is pruned so that a hidden
-link also hides every series reached through it. Nothing beyond a series
-the caller can't see leaks.
+non-admins never see removed series. Arcs are filtered as described under
+"Arc targets". The chain is pruned so that a hidden link also hides every
+series reached through it. Nothing beyond a series the caller can't see
+leaks. `GET /arcs/{slug}/tie-ins` filters the tying-in series in SQL with
+the entity pages' series ACL (removed series hidden), so pages are never
+short.
 
-**Audit.** `admin.series.relationship.create` (only when a pair was actually
-inserted) and `admin.series.relationship.delete`, both with target
-`("series", <slug's series id>)` and the edge ids/kinds in the payload.
+**Audit.** `admin.series.relationship.create` (only when a pair or arc edge
+was actually inserted), `admin.series.relationship.update` (payload: new
+and previous row ids, `kind_before` / `kind`, `kind_changed`,
+`scope_before` / `scope`) and `admin.series.relationship.delete`, all with
+target `("series", <slug's series id>)`. Every write calls
+`state.similarity.invalidate_all()`.
 
-**Pagination.** The list isn't cursor-paginated. Relationships are curated
-(admin-made or accepted suggestions), so the set is bounded by the domain,
-like `/me/sessions`. If WP-7.2 starts accepting `same_universe` suggestions
-in bulk, revisit this.
+**Pagination.** The series list isn't cursor-paginated. Relationships are
+curated (admin-made or accepted suggestions), so the set is bounded by the
+domain, like `/me/sessions`. The arc tie-in list is cursor-paginated
+because WP-7.6 will detect tie-ins from `issue_arcs` and big events can
+have many.
 
 ## OPDS
 
 Series feeds link related series the caller can see:
 
 - OPDS 1.2 `/opds/v1/series/{id}`: a feed-level
-  `<link rel="related" href="/opds/v1/series/{other}" type="…acquisition" title="Sequel of: Saga (2012)"/>`
+  `<link rel="related" href="/opds/v1/series/{other}" type="…acquisition" title="Sequel to: Saga (2012)"/>`
   for each one.
 - OPDS 2.0 `/opds/v2/series/{id}`: a `links[]` entry
   `{ "rel": "related", "href": "/opds/v2/series/{other}", "type": "application/opds+json", "title": …, "properties": { "folio:relationship": "sequel_of" } }`.
 
-Both use `api::series_relationships::visible_related`, which applies the
-same ACL as the JSON `GET`.
+Both use `api::series_relationships::visible_related` (a `RelatedLink {
+kind, label, series }` list, the label being `display_label` with any
+tie-in role folded in), which applies the same ACL as the JSON `GET`. Arc
+edges aren't linked from OPDS.
+
+## Migration (`m20270505_000001_relationship_taxonomy`)
+
+**Up**, in `series_relationship`:
+
+1. Every `prequel_of` row becomes `has_sequel`: under the WP-7.1 model
+   `prequel_of` was only ever the inverse half of `sequel_of`.
+2. Every `source = 'suggested'` `sequel_of` / `has_sequel` pair whose
+   suggestion (same `from` / `to`, `status = 'accepted'`, kind `sequel_of`)
+   has a `name_continuation` or `provider_volume` entry in
+   `evidence.sources` becomes `continues` / `continued_by` — those sources
+   detect publication continuity, not narrative order.
+3. Manual `sequel_of` stays (the admin chose it), and so does a suggested
+   `sequel_of` that came from a **modified** accept (the admin picked
+   `sequel_of` over the suggested kind).
+
+In `series_relationship_suggestion`: `pending` / `stale` / `accepted`
+`sequel_of` rows from those two sources become `continues` (accepted rows
+too, so the "never re-suggest" rejection memory keeps matching the new
+kind); `accepted_kind = 'prequel_of'` becomes `has_sequel` (same meaning);
+rejected and modified rows keep their kind (the engine's dedupe treats
+`sequel_of` ≡ `continues`, below). The kind / canonical / accepted-kind
+CHECKs are replaced with the new lists.
+
+**Down is lossy** but keeps working (CI's migration round-trip runs it):
+arc-target rows are deleted and the scope columns dropped;
+`has_sequel` / `continued_by` → `prequel_of`, `continues` / `has_prequel` →
+`sequel_of`, every other new kind → `see_also`, keeping one row where two
+now collide on the restored `UNIQUE (from, to, kind)` (a row already of the
+old kind wins, then the oldest). Suggestions: `continues` → `sequel_of`
+(dropped when a `sequel_of` row for the pair exists), rows of any other new
+kind are deleted, `accepted_kind` is mapped like the edges.
+
+Tested by `crates/server/tests/migration_relationship_taxonomy.rs` (down →
+seed old-shape rows → up → assert → new-only rows → down → assert → up).
 
 ## Suggestion engine (WP-7.2)
 
@@ -217,11 +382,14 @@ source; `citations.rs` = the "Collects X #1-6" parser), the job in
 | `reviewed_by` | `uuid` NULL FK → `users` ON DELETE SET NULL | |
 
 `UNIQUE (from_series_id, to_series_id, kind)`. **Canonical form**, enforced
-by CHECKs: self-inverse kinds (`crossover_with`, `same_universe`,
-`see_also`) are stored with `from < to`, so A→B and B→A are one row;
-directional kinds are stored in one direction only (`sequel_of`,
-`spin_off_of`, `collects`, never their inverses). `canonicalize()` folds
-every candidate onto that form before the upsert.
+by CHECKs (rewritten by WP-7.5): self-inverse kinds (`crossover_with`,
+`companion_to`, `same_universe`, `see_also`, `alternate_edition_of`) are
+stored with `from < to`, so A→B and B→A are one row; directional kinds are
+stored in one direction only — `sequel_of`, `prequel_of`, `spin_off_of`,
+`side_story_of`, `tie_in_to`, `continues`, `annual_of`, `supplement_to`,
+`collects`, `reprints`, `translation_of`, `adaptation_of`,
+`reimagining_of` (`RelationshipKind::is_canonical`), never their inverses.
+`canonicalize()` folds every candidate onto that form before the upsert.
 
 Rows are **never deleted** (spec §5.7); only the series FK cascade removes
 them. Only the status moves: a review (`accepted` / `rejected` /
@@ -241,13 +409,13 @@ caps its output at 5000 rows.
 
 | source | kind | confidence |
 |---|---|---|
-| **Name continuation**: series grouped by `(base name, publisher)`, where the base name is `normalized_name` minus a trailing `vol N` / `vN` / year (1930–2049) token, or the parent folder's name when the series folder is just `Vol N`; each series pairs with its predecessor by `(year, volume)` | `sequel_of` (later → earlier) | consecutive volumes 0.9 · later volume with a gap 0.65 · later year, no volumes 0.7 · year and volume order disagree 0.45 · same name and same year → `see_also` 0.35 |
+| **Name continuation**: series grouped by `(base name, publisher)`, where the base name is `normalized_name` minus a trailing `vol N` / `vN` / year (1930–2049) token, or the parent folder's name when the series folder is just `Vol N`; each series pairs with its predecessor by `(year, volume)` | `continues` (later → earlier; `sequel_of` before WP-7.5) | consecutive volumes 0.9 · later volume with a gap 0.65 · later year, no volumes 0.7 · year and volume order disagree 0.45 · same name and same year → `see_also` 0.35 |
 | **AlternateSeries**: ComicInfo `AlternateSeries` on issues of A, split on `,`/`;`, matched to a series by normalized name (closest year to the citing issues wins; A's own title is ignored) | `crossover_with` | plain value 0.75 · ComicVine reading-list style `"Avengers" Civil War` 0.5 · +0.05 for ≥ 3 issues · −0.05 when several series share the name · −0.15 when the year gap is > 3 |
 | **SeriesGroup**: series sharing a normalized `series_group`; star onto the member whose name equals the group (else the oldest) | `same_universe` | group ≤ 12 series 0.85 · ≤ 40 0.7 · larger 0.5 |
 | **Story arc**: arcs in `issue_arcs` spanning ≥ 2 series; star onto the series with the most issues in the arc, aggregated across arcs; same-name pairs skipped | `crossover_with` | 0.5 (one issue on the far side) or 0.65 (≥ 2), +0.1 per extra shared arc (max 0.9) · capped at 0.45 when the smallest shared arc spans > 10 series (event tie-ins) |
 | **Collected edition**: issues whose `Format` / `special_type` / series type / series name marks a TPB, HC, omnibus or graphic novel; their title, notes and a "Collects…"/"Reprints…" summary are parsed for `Name #lo-hi` (or `issues lo-hi`) citations; an unnamed citation means the edition's own title minus format words | `collects` (edition → collected series) | issue coverage in the library ≥ 80% 0.85 · ≥ 50% 0.7 · some 0.55 · none 0.4 · −0.1 for an unnamed citation · −0.1 when the name is ambiguous and nothing is covered |
-| **Shared provider volume**: local series whose first issue's ComicInfo `comicvine_series_id` / `metron_series_id`, or whose series-level `external_ids`, name the same provider series (2–12 claimants). The series-level `external_ids` row is unique per provider id, so a second claimant only shows up through its issues | `sequel_of` when issue ranges are disjoint and ordered (the provider sees one continuous run split into several local series), else `see_also` (overlapping numbers: probably duplicate copies) | 0.8 · `see_also` 0.6 (0.55 without issue numbers) |
-| **Provider range**: a `series_provider_range` row on A pointing at provider series P while another local series B is matched to P | `see_also` | 0.7. Not `sequel_of`: the range sits inside A (A is not read entirely before or after B), and B usually duplicates those issues rather than continuing them |
+| **Shared provider volume**: local series whose first issue's ComicInfo `comicvine_series_id` / `metron_series_id`, or whose series-level `external_ids`, name the same provider series (2–12 claimants). The series-level `external_ids` row is unique per provider id, so a second claimant only shows up through its issues | `continues` when issue ranges are disjoint and ordered (the provider sees one continuous run split into several local series; `sequel_of` before WP-7.5), else `see_also` (overlapping numbers: probably duplicate copies) | 0.8 · `see_also` 0.6 (0.55 without issue numbers) |
+| **Provider range**: a `series_provider_range` row on A pointing at provider series P while another local series B is matched to P | `see_also` | 0.7. Not `continues`: the range sits inside A (A is not read entirely before or after B), and B usually duplicates those issues rather than continuing them |
 | **Character/team density**: same publisher, sharing ≥ 5 *uncommon* characters/teams (`series_characters` / `series_teams`) with overlap ≥ 0.5 of the smaller set. "Uncommon" means present in at most 2% of the library's series that have character data (clamped to 3–25), which also bounds the self-join. Each series keeps at most 3 partners, counted across both ends | `same_universe` | 0.25 + 0.25 × overlap, so **always low** (≤ 0.5) |
 
 `same_universe` is deliberately conservative (WP-7.1 flagged that bulk-
@@ -265,9 +433,15 @@ Per run, after merging:
 
 1. Drop a proposal whose `(from, to)` already has an edge with the same kind
    **or its inverse** (the inverse would 409 on accept). Because edges are
-   stored as pairs, one lookup covers both orientations.
-2. Drop a proposal whose row is already `accepted` / `rejected` /
-   `modified`. A rejected suggestion never reappears; re-suggesting needs
+   stored as pairs, one lookup covers both orientations. WP-7.5:
+   `sequel_of` and `continues` are **equivalent** here
+   (`suggestions::equivalent_kinds`) — an existing `sequel_of` (or
+   `has_sequel`) edge satisfies a `continues` proposal for the same ordered
+   pair and vice versa, so a pair linked by hand as a narrative sequel is
+   never re-proposed as a continuation.
+2. Drop a proposal whose row (or an equivalent-kind row: a pre-WP-7.5
+   rejected `sequel_of` covers `continues`) is already `accepted` /
+   `rejected` / `modified`. A rejected suggestion never reappears; re-suggesting needs
    the rejection cleared by hand (spec §5.7) — the WP-7.3 **reopen**
    action. `stale` rows are not rejection memory.
 3. Keep the top **1000** by confidence (`MAX_SUGGESTIONS_PER_RUN`; ties by
@@ -414,9 +588,10 @@ page's "Related" block with the "Suggested" badge (`source = suggested`,
 - Each row: both covers and names (linked), the kind label, confidence %,
   bucket, status, the reason, and a collapsible **Evidence** list (one entry
   per source with its fields).
-- Pending rows: **Accept**, **Edit kind** (popover with all nine kinds,
-  read "*from* is … *to*"; a different kind accepts as `modified`) and
-  **Reject**. Rejected rows: **Reopen**. Reviewed rows show the review date.
+- Pending rows: **Accept**, **Edit kind** (popover with the grouped
+  catalogue picker — Story / Publication history / Editions & contents /
+  Advanced — read "*from* is … *to*"; a different kind accepts as
+  `modified`) and **Reject**. Rejected rows: **Reopen**. Reviewed rows show the review date.
 - **Run now** queues the engine for the selected library (or every library).
 - **Accept all high-confidence (N)** sits behind an `AlertDialog` and sends
   bucket mode for the current library filter.
@@ -427,8 +602,9 @@ page's "Related" block with the "Suggested" badge (`source = suggested`,
 **Series page chips** (`SeriesSuggestedRelationships`, admins only, inside
 the Related block): pending suggestions touching the series from
 `GET /api/series/{slug}/relationship-suggestions` (cursor-paginated, "Show
-more"), read from this series' side (a row stored as "*other* `sequel_of`
-*this*" shows "Prequel of *other*"), the reason and confidence in a
+more"), read from this series' side (a row stored as "*other* `continues`
+*this*" shows "Continued by *other*", from the view's `inverse_kind` /
+`inverse_kind_label`, WP-7.5), the reason and confidence in a
 tooltip, one-click accept / reject.
 
 Every accept path (single, chip, bulk) invalidates both series'
@@ -491,18 +667,39 @@ heuristic versions; a second run marked none.
   a crossover or same-universe title.
 - Cross-library suggestions are out of scope by design (see above).
 - Bulk accept has no kind override (accept-as-modified is per row).
+- WP-7.5 kept the detectors as they were (only the continuation sources
+  switched to `continues`). Annual, arc tie-in, reprint, alternate-edition,
+  supplement and translation detectors, the continuation qualifier and the
+  retirement of the pairwise `same_universe` / arc-crossover sources are
+  WP-7.6. Suggestions carry no scope, so an accepted suggestion creates an
+  unscoped edge.
 
 ## Web
 
 `web/components/library/SeriesRelatedSection.tsx` renders the "Related"
 block on the series page, between the metadata tabs and the issue list:
 
-- a **Reading order** strip (the chain, with this series highlighted);
-- direct relationships grouped by kind, with a "Suggested" badge on
-  accepted suggestions;
-- for admins, an **Add related series** form (kind select plus a
-  cursor-paginated series typeahead) and remove buttons behind an
-  `AlertDialog` confirm.
+- a **Reading order** strip (the chain — sequels and continuations — with
+  this series highlighted);
+- direct relationships grouped by UI group (Story / Publication history /
+  Editions & contents / Advanced) and then by display label, with a
+  "Suggested" badge on accepted suggestions and the scope (qualifier,
+  ranges, coverage, note) as secondary text (`scopeCaption`);
+- a **Story arcs** list of the series' arc tie-ins, linking to
+  `/arcs/{slug}`;
+- for admins, an **Add related series** form — the grouped
+  **Relationship** picker (`RelationshipKindSelect`), a cursor-paginated
+  series typeahead, and the scope fields the chosen kind accepts
+  (qualifier / role, coverage, both ranges, note) — and remove buttons
+  behind an `AlertDialog` confirm.
+
+The kind list comes from `GET /api/relationship-kinds`
+(`useRelationshipKinds`, `queryKeys.relationshipKinds`, never refetched);
+`web/lib/relationships.ts` only slices that catalogue (`groupedKinds`,
+`kindInfo`, `kindLabel`, `kindOrder`, `scopeCaption`). Editing an existing
+edge's kind or scope, and creating arc targets, have API support (`PATCH`,
+`target_arc`) but no UI yet — that is WP-7.7, as is the arc page's "Has
+tie-ins" section over `GET /api/arcs/{slug}/tie-ins`.
 
 Hooks: `useSeriesRelationships` (`queryKeys.seriesRelationships`),
 `useCreateSeriesRelationship` and `useDeleteSeriesRelationship`. Both
@@ -514,8 +711,8 @@ For admins the block also shows the WP-7.3 **Suggested** chips
 hooks live in `web/lib/api/mutations/relationship-suggestions.ts`
 (`useAcceptRelationshipSuggestion`, `useRejectRelationshipSuggestion`,
 `useReopenRelationshipSuggestion`, `useBulkAccept…`, `useBulkReject…`,
-`useRunRelationshipSuggestions`); kind labels and inverses are in
-`web/lib/relationships.ts`.
+`useRunRelationshipSuggestions`); chip labels come from the suggestion
+view's `kind_label` / `inverse_kind_label`.
 
 ## Tests
 
@@ -523,11 +720,27 @@ hooks live in `web/lib/api/mutations/relationship-suggestions.ts`
   delete, self-inverse kinds, idempotent create (200, one audit row),
   conflict 409, self-edge 422 (and the DB CHECK), non-admin 403, ACL
   filtering and chain pruning, cycle safety, the depth-6 cap, FK cascade,
-  and OPDS v1/v2 related links.
-- `crates/server/src/relationships/mod.rs` unit tests: inverse involution,
-  the self-inverse set, and str/serde round-trip.
+  and OPDS v1/v2 related links. WP-7.5: the kind catalogue endpoint; scope
+  validation (422 + field `details` for coverage / qualifier on the wrong
+  kind, over-long range / note, arc target with a non-arc kind, missing or
+  doubled target) and the mirrored inverse scope, plus the DB CHECKs; PATCH
+  (scope edit on both halves, edit through the inverse half, kind change as
+  delete + create, 422 / 409 roll back, audit rows, similarity
+  invalidation, 403 / 404 / 400); arc targets (single row, idempotent, the
+  target / kind / uniqueness constraints, the arc ACL on the series GET and
+  on `/arcs/{slug}/tie-ins` incl. pagination and 404, PATCH / DELETE, FK
+  cascade); the mixed `continues` + `sequel_of` chain with a `prequel_of`
+  kept out, and the cross-family contradiction.
+- `crates/server/tests/migration_relationship_taxonomy.rs`: the WP-7.5 data
+  migration (down → seed old-shape rows → up → assert; then the lossy down
+  and up again).
+- `crates/server/src/relationships/mod.rs` unit tests: inverse involution
+  and the full inverse table, groups and labels (catalogue order is
+  grouped), scope rules and mirroring, contradictions, arc-capable kinds,
+  and str/serde round-trip.
 - `web/tests/library/series-related-section.test.tsx`: chain order and
-  highlight, grouping, admin gating, and empty state.
+  highlight, grouping by UI group and kind, scope captions, arc tie-ins,
+  admin gating, and empty state.
 - `crates/server/tests/relationship_suggestions.rs` (WP-7.2): a fixture
   library with one cluster per evidence source (expected kind, bucket and
   reason), canonical dedupe of reversed self-inverse candidates, existing-
@@ -536,8 +749,13 @@ hooks live in `web/lib/api/mutations/relationship-suggestions.ts`
   409, and similarity-cache invalidation), list pagination, filters and
   counts, non-admin 403 on every endpoint, `run` enqueue dedupe, audit rows,
   and the 1000 cap on a 3,000-series stress library.
-- `relationships::suggestions` unit tests: canonical forms, merge and
-  corroboration, buckets, the citation parser and the base-name helpers.
+- `relationships::suggestions` unit tests: canonical forms (every kind
+  folds onto a canonical one), the `sequel_of` ≡ `continues` dedupe
+  equivalence, merge and corroboration, buckets, the citation parser and
+  the base-name helpers. Integration (`sequel_of_and_continues_dedupe_each_other`):
+  a legacy rejected `sequel_of` row and existing `sequel_of` /
+  `continued_by` edges suppress `continues` proposals; a `has_sequel` edge
+  makes accepting a `continues` suggestion a 409.
 - WP-7.3, same integration file: bulk accept by ids (one audit row, no
   per-item rows, partial failures `conflict` / `already_reviewed` /
   `not_found` reported while the good item commits, one similarity

@@ -263,6 +263,62 @@ fn series_visible(acl: &AclSql) -> String {
     format!("s.removed_at IS NULL{}{}", acl.lib, acl.series_cap)
 }
 
+/// The visible-series predicate over alias `s` for `visible` (bound values
+/// pushed onto `params`), or `None` when the caller is restricted to an
+/// empty library set. Lets other modules page series-keyed rows with the
+/// same ACL as the entity pages (WP-7.5 arc tie-ins).
+pub(crate) fn series_visible_sql(
+    visible: &VisibleLibraries,
+    params: &mut Vec<Value>,
+) -> Option<String> {
+    acl_sql(visible, params).map(|a| series_visible(&a))
+}
+
+/// Of `arc_ids`, the story arcs with at least one appearance the caller
+/// can see — a visible issue in `issue_arcs` or a visible series in
+/// `series_arcs`. The same rule that 404s `/arcs/{slug}` (WP-7.5: arc
+/// targets of series relationships are listed only when visible).
+pub(crate) async fn visible_arc_ids(
+    app: &AppState,
+    visible: &VisibleLibraries,
+    arc_ids: &[Uuid],
+) -> Result<std::collections::HashSet<Uuid>, sea_orm::DbErr> {
+    if arc_ids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let ids: Vec<String> = arc_ids.iter().map(Uuid::to_string).collect();
+    let mut params: Vec<Value> = vec![Value::from(ids)];
+    let Some(acl) = acl_sql(visible, &mut params) else {
+        return Ok(std::collections::HashSet::new());
+    };
+    #[derive(FromQueryResult)]
+    struct IdRow {
+        id: Uuid,
+    }
+    let sql = format!(
+        "SELECT ia.arc_id AS id \
+           FROM issue_arcs ia \
+           JOIN issues i ON i.id = ia.issue_id \
+           JOIN series s ON s.id = i.series_id \
+          WHERE ia.arc_id = ANY($1::uuid[]) AND {ivis} \
+         UNION \
+         SELECT sa.arc_id AS id \
+           FROM series_arcs sa \
+           JOIN series s ON s.id = sa.series_id \
+          WHERE sa.arc_id = ANY($1::uuid[]) AND {svis}",
+        ivis = issue_visible(&acl),
+        svis = series_visible(&acl),
+    );
+    let rows = IdRow::find_by_statement(Statement::from_sql_and_values(
+        app.db.get_database_backend(),
+        sql,
+        params,
+    ))
+    .all(&app.db)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.id).collect())
+}
+
 /// `SELECT issue_id, series_id` of every visible issue one entity
 /// (`$e` = id, `$n` = normalized name) appears in.
 fn issue_hits_one(kind: EntityKind, e: usize, n: usize, acl: &AclSql) -> String {

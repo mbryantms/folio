@@ -53,7 +53,9 @@ function suggestion(
     from_series: series(`${id}-a`, "Daredevil", 2014),
     to_series: series(`${id}-b`, "Daredevil", 2011),
     kind: "sequel_of",
-    kind_label: "Sequel of",
+    kind_label: "Sequel to",
+    inverse_kind: "has_sequel",
+    inverse_kind_label: "Has sequel",
     confidence,
     bucket: confidence >= 0.8 ? "high" : "medium",
     reason: "Daredevil (2014) follows Daredevil (2011) — next volume",
@@ -77,6 +79,7 @@ function suggestion(
 }
 
 vi.mock("@/lib/api/queries", () => ({
+  useRelationshipKinds: () => ({ data: undefined }),
   useLibraryList: () => ({
     data: [{ id: "lib-1", name: "Comics", slug: "comics" }],
     isLoading: false,
@@ -165,7 +168,7 @@ describe("<RelationshipSuggestionsPanel>", () => {
     expect(rows).toHaveLength(2);
     const row = within(rows[0]!);
     expect(row.getAllByText("Daredevil")).toHaveLength(2);
-    expect(row.getByText("Sequel of")).toBeTruthy();
+    expect(row.getByText("Sequel to")).toBeTruthy();
     expect(row.getByText("90%")).toBeTruthy();
     expect(row.getByText(/next volume$/)).toBeTruthy();
     // Bucket pills carry the first page's counts.

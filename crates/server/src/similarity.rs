@@ -158,6 +158,11 @@ pub struct Reason {
     /// kind (`sequel_of`, …) for relationships; absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    /// Relationships only: the kind's display label, lower-cased
+    /// ("sequel to", "continued by"; WP-7.5), so clients don't need the
+    /// kind catalogue to caption a reason.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     /// Display name of the shared entity (or the related series).
     pub name: String,
     /// This entity's contribution to the score (before the per-kind cap).
@@ -268,6 +273,7 @@ pub fn score(
             .take(MAX_REASONS)
             .map(|c| Reason {
                 kind: c.kind,
+                label: relationship_label(c.kind, c.role.as_deref()),
                 role: c.role,
                 name: c.name,
                 weight: round3(c.value),
@@ -463,6 +469,15 @@ async fn fetch_sizes<C: ConnectionTrait>(
         .collect())
 }
 
+/// Lower-cased kind label for a relationship reason (`None` otherwise).
+fn relationship_label(kind: ReasonKind, role: Option<&str>) -> Option<String> {
+    if kind != ReasonKind::Relationship {
+        return None;
+    }
+    let k: crate::relationships::RelationshipKind = role?.parse().ok()?;
+    Some(k.label().to_lowercase())
+}
+
 #[derive(Debug, FromQueryResult)]
 struct RelationshipRow {
     series_id: Uuid,
@@ -479,7 +494,8 @@ struct RelationshipRow {
 /// neighbourhood. The reason reads from the *candidate's* side
 /// (`kind.inverse()`, named after the target, with its year so same-name
 /// volumes stay distinguishable): on Daredevil (2014)'s page, Daredevil
-/// (2011) is "prequel of Daredevil (2014)". Flat
+/// (2011) is "continued by Daredevil (2014)". Arc-target edges (WP-7.5)
+/// have no `to_series_id` and drop out of the join. Flat
 /// [`RELATIONSHIP_WEIGHT`], not IDF-weighted: a curated link is strong
 /// evidence on its own.
 async fn fetch_relationships<C: ConnectionTrait>(

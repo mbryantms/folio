@@ -7,12 +7,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import type { SeriesRelationshipsResp, SeriesView } from "@/lib/api/types";
+import type {
+  RelationshipCatalogue,
+  SeriesRelationshipsResp,
+  SeriesView,
+} from "@/lib/api/types";
 
 let role: "admin" | "user" = "user";
 let data: SeriesRelationshipsResp | undefined;
 
 vi.mock("@/lib/api/queries", () => ({
+  useRelationshipKinds: () => ({ data: undefined }),
   useMe: () => ({ data: { role } }),
   useSeriesRelationships: () => ({ data, isLoading: false }),
   useSeriesListInfinite: () => ({ data: undefined, isLoading: false }),
@@ -66,7 +71,8 @@ const full: SeriesRelationshipsResp = {
     {
       id: "r1",
       kind: "sequel_of",
-      kind_label: "Sequel of",
+      kind_label: "Sequel to",
+      group: "story",
       source: "manual",
       confidence: null,
       created_at: "2026-01-01T00:00:00Z",
@@ -76,6 +82,10 @@ const full: SeriesRelationshipsResp = {
       id: "r2",
       kind: "collected_in",
       kind_label: "Collected in",
+      group: "editions",
+      to_range: "1-6",
+      coverage: "partial",
+      note: "Deluxe",
       source: "suggested",
       confidence: 0.9,
       created_at: "2026-01-01T00:00:00Z",
@@ -83,12 +93,32 @@ const full: SeriesRelationshipsResp = {
     },
     {
       id: "r3",
-      kind: "prequel_of",
-      kind_label: "Prequel of",
+      kind: "continued_by",
+      kind_label: "Continued by",
+      group: "publication",
+      qualifier: "relaunch",
+      qualifier_label: "Relaunch",
       source: "manual",
       confidence: null,
       created_at: "2026-01-01T00:00:00Z",
       series: vol3,
+    },
+  ],
+  arcs: [
+    {
+      id: "a1",
+      kind: "tie_in_to",
+      kind_label: "Prelude to",
+      group: "story",
+      qualifier: "prelude",
+      qualifier_label: "Prelude",
+      source: "manual",
+      created_at: "2026-01-01T00:00:00Z",
+      arc: {
+        id: "arc1",
+        slug: "war-for-the-realms",
+        name: "War for the Realms",
+      },
     },
   ],
   chain: [
@@ -110,13 +140,13 @@ function render() {
 describe("<SeriesRelatedSection>", () => {
   it("renders nothing for a non-admin when there are no relationships", () => {
     role = "user";
-    data = { series_id: "s2", relationships: [], chain: [] };
+    data = { series_id: "s2", relationships: [], arcs: [], chain: [] };
     expect(render()).toBe("");
   });
 
   it("offers the add affordance to admins even when empty", () => {
     role = "admin";
-    data = { series_id: "s2", relationships: [], chain: [] };
+    data = { series_id: "s2", relationships: [], arcs: [], chain: [] };
     const html = render();
     expect(html).toContain("Add related series");
     expect(html).toContain("No related series yet");
@@ -135,9 +165,20 @@ describe("<SeriesRelatedSection>", () => {
     expect(i2).toBeLessThan(i3);
     expect(html).toContain('aria-current="true"');
     expect(html).toContain("This series");
-    // Direct relationships grouped under their kind labels.
-    expect(html).toContain("Sequel of");
+    // Direct relationships grouped under UI groups and kind labels.
+    expect(html).toContain("Story");
+    expect(html).toContain("Publication");
+    expect(html).toContain("Sequel to");
     expect(html).toContain("Collected in");
+    expect(html).toContain("Continued by");
+    // Scope as secondary text.
+    expect(html).toContain("#1-6");
+    expect(html).toContain("partial coverage");
+    expect(html).toContain("Deluxe");
+    expect(html).toContain("Relaunch");
+    // Arc tie-ins link to the arc page with the role folded in.
+    expect(html).toContain("Prelude to");
+    expect(html).toContain('href="/arcs/war-for-the-realms"');
     expect(html).toContain("Suggested");
     expect(html).toContain('href="/series/saga-omnibus"');
     // No admin affordances for a reader.
@@ -149,17 +190,37 @@ describe("<SeriesRelatedSection>", () => {
     role = "admin";
     data = full;
     const html = render();
-    expect(html).toContain('aria-label="Remove sequel of Saga Vol 1"');
+    expect(html).toContain('aria-label="Remove sequel to Saga Vol 1"');
   });
 });
 
 describe("helpers", () => {
-  it("groups by kind in canonical order", () => {
+  it("groups by UI group, then kind, in catalogue order", () => {
     const groups = groupRelationships(full.relationships);
-    expect(groups.map((g) => g.kind)).toEqual([
+    expect(groups.map((g) => g.group)).toEqual([
+      "story",
+      "publication",
+      "editions",
+    ]);
+    expect(groups.flatMap((g) => g.kinds.map((k) => k.kind))).toEqual([
       "sequel_of",
-      "prequel_of",
+      "continued_by",
       "collected_in",
+    ]);
+    // The catalogue's group labels and kind order win once loaded.
+    const catalogue = {
+      groups: [
+        { group: "editions", label: "Editions & contents" },
+        { group: "story", label: "Story" },
+        { group: "publication", label: "Publication history" },
+      ],
+      kinds: [],
+    } as unknown as RelationshipCatalogue;
+    const withCatalogue = groupRelationships(full.relationships, catalogue);
+    expect(withCatalogue.map((g) => g.label)).toEqual([
+      "Editions & contents",
+      "Story",
+      "Publication history",
     ]);
   });
 

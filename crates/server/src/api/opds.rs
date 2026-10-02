@@ -871,16 +871,18 @@ async fn series_one(
 
 /// WP-7.1: one feed-level `<link rel="related">` per visible series
 /// relationship, pointing at the related series' acquisition feed. The
-/// `title` carries the relationship ("Sequel of: Saga (2012)") so clients
-/// that list related links render something meaningful.
+/// `title` carries the relationship ("Sequel to: Saga (2012)", WP-7.5
+/// labels with a tie-in role folded in) so clients that list related links
+/// render something meaningful.
 fn render_related_series_links(
-    related: &[(crate::relationships::RelationshipKind, series::Model)],
+    related: &[crate::api::series_relationships::RelatedLink],
 ) -> String {
     let mut out = String::new();
-    for (kind, other) in related {
+    for link in related {
+        let other = &link.series;
         let title = match other.year {
-            Some(y) => format!("{}: {} ({y})", kind.label(), other.name),
-            None => format!("{}: {}", kind.label(), other.name),
+            Some(y) => format!("{}: {} ({y})", link.label, other.name),
+            None => format!("{}: {}", link.label, other.name),
         };
         out.push_str(&format!(
             "  <link rel=\"related\" href=\"/opds/v1/series/{id}\" type=\"{acq}\" title=\"{title}\"/>\n",

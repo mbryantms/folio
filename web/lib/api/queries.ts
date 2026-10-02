@@ -2392,6 +2392,7 @@ import type {
   IssueCoversResp,
   ProviderCoverageResp,
   ProviderRangesListResp,
+  RelationshipCatalogue,
   RelationshipSuggestionListView,
   SeriesRelationshipsResp,
   SuggestionBucket,
@@ -2705,6 +2706,17 @@ export function useSeriesRelationships(seriesSlug: string) {
       ),
     enabled: !!seriesSlug,
     staleTime: 30_000,
+  });
+}
+
+/** WP-7.5: the relationship kind catalogue (labels, inverses, UI groups,
+ *  allowed qualifiers). Static for a server build, so never refetched. */
+export function useRelationshipKinds() {
+  return useQuery({
+    queryKey: queryKeys.relationshipKinds,
+    queryFn: () => jsonFetch<RelationshipCatalogue>("/relationship-kinds"),
+    staleTime: Infinity,
+    gcTime: Infinity,
   });
 }
 

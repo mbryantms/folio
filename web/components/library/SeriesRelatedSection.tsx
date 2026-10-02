@@ -7,8 +7,11 @@
  *  - **Reading order** — the sequel/prequel chain through this series
  *    (server-side recursive CTE, depth ≤ 6 each way), rendered as a
  *    horizontal strip with this series highlighted.
- *  - **Related series** — direct relationships grouped by kind
- *    ("Sequel of", "Collected in", …).
+ *  - **Related series** — direct relationships grouped by UI group
+ *    (Story · Publication history · Editions & contents · Advanced, WP-7.5)
+ *    and kind label ("Sequel to", "Collected in", …), with ranges /
+ *    coverage / qualifier / note as secondary text, plus tie-ins to story
+ *    arcs.
  *
  * Everyone who can see the series sees the block (the API already drops
  * series the viewer can't see); admins also get add / remove and the
@@ -55,35 +58,74 @@ import {
 } from "@/lib/api/mutations";
 import {
   useMe,
+  useRelationshipKinds,
   useSeriesListInfinite,
   useSeriesRelationships,
 } from "@/lib/api/queries";
+import { RelationshipKindSelect } from "@/components/library/RelationshipKindSelect";
 import type {
+  RelationshipCatalogue,
+  RelationshipCoverage,
+  RelationshipGroup,
   RelationshipKind,
+  RelationshipQualifier,
+  SeriesArcRelationshipView,
   SeriesChainEntry,
   SeriesRelationshipView,
   SeriesView,
 } from "@/lib/api/types";
-import { RELATIONSHIP_KINDS } from "@/lib/relationships";
+import { kindInfo, kindOrder, scopeCaption } from "@/lib/relationships";
 import { seriesUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
-export { RELATIONSHIP_KINDS };
+/** Fallback group order until the catalogue loads (the catalogue's own
+ *  `groups` order wins once it does). */
+const DEFAULT_GROUP_ORDER: RelationshipGroup[] = [
+  "story",
+  "publication",
+  "editions",
+  "advanced",
+];
 
-/** Group direct relationships by kind, keeping the add-form's kind order. */
-export function groupRelationships(rels: SeriesRelationshipView[]): Array<{
-  kind: RelationshipKind;
+/** Group direct relationships by UI group, then by display label (a
+ *  tie-in role gives "Prelude to" its own heading), in catalogue order. */
+export function groupRelationships(
+  rels: SeriesRelationshipView[],
+  catalogue?: RelationshipCatalogue,
+): Array<{
+  group: RelationshipGroup;
   label: string;
-  items: SeriesRelationshipView[];
+  kinds: Array<{
+    kind: RelationshipKind;
+    label: string;
+    items: SeriesRelationshipView[];
+  }>;
 }> {
-  return RELATIONSHIP_KINDS.map(({ value }) => {
-    const items = rels.filter((r) => r.kind === value);
-    return {
-      kind: value,
-      label: items[0]?.kind_label ?? value,
-      items,
-    };
-  }).filter((g) => g.items.length > 0);
+  const order = catalogue?.groups.map((g) => g.group) ?? DEFAULT_GROUP_ORDER;
+  const sorted = [...rels].sort(
+    (a, b) => kindOrder(catalogue, a.kind) - kindOrder(catalogue, b.kind),
+  );
+  return order
+    .map((group) => {
+      const kinds: Array<{
+        kind: RelationshipKind;
+        label: string;
+        items: SeriesRelationshipView[];
+      }> = [];
+      for (const r of sorted.filter((r) => r.group === group)) {
+        const slot = kinds.find((k) => k.label === r.kind_label);
+        if (slot) slot.items.push(r);
+        else kinds.push({ kind: r.kind, label: r.kind_label, items: [r] });
+      }
+      return {
+        group,
+        label:
+          catalogue?.groups.find((g) => g.group === group)?.label ??
+          group.charAt(0).toUpperCase() + group.slice(1),
+        kinds,
+      };
+    })
+    .filter((g) => g.kinds.length > 0);
 }
 
 /** "Read before" / "This series" / "Read after" caption for a chain slot. */
@@ -110,12 +152,15 @@ export function SeriesRelatedSection({
     null,
   );
 
+  const catalogue = useRelationshipKinds();
   const rels = query.data?.relationships ?? [];
+  const arcs = query.data?.arcs ?? [];
   const chain = query.data?.chain ?? [];
-  const groups = groupRelationships(rels);
+  const groups = groupRelationships(rels, catalogue.data);
 
   if (query.isLoading) return null;
-  if (rels.length === 0 && chain.length === 0 && !isAdmin) return null;
+  if (rels.length === 0 && arcs.length === 0 && chain.length === 0 && !isAdmin)
+    return null;
 
   return (
     <section aria-labelledby="series-related-heading" className="space-y-4">
@@ -142,51 +187,83 @@ export function SeriesRelatedSection({
         />
       )}
 
-      {groups.length > 0 ? (
-        <div className="space-y-4">
+      {groups.length > 0 || arcs.length > 0 ? (
+        <div className="space-y-5">
           {groups.map((g) => (
-            <div key={g.kind} className="space-y-2">
-              <h3 className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-                {g.label}
-              </h3>
-              <ul className="flex flex-wrap gap-3">
-                {g.items.map((r) => (
-                  <li key={r.id} className="relative">
-                    <RelatedCard series={r.series}>
-                      {r.source === "suggested" && (
-                        <Badge variant="secondary" className="font-normal">
-                          Suggested
-                        </Badge>
-                      )}
-                    </RelatedCard>
-                    {isAdmin && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="bg-background/80 text-muted-foreground hover:text-foreground absolute top-1 right-1 h-6 w-6"
-                        aria-label={`Remove ${r.kind_label.toLowerCase()} ${r.series.name}`}
-                        onClick={() =>
-                          setConfirmRemove({
-                            id: r.id,
-                            otherSlug: r.series.slug,
-                            label: `${r.kind_label} ${r.series.name}`,
-                          })
-                        }
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                  </li>
-                ))}
-              </ul>
+            <div key={g.group} className="space-y-3">
+              <h3 className="text-foreground text-sm font-medium">{g.label}</h3>
+              {g.kinds.map((k) => (
+                <div key={k.label} className="space-y-2">
+                  <h4 className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
+                    {k.label}
+                  </h4>
+                  <ul className="flex flex-wrap gap-3">
+                    {k.items.map((r) => {
+                      const caption = scopeCaption(r);
+                      return (
+                        <li key={r.id} className="relative">
+                          <RelatedCard series={r.series}>
+                            {r.source === "suggested" && (
+                              <Badge
+                                variant="secondary"
+                                className="font-normal"
+                              >
+                                Suggested
+                              </Badge>
+                            )}
+                            {caption && (
+                              <p
+                                className="text-muted-foreground line-clamp-3 text-xs"
+                                title={caption}
+                              >
+                                {caption}
+                              </p>
+                            )}
+                          </RelatedCard>
+                          {isAdmin && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="bg-background/80 text-muted-foreground hover:text-foreground absolute top-1 right-1 h-6 w-6"
+                              aria-label={`Remove ${r.kind_label.toLowerCase()} ${r.series.name}`}
+                              onClick={() =>
+                                setConfirmRemove({
+                                  id: r.id,
+                                  otherSlug: r.series.slug,
+                                  label: `${r.kind_label} ${r.series.name}`,
+                                })
+                              }
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
             </div>
           ))}
+          {arcs.length > 0 && (
+            <ArcLinks
+              arcs={arcs}
+              isAdmin={isAdmin}
+              onRemove={(a) =>
+                setConfirmRemove({
+                  id: a.id,
+                  otherSlug: seriesSlug,
+                  label: `${a.kind_label} ${a.arc.name}`,
+                })
+              }
+            />
+          )}
         </div>
       ) : (
         isAdmin &&
         !adding && (
           <p className="text-muted-foreground text-sm">
-            No related series yet. Link sequels, prequels, spin-offs and
+            No related series yet. Link sequels, continuations, spin-offs and
             collected editions so readers can follow the run.
           </p>
         )
@@ -240,6 +317,55 @@ export function SeriesRelatedSection({
         </AlertDialogContent>
       </AlertDialog>
     </section>
+  );
+}
+
+/** Tie-ins to story arcs (WP-7.5): one-directional series → arc edges. */
+function ArcLinks({
+  arcs,
+  isAdmin,
+  onRemove,
+}: {
+  arcs: SeriesArcRelationshipView[];
+  isAdmin: boolean;
+  onRemove: (a: SeriesArcRelationshipView) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <h3 className="text-foreground text-sm font-medium">Story arcs</h3>
+      <ul className="space-y-1 text-sm">
+        {arcs.map((a) => {
+          const caption = scopeCaption(a);
+          return (
+            <li key={a.id} className="flex items-center gap-2">
+              <span className="text-muted-foreground">{a.kind_label}</span>
+              <Link
+                href={`/arcs/${encodeURIComponent(a.arc.slug)}`}
+                className="font-medium hover:underline"
+              >
+                {a.arc.name}
+              </Link>
+              {caption && (
+                <span className="text-muted-foreground text-xs">
+                  · {caption}
+                </span>
+              )}
+              {isAdmin && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted-foreground hover:text-foreground h-6 w-6"
+                  aria-label={`Remove ${a.kind_label.toLowerCase()} ${a.arc.name}`}
+                  onClick={() => onRemove(a)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -344,14 +470,41 @@ function AddRelationshipForm({
   onDone: () => void;
 }) {
   const create = useCreateSeriesRelationship(seriesSlug);
+  const catalogue = useRelationshipKinds();
   const [kind, setKind] = React.useState<RelationshipKind>("sequel_of");
   const [target, setTarget] = React.useState<SeriesView | null>(null);
+  const [qualifier, setQualifier] = React.useState<RelationshipQualifier | "">(
+    "",
+  );
+  const [coverage, setCoverage] = React.useState<RelationshipCoverage | "">("");
+  const [fromRange, setFromRange] = React.useState("");
+  const [toRange, setToRange] = React.useState("");
+  const [note, setNote] = React.useState("");
+  const info = kindInfo(catalogue.data, kind);
+  const qualifiers = info?.qualifiers ?? [];
+  const allowsCoverage = info?.allows_coverage ?? false;
+
+  const onKind = (k: RelationshipKind) => {
+    setKind(k);
+    // Drop scope the new kind doesn't take (the server would 422).
+    const next = kindInfo(catalogue.data, k);
+    if (!next?.qualifiers.some((q) => q.value === qualifier)) setQualifier("");
+    if (!next?.allows_coverage) setCoverage("");
+  };
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!target) return;
     create.mutate(
-      { target: target.id, kind },
+      {
+        target: target.id,
+        kind,
+        qualifier: qualifier || null,
+        coverage: coverage || null,
+        from_range: fromRange.trim() || null,
+        to_range: toRange.trim() || null,
+        note: note.trim() || null,
+      },
       {
         onSuccess: () => {
           setTarget(null);
@@ -364,34 +517,114 @@ function AddRelationshipForm({
   return (
     <form
       onSubmit={onSubmit}
-      className="border-border/60 grid gap-3 border-t pt-3 sm:grid-cols-[12rem_1fr_auto] sm:items-end"
+      className="border-border/60 space-y-3 border-t pt-3"
     >
-      <div className="grid gap-1.5">
-        <Label htmlFor="rel-kind" className="text-xs">
-          This series is…
-        </Label>
-        <Select
-          value={kind}
-          onValueChange={(v) => setKind(v as RelationshipKind)}
-        >
-          <SelectTrigger id="rel-kind">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {RELATIONSHIP_KINDS.map((k) => (
-              <SelectItem key={k.value} value={k.value}>
-                {k.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className="grid gap-3 sm:grid-cols-[14rem_1fr] sm:items-end">
+        <div className="grid gap-1.5">
+          <Label htmlFor="rel-kind" className="text-xs">
+            Relationship
+          </Label>
+          <RelationshipKindSelect
+            id="rel-kind"
+            value={kind}
+            onChange={onKind}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label className="text-xs">Series</Label>
+          <SeriesTargetPicker
+            excludeId={seriesId}
+            value={target}
+            onChange={setTarget}
+          />
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-4">
+        {qualifiers.length > 0 && (
+          <div className="grid gap-1.5">
+            <Label htmlFor="rel-qualifier" className="text-xs">
+              {kind === "tie_in_to" || kind === "has_tie_in"
+                ? "Role"
+                : "Qualifier"}
+            </Label>
+            <Select
+              value={qualifier || "none"}
+              onValueChange={(v) =>
+                setQualifier(v === "none" ? "" : (v as RelationshipQualifier))
+              }
+            >
+              <SelectTrigger id="rel-qualifier">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                {qualifiers.map((q) => (
+                  <SelectItem key={q.value} value={q.value}>
+                    {q.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+        {allowsCoverage && (
+          <div className="grid gap-1.5">
+            <Label htmlFor="rel-coverage" className="text-xs">
+              Coverage
+            </Label>
+            <Select
+              value={coverage || "none"}
+              onValueChange={(v) =>
+                setCoverage(v === "none" ? "" : (v as RelationshipCoverage))
+              }
+            >
+              <SelectTrigger id="rel-coverage">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Not set</SelectItem>
+                <SelectItem value="full">Full</SelectItem>
+                <SelectItem value="partial">Partial</SelectItem>
+                <SelectItem value="unknown">Unknown</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+        <div className="grid gap-1.5">
+          <Label htmlFor="rel-from-range" className="text-xs">
+            This series&rsquo; issues
+          </Label>
+          <Input
+            id="rel-from-range"
+            value={fromRange}
+            maxLength={100}
+            placeholder="e.g. 1-6"
+            onChange={(e) => setFromRange(e.target.value)}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="rel-to-range" className="text-xs">
+            Their issues
+          </Label>
+          <Input
+            id="rel-to-range"
+            value={toRange}
+            maxLength={100}
+            placeholder="e.g. 1-6,Annual 1"
+            onChange={(e) => setToRange(e.target.value)}
+          />
+        </div>
       </div>
       <div className="grid gap-1.5">
-        <Label className="text-xs">Series</Label>
-        <SeriesTargetPicker
-          excludeId={seriesId}
-          value={target}
-          onChange={setTarget}
+        <Label htmlFor="rel-note" className="text-xs">
+          Note
+        </Label>
+        <Input
+          id="rel-note"
+          value={note}
+          maxLength={500}
+          placeholder="Optional"
+          onChange={(e) => setNote(e.target.value)}
         />
       </div>
       <div className="flex gap-1">
