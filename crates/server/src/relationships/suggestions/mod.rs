@@ -4,8 +4,13 @@
 //! already in the DB ([`sources`]) and upserts them into
 //! `series_relationship_suggestion`. It **never** creates
 //! `series_relationship` edges: an admin accepts ([`accept`], which calls
-//! [`crate::relationships::create_pair`] with
+//! [`crate::relationships::create_pair_scoped`] — or
+//! [`crate::relationships::create_arc_edge`] for an arc target — with
 //! [`RelationshipSource::Suggested`]) or rejects ([`reject`]) each one.
+//!
+//! WP-7.6: a suggestion may target a story arc ([`Target::Arc`], `tie_in_to`
+//! only) and carries a proposed [`Scope`] (ranges, coverage, qualifier),
+//! which `accept` passes through to the edge.
 //!
 //! Invariants:
 //! - **Canonical rows.** Self-inverse kinds are stored with
@@ -34,9 +39,10 @@
 //! See `docs/dev/series-relationships.md` ("Suggestion engine").
 
 pub mod citations;
+pub mod detectors;
 pub mod sources;
 
-use super::{PairError, PairOutcome, RelationshipKind, RelationshipSource};
+use super::{PairError, RelationshipKind, RelationshipSource, Scope};
 use chrono::Utc;
 use entity::series_relationship_suggestion as sug;
 use sea_orm::{
@@ -153,25 +159,87 @@ impl FromStr for SuggestionStatus {
 }
 
 /// Which heuristic produced a candidate (the `source` key of each
-/// `evidence.sources[]` entry).
+/// `evidence.sources[]` entry). WP-7.6 retired `series_group`,
+/// `character_density` (pairwise `same_universe`) and the pairwise
+/// `story_arc` → `crossover_with` source; old rows keep those names in their
+/// stored evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceSource {
     AlternateSeries,
-    SeriesGroup,
-    StoryArc,
     NameContinuation,
     CollectedEdition,
     ProviderVolume,
     ProviderRange,
-    CharacterDensity,
+    /// WP-7.6: an annual series → its main series.
+    Annual,
+    /// WP-7.6: a series → a story arc it ties in to (with role).
+    ArcTieIn,
+    /// WP-7.6: two series that are both `main` of the same arc.
+    ArcCrossover,
+    /// WP-7.6: `issue_reprints` rolled up per series pair.
+    ReprintRollup,
+    /// WP-7.6: same base title, edition marker (Deluxe, Director's Cut, …).
+    AlternateEdition,
+    /// WP-7.6: "X #N Facsimile Edition" → reprints X #N.
+    Facsimile,
+    /// WP-7.6: handbook / saga / spotlight / special sharing the parent's title.
+    Supplement,
+    /// WP-7.6: same work in another language.
+    Translation,
+}
+
+/// A suggestion's target: a series, or (WP-7.6, `tie_in_to` only) a story
+/// arc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Target {
+    Series(Uuid),
+    Arc(Uuid),
+}
+
+impl Target {
+    pub fn series(self) -> Option<Uuid> {
+        match self {
+            Self::Series(id) => Some(id),
+            Self::Arc(_) => None,
+        }
+    }
+
+    pub fn arc(self) -> Option<Uuid> {
+        match self {
+            Self::Arc(id) => Some(id),
+            Self::Series(_) => None,
+        }
+    }
+
+    /// Text key (`s:<uuid>` / `a:<uuid>`) for the stale-marking `unnest`.
+    fn key(self) -> String {
+        match self {
+            Self::Series(id) => format!("s:{id}"),
+            Self::Arc(id) => format!("a:{id}"),
+        }
+    }
+
+    fn of(to_series_id: Option<Uuid>, to_arc_id: Option<Uuid>) -> Option<Self> {
+        match (to_series_id, to_arc_id) {
+            (Some(s), _) => Some(Self::Series(s)),
+            (None, Some(a)) => Some(Self::Arc(a)),
+            (None, None) => None,
+        }
+    }
+}
+
+impl From<Uuid> for Target {
+    fn from(id: Uuid) -> Self {
+        Self::Series(id)
+    }
 }
 
 /// One proposal from one source, before canonicalization and merging.
 #[derive(Debug, Clone)]
 pub struct Candidate {
     pub from: Uuid,
-    pub to: Uuid,
+    pub to: Target,
     pub kind: RelationshipKind,
     pub confidence: f32,
     pub source: EvidenceSource,
@@ -180,6 +248,10 @@ pub struct Candidate {
     pub reason: String,
     /// `{ "source": "<snake_case source>", … }`.
     pub evidence: serde_json::Value,
+    /// Proposed scope (WP-7.6), read from `from`'s side. Mirrored when the
+    /// candidate is folded onto the canonical direction; fields the kind
+    /// doesn't take are dropped.
+    pub scope: Scope,
 }
 
 /// Fold a `(from, to, kind)` onto the stored canonical form: a
@@ -216,28 +288,72 @@ pub fn equivalent_kinds(kind: RelationshipKind) -> Vec<RelationshipKind> {
 #[derive(Debug, Clone)]
 pub struct Proposal {
     pub from: Uuid,
-    pub to: Uuid,
+    pub to: Target,
     pub kind: RelationshipKind,
     pub confidence: f32,
     pub bucket: SuggestionBucket,
     pub reason: String,
     pub evidence: serde_json::Value,
+    pub scope: Scope,
+}
+
+/// [`canonicalize`] for a [`Target`]; also reports whether the ends were
+/// swapped (the candidate's scope must then be mirrored). Arc targets are
+/// always `tie_in_to`, which is canonical.
+fn canonicalize_target(
+    from: Uuid,
+    to: Target,
+    kind: RelationshipKind,
+) -> (Uuid, Target, RelationshipKind, bool) {
+    match to {
+        Target::Arc(_) => (from, to, kind, false),
+        Target::Series(t) => {
+            let (f, t2, k) = canonicalize(from, t, kind);
+            (f, Target::Series(t2), k, f != from)
+        }
+    }
+}
+
+/// Scope merged across a proposal's sources (strongest first): each field
+/// comes from the strongest source that set it. Fields the kind doesn't take
+/// and over-long ranges are dropped, so the row always passes the CHECKs.
+fn merged_scope<'a>(parts: impl Iterator<Item = &'a Scope>, kind: RelationshipKind) -> Scope {
+    let mut out = Scope::default();
+    for s in parts {
+        out.from_range = out.from_range.or_else(|| s.from_range.clone());
+        out.to_range = out.to_range.or_else(|| s.to_range.clone());
+        out.coverage = out.coverage.or(s.coverage);
+        out.qualifier = out.qualifier.or(s.qualifier);
+    }
+    let fits = |r: Option<String>| r.filter(|r| r.chars().count() <= super::MAX_RANGE_LEN);
+    out.from_range = fits(out.from_range);
+    out.to_range = fits(out.to_range);
+    out.note = None;
+    out.normalized().fitted(kind)
 }
 
 /// Canonicalize and merge candidates that land on the same row. Confidence
 /// is the strongest source's plus [`CORROBORATION_BONUS`] per additional
 /// distinct source; reasons are joined strongest first; evidence keeps
-/// every source entry (`{"sources": [...]}`). Self edges are dropped.
+/// every source entry (`{"sources": [...]}`); the scope is taken field by
+/// field from the strongest source that has it. Self edges, and arc targets
+/// on kinds that can't target an arc, are dropped.
 pub fn merge(candidates: Vec<Candidate>) -> Vec<Proposal> {
     struct Acc {
         best: BTreeMap<EvidenceSource, Candidate>,
     }
-    let mut by_key: HashMap<(Uuid, Uuid, RelationshipKind), Acc> = HashMap::new();
-    for c in candidates {
-        if c.from == c.to || !c.confidence.is_finite() {
+    let mut by_key: HashMap<(Uuid, Target, RelationshipKind), Acc> = HashMap::new();
+    for mut c in candidates {
+        if c.to == Target::Series(c.from) || !c.confidence.is_finite() {
             continue;
         }
-        let (from, to, kind) = canonicalize(c.from, c.to, c.kind);
+        if matches!(c.to, Target::Arc(_)) && !c.kind.allows_arc_target() {
+            continue;
+        }
+        let (from, to, kind, swapped) = canonicalize_target(c.from, c.to, c.kind);
+        if swapped {
+            c.scope = c.scope.mirrored();
+        }
         let acc = by_key.entry((from, to, kind)).or_insert_with(|| Acc {
             best: BTreeMap::new(),
         });
@@ -268,6 +384,7 @@ pub fn merge(candidates: Vec<Candidate>) -> Vec<Proposal> {
                 .map(|p| p.reason.as_str())
                 .collect::<Vec<_>>()
                 .join("; ");
+            let scope = merged_scope(parts.iter().map(|p| &p.scope), kind);
             let evidence = serde_json::json!({
                 "sources": parts.iter().map(|p| {
                     let mut e = p.evidence.clone();
@@ -286,6 +403,7 @@ pub fn merge(candidates: Vec<Candidate>) -> Vec<Proposal> {
                 bucket: SuggestionBucket::from_confidence(confidence),
                 reason,
                 evidence,
+                scope,
             }
         })
         .collect();
@@ -338,8 +456,23 @@ pub struct RunReport {
 #[derive(Debug, FromQueryResult)]
 struct KeyRow {
     from_series_id: Uuid,
-    to_series_id: Uuid,
+    to_series_id: Option<Uuid>,
+    to_arc_id: Option<Uuid>,
     kind: String,
+}
+
+type RowKey = (Uuid, Target, String);
+
+fn key_set(rows: Vec<KeyRow>) -> HashSet<RowKey> {
+    rows.into_iter()
+        .filter_map(|e| {
+            Some((
+                e.from_series_id,
+                Target::of(e.to_series_id, e.to_arc_id)?,
+                e.kind,
+            ))
+        })
+        .collect()
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -351,7 +484,7 @@ struct UpsertRow {
 /// Run every evidence source for `library_id`, merge, drop what is already
 /// an edge or already reviewed, cap at [`MAX_SUGGESTIONS_PER_RUN`], and
 /// upsert. Pending rows that are proposed again get their confidence,
-/// bucket, reason and evidence refreshed; non-pending rows are never
+/// bucket, reason, evidence and scope refreshed; non-pending rows are never
 /// touched. Idempotent.
 #[tracing::instrument(skip_all, name = "relationship_suggest", fields(library_id = %library_id))]
 pub async fn generate_for_library<C: ConnectionTrait>(
@@ -370,57 +503,51 @@ pub async fn generate_for_library<C: ConnectionTrait>(
     let proposals = merge(candidates);
     report.proposals = proposals.len();
 
-    // Existing edges touching this library (bounded by curation).
-    let edges = KeyRow::find_by_statement(Statement::from_sql_and_values(
-        conn.get_database_backend(),
-        "SELECT r.from_series_id, r.to_series_id, r.kind \
-           FROM series_relationship r \
-           JOIN series s ON s.id = r.from_series_id \
-          WHERE s.library_id = $1 AND r.to_series_id IS NOT NULL",
-        [Value::from(library_id)],
-    ))
-    .all(conn)
-    .await?;
-    let edge_set: HashSet<(Uuid, Uuid, String)> = edges
-        .into_iter()
-        .map(|e| (e.from_series_id, e.to_series_id, e.kind))
-        .collect();
+    // Existing edges touching this library (bounded by curation), series
+    // and arc targets alike.
+    let edge_set = key_set(
+        KeyRow::find_by_statement(Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            "SELECT r.from_series_id, r.to_series_id, r.to_arc_id, r.kind \
+               FROM series_relationship r \
+               JOIN series s ON s.id = r.from_series_id \
+              WHERE s.library_id = $1",
+            [Value::from(library_id)],
+        ))
+        .all(conn)
+        .await?,
+    );
     // Reviewed suggestions (the rejection memory).
-    let reviewed = KeyRow::find_by_statement(Statement::from_sql_and_values(
-        conn.get_database_backend(),
-        "SELECT g.from_series_id, g.to_series_id, g.kind \
-           FROM series_relationship_suggestion g \
-           JOIN series s ON s.id = g.from_series_id \
-          WHERE s.library_id = $1 AND g.status NOT IN ('pending', 'stale')",
-        [Value::from(library_id)],
-    ))
-    .all(conn)
-    .await?;
-    let reviewed_set: HashSet<(Uuid, Uuid, String)> = reviewed
-        .into_iter()
-        .map(|e| (e.from_series_id, e.to_series_id, e.kind))
-        .collect();
-
+    let reviewed_set = key_set(
+        KeyRow::find_by_statement(Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            "SELECT g.from_series_id, g.to_series_id, g.to_arc_id, g.kind \
+               FROM series_relationship_suggestion g \
+               JOIN series s ON s.id = g.from_series_id \
+              WHERE s.library_id = $1 AND g.status NOT IN ('pending', 'stale')",
+            [Value::from(library_id)],
+        ))
+        .all(conn)
+        .await?,
+    );
     // Stale rows (to count revivals: the upsert flips them to pending).
-    let stale = KeyRow::find_by_statement(Statement::from_sql_and_values(
-        conn.get_database_backend(),
-        "SELECT g.from_series_id, g.to_series_id, g.kind \
-           FROM series_relationship_suggestion g \
-           JOIN series s ON s.id = g.from_series_id \
-          WHERE s.library_id = $1 AND g.status = 'stale'",
-        [Value::from(library_id)],
-    ))
-    .all(conn)
-    .await?;
-    let stale_set: HashSet<(Uuid, Uuid, String)> = stale
-        .into_iter()
-        .map(|e| (e.from_series_id, e.to_series_id, e.kind))
-        .collect();
+    let stale_set = key_set(
+        KeyRow::find_by_statement(Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            "SELECT g.from_series_id, g.to_series_id, g.to_arc_id, g.kind \
+               FROM series_relationship_suggestion g \
+               JOIN series s ON s.id = g.from_series_id \
+              WHERE s.library_id = $1 AND g.status = 'stale'",
+            [Value::from(library_id)],
+        ))
+        .all(conn)
+        .await?,
+    );
 
     let mut keep: Vec<Proposal> = Vec::with_capacity(proposals.len().min(MAX_SUGGESTIONS_PER_RUN));
     // Every proposal still produced this run (kept or capped): pending rows
     // outside this set go stale.
-    let mut produced: Vec<(Uuid, Uuid, RelationshipKind)> = Vec::with_capacity(proposals.len());
+    let mut produced: Vec<(Uuid, Target, RelationshipKind)> = Vec::with_capacity(proposals.len());
     for p in proposals {
         // Inverse rows are always stored, so checking the forward
         // orientation for both the kind and its inverse covers "already
@@ -451,18 +578,23 @@ pub async fn generate_for_library<C: ConnectionTrait>(
         keep.push(p);
     }
 
-    for chunk in keep.chunks(UPSERT_CHUNK) {
-        let rows = upsert_chunk(conn, chunk).await?;
-        for r in rows {
-            if r.inserted {
-                report.inserted += 1;
-            } else if r.changed {
-                report.updated += 1;
+    let (to_series, to_arcs): (Vec<Proposal>, Vec<Proposal>) = keep
+        .into_iter()
+        .partition(|p| matches!(p.to, Target::Series(_)));
+    let kept = to_series.len() + to_arcs.len();
+    for (rows, arc) in [(&to_series, false), (&to_arcs, true)] {
+        for chunk in rows.chunks(UPSERT_CHUNK) {
+            for r in upsert_chunk(conn, chunk, arc).await? {
+                if r.inserted {
+                    report.inserted += 1;
+                } else if r.changed {
+                    report.updated += 1;
+                }
             }
         }
     }
     // Rows the upsert matched but left alone: pending + identical.
-    report.unchanged = keep.len().saturating_sub(report.inserted + report.updated);
+    report.unchanged = kept.saturating_sub(report.inserted + report.updated);
     if report.failed_sources.is_empty() {
         report.marked_stale = mark_stale(conn, library_id, &produced).await?;
     } else {
@@ -490,43 +622,73 @@ pub async fn generate_for_library<C: ConnectionTrait>(
     Ok(report)
 }
 
-/// `INSERT … ON CONFLICT DO UPDATE … WHERE status IN ('pending', 'stale')`.
-/// A reviewed row conflicts and is left untouched (the `WHERE` guard also
-/// covers a review that lands between the pre-filter and this statement);
-/// a stale row is revived to `pending`. Returns one row per inserted,
-/// *changed* or revived row.
+/// `INSERT … ON CONFLICT DO UPDATE … WHERE status IN ('pending', 'stale')`,
+/// for one target type (`arc` = `to_arc_id`, else `to_series_id`; each has
+/// its own partial unique index). A reviewed row conflicts and is left
+/// untouched (the `WHERE` guard also covers a review that lands between the
+/// pre-filter and this statement); a stale row is revived to `pending`.
+/// Returns one row per inserted, *changed* or revived row. Empty scope
+/// fields travel as `''` and land as NULL.
 async fn upsert_chunk<C: ConnectionTrait>(
     conn: &C,
     chunk: &[Proposal],
+    arc: bool,
 ) -> Result<Vec<UpsertRow>, DbErr> {
+    let text = |f: &dyn Fn(&Proposal) -> Option<String>| -> Vec<String> {
+        chunk.iter().map(|p| f(p).unwrap_or_default()).collect()
+    };
     let from: Vec<String> = chunk.iter().map(|p| p.from.to_string()).collect();
-    let to: Vec<String> = chunk.iter().map(|p| p.to.to_string()).collect();
+    let to: Vec<String> = chunk
+        .iter()
+        .map(|p| match p.to {
+            Target::Series(id) | Target::Arc(id) => id.to_string(),
+        })
+        .collect();
     let kind: Vec<String> = chunk.iter().map(|p| p.kind.as_str().to_owned()).collect();
     let conf: Vec<f64> = chunk.iter().map(|p| f64::from(p.confidence)).collect();
     let bucket: Vec<String> = chunk.iter().map(|p| p.bucket.as_str().to_owned()).collect();
     let reason: Vec<String> = chunk.iter().map(|p| p.reason.clone()).collect();
     let evidence: Vec<String> = chunk.iter().map(|p| p.evidence.to_string()).collect();
-    let sql = r#"
-        INSERT INTO series_relationship_suggestion
-            (id, from_series_id, to_series_id, kind, confidence, bucket, reason, evidence,
-             status, created_at, updated_at)
-        SELECT gen_random_uuid(), f::uuid, t::uuid, k, c::real, b, r, e::jsonb, 'pending', now(), now()
-          FROM unnest($1::text[], $2::text[], $3::text[], $4::float8[], $5::text[], $6::text[], $7::text[])
-               AS x(f, t, k, c, b, r, e)
-        ON CONFLICT (from_series_id, to_series_id, kind) DO UPDATE
+    let from_range = text(&|p| p.scope.from_range.clone());
+    let to_range = text(&|p| p.scope.to_range.clone());
+    let coverage = text(&|p| p.scope.coverage.map(|c| c.as_str().to_owned()));
+    let qualifier = text(&|p| p.scope.qualifier.map(|q| q.as_str().to_owned()));
+    let col = if arc { "to_arc_id" } else { "to_series_id" };
+    let t = "series_relationship_suggestion";
+    let sql = format!(
+        r#"
+        INSERT INTO {t}
+            (id, from_series_id, {col}, kind, confidence, bucket, reason, evidence,
+             from_range, to_range, coverage, qualifier, status, created_at, updated_at)
+        SELECT gen_random_uuid(), f::uuid, x.t::uuid, k, c::real, b, r, e::jsonb,
+               nullif(fr, ''), nullif(tr, ''), nullif(cv, ''), nullif(q, ''),
+               'pending', now(), now()
+          FROM unnest($1::text[], $2::text[], $3::text[], $4::float8[], $5::text[], $6::text[],
+                      $7::text[], $8::text[], $9::text[], $10::text[], $11::text[])
+               AS x(f, t, k, c, b, r, e, fr, tr, cv, q)
+        ON CONFLICT (from_series_id, {col}, kind) WHERE {col} IS NOT NULL DO UPDATE
            SET confidence = EXCLUDED.confidence,
                bucket     = EXCLUDED.bucket,
                reason     = EXCLUDED.reason,
                evidence   = EXCLUDED.evidence,
+               from_range = EXCLUDED.from_range,
+               to_range   = EXCLUDED.to_range,
+               coverage   = EXCLUDED.coverage,
+               qualifier  = EXCLUDED.qualifier,
                status     = 'pending',
                updated_at = now()
-         WHERE series_relationship_suggestion.status IN ('pending', 'stale')
-           AND (series_relationship_suggestion.status = 'stale'
-             OR series_relationship_suggestion.confidence IS DISTINCT FROM EXCLUDED.confidence
-             OR series_relationship_suggestion.reason     IS DISTINCT FROM EXCLUDED.reason
-             OR series_relationship_suggestion.evidence   IS DISTINCT FROM EXCLUDED.evidence)
+         WHERE {t}.status IN ('pending', 'stale')
+           AND ({t}.status = 'stale'
+             OR {t}.confidence IS DISTINCT FROM EXCLUDED.confidence
+             OR {t}.reason     IS DISTINCT FROM EXCLUDED.reason
+             OR {t}.evidence   IS DISTINCT FROM EXCLUDED.evidence
+             OR {t}.from_range IS DISTINCT FROM EXCLUDED.from_range
+             OR {t}.to_range   IS DISTINCT FROM EXCLUDED.to_range
+             OR {t}.coverage   IS DISTINCT FROM EXCLUDED.coverage
+             OR {t}.qualifier  IS DISTINCT FROM EXCLUDED.qualifier)
         RETURNING (xmax = 0) AS inserted, true AS changed
-    "#;
+    "#
+    );
     UpsertRow::find_by_statement(Statement::from_sql_and_values(
         conn.get_database_backend(),
         sql,
@@ -538,6 +700,10 @@ async fn upsert_chunk<C: ConnectionTrait>(
             Value::from(bucket),
             Value::from(reason),
             Value::from(evidence),
+            Value::from(from_range),
+            Value::from(to_range),
+            Value::from(coverage),
+            Value::from(qualifier),
         ],
     ))
     .all(conn)
@@ -546,14 +712,16 @@ async fn upsert_chunk<C: ConnectionTrait>(
 
 /// Mark the library's pending rows that are not in `produced` as `stale`.
 /// Returns how many rows changed. Keyed on the suggestion's `from` series'
-/// library, like every other library-scoped query here.
+/// library, like every other library-scoped query here. Targets compare as
+/// `s:<uuid>` / `a:<uuid>` text keys so series and arc rows share one
+/// `unnest`.
 async fn mark_stale<C: ConnectionTrait>(
     conn: &C,
     library_id: Uuid,
-    produced: &[(Uuid, Uuid, RelationshipKind)],
+    produced: &[(Uuid, Target, RelationshipKind)],
 ) -> Result<usize, DbErr> {
     let from: Vec<String> = produced.iter().map(|k| k.0.to_string()).collect();
-    let to: Vec<String> = produced.iter().map(|k| k.1.to_string()).collect();
+    let to: Vec<String> = produced.iter().map(|k| k.1.key()).collect();
     let kind: Vec<String> = produced.iter().map(|k| k.2.as_str().to_owned()).collect();
     let res = conn
         .execute_raw(Statement::from_sql_and_values(
@@ -569,7 +737,9 @@ async fn mark_stale<C: ConnectionTrait>(
                    SELECT 1
                      FROM unnest($2::text[], $3::text[], $4::text[]) AS k(f, t, kd)
                     WHERE k.f::uuid = g.from_series_id
-                      AND k.t::uuid = g.to_series_id
+                      AND k.t = CASE WHEN g.to_arc_id IS NOT NULL
+                                     THEN 'a:' || g.to_arc_id::text
+                                     ELSE 's:' || g.to_series_id::text END
                       AND k.kd = g.kind)
             "#,
             [
@@ -595,7 +765,8 @@ pub enum ReviewError {
     AlreadyReviewed {
         status: SuggestionStatus,
     },
-    /// `create_pair` refused (self edge, contradicting kind, …).
+    /// `create_pair_scoped` / `create_arc_edge` refused (self edge,
+    /// contradicting kind, a non-arc kind on an arc suggestion, …).
     Pair(PairError),
     Db(DbErr),
 }
@@ -632,9 +803,24 @@ pub struct AcceptOutcome {
     pub suggestion: sug::Model,
     /// The edge kind that was created (`from kind to`).
     pub kind: RelationshipKind,
-    /// The pair from [`crate::relationships::create_pair`] (`created =
-    /// false` when the edge already existed).
-    pub pair: PairOutcome,
+    /// The `from → to` edge row (pre-existing or new): a series pair's
+    /// forward half, or the series → arc edge.
+    pub forward: entity::series_relationship::Model,
+    /// The inverse half of a series pair; `None` for an arc edge (WP-7.6).
+    pub inverse: Option<entity::series_relationship::Model>,
+    /// `false` when the edge already existed.
+    pub created: bool,
+}
+
+/// The scope a suggestion row proposes (WP-7.6).
+pub fn scope_of(row: &sug::Model) -> Scope {
+    Scope {
+        from_range: row.from_range.clone(),
+        to_range: row.to_range.clone(),
+        coverage: row.coverage.as_deref().and_then(|c| c.parse().ok()),
+        qualifier: row.qualifier.as_deref().and_then(|q| q.parse().ok()),
+        note: None,
+    }
 }
 
 async fn lock_pending<C: ConnectionTrait>(conn: &C, id: Uuid) -> Result<sug::Model, ReviewError> {
@@ -650,17 +836,22 @@ async fn lock_pending<C: ConnectionTrait>(conn: &C, id: Uuid) -> Result<sug::Mod
     Ok(row)
 }
 
-/// Accept a pending suggestion: create the edge pair via
-/// [`crate::relationships::create_pair`] (`source = suggested`, the
-/// suggestion's confidence, `created_by = actor`) and mark the row
-/// `accepted` — or `modified` with `accepted_kind` when `kind_override`
-/// differs from the suggested kind. The override is read in the
-/// suggestion's `from → to` direction. Both writes share one transaction
-/// (a savepoint when `conn` is already a transaction), and the row is
-/// locked `FOR UPDATE`, so a double accept can't create twice.
+/// Accept a pending suggestion: create the edge with `source = suggested`,
+/// the suggestion's confidence, `created_by = actor` and its proposed scope
+/// (WP-7.6) — a series pair via [`crate::relationships::create_pair_scoped`],
+/// or a series → arc edge via [`crate::relationships::create_arc_edge`] — and
+/// mark the row `accepted`, or `modified` with `accepted_kind` when
+/// `kind_override` differs from the suggested kind. The override is read in
+/// the suggestion's `from → to` direction; scope fields the overriding kind
+/// doesn't take (a coverage on a non-collection kind, a qualifier from
+/// another set) are dropped rather than failing the accept
+/// ([`Scope::fitted`]). An arc suggestion only accepts arc-capable kinds
+/// (`tie_in_to`); anything else is [`PairError::ArcKind`]. Both writes share
+/// one transaction (a savepoint when `conn` is already a transaction), and
+/// the row is locked `FOR UPDATE`, so a double accept can't create twice.
 ///
 /// **Callers must** call `AppState::similarity.invalidate_all()` after this
-/// returns with `pair.created = true` (accepted edges feed WP-7.4's similar
+/// returns with `created = true` (accepted edges feed WP-7.4's similar
 /// series); the HTTP handler does, and so must any bulk path.
 pub async fn accept<C>(
     conn: &C,
@@ -678,20 +869,49 @@ where
         .parse()
         .map_err(|()| ReviewError::Db(DbErr::Custom(format!("bad kind {}", row.kind))))?;
     let kind = kind_override.unwrap_or(suggested);
-    let pair = super::create_pair(
-        &txn,
-        row.from_series_id,
-        row.to_series_id,
-        kind,
-        RelationshipSource::Suggested,
-        Some(row.confidence.clamp(0.0, 1.0)),
-        Some(actor),
-    )
-    .await
-    .map_err(|e| match e {
+    let scope = scope_of(&row).fitted(kind);
+    let confidence = Some(row.confidence.clamp(0.0, 1.0));
+    let pair_err = |e: PairError| match e {
         PairError::Db(d) => ReviewError::Db(d),
         other => ReviewError::Pair(other),
-    })?;
+    };
+    let (forward, inverse, created) = match Target::of(row.to_series_id, row.to_arc_id) {
+        Some(Target::Series(to)) => {
+            let pair = super::create_pair_scoped(
+                &txn,
+                row.from_series_id,
+                to,
+                kind,
+                RelationshipSource::Suggested,
+                confidence,
+                Some(actor),
+                &scope,
+            )
+            .await
+            .map_err(pair_err)?;
+            (pair.forward, Some(pair.inverse), pair.created)
+        }
+        Some(Target::Arc(arc)) => {
+            let edge = super::create_arc_edge(
+                &txn,
+                row.from_series_id,
+                arc,
+                kind,
+                RelationshipSource::Suggested,
+                confidence,
+                Some(actor),
+                &scope,
+            )
+            .await
+            .map_err(pair_err)?;
+            (edge.row, None, edge.created)
+        }
+        None => {
+            return Err(ReviewError::Db(DbErr::Custom(
+                "suggestion has no target".into(),
+            )));
+        }
+    };
     let modified = kind != suggested;
     let now = Utc::now().fixed_offset();
     let status = if modified {
@@ -712,7 +932,9 @@ where
     Ok(AcceptOutcome {
         suggestion,
         kind,
-        pair,
+        forward,
+        inverse,
+        created,
     })
 }
 
@@ -809,7 +1031,7 @@ where
         }
         match accept(&txn, id, actor, None).await {
             Ok(o) => {
-                if o.pair.created {
+                if o.created {
                     out.created += 1;
                 }
                 out.succeeded.push(o.suggestion);
@@ -1044,12 +1266,13 @@ mod tests {
     fn cand(from: Uuid, to: Uuid, kind: K, c: f32, source: EvidenceSource) -> Candidate {
         Candidate {
             from,
-            to,
+            to: to.into(),
             kind,
             confidence: c,
             source,
             reason: format!("{source:?}"),
             evidence: serde_json::json!({ "source": format!("{source:?}") }),
+            scope: Scope::default(),
         }
     }
 
@@ -1079,13 +1302,13 @@ mod tests {
     fn merge_dedupes_reversed_self_inverse_and_boosts_corroboration() {
         let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
         let merged = merge(vec![
-            cand(a, b, K::CrossoverWith, 0.6, EvidenceSource::StoryArc),
+            cand(a, b, K::CrossoverWith, 0.6, EvidenceSource::ArcCrossover),
             cand(b, a, K::CrossoverWith, 0.7, EvidenceSource::AlternateSeries),
             cand(b, a, K::CrossoverWith, 0.5, EvidenceSource::AlternateSeries),
         ]);
         assert_eq!(merged.len(), 1);
         let p = &merged[0];
-        assert_eq!((p.from, p.to), (a, b));
+        assert_eq!((p.from, p.to), (a, Target::Series(b)));
         assert!((p.confidence - 0.75).abs() < 1e-6, "{}", p.confidence);
         assert_eq!(p.bucket, SuggestionBucket::Medium);
         assert_eq!(p.evidence["sources"].as_array().unwrap().len(), 2);
@@ -1119,10 +1342,57 @@ mod tests {
                 a,
                 K::SeeAlso,
                 0.9,
-                EvidenceSource::SeriesGroup
+                EvidenceSource::AlternateSeries
             )])
             .is_empty()
         );
+    }
+
+    #[test]
+    fn merge_mirrors_scope_when_folding_and_fits_it_to_the_kind() {
+        use crate::relationships::{RelationshipCoverage as Cov, RelationshipQualifier as Q};
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        // `collected_in` folds onto `collects` with the ends swapped: the
+        // ranges swap too.
+        let mut c = cand(a, b, K::CollectedIn, 0.8, EvidenceSource::ReprintRollup);
+        c.scope = Scope {
+            from_range: Some("1-6".into()),
+            to_range: Some("1".into()),
+            coverage: Some(Cov::Full),
+            qualifier: Some(Q::Relaunch),
+            note: Some("dropped".into()),
+        };
+        let merged = merge(vec![c]);
+        let p = &merged[0];
+        assert_eq!((p.from, p.to, p.kind), (b, Target::Series(a), K::Collects));
+        assert_eq!(p.scope.from_range.as_deref(), Some("1"));
+        assert_eq!(p.scope.to_range.as_deref(), Some("1-6"));
+        assert_eq!(p.scope.coverage, Some(Cov::Full));
+        assert_eq!(p.scope.qualifier, None, "collects takes no qualifier");
+        assert_eq!(p.scope.note, None);
+
+        // Fields come from the strongest source that has them.
+        let mut strong = cand(a, b, K::Continues, 0.9, EvidenceSource::NameContinuation);
+        strong.scope.from_range = Some("1-12".into());
+        let mut weak = cand(a, b, K::Continues, 0.6, EvidenceSource::ProviderVolume);
+        weak.scope.qualifier = Some(Q::Relaunch);
+        weak.scope.from_range = Some("ignored".into());
+        let p = &merge(vec![weak, strong])[0];
+        assert_eq!(p.scope.from_range.as_deref(), Some("1-12"));
+        assert_eq!(p.scope.qualifier, Some(Q::Relaunch));
+    }
+
+    #[test]
+    fn merge_keeps_arc_targets_apart_and_drops_non_arc_kinds() {
+        let (a, arc) = (Uuid::from_u128(1), Uuid::from_u128(9));
+        let mut tie = cand(a, a, K::TieInTo, 0.7, EvidenceSource::ArcTieIn);
+        tie.to = Target::Arc(arc);
+        let mut bad = cand(a, a, K::SeeAlso, 0.7, EvidenceSource::ArcTieIn);
+        bad.to = Target::Arc(arc);
+        let merged = merge(vec![tie, bad]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].to, Target::Arc(arc));
+        assert_eq!(merged[0].kind, K::TieInTo);
     }
 
     #[test]

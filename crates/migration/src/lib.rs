@@ -119,6 +119,7 @@ mod m20270502_000001_relationship_suggestion;
 mod m20270503_000001_relationship_suggestion_stale;
 mod m20270504_000001_similar_series_rail;
 mod m20270505_000001_relationship_taxonomy;
+mod m20270506_000001_relationship_suggestion_scope;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -246,6 +247,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270503_000001_relationship_suggestion_stale::Migration),
             Box::new(m20270504_000001_similar_series_rail::Migration),
             Box::new(m20270505_000001_relationship_taxonomy::Migration),
+            Box::new(m20270506_000001_relationship_suggestion_scope::Migration),
         ]
     }
 }

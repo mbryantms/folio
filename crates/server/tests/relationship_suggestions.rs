@@ -27,6 +27,7 @@ use sea_orm::{
 use server::jobs::relationship_suggest;
 use server::relationships::suggestions::MAX_SUGGESTIONS_PER_RUN;
 use server::relationships::{self, RelationshipKind, RelationshipSource};
+use std::collections::HashMap;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -187,6 +188,10 @@ struct S {
     volume: Option<i32>,
     publisher: Option<&'static str>,
     group: Option<&'static str>,
+    series_type: Option<&'static str>,
+    /// `language_code`; default `en`.
+    lang: Option<&'static str>,
+    aliases: &'static [&'static str],
 }
 
 async fn mk_series(db: &DatabaseConnection, lib_id: Uuid, s: S) -> Uuid {
@@ -211,11 +216,11 @@ async fn mk_series(db: &DatabaseConnection, lib_id: Uuid, s: S) -> Uuid {
         total_issues: Set(None),
         age_rating: Set(None),
         summary: Set(None),
-        language_code: Set("en".into()),
+        language_code: Set(s.lang.unwrap_or("en").into()),
         sort_name: Set(None),
         year_end: Set(None),
-        series_type: Set(None),
-        aliases: Set(serde_json::json!([])),
+        series_type: Set(s.series_type.map(str::to_owned)),
+        aliases: Set(serde_json::json!(s.aliases)),
         deck: Set(None),
         publisher_id: Set(None),
         imprint_id: Set(None),
@@ -251,6 +256,9 @@ struct I {
     format: Option<&'static str>,
     notes: Option<&'static str>,
     cv_series: Option<i64>,
+    month: Option<i32>,
+    title: Option<&'static str>,
+    special_type: Option<&'static str>,
 }
 
 async fn mk_issue(db: &DatabaseConnection, lib: Uuid, series: Uuid, i: I) -> String {
@@ -263,8 +271,8 @@ async fn mk_issue(db: &DatabaseConnection, lib: Uuid, series: Uuid, i: I) -> Str
         sea_orm::DatabaseBackend::Postgres,
         "INSERT INTO issues (id, library_id, series_id, file_path, file_size, file_mtime, \
            content_hash, slug, sort_number, number_raw, year, alternate_series, format, notes, \
-           comic_info_raw) \
-         VALUES ($1, $2, $3, $4, 1, now(), $1, $5, $6, $7, $8, $9, $10, $11, $12)",
+           comic_info_raw, month, title, special_type) \
+         VALUES ($1, $2, $3, $4, 1, now(), $1, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
         [
             id.clone().into(),
             lib.into(),
@@ -278,6 +286,9 @@ async fn mk_issue(db: &DatabaseConnection, lib: Uuid, series: Uuid, i: I) -> Str
             i.format.map(str::to_owned).into(),
             i.notes.map(str::to_owned).into(),
             raw.into(),
+            i.month.into(),
+            i.title.map(str::to_owned).into(),
+            i.special_type.map(str::to_owned).into(),
         ],
     ))
     .await
@@ -327,7 +338,7 @@ async fn rows(db: &DatabaseConnection) -> Vec<sug::Model> {
 
 fn find<'a>(rows: &'a [sug::Model], from: Uuid, to: Uuid, kind: &str) -> Option<&'a sug::Model> {
     rows.iter()
-        .find(|r| r.from_series_id == from && r.to_series_id == to && r.kind == kind)
+        .find(|r| r.from_series_id == from && r.to_series_id == Some(to) && r.kind == kind)
 }
 
 fn sources(r: &sug::Model) -> Vec<String> {
@@ -695,28 +706,43 @@ async fn fixture_library_yields_one_suggestion_per_source() {
     assert!(cw.reason.contains("\"Civil War\""), "{}", cw.reason);
     assert!(cw.confidence >= 0.8, "{}", cw.confidence);
 
-    // SeriesGroup → same_universe, high for a small group.
-    let (a, b) = ordered(f.batman, f.nightwing);
-    let grp = find(&all, a, b, "same_universe").expect(&dump);
-    assert_eq!(grp.bucket, "high");
-    assert!(grp.reason.contains("Batman Family"));
+    // SeriesGroup no longer suggests pairwise same_universe (WP-7.6: it is
+    // derived from universe / SeriesGroup membership instead).
+    assert!(all.iter().all(|r| r.kind != "same_universe"), "{dump}");
 
-    // Shared story arc → crossover_with.
+    // Shared story arc → each series ties in to the arc (WP-7.6), not a
+    // pairwise crossover. 3 vs 2 issues: no clear main, so medium/low.
     let (a, b) = ordered(f.avengers, f.spider_man);
-    let arc = find(&all, a, b, "crossover_with").expect(&dump);
-    assert_eq!(sources(arc), vec!["story_arc"]);
-    assert!(arc.reason.contains("War of the Realms"), "{}", arc.reason);
+    assert!(find(&all, a, b, "crossover_with").is_none(), "{dump}");
+    let tie = |s: Uuid| {
+        all.iter()
+            .find(|r| r.from_series_id == s && r.to_arc_id.is_some())
+            .expect(&dump)
+    };
+    let main = tie(f.avengers);
+    assert_eq!(main.kind, "tie_in_to");
+    assert_eq!(main.qualifier.as_deref(), Some("main"));
+    assert_eq!(main.from_range.as_deref(), Some("1-3"));
+    assert_eq!(sources(main), vec!["arc_tie_in"]);
+    assert!(main.reason.contains("War of the Realms"), "{}", main.reason);
+    assert_eq!(tie(f.spider_man).qualifier.as_deref(), Some("tie_in"));
 
-    // Collected edition → collects (TPB/HC series is the subject).
+    // Collected edition → collects (TPB/HC series is the subject), with the
+    // cited range as scope.
     let col = find(&all, f.saga_deluxe, f.saga, "collects").expect(&dump);
     assert_eq!(col.bucket, "high");
     assert!(col.reason.contains("#1–6"), "{}", col.reason);
     assert_eq!(col.evidence["sources"][0]["issues_in_library"], 6);
+    assert_eq!(col.to_range.as_deref(), Some("1-6"));
+    assert_eq!(col.from_range.as_deref(), Some("1"));
+    assert_eq!(col.coverage.as_deref(), Some("full"));
 
-    // Shared provider volume with disjoint ranges → continues.
+    // Shared provider volume with disjoint ranges → continues; different
+    // names under one provider series → retitle.
     let pv = find(&all, f.usm_relaunch, f.ucsm, "continues").expect(&dump);
     assert_eq!(sources(pv), vec!["provider_volume"]);
     assert!(pv.reason.contains("424242"), "{}", pv.reason);
+    assert_eq!(pv.qualifier.as_deref(), Some("retitle"));
 
     // Provider range → see_also.
     let (a, b) = ordered(f.ff_1998, f.ff_2012);
@@ -724,12 +750,9 @@ async fn fixture_library_yields_one_suggestion_per_source() {
     assert_eq!(sources(pr), vec!["provider_range"]);
     assert!(pr.reason.contains("#600–611"), "{}", pr.reason);
 
-    // Character density → same_universe, always low.
+    // Character density is retired (WP-7.6).
     let (a, b) = ordered(f.invincible, f.guarding);
-    let dens = find(&all, a, b, "same_universe").expect(&dump);
-    assert_eq!(dens.bucket, "low");
-    assert!(dens.confidence <= 0.5);
-    assert_eq!(dens.evidence["sources"][0]["shared_features"], 5);
+    assert!(find(&all, a, b, "same_universe").is_none());
 
     // Existing manual edge isn't re-suggested.
     assert!(find(&all, f.atlas_2009, f.atlas_2007, "continues").is_none());
@@ -745,8 +768,13 @@ async fn fixture_library_yields_one_suggestion_per_source() {
             r.kind
         );
         if ["crossover_with", "same_universe", "see_also"].contains(&r.kind.as_str()) {
-            assert!(r.from_series_id < r.to_series_id);
+            assert!(r.to_series_id.is_some_and(|t| r.from_series_id < t));
         }
+        assert_eq!(
+            r.to_series_id.is_some(),
+            r.to_arc_id.is_none(),
+            "exactly one target"
+        );
     }
     assert_eq!(report.inserted, all.len());
 
@@ -1059,7 +1087,10 @@ async fn list_paginates_filters_and_reports_counts() {
         let items = body["items"].as_array().unwrap();
         for it in items {
             assert!(it["from_series"]["slug"].is_string());
-            assert!(it["to_series"]["slug"].is_string());
+            assert!(
+                it["to_series"]["slug"].is_string() ^ it["to_arc"]["slug"].is_string(),
+                "{it}"
+            );
             seen.push((
                 it["confidence"].as_f64().unwrap(),
                 it["id"].as_str().unwrap().to_owned(),
@@ -1250,9 +1281,11 @@ async fn cap_is_respected_on_a_large_library() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let lib = mk_library(&app, &db, "stress").await;
 
-    // 1500 titles × 2 volumes (3000 series): 1500 consecutive-volume sequel
-    // candidates, plus one 3000-member SeriesGroup (a star → 2999 more), plus
-    // a 1500-pair story-arc fan-out.
+    // 1500 titles × 2 volumes (3000 series): 1500 consecutive-volume
+    // `continues` candidates; plus 1500 "Title N Annual" series (1500
+    // `annual_of` through the name-detector catalogue) and a 4500-series
+    // story-arc fan-out (4500 `tie_in_to` arc candidates). The legacy
+    // SeriesGroup on every series must not add anything (WP-7.6 retired it).
     exec(
         &db,
         r#"INSERT INTO series (id, library_id, name, normalized_name, slug, year, volume, publisher,
@@ -1263,6 +1296,19 @@ async fn cap_is_respected_on_a_large_library() {
                   'continuing', 'en', '[]'::jsonb, '[]'::jsonb, 'Stress Universe',
                   false, false, now(), now()
              FROM generate_series(1, 1500) t, generate_series(1, 2) v"#,
+        vec![lib.into()],
+    )
+    .await;
+    exec(
+        &db,
+        r#"INSERT INTO series (id, library_id, name, normalized_name, slug, year, publisher,
+                               status, language_code, alternate_names, aliases, series_group,
+                               metadata_sync_paused, preserve_canonical_order, created_at, updated_at)
+           SELECT gen_random_uuid(), $1, 'Title ' || t || ' Annual', 'title ' || t || ' annual',
+                  'title-' || t || '-annual', 2006, 'Stress',
+                  'continuing', 'en', '[]'::jsonb, '[]'::jsonb, 'Stress Universe',
+                  false, false, now(), now()
+             FROM generate_series(1, 1500) t"#,
         vec![lib.into()],
     )
     .await;
@@ -1288,6 +1334,9 @@ async fn cap_is_respected_on_a_large_library() {
     let report = relationship_suggest::run(&db, lib).await.unwrap();
     let elapsed = started.elapsed();
     assert!(report.proposals > MAX_SUGGESTIONS_PER_RUN, "{report:?}");
+    assert_eq!(report.by_source["annual"], 1500, "{report:?}");
+    assert_eq!(report.by_source["arc_tie_in"], 4500, "{report:?}");
+    assert!(report.failed_sources.is_empty(), "{report:?}");
     assert_eq!(report.inserted, MAX_SUGGESTIONS_PER_RUN, "{report:?}");
     assert_eq!(
         report.capped,
@@ -1300,8 +1349,8 @@ async fn cap_is_respected_on_a_large_library() {
         sug::Entity::find().count(&db).await.unwrap(),
         MAX_SUGGESTIONS_PER_RUN as u64
     );
-    // Strongest first: the 1500 consecutive-volume sequels (0.9) fill the
-    // cap before anything weaker.
+    // Strongest first: the consecutive-volume continuations and the annuals
+    // (both 0.9) fill the cap before anything weaker.
     let min_written = sug::Entity::find()
         .all(&db)
         .await
@@ -1880,4 +1929,1006 @@ async fn sequel_of_and_continues_dedupe_each_other() {
         ),
         "{err:?}"
     );
+}
+
+// ───── WP-7.6 detectors ─────
+
+/// Series with issues `numbers` in `year` (each `month` 1 unless given).
+async fn mk_run(
+    db: &DatabaseConnection,
+    lib: Uuid,
+    s: S,
+    numbers: std::ops::RangeInclusive<i32>,
+    year: i32,
+) -> Uuid {
+    let id = mk_series(db, lib, s).await;
+    for n in numbers {
+        mk_issue(
+            db,
+            lib,
+            id,
+            I {
+                number: f64::from(n),
+                year: Some(year),
+                ..Default::default()
+            },
+        )
+        .await;
+    }
+    id
+}
+
+fn s(name: &'static str, year: i32) -> S {
+    S {
+        name,
+        year: Some(year),
+        ..Default::default()
+    }
+}
+
+fn dump(all: &[sug::Model]) -> String {
+    all.iter()
+        .map(|r| {
+            format!(
+                "{} {:.2} {:?} {:?}/{:?}/{:?} {}",
+                r.kind, r.confidence, r.qualifier, r.from_range, r.to_range, r.coverage, r.reason
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+async fn link_arc(db: &DatabaseConnection, issue: &str, arc: Uuid) {
+    exec(
+        db,
+        "INSERT INTO issue_arcs (issue_id, arc_id) VALUES ($1, $2)",
+        vec![issue.into(), arc.into()],
+    )
+    .await;
+}
+
+async fn arc_issue(
+    db: &DatabaseConnection,
+    lib: Uuid,
+    series: Uuid,
+    arc: Uuid,
+    number: f64,
+    (year, month): (i32, i32),
+    title: Option<&'static str>,
+) {
+    let id = mk_issue(
+        db,
+        lib,
+        series,
+        I {
+            number,
+            year: Some(year),
+            month: Some(month),
+            title,
+            ..Default::default()
+        },
+    )
+    .await;
+    link_arc(db, &id, arc).await;
+}
+
+fn arc_row(all: &[sug::Model], from: Uuid, arc: Uuid) -> Option<&sug::Model> {
+    all.iter()
+        .find(|r| r.from_series_id == from && r.to_arc_id == Some(arc))
+}
+
+#[tokio::test]
+async fn annual_detector_picks_the_volume_whose_years_contain_it() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib = mk_library(&app, &db, "annuals").await;
+    // Two Avengers volumes; the 2012 annual sits inside the first.
+    let av_2010 = mk_run(&db, lib, s("Avengers", 2010), 1..=3, 2010).await;
+    exec(
+        &db,
+        "UPDATE issues SET year = 2012 WHERE series_id = $1 AND sort_number = 3",
+        vec![av_2010.into()],
+    )
+    .await;
+    let av_2013 = mk_run(&db, lib, s("Avengers", 2013), 1..=3, 2013).await;
+    let av_annual = mk_run(&db, lib, s("Avengers Annual", 2012), 1..=1, 2012).await;
+    // "The" is ignored when matching.
+    let asm = mk_run(&db, lib, s("Amazing Spider-Man", 2018), 1..=5, 2018).await;
+    let asm_annual = mk_run(
+        &db,
+        lib,
+        s("The Amazing Spider-Man Annual", 2019),
+        1..=1,
+        2019,
+    )
+    .await;
+    // Issues formatted Annual, no "Annual" in the name.
+    let iron_man = mk_run(&db, lib, s("Iron Man", 1998), 1..=40, 1998).await;
+    exec(
+        &db,
+        "UPDATE issues SET year = 2001 WHERE series_id = $1 AND sort_number > 20",
+        vec![iron_man.into()],
+    )
+    .await;
+    let im_1999 = mk_series(&db, lib, s("Iron Man 1999", 1999)).await;
+    mk_issue(
+        &db,
+        lib,
+        im_1999,
+        I {
+            number: 1.0,
+            year: Some(1999),
+            special_type: Some("Annual"),
+            ..Default::default()
+        },
+    )
+    .await;
+    // Metron "Annual Series" series type.
+    let thor = mk_run(&db, lib, s("Thor", 2007), 1..=12, 2007).await;
+    let thor_annual = mk_run(
+        &db,
+        lib,
+        S {
+            series_type: Some("Annual Series"),
+            ..s("Thor", 2008)
+        },
+        1..=1,
+        2008,
+    )
+    .await;
+    // Different publisher: no suggestion.
+    mk_run(
+        &db,
+        lib,
+        S {
+            publisher: Some("DC Comics"),
+            ..s("Hawkman Annual", 2010)
+        },
+        1..=1,
+        2010,
+    )
+    .await;
+    mk_run(&db, lib, s("Hawkman", 2010), 1..=6, 2010).await;
+    // Two equally fitting volumes: lower confidence.
+    let x_a = mk_run(&db, lib, s("X-Factor", 2005), 1..=3, 2005).await;
+    let x_b = mk_run(&db, lib, s("X-Factor", 2005), 4..=6, 2005).await;
+    let x_annual = mk_run(&db, lib, s("X-Factor Annual", 2005), 1..=1, 2005).await;
+
+    relationship_suggest::run(&db, lib).await.unwrap();
+    let all = rows(&db).await;
+    let d = dump(&all);
+
+    let a = find(&all, av_annual, av_2010, "annual_of").expect(&d);
+    assert_eq!(a.bucket, "high", "{d}");
+    assert!((a.confidence - 0.9).abs() < 1e-6, "{d}");
+    assert!(
+        a.reason.contains("within that volume's 2010–2012"),
+        "{}",
+        a.reason
+    );
+    assert!(find(&all, av_annual, av_2013, "annual_of").is_none(), "{d}");
+    assert_eq!(sources(a), vec!["annual"]);
+
+    assert!(find(&all, asm_annual, asm, "annual_of").is_some(), "{d}");
+    let im = find(&all, im_1999, iron_man, "annual_of").expect(&d);
+    assert!(
+        find(&all, im_1999, iron_man, "continues").is_none(),
+        "an annual is not the next volume: {d}"
+    );
+    assert_eq!(im.evidence["sources"][0]["signal"], "format");
+    assert_eq!(im.bucket, "high", "{d}");
+    let th = find(&all, thor_annual, thor, "annual_of").expect(&d);
+    assert_eq!(th.evidence["sources"][0]["signal"], "seriestype");
+    assert!(
+        all.iter()
+            .all(|r| r.kind != "annual_of" || !r.reason.contains("Hawkman")),
+        "{d}"
+    );
+    let xf = all
+        .iter()
+        .find(|r| r.from_series_id == x_annual && r.kind == "annual_of")
+        .expect(&d);
+    assert!(xf.to_series_id == Some(x_a) || xf.to_series_id == Some(x_b));
+    assert!(xf.confidence < 0.8, "ambiguous volume → not high: {d}");
+}
+
+#[tokio::test]
+async fn arc_tie_ins_assign_roles_and_co_mains_cross_over() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib = mk_library(&app, &db, "arcs").await;
+
+    // Main by name: the ComicVine reading-list arc `"Secret Wars"
+    // Battleworld` matches the "Secret Wars" series.
+    let sw_arc = mk_arc(&db, "\"Secret Wars\" Battleworld").await;
+    let sw = mk_series(&db, lib, s("Secret Wars", 2015)).await;
+    for (n, m) in [(1.0, 5), (2.0, 6), (3.0, 7)] {
+        arc_issue(&db, lib, sw, sw_arc, n, (2015, m), None).await;
+    }
+    let avengers = mk_series(&db, lib, s("Avengers", 2015)).await;
+    arc_issue(&db, lib, avengers, sw_arc, 1.0, (2015, 6), None).await;
+    arc_issue(&db, lib, avengers, sw_arc, 2.0, (2015, 7), None).await;
+    // Prelude by series name, aftermath by issue title, prelude by date.
+    let prelude = mk_series(&db, lib, s("Secret Wars Prelude", 2015)).await;
+    arc_issue(&db, lib, prelude, sw_arc, 1.0, (2015, 5), None).await;
+    let xmen = mk_series(&db, lib, s("X-Men", 2015)).await;
+    arc_issue(
+        &db,
+        lib,
+        xmen,
+        sw_arc,
+        7.0,
+        (2015, 6),
+        Some("Aftermath, Part 1"),
+    )
+    .await;
+    let thor = mk_series(&db, lib, s("Thor", 2014)).await;
+    arc_issue(&db, lib, thor, sw_arc, 8.0, (2015, 1), None).await;
+    let later = mk_series(&db, lib, s("Squadron Supreme", 2016)).await;
+    arc_issue(&db, lib, later, sw_arc, 1.0, (2016, 2), None).await;
+
+    // Two co-main titles (3 + 3 issues) and a one-issue tie-in.
+    let sv_arc = mk_arc(&db, "Spider-Verse").await;
+    let spidey = mk_series(&db, lib, s("Spider-Man", 2014)).await;
+    let woman = mk_series(&db, lib, s("Spider-Woman", 2014)).await;
+    for n in 1..=3 {
+        arc_issue(&db, lib, spidey, sv_arc, f64::from(n), (2014, 10 + n), None).await;
+        arc_issue(&db, lib, woman, sv_arc, f64::from(n), (2014, 10 + n), None).await;
+    }
+    let scarlet = mk_series(&db, lib, s("Scarlet Spiders", 2014)).await;
+    arc_issue(&db, lib, scarlet, sv_arc, 1.0, (2014, 11), None).await;
+
+    // An arc inside one series suggests nothing.
+    let solo_arc = mk_arc(&db, "Solo").await;
+    let solo = mk_series(&db, lib, s("Daredevil", 2014)).await;
+    arc_issue(&db, lib, solo, solo_arc, 1.0, (2014, 1), None).await;
+
+    relationship_suggest::run(&db, lib).await.unwrap();
+    let all = rows(&db).await;
+    let d = dump(&all);
+    let role = |s: Uuid, arc: Uuid| {
+        let r = arc_row(&all, s, arc).expect(&d);
+        assert_eq!(r.kind, "tie_in_to");
+        (r.qualifier.clone().unwrap(), r.bucket.clone())
+    };
+    assert_eq!(role(sw, sw_arc), ("main".into(), "high".into()));
+    assert_eq!(
+        arc_row(&all, sw, sw_arc).unwrap().from_range.as_deref(),
+        Some("1-3")
+    );
+    assert_eq!(role(avengers, sw_arc), ("tie_in".into(), "high".into()));
+    assert_eq!(role(prelude, sw_arc).0, "prelude");
+    assert_eq!(role(xmen, sw_arc).0, "aftermath");
+    assert_eq!(
+        role(thor, sw_arc).0,
+        "prelude",
+        "cover-dated before the main span"
+    );
+    assert_eq!(role(later, sw_arc).0, "aftermath", "cover-dated after");
+    assert!(
+        arc_row(&all, thor, sw_arc)
+            .unwrap()
+            .reason
+            .contains("cover-dated before"),
+        "{d}"
+    );
+
+    assert_eq!(role(spidey, sv_arc), ("main".into(), "medium".into()));
+    assert_eq!(role(woman, sv_arc).0, "main");
+    assert_eq!(role(scarlet, sv_arc), ("tie_in".into(), "medium".into()));
+    let (a, b) = ordered(spidey, woman);
+    let cross = find(&all, a, b, "crossover_with").expect(&d);
+    assert_eq!(sources(cross), vec!["arc_crossover"]);
+    // No pairwise crossover for plain tie-ins.
+    assert_eq!(
+        all.iter().filter(|r| r.kind == "crossover_with").count(),
+        1,
+        "{d}"
+    );
+    assert!(all.iter().all(|r| r.to_arc_id != Some(solo_arc)), "{d}");
+}
+
+#[tokio::test]
+async fn reprint_rollup_and_citations_carry_ranges_and_coverage() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib = mk_library(&app, &db, "reprints").await;
+    let saga = mk_series(&db, lib, s("Saga", 2012)).await;
+    let mut saga_issues = HashMap::new();
+    for n in 1..=9 {
+        let id = mk_issue(
+            &db,
+            lib,
+            saga,
+            I {
+                number: f64::from(n),
+                ..Default::default()
+            },
+        )
+        .await;
+        saga_issues.insert(n, id);
+    }
+    let reprint = |db: &DatabaseConnection, issue: String, of: String| {
+        let db = db.clone();
+        async move {
+            exec(
+                &db,
+                "INSERT INTO issue_reprints (id, issue_id, reprinted_issue_id) VALUES ($1, $2, $3)",
+                vec![Uuid::now_v7().into(), issue.into(), of.into()],
+            )
+            .await;
+        }
+    };
+    // A TPB reprinting #1-6: collects, full.
+    let tpb = mk_series(&db, lib, s("Saga Vol. 1 TPB", 2012)).await;
+    let tpb1 = mk_issue(
+        &db,
+        lib,
+        tpb,
+        I {
+            number: 1.0,
+            format: Some("TPB"),
+            ..Default::default()
+        },
+    )
+    .await;
+    for n in 1..=6 {
+        reprint(&db, tpb1.clone(), saga_issues[&n].clone()).await;
+    }
+    // A singles reprint series covering #1-6 and #9 (7, 8 are in the
+    // library but not reprinted): reprints, partial.
+    let classic = mk_series(&db, lib, s("Saga Classic", 2020)).await;
+    let c1 = mk_issue(
+        &db,
+        lib,
+        classic,
+        I {
+            number: 1.0,
+            ..Default::default()
+        },
+    )
+    .await;
+    let c2 = mk_issue(
+        &db,
+        lib,
+        classic,
+        I {
+            number: 2.0,
+            ..Default::default()
+        },
+    )
+    .await;
+    for n in 1..=6 {
+        reprint(&db, c1.clone(), saga_issues[&n].clone()).await;
+    }
+    reprint(&db, c2.clone(), saga_issues[&9].clone()).await;
+    // A label-only reprint row is ignored.
+    exec(
+        &db,
+        "INSERT INTO issue_reprints (id, issue_id, reprinted_label) VALUES ($1, $2, 'Saga #7')",
+        vec![Uuid::now_v7().into(), c2.clone().into()],
+    )
+    .await;
+
+    // Citations: an HC series whose two issues cite #1-6 and #9-10 of
+    // "Paper Girls": one suggestion, merged ranges, partial (gap 7-8).
+    let pg = mk_series(&db, lib, s("Paper Girls", 2015)).await;
+    for n in 1..=10 {
+        mk_issue(
+            &db,
+            lib,
+            pg,
+            I {
+                number: f64::from(n),
+                ..Default::default()
+            },
+        )
+        .await;
+    }
+    let pg_hc = mk_series(&db, lib, s("Paper Girls Deluxe HC", 2017)).await;
+    for (n, note) in [
+        (1.0, "Collects Paper Girls #1-6."),
+        (2.0, "Collects Paper Girls #9-10."),
+    ] {
+        mk_issue(
+            &db,
+            lib,
+            pg_hc,
+            I {
+                number: n,
+                format: Some("Hardcover"),
+                notes: Some(note),
+                ..Default::default()
+            },
+        )
+        .await;
+    }
+
+    relationship_suggest::run(&db, lib).await.unwrap();
+    let all = rows(&db).await;
+    let d = dump(&all);
+    let col = find(&all, tpb, saga, "collects").expect(&d);
+    assert_eq!(col.to_range.as_deref(), Some("1-6"), "{d}");
+    assert_eq!(col.from_range.as_deref(), Some("1"), "{d}");
+    assert_eq!(col.coverage.as_deref(), Some("full"), "{d}");
+    assert_eq!(col.bucket, "high");
+    assert_eq!(sources(col), vec!["reprint_rollup"]);
+    let rp = find(&all, classic, saga, "reprints").expect(&d);
+    assert_eq!(rp.to_range.as_deref(), Some("1-6,9"), "{d}");
+    assert_eq!(rp.from_range.as_deref(), Some("1-2"), "{d}");
+    assert_eq!(rp.coverage.as_deref(), Some("partial"), "{d}");
+    assert_eq!(rp.bucket, "medium");
+    assert_eq!(rp.evidence["sources"][0]["linked_issues"], 7);
+
+    let cite = find(&all, pg_hc, pg, "collects").expect(&d);
+    assert_eq!(cite.to_range.as_deref(), Some("1-6,9-10"), "{d}");
+    assert_eq!(cite.from_range.as_deref(), Some("1-2"), "{d}");
+    assert_eq!(cite.coverage.as_deref(), Some("partial"), "{d}");
+    assert_eq!(
+        all.iter()
+            .filter(|r| r.from_series_id == pg_hc && r.kind == "collects")
+            .count(),
+        1,
+        "citations roll up per pair"
+    );
+}
+
+#[tokio::test]
+async fn alternate_editions_facsimiles_supplements() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib = mk_library(&app, &db, "editions").await;
+    let hom = mk_run(&db, lib, s("House of M", 2005), 1..=8, 2005).await;
+    let hom_dc = mk_run(&db, lib, s("House of M Director's Cut", 2005), 1..=1, 2005).await;
+    // Content overlap only (years apart): The Walking Dead Deluxe.
+    let twd = mk_run(&db, lib, s("The Walking Dead", 2003), 1..=12, 2003).await;
+    let twd_deluxe = mk_run(&db, lib, s("The Walking Dead Deluxe", 2020), 1..=6, 2020).await;
+    // "Absolute" singles are an event / a new line, not an edition.
+    mk_run(&db, lib, s("Carnage", 2016), 1..=10, 2016).await;
+    mk_run(&db, lib, s("Absolute Carnage", 2016), 1..=5, 2016).await;
+    // Facsimile → reprints that one issue.
+    let rom = mk_run(&db, lib, s("ROM", 1979), 1..=3, 1979).await;
+    let rom_fax = mk_run(&db, lib, s("ROM #1 Facsimile Edition", 2019), 1..=1, 2019).await;
+    // Supplements.
+    let annihilation = mk_run(&db, lib, s("Annihilation", 2006), 1..=6, 2006).await;
+    let saga = mk_run(&db, lib, s("Annihilation Saga", 2007), 1..=1, 2007).await;
+    let ff = mk_run(&db, lib, s("Fantastic Four", 2018), 1..=12, 2018).await;
+    let wedding = mk_run(
+        &db,
+        lib,
+        s("Fantastic Four: Wedding Special", 2018),
+        1..=1,
+        2018,
+    )
+    .await;
+    let marvel_u = mk_run(&db, lib, s("Marvel Universe", 1998), 1..=7, 1998).await;
+    let ohotmu = mk_run(
+        &db,
+        lib,
+        s("Official Handbook of the Marvel Universe", 2004),
+        1..=1,
+        2004,
+    )
+    .await;
+    // "Saga" alone is a title, not a supplement.
+    mk_run(&db, lib, s("Saga", 2012), 1..=3, 2012).await;
+
+    relationship_suggest::run(&db, lib).await.unwrap();
+    let all = rows(&db).await;
+    let d = dump(&all);
+
+    let (a, b) = ordered(hom, hom_dc);
+    let alt = find(&all, a, b, "alternate_edition_of").expect(&d);
+    assert_eq!(alt.bucket, "medium", "{d}");
+    assert!(alt.reason.contains("Director's Cut"), "{}", alt.reason);
+    let (a, b) = ordered(twd, twd_deluxe);
+    assert!(find(&all, a, b, "alternate_edition_of").is_some(), "{d}");
+    assert!(
+        all.iter()
+            .filter(|r| r.kind == "alternate_edition_of")
+            .count()
+            == 2,
+        "Absolute Carnage is not an edition: {d}"
+    );
+
+    let fax = find(&all, rom_fax, rom, "reprints").expect(&d);
+    assert_eq!(fax.to_range.as_deref(), Some("1"));
+    assert_eq!(fax.coverage.as_deref(), Some("full"));
+    assert_eq!(sources(fax), vec!["facsimile"]);
+    let (a, b) = ordered(rom, rom_fax);
+    assert!(find(&all, a, b, "alternate_edition_of").is_none());
+
+    assert!(
+        find(&all, saga, annihilation, "supplement_to").is_some(),
+        "{d}"
+    );
+    assert!(find(&all, wedding, ff, "supplement_to").is_some(), "{d}");
+    let hb = find(&all, ohotmu, marvel_u, "supplement_to").expect(&d);
+    assert!(hb.reason.contains("handbook"), "{}", hb.reason);
+    assert_eq!(
+        all.iter().filter(|r| r.kind == "supplement_to").count(),
+        3,
+        "{d}"
+    );
+}
+
+#[tokio::test]
+async fn translation_detector_points_at_the_original() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib = mk_library(&app, &db, "translations").await;
+    // Same title, shared writer, French original (eng/fre codes fold).
+    let fr = mk_run(
+        &db,
+        lib,
+        S {
+            lang: Some("fre"),
+            ..s("Asterix", 1961)
+        },
+        1..=2,
+        1961,
+    )
+    .await;
+    let en = mk_run(
+        &db,
+        lib,
+        S {
+            lang: Some("eng"),
+            ..s("Asterix", 1969)
+        },
+        1..=2,
+        1969,
+    )
+    .await;
+    for sid in [fr, en] {
+        exec(
+            &db,
+            "INSERT INTO issue_credits (issue_id, role, person) \
+             SELECT id, 'writer', 'René Goscinny' FROM issues WHERE series_id = $1",
+            vec![sid.into()],
+        )
+        .await;
+    }
+    // Alias evidence: the English edition lists the original title.
+    let schtroumpfs = mk_run(
+        &db,
+        lib,
+        S {
+            lang: Some("fr"),
+            ..s("Les Schtroumpfs", 1959)
+        },
+        1..=1,
+        1959,
+    )
+    .await;
+    let smurfs = mk_run(
+        &db,
+        lib,
+        S {
+            lang: Some("en"),
+            aliases: &["Les Schtroumpfs"],
+            ..s("The Smurfs", 2010)
+        },
+        1..=1,
+        2010,
+    )
+    .await;
+    // Provider evidence: both claim ComicVine volume 777.
+    let ll = mk_series(
+        &db,
+        lib,
+        S {
+            lang: Some("fr"),
+            ..s("Lucky Luke", 1949)
+        },
+    )
+    .await;
+    let ll_en = mk_series(
+        &db,
+        lib,
+        S {
+            lang: Some("en"),
+            ..s("Lucky Luke Adventures", 2006)
+        },
+    )
+    .await;
+    for (sid, n, y) in [(ll, 1.0, 1949), (ll_en, 2.0, 2006)] {
+        mk_issue(
+            &db,
+            lib,
+            sid,
+            I {
+                number: n,
+                year: Some(y),
+                cv_series: Some(777),
+                ..Default::default()
+            },
+        )
+        .await;
+    }
+    // Same title, same language: a continuation, not a translation.
+    mk_run(&db, lib, s("Blacksad", 2000), 1..=1, 2000).await;
+    mk_run(&db, lib, s("Blacksad", 2010), 1..=1, 2010).await;
+
+    relationship_suggest::run(&db, lib).await.unwrap();
+    let all = rows(&db).await;
+    let d = dump(&all);
+    let t = find(&all, en, fr, "translation_of").expect(&d);
+    assert!(t.reason.contains("shared creator"), "{}", t.reason);
+    assert!(
+        find(&all, en, fr, "continues").is_none(),
+        "language splits the continuation partition: {d}"
+    );
+    let a = find(&all, smurfs, schtroumpfs, "translation_of").expect(&d);
+    assert_eq!(a.evidence["sources"][0]["evidence"], "alias");
+    let p = find(&all, ll_en, ll, "translation_of").expect(&d);
+    assert_eq!(p.evidence["sources"][0]["evidence"], "provider_series");
+    assert!(
+        find(&all, ll_en, ll, "continues").is_none() && find(&all, ll_en, ll, "see_also").is_none(),
+        "provider volume skips cross-language claimants: {d}"
+    );
+    assert!(
+        all.iter()
+            .filter(|r| r.kind == "translation_of")
+            .all(|r| r.bucket != "high"),
+        "translations are medium or low: {d}"
+    );
+    assert_eq!(
+        all.iter().filter(|r| r.kind == "translation_of").count(),
+        3,
+        "{d}"
+    );
+}
+
+#[tokio::test]
+async fn continuation_qualifiers() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib = mk_library(&app, &db, "qualifiers").await;
+    // relaunch: restarts at #1 after the previous run ended.
+    let hk_a = mk_run(&db, lib, s("Hawkeye", 2012), 1..=22, 2012).await;
+    let hk_b = mk_run(&db, lib, s("Hawkeye", 2016), 1..=16, 2016).await;
+    // numbering: the later volume's numbers continue the old ones.
+    let thor_a = mk_run(&db, lib, s("Thor", 2007), 1..=12, 2007).await;
+    let thor_b = mk_run(&db, lib, s("Thor", 2008), 600..=614, 2008).await;
+    // split: a provider records the run as split (series_provider_range).
+    let ff_a = mk_run(&db, lib, s("Fantastic Four", 1998), 1..=70, 1998).await;
+    let ff_b = mk_run(&db, lib, s("Fantastic Four", 2013), 1..=16, 2013).await;
+    exec(
+        &db,
+        "INSERT INTO series_provider_range (series_id, source, provider_series_id, range_low, range_high, set_by) \
+         VALUES ($1, 'metron', '1713', '500', '611', 'cross_reference')",
+        vec![ff_a.into()],
+    )
+    .await;
+    // unsure: no issue numbers → no qualifier.
+    let nova_a = mk_series(&db, lib, s("Nova", 2013)).await;
+    let nova_b = mk_series(&db, lib, s("Nova", 2015)).await;
+    // retitle: two names under one provider series.
+    let usm = mk_series(&db, lib, s("Ultimate Spider-Man", 2000)).await;
+    let ucsm = mk_series(&db, lib, s("Ultimate Comics Spider-Man", 2009)).await;
+    for (sid, nums) in [(usm, 1..=3), (ucsm, 4..=6)] {
+        for n in nums {
+            mk_issue(
+                &db,
+                lib,
+                sid,
+                I {
+                    number: f64::from(n),
+                    cv_series: Some(5151),
+                    ..Default::default()
+                },
+            )
+            .await;
+        }
+    }
+
+    relationship_suggest::run(&db, lib).await.unwrap();
+    let all = rows(&db).await;
+    let d = dump(&all);
+    let q = |from: Uuid, to: Uuid| {
+        find(&all, from, to, "continues")
+            .expect(&d)
+            .qualifier
+            .clone()
+    };
+    assert_eq!(q(hk_b, hk_a).as_deref(), Some("relaunch"), "{d}");
+    assert_eq!(q(thor_b, thor_a).as_deref(), Some("numbering"), "{d}");
+    assert_eq!(q(ff_b, ff_a).as_deref(), Some("split"), "{d}");
+    assert_eq!(q(nova_b, nova_a), None, "{d}");
+    assert_eq!(q(ucsm, usm).as_deref(), Some("retitle"), "{d}");
+}
+
+/// WP-7.6 retired the pairwise `same_universe` sources (SeriesGroup star,
+/// publisher + character density) and the pairwise arc → `crossover_with`
+/// source. Their pending rows go stale on the next run through the normal
+/// stale mechanism; reviewed rows and accepted edges are untouched.
+#[tokio::test]
+async fn retired_pairwise_suggestions_go_stale() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let f = fixture(&app, &db).await;
+    let legacy = |from: Uuid,
+                  to: Uuid,
+                  kind: &'static str,
+                  status: &'static str,
+                  src: &'static str| {
+        let db = db.clone();
+        async move {
+            let (a, b) = ordered(from, to);
+            let id = Uuid::now_v7();
+            exec(
+                &db,
+                "INSERT INTO series_relationship_suggestion \
+                   (id, from_series_id, to_series_id, kind, confidence, bucket, reason, evidence, status) \
+                 VALUES ($1, $2, $3, $4, 0.6, 'medium', 'legacy', $5::jsonb, $6)",
+                vec![
+                    id.into(),
+                    a.into(),
+                    b.into(),
+                    kind.into(),
+                    serde_json::json!({"sources": [{"source": src}]}).to_string().into(),
+                    status.into(),
+                ],
+            )
+            .await;
+            id
+        }
+    };
+    let group = legacy(
+        f.batman,
+        f.nightwing,
+        "same_universe",
+        "pending",
+        "series_group",
+    )
+    .await;
+    let density = legacy(
+        f.invincible,
+        f.guarding,
+        "same_universe",
+        "pending",
+        "character_density",
+    )
+    .await;
+    let arc_cross = legacy(
+        f.avengers,
+        f.spider_man,
+        "crossover_with",
+        "pending",
+        "story_arc",
+    )
+    .await;
+    let accepted = legacy(
+        f.saga,
+        f.invincible,
+        "same_universe",
+        "accepted",
+        "series_group",
+    )
+    .await;
+    relationships::create_pair(
+        &db,
+        f.saga,
+        f.invincible,
+        RelationshipKind::SameUniverse,
+        RelationshipSource::Suggested,
+        Some(0.6),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let report = relationship_suggest::run(&db, f.lib).await.unwrap();
+    assert!(report.failed_sources.is_empty(), "{report:?}");
+    assert!(report.marked_stale >= 3, "{report:?}");
+    for id in [group, density, arc_cross] {
+        assert_eq!(status_of(&db, id).await, "stale");
+    }
+    assert_eq!(status_of(&db, accepted).await, "accepted");
+    assert!(
+        rel::Entity::find()
+            .filter(rel::Column::FromSeriesId.eq(f.saga))
+            .filter(rel::Column::Kind.eq("same_universe"))
+            .one(&db)
+            .await
+            .unwrap()
+            .is_some(),
+        "accepted same_universe edges stay"
+    );
+    // The engine no longer produces any of these kinds pairwise.
+    assert!(
+        rows(&db)
+            .await
+            .iter()
+            .filter(|r| r.status == "pending")
+            .all(|r| r.kind != "same_universe"),
+    );
+}
+
+#[tokio::test]
+async fn accepting_scoped_and_arc_suggestions_creates_the_right_edges() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let f = fixture(&app, &db).await;
+    let lib = f.lib;
+    let hk_a = mk_run(&db, lib, s("Hawkeye", 2012), 1..=22, 2012).await;
+    let hk_b = mk_run(&db, lib, s("Hawkeye", 2016), 1..=16, 2016).await;
+    relationship_suggest::run(&db, lib).await.unwrap();
+    let all = rows(&db).await;
+    let arc_id = all
+        .iter()
+        .find(|r| r.from_series_id == f.avengers && r.to_arc_id.is_some())
+        .unwrap()
+        .to_arc_id
+        .unwrap();
+    let arc_sug = arc_row(&all, f.avengers, arc_id).unwrap().clone();
+    let spidey_sug = arc_row(&all, f.spider_man, arc_id).unwrap().clone();
+    let col = find(&all, f.saga_deluxe, f.saga, "collects")
+        .unwrap()
+        .clone();
+    let hk = find(&all, hk_b, hk_a, "continues").unwrap().clone();
+
+    // The list view exposes the arc target and the scope.
+    let (status, body) = call_json(
+        &app,
+        Method::GET,
+        &format!("/api/admin/relationship-suggestions?limit=200&library_id={lib}"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let item = |id: Uuid| {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == id.to_string())
+            .cloned()
+            .unwrap()
+    };
+    let v = item(arc_sug.id);
+    assert!(v["to_series"].is_null());
+    assert_eq!(v["to_arc"]["name"], "War of the Realms");
+    assert_eq!(v["qualifier"], "main");
+    assert_eq!(v["kind_label"], "Main story of");
+    assert_eq!(v["from_range"], "1-3");
+    let v = item(col.id);
+    assert_eq!(v["to_range"], "1-6");
+    assert_eq!(v["coverage"], "full");
+    assert_eq!(item(hk.id)["qualifier_label"], "Relaunch");
+
+    // Arc accept → one series → arc edge with the role and range; no
+    // inverse.
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        &format!("/api/admin/relationship-suggestions/{}/accept", arc_sug.id),
+        &admin,
+        Some(serde_json::json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["inverse_id"].is_null());
+    assert_eq!(body["created"], true);
+    let edge = rel::Entity::find()
+        .filter(rel::Column::FromSeriesId.eq(f.avengers))
+        .filter(rel::Column::ToArcId.eq(arc_id))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("arc edge");
+    assert_eq!(edge.kind, "tie_in_to");
+    assert_eq!(edge.qualifier.as_deref(), Some("main"));
+    assert_eq!(edge.from_range.as_deref(), Some("1-3"));
+    assert_eq!(edge.source, "suggested");
+
+    // Overriding an arc suggestion with a kind that can't target an arc → 422.
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        &format!(
+            "/api/admin/relationship-suggestions/{}/accept",
+            spidey_sug.id
+        ),
+        &admin,
+        Some(serde_json::json!({ "kind": "see_also" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(status_of(&db, spidey_sug.id).await, "pending");
+
+    // Scoped series accept → both halves, the inverse mirrored.
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        &format!("/api/admin/relationship-suggestions/{}/accept", col.id),
+        &admin,
+        Some(serde_json::json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let fwd = rel::Entity::find()
+        .filter(rel::Column::FromSeriesId.eq(f.saga_deluxe))
+        .filter(rel::Column::ToSeriesId.eq(f.saga))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            fwd.kind.as_str(),
+            fwd.from_range.as_deref(),
+            fwd.to_range.as_deref(),
+            fwd.coverage.as_deref()
+        ),
+        ("collects", Some("1"), Some("1-6"), Some("full"))
+    );
+    let inv = rel::Entity::find()
+        .filter(rel::Column::FromSeriesId.eq(f.saga))
+        .filter(rel::Column::ToSeriesId.eq(f.saga_deluxe))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            inv.kind.as_str(),
+            inv.from_range.as_deref(),
+            inv.to_range.as_deref(),
+            inv.coverage.as_deref()
+        ),
+        ("collected_in", Some("1-6"), Some("1"), Some("full"))
+    );
+
+    // Edit kind: a qualifier the new kind doesn't take is dropped, not an
+    // error.
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        &format!("/api/admin/relationship-suggestions/{}/accept", hk.id),
+        &admin,
+        Some(serde_json::json!({ "kind": "sequel_of" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["suggestion"]["status"], "modified");
+    let e = rel::Entity::find()
+        .filter(rel::Column::FromSeriesId.eq(hk_b))
+        .filter(rel::Column::ToSeriesId.eq(hk_a))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(e.kind, "sequel_of");
+    assert_eq!(e.qualifier, None);
+
+    // Bulk accept handles arc suggestions too.
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        "/api/admin/relationship-suggestions/bulk-accept",
+        &admin,
+        Some(serde_json::json!({ "ids": [spidey_sug.id] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["created"], 1, "{body}");
+    assert!(
+        rel::Entity::find()
+            .filter(rel::Column::FromSeriesId.eq(f.spider_man))
+            .filter(rel::Column::ToArcId.eq(arc_id))
+            .filter(rel::Column::Qualifier.eq("tie_in"))
+            .one(&db)
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    // A rerun doesn't re-propose accepted arc edges.
+    let report = relationship_suggest::run(&db, lib).await.unwrap();
+    assert_eq!(report.inserted, 0, "{report:?}");
+    assert!(report.skipped_existing_edge >= 2, "{report:?}");
 }

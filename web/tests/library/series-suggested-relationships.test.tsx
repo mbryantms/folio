@@ -162,6 +162,28 @@ describe("fromPerspective", () => {
       other: { id: "omni" },
     });
   });
+
+  it("reads an arc tie-in's target from `to_arc` (WP-7.6)", () => {
+    const arc = {
+      ...sug(
+        "g3",
+        self,
+        older,
+        "tie_in_to",
+        "Prelude to",
+        "has_tie_in",
+        "Has prelude",
+      ),
+      to_series: null,
+      to_arc: { id: "arc1", slug: "secret-wars", name: "Secret Wars" },
+      qualifier: "prelude" as const,
+    };
+    expect(fromPerspective(arc, "this")).toMatchObject({
+      kind: "tie_in_to",
+      label: "Prelude to",
+      other: { id: "arc1", name: "Secret Wars", href: "/arcs/secret-wars" },
+    });
+  });
 });
 
 describe("<SeriesSuggestedRelationships>", () => {

@@ -4959,7 +4959,11 @@ export interface components {
         AcceptRelationshipSuggestionResp: {
             /** @description `false` when the edge already existed (nothing new was inserted). */
             created: boolean;
-            inverse_id: string;
+            /**
+             * @description The inverse half; `null` for an arc edge (WP-7.6: arc edges have no
+             *     inverse row).
+             */
+            inverse_id?: string | null;
             /** @description The kind created (`from kind to`). */
             kind: components["schemas"]["RelationshipKind"];
             /**
@@ -9950,8 +9954,10 @@ export interface components {
             total?: number | null;
         };
         /**
-         * @description One suggestion, both series hydrated like library-grid cards (covers
-         *     for the review UI). Reads "`from_series` `kind` `to_series`".
+         * @description One suggestion, both ends hydrated (series like library-grid cards, for
+         *     the review UI's covers). Reads "`from_series` `kind` `to_series`" — or,
+         *     for an arc tie-in (WP-7.6), "`from_series` `kind` `to_arc`". Exactly one
+         *     of `to_series` / `to_arc` is set.
          */
         RelationshipSuggestionView: {
             accepted_kind?: components["schemas"]["RelationshipKind"] | null;
@@ -9961,9 +9967,16 @@ export interface components {
              * @description 0–1.
              */
             confidence: number;
+            coverage?: components["schemas"]["RelationshipCoverage"] | null;
             created_at: string;
             /** @description Structured evidence: `{ "sources": [ { "source": "story_arc", "confidence": 0.65, "reason": "…", … } ] }`. */
             evidence: Record<string, never>;
+            /**
+             * @description Proposed scope (WP-7.6), read from `from_series`' side; accepting
+             *     passes it to the edge (fields an overriding kind doesn't take are
+             *     dropped).
+             */
+            from_range?: string | null;
             from_series: components["schemas"]["SeriesView"];
             id: string;
             /**
@@ -9977,14 +9990,21 @@ export interface components {
              *     `continues`, `sequel_of`, `collects`, … — or a self-inverse kind).
              */
             kind: components["schemas"]["RelationshipKind"];
-            /** @description Display label for `kind` ("Continues", …). */
+            /**
+             * @description Display label for `kind`, a tie-in role folded in ("Continues",
+             *     "Prelude to", …).
+             */
             kind_label: string;
+            qualifier?: components["schemas"]["RelationshipQualifier"] | null;
+            qualifier_label?: string | null;
             /** @description Human-readable explanation (one clause per evidence source). */
             reason: string;
             reviewed_at?: string | null;
             reviewed_by?: string | null;
             status: components["schemas"]["SuggestionStatus"];
-            to_series: components["schemas"]["SeriesView"];
+            to_arc?: components["schemas"]["RelationshipArcRef"] | null;
+            to_range?: string | null;
+            to_series?: components["schemas"]["SeriesView"] | null;
             updated_at: string;
         };
         RemovedIssueView: {

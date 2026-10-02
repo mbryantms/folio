@@ -82,14 +82,19 @@ export function useAcceptRelationshipSuggestion() {
     {
       successMessage: (data) =>
         data
-          ? `Linked ${seriesLabel(data.suggestion.from_series)} → ${seriesLabel(data.suggestion.to_series)}`
+          ? `Linked ${seriesLabel(data.suggestion.from_series)} → ${seriesLabel(data.suggestion.to_series ?? data.suggestion.to_arc ?? { name: "story arc" })}`
           : "Suggestion accepted",
       onSuccess: (data) => {
         invalidateSuggestionLists(qc);
         invalidateRelationships(
           qc,
           data
-            ? [data.suggestion.from_series.slug, data.suggestion.to_series.slug]
+            ? [
+                data.suggestion.from_series.slug,
+                ...(data.suggestion.to_series
+                  ? [data.suggestion.to_series.slug]
+                  : []),
+              ]
             : null,
         );
       },
