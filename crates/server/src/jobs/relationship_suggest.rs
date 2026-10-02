@@ -109,6 +109,25 @@ pub async fn run(db: &DatabaseConnection, library_id: Uuid) -> anyhow::Result<Ru
             ..Default::default()
         });
     }
+    // WP-7.8: resolve external links and label-only reprints whose target
+    // was scanned in / matched since the last run, before the sources read
+    // them. Best-effort: a failure only delays promotion to the next run.
+    match crate::relationships::external::promote_library(db, library_id).await {
+        Ok(p) if p.promoted + p.unmarked > 0 || p.reprints_resolved > 0 => {
+            tracing::info!(
+                library_id = %library_id,
+                promoted = p.promoted,
+                unmarked = p.unmarked,
+                reprints_resolved = p.reprints_resolved,
+                "relationship suggest: external links promoted"
+            );
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!(library_id = %library_id, error = %e,
+                "relationship suggest: external-link promotion failed");
+        }
+    }
     let report = suggestions::generate_for_library(db, library_id).await?;
     if report.inserted + report.updated + report.marked_stale > 0 {
         event_log::record(

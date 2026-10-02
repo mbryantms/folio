@@ -29,7 +29,13 @@ vi.mock("@/lib/api/auth-refresh", () => ({
     calls.paths.push(path);
     if (path.startsWith("/auth/me")) return json({ id: "u", role: "user" });
     if (path.includes("/relationships"))
-      return json({ series_id: "s1", relationships: [], arcs: [], chain: [] });
+      return json({
+        series_id: "s1",
+        relationships: [],
+        arcs: [],
+        chain: [],
+        external: [],
+      });
     if (path.startsWith("/relationship-kinds"))
       return json({ groups: [], kinds: [] });
     return json({ items: [], next_cursor: null, total: 0 });

@@ -227,6 +227,13 @@ pub struct GenericMetadata {
     pub tags: Vec<String>,
     pub reprints: Vec<ReprintCandidate>,
     pub variants: Vec<VariantCoverCandidate>,
+    /// WP-7.8: provider series this series is linked to (Metron
+    /// `associated`). Untyped and symmetric upstream — the relationship
+    /// layer (`relationships::external`) gives them a kind from the two
+    /// series types. Not a ComicInfo / MetronInfo field: never composed
+    /// into a sidecar.
+    #[serde(default)]
+    pub related_series: Vec<ProviderSeriesRef>,
 
     // ── cover ──────────────────────────────────────────────────
     pub cover_image_url: Option<String>,
@@ -344,6 +351,24 @@ pub struct EntityCandidate {
     /// Story-arc-specific reading position.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position_in_arc: Option<i32>,
+}
+
+/// A provider series referenced by another provider record (WP-7.8:
+/// Metron series `associated`). The series may or may not be in the
+/// library.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderSeriesRef {
+    pub source: Source,
+    /// The provider's series id.
+    pub id: String,
+    /// The provider's display label as sent ("Saga (2018)").
+    pub label: String,
+    /// `label` minus a trailing "(year)".
+    pub name: String,
+    /// The year parsed from the label, when it carries one.
+    pub year: Option<i32>,
+    /// Canonical provider page.
+    pub url: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

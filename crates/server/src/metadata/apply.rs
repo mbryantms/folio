@@ -354,12 +354,57 @@ impl ProvResolver<'_> {
 }
 
 pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutcome, ApplyError> {
+    let run_id = args.run_id;
     let outcome = apply_series_impl(state, args).await;
     // WP-7.4: an apply changes the entities similar-series scores over.
-    if outcome.is_ok() {
+    if let Ok(o) = &outcome {
         state.similarity.invalidate_all();
+        queue_relationship_suggest(state, run_id, o).await;
     }
     outcome
+}
+
+/// WP-7.8: after a successful apply, queue a relationship-suggestion run
+/// for the library so what the apply recorded — provider links
+/// (`series_external_relationship`, every series apply) and reprints
+/// (`issue_reprints`, an issue apply that wrote them DB-direct) — turns
+/// into suggestions without waiting for the next scan. The writeback path's
+/// reprints land after the rewrite; its scoped rescan queues the run.
+/// Best-effort (deduped per library by the job's own key).
+pub(crate) async fn queue_relationship_suggest(
+    state: &AppState,
+    run_id: Uuid,
+    outcome: &ApplyOutcome,
+) {
+    let Ok(run) = load_run(&state.db, run_id).await else {
+        return;
+    };
+    let Some(entity_id) = run.scope_entity_id.as_deref() else {
+        return;
+    };
+    let library_id = if run.scope == crate::metadata::orchestrator::scope::SERIES {
+        let Ok(id) = Uuid::parse_str(entity_id) else {
+            return;
+        };
+        series::Entity::find_by_id(id)
+            .one(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .map(|s| s.library_id)
+    } else if outcome.junctions_touched.iter().any(|j| j == "reprints") {
+        issue::Entity::find_by_id(entity_id)
+            .one(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .map(|i| i.library_id)
+    } else {
+        None
+    };
+    if let Some(library_id) = library_id {
+        crate::jobs::relationship_suggest::enqueue(state, library_id).await;
+    }
 }
 
 async fn apply_series_impl(state: &AppState, args: ApplyArgs) -> Result<ApplyOutcome, ApplyError> {
@@ -634,8 +679,65 @@ pub(crate) async fn write_series_scalar_fields(
     )
     .await?;
 
+    record_series_provider_links(state, row, detail).await?;
+
     // Bump sync timestamp.
     bump_series_sync(&state.db, series_uuid).await?;
+    Ok(())
+}
+
+/// WP-7.8: store the provider's linked series (Metron `associated`) as
+/// external relationship rows (`relationships::external`). Metadata-only:
+/// neither sidecar schema carries series links, so both apply paths record
+/// them here, next to the series scalars. Not gated by `selected_fields`
+/// (no preview row; like external ids, the links are additive evidence)
+/// and never touches a user-set or dismissed row. A Metron detail with an
+/// empty `associated` list clears that series' old Metron rows.
+async fn record_series_provider_links(
+    state: &AppState,
+    row: &series::Model,
+    detail: &GenericMetadata,
+) -> Result<(), ApplyError> {
+    let mut sources: Vec<Source> = Vec::new();
+    for l in &detail.related_series {
+        if !sources.contains(&l.source) {
+            sources.push(l.source);
+        }
+    }
+    if detail.source_provider == Some(Source::Metron) && !sources.contains(&Source::Metron) {
+        sources.push(Source::Metron);
+    }
+    for source in sources {
+        let own_id = detail
+            .identifiers
+            .iter()
+            .find(|i| i.source == source && i.is_for_entity("series"))
+            .map(|i| i.id.as_str())
+            .or(if detail.source_provider == Some(source) {
+                detail.source_external_id.as_deref()
+            } else {
+                None
+            });
+        let report = crate::relationships::external::record_provider_links(
+            &state.db,
+            row,
+            source,
+            own_id,
+            detail.series_type.as_deref().or(row.series_type.as_deref()),
+            &detail.related_series,
+        )
+        .await?;
+        if report != Default::default() {
+            tracing::debug!(
+                series_id = %row.id,
+                source = source.as_str(),
+                upserted = report.upserted,
+                removed = report.removed,
+                promoted = report.promoted,
+                "apply: provider series links recorded"
+            );
+        }
+    }
     Ok(())
 }
 
@@ -1046,10 +1148,32 @@ pub(crate) async fn apply_issue_via_sidecar(
             source_external_id: prov.source_ext,
         });
     }
+    // WP-7.8: provider reprints — metadata-only rows neither XML schema
+    // carries, so they ride the deferred payload like variant covers and
+    // land only after the rewrite succeeded. Same decision as the
+    // DB-direct path (user pin + fill/replace; not `selected_fields`).
+    let reprints = if detail.reprints.is_empty() {
+        Vec::new()
+    } else {
+        let prov_map = fetch_field_provenance_map(&state.db, "issue", &row.id).await?;
+        let has = issue_has_reprints(&state.db, &row.id).await?;
+        if reprints_should_apply(has, &prov_map, args) {
+            detail.reprints.clone()
+        } else {
+            Vec::new()
+        }
+    };
+    let reprints_prov = resolver.resolve(&MetadataField::Reprints.key());
     let post_apply = crate::jobs::rewrite_sidecars::PostRewriteWrites {
         provenance,
         variants,
         variants_source: Some(source),
+        reprints_source: match reprints_prov.set_by {
+            SetBy::Provider(s) if !reprints.is_empty() => Some(s),
+            _ => None,
+        },
+        reprints_source_external_id: reprints_prov.source_ext,
+        reprints,
         // `last_metadata_sync_at` is bookkeeping the XML doesn't carry, so
         // the scoped rescan can't set it — the job stamps it on success
         // (the DB-direct `apply_issue` does this via `bump_issue_sync`).
@@ -1096,10 +1220,12 @@ pub(crate) async fn apply_issue_via_sidecar(
 }
 
 pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutcome, ApplyError> {
+    let run_id = args.run_id;
     let outcome = apply_issue_impl(state, args).await;
     // WP-7.4: an apply changes the entities similar-series scores over.
-    if outcome.is_ok() {
+    if let Ok(o) = &outcome {
         state.similarity.invalidate_all();
+        queue_relationship_suggest(state, run_id, o).await;
     }
     outcome
 }
@@ -1524,6 +1650,22 @@ pub(crate) async fn write_issue_fields(
         outcome.skipped_fields.push(MetadataField::StoryArcs.key());
     }
 
+    // WP-7.8: provider reprints (Metron `reprints`) → `issue_reprints`.
+    if !detail.reprints.is_empty() {
+        let has = issue_has_reprints(&state.db, &entity_id_str).await?;
+        if reprints_should_apply(has, &provenance, &args) {
+            let set_by = resolver.set_by(&MetadataField::Reprints.key());
+            let source_ext = resolver.source_ext(&MetadataField::Reprints.key());
+            let specs = writers::reprint_specs(&state.db, &entity_id_str, &detail.reprints).await?;
+            writers::set_issue_reprints(&state.db, &entity_id_str, specs, set_by, source_ext)
+                .await?;
+            outcome.applied_fields.push(MetadataField::Reprints.key());
+            outcome.junctions_touched.push("reprints".into());
+        } else {
+            outcome.skipped_fields.push(MetadataField::Reprints.key());
+        }
+    }
+
     // Flush the CSV cache rebuild for any touched issue.
     let _ = rebuild_batch.flush(&state.db).await;
 
@@ -1617,6 +1759,35 @@ pub(crate) async fn write_issue_fields(
     }
 
     Ok(outcome)
+}
+
+/// WP-7.8: the apply decision for provider reprints. Same matrix as
+/// [`should_apply`] — a user pin on `reprints` is sacred unless
+/// `override_user_edits`, and `fill_missing` keeps an existing set — but
+/// **not** gated by `selected_fields`: reprints have no preview-pane row
+/// (like external ids, they're additive provider metadata), so a preview
+/// selection would otherwise always drop them.
+pub(crate) fn reprints_should_apply(
+    db_has_value: bool,
+    provenance: &HashMap<String, String>,
+    args: &ApplyArgs,
+) -> bool {
+    if user_pinned(provenance, MetadataField::Reprints) && !args.override_user_edits {
+        return false;
+    }
+    !db_has_value || matches!(args.mode, ApplyMode::ReplaceAll)
+}
+
+async fn issue_has_reprints(
+    db: &DatabaseConnection,
+    issue_id: &str,
+) -> Result<bool, sea_orm::DbErr> {
+    use sea_orm::PaginatorTrait;
+    Ok(entity::issue_reprint::Entity::find()
+        .filter(entity::issue_reprint::Column::IssueId.eq(issue_id))
+        .count(db)
+        .await?
+        > 0)
 }
 
 // ───────── decision wrappers ─────────

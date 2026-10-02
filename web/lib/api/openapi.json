@@ -9247,6 +9247,103 @@
         }
       }
     },
+    "/api/series/{slug}/external-relationships": {
+      "post": {
+        "operationId": "series_external_relationships_create",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateExternalRelationshipReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the same link already existed; returned unchanged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateExternalRelationshipResp"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "external link stored, or (already in the library) a relationship pair created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateExternalRelationshipResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series not found"
+          },
+          "409": {
+            "description": "the target is local and the kind contradicts an existing relationship"
+          },
+          "422": {
+            "description": "invalid provider id / name / year / qualifier"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/external-relationships/{id}": {
+      "delete": {
+        "operationId": "series_external_relationships_delete",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "external relationship row id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "user link deleted, or provider link dismissed"
+          },
+          "400": {
+            "description": "malformed id"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series / external relationship not found"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/issues": {
       "get": {
         "operationId": "series_list_issues",
@@ -15148,6 +15245,76 @@
           }
         }
       },
+      "CreateExternalRelationshipReq": {
+        "type": "object",
+        "description": "`POST /series/{slug}/external-relationships` body: \"this series `kind`\nthe provider series\".",
+        "required": [
+          "kind",
+          "source",
+          "provider_series_id",
+          "name"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RelationshipKind"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name (1–300 characters)."
+          },
+          "provider_series_id": {
+            "type": "string",
+            "description": "The provider's numeric series id."
+          },
+          "qualifier": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipQualifier",
+                "description": "Continuation qualifier / tie-in role (only for the kinds that take\none)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/ExternalSource"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "CreateExternalRelationshipResp": {
+        "type": "object",
+        "description": "`POST` result: exactly one of `external` (the stored external link) or\n`relationship` (the provider series is already in the library, so an\nordinary relationship pair was created instead).",
+        "properties": {
+          "external": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SeriesExternalRelationshipView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "relationship": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SeriesRelationshipView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "CreateLibraryReq": {
         "type": "object",
         "required": [
@@ -18795,6 +18962,50 @@
             }
           }
         }
+      },
+      "ExternalLocalSeries": {
+        "type": "object",
+        "description": "A local series a link resolved to (shown instead of \"not in your\nlibrary\" until the next suggestion run promotes it).",
+        "required": [
+          "id",
+          "slug",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "ExternalSetBy": {
+        "type": "string",
+        "description": "Who made an external row.",
+        "enum": [
+          "user",
+          "provider"
+        ]
+      },
+      "ExternalSource": {
+        "type": "string",
+        "description": "The providers an external row may point at.",
+        "enum": [
+          "metron",
+          "comicvine",
+          "gcd"
+        ]
       },
       "Field": {
         "type": "string",
@@ -25418,6 +25629,108 @@
           }
         }
       },
+      "SeriesExternalRelationshipView": {
+        "type": "object",
+        "description": "One relationship to a provider series that isn't in the library, from\nthe requested series' point of view: \"this series `kind` *name*\".",
+        "required": [
+          "id",
+          "kind",
+          "kind_label",
+          "group",
+          "source",
+          "source_label",
+          "provider_series_id",
+          "name",
+          "set_by",
+          "created_at"
+        ],
+        "properties": {
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "0–1 for provider links; `null` for user links."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "group": {
+            "$ref": "#/components/schemas/RelationshipGroup"
+          },
+          "id": {
+            "type": "string",
+            "description": "Row id — pass to `DELETE /series/{slug}/external-relationships/{id}`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RelationshipKind"
+          },
+          "kind_label": {
+            "type": "string",
+            "description": "\"Continued by\", \"Collected in\", … (tie-in role folded in)."
+          },
+          "local_series": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExternalLocalSeries",
+                "description": "Set when the provider series is already matched to a local series\nthe caller can see (a user link not yet promoted)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "The provider's series name (falls back to the id)."
+          },
+          "provider_series_id": {
+            "type": "string"
+          },
+          "qualifier": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipQualifier"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qualifier_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "set_by": {
+            "$ref": "#/components/schemas/ExternalSetBy",
+            "description": "`provider` (from provider data) or `user` (added by an admin)."
+          },
+          "source": {
+            "$ref": "#/components/schemas/ExternalSource"
+          },
+          "source_label": {
+            "type": "string",
+            "description": "\"Metron\", \"ComicVine\", \"GCD\"."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Canonical provider page (attribution link)."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
       "SeriesListView": {
         "type": "object",
         "required": [
@@ -25612,7 +25925,8 @@
           "series_id",
           "relationships",
           "arcs",
-          "chain"
+          "chain",
+          "external"
         ],
         "properties": {
           "arcs": {
@@ -25628,6 +25942,13 @@
               "$ref": "#/components/schemas/SeriesChainEntry"
             },
             "description": "Reading-order chain through this series (`sequel_of` / `has_sequel`\nand `continues` / `continued_by`, depth ≤ 6 each way). Empty when\nthe series has no such edges; otherwise includes this series at\nposition 0."
+          },
+          "external": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesExternalRelationshipView"
+            },
+            "description": "WP-7.8: relationships to provider series that aren't in the library\n(\"Continued by: Saga (2018), not in your library\"), oldest first.\nProvider links whose target is already local are left out (the\nsuggestion engine proposes those)."
           },
           "relationships": {
             "type": "array",

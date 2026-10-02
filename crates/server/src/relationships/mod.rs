@@ -23,6 +23,7 @@
 //! the sequel, so *to* comes first in reading order. See
 //! `docs/dev/series-relationships.md`.
 
+pub mod external;
 pub mod suggestions;
 
 use chrono::Utc;

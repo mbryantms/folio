@@ -67,6 +67,7 @@ pub mod series_character;
 pub mod series_concept;
 pub mod series_cover;
 pub mod series_credit;
+pub mod series_external_relationship;
 pub mod series_genre;
 pub mod series_location;
 pub mod series_object;

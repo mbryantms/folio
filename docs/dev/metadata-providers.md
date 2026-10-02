@@ -126,7 +126,7 @@ retried requests count against the same upstream window either way.
 
 | Table | Key | Payload | TTL |
 |---|---|---|---|
-| `metadata_cache` | `(provider, entity, external_id)` | normalized `GenericMetadata` JSON + `schema_version` + `etag` / `last_modified` validators | 24 h issue / 168 h series (settings) |
+| `metadata_cache` | `(provider, entity, external_id)` | normalized `GenericMetadata` JSON + `schema_version` (`cache::CACHE_SCHEMA_VERSION`, 2 since WP-7.8; a row of another version is a miss) + `etag` / `last_modified` validators | 24 h issue / 168 h series (settings) |
 | `metadata_cover_hash` | provider image `url` | `phash` / `dhash` / `ahash` | 30 days |
 
 `cache::get_or_revalidate` is the single-flight read path for detail
@@ -299,6 +299,71 @@ appropriate writer:
 After every successful write, `write_provenance_for_applied` emits
 one `field_provenance` row per applied field with
 `set_by=SetBy::Provider(source)` + the provider's external id.
+
+### Metron links: `associated`, `alt_names`, reprints (WP-7.8)
+
+Before WP-7.8 the Metron mapper read series `associated` entries as
+`{id, name}`. The wire shape is `[{"id": 123, "series": "Saga (2012)"}]`,
+so every entry deserialized with `name = None`: the list was always
+empty, and the code fed it into `aliases` (wrong meaning anyway:
+associated entries are *other* series). Now:
+
+- `associated` → `GenericMetadata.related_series: Vec<ProviderSeriesRef
+  { source, id, label, name, year, url }>` (the label's trailing
+  "(YYYY)" becomes `year`). Untyped and symmetric upstream (a Django
+  self-M2M). The series apply records them as external relationship rows
+  (`relationships::external::record_provider_links`, called from
+  `write_series_scalar_fields`, so the DB-direct **and** the sidecar
+  writeback paths both do it) and the suggestion engine turns links
+  between local series into suggestions. See
+  `docs/dev/series-relationships.md` ("Provider links and external
+  targets").
+- `aliases` come from Metron's real alias field, `alt_names: [str]`
+  (part of the series detail payload, no extra request).
+- Issue `reprints` (`[{"id": 456, "issue": "Saga (2012) #1"}]`) were
+  already parsed into `ReprintCandidate` but `writers::set_issue_reprints`
+  had no caller, so `issue_reprints` stayed empty. The issue apply now
+  writes them (`MetadataField::Reprints`):
+  - **Decision** (`apply::reprints_should_apply`): the `should_apply`
+    matrix — a `user` pin on `reprints` is sacred unless
+    `override_user_edits`, `fill_missing` keeps an existing set — but
+    **not** gated by `selected_fields`: reprints have no preview-pane row
+    (like external ids they're additive provider data), so a preview
+    selection would otherwise always drop them.
+  - **Resolution** (`writers::reprint_specs`): each reprinted issue is
+    matched to a local issue through `external_ids` (its Metron id) or the
+    **id bridge** (the provider's cached detail of that issue in
+    `metadata_cache` lists its `cv_id` / `gcd_id`, and a local issue is
+    matched under one of them). No network. The label is always kept, and
+    the provider id goes to `issue_reprints.reprinted_source` /
+    `reprinted_external_id` so a row whose issue isn't local yet resolves
+    later (`writers::resolve_pending_reprints`: from the
+    `set_external_id` hook when the issue gains that id, and before every
+    relationship-suggestion run).
+  - **Writeback libraries**: neither ComicInfo nor MetronInfo carries
+    reprints, so they're metadata-only rows like variant covers — the
+    sidecar apply decides them and hands them to the rewrite job in
+    `PostRewriteWrites.reprints` (+ `reprints_source`); the job writes
+    them only after the XML is in the archive. The scanner never touches
+    `issue_reprints`.
+  - **Composite applies** take reprints from the most-preferred included
+    provider that has any (only Metron today) and union `related_series`
+    by `(source, id)`, attributing provenance to the donor.
+- Not ComicInfo / MetronInfo fields: no composer
+  (`sidecar_compose.rs`), parser or scanner-ingest change — the CLAUDE.md
+  "new metadata field" checklist doesn't apply.
+- `CACHE_SCHEMA_VERSION` is **2**: payloads cached by the old mapping
+  (empty `related_series`, `associated` as aliases) are misses and get
+  re-fetched.
+- After a successful series apply (and an issue apply that wrote
+  reprints DB-direct) the apply queues a relationship-suggestion run for
+  the library (`apply::queue_relationship_suggest`, deduped per library);
+  the writeback path's scoped rescan queues it for issue applies.
+
+GCD's REST API exposes no series bonds or reprint links (they exist only
+in its database dump) and ComicVine has no volume-to-volume links, so
+WP-7.8 reads links from Metron only. GCD bonds are deferred until the
+API serves them; GCD notes are not text-mined.
 
 ## Diff / preview pane
 

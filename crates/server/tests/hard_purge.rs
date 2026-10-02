@@ -629,6 +629,7 @@ async fn unconstrained_id_columns_are_accounted_for() {
         "cbl_entries.metron_issue_id",
         "cbl_entries.metron_series_id",
         "series_provider_range.provider_series_id",
+        "series_external_relationship.provider_series_id",
     ];
     let app = TestApp::spawn().await;
     let db = &app.state().db;

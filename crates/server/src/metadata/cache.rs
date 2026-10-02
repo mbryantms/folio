@@ -66,8 +66,11 @@ impl Validators {
 /// fills additive fields with defaults on deserialize, so the
 /// deserialize-failure guard in [`get`] does *not* catch this class of
 /// drift. Bumped to 1 for ComicVine variant covers + first-appearance
-/// flags (`associated_images` / `first_appearance_*`).
-pub const CACHE_SCHEMA_VERSION: i32 = 1;
+/// flags (`associated_images` / `first_appearance_*`). Bumped to 2 for
+/// WP-7.8: Metron series details now fill `related_series` (from
+/// `associated`, which pre-2 payloads read as always-empty) and take
+/// `aliases` from `alt_names` instead of `associated`.
+pub const CACHE_SCHEMA_VERSION: i32 = 2;
 
 /// Logical entity types that get cached separately. Keys map 1:1 to
 /// the `entity` column on `metadata_cache` and the settings-registry

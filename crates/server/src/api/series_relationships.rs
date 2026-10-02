@@ -169,6 +169,11 @@ pub struct SeriesRelationshipsResp {
     /// the series has no such edges; otherwise includes this series at
     /// position 0.
     pub chain: Vec<SeriesChainEntry>,
+    /// WP-7.8: relationships to provider series that aren't in the library
+    /// ("Continued by: Saga (2018), not in your library"), oldest first.
+    /// Provider links whose target is already local are left out (the
+    /// suggestion engine proposes those).
+    pub external: Vec<super::series_external_relationships::SeriesExternalRelationshipView>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -436,11 +441,18 @@ pub async fn list(
             .collect()
     };
 
+    let external =
+        match super::series_external_relationships::external_views(&app, &user, s.id).await {
+            Ok(x) => x,
+            Err(e) => return internal(&e),
+        };
+
     Json(SeriesRelationshipsResp {
         series_id: s.id.to_string(),
         relationships,
         arcs,
         chain: chain_view,
+        external,
     })
     .into_response()
 }
@@ -1171,7 +1183,13 @@ pub(crate) async fn visible_relationship_count(
             .filter(|e| e.to_arc_id.is_some_and(|id| vis.contains(&id)))
             .count()
     };
-    i64::try_from(series_n + arc_n).ok()
+    // WP-7.8: external ("not in your library") links show in the tab too.
+    // One indexed lookup when the series has none (the common case).
+    let ext_n = super::series_external_relationships::external_views(app, user, series_id)
+        .await
+        .ok()?
+        .len();
+    i64::try_from(series_n + arc_n + ext_n).ok()
 }
 
 /// One story arc this series ties in to, for the OPDS "related" links
@@ -1259,6 +1277,11 @@ pub(crate) async fn visible_related(
             })
         })
         .collect()
+}
+
+/// [`edge_view`] for sibling modules (the external-link promotion answer).
+pub(crate) fn edge_view_pub(e: rel::Model, series: SeriesView) -> Option<SeriesRelationshipView> {
+    edge_view(e, series)
 }
 
 fn edge_view(e: rel::Model, series: SeriesView) -> Option<SeriesRelationshipView> {

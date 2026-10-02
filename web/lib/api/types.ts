@@ -825,6 +825,16 @@ export type UpdateSeriesRelationshipReq =
   Schemas["UpdateSeriesRelationshipReq"];
 export type ArcTieInView = Schemas["ArcTieInView"];
 export type ArcTieInListView = Schemas["CursorPage_ArcTieInView"];
+// WP-7.8 provider links and external (not-in-library) targets
+export type ExternalSource = Schemas["ExternalSource"];
+export type ExternalSetBy = Schemas["ExternalSetBy"];
+export type ExternalLocalSeries = Schemas["ExternalLocalSeries"];
+export type SeriesExternalRelationshipView =
+  Schemas["SeriesExternalRelationshipView"];
+export type CreateExternalRelationshipReq =
+  Schemas["CreateExternalRelationshipReq"];
+export type CreateExternalRelationshipResp =
+  Schemas["CreateExternalRelationshipResp"];
 // WP-7.7 derived "Same universe"
 export type SharedUniverseVia = Schemas["SharedUniverseVia"];
 export type SharedUniverse = Schemas["SharedUniverse"];

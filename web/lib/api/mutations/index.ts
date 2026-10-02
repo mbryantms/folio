@@ -2420,6 +2420,8 @@ import type {
   LookupReq,
   LookupResp,
   ProviderRangeRow,
+  CreateExternalRelationshipReq,
+  CreateExternalRelationshipResp,
   CreateSeriesRelationshipReq,
   SeriesArcRelationshipView,
   SeriesRelationshipView,
@@ -2940,6 +2942,51 @@ export function useUpdateSeriesRelationship(seriesSlug: string) {
     {
       successMessage: "Relationship updated",
       onSuccess: (row) => invalidateRelationshipViews(qc, seriesSlug, row),
+    },
+  );
+}
+
+/** WP-7.8: link this series to a provider series that isn't in the
+ *  library (admin). When the provider series is already matched locally
+ *  the server creates an ordinary relationship pair instead
+ *  (`relationship` set), so the other series' list is invalidated too. */
+export function useCreateExternalRelationship(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<
+    CreateExternalRelationshipResp,
+    CreateExternalRelationshipReq
+  >(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/external-relationships`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: (data) =>
+        data?.relationship
+          ? `Already in your library — linked to ${data.relationship.series.name}`
+          : "External link added",
+      onSuccess: (data) =>
+        invalidateRelationshipViews(qc, seriesSlug, data?.relationship ?? null),
+    },
+  );
+}
+
+/** WP-7.8: remove an external link (admin). A provider link is dismissed
+ *  server-side so a later metadata apply doesn't bring it back. */
+export function useDeleteExternalRelationship(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<null, { id: string }>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/external-relationships/${encodeURIComponent(input.id)}`,
+      method: "DELETE",
+    }),
+    {
+      successMessage: "External link removed",
+      onSuccess: () =>
+        qc.invalidateQueries({
+          queryKey: queryKeys.seriesRelationships(seriesSlug),
+        }),
     },
   );
 }
