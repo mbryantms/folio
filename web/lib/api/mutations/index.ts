@@ -2421,7 +2421,9 @@ import type {
   LookupResp,
   ProviderRangeRow,
   CreateSeriesRelationshipReq,
+  SeriesArcRelationshipView,
   SeriesRelationshipView,
+  UpdateSeriesRelationshipReq,
   SearchOverrides,
   SearchStartedResp,
   SyncStatusResp,
@@ -2848,27 +2850,50 @@ export function useDeleteProviderRangeSeries(seriesSlug: string) {
 
 /** WP-7.1: relate this series to another (admin). The server writes the
  *  inverse edge too, so both series' relationship lists are invalidated. */
+/** What a relationship write returns: a series edge, or (`target_arc`)
+ *  a series → arc edge. */
+type RelationshipWriteResult =
+  SeriesRelationshipView | SeriesArcRelationshipView | null | undefined;
+
+/** Invalidate everything a relationship write touches: this series'
+ *  Related tab, the other series' (its inverse half / chain), the arc
+ *  page's tie-ins for an arc edge, and the similar-series rail (the
+ *  server drops its similarity cache on every write). */
+function invalidateRelationshipViews(
+  qc: ReturnType<typeof useQueryClient>,
+  seriesSlug: string,
+  row: RelationshipWriteResult,
+  otherSlug?: string,
+) {
+  qc.invalidateQueries({
+    queryKey: queryKeys.seriesRelationships(seriesSlug),
+  });
+  qc.invalidateQueries({ queryKey: queryKeys.similarSeries(seriesSlug) });
+  const other =
+    otherSlug ?? (row && "series" in row ? row.series.slug : undefined);
+  if (other && other !== seriesSlug) {
+    qc.invalidateQueries({ queryKey: queryKeys.seriesRelationships(other) });
+    qc.invalidateQueries({ queryKey: queryKeys.similarSeries(other) });
+  }
+  if (row && "arc" in row) {
+    qc.invalidateQueries({ queryKey: queryKeys.arcTieIns(row.arc.slug) });
+  }
+}
+
 export function useCreateSeriesRelationship(seriesSlug: string) {
   const qc = useQueryClient();
-  return useApiMutation<SeriesRelationshipView, CreateSeriesRelationshipReq>(
+  return useApiMutation<
+    SeriesRelationshipView | SeriesArcRelationshipView,
+    CreateSeriesRelationshipReq
+  >(
     (input) => ({
       path: `/series/${encodeURIComponent(seriesSlug)}/relationships`,
       method: "POST",
       body: input,
     }),
     {
-      successMessage: "Related series added",
-      onSuccess: (row) => {
-        qc.invalidateQueries({
-          queryKey: queryKeys.seriesRelationships(seriesSlug),
-        });
-        // The inverse edge (and possibly chains) changed on the other side.
-        if (row) {
-          qc.invalidateQueries({
-            queryKey: queryKeys.seriesRelationships(row.series.slug),
-          });
-        }
-      },
+      successMessage: "Relationship added",
+      onSuccess: (row) => invalidateRelationshipViews(qc, seriesSlug, row),
     },
   );
 }
@@ -2876,21 +2901,45 @@ export function useCreateSeriesRelationship(seriesSlug: string) {
 /** WP-7.1: remove a relationship (and its inverse) by row id (admin). */
 export function useDeleteSeriesRelationship(seriesSlug: string) {
   const qc = useQueryClient();
-  return useApiMutation<null, { id: string; otherSlug: string }>(
+  return useApiMutation<
+    null,
+    { id: string; otherSlug: string; arcSlug?: string }
+  >(
     (input) => ({
       path: `/series/${encodeURIComponent(seriesSlug)}/relationships/${encodeURIComponent(input.id)}`,
       method: "DELETE",
     }),
     {
-      successMessage: "Related series removed",
+      successMessage: "Relationship removed",
       onSuccess: (_data, input) => {
-        qc.invalidateQueries({
-          queryKey: queryKeys.seriesRelationships(seriesSlug),
-        });
-        qc.invalidateQueries({
-          queryKey: queryKeys.seriesRelationships(input.otherSlug),
-        });
+        invalidateRelationshipViews(qc, seriesSlug, null, input.otherSlug);
+        if (input.arcSlug) {
+          qc.invalidateQueries({
+            queryKey: queryKeys.arcTieIns(input.arcSlug),
+          });
+        }
       },
+    },
+  );
+}
+
+/** WP-7.7: edit an existing relationship's kind and/or scope (admin).
+ *  `PATCH /series/{slug}/relationships/{id}`; both halves stay in sync
+ *  server-side (a kind change re-creates the pair with a new row id). */
+export function useUpdateSeriesRelationship(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<
+    SeriesRelationshipView | SeriesArcRelationshipView,
+    { id: string; body: UpdateSeriesRelationshipReq }
+  >(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/relationships/${encodeURIComponent(input.id)}`,
+      method: "PATCH",
+      body: input.body,
+    }),
+    {
+      successMessage: "Relationship updated",
+      onSuccess: (row) => invalidateRelationshipViews(qc, seriesSlug, row),
     },
   );
 }

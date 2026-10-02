@@ -4,7 +4,7 @@
  * Chips read from this series' point of view (the inverse kind when the
  * series is the suggestion's `to` end), carry the reason in a tooltip,
  * and accept / reject in one click. Not rendered for non-admins (the
- * Related block gates it) or when nothing is pending.
+ * Related tab gates it) or when nothing is pending.
  */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -52,6 +52,7 @@ vi.mock("@/lib/api/queries", () => ({
 vi.mock("@/lib/api/mutations", () => ({
   useCreateSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
+  useUpdateSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
   useAcceptRelationshipSuggestion: () => ({
     mutate: m.accept,
     isPending: false,
@@ -240,7 +241,10 @@ describe("<SeriesSuggestedRelationships>", () => {
     const { container } = render(
       <SeriesRelatedSection seriesSlug="daredevil-2014" seriesId="this" />,
     );
-    expect(container.innerHTML).toBe("");
+    // WP-7.7: inside the Related tab a reader sees the empty state, never
+    // the suggestion chips (and the suggestions query never runs).
+    expect(container.textContent).toContain("No related series linked yet");
+    expect(screen.queryByTestId("suggested-relationships")).toBeNull();
     expect(m.enabled).toEqual([]);
     m.role = "admin";
     render(

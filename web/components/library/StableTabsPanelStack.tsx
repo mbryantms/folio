@@ -16,7 +16,14 @@ export function StableTabsPanelStack({
   children: React.ReactNode;
   className?: string;
 }) {
-  return <div className={cn("grid", className)}>{children}</div>;
+  // `minmax(0, 1fr)`: the one column is the container's width, never the
+  // content's — a horizontal rail inside a panel (Related tab, WP-7.7)
+  // would otherwise widen the implicit `auto` column and the page.
+  return (
+    <div className={cn("grid grid-cols-[minmax(0,1fr)]", className)}>
+      {children}
+    </div>
+  );
 }
 
 export function StableTabsPanel({

@@ -1,8 +1,11 @@
 /**
- * <SeriesRelatedSection> — WP-7.1. Static-markup smoke over the mocked
- * relationships query: renders the reading-order chain in position order
- * with this series highlighted, groups direct relationships by kind, gates
- * the admin affordances, and stays invisible when empty for non-admins.
+ * <SeriesRelatedSection> — WP-7.1, in the Related tab since WP-7.7.
+ * Static-markup smoke over the mocked relationships query: renders the
+ * reading-order chain in position order with this series highlighted,
+ * groups direct relationships by kind, lists arc edges under "Part of
+ * event" with their role, sizes covers to `coverWidth`, gates the admin
+ * affordances (add / edit / remove), shows an empty state, and shows a
+ * skeleton — never the raw group key — before the kind catalogue loads.
  */
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -15,9 +18,10 @@ import type {
 
 let role: "admin" | "user" = "user";
 let data: SeriesRelationshipsResp | undefined;
+let catalogue: RelationshipCatalogue | undefined;
 
 vi.mock("@/lib/api/queries", () => ({
-  useRelationshipKinds: () => ({ data: undefined }),
+  useRelationshipKinds: () => ({ data: catalogue }),
   useMe: () => ({ data: { role } }),
   useSeriesRelationships: () => ({ data, isLoading: false }),
   useSeriesListInfinite: () => ({ data: undefined, isLoading: false }),
@@ -29,6 +33,7 @@ vi.mock("@/lib/api/queries", () => ({
 vi.mock("@/lib/api/mutations", () => ({
   useCreateSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
+  useUpdateSeriesRelationship: () => ({ mutate: vi.fn(), isPending: false }),
   useAcceptRelationshipSuggestion: () => ({
     mutate: vi.fn(),
     isPending: false,
@@ -128,32 +133,67 @@ const full: SeriesRelationshipsResp = {
   ],
 };
 
-function render() {
+const CATALOGUE = {
+  groups: [
+    { group: "story", label: "Story" },
+    { group: "publication", label: "Publication history" },
+    { group: "editions", label: "Editions & contents" },
+    { group: "advanced", label: "Advanced" },
+  ],
+  kinds: [],
+} as unknown as RelationshipCatalogue;
+
+function render(coverWidth?: number) {
   return renderToStaticMarkup(
     createElement(SeriesRelatedSection, {
       seriesSlug: "saga-vol-2",
       seriesId: "s2",
+      coverWidth,
     }),
   );
 }
 
 describe("<SeriesRelatedSection>", () => {
-  it("renders nothing for a non-admin when there are no relationships", () => {
+  it("shows an empty state to readers when there are no relationships", () => {
     role = "user";
+    catalogue = CATALOGUE;
     data = { series_id: "s2", relationships: [], arcs: [], chain: [] };
-    expect(render()).toBe("");
+    const html = render();
+    expect(html).toContain("No related series linked yet");
+    expect(html).not.toContain("Add relationship");
   });
 
   it("offers the add affordance to admins even when empty", () => {
     role = "admin";
+    catalogue = CATALOGUE;
     data = { series_id: "s2", relationships: [], arcs: [], chain: [] };
     const html = render();
-    expect(html).toContain("Add related series");
+    expect(html).toContain("Add relationship");
     expect(html).toContain("No related series yet");
+  });
+
+  it("sizes every cover to the grid's column width", () => {
+    role = "user";
+    catalogue = CATALOGUE;
+    data = full;
+    const html = render(213.5);
+    // 3 chain cards + 3 relationship cards, all at the given width.
+    expect(html.match(/width:213\.5px/g)?.length).toBe(6);
+  });
+
+  it("shows a skeleton, not the raw group key, before the catalogue loads", () => {
+    role = "user";
+    catalogue = undefined;
+    data = full;
+    const html = render();
+    expect(html).toContain('data-testid="relationship-group-loading"');
+    expect(html).not.toContain(">Editions<");
+    expect(html).not.toContain(">Publication<");
   });
 
   it("renders the chain in reading order with the current series marked", () => {
     role = "user";
+    catalogue = CATALOGUE;
     data = full;
     const html = render();
     expect(html).toContain("Reading order");
@@ -167,7 +207,8 @@ describe("<SeriesRelatedSection>", () => {
     expect(html).toContain("This series");
     // Direct relationships grouped under UI groups and kind labels.
     expect(html).toContain("Story");
-    expect(html).toContain("Publication");
+    expect(html).toContain("Publication history");
+    expect(html).toContain("Editions &amp; contents");
     expect(html).toContain("Sequel to");
     expect(html).toContain("Collected in");
     expect(html).toContain("Continued by");
@@ -176,21 +217,27 @@ describe("<SeriesRelatedSection>", () => {
     expect(html).toContain("partial coverage");
     expect(html).toContain("Deluxe");
     expect(html).toContain("Relaunch");
-    // Arc tie-ins link to the arc page with the role folded in.
+    // Arc tie-ins: "Part of event", linking the arc with its role.
+    expect(html).toContain("Part of event");
     expect(html).toContain("Prelude to");
     expect(html).toContain('href="/arcs/war-for-the-realms"');
     expect(html).toContain("Suggested");
     expect(html).toContain('href="/series/saga-omnibus"');
     // No admin affordances for a reader.
-    expect(html).not.toContain("Add related series");
+    expect(html).not.toContain("Add relationship");
     expect(html).not.toContain("Remove ");
+    expect(html).not.toContain("Edit ");
   });
 
-  it("shows remove buttons to admins", () => {
+  it("shows edit + remove buttons to admins, arcs included", () => {
     role = "admin";
+    catalogue = CATALOGUE;
     data = full;
     const html = render();
+    expect(html).toContain('aria-label="Edit sequel to Saga Vol 1"');
     expect(html).toContain('aria-label="Remove sequel to Saga Vol 1"');
+    expect(html).toContain('aria-label="Edit prelude to War for the Realms"');
+    expect(html).toContain('aria-label="Remove prelude to War for the Realms"');
   });
 });
 

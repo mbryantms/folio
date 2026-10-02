@@ -30,6 +30,7 @@ import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { VirtualizedCardGrid } from "@/components/library/VirtualizedCardGrid";
 import { useCardSize } from "@/components/library/use-card-size";
+import { SERIES_CARD_SIZE } from "@/lib/library/series-card-size";
 import { Input } from "@/components/ui/input";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import {
@@ -92,17 +93,15 @@ const SORT_LABELS: Partial<Record<IssueSort, string>> = {
   updated_at: "Date updated",
 };
 
-/**
- * Card-size bounds for the View → Card size slider. The grid uses
- * `repeat(auto-fill, minmax(<size>px, 1fr))` so column count adapts
- * fluidly as the user drags. Step matches a comic cover's natural
- * aspect ratio increments — finer steps just look like jitter.
- */
-const CARD_SIZE_MIN = 120;
-const CARD_SIZE_MAX = 280;
-const CARD_SIZE_STEP = 20;
-const CARD_SIZE_DEFAULT = 160;
-const CARD_SIZE_STORAGE_KEY = "folio.series.cardSize";
+/** Card-size bounds + storage key, shared with the Related tab (WP-7.7)
+ *  so every cover on the series page follows this panel's slider. */
+const {
+  min: CARD_SIZE_MIN,
+  max: CARD_SIZE_MAX,
+  step: CARD_SIZE_STEP,
+  defaultSize: CARD_SIZE_DEFAULT,
+  storageKey: CARD_SIZE_STORAGE_KEY,
+} = SERIES_CARD_SIZE;
 
 export function IssuesPanel({
   seriesSlug,

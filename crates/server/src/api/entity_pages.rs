@@ -266,12 +266,20 @@ fn series_visible(acl: &AclSql) -> String {
 /// The visible-series predicate over alias `s` for `visible` (bound values
 /// pushed onto `params`), or `None` when the caller is restricted to an
 /// empty library set. Lets other modules page series-keyed rows with the
-/// same ACL as the entity pages (WP-7.5 arc tie-ins).
-pub(crate) fn series_visible_sql(
+/// same ACL as the entity pages (WP-7.5 arc tie-ins, WP-7.7 same
+/// universe). `include_removed` (admins, matching `series::list`) drops
+/// the `removed_at IS NULL` term but keeps the grant + age-rating cap.
+pub(crate) fn series_visible_sql_for(
     visible: &VisibleLibraries,
     params: &mut Vec<Value>,
+    include_removed: bool,
 ) -> Option<String> {
-    acl_sql(visible, params).map(|a| series_visible(&a))
+    let acl = acl_sql(visible, params)?;
+    Some(if include_removed {
+        format!("TRUE{}{}", acl.lib, acl.series_cap)
+    } else {
+        series_visible(&acl)
+    })
 }
 
 /// Of `arc_ids`, the story arcs with at least one appearance the caller

@@ -4734,6 +4734,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/same-universe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["series_same_universe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/scan": {
         parameters: {
             query?: never;
@@ -6857,6 +6873,20 @@ export interface components {
                 show_in_sidebar: boolean;
                 slug: string;
                 updated_at: string;
+            }[];
+            next_cursor?: string | null;
+            /** Format: int64 */
+            total?: number | null;
+        };
+        /**
+         * @description Cursor-paginated list response. `total` is populated only on the first
+         *     page of paginated lists where the count is cheap; bounded lists omit it.
+         */
+        CursorPage_SameUniverseItem: {
+            items: {
+                series: components["schemas"]["SeriesView"];
+                /** @description What is shared (universes first, then series groups; by name). */
+                shared: components["schemas"]["SharedUniverse"][];
             }[];
             next_cursor?: string | null;
             /** Format: int64 */
@@ -10213,6 +10243,12 @@ export interface components {
             next_cursor?: string | null;
             runs: components["schemas"]["RunRow"][];
         };
+        /** @description One series sharing a universe or series group with the requested one. */
+        SameUniverseItem: {
+            series: components["schemas"]["SeriesView"];
+            /** @description What is shared (universes first, then series groups; by name). */
+            shared: components["schemas"]["SharedUniverse"][];
+        };
         /** @description Request for the saved-view batch endpoint. */
         SavedViewBatchReq: {
             /** Format: uuid */
@@ -10759,6 +10795,12 @@ export interface components {
              *     declare manga.
              */
             reading_direction?: string | null;
+            /**
+             * Format: int64
+             * @description WP-7.7: direct relationships (series + story-arc edges) the caller
+             *     can see — the series page's "Related" tab label. Detail-only.
+             */
+            relationship_count?: number | null;
             slug: string;
             /**
              * @description Search-result excerpt with `<mark>…</mark>` tags around matched
@@ -10923,6 +10965,16 @@ export interface components {
              */
             values: components["schemas"]["ResolvedEntry"][];
         };
+        SharedUniverse: {
+            /** @description Universe name, or the series-group value as this series spells it. */
+            name: string;
+            via: components["schemas"]["SharedUniverseVia"];
+        };
+        /**
+         * @description What two series share.
+         * @enum {string}
+         */
+        SharedUniverseVia: "universe" | "series_group";
         SidebarEntryView: {
             href: string;
             icon: string;
@@ -22163,6 +22215,46 @@ export interface operations {
                 };
             };
             /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_same_universe: {
+        parameters: {
+            query?: {
+                /** @description Opaque continuation token from a previous page's `next_cursor`. */
+                cursor?: string | null;
+                /** @description Page size, 1–60 (default 24). */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_SameUniverseItem"];
+                };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found or not visible */
             404: {
                 headers: {
                     [name: string]: unknown;

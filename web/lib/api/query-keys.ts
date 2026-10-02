@@ -343,6 +343,11 @@ export const queryKeys = {
     ["series", slug, "relationships"] as const,
   /** WP-7.5: the relationship kind catalogue (static per server build). */
   relationshipKinds: ["relationship-kinds"] as const,
+  /** WP-7.7: derived same-universe list (shared universe / series group). */
+  seriesSameUniverse: (slug: string) =>
+    ["series", slug, "same-universe"] as const,
+  /** WP-7.7: series tying in to a story arc (arc page "Tie-ins"). */
+  arcTieIns: (slug: string) => ["arcs", slug, "tie-ins"] as const,
   /** WP-7.3: prefix for every admin relationship-suggestion listing. */
   relationshipSuggestionsAll: ["admin", "relationship-suggestions"] as const,
   /** WP-7.3 review page listing (server-side status / bucket / library

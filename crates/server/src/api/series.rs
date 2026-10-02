@@ -923,6 +923,10 @@ pub struct SeriesView {
     /// Detail-only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata_completeness_summary: Option<MetadataCompletenessSummary>,
+    /// WP-7.7: direct relationships (series + story-arc edges) the caller
+    /// can see — the series page's "Related" tab label. Detail-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relationship_count: Option<i64>,
 }
 
 /// Issue-level completeness rollup for a series. `complete` counts active
@@ -1002,6 +1006,7 @@ impl From<series::Model> for SeriesView {
             snippet: None,
             metadata_completeness: None,
             metadata_completeness_summary: None,
+            relationship_count: None,
             metadata_completeness_tier: None,
         }
     }
@@ -3297,6 +3302,14 @@ pub async fn get_one(
     // widget shows an empty 5-star control.
     v.user_rating =
         lookup_user_rating(&app, user.id, "series", &series_id_for_lookups.to_string()).await;
+
+    // WP-7.7: the Related tab's label count, without the full payload.
+    v.relationship_count = crate::api::series_relationships::visible_relationship_count(
+        &app,
+        &user,
+        series_id_for_lookups,
+    )
+    .await;
 
     Json(v).into_response()
 }

@@ -22,8 +22,7 @@ import {
 import { Description } from "@/components/library/Description";
 import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
 import { SeriesProviderRangesCard } from "@/components/library/SeriesProviderRangesCard";
-import { SeriesRelatedSection } from "@/components/library/SeriesRelatedSection";
-import { SimilarSeriesRail } from "@/components/library/SimilarSeriesRail";
+import { SeriesRelatedTab } from "@/components/library/SeriesRelatedTab";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
 import { Stat } from "@/components/library/Stat";
 import {
@@ -37,7 +36,6 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { SeriesActivityTab } from "@/components/activity/SeriesActivityTab";
 import { MarkersList } from "@/components/markers/MarkersList";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
   MarkerListView,
@@ -67,6 +65,7 @@ import { CollectionTab } from "./CollectionTab";
 import { AppearancesTab } from "@/components/library/AppearancesTab";
 import { IssuesPanel } from "./IssuesPanel";
 import { SeriesActions } from "./SeriesActions";
+import { SeriesTabs } from "./SeriesTabs";
 import { SeriesSourcesFooter } from "./SeriesSourcesFooter";
 import { entityHrefFor } from "@/lib/entities";
 
@@ -75,10 +74,10 @@ export default async function SeriesPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; tab?: string }>;
 }) {
   const { slug } = await params;
-  const { q: initialQuery } = await searchParams;
+  const { q: initialQuery, tab: initialTab } = await searchParams;
 
   let series: SeriesView;
   let firstIssuePage: IssueListView;
@@ -322,18 +321,15 @@ export default async function SeriesPage({
         <ReadProgressStat read={finishedCount} total={totalCount} />
       </section>
 
-      <Tabs defaultValue="credits">
-        <TabsList>
-          <TabsTrigger value="credits">Credits</TabsTrigger>
-          <TabsTrigger value="cast">Cast &amp; Setting</TabsTrigger>
-          <TabsTrigger value="details">Details</TabsTrigger>
-          <TabsTrigger value="collection">Collection</TabsTrigger>
-          {hasAppearances && (
-            <TabsTrigger value="appearances">Appears in</TabsTrigger>
-          )}
-          <TabsTrigger value="activity">Activity</TabsTrigger>
-          {hasNotes && <TabsTrigger value="markers">Your notes</TabsTrigger>}
-        </TabsList>
+      {/* WP-7.7: the strip is a client wrapper so `?tab=` deep-links and
+          stays in sync, and the Related label carries a live count. */}
+      <SeriesTabs
+        seriesSlug={series.slug}
+        initialTab={initialTab ?? null}
+        relationshipCount={series.relationship_count ?? null}
+        hasAppearances={hasAppearances}
+        hasNotes={hasNotes}
+      >
         {/* Keep the common, lightweight metadata tabs in one force-mounted
             grid cell so the issue list below does not jump between Credits
             and Cast. Details / Collection / Activity render on demand because
@@ -621,6 +617,19 @@ export default async function SeriesPage({
           <StackedTabsPanel value="collection">
             <CollectionTab seriesSlug={series.slug} />
           </StackedTabsPanel>
+          {/* WP-7.7: relationships, same universe and similar series. Not
+              force-mounted, so nothing in it fetches until the tab opens. */}
+          <StackedTabsPanel value="related">
+            <SeriesRelatedTab
+              seriesSlug={series.slug}
+              seriesId={series.id}
+              seriesName={
+                series.year != null
+                  ? `${series.name} (${series.year})`
+                  : series.name
+              }
+            />
+          </StackedTabsPanel>
           {hasAppearances && (
             <StackedTabsPanel value="appearances">
               <AppearancesTab
@@ -651,19 +660,13 @@ export default async function SeriesPage({
             </StackedTabsPanel>
           )}
         </StableTabsPanelStack>
-      </Tabs>
-
-      {/* WP-7.1: reading-order chain + related series (admin add/remove). */}
-      <SeriesRelatedSection seriesSlug={series.slug} seriesId={series.id} />
+      </SeriesTabs>
 
       <IssuesPanel
         seriesSlug={series.slug}
         issueCount={series.issue_count ?? series.total_issues ?? null}
         initialQuery={initialQuery ?? ""}
       />
-
-      {/* WP-7.4: content-based neighbours with a "because" caption. */}
-      <SimilarSeriesRail seriesSlug={series.slug} />
 
       <SeriesSourcesFooter seriesSlug={series.slug} />
     </div>

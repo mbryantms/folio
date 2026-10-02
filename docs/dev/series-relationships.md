@@ -218,7 +218,14 @@ caller that traverses `same_universe` should pass a small `max_depth`.
 | `POST` | `/api/series/{slug}/relationships` | `RequireAdmin` | `201` new / `200` existing → `SeriesRelationshipView` (or `SeriesArcRelationshipView` for an arc target) |
 | `PATCH` | `/api/series/{slug}/relationships/{id}` | `RequireAdmin` | `200` → the updated edge from `{slug}`'s side |
 | `DELETE` | `/api/series/{slug}/relationships/{id}` | `RequireAdmin` | `204` |
-| `GET` | `/api/arcs/{slug}/tie-ins` | any user who can see the arc | `CursorPage<ArcTieInView>` (`cursor`, `limit` 1–100, default 60; `total` on the first page) |
+| `GET` | `/api/arcs/{slug}/tie-ins` | any user who can see the arc | `CursorPage<ArcTieInView>` (`cursor`, `limit` 1–100, default 60; `total` on the first page), ordered by role — prelude, main story, tie-in (or unset), aftermath — then oldest first (WP-7.7) |
+| `GET` | `/api/series/{slug}/same-universe` | any user who can see the series | `CursorPage<SameUniverseItem>` (`cursor`, `limit` 1–60, default 24; `total` on the first page) — derived, see "Same universe" below (WP-7.7; `crates/server/src/api/series_same_universe.rs`) |
+
+`GET /api/series/{slug}` also carries `relationship_count` (WP-7.7): the
+direct series edges plus arc edges the caller can see (the same filters as
+the relationships `GET`), so the series page's Related tab label shows a
+count without loading the relationships. Detail only; list payloads omit
+it.
 
 ```jsonc
 // GET /api/series/{slug}/relationships
@@ -282,8 +289,9 @@ non-admins never see removed series. Arcs are filtered as described under
 "Arc targets". The chain is pruned so that a hidden link also hides every
 series reached through it. Nothing beyond a series the caller can't see
 leaks. `GET /arcs/{slug}/tie-ins` filters the tying-in series in SQL with
-the entity pages' series ACL (removed series hidden), so pages are never
-short.
+the entity pages' series ACL (`entity_pages::series_visible_sql_for`), so
+pages are never short; admins also see removed series there (WP-7.7,
+consistent with `series::list`), non-admins don't.
 
 **Audit.** `admin.series.relationship.create` (only when a pair or arc edge
 was actually inserted), `admin.series.relationship.update` (payload: new
@@ -310,8 +318,16 @@ Series feeds link related series the caller can see:
 
 Both use `api::series_relationships::visible_related` (a `RelatedLink {
 kind, label, series }` list, the label being `display_label` with any
-tie-in role folded in), which applies the same ACL as the JSON `GET`. Arc
-edges aren't linked from OPDS.
+tie-in role folded in), which applies the same ACL as the JSON `GET`.
+
+Arc edges (WP-7.7) link to the arc's acquisition feed through
+`visible_related_arcs` (arcs filtered by the arc visibility rule):
+
+- OPDS 1.2: `<link rel="related" href="/opds/v1/arcs/{slug}" type="…acquisition" title="Prelude to: Secret Wars"/>`.
+- OPDS 2.0: the same href with `"type": "application/atom+xml;profile=opds-catalog;kind=acquisition"`
+  and `"properties": { "folio:relationship": "tie_in_to" }`. Story arcs have
+  no OPDS 2.0 feed yet (M5 backlog), so the v2 link points at the 1.x
+  feed and says so in `type`.
 
 ## Migration (`m20270505_000001_relationship_taxonomy`)
 
@@ -668,7 +684,7 @@ page's "Related" block with the "Suggested" badge (`source = suggested`,
   `AlertDialog`.
 
 **Series page chips** (`SeriesSuggestedRelationships`, admins only, inside
-the Related block): pending suggestions touching the series from
+the Related tab): pending suggestions touching the series from
 `GET /api/series/{slug}/relationship-suggestions` (cursor-paginated, "Show
 more"), read from this series' side (a row stored as "*other* `continues`
 *this*" shows "Continued by *other*", from the view's `inverse_kind` /
@@ -753,43 +769,134 @@ heuristic versions; a second run marked none.
 
 ## Web
 
-`web/components/library/SeriesRelatedSection.tsx` renders the "Related"
-block on the series page, between the metadata tabs and the issue list:
+### Related tab (WP-7.7)
 
-- a **Reading order** strip (the chain — sequels and continuations — with
-  this series highlighted);
-- direct relationships grouped by UI group (Story / Publication history /
-  Editions & contents / Advanced) and then by display label, with a
-  "Suggested" badge on accepted suggestions and the scope (qualifier,
-  ranges, coverage, note) as secondary text (`scopeCaption`);
-- a **Story arcs** list of the series' arc tie-ins, linking to
-  `/arcs/{slug}`;
-- for admins, an **Add related series** form — the grouped
-  **Relationship** picker (`RelationshipKindSelect`), a cursor-paginated
-  series typeahead, and the scope fields the chosen kind accepts
-  (qualifier / role, coverage, both ranges, note) — and remove buttons
-  behind an `AlertDialog` confirm.
+Relationships live in a **Related** tab on the series page, after
+Collection in the strip (`web/app/[locale]/(library)/series/[slug]/SeriesTabs.tsx`
++ `web/components/library/SeriesRelatedTab.tsx`). The issue list follows the
+tab strip directly; nothing relationship-related renders in the page body.
+
+- **Lazy.** The panel is a `StackedTabsPanel` (no `forceMount`), so it is
+  unmounted while inactive and none of the relationships / same-universe /
+  similar queries fire until the tab opens
+  (`web/tests/dom/series-related-tab.test.tsx` asserts no fetch before
+  activation). `StableTabsPanelStack` pins its single column to
+  `minmax(0, 1fr)` so a horizontal rail inside a panel can't widen the page.
+- **Deep link.** `?tab=related` (any tab name) opens that tab; switching
+  tabs `replaceState`s `?tab=` (dropped for the default Credits tab, other
+  params such as the Issues panel's `?q=` kept). Unknown or unavailable tab
+  names fall back to Credits.
+- **Count.** The trigger reads "Related N": the server's
+  `relationship_count` until the tab has loaded, then the live count from
+  the query cache (`useSeriesRelationships(slug, { enabled: false })`, which
+  never fetches on its own), so add / remove updates it.
+- **Contents**, top to bottom: `SeriesRelatedSection` (header with the admin
+  **Add relationship** button, the **Reading order** strip, the admin
+  **Suggested** chips, the grouped relationships, **Part of event**), then
+  **Same universe** (`SameUniverseSection`), then **Similar series**
+  (`SimilarSeriesRail`, see `similar-series.md`).
+- **Cover size.** Every cover in the tab — reading-order strip, relationship
+  cards, same-universe and similar rails — renders at the issue grid's
+  effective column width for the page's card-size slider. The slider stays
+  in the Issues panel's "View options"; both read `folio.series.cardSize`
+  (`SERIES_CARD_SIZE` in `web/lib/library/series-card-size.ts`).
+  `useCardSize` syncs every instance sharing a key: the setter broadcasts a
+  `folio:card-size` window event (same page) and other browser tabs follow
+  through the native `storage` event. `useGridColumnWidth`
+  (`web/lib/library/use-grid-column-width.ts`) measures the tab panel (as
+  wide as the grid) with a `ResizeObserver` and applies
+  `effectiveColumnWidth` (`web/lib/library/grid-window.ts`):
+  `cols = max(1, floor((W + gap) / (size + gap)))`,
+  `width = (W − gap·(cols − 1)) / cols` with the grid's 16 px gap. Browser
+  check on the dev library: 180.28 px covers in both the grid and the tab
+  at slider 160, 327.5 px at 280, 121.39 px at 120.
+- **Empty / loading.** A cover-sized skeleton while loading; readers see
+  "No related series linked yet." when there are none, admins a prompt.
+  Group headings render a skeleton until the kind catalogue loads (never
+  the raw group key).
+
+### Relationship cards and editing
+
+Direct relationships are grouped by UI group (Story / Publication history /
+Editions & contents / Advanced) and display label, with a "Suggested" badge
+on accepted suggestions and the scope (qualifier, ranges, coverage, note) as
+secondary text (`scopeCaption`). **Part of event** lists the series' arc
+edges with their role ("Prelude to Secret Wars", "Tie-in to …"), linking to
+`/arcs/{slug}`.
+
+For admins each card (and each event row) has **Edit** and **Remove**.
+Remove sits behind an `AlertDialog`. Add and Edit open
+`RelationshipFormDialog` (`web/components/library/RelationshipFormDialog.tsx`,
+react-hook-form):
+
+- **Relationship**: `RelationshipKindSelect`, a searchable command palette
+  (shadcn `Command` in a popover) with a heading per group, tall enough to
+  show every group, filtering on label and group name. A skeleton until the
+  catalogue loads. The admin review page's "Edit kind" uses the same picker.
+  One scroller only: the popover doesn't scroll; the list sits in the themed
+  `ScrollArea`, sized to Radix's available height (capped at 26rem), with
+  sticky group headings, and opens on the current kind. The dialog never
+  scrolls itself (`overflow-visible`; pickers portal into it so the modal
+  focus trap keeps their search live) — only its form body does, and only
+  on viewports shorter than the form.
+- **Target** (add only): a "Series | Story arc" toggle. Story arc is enabled
+  only for arc-capable kinds (`allows_arc_target`, i.e. `tie_in_to`); each
+  side has a typeahead (`/series?q=` and `/arcs?q=`, cursor-paginated with
+  "More results").
+- **Scope**: qualifier / role (the kind's allowed set from the catalogue),
+  coverage (only when `allows_coverage`), this series' and the other side's
+  ranges, note. Changing the kind drops scope the new kind doesn't take.
+  Editing an arc edge keeps the kind list to arc-capable kinds.
+- Edit sends `PATCH` with every scope field (`null` clears); Save is
+  disabled until something changes. Server 422 `details` bind to the inputs
+  via `applyServerErrors` (field names match the request body); the
+  mutation hook still toasts.
+
+Hooks: `useSeriesRelationships` (`queryKeys.seriesRelationships`, optional
+`enabled`), `useCreateSeriesRelationship`, `useUpdateSeriesRelationship`,
+`useDeleteSeriesRelationship`. All writes invalidate both series'
+relationship lists, both similar rails (the server drops its similarity
+cache on every write) and, for an arc edge, that arc's tie-in list.
 
 The kind list comes from `GET /api/relationship-kinds`
 (`useRelationshipKinds`, `queryKeys.relationshipKinds`, never refetched);
 `web/lib/relationships.ts` only slices that catalogue (`groupedKinds`,
-`kindInfo`, `kindLabel`, `kindOrder`, `scopeCaption`). Editing an existing
-edge's kind or scope, and creating arc targets, have API support (`PATCH`,
-`target_arc`) but no UI yet — that is WP-7.7, as is the arc page's "Has
-tie-ins" section over `GET /api/arcs/{slug}/tie-ins`.
+`kindInfo`, `kindLabel`, `kindOrder`, `scopeCaption`).
 
-Hooks: `useSeriesRelationships` (`queryKeys.seriesRelationships`),
-`useCreateSeriesRelationship` and `useDeleteSeriesRelationship`. Both
-mutations invalidate the relationship lists of the current series and the
-other series.
-
-For admins the block also shows the WP-7.3 **Suggested** chips
+For admins the tab also shows the WP-7.3 **Suggested** chips
 (`web/components/library/SeriesSuggestedRelationships.tsx`). The review
 hooks live in `web/lib/api/mutations/relationship-suggestions.ts`
 (`useAcceptRelationshipSuggestion`, `useRejectRelationshipSuggestion`,
 `useReopenRelationshipSuggestion`, `useBulkAccept…`, `useBulkReject…`,
 `useRunRelationshipSuggestions`); chip labels come from the suggestion
 view's `kind_label` / `inverse_kind_label`.
+
+### Same universe (derived)
+
+"Same universe" is not an edge. `GET /api/series/{slug}/same-universe`
+derives it on read: series sharing a `universe` with this one
+(`series_universes`), or a ComicInfo `SeriesGroup` value (`series.series_group`,
+split on `,` / `;`, compared trimmed and case-insensitively). Each item is
+`{ series, shared: [{ via: "universe" | "series_group", name }] }`
+(universes first). ACL as the relationships `GET`: 404 for a series the
+caller can't see; listed series pass the library grant + age-rating cap;
+removed series are listed for admins only. Keyset over `(name, id)`.
+
+The section is a cover-size-aware horizontal rail with an end sentinel
+that walks pages, each card captioned "Universe: Earth-616 · Group:
+Spider-Man", hidden when nothing is shared. It replaces the pairwise
+`same_universe` suggestions (WP-7.6 retires that source); manual
+`same_universe` edges are ordinary relationships and still show in the
+grouped list.
+
+### Arc page tie-ins
+
+`/arcs/{slug}` gains a **Tie-ins N** tab (only when the arc has tie-ins;
+the first page is fetched with the page for the count) over
+`GET /api/arcs/{slug}/tie-ins` (`useArcTieInsInfinite`,
+`queryKeys.arcTieIns`): infinite scroll, grouped into Preludes / Main story
+/ Tie-ins / Aftermath. The server orders by role, so `groupTieIns` only
+groups contiguous runs and a later page never reopens an earlier group.
 
 ## Tests
 
@@ -816,8 +923,9 @@ view's `kind_label` / `inverse_kind_label`.
   grouped), scope rules and mirroring, contradictions, arc-capable kinds,
   and str/serde round-trip.
 - `web/tests/library/series-related-section.test.tsx`: chain order and
-  highlight, grouping by UI group and kind, scope captions, arc tie-ins,
-  admin gating, and empty state.
+  highlight, grouping by UI group and kind, scope captions, "Part of
+  event", covers sized to the grid width, admin edit / remove gating, empty
+  state, and the group-heading skeleton before the catalogue loads.
 - WP-7.6, same integration file: one fixture-driven test per detector —
   annual (name / series type / format signals, volume containment,
   publisher mismatch, two equally fitting volumes), arc tie-in (main by
@@ -834,6 +942,17 @@ view's `kind_label` / `inverse_kind_label`.
   accept); and the stress cap with the new sources.
   `crates/server/tests/migration_relationship_suggestion_scope.rs`: the
   WP-7.6 migration's down → up → CHECKs → lossy down → up round trip.
+- WP-7.7: `crates/server/tests/relationship_ui.rs` (same-universe
+  derivation, ACL, age cap, removed-for-admins and paging;
+  `relationship_count`; OPDS v1/v2 arc links; arc tie-ins role order across
+  pages and admin visibility of removed series; the tie-in role in
+  similar-series reasons). Web: `web/tests/dom/series-related-tab.test.tsx`
+  (no fetch before the tab opens, `?tab=` deep link and URL sync, live
+  count), `web/tests/dom/card-size-sync.test.tsx` (column-width math,
+  same-page and cross-tab sync), `web/tests/dom/relationship-form.test.tsx`
+  (picker groups / search / skeleton / filter, edit PATCH body, scope per
+  kind, 422 binding, arc target toggle) and
+  `web/tests/library/arc-tie-ins.test.ts` (role grouping, cursor).
 - `crates/server/tests/relationship_suggestions.rs` (WP-7.2): a fixture
   library with one cluster per evidence source (expected kind, bucket and
   reason), canonical dedupe of reversed self-inverse candidates, existing-
