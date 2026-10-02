@@ -34,4 +34,7 @@ export function invalidateRails(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["collections"], exact: false });
   qc.invalidateQueries({ queryKey: ["markers"], exact: false });
   qc.invalidateQueries({ queryKey: queryKeys.markerCount });
+  // WP-7.4: similar-series rails exclude hidden + (home rail) started
+  // series, so both a dismissal and a progress write can change them.
+  qc.invalidateQueries({ queryKey: ["similar"], exact: false });
 }

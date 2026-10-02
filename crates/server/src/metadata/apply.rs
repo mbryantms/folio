@@ -354,6 +354,15 @@ impl ProvResolver<'_> {
 }
 
 pub async fn apply_series(state: &AppState, args: ApplyArgs) -> Result<ApplyOutcome, ApplyError> {
+    let outcome = apply_series_impl(state, args).await;
+    // WP-7.4: an apply changes the entities similar-series scores over.
+    if outcome.is_ok() {
+        state.similarity.invalidate_all();
+    }
+    outcome
+}
+
+async fn apply_series_impl(state: &AppState, args: ApplyArgs) -> Result<ApplyOutcome, ApplyError> {
     let candidate = load_candidate(&state.db, args.run_id, args.ordinal).await?;
     let run = load_run(&state.db, args.run_id).await?;
     if run.scope != crate::metadata::orchestrator::scope::SERIES {
@@ -1087,6 +1096,15 @@ pub(crate) async fn apply_issue_via_sidecar(
 }
 
 pub async fn apply_issue(state: &AppState, args: ApplyArgs) -> Result<ApplyOutcome, ApplyError> {
+    let outcome = apply_issue_impl(state, args).await;
+    // WP-7.4: an apply changes the entities similar-series scores over.
+    if outcome.is_ok() {
+        state.similarity.invalidate_all();
+    }
+    outcome
+}
+
+async fn apply_issue_impl(state: &AppState, args: ApplyArgs) -> Result<ApplyOutcome, ApplyError> {
     let candidate = load_candidate(&state.db, args.run_id, args.ordinal).await?;
     let run = load_run(&state.db, args.run_id).await?;
     if run.scope != crate::metadata::orchestrator::scope::ISSUE {

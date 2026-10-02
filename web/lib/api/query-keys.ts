@@ -457,6 +457,14 @@ export const queryKeys = {
    *  (data changes only when a scan lands); default staleness re-fetches
    *  on the next home-page visit, same as the filter rails. */
   recentIssues: ["rails", "recent-issues"] as const,
+  /** WP-7.4 "Similar series" rail on the series page
+   *  (`/series/{slug}/similar`, cursor-paginated). Lives under the
+   *  `["similar"]` prefix so `invalidateRails` (hide / progress) drops it
+   *  along with the home rail. */
+  similarSeries: (slug: string) => ["similar", "series", slug] as const,
+  /** WP-7.4 optional home rail (`/me/similar-series`) — "Because you
+   *  read …", seeded from the latest read series. */
+  similarRail: ["similar", "rail"] as const,
   /** Reader's single-issue "what's next?" resolver
    *  (`/issues/{id}/next-up`). Separate cache entry per (issue, cbl)
    *  pairing so a CBL-context read and a series-context read don't

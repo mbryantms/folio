@@ -616,6 +616,10 @@ pub struct SpawnOpts {
     /// When `Some`, written to `secrets/pepper.previous` before the secrets
     /// load — simulates an in-progress argon2 pepper rotation (L-1, WP-6.3).
     pub previous_pepper: Option<[u8; 32]>,
+    /// Keep sqlx's per-statement `sqlx::query` tracing events on the app's
+    /// pool. Off by default (noise); `perf_regressions.rs` turns it on —
+    /// its ≤N-queries guards count those events.
+    pub sqlx_logging: bool,
 }
 
 impl TestApp {
@@ -644,6 +648,16 @@ impl TestApp {
 
     pub async fn spawn() -> Self {
         Self::spawn_inner(SpawnOpts::default()).await
+    }
+
+    /// [`spawn`] with sqlx statement logging left on, so a tracing layer
+    /// can count the queries each request fires (`perf_regressions.rs`).
+    pub async fn spawn_with_query_logging() -> Self {
+        Self::spawn_inner(SpawnOpts {
+            sqlx_logging: true,
+            ..SpawnOpts::default()
+        })
+        .await
     }
 
     /// Spawn with the SSR fallback pointed at the given upstream URL
@@ -814,7 +828,7 @@ impl TestApp {
         // 100-connection Postgres service headroom at 12-way nextest
         // oversubscription (12 × 6 = 72); the realistic peak is ~2 conns/test.
         let mut db_opts = ConnectOptions::new(db_url.clone());
-        db_opts.max_connections(6).sqlx_logging(false);
+        db_opts.max_connections(6).sqlx_logging(opts.sqlx_logging);
         let db = Database::connect(db_opts).await.expect("connect test db");
 
         // Redis (apalis backend) — required since Library Scanner v1. One

@@ -3529,6 +3529,23 @@ export interface paths {
         patch: operations["sidebar_layout_update_layout"];
         trace?: never;
     };
+    "/api/me/similar-series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /me/similar-series` — "Because you read …" home rail. */
+        get: operations["rails_similar_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/metadata/batch/saved-view": {
         parameters: {
             query?: never;
@@ -4561,6 +4578,23 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["series_scan_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/similar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /series/{slug}/similar` */
+        get: operations["series_similar"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -10426,6 +10460,62 @@ export interface components {
         };
         SidebarLayoutView: {
             entries: components["schemas"]["SidebarEntryView"][];
+        };
+        /** @description One shared entity explaining a match. */
+        SimilarReason: {
+            kind: components["schemas"]["SimilarReasonKind"];
+            /** @description Display name of the shared entity (or the related series). */
+            name: string;
+            /**
+             * @description Credit role (`writer`, `penciller`, …) for creators; relationship
+             *     kind (`sequel_of`, …) for relationships; absent otherwise.
+             */
+            role?: string | null;
+            /**
+             * Format: double
+             * @description This entity's contribution to the score (before the per-kind cap).
+             */
+            weight: number;
+        };
+        /**
+         * @description Entity kinds that can explain a match. `Relationship` is produced by
+         *     the accepted-relationship signal (WP-7.1); it's part of the enum from
+         *     day one so wiring that signal doesn't change the response schema.
+         * @enum {string}
+         */
+        SimilarReasonKind: "creator" | "character" | "team" | "arc" | "genre" | "tag" | "publisher" | "imprint" | "relationship";
+        /** @description The series the home rail's neighbours are drawn from. */
+        SimilarSeed: {
+            id: string;
+            name: string;
+            slug: string;
+        };
+        /** @description One neighbour: the series card plus why it matched. */
+        SimilarSeriesItem: {
+            /** @description The largest shared-entity contributions, strongest first. */
+            because: components["schemas"]["SimilarReason"][];
+            /**
+             * Format: double
+             * @description Similarity score (sum of capped per-kind overlap; higher = closer).
+             */
+            score: number;
+            series: components["schemas"]["SeriesView"];
+        };
+        SimilarSeriesListView: {
+            items: components["schemas"]["SimilarSeriesItem"][];
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Visible neighbours across all pages — first page only.
+             */
+            total?: number | null;
+        };
+        SimilarSeriesRailView: {
+            items: components["schemas"]["SimilarSeriesItem"][];
+            next_cursor?: string | null;
+            seed?: components["schemas"]["SimilarSeed"] | null;
+            /** Format: int64 */
+            total?: number | null;
         };
         /**
          * @description Sort axes a saved view can choose. Distinct from [`Field`] because not
@@ -18451,6 +18541,37 @@ export interface operations {
             };
         };
     };
+    rails_similar_series: {
+        parameters: {
+            query?: {
+                /** @description Opaque continuation token from a previous page's `next_cursor`. */
+                cursor?: string | null;
+                /** @description Page size, 1–50 (default 20). */
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimilarSeriesRailView"];
+                };
+            };
+            /** @description Malformed cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     metadata_create_saved_view_batch: {
         parameters: {
             query?: never;
@@ -21079,6 +21200,45 @@ export interface operations {
                 content?: never;
             };
             /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_similar: {
+        parameters: {
+            query?: {
+                /** @description Opaque continuation token from a previous page's `next_cursor`. */
+                cursor?: string | null;
+                /** @description Page size, 1–50 (default 20). */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimilarSeriesListView"];
+                };
+            };
+            /** @description Malformed cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             404: {
                 headers: {
                     [name: string]: unknown;

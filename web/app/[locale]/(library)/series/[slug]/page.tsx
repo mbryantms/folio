@@ -23,6 +23,7 @@ import { Description } from "@/components/library/Description";
 import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
 import { SeriesProviderRangesCard } from "@/components/library/SeriesProviderRangesCard";
 import { SeriesRelatedSection } from "@/components/library/SeriesRelatedSection";
+import { SimilarSeriesRail } from "@/components/library/SimilarSeriesRail";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
 import { Stat } from "@/components/library/Stat";
 import {
@@ -660,6 +661,9 @@ export default async function SeriesPage({
         issueCount={series.issue_count ?? series.total_issues ?? null}
         initialQuery={initialQuery ?? ""}
       />
+
+      {/* WP-7.4: content-based neighbours with a "because" caption. */}
+      <SimilarSeriesRail seriesSlug={series.slug} />
 
       <SeriesSourcesFooter seriesSlug={series.slug} />
     </div>

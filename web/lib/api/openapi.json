@@ -7685,6 +7685,54 @@
         }
       }
     },
+    "/api/me/similar-series": {
+      "get": {
+        "summary": "`GET /me/similar-series` — \"Because you read …\" home rail.",
+        "operationId": "rails_similar_series",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque continuation token from a previous page's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1–50 (default 20).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimilarSeriesRailView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed cursor"
+          }
+        }
+      }
+    },
     "/api/metadata/batch/saved-view": {
       "post": {
         "summary": "`POST /metadata/batch/saved-view` — fan out a metadata search over the\ntargets of a saved view: a filter/smart view searches each matching series;\na CBL reading list searches each issue. One `metadata_batch` groups them.",
@@ -10554,6 +10602,63 @@
           "404": {
             "description": "series not found"
           }
+        }
+      }
+    },
+    "/api/series/{slug}/similar": {
+      "get": {
+        "summary": "`GET /series/{slug}/similar`",
+        "operationId": "series_similar",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque continuation token from a previous page's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1–50 (default 20).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimilarSeriesListView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed cursor"
+          },
+          "404": {}
         }
       }
     },
@@ -24570,6 +24675,163 @@
             "items": {
               "$ref": "#/components/schemas/SidebarEntryView"
             }
+          }
+        }
+      },
+      "SimilarReason": {
+        "type": "object",
+        "description": "One shared entity explaining a match.",
+        "required": [
+          "kind",
+          "name",
+          "weight"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/SimilarReasonKind"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name of the shared entity (or the related series)."
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Credit role (`writer`, `penciller`, …) for creators; relationship\nkind (`sequel_of`, …) for relationships; absent otherwise."
+          },
+          "weight": {
+            "type": "number",
+            "format": "double",
+            "description": "This entity's contribution to the score (before the per-kind cap)."
+          }
+        }
+      },
+      "SimilarReasonKind": {
+        "type": "string",
+        "description": "Entity kinds that can explain a match. `Relationship` is produced by\nthe accepted-relationship signal (WP-7.1); it's part of the enum from\nday one so wiring that signal doesn't change the response schema.",
+        "enum": [
+          "creator",
+          "character",
+          "team",
+          "arc",
+          "genre",
+          "tag",
+          "publisher",
+          "imprint",
+          "relationship"
+        ]
+      },
+      "SimilarSeed": {
+        "type": "object",
+        "description": "The series the home rail's neighbours are drawn from.",
+        "required": [
+          "id",
+          "name",
+          "slug"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "SimilarSeriesItem": {
+        "type": "object",
+        "description": "One neighbour: the series card plus why it matched.",
+        "required": [
+          "series",
+          "score",
+          "because"
+        ],
+        "properties": {
+          "because": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimilarReason"
+            },
+            "description": "The largest shared-entity contributions, strongest first."
+          },
+          "score": {
+            "type": "number",
+            "format": "double",
+            "description": "Similarity score (sum of capped per-kind overlap; higher = closer)."
+          },
+          "series": {
+            "$ref": "#/components/schemas/SeriesView"
+          }
+        }
+      },
+      "SimilarSeriesListView": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimilarSeriesItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Visible neighbours across all pages — first page only."
+          }
+        }
+      },
+      "SimilarSeriesRailView": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimilarSeriesItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seed": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SimilarSeed",
+                "description": "`None` when the caller hasn't read anything with visible,\nunread neighbours yet (the rail hides itself)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           }
         }
       },

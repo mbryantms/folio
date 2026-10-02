@@ -98,6 +98,12 @@ export type ContinueReadingView = Schemas["ContinueReadingView"];
 export type OnDeckCard = Schemas["OnDeckCard"];
 export type OnDeckView = Schemas["OnDeckView"];
 export type RecentIssuesView = Schemas["RecentIssuesView"];
+export type SimilarReason = Schemas["SimilarReason"];
+export type SimilarReasonKind = Schemas["SimilarReasonKind"];
+export type SimilarSeriesItem = Schemas["SimilarSeriesItem"];
+export type SimilarSeriesListView = Schemas["SimilarSeriesListView"];
+export type SimilarSeed = Schemas["SimilarSeed"];
+export type SimilarSeriesRailView = Schemas["SimilarSeriesRailView"];
 export type CreateRailDismissalReq = Schemas["CreateDismissalReq"]; // renamed in codegen as CreateDismissalReq
 export type NextUpSource = Schemas["NextUpSource"];
 export type NextUpView = Schemas["NextUpView"];
@@ -682,7 +688,12 @@ export type SavedViewKind =
   | "system"
   | "collection";
 
-export type SystemRailKey = "continue_reading" | "on_deck" | "want_to_read";
+export type SystemRailKey =
+  | "continue_reading"
+  | "on_deck"
+  | "new_issues"
+  | "similar_series"
+  | "want_to_read";
 
 export type SidebarEntryKind =
   | "builtin"

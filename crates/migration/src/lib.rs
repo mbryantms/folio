@@ -115,6 +115,7 @@ mod m20270307_000001_markers_user_series_kind_idx;
 mod m20270402_000001_anchor_page_hash;
 mod m20270405_000001_library_auto_convert_cb7_on_scan;
 mod m20270501_000001_series_relationship;
+mod m20270504_000001_similar_series_rail;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -238,6 +239,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270402_000001_anchor_page_hash::Migration),
             Box::new(m20270405_000001_library_auto_convert_cb7_on_scan::Migration),
             Box::new(m20270501_000001_series_relationship::Migration),
+            Box::new(m20270504_000001_similar_series_rail::Migration),
         ]
     }
 }

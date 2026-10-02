@@ -23,10 +23,14 @@
 //!   `OnceLock`. perf_regressions.rs has a single `#[tokio::test]`
 //!   function so the global subscriber doesn't conflict with
 //!   anything. Adding a second test in this file requires care.
-//! - Sea-ORM defaults `sqlx_logging` to true at INFO; if a future
-//!   refactor silences sqlx's per-query logging the counter goes
-//!   to zero and the asserts here trivially pass — a separate
-//!   "queries observed > 0" sanity check guards against that.
+//! - The shared test harness turns sqlx statement logging off on the
+//!   app pool (noise), so this file spawns via
+//!   `TestApp::spawn_with_query_logging()`. If the app pool's logging
+//!   is silenced again the counter reads zero and the ≤N asserts would
+//!   trivially pass — `assert_query_count` therefore also requires a
+//!   non-zero count per endpoint (the earlier process-wide "> 0" check
+//!   was satisfied by the seed connections alone and missed exactly
+//!   that from #208 until WP-7.4).
 //! - Connection-pool setup queries (`SELECT 1` health pings) fire
 //!   on the worker threads; we don't try to filter them out, the
 //!   thresholds are calibrated against the observed real values.
@@ -45,7 +49,7 @@ use entity::{
     library, library_user_access, progress_record, saved_view,
     series::{ActiveModel as SeriesAM, normalize_name},
 };
-use sea_orm::{ActiveModelTrait, Database, Set};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, Database, Set, Statement};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -615,24 +619,35 @@ const MAX_QUERIES_ON_DECK: u64 = 20; // observed ≈ 9-12 after batching (was �
 const MAX_QUERIES_ON_DECK_AT_SCALE: u64 = 20;
 const MAX_QUERIES_MARKERS: u64 = 10; // observed ≈ 2
 const MAX_QUERIES_READING_LOG: u64 = 30; // observed ≈ 9
-const MAX_QUERIES_SERIES: u64 = 20; // observed ≈ 5
+const MAX_QUERIES_SERIES: u64 = 20; // observed ≈ 7
 const MAX_QUERIES_ADMIN_STATS: u64 = 20; // observed ≈ 6
 // PERF-12 (audit 2026-07): guards for the endpoints PERF-1/PERF-8 fixed —
 // a future re-introduced per-member probe or serialized lookup ships loud.
-const MAX_QUERIES_SERIES_DETAIL: u64 = 15; // observed ≈ 5
-const MAX_QUERIES_ISSUE_DETAIL: u64 = 20; // observed ≈ 10 (parallel try_join set)
-// Must stay flat in the member count: the pre-PERF-1 shape cost ~2 queries
-// per member (~200 for the 100-member batch below).
-const MAX_QUERIES_BULK_ADD: u64 = 15;
+const MAX_QUERIES_SERIES_DETAIL: u64 = 15; // observed ≈ 13
+const MAX_QUERIES_ISSUE_DETAIL: u64 = 20; // observed ≈ 9 (parallel try_join set)
+// The pre-PERF-1 shape cost ~3 queries per member (~300 for the 100-member
+// batch below). The existence probes are batched, but the inserts are still
+// one statement per member by design (the two partial-unique indexes can't be
+// an `insert_many` ON CONFLICT target — see `collections::bulk_add_members`),
+// so this is O(members): observed 104 for 100 members. The old bound of 15
+// was never actually enforced — the app pool had sqlx statement logging off
+// since the shared-Postgres harness (#208), so every count here read 0.
+const MAX_QUERIES_BULK_ADD: u64 = 110;
 // WP-2.1: the export is 10 section reads + 1 pinned-view hydrate + 3
 // identity batches (issues / series / libraries) + the user row + auth.
 // A per-row hydrate over the 100-entry collection would add ~100.
-const MAX_QUERIES_USER_EXPORT: u64 = 25; // observed ≈ 16
+const MAX_QUERIES_USER_EXPORT: u64 = 25; // observed ≈ 15
+// WP-7.4: similar series. Cold = the two set-based scoring queries + the
+// page hydrate; warm = served from the neighbour cache, hydrate only.
+// Both must stay flat in the neighbour count (9 here): a per-candidate
+// probe or a per-card hydrate would add ~9-40.
+const MAX_QUERIES_SIMILAR_COLD: u64 = 20; // observed ≈ 11
+const MAX_QUERIES_SIMILAR_WARM: u64 = 15; // observed ≈ 8
 
 #[tokio::test]
 async fn realistic_dataset_endpoints_respond_correctly() {
     let counter = install_query_counter();
-    let app = TestApp::spawn().await;
+    let app = TestApp::spawn_with_query_logging().await;
     let user = register(&app, "perf@example.com").await;
 
     // 10 series × 10 issues = 100 issues, 5 CBLs.
@@ -737,6 +752,47 @@ async fn realistic_dataset_endpoints_respond_correctly() {
         snap.taken(),
         MAX_QUERIES_ISSUE_DETAIL,
         "/api/series/{slug}/issues/{slug}",
+    );
+
+    // ── /series/{slug}/similar — WP-7.4. perf-0 shares one rare
+    // character with each of the other 9 series, so every one is a
+    // neighbour and the page hydrates 9 cards.
+    {
+        let db = Database::connect(&app.db_url).await.unwrap();
+        for (i, (series_id, _)) in series_with_issues.iter().enumerate().skip(1) {
+            for sid in [series_with_issues[0].0, *series_id] {
+                db.execute_raw(Statement::from_sql_and_values(
+                    db.get_database_backend(),
+                    r#"INSERT INTO series_characters (series_id, "character") VALUES ($1, $2)"#,
+                    [sid.into(), format!("Link {i}").into()],
+                ))
+                .await
+                .unwrap();
+            }
+        }
+    }
+    let snap = QueryCount::snapshot(&counter);
+    let (status, body, elapsed) = get(&app, &user, "/api/series/perf-0/similar").await;
+    assert_eq!(status, StatusCode::OK, "similar: {body}");
+    assert_eq!(
+        body["items"].as_array().map(Vec::len),
+        Some(9),
+        "similar should list every linked series: {body}"
+    );
+    assert_quick(elapsed, "/api/series/perf-0/similar");
+    assert_query_count(
+        snap.taken(),
+        MAX_QUERIES_SIMILAR_COLD,
+        "/api/series/{slug}/similar (cold)",
+    );
+    let snap = QueryCount::snapshot(&counter);
+    let (status, _, elapsed) = get(&app, &user, "/api/series/perf-0/similar").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_quick(elapsed, "/api/series/perf-0/similar (warm)");
+    assert_query_count(
+        snap.taken(),
+        MAX_QUERIES_SIMILAR_WARM,
+        "/api/series/{slug}/similar (warm)",
     );
 
     // ── collections bulk-add — PERF-1 replaced the per-member existence
@@ -847,6 +903,14 @@ async fn realistic_dataset_endpoints_respond_correctly() {
 }
 
 fn assert_query_count(observed: u64, max: u64, path: &str) {
+    // Every endpoint here touches the DB at least once; a zero means the
+    // counter isn't seeing the app pool's statements (the guard would
+    // silently pass — it did, from #208 until WP-7.4 re-enabled logging).
+    assert!(
+        observed > 0,
+        "{path} fired 0 observed queries — sqlx statement logging is off on the \
+         app pool, so the ≤N guards are blind (TestApp::spawn_with_query_logging)",
+    );
     assert!(
         observed <= max,
         "{path} fired {observed} queries (>{max}); investigate for N+1 regressions. \

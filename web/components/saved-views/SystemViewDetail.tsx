@@ -15,16 +15,20 @@ import {
 } from "@/components/library/ProgressIssueCard";
 import { useCardSize } from "@/components/library/use-card-size";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import { SeriesCardSkeleton } from "@/components/library/SeriesCard";
+import { SimilarSeriesCard } from "@/components/library/SimilarSeriesCard";
 import {
   useContinueReading,
   useIssuesCrossListInfinite,
   useOnDeck,
+  useSimilarRailInfinite,
 } from "@/lib/api/queries";
 import type {
   ContinueReadingCard,
   OnDeckCard as OnDeckCardData,
   SavedViewView,
 } from "@/lib/api/types";
+import { seriesUrl } from "@/lib/urls";
 
 /** Query filters for the New Issues detail grid: the FULL ingest-ordered
  *  issue list. Deliberately uncapped — the home rail's per-series cap is
@@ -49,6 +53,7 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
   const isContinueReading = view.system_key === "continue_reading";
   const isOnDeck = view.system_key === "on_deck";
   const isNewIssues = view.system_key === "new_issues";
+  const isSimilar = view.system_key === "similar_series";
 
   const cr = useContinueReading({ enabled: isContinueReading });
   const od = useOnDeck({ enabled: isOnDeck });
@@ -56,6 +61,9 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
   const ni = useIssuesCrossListInfinite(NEW_ISSUES_FILTERS, {
     enabled: isNewIssues,
   });
+  // Same key as the grid below — one cache entry, two subscribers.
+  const sim = useSimilarRailInfinite({ enabled: isSimilar });
+  const similarSeed = sim.data?.pages[0]?.seed ?? null;
   const [cardSize, setCardSize] = useCardSize({
     storageKey: CARD_SIZE_STORAGE_KEY,
     min: CARD_SIZE_MIN,
@@ -71,7 +79,9 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
         ? // `total` rides only the first page (cursor-pagination
           // convention) — the full library-wide issue count.
           (ni.data?.pages[0]?.total ?? null)
-        : null;
+        : isSimilar
+          ? (sim.data?.pages[0]?.total ?? null)
+          : null;
 
   return (
     <div className="space-y-6">
@@ -103,6 +113,17 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
               {view.description}
             </p>
           )}
+          {isSimilar && similarSeed ? (
+            <p className="text-muted-foreground mt-2 text-sm">
+              Because you read{" "}
+              <Link
+                href={seriesUrl(similarSeed)}
+                className="text-foreground underline-offset-2 hover:underline"
+              >
+                {similarSeed.name}
+              </Link>
+            </p>
+          ) : null}
           {itemCount != null && (
             <p className="text-muted-foreground mt-2 text-sm">
               {itemCount === 0
@@ -133,6 +154,8 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
           <OnDeckGrid loading={od.isLoading} data={od.data} />
         ) : isNewIssues ? (
           <NewIssuesGrid />
+        ) : isSimilar ? (
+          <SimilarSeriesGrid />
         ) : null}
       </div>
     </div>
@@ -194,6 +217,62 @@ function NewIssuesGrid() {
       {isFetchingNextPage
         ? Array.from({ length: 6 }).map((_, i) => (
             <IssueCardSkeleton key={`next-${i}`} />
+          ))
+        : null}
+    </>
+  );
+}
+
+/** WP-7.4: every visible neighbour of the rail's seed series, walked
+ *  page by page through the IntersectionObserver sentinel. */
+function SimilarSeriesGrid() {
+  const query = useSimilarRailInfinite();
+  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  React.useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          if (hasNextPage && !isFetchingNextPage) {
+            void fetchNextPage();
+          }
+        }
+      },
+      { rootMargin: "400px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  if (query.isLoading) {
+    return (
+      <>
+        {Array.from({ length: 12 }).map((_, i) => (
+          <SeriesCardSkeleton key={i} />
+        ))}
+      </>
+    );
+  }
+  const items = query.data?.pages.flatMap((p) => p.items) ?? [];
+  if (items.length === 0) {
+    return (
+      <p className="text-muted-foreground col-span-full text-sm">
+        Nothing to suggest yet. Read something and series that share its
+        creators, characters, or story arcs show up here.
+      </p>
+    );
+  }
+  return (
+    <>
+      {items.map((item) => (
+        <SimilarSeriesCard key={item.series.id} item={item} />
+      ))}
+      <div ref={sentinelRef} aria-hidden className="col-span-full h-px" />
+      {isFetchingNextPage
+        ? Array.from({ length: 6 }).map((_, i) => (
+            <SeriesCardSkeleton key={`next-${i}`} />
           ))
         : null}
     </>

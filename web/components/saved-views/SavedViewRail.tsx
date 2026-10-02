@@ -27,6 +27,8 @@ import {
   ContinueReadingRailBody,
   OnDeckRailBody,
   RecentIssuesRailBody,
+  SimilarRailSeedNote,
+  SimilarSeriesRailBody,
   useSystemRailIsEmpty,
 } from "./system-rails";
 
@@ -130,6 +132,12 @@ function renderRailBody(
       hasMore: true,
     };
   }
+  if (view.kind === "system" && view.system_key === "similar_series") {
+    return {
+      body: <SimilarSeriesRailBody itemStyle={itemStyle} />,
+      hasMore: true,
+    };
+  }
   if (view.kind === "filter_series") {
     return {
       body: <FilterRailBody view={view} itemStyle={itemStyle} />,
@@ -192,6 +200,9 @@ function RailHeader({ view }: { view: SavedViewView }) {
       </h2>
       {isCbl && view.cbl_list_id ? (
         <CblStatsPills cblListId={view.cbl_list_id} size="rail" />
+      ) : null}
+      {view.kind === "system" && view.system_key === "similar_series" ? (
+        <SimilarRailSeedNote />
       ) : null}
       {showSurpriseMe ? (
         <SurpriseMeButton className="ml-auto shrink-0" />

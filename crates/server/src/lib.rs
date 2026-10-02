@@ -30,6 +30,7 @@ pub mod pages;
 pub mod reading;
 pub mod relationships;
 pub mod settings;
+pub mod similarity;
 pub mod slug;
 pub mod state;
 pub mod upstream;
