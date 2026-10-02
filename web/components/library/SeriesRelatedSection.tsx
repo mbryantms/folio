@@ -82,9 +82,7 @@ export const RELATIONSHIP_KINDS: Array<{
 ];
 
 /** Group direct relationships by kind, keeping the add-form's kind order. */
-export function groupRelationships(
-  rels: SeriesRelationshipView[],
-): Array<{
+export function groupRelationships(rels: SeriesRelationshipView[]): Array<{
   kind: RelationshipKind;
   label: string;
   items: SeriesRelationshipView[];
