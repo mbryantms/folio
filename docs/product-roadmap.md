@@ -234,6 +234,12 @@ Exit: notes are durable and browsable in context; issue-level queries exist; ent
 
 Exit: series carry typed, traversable relationships (manual and suggested), the scanner proposes them with confidence, and every series page offers "related" and "similar" rails that are explainable and never wrong-by-magic.
 
+**Status (2026-10-01): all four WPs implemented as one stacked PR chain, open for review:** 7.1 #946 → 7.4 #947 → 7.2 #948 → 7.3 #949 (each PR's base is the previous branch; retarget each to `main` before merging its base, or the squash-merge auto-closes it). Every WP was verified in a real browser against the dev library (dev DB migrated). Notes from implementation:
+- **7.1:** `has_spin_off` added as the inverse of `spin_off_of` (the kind list had none); contradictory directional pairs are refused (409); DELETE is `/series/{slug}/relationships/{id}`; the series page shows a sequel/prequel "Reading order" strip plus grouped links; OPDS 1.x and 2.0 emit `rel="related"`.
+- **7.4:** IDF-weighted overlap (creators by role, characters, teams, arcs, genres/tags, publisher/imprint, relationships) with per-kind caps and size damping; in-memory LRU on `AppState` with a global generation counter (single instance, D2) — every relationship or metadata write calls `state.similarity.invalidate_all()`; optional "Because you read X" home rail (`similar_series`, not auto-pinned). Found and fixed: the `perf_regressions.rs` query-count guards had read 0 for every endpoint since #208 (statement logging was off on the test pool).
+- **7.2:** suggestions only pair series within one library; sources are name/volume continuation, `AlternateSeries`, `SeriesGroup`, shared arcs (capped low past 10 series), collected-edition citations, shared provider volumes, `series_provider_range`, and uncommon shared characters/teams; high ≥ 0.8, medium ≥ 0.55. Dev library: 608 suggestions across 2,573 series in ~0.45 s.
+- **7.3:** `/admin/relationships` review page; bulk accept by ids (≤ 500) or `bucket=high` (500 per call, returns `remaining`), one transaction with a savepoint per item, one audit row per batch; `reopen` clears a rejection; new `stale` status for pending rows a rerun no longer produces (needs the `breaking-change` label: response-enum value added); admin-only "Suggested" chips on the series page; opt-in Playwright spec (skips without `E2E_ADMIN_*` credentials).
+
 | WP | Title | Effort | Audit | Scope | Files | Done when |
 |---|---|---|---|---|---|---|
 | 7.1 | Relationship schema, API, and manual editing | M | spec §5.2 / Phase 7 | `series_relationship(from_series, to_series, kind, source, confidence, created_by, created_at)` with kinds `sequel_of / prequel_of / spin_off_of / crossover_with / collects / collected_in / same_universe / see_also`; inverse pair auto-created and kept in sync; unique on `(from, to, kind)`; `GET/POST/DELETE /series/{slug}/relationships`; recursive traversal query (CTE, depth ≤ 6) for "chain" views; admin audit via `record_admin_action!`; "Related" section on the series page with add/remove; OPDS related links | migration, new `crates/entity/src/series_relationship.rs`, new `api/series_relationships.rs`, series page component, `api/opds*.rs` | Inverse-pair and cycle tests; CTE depth cap test; audit-check passes; series page renders a chain |
@@ -288,6 +294,13 @@ Items noticed during the audit that are real but small, to be picked up opportun
   - BZip2-coded 7z is unsupported (`bzip2-1.0.6` licence not in `deny.toml`); compressed 7z headers decode before Folio can cap memory.
   - No backfill of `page_hash` for existing markers; `account_export` omits `page_hash`.
   - arm64 images (OP-3) and the locale-segment decision (WP-6.6, AR-2) deferred by the owner.
+- Found during M7 (2026-10-01):
+  - `GET /series/{slug}/relationships` is unpaginated (bounded by curation); revisit if bulk-accepted `same_universe` edges grow large.
+  - The series page's "Sequel of" / "Prequel of" groups repeat what the "Reading order" strip already shows; consider hiding them when a chain renders.
+  - Collections bulk-add fires one INSERT per member (104 queries for 100); the real query counts from #947 exposed it and its guard was raised to 110.
+  - Similarity weights are code constants, not settings; performance measured at 22k issues, not 50k.
+  - Suggestion engine: no `spin_off_of` source (no evidence distinguishes it); no cross-library suggestions; collected-edition and `SeriesGroup` sources are fixture-tested only (the dev library has neither).
+  - Review UI: bulk accept has no kind override; stale rows cannot be rejected; the relationship e2e spec skips in docker-smoke (no credentials or suggestion-yielding fixture).
 
 ---
 
@@ -302,3 +315,4 @@ None. Every audit item is now either scheduled (§5) or confirmed excluded (§2)
 - 2026-09-29: exclusion list ruled on. Pulled back in and planned: relationship suggestion engine (M7), similar series (WP-7.4), GCD provider (WP-6.1), page-hash marker anchoring (WP-6.2). All other proposed exclusions confirmed excluded. An earlier edit the same day had these four backwards; corrected.
 - 2026-09-30: M3 and M5 fully merged; M4 merged except owner-run WP-4.1. M5 owner decisions recorded in the M5 status line.
 - 2026-10-01: M6 started and merged the same day; the owner deferred arm64 images (WP-6.5) and WP-6.6. WP-6.1–6.5 (CB7) landed as #934–#938.
+- 2026-10-01: M7 implemented the same day as a stacked chain #946 → #947 → #948 → #949, awaiting review.
