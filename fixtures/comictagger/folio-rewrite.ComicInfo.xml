@@ -39,9 +39,9 @@
   <CommunityRating>4.5</CommunityRating>
   <ComicVineID>123456</ComicVineID>
   <Pages>
-    <Page Image="0" Type="FrontCover" DoublePage="false" ImageSize="114" ImageWidth="40" ImageHeight="60"/>
-    <Page Image="1" Type="Story" DoublePage="false" ImageSize="676" Bookmark="The Round Trip" ImageWidth="40" ImageHeight="60"/>
+    <Page Image="0" Type="FrontCover" ImageSize="114" ImageWidth="40" ImageHeight="60"/>
+    <Page Image="1" Type="Story" ImageSize="676" Bookmark="The Round Trip" ImageWidth="40" ImageHeight="60"/>
     <Page Image="2" DoublePage="true" ImageSize="143" ImageWidth="80" ImageHeight="60"/>
-    <Page Image="3" Type="BackCover" DoublePage="false" ImageSize="676" ImageWidth="40" ImageHeight="60"/>
+    <Page Image="3" Type="BackCover" ImageSize="676" ImageWidth="40" ImageHeight="60"/>
   </Pages>
 </ComicInfo>

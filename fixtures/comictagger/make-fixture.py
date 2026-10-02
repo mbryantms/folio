@@ -209,11 +209,11 @@ def ct_read(xml: bytes) -> dict:
     }
     out["credits"] = sorted((c["role"], c["person"]) for c in md.credits)
     # Page attributes as ComicTagger holds them, with `DoublePage=False`
-    # folded into "absent" (the ComicInfo default). Folio writes an
-    # explicit `DoublePage="false"` on every non-spread page; ComicTagger
-    # reads it as False — equal in value. (Its 1.5.5 GUI page editor ticks
-    # the checkbox on attribute *presence*, a known cosmetic quirk listed
-    # in docs/dev/metadata-sidecar-writeback.md.)
+    # folded into "absent" (the ComicInfo default). Since WP-8.1 Folio
+    # omits `DoublePage="false"` (ComicTagger 1.5.5's GUI page editor
+    # ticked the checkbox on attribute *presence*); it keeps an explicit
+    # false only on a landscape page, where an absent attribute would let
+    # the next scan infer a spread. Either way ComicTagger reads False.
     out["pages"] = [
         {k: str(v) for k, v in p.items() if not (k == "DoublePage" and v is False)}
         for p in md.pages

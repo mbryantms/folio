@@ -1074,8 +1074,8 @@ async fn issue_search_then_apply_round_trips_through_the_factory() {
         "{:?}",
         outcome.applied_fields
     );
-    // Credits landed in the junction with the canonical roles GCD's
-    // free-text story credits were mapped onto.
+    // Credits landed in the junction with the canonical (lowercase,
+    // WP-8.1) roles GCD's free-text story credits were mapped onto.
     let credits = entity::issue_credit::Entity::find()
         .filter(entity::issue_credit::Column::IssueId.eq(issue_id.clone()))
         .all(&state.db)
@@ -1083,16 +1083,29 @@ async fn issue_search_then_apply_round_trips_through_the_factory() {
         .unwrap();
     let roles: std::collections::HashSet<_> = credits.iter().map(|c| c.role.as_str()).collect();
     for role in [
-        "Writer",
-        "Penciller",
-        "Inker",
-        "Colorist",
-        "Letterer",
-        "Editor",
-        "CoverArtist",
+        "writer",
+        "penciller",
+        "inker",
+        "colorist",
+        "letterer",
+        "editor",
+        "cover_artist",
     ] {
         assert!(roles.contains(role), "missing {role}: {roles:?}");
     }
+    // …so the per-role CSV read-cache was rebuilt (WP-8.1 regression:
+    // `Writer` rows left `issues.writer` empty).
+    let row = entity::issue::Entity::find_by_id(issue_id.clone())
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        row.writer.as_deref().is_some_and(|w| !w.is_empty()),
+        "{:?}",
+        row.writer
+    );
+    assert!(row.cover_artist.as_deref().is_some_and(|w| !w.is_empty()));
     let ext = entity::external_id::Entity::find()
         .filter(entity::external_id::Column::EntityType.eq("issue"))
         .filter(entity::external_id::Column::EntityId.eq(issue_id.clone()))

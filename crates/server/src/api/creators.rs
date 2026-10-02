@@ -64,8 +64,8 @@ pub struct CreatorDetailView {
     /// distinct (series_id) or (issue_id) counted once).
     pub credit_count: i64,
     /// Series rails — one per role the creator held. Order matches
-    /// `roles`; each rail is sorted by series name. Empty when the
-    /// creator only has credits in libraries the caller can't see.
+    /// `roles`; each rail is sorted by series name. Never empty: a
+    /// creator with no credit visible to the caller is a 404.
     pub rails: Vec<CreatorRoleRail>,
 }
 
@@ -376,15 +376,11 @@ pub async fn get_one(
         String::new()
     } else {
         if visible.allowed.is_empty() {
-            return Json(CreatorDetailView {
-                id: row.id.to_string(),
-                slug: row.slug.clone(),
-                name: row.name.clone(),
-                roles: Vec::new(),
-                credit_count: 0,
-                rails: Vec::new(),
-            })
-            .into_response();
+            // WP-8.1: nothing visible → 404, like the arc / character /
+            // team pages (`entity_pages::resolve_visible`), so a
+            // restricted user can't confirm a name that only occurs in
+            // hidden libraries.
+            return error(StatusCode::NOT_FOUND, "not_found", "creator not found");
         }
         let placeholders: Vec<String> = visible
             .allowed
@@ -500,6 +496,12 @@ pub async fn get_one(
         })
         .filter(|r| !r.series.is_empty())
         .collect();
+
+    // WP-8.1: a creator with no visible credit is a 404, not a 200 with
+    // empty rails (same rule as the other entity pages).
+    if rails.is_empty() {
+        return error(StatusCode::NOT_FOUND, "not_found", "creator not found");
+    }
 
     let roles: Vec<String> = rails.iter().map(|r| r.role.clone()).collect();
     let credit_count: i64 = all_series_ids.len() as i64;

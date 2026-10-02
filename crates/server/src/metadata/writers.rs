@@ -42,7 +42,7 @@ use sea_orm::{
     EntityTrait, ExprTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect, Statement,
     TransactionTrait,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use uuid::Uuid;
 
@@ -1044,6 +1044,11 @@ pub async fn upsert_imprint<C: ConnectionTrait>(
 // ─────────────────────────────────────────────────────────────────
 
 /// Per-credit triple: (person_id, role, ordinal).
+///
+/// `role` may be any provider / ComicInfo spelling (`Writer`,
+/// `CoverArtist`, `cover`, …): [`set_issue_credits`] folds it onto the
+/// canonical storage key via
+/// [`crate::metadata::provider::canonical_credit_role`].
 pub type CreditSpec = (Uuid, String, i32);
 
 pub async fn set_issue_credits<C: ConnectionTrait>(
@@ -1058,24 +1063,45 @@ pub async fn set_issue_credits<C: ConnectionTrait>(
         .filter(issue_credit::Column::IssueId.eq(issue_id))
         .exec(db)
         .await?;
-    if !credits.is_empty() {
-        let rows: Vec<issue_credit::ActiveModel> = credits
+    // WP-8.1: the junction's `person` column is the creator's *name* —
+    // the scanner writes it that way, and `/creators`, `/people`, the
+    // saved-view credit filters, `series_credits` and the reading stats
+    // all key on it. (Pre-WP-8.1 this path stashed the person UUID
+    // there, so provider-applied credits were invisible to all of them.)
+    // `person.normalized_name` is unique, so two distinct people can't
+    // collide on `(issue_id, role, person)`.
+    let person_ids: Vec<Uuid> = credits.iter().map(|(id, _, _)| *id).collect();
+    let names: HashMap<Uuid, String> = if person_ids.is_empty() {
+        HashMap::new()
+    } else {
+        person::Entity::find()
+            .filter(person::Column::Id.is_in(person_ids))
+            .all(db)
+            .await?
             .into_iter()
-            .map(|(person_id, role, ordinal)| issue_credit::ActiveModel {
-                issue_id: Set(issue_id.into()),
-                role: Set(role),
-                // Junction PK is `(issue_id, role, person)` with
-                // `person` as the legacy TEXT name column. Stash the
-                // person UUID as text so multi-person-per-role
-                // inserts don't collide on the PK. CSV rebuild reads
-                // names from the `person` table via `person_id`, not
-                // this column. Follow-up cleanup (post-M0c) will
-                // migrate the PK to use `person_id` directly.
-                person: Set(person_id.to_string()),
-                person_id: Set(Some(person_id)),
-                ordinal: Set(ordinal),
-            })
-            .collect();
+            .map(|p| (p.id, p.name))
+            .collect()
+    };
+    let mut seen: HashSet<(String, Uuid)> = HashSet::new();
+    let rows: Vec<issue_credit::ActiveModel> = credits
+        .into_iter()
+        .filter_map(|(person_id, role, ordinal)| {
+            // WP-8.1: one canonical lowercase role key at the write
+            // surface — the CSV rebuild, the filters and the UI match
+            // `writer` / `cover_artist`, never `Writer` / `CoverArtist`.
+            let role = crate::metadata::provider::canonical_credit_role(&role)?;
+            let name = names.get(&person_id)?.clone();
+            seen.insert((role.clone(), person_id))
+                .then(|| issue_credit::ActiveModel {
+                    issue_id: Set(issue_id.into()),
+                    role: Set(role),
+                    person: Set(name),
+                    person_id: Set(Some(person_id)),
+                    ordinal: Set(ordinal),
+                })
+        })
+        .collect();
+    if !rows.is_empty() {
         issue_credit::Entity::insert_many(rows)
             .on_conflict(
                 OnConflict::columns([

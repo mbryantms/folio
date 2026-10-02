@@ -671,6 +671,220 @@ async fn apply_issue_writes_credits_through_writer_helpers() {
     assert_eq!(row.writer.as_deref(), Some("Brian K. Vaughan"));
 }
 
+/// WP-8.1 regression: the provider mappers emit ComicInfo PascalCase
+/// roles (`Writer`, `CoverArtist`), but the per-role CSV rebuild, the
+/// filters and the UI match lowercase keys. A non-writeback apply used to
+/// leave `issues.writer` empty — so the writer filter and full-text search
+/// missed the issue — and stashed the person UUID in `issue_credits.person`
+/// (invisible to `/creators`). `set_issue_credits` now canonicalizes both.
+#[tokio::test]
+async fn apply_issue_canonicalizes_pascal_case_roles_and_fills_the_csv_cache() {
+    use server::metadata::cache;
+    use server::metadata::identifier::{Identifier, Source};
+    use server::metadata::provider::CreditCandidate;
+
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    // Plain library: no sidecar writeback, so the apply writes DB rows.
+    let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let cbz = dir.path().join("test.cbz");
+    let issue_id = common::seed::IssueSeed::new(lib_id, series_id, &cbz, b"dummy", 1.0)
+        .insert(&app.state().db)
+        .await;
+    let run_id = seed_issue_run(&app, &issue_id, "67890").await;
+
+    let credit = |name: &str, role: &str, id: &str| CreditCandidate {
+        name: name.into(),
+        role: role.into(),
+        ordinal: None,
+        identifiers: vec![Identifier::with_canonical_url(
+            Source::ComicVine,
+            id,
+            "person",
+        )],
+    };
+    let prefilled = server::metadata::provider::GenericMetadata {
+        issue_number: Some("1".into()),
+        credits: vec![
+            credit("Brian K. Vaughan", "Writer", "7"),
+            credit("Fiona Staples", "Artist", "8"),
+            credit("Fiona Staples", "CoverArtist", "8"),
+            // A second spelling of the same (person, role) collapses.
+            credit("Fiona Staples", "Cover Artist", "8"),
+            credit("Eric Stephenson", "Editor In Chief", "9"),
+            credit("Fonografiks", "Letterer", "10"),
+        ],
+        identifiers: vec![Identifier::with_canonical_url(
+            Source::ComicVine,
+            "67890",
+            "issue",
+        )],
+        source_provider: Some(Source::ComicVine),
+        source_external_id: Some("67890".into()),
+        ..Default::default()
+    };
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Issue,
+        "67890",
+        &prefilled,
+    )
+    .await
+    .unwrap();
+
+    let outcome = server::jobs::metadata_apply::apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        args(run_id, 0, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("apply_issue");
+    assert!(outcome.applied_fields.contains(&"credits".to_owned()));
+
+    // Junction rows: canonical lowercase roles, the creator's name in
+    // `person`.
+    let mut rows: Vec<(String, String)> = entity::issue_credit::Entity::find()
+        .filter(entity::issue_credit::Column::IssueId.eq(issue_id.clone()))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.role, r.person))
+        .collect();
+    rows.sort();
+    assert_eq!(
+        rows,
+        vec![
+            ("cover_artist".to_owned(), "Fiona Staples".to_owned()),
+            ("editor".to_owned(), "Eric Stephenson".to_owned()),
+            ("letterer".to_owned(), "Fonografiks".to_owned()),
+            ("penciller".to_owned(), "Fiona Staples".to_owned()),
+            ("writer".to_owned(), "Brian K. Vaughan".to_owned()),
+        ]
+    );
+
+    // The per-role CSV read-cache is filled.
+    let row = issue::Entity::find_by_id(&issue_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.writer.as_deref(), Some("Brian K. Vaughan"));
+    assert_eq!(row.penciller.as_deref(), Some("Fiona Staples"));
+    assert_eq!(row.cover_artist.as_deref(), Some("Fiona Staples"));
+    assert_eq!(row.editor.as_deref(), Some("Eric Stephenson"));
+    assert_eq!(row.letterer.as_deref(), Some("Fonografiks"));
+
+    // The writer facet filter and full-text search find the issue.
+    for uri in [
+        "/api/issues?writers=Brian%20K.%20Vaughan",
+        "/api/issues?q=Vaughan",
+    ] {
+        let (status, json) = get_json(&app, &auth, uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {json}");
+        let ids: Vec<&str> = json["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|i| i["id"].as_str())
+            .collect();
+        assert_eq!(ids, vec![issue_id.as_str()], "{uri}: {json}");
+    }
+    let (_, json) = get_json(&app, &auth, "/api/issues?writers=Nobody").await;
+    assert_eq!(json["items"].as_array().unwrap().len(), 0, "{json}");
+
+    // The creator page sees the provider-applied credit.
+    let slug = person::Entity::find()
+        .filter(person::Column::Name.eq("Brian K. Vaughan"))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+        .slug;
+    let (status, json) = get_json(&app, &auth, &format!("/api/creators/{slug}")).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["roles"], json!(["writer"]), "{json}");
+}
+
+/// Issue-scope `metadata_run` + one ComicVine candidate (ordinal 0).
+async fn seed_issue_run(app: &TestApp, issue_id: &str, cv_id: &str) -> Uuid {
+    let now = Utc::now().fixed_offset();
+    let run_id = Uuid::now_v7();
+    metadata_run::ActiveModel {
+        id: Set(run_id),
+        scope: Set("issue".into()),
+        scope_entity_id: Set(Some(issue_id.to_owned())),
+        library_id: Set(None),
+        triggered_by: Set(None),
+        trigger_kind: Set("manual".into()),
+        providers: Set(vec!["comicvine".into()]),
+        status: Set("completed".into()),
+        started_at: Set(now),
+        finished_at: Set(Some(now)),
+        items_total: Set(1),
+        items_matched_high: Set(1),
+        items_matched_medium: Set(0),
+        items_matched_low: Set(0),
+        items_no_match: Set(0),
+        items_applied: Set(0),
+        items_skipped: Set(0),
+        items_failed: Set(0),
+        error_summary: Set(None),
+        resume_after: Set(None),
+        batch_id: Set(None),
+        query: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+    metadata_run_candidate::ActiveModel {
+        run_id: Set(run_id),
+        ordinal: Set(0),
+        source: Set("comicvine".into()),
+        external_id: Set(cv_id.into()),
+        bucket: Set("high".into()),
+        score: Set(95.0),
+        score_breakdown: Set(json!({})),
+        candidate: Set(json!({"kind": "issue"})),
+        applied_at: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+    run_id
+}
+
+async fn get_json(app: &TestApp, auth: &Authed, uri: &str) -> (StatusCode, serde_json::Value) {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(uri)
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={}; __Host-comic_csrf={}",
+                        auth.session, auth.csrf
+                    ),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
 // ────────────────────────────────────────────────────────────────
 // metadata-providers-1.0 M5 — diff endpoint + selected_fields-
 // respecting apply. The preview pane reads the diff to render

@@ -15654,7 +15654,7 @@
             "items": {
               "$ref": "#/components/schemas/CreatorRoleRail"
             },
-            "description": "Series rails — one per role the creator held. Order matches\n`roles`; each rail is sorted by series name. Empty when the\ncreator only has credits in libraries the caller can't see."
+            "description": "Series rails — one per role the creator held. Order matches\n`roles`; each rail is sorted by series name. Never empty: a\ncreator with no credit visible to the caller is a 404."
           },
           "roles": {
             "type": "array",

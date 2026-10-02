@@ -106,6 +106,45 @@ roles, `<ID source>` map, structured cast lists). That doubles the
 write but the archive rewrite is the cheap step; what matters is that
 the file stays in sync for whichever consumer reads it next.
 
+**MetronInfo credits (WP-8.1).** `<Credits>` follows the MetronInfo XSD
+(v1.0 / v1.1 `creditType`, [Metron-Project/metroninfo](https://github.com/Metron-Project/metroninfo/tree/master/schema)):
+one `<Credit>` per creator, the name as `<Creator>` text, every role it
+holds under `<Roles>`:
+
+```xml
+<Credit>
+  <Creator>Fiona Staples</Creator>
+  <Roles>
+    <Role>Cover</Role>
+    <Role>Penciller</Role>
+  </Roles>
+</Credit>
+```
+
+Role values come from the schema's `roleValues` enumeration
+(`parsers::metroninfo::METRON_ROLES`): Folio's `CoverArtist` is written
+as `Cover`, other names match case-/spacing-insensitively, and a role
+outside the enumeration (`journalist`, `unknown`) becomes the schema's
+`Other`. Before WP-8.1 Folio wrote a non-schema
+`<Credit role="…"><Creator><Name>…</Name></Creator></Credit>` per
+(role, creator) pair; the parser reads **both** shapes (and maps `Cover`
+back to `CoverArtist`), so archives Folio already rewrote still ingest
+unchanged, and the next rewrite upgrades them. `sidecar_parity.rs`
+asserts the credit grammar structurally (no Rust XSD validator is a
+dependency); the golden's `<Credits>` block also validates against both
+XSD versions with `xmllint` (the 1.1 `xs:assert`s stripped). The rest of
+Folio's MetronInfo document still uses its pre-schema element names
+(`<Title>`, `<Year>/<Month>/<Day>`, flat `<Series>` / `<Publisher>`,
+`<ID>` without `<IDS>`, `<StoryArcs>`) — tracked separately.
+
+**`<Page DoublePage>` (WP-8.1).** `DoublePage="false"` is omitted (the
+ComicInfo default): ComicTagger 1.5.5's page editor ticked "double page"
+on the attribute's mere presence. The one exception is a landscape page
+(declared `ImageWidth / ImageHeight` ≥ `SPREAD_ASPECT_RATIO`, 1.2): there
+an absent attribute would make the next scan infer a spread, so a
+declared `false` is written to survive the round-trip. `true` is always
+written.
+
 ## The rewrite job
 
 `RewriteIssueSidecarsJob` (apalis worker, [`jobs/rewrite_sidecars.rs`](../../crates/server/src/jobs/rewrite_sidecars.rs))
@@ -359,14 +398,15 @@ every re-bless).
 | Element | ComicTagger 1.5.5 | Folio | Why |
 | --- | --- | --- | --- |
 | `<ComicVineID>` | absent (id only inside `<Web>`) | `123456` | Folio extracts the `4000-N` issue id from a ComicVine `<Web>` URL and writes the de-facto `<ComicVineID>` extension element (Metron-Tagger / Mylar3 spelling). ComicTagger ignores it on read. |
-| `<Page DoublePage>` | only on pages marked double, as `"True"` | on every page, `"true"` / `"false"` (declared, or inferred from the probed pixel aspect) | xs:boolean form; an explicit `false` equals the ComicInfo default and ComicTagger reads it as `False`. Cosmetic quirk: ComicTagger **1.5.5's GUI** page editor ticks "double page" on attribute *presence*, so it shows every page ticked; 1.6.x checks the value. Not fixed because the scanner can't tell an inferred `false` from a declared one (the `double_page_inferred` flag marks only inferred `true`) — backlog. |
+| `<Page DoublePage>` | only on pages marked double, as `"True"` | only on pages marked double, as `"true"` (plus a declared `"false"` on a landscape page, so a rescan doesn't infer a spread) | xs:boolean form. WP-8.1 stopped writing `DoublePage="false"` on ordinary pages: ComicTagger **1.5.5's GUI** page editor ticked "double page" on attribute *presence* (1.6.x checks the value). The test compares `DoublePage` as a boolean with absent = `false`, so it isn't an element difference. |
 | Element order, XML declaration quoting, indentation | ComicTagger's tree order | Anansi schema order | Not semantic; the test compares a name → value map. |
 
 What this does **not** cover: the provider-apply path (it replaces
 `<Notes>` with the Folio audit line by design, and its values come from
-the provider, not the file), a ComicTagger 1.6.x fixture, and
-MetronInfo-schema conformance of Folio's `<Credits>` shape (ComicTagger
-1.5.5 doesn't read MetronInfo, so it is out of this parity check).
+the provider, not the file) and a ComicTagger 1.6.x fixture. ComicTagger
+1.5.5 doesn't read MetronInfo; the test checks Folio's MetronInfo
+against the ComicInfo values and asserts its `<Credits>` follow the
+MetronInfo schema shape (WP-8.1, see above).
 
 ## Migration recipe
 

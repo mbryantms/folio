@@ -35,29 +35,53 @@
     <Genre>Comedy</Genre>
   </Genres>
   <Credits>
-    <Credit role="Colorist">
-      <Creator><Name>Cora Colorist</Name></Creator>
+    <Credit>
+      <Creator>Cora Colorist</Creator>
+      <Roles>
+        <Role>Colorist</Role>
+      </Roles>
     </Credit>
-    <Credit role="CoverArtist">
-      <Creator><Name>Cass Cover</Name></Creator>
+    <Credit>
+      <Creator>Cass Cover</Creator>
+      <Roles>
+        <Role>Cover</Role>
+      </Roles>
     </Credit>
-    <Credit role="Editor">
-      <Creator><Name>Eddie Editor</Name></Creator>
+    <Credit>
+      <Creator>Eddie Editor</Creator>
+      <Roles>
+        <Role>Editor</Role>
+      </Roles>
     </Credit>
-    <Credit role="Inker">
-      <Creator><Name>Ian Inker</Name></Creator>
+    <Credit>
+      <Creator>Ian Inker</Creator>
+      <Roles>
+        <Role>Inker</Role>
+      </Roles>
     </Credit>
-    <Credit role="Letterer">
-      <Creator><Name>Lee Letterer</Name></Creator>
+    <Credit>
+      <Creator>Lee Letterer</Creator>
+      <Roles>
+        <Role>Letterer</Role>
+      </Roles>
     </Credit>
-    <Credit role="Penciller">
-      <Creator><Name>Pat Penciller</Name></Creator>
+    <Credit>
+      <Creator>Pat Penciller</Creator>
+      <Roles>
+        <Role>Penciller</Role>
+      </Roles>
     </Credit>
-    <Credit role="Writer">
-      <Creator><Name>Wanda Writer</Name></Creator>
+    <Credit>
+      <Creator>Wanda Writer</Creator>
+      <Roles>
+        <Role>Writer</Role>
+      </Roles>
     </Credit>
-    <Credit role="Writer">
-      <Creator><Name>Second Scribe</Name></Creator>
+    <Credit>
+      <Creator>Second Scribe</Creator>
+      <Roles>
+        <Role>Writer</Role>
+      </Roles>
     </Credit>
   </Credits>
 </MetronInfo>

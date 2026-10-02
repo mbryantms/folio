@@ -27,7 +27,7 @@ re-verified against the code during WP-6.3.
 | M-4 OIDC state cookie path narrower than other cookies | Medium | **Fixed (earlier)** — state cookie is `Path=/` | `crates/server/src/auth/oidc.rs` |
 | M-5 no per-user CBL import quota | Medium | **Fixed (WP-6.3)** — 20 import-class ops (create upload/URL/catalog, manual refresh/check) per user per hour (Redis, `429` + `Retry-After`), plus a standing cap of 50 server-fetched (`url`/`catalog`) lists per user (`422 cbl.remote_list_limit`); admins exempt (`cbl::quota`) | `tests/cbl_lists.rs::import_quota_*`, `remote_list_cap_*` |
 | L-1 no pepper rotation path | Low | **Fixed (WP-6.3)** — dual-pepper verify-and-rehash via `secrets/pepper.previous`; runbook in [`docs/install/secrets-backup.md`](../install/secrets-backup.md#rotating-the-pepper) | `tests/pepper_rotation.rs`, `auth::password::tests::rotating_verify_*`, `secrets::tests::moving_pepper_aside_*` |
-| L-2 email-token verifier accepts expiry up to 30 days out | Low | **Open** — not in WP-6.3 scope. Tokens are single-use and HMAC-signed; the bound is effectively a max-TTL check, not a clock-skew window. | — |
+| L-2 email-token verifier accepts expiry up to 30 days out | Low | **Fixed (WP-8.1)** — the verifier caps `expires_at` at `now + TokenPurpose::ttl() + 300 s` skew, using the issuer's own TTLs (verify-email 24 h, password reset 1 h; `auth::local` issues with the same constants) | `auth::email_token::tests::{expiry_beyond_purpose_ttl_rejected, full_ttl_tokens_verify_for_each_purpose}` |
 | L-3 CBL multipart upload accepts any `Content-Type` | Low | **Fixed (earlier)** — `is_allowed_cbl_content_type` (`415` before the body is read) | `tests/cbl_lists.rs::upload_rejects_obvious_non_xml_content_type` |
 | L-4 `LIMIT` via `format!` interpolation | Low | **Fixed (WP-6.3)** — every raw-SQL `LIMIT`/`OFFSET` now a bound parameter (`people`, `creators`, `filter_options`, `entity_pages`, `reading_sessions`, `admin_activity`) | `tests/sql_limit_binding.rs` (source scan) |
 
@@ -203,11 +203,16 @@ suspected leak invalidates every stored password. Document the
 runbook (force a password reset cycle) or add a `pepper_version`
 column + opportunistic rehash on next login.
 
-### L-2. Email-token verifier accepts up to 30 days in the future
+### L-2. Email-token verifier accepts up to 30 days in the future — fixed (WP-8.1)
 
-[crates/server/src/email/token.rs](../../crates/server/src/email/token.rs)
+[crates/server/src/auth/email_token.rs](../../crates/server/src/auth/email_token.rs)
 — clock-skew window is much larger than needed. No exploit because
 tokens are single-use, but tighten to ±300s for hygiene.
+
+**Fixed (WP-8.1):** `verify_claims` rejects a token whose `expires_at`
+lies beyond `now + purpose.ttl() + MAX_CLOCK_SKEW` (300 s), where
+`TokenPurpose::ttl()` is the lifetime the issuer uses (verify-email
+24 h, password reset 1 h — `auth::local` now reads the same constants).
 
 ### L-3. CBL multipart upload accepts any `Content-Type`
 

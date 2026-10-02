@@ -296,11 +296,11 @@ pub struct VerifyEmailQuery {
     pub token: String,
 }
 
-/// Token TTLs match the spec / `docs/architecture/rate-limits.md`:
-/// - verify-email: 24h (less time-sensitive; users may not check email same-day)
-/// - reset-password: 1h (sensitive credential operation; short window)
-const VERIFY_EMAIL_TTL: Duration = Duration::from_secs(24 * 60 * 60);
-const PASSWORD_RESET_TTL: Duration = Duration::from_secs(60 * 60);
+/// Token TTLs live with the token format (`email_token::TokenPurpose::ttl`)
+/// so the verifier can cap a token's expiry at what the issuer sets
+/// (L-2): verify-email 24 h, reset-password 1 h.
+const VERIFY_EMAIL_TTL: Duration = TokenPurpose::EmailVerification.ttl();
+const PASSWORD_RESET_TTL: Duration = TokenPurpose::PasswordReset.ttl();
 
 // ────────────── Handlers ──────────────
 

@@ -6661,8 +6661,8 @@ export interface components {
             name: string;
             /**
              * @description Series rails — one per role the creator held. Order matches
-             *     `roles`; each rail is sorted by series name. Empty when the
-             *     creator only has credits in libraries the caller can't see.
+             *     `roles`; each rail is sorted by series name. Never empty: a
+             *     creator with no credit visible to the caller is a 404.
              */
             rails: components["schemas"]["CreatorRoleRail"][];
             /**

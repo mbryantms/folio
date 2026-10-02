@@ -87,7 +87,7 @@ pub const THUMBNAIL_VERSION: i32 = 5;
 /// US-comic page is ≈ 0.65, a spread ≈ 1.30; 1.2 sits safely between
 /// them (validated against the Geiger 004 fixture). Change all three
 /// together.
-pub const SPREAD_ASPECT_RATIO: f32 = 1.2;
+pub const SPREAD_ASPECT_RATIO: f32 = parsers::comicinfo::SPREAD_ASPECT_RATIO;
 
 /// Which half of a wraparound cover holds the front cover.
 ///

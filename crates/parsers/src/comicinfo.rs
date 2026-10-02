@@ -107,6 +107,28 @@ pub struct PageInfo {
     pub double_page_inferred: Option<bool>,
 }
 
+/// Width / height ratio at or above which a page is treated as a
+/// two-page spread when its `DoublePage` is undeclared. The scanner's
+/// aspect inference, the thumbnail strip and the reader all key off this
+/// one value (`server::library::thumbnails::SPREAD_ASPECT_RATIO`
+/// re-exports it).
+pub const SPREAD_ASPECT_RATIO: f32 = 1.2;
+
+/// Whether a page's `DoublePage="false"` must be written explicitly.
+///
+/// `false` is the ComicInfo default, and ComicTagger 1.5.5's page editor
+/// ticks "double page" on the attribute's mere *presence* — so Folio
+/// omits it (WP-8.1). The one exception is a landscape page (declared
+/// dims at or past [`SPREAD_ASPECT_RATIO`]): there an absent attribute
+/// would make the next scan infer a spread, so a declared `false` is
+/// kept to survive the round-trip.
+fn false_needs_declaring(p: &PageInfo) -> bool {
+    match (p.image_width, p.image_height) {
+        (Some(w), Some(h)) if h > 0 => w as f32 / h as f32 >= SPREAD_ASPECT_RATIO,
+        _ => false,
+    }
+}
+
 /// Pick the cover-page index from a parsed `<Pages>` block.
 ///
 /// Returns the `Image` attribute of the first `<Page Type="FrontCover"/>`
@@ -406,7 +428,9 @@ pub fn serialize(info: &ComicInfo) -> String {
             if let Some(ref t) = p.kind {
                 push_attr(&mut out, "Type", t);
             }
-            if let Some(dp) = p.double_page {
+            if let Some(dp) = p.double_page
+                && (dp || false_needs_declaring(p))
+            {
                 push_attr(&mut out, "DoublePage", if dp { "true" } else { "false" });
             }
             if let Some(sz) = p.image_size {
@@ -1090,6 +1114,52 @@ mod tests {
         // Exactly one tag for the ID. The alias spelling must NOT appear.
         assert!(xml.contains("<ComicVineID>99</ComicVineID>"));
         assert!(!xml.contains("<ComicvineID>"));
+    }
+
+    /// WP-8.1: `DoublePage="false"` is the ComicInfo default and
+    /// ComicTagger 1.5.5's page editor ticks the box on attribute
+    /// presence, so it's omitted — except on a landscape page, where an
+    /// absent attribute would let the next scan infer a spread.
+    #[test]
+    fn serialize_omits_double_page_false_unless_the_page_is_landscape() {
+        let page = |image, dp, w, h| PageInfo {
+            image,
+            kind: None,
+            double_page: dp,
+            image_size: None,
+            key: None,
+            bookmark: None,
+            image_width: w,
+            image_height: h,
+            double_page_inferred: None,
+        };
+        let info = ComicInfo {
+            pages: vec![
+                page(0, Some(false), Some(800), Some(1200)), // portrait false → omitted
+                page(1, Some(true), Some(1600), Some(1200)), // spread → kept
+                page(2, Some(false), Some(1600), Some(1200)), // declared-false landscape → kept
+                page(3, Some(false), None, None),            // no dims → omitted
+                page(4, None, Some(1600), Some(1200)),       // undeclared → omitted
+            ],
+            ..ComicInfo::default()
+        };
+        let xml = serialize(&info);
+        let line = |i: i32| {
+            xml.lines()
+                .find(|l| l.contains(&format!("<Page Image=\"{i}\"")))
+                .unwrap()
+                .to_owned()
+        };
+        assert!(!line(0).contains("DoublePage"), "{xml}");
+        assert!(line(1).contains("DoublePage=\"true\""), "{xml}");
+        assert!(line(2).contains("DoublePage=\"false\""), "{xml}");
+        assert!(!line(3).contains("DoublePage"), "{xml}");
+        assert!(!line(4).contains("DoublePage"), "{xml}");
+        // Round-trip: absent parses back as undeclared, the kept values
+        // as declared.
+        let back = parse(xml.as_bytes()).unwrap();
+        let dps: Vec<Option<bool>> = back.pages.iter().map(|p| p.double_page).collect();
+        assert_eq!(dps, vec![None, Some(true), Some(false), None, None]);
     }
 
     #[test]

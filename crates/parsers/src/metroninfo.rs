@@ -3,7 +3,9 @@
 //! Same defensive posture as `comicinfo`: XXE-safe (DOCTYPE rejected), 1 MiB cap.
 //!
 //! MetronInfo is structurally similar to ComicInfo but with richer creator
-//! credits (one element per creator with a role attribute) and proper IDs
+//! credits (`<Credit><Creator>Name</Creator><Roles><Role>…` — one element
+//! per creator listing every role it holds; the legacy Folio
+//! `<Credit role="…"><Creator><Name>` shape is still read) and proper IDs
 //! (`<ID source="metron">123</ID>`). For Phase 1b we extract a curated subset
 //! that overlaps with our `comic_info_raw` storage; everything else lands in
 //! `raw` for forward-compat.
@@ -113,7 +115,7 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
     let mut buf = Vec::with_capacity(2048);
     let mut path: Vec<String> = Vec::with_capacity(16);
     let mut text = String::new();
-    let mut current_creator_role: Option<String> = None;
+    let mut credit = CreditState::default();
     let mut current_id_source: Option<String> = None;
 
     loop {
@@ -122,13 +124,16 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
             Ok(Event::Start(e)) => {
                 let name = e.name().into_inner().to_string();
                 if name == "Credit" {
-                    current_creator_role = None;
+                    credit = CreditState::default();
+                    // Legacy Folio shape (pre-WP-8.1): `<Credit role="…">`.
                     for attr in e.attributes().with_checks(false).flatten() {
-                        if attr.key.as_ref() == "role" {
-                            current_creator_role = attr
-                                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                                .ok()
-                                .map(|c| c.into_owned());
+                        if attr.key.as_ref() == "role"
+                            && let Ok(v) = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                        {
+                            let v = v.trim();
+                            if !v.is_empty() {
+                                credit.roles.push(role_key_from_metron(v));
+                            }
                         }
                     }
                 } else if name == "ID" {
@@ -156,7 +161,7 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
                             &path,
                             &name,
                             &value,
-                            &mut current_creator_role,
+                            &mut credit,
                             &mut current_id_source,
                         );
                         // Only direct children of <MetronInfo> go into the
@@ -172,7 +177,7 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
                 }
                 path.pop();
                 if name == "Credit" {
-                    current_creator_role = None;
+                    std::mem::take(&mut credit).flush_into(&mut info.credits);
                 }
                 if name == "ID" {
                     current_id_source = None;
@@ -232,10 +237,11 @@ pub fn parse(bytes: &[u8]) -> Result<MetronInfo, ParseError> {
 ///     `Tags`, `Genres`) are emitted only when the corresponding `Vec`
 ///     is non-empty, in canonical container/leaf form
 ///     (`<StoryArcs><StoryArc>…</StoryArc></StoryArcs>`).
-///   - `<Credits>` is emitted from the `credits` BTreeMap: one `<Credit>`
-///     per (role, creator) pair, preserving multiplicity (Vec order).
-///     Roles are iterated in BTreeMap key order; creators within a role
-///     in Vec order.
+///   - `<Credits>` is emitted from the `credits` BTreeMap in the
+///     MetronInfo schema shape: one `<Credit>` per creator
+///     (`<Creator>name</Creator><Roles><Role>…</Role></Roles>`), creators
+///     in first-seen order over the role-sorted map, role values mapped
+///     onto the schema enumeration by [`metron_role_value`].
 ///   - Unknown scalar leafs in [`MetronInfo::raw`] are passed through
 ///     after the typed scalars but before the list elements. Entries
 ///     matching a typed field name are not re-emitted (the typed value
@@ -293,19 +299,45 @@ pub fn serialize(info: &MetronInfo) -> String {
     write_list(&mut out, "Tags", "Tag", &info.tags);
     write_list(&mut out, "Genres", "Genre", &info.genres);
 
-    // Credits — last block.
-    if !info.credits.is_empty() && info.credits.values().any(|v| !v.is_empty()) {
-        out.push_str("  <Credits>\n");
-        for (role, creators) in &info.credits {
-            for creator in creators {
-                out.push_str("    <Credit role=\"");
-                escape_xml_attr(&mut out, role);
-                out.push_str("\">\n");
-                out.push_str("      <Creator><Name>");
-                escape_xml_text(&mut out, creator);
-                out.push_str("</Name></Creator>\n");
-                out.push_str("    </Credit>\n");
+    // Credits — last block, in the MetronInfo schema shape (v1.0/v1.1
+    // `creditType`): one `<Credit>` per creator, its name as the
+    // `<Creator>` text, every role it holds under `<Roles>` (WP-8.1;
+    // before, Folio wrote a non-schema `<Credit role="…"><Creator><Name>`
+    // per (role, creator) pair — the parser still reads that). Creators
+    // in first-seen order over the role-sorted map; roles mapped onto the
+    // schema enumeration ([`metron_role_value`]) and deduped per creator.
+    let mut by_creator: Vec<(&str, Vec<&'static str>)> = Vec::new();
+    for (role, creators) in &info.credits {
+        let value = metron_role_value(role);
+        for creator in creators {
+            if creator.trim().is_empty() {
+                continue;
             }
+            match by_creator.iter_mut().find(|(c, _)| *c == creator.as_str()) {
+                Some((_, roles)) => {
+                    if !roles.contains(&value) {
+                        roles.push(value);
+                    }
+                }
+                None => by_creator.push((creator.as_str(), vec![value])),
+            }
+        }
+    }
+    if !by_creator.is_empty() {
+        out.push_str("  <Credits>\n");
+        for (creator, roles) in by_creator {
+            out.push_str("    <Credit>\n");
+            out.push_str("      <Creator>");
+            escape_xml_text(&mut out, creator);
+            out.push_str("</Creator>\n");
+            out.push_str("      <Roles>\n");
+            for role in roles {
+                out.push_str("        <Role>");
+                escape_xml_text(&mut out, role);
+                out.push_str("</Role>\n");
+            }
+            out.push_str("      </Roles>\n");
+            out.push_str("    </Credit>\n");
         }
         out.push_str("  </Credits>\n");
     }
@@ -363,6 +395,8 @@ fn is_typed_metron_info_leaf(name: &str) -> bool {
             | "Credit"
             | "Creator"
             | "Name"
+            | "Roles"
+            | "Role"
             | "ID"
     )
 }
@@ -434,12 +468,116 @@ fn escape_xml_attr(out: &mut String, s: &str) {
     }
 }
 
+/// One `<Credit>` being parsed: its creator name(s) and role(s), flushed
+/// into [`MetronInfo::credits`] at `</Credit>` (the schema puts
+/// `<Roles>` after `<Creator>`, the legacy shape the role up front).
+#[derive(Default)]
+struct CreditState {
+    creators: Vec<String>,
+    roles: Vec<String>,
+}
+
+impl CreditState {
+    fn flush_into(self, credits: &mut BTreeMap<String, Vec<String>>) {
+        for role in &self.roles {
+            for creator in &self.creators {
+                let names = credits.entry(role.clone()).or_default();
+                if !names.contains(creator) {
+                    names.push(creator.clone());
+                }
+            }
+        }
+    }
+}
+
+/// The MetronInfo `roleValues` enumeration (schema v1.0, unchanged in
+/// v1.1), in schema order.
+pub const METRON_ROLES: &[&str] = &[
+    "Writer",
+    "Script",
+    "Story",
+    "Plot",
+    "Interviewer",
+    "Artist",
+    "Penciller",
+    "Breakdowns",
+    "Illustrator",
+    "Layouts",
+    "Inker",
+    "Embellisher",
+    "Finishes",
+    "Ink Assists",
+    "Colorist",
+    "Color Separations",
+    "Color Assists",
+    "Color Flats",
+    "Digital Art Technician",
+    "Gray Tone",
+    "Letterer",
+    "Cover",
+    "Editor",
+    "Consulting Editor",
+    "Assistant Editor",
+    "Associate Editor",
+    "Group Editor",
+    "Senior Editor",
+    "Managing Editor",
+    "Collection Editor",
+    "Production",
+    "Designer",
+    "Logo Design",
+    "Translator",
+    "Supervising Editor",
+    "Executive Editor",
+    "Editor In Chief",
+    "President",
+    "Publisher",
+    "Chief Creative Officer",
+    "Executive Producer",
+    "Other",
+];
+
+/// Folio's internal credit key (the ComicInfo names the accessors read:
+/// `Writer`, `CoverArtist`, …) for a MetronInfo `<Role>` value. Only
+/// `Cover` differs; every other value is kept as written.
+fn role_key_from_metron(role: &str) -> String {
+    let role = role.trim();
+    if role.eq_ignore_ascii_case("cover") {
+        "CoverArtist".to_owned()
+    } else {
+        role.to_owned()
+    }
+}
+
+/// The MetronInfo `<Role>` value for one of Folio's credit keys: the
+/// schema enumeration entry it names (case / `_` / `-` / spacing
+/// insensitive; `CoverArtist` → `Cover`), else `Other` — the schema's
+/// catch-all, so the document stays valid for roles outside the
+/// enumeration (`journalist`, `unknown`).
+pub fn metron_role_value(key: &str) -> &'static str {
+    let norm = |s: &str| -> String {
+        s.chars()
+            .filter(|c| !matches!(c, ' ' | '_' | '-'))
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    let k = norm(key);
+    if k == "coverartist" || k == "covers" {
+        return "Cover";
+    }
+    METRON_ROLES
+        .iter()
+        .find(|r| norm(r) == k)
+        .copied()
+        .unwrap_or("Other")
+}
+
 fn assign(
     info: &mut MetronInfo,
     path: &[String],
     name: &str,
     val: &str,
-    current_role: &mut Option<String>,
+    credit: &mut CreditState,
     current_id_source: &mut Option<String>,
 ) {
     macro_rules! str_field {
@@ -471,14 +609,19 @@ fn assign(
         return;
     }
 
-    if name == "Name" && parent == Some("Creator") {
-        if let Some(role) = current_role.as_ref() {
-            info.credits
-                .entry(role.clone())
-                .or_default()
-                .push(val.to_string());
+    // Credits — both shapes. Schema (MetronInfo v1.0/v1.1):
+    // `<Credit><Creator>Name</Creator><Roles><Role>Writer</Role></Roles>`.
+    // Legacy Folio: `<Credit role="Writer"><Creator><Name>…</Name>`.
+    match (parent, name) {
+        (Some("Credit"), "Creator") | (Some("Creator"), "Name") => {
+            credit.creators.push(val.to_string());
+            return;
         }
-        return;
+        (Some("Roles"), "Role") => {
+            credit.roles.push(role_key_from_metron(val));
+            return;
+        }
+        _ => {}
     }
 
     if name == "ID" {
@@ -617,6 +760,101 @@ mod tests {
             reparsed.credits.get("Writer").map(Vec::as_slice),
             Some(["Brian K. Vaughan".to_string()].as_slice()),
         );
+    }
+
+    /// The schema's credit shape (MetronInfo v1.0/v1.1 `creditType`, as
+    /// in the upstream `schema/v1.0/Sample.xml`): name as `<Creator>`
+    /// text, roles under `<Roles>`, several roles per creator.
+    #[test]
+    fn parses_schema_credit_shape() {
+        let xml = r#"<?xml version="1.0"?>
+<MetronInfo>
+  <Credits>
+    <Credit>
+      <Creator id="32165">Geoff Johns</Creator>
+      <Roles>
+        <Role id="32165">Writer</Role>
+        <Role>Cover</Role>
+      </Roles>
+    </Credit>
+    <Credit>
+      <Creator>David Finch</Creator>
+      <Roles><Role>Cover</Role></Roles>
+    </Credit>
+    <Credit>
+      <Creator>Jane Doe</Creator>
+      <Roles><Role>Penciller</Role><Role>Ink Assists</Role></Roles>
+    </Credit>
+  </Credits>
+</MetronInfo>"#;
+        let info = parse(xml.as_bytes()).expect("parse");
+        assert_eq!(info.writer().as_deref(), Some("Geoff Johns"));
+        // `Cover` is the schema spelling of Folio's `CoverArtist`.
+        assert_eq!(
+            info.cover_artist().as_deref(),
+            Some("Geoff Johns, David Finch")
+        );
+        assert_eq!(info.penciller().as_deref(), Some("Jane Doe"));
+        assert_eq!(
+            info.credits.get("Ink Assists").map(Vec::as_slice),
+            Some(["Jane Doe".to_string()].as_slice())
+        );
+        assert!(info.raw.keys().all(|k| k != "Creator" && k != "Role"));
+    }
+
+    /// WP-8.1: the serializer emits the schema shape — one `<Credit>` per
+    /// creator, `<Creator>` text + `<Roles><Role>`, role values from the
+    /// schema enumeration — and no `role=` attribute / `<Name>` child.
+    #[test]
+    fn serialize_writes_schema_credit_shape() {
+        let mut info = MetronInfo::default();
+        info.credits
+            .insert("Writer".into(), vec!["Ann".into(), "Bob".into()]);
+        info.credits
+            .insert("CoverArtist".into(), vec!["Ann".into()]);
+        info.credits.insert("journalist".into(), vec!["Cy".into()]);
+        info.credits
+            .insert("ink assists".into(), vec!["Bob".into()]);
+        let xml = serialize(&info);
+        assert!(!xml.contains("role="), "{xml}");
+        assert!(!xml.contains("<Name>"), "{xml}");
+        // Ann: Cover (from CoverArtist, sorted first) + Writer, in one Credit.
+        assert!(
+            xml.contains(
+                "    <Credit>\n      <Creator>Ann</Creator>\n      <Roles>\n        \
+                 <Role>Cover</Role>\n        <Role>Writer</Role>\n      </Roles>\n    </Credit>\n"
+            ),
+            "{xml}"
+        );
+        assert!(xml.contains("<Role>Ink Assists</Role>"), "{xml}");
+        // Outside the enumeration → the schema's catch-all.
+        assert!(
+            xml.contains("<Creator>Cy</Creator>\n      <Roles>\n        <Role>Other</Role>"),
+            "{xml}"
+        );
+        assert_eq!(xml.matches("<Credit>").count(), 3, "{xml}");
+        let back = parse(xml.as_bytes()).unwrap();
+        assert_eq!(back.writer().as_deref(), Some("Ann, Bob"));
+        assert_eq!(back.cover_artist().as_deref(), Some("Ann"));
+    }
+
+    #[test]
+    fn metron_role_value_maps_onto_the_schema_enumeration() {
+        for (key, want) in [
+            ("Writer", "Writer"),
+            ("writer", "Writer"),
+            ("CoverArtist", "Cover"),
+            ("cover_artist", "Cover"),
+            ("Cover", "Cover"),
+            ("Penciller", "Penciller"),
+            ("ink assists", "Ink Assists"),
+            ("editor in chief", "Editor In Chief"),
+            ("Translator", "Translator"),
+            ("journalist", "Other"),
+            ("unknown", "Other"),
+        ] {
+            assert_eq!(metron_role_value(key), want, "{key}");
+        }
     }
 
     #[test]

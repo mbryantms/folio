@@ -300,6 +300,44 @@ After every successful write, `write_provenance_for_applied` emits
 one `field_provenance` row per applied field with
 `set_by=SetBy::Provider(source)` + the provider's external id.
 
+### Credit roles: one canonical form (WP-8.1)
+
+Three role vocabularies meet at the credit junctions:
+
+| Layer | Spelling | Example |
+| --- | --- | --- |
+| Provider mappers (`CreditCandidate.role`) | ComicInfo PascalCase via `provider::canonicalize_role`, else the raw role lowercased | `Writer`, `CoverArtist`, `journalist` |
+| MetronInfo XML `<Role>` | the schema's `roleValues` enumeration | `Writer`, `Cover`, `Ink Assists` |
+| **Storage** (`issue_credits.role`, `series_credits.role`), the per-role CSV rebuild, filters, saved views, `/creators`, the web UI | **lowercase snake_case** | `writer`, `cover_artist`, `ink_assists` |
+
+[`writers::set_issue_credits`](../../crates/server/src/metadata/writers.rs)
+is the single write surface for provider credits and folds every role
+through
+[`provider::canonical_credit_role`](../../crates/server/src/metadata/provider.rs):
+each known spelling (`Writer`, `Script`, `penciler`, `Artist`, `Cover`,
+`Cover Artist`, `CoverArtist`, `Editor In Chief`, `colourist`, …) maps to
+one of the eight keys (`writer`, `penciller`, `inker`, `colorist`,
+`letterer`, `cover_artist`, `editor`, `translator`); any other role is
+kept, lowercased and snake_cased. The function is idempotent. The
+scanner already writes the eight keys (`CreditRole::as_str`).
+`set_issue_credits` also stores the creator's **name** in the junction's
+`person` column (the scanner does the same; `/creators`, `/people`, the
+saved-view credit filters and the `series_credits` rollup key on it) and
+dedupes `(role, person)` pairs.
+
+Before WP-8.1 the apply wrote `Writer` rows with the person UUID in
+`person`: the lowercase CSV rebuild never matched them, so a
+non-writeback apply left `issues.writer` & co. empty (writer filters and
+search missed the issue), and the series rollup then minted a "ghost"
+`person` named with that UUID. Migration
+`m20270601_000001_canonical_credit_roles` canonicalizes existing rows in
+both junctions (same table in SQL — keep the two in sync), restores
+names, drops the rows that collide after normalization, rebuilds the
+eight CSV columns of the affected issues only, and deletes unreferenced
+ghost people. Its `down` is a documented no-op (the old spellings aren't
+recoverable). Tests: `metadata_apply.rs::apply_issue_canonicalizes_pascal_case_roles_and_fills_the_csv_cache`,
+`migration_canonical_credit_roles.rs`, `provider::tests::canonical_credit_role_folds_every_spelling_onto_the_storage_key`.
+
 ### Metron links: `associated`, `alt_names`, reprints (WP-7.8)
 
 Before WP-7.8 the Metron mapper read series `associated` entries as
