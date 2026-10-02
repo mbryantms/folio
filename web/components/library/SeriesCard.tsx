@@ -415,12 +415,16 @@ export function MetaNeedsBadge({
           activate();
         }
       }}
-      className={cn(
-        badgeClass,
-        "cursor-pointer transition hover:brightness-110 focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:outline-none",
-      )}
+      // The chip itself is ~19 px tall; the transparent wrapper gives the
+      // target the WCAG 2.2 minimum of 24 x 24 px (2.5.8, axe
+      // `target-size`, WP-8.5) without changing how the chip looks.
+      className="group/meta inline-flex min-h-6 min-w-6 cursor-pointer items-center justify-end rounded-md focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:outline-none"
     >
-      meta
+      <span
+        className={cn(badgeClass, "transition group-hover/meta:brightness-110")}
+      >
+        meta
+      </span>
     </span>
   );
 }

@@ -11,22 +11,35 @@ const ScrollArea = React.forwardRef<
     /** Classes for the scrolling viewport — e.g. a `max-h-*` cap, which
      *  must sit on the viewport (not the root) for content-sized areas. */
     viewportClassName?: string;
+    /** Extra props for the scrolling viewport (e.g. `tabIndex={0}` so a
+     *  region whose contents aren't focusable can still be scrolled from
+     *  the keyboard — axe `scrollable-region-focusable`). */
+    viewportProps?: Omit<
+      React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Viewport>,
+      "className" | "children"
+    >;
   }
->(({ className, viewportClassName, children, ...props }, ref) => (
-  <ScrollAreaPrimitive.Root
-    ref={ref}
-    className={cn("relative overflow-hidden", className)}
-    {...props}
-  >
-    <ScrollAreaPrimitive.Viewport
-      className={cn("h-full w-full rounded-[inherit]", viewportClassName)}
+>(
+  (
+    { className, viewportClassName, viewportProps, children, ...props },
+    ref,
+  ) => (
+    <ScrollAreaPrimitive.Root
+      ref={ref}
+      className={cn("relative overflow-hidden", className)}
+      {...props}
     >
-      {children}
-    </ScrollAreaPrimitive.Viewport>
-    <ScrollBar />
-    <ScrollAreaPrimitive.Corner />
-  </ScrollAreaPrimitive.Root>
-));
+      <ScrollAreaPrimitive.Viewport
+        {...viewportProps}
+        className={cn("h-full w-full rounded-[inherit]", viewportClassName)}
+      >
+        {children}
+      </ScrollAreaPrimitive.Viewport>
+      <ScrollBar />
+      <ScrollAreaPrimitive.Corner />
+    </ScrollAreaPrimitive.Root>
+  ),
+);
 ScrollArea.displayName = ScrollAreaPrimitive.Root.displayName;
 
 const ScrollBar = React.forwardRef<

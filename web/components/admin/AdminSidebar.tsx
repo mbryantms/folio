@@ -90,7 +90,7 @@ export function AdminSidebar({
           {sections.map((section) => (
             <div key={section.label} className="flex flex-col gap-1">
               {!collapsed && (
-                <p className="text-muted-foreground/70 px-3 text-[11px] font-medium tracking-widest uppercase">
+                <p className="text-muted-foreground px-3 text-[11px] font-medium tracking-widest uppercase">
                   {section.label}
                 </p>
               )}

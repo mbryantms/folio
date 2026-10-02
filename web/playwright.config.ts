@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+import { ADMIN_STATE } from "./tests/e2e/support/admin";
+
 /**
  * Playwright config for the web e2e suite.
  *
@@ -12,7 +14,18 @@ import { defineConfig, devices } from "@playwright/test";
  * One retry in CI (not two): the suite gates dependency auto-merge, and a
  * retry can launder an intermittent regression into a pass — but browser-
  * level flakes are real and the whole run takes seconds.
+ *
+ * Shared admin (WP-8.5): the `setup` project (`admin.setup.ts`) registers
+ * the first user — the admin — scans the fixture library once and saves the
+ * session to ADMIN_STATE. Specs that need the admin live in
+ * `chromium-admin`, which depends on `setup` and starts from that
+ * `storageState`; nothing else registers, so no two specs race for the
+ * first-user admin role and the admin specs are order-independent.
  */
+
+/** Specs that start signed in as the shared admin (see above). */
+const ADMIN_SPECS = /(reader-flow|relationship-review)\.spec\.ts/;
+
 export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 30_000,
@@ -35,12 +48,24 @@ export default defineConfig({
       },
   projects: [
     {
+      name: "setup",
+      testMatch: /admin\.setup\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "chromium-admin",
+      testMatch: ADMIN_SPECS,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: ADMIN_STATE },
+    },
+    {
       name: "mobile-chromium",
       testMatch: /pwa\.spec\.ts/,
       use: { ...devices["Pixel 7"] },
     },
     {
       name: "chromium",
+      testIgnore: ADMIN_SPECS,
       use: { ...devices["Desktop Chrome"] },
     },
   ],

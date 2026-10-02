@@ -5,6 +5,7 @@ dist/
 coverage/
 playwright-report/
 test-results/
+playwright/.auth/
 pnpm-lock.yaml
 lib/api/openapi.json
 lib/api/types.ts

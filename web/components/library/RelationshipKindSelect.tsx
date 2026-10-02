@@ -135,7 +135,20 @@ export function RelationshipKindSelect({
           <CommandInput placeholder="Search relationships…" />
           <ScrollArea
             type="auto"
-            viewportClassName={KIND_LIST_MAX_H}
+            viewportClassName={cn(
+              KIND_LIST_MAX_H,
+              "focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset",
+            )}
+            // The options are reached with the arrow keys from the search
+            // input (cmdk's active-descendant), so nothing inside the
+            // scroller takes focus; make the scroller itself a tab stop so
+            // it can also be scrolled from the keyboard (axe
+            // `scrollable-region-focusable`, WP-8.5).
+            viewportProps={{
+              tabIndex: 0,
+              role: "group",
+              "aria-label": "Relationship kinds",
+            }}
             data-testid="relationship-kind-scroll"
           >
             {/* `pr-2.5` reserves the ScrollArea's overlay scrollbar gutter

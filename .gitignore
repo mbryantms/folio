@@ -105,3 +105,5 @@ crates/server/openapi.json.tmp
 
 # Generated Playwright fixture library (web/tests/e2e/fixtures/make-library.mjs)
 web/tests/e2e/.library/
+# Shared Playwright admin session (web/tests/e2e/admin.setup.ts)
+web/playwright/.auth/

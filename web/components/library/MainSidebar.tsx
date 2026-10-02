@@ -114,7 +114,7 @@ export function MainSidebar({
                       onClick={() =>
                         sectionCollapse.toggle(section.headerRefId!)
                       }
-                      className="hover:bg-secondary/30 text-muted-foreground/70 hover:text-foreground/80 group flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[11px] font-medium tracking-widest uppercase transition-colors"
+                      className="hover:bg-secondary/30 text-muted-foreground hover:text-foreground/80 group flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[11px] font-medium tracking-widest uppercase transition-colors"
                     >
                       {sectionClosed ? (
                         <ChevronRight className="h-3 w-3 shrink-0 transition-transform" />
@@ -124,7 +124,7 @@ export function MainSidebar({
                       <span className="truncate">{section.label}</span>
                     </button>
                   ) : (
-                    <p className="text-muted-foreground/70 px-3 text-[11px] font-medium tracking-widest uppercase">
+                    <p className="text-muted-foreground px-3 text-[11px] font-medium tracking-widest uppercase">
                       {section.label}
                     </p>
                   ))}

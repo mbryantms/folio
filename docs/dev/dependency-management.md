@@ -103,8 +103,10 @@ The web side, as of 2026-09-13:
   through the Rust origin): register the first user → create a library
   over a generated three-page CBZ → scan → series page → reader → page
   turn → progress persisted (API) → reload resumes on page 2 → series CTA
-  reads "Continue reading". Plus the CSP-nonce and a11y specs on the same
-  stack. This is the only test that exercises hydration, event handlers,
+  reads "Continue reading". The registration, library and scan run once in
+  the Playwright `setup` project (`admin.setup.ts`), whose saved admin
+  session the reader-flow and relationship-review specs share (WP-8.5).
+  Plus the CSP-nonce and a11y specs on the same stack. This is the only test that exercises hydration, event handlers,
   the proxy hop, cookies + CSRF and the scan pipeline together, and it is
   what lets React / Next / Radix / TanStack minors auto-merge.
 * **jsdom render tests** (`web/tests/dom/*`, opt-in per file with

@@ -1240,11 +1240,22 @@ groups contiguous runs and a later page never reopens an earlier group.
   their group, provider link, local link, admin remove, empty state) and
   `web/tests/dom/relationship-form.test.tsx` ("Not in library" target,
   client checks, POST body, 422 binding).
-- E2E: `web/tests/e2e/relationship-review.spec.ts` — opt-in (needs
-  `E2E_ADMIN_EMAIL` / `E2E_ADMIN_PASSWORD` for an existing admin and at
-  least one suggestion; it queues a run and skips if none appear). It never
-  registers, so it can't race `reader-flow.spec.ts` for the first-user admin
-  role; in docker-smoke (no creds, one-series fixture) it skips.
+- E2E: `web/tests/e2e/relationship-review.spec.ts` runs in the
+  docker-smoke job (WP-8.5). It starts from the shared admin session that
+  the Playwright `setup` project (`web/tests/e2e/admin.setup.ts`) creates —
+  first-user registration, library over the generated fixture, scan — so it
+  never registers and can't race `reader-flow.spec.ts` for the admin role.
+  The fixture (`web/tests/e2e/fixtures/make-library.mjs`) writes
+  "Relay (2011)" and "Relay (2016)" (ComicInfo Series `Relay`, Volume 1 /
+  2, Year 2011 / 2016), so the post-scan run proposes
+  "Relay (2016) continues Relay (2011)" (name continuation, 0.9). The spec
+  polls for that pending row (bounded, no sleeps), accepts it from
+  `/admin/relationships`, checks the pair and the reading-order chain over
+  the API, and runs axe (WCAG 2.2 AA, `support/axe.ts`) on: the Related tab
+  with the pending chip; the pending list; the "Edit kind" popover with the
+  kind picker open; the Related tab with the link, reading-order strip and
+  Similar rail; and the "Add relationship" dialog with the kind picker
+  expanded.
 - WP-8.2 (relationship tuning): `crates/server/tests/relationship_suggestions.rs`
   — `edition_kinds_pair_series_across_libraries` (a singles and a trades
   library: one cross-library pair per edition source, no story /

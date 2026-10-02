@@ -1,131 +1,198 @@
 /**
- * Relationship-suggestion review smoke (WP-7.3): open the admin review
- * queue, accept the top pending suggestion with one click, and check the
- * relationship pair landed (API + the series page's Related block).
+ * Relationship review + the M7b surfaces' accessibility (WP-7.3, WP-8.5).
  *
- * **Needs an existing admin and at least one suggestion**, so it is opt-in:
+ * Runs in the docker-smoke job, in the `chromium-admin` project: it starts
+ * signed in as the admin `admin.setup.ts` registered, with the fixture
+ * library scanned. The fixture (`fixtures/make-library.mjs`) holds two
+ * volumes of one title — "Relay (2011)" (Volume 1) and "Relay (2016)"
+ * (Volume 2) — so the scan's post-scan relationship-suggestion run has a
+ * name-continuation proposal: "Relay (2016) continues Relay (2011)".
  *
- *   E2E_ADMIN_EMAIL=… E2E_ADMIN_PASSWORD=… \
- *   PLAYWRIGHT_BASE_URL=http://localhost:8080 pnpm exec playwright test relationship-review
+ *   wait for the pending suggestion (async job; bounded poll) → Related tab
+ *   with the suggestion chip (axe) → /admin/relationships pending list
+ *   (axe) → "Edit kind" popover with the kind picker open (axe) → Accept →
+ *   the pair exists (API) → Related tab with the reading-order strip and
+ *   the Similar rail (axe) → "Add relationship" dialog with the kind picker
+ *   expanded (axe).
  *
- * It signs in with those credentials (never registers: in the docker-smoke
- * job `reader-flow.spec.ts` must be the first — admin — registration, and a
- * second registering spec would race it for the role). With no pending
- * suggestion it queues an engine run and polls briefly; if there is still
- * none it skips. The docker-smoke fixture library is one series, so the
- * engine has nothing to suggest there and the spec skips cleanly in CI.
- * It really accepts a suggestion — point it at a disposable instance.
+ * Axe uses the shared WCAG 2.2 AA assertion (`support/axe.ts`); any
+ * violation fails, whatever its impact.
  */
 import { test, expect, type APIRequestContext } from "@playwright/test";
 
-const EMAIL = process.env.E2E_ADMIN_EMAIL;
-const PASSWORD = process.env.E2E_ADMIN_PASSWORD;
+import { json, registrationOpen } from "./support/admin";
+import { expectNoAxeViolations } from "./support/axe";
 
 type Series = { id: string; slug: string; name: string };
 type Suggestion = {
   id: string;
   from_series: Series;
-  to_series: Series;
+  to_series?: Series | null;
   kind: string;
   kind_label: string;
   status: string;
 };
 type ListView = { items: Suggestion[] };
 
-async function firstPending(
+/** The fixture's continuation suggestion with `status`, if it exists. */
+async function relaySuggestion(
   request: APIRequestContext,
+  status: "pending" | "accepted",
 ): Promise<Suggestion | undefined> {
-  const res = await request.get(
-    "/api/admin/relationship-suggestions?status=pending&limit=1",
+  const list = await json<ListView>(
+    request.get(
+      `/api/admin/relationship-suggestions?status=${status}&limit=200`,
+    ),
   );
-  expect(res.ok(), `list → ${res.status()}`).toBeTruthy();
-  return ((await res.json()) as ListView).items[0];
+  return list.items.find(
+    (s) =>
+      s.kind === "continues" &&
+      s.from_series.name === "Relay" &&
+      s.to_series?.name === "Relay",
+  );
 }
 
 test.describe("Relationship review", () => {
-  test.skip(
-    !EMAIL || !PASSWORD,
-    "set E2E_ADMIN_EMAIL / E2E_ADMIN_PASSWORD (an existing admin) to run",
-  );
-
-  test("accept a suggestion from the review queue", async ({
-    page,
-    context,
-  }) => {
-    test.setTimeout(90_000);
-
-    // 1. Sign in through the JSON login (CSRF-exempt; sets the session +
-    //    CSRF cookies on the shared browser context).
-    const login = await page.request.post("/auth/local/login", {
-      data: { email: EMAIL, password: PASSWORD },
-    });
-    expect(login.status(), await login.text()).toBe(200);
-    const me = (await (await page.request.get("/api/auth/me")).json()) as {
-      role: string;
-    };
-    test.skip(me.role !== "admin", "E2E_ADMIN_EMAIL is not an admin");
-    const csrf = (await context.cookies()).find(
-      (c) => c.name === "__Host-comic_csrf",
-    )?.value;
-    expect(csrf, "CSRF cookie").toBeTruthy();
-
-    // 2. Make sure there is something to review.
-    let target = await firstPending(page.request);
-    if (!target) {
-      const run = await page.request.post(
-        "/api/admin/relationship-suggestions/run",
-        { headers: { "X-CSRF-Token": csrf! } },
-      );
-      expect(run.status()).toBe(202);
-      await expect
-        .poll(async () => (target = await firstPending(page.request)), {
-          timeout: 20_000,
-        })
-        .toBeTruthy()
-        .catch(() => undefined);
-    }
-    test.skip(!target, "no pending relationship suggestions to review");
-    const s = target!;
-
-    // 3. The review queue lists it first (highest confidence); accept it.
-    await page.goto("/admin/relationships");
-    await expect(
-      page.getByRole("heading", { name: "Relationships" }),
-    ).toBeVisible();
-    const row = page.locator(`[data-suggestion-id="${s.id}"]`);
-    await expect(row).toBeVisible();
-    await expect(row.getByText(s.kind_label).first()).toBeVisible();
-    const accepted = page.waitForResponse(
-      (r) =>
-        r
-          .url()
-          .endsWith(`/api/admin/relationship-suggestions/${s.id}/accept`) &&
-        r.request().method() === "POST",
+  test.beforeEach(async ({ request }) => {
+    test.skip(
+      !(await registrationOpen(request)),
+      "needs the Rust origin with COMIC_LOCAL_REGISTRATION_OPEN=true (compose.test.yml)",
     );
-    await row.getByRole("button", { name: "Accept", exact: true }).click();
-    const res = await accepted;
-    expect(res.status(), await res.text()).toBe(200);
-    // It leaves the pending queue.
-    await expect(row).toHaveCount(0);
+  });
 
-    // 4. The pair exists (created via create_pair, source = suggested)…
-    const rels = (await (
-      await page.request.get(`/api/series/${s.from_series.slug}/relationships`)
-    ).json()) as {
-      relationships: { series: Series; source: string; kind: string }[];
-    };
-    expect(
-      rels.relationships.some(
-        (r) => r.series.id === s.to_series.id && r.source === "suggested",
-      ),
-    ).toBeTruthy();
+  test("accept a suggestion; the M7b surfaces are axe-clean", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(150_000);
 
-    // 5. …and shows on the series page's Related block.
-    await page.goto(`/series/${s.from_series.slug}`);
-    const related = page.locator(
+    // 1. The post-scan suggestion job is async: poll for its proposal. On a
+    //    CI retry after the accept already went through, pick up from the
+    //    accepted row instead (the queue part ran on the first attempt).
+    let pending: Suggestion | undefined;
+    let accepted: Suggestion | undefined;
+    await expect
+      .poll(
+        async () => {
+          pending = await relaySuggestion(page.request, "pending");
+          if (!pending && testInfo.retry > 0) {
+            accepted = await relaySuggestion(page.request, "accepted");
+          }
+          return Boolean(pending ?? accepted);
+        },
+        {
+          timeout: 90_000,
+          message: "post-scan run proposes Relay (2016) continues Relay (2011)",
+        },
+      )
+      .toBe(true);
+    const s = (pending ?? accepted)!;
+    const from = s.from_series;
+    const to = s.to_series!;
+    expect(from.id).not.toBe(to.id);
+
+    // Visible only: right after a navigation the DOM can briefly hold a
+    // second, hidden copy of the panel while the page streams in.
+    const relatedTab = page
+      .getByTestId("series-related-tab")
+      .filter({ visible: true });
+    const related = relatedTab.locator(
       "section[aria-labelledby='series-related-heading']",
     );
-    await expect(related).toBeVisible();
-    await expect(related.getByText(s.to_series.name).first()).toBeVisible();
+
+    if (pending) {
+      // 2. Related tab before review: the admin suggestion chip.
+      await page.goto(`/series/${from.slug}?tab=related`);
+      await expect(relatedTab).toBeVisible();
+      await expect(
+        related.getByRole("heading", { name: "Related series" }),
+      ).toBeVisible();
+      await expect(related.getByText(/^Continues$/).first()).toBeVisible();
+      await expectNoAxeViolations(page, "series Related tab, pending chip");
+
+      // 3. The review queue lists it; axe on the pending list.
+      await page.goto("/admin/relationships");
+      await expect(
+        page.getByRole("heading", { name: "Relationships" }),
+      ).toBeVisible();
+      const row = page.locator(`[data-suggestion-id="${s.id}"]`);
+      await expect(row).toBeVisible();
+      await expect(row.getByText(s.kind_label).first()).toBeVisible();
+      await expectNoAxeViolations(page, "/admin/relationships pending list");
+
+      // 4. "Edit kind" (accept as another kind): popover + picker open.
+      await row.getByRole("button", { name: "Edit kind" }).click();
+      const kindPicker = page.getByRole("combobox", {
+        name: "Relationship kind",
+      });
+      await expect(kindPicker).toBeVisible();
+      await kindPicker.click();
+      await expect(page.getByRole("listbox")).toBeVisible();
+      await expectNoAxeViolations(page, "/admin/relationships edit kind");
+      // Close the picker, then the popover, without accepting.
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("listbox")).toBeHidden();
+      await page.keyboard.press("Escape");
+      await expect(kindPicker).toBeHidden();
+
+      // 5. Accept as suggested.
+      const acceptRes = page.waitForResponse(
+        (r) =>
+          r
+            .url()
+            .endsWith(`/api/admin/relationship-suggestions/${s.id}/accept`) &&
+          r.request().method() === "POST",
+      );
+      await row.getByRole("button", { name: "Accept", exact: true }).click();
+      const res = await acceptRes;
+      expect(res.status(), await res.text()).toBe(200);
+      // It leaves the pending queue.
+      await expect(row).toHaveCount(0);
+    }
+
+    // 6. The pair exists (created via create_pair, source = suggested).
+    const rels = await json<{
+      relationships: { series: Series; source: string; kind: string }[];
+      chain: { series: Series }[];
+    }>(page.request.get(`/api/series/${from.slug}/relationships`));
+    expect(
+      rels.relationships.some(
+        (r) =>
+          r.series.id === to.id &&
+          r.kind === "continues" &&
+          r.source === "suggested",
+      ),
+    ).toBeTruthy();
+    expect(rels.chain.map((c) => c.series.id)).toEqual([to.id, from.id]);
+
+    // 7. The Related tab with relationships: grouped link, reading-order
+    //    strip and the Similar rail (an accepted relationship alone lists
+    //    the other volume as similar).
+    await page.goto(`/series/${from.slug}?tab=related`);
+    await expect(relatedTab).toBeVisible();
+    await expect(
+      related.getByRole("list", { name: "Reading order" }),
+    ).toBeVisible();
+    await expect(
+      related.locator("[data-testid='related-card']").first(),
+    ).toBeVisible();
+    const similar = relatedTab.locator(
+      "section[aria-labelledby='similar-series-heading']",
+    );
+    await expect(similar).toBeVisible();
+    await expect(similar.getByText("Relay").first()).toBeVisible();
+    await expectNoAxeViolations(page, "series Related tab with relationships");
+
+    // 8. "Add relationship" dialog with the kind picker expanded.
+    await related.getByRole("button", { name: "Add relationship" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    const picker = dialog.getByRole("combobox", { name: "Relationship" });
+    await picker.click();
+    await expect(picker).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("listbox")).toBeVisible();
+    await expectNoAxeViolations(
+      page,
+      "add-relationship dialog, kind picker open",
+    );
   });
 });
