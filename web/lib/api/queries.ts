@@ -2351,6 +2351,7 @@ import type {
   IssueCoversResp,
   ProviderCoverageResp,
   ProviderRangesListResp,
+  SeriesRelationshipsResp,
   SyncStatusResp,
 } from "./types";
 
@@ -2642,6 +2643,21 @@ export function useProviderCoverageSeries(seriesSlug: string) {
     queryFn: () =>
       jsonFetch<ProviderCoverageResp>(
         `/series/${encodeURIComponent(seriesSlug)}/provider-coverage`,
+      ),
+    enabled: !!seriesSlug,
+    staleTime: 30_000,
+  });
+}
+
+/** WP-7.1: direct relationships + reading-order chain. Not paginated —
+ *  relationships are curated (admin-made or accepted suggestions), so the
+ *  set is bounded by domain like `/me/sessions`. */
+export function useSeriesRelationships(seriesSlug: string) {
+  return useQuery({
+    queryKey: queryKeys.seriesRelationships(seriesSlug),
+    queryFn: () =>
+      jsonFetch<SeriesRelationshipsResp>(
+        `/series/${encodeURIComponent(seriesSlug)}/relationships`,
       ),
     enabled: !!seriesSlug,
     staleTime: 30_000,

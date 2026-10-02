@@ -158,6 +158,7 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(api::metadata_search::routes())
         .merge(api::external_ids::routes())
         .merge(api::provider_ranges::routes())
+        .merge(api::series_relationships::routes())
         .merge(api::covers::routes());
 
     bare.nest("/api", with_json_layers(api, JSON_ROUTE_TIMEOUT))

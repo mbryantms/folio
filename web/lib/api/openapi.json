@@ -10340,6 +10340,130 @@
         }
       }
     },
+    "/api/series/{slug}/relationships": {
+      "get": {
+        "operationId": "series_relationships_list",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesRelationshipsResp"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "series not found or not visible"
+          }
+        }
+      },
+      "post": {
+        "operationId": "series_relationships_create",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSeriesRelationshipReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "edge already existed; returned unchanged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesRelationshipView"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "edge (and its inverse) created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesRelationshipView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series or target not found"
+          },
+          "409": {
+            "description": "contradicts an existing relationship"
+          },
+          "422": {
+            "description": "self-relationship / invalid body"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/relationships/{id}": {
+      "delete": {
+        "operationId": "series_relationships_delete",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "relationship row id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "edge and its inverse removed"
+          },
+          "400": {
+            "description": "malformed id"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series / relationship not found"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/restore": {
       "post": {
         "operationId": "reconcile_restore_series",
@@ -14325,6 +14449,23 @@
                 "type": "null"
               }
             ]
+          }
+        }
+      },
+      "CreateSeriesRelationshipReq": {
+        "type": "object",
+        "required": [
+          "target",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RelationshipKind",
+            "description": "Read as \"this series `kind` target\" (e.g. `sequel_of`)."
+          },
+          "target": {
+            "type": "string",
+            "description": "The other series — slug or UUID."
           }
         }
       },
@@ -22404,6 +22545,29 @@
           }
         }
       },
+      "RelationshipKind": {
+        "type": "string",
+        "description": "The kind of a directed relationship edge. Wire + DB form is snake_case\n(`sequel_of`, …); the DB CHECK in the migration mirrors this list.",
+        "enum": [
+          "sequel_of",
+          "prequel_of",
+          "spin_off_of",
+          "has_spin_off",
+          "crossover_with",
+          "collects",
+          "collected_in",
+          "same_universe",
+          "see_also"
+        ]
+      },
+      "RelationshipSource": {
+        "type": "string",
+        "description": "Where an edge came from.",
+        "enum": [
+          "manual",
+          "suggested"
+        ]
+      },
       "RemovedIssueView": {
         "type": "object",
         "required": [
@@ -23638,6 +23802,24 @@
           }
         }
       },
+      "SeriesChainEntry": {
+        "type": "object",
+        "description": "One step of the sequel/prequel reading-order chain.",
+        "required": [
+          "position",
+          "series"
+        ],
+        "properties": {
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Signed reading-order offset: negative = read before this series,\n`0` = this series, positive = read after. Entries sharing a\nposition are alternative branches."
+          },
+          "series": {
+            "$ref": "#/components/schemas/SeriesView"
+          }
+        }
+      },
       "SeriesListView": {
         "type": "object",
         "required": [
@@ -23727,6 +23909,76 @@
               "null"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "SeriesRelationshipView": {
+        "type": "object",
+        "description": "One direct relationship, from the requested series' point of view:\n\"this series `kind` `series`\".",
+        "required": [
+          "id",
+          "kind",
+          "kind_label",
+          "source",
+          "created_at",
+          "series"
+        ],
+        "properties": {
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Suggestion confidence (0–1); `null` for manual edges."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "Row id — pass to `DELETE /series/{slug}/relationships/{id}`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RelationshipKind"
+          },
+          "kind_label": {
+            "type": "string",
+            "description": "Display label for `kind` (\"Sequel of\", \"Collected in\", …)."
+          },
+          "series": {
+            "$ref": "#/components/schemas/SeriesView",
+            "description": "The other series, hydrated like a library-grid card (cover, issue\ncount, …)."
+          },
+          "source": {
+            "$ref": "#/components/schemas/RelationshipSource"
+          }
+        }
+      },
+      "SeriesRelationshipsResp": {
+        "type": "object",
+        "required": [
+          "series_id",
+          "relationships",
+          "chain"
+        ],
+        "properties": {
+          "chain": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesChainEntry"
+            },
+            "description": "Sequel/prequel chain through this series in reading order (depth\n≤ 6 each way). Empty when the series has no sequel/prequel edges;\notherwise includes this series at position 0."
+          },
+          "relationships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesRelationshipView"
+            },
+            "description": "Direct relationships, oldest first. Bounded by curation (each edge\nis admin-created or an accepted suggestion), so not paginated."
+          },
+          "series_id": {
+            "type": "string"
           }
         }
       },

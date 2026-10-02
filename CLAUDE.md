@@ -603,6 +603,7 @@ Default admin (first registered user becomes admin):
 - OCR pipeline (detector + recognizer + cache + admin surfaces): [docs/dev/ocr.md](docs/dev/ocr.md)
 - Logging conventions (#[handler] macro, severity levels, secret-redaction): [docs/dev/logging.md](docs/dev/logging.md)
 - Observability two-stream split (Server vs Library stream; `library_events` manifest + writer/`EventCollector`/retention; `scan_batch`; ring-buffer `domain`/`error_code`): [docs/dev/observability.md](docs/dev/observability.md)
+- Series relationships (typed inverse-pair edges, `relationships::create_pair`/`delete_pair`, depth-6 cycle-safe CTE chain, ACL-pruned GET, OPDS related links): [docs/dev/series-relationships.md](docs/dev/series-relationships.md)
 - Metadata providers architecture: [docs/dev/metadata-providers.md](docs/dev/metadata-providers.md)
 - Metadata providers operator guide (API keys, weekly refresh, troubleshooting): [docs/dev/metadata-operator-guide.md](docs/dev/metadata-operator-guide.md)
 - Metadata sidecar writeback (DB-canonical → XML-canonical inversion, per-library opt-in, drift surfacing): [docs/dev/metadata-sidecar-writeback.md](docs/dev/metadata-sidecar-writeback.md)

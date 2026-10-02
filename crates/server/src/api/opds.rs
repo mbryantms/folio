@@ -841,6 +841,9 @@ async fn series_one(
         None => String::new(),
     };
     let up_next_link = render_up_next_feed_link(up_next_issue.as_ref().map(|i| i.id.as_str()));
+    // WP-7.1: `rel="related"` per series relationship the caller can see.
+    let related = crate::api::series_relationships::visible_related(&app, &user, s.id).await;
+    let related_links = render_related_series_links(&related);
     let now = chrono::Utc::now().to_rfc3339();
     let body = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -851,7 +854,7 @@ async fn series_one(
 {description}{metadata}{cover_links}  <link rel="self" href="{self_href}?page={page}" type="{acq}"/>
   <link rel="up" href="/opds/v1" type="{nav}"/>
 {up_next_link}
-{pagination}{entries}</feed>
+{related_links}{pagination}{entries}</feed>
 "#,
         id = id,
         title = xml_escape(&s.name),
@@ -864,6 +867,29 @@ async fn series_one(
         pagination = paginate_links(&self_href, page, total_pages),
     );
     atom(body)
+}
+
+/// WP-7.1: one feed-level `<link rel="related">` per visible series
+/// relationship, pointing at the related series' acquisition feed. The
+/// `title` carries the relationship ("Sequel of: Saga (2012)") so clients
+/// that list related links render something meaningful.
+fn render_related_series_links(
+    related: &[(crate::relationships::RelationshipKind, series::Model)],
+) -> String {
+    let mut out = String::new();
+    for (kind, other) in related {
+        let title = match other.year {
+            Some(y) => format!("{}: {} ({y})", kind.label(), other.name),
+            None => format!("{}: {}", kind.label(), other.name),
+        };
+        out.push_str(&format!(
+            "  <link rel=\"related\" href=\"/opds/v1/series/{id}\" type=\"{acq}\" title=\"{title}\"/>\n",
+            id = other.id,
+            acq = ACQ_CT,
+            title = xml_escape(&title),
+        ));
+    }
+    out
 }
 
 async fn recent(State(app): State<AppState>, user: CurrentUser) -> Response {

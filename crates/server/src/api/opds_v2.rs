@@ -587,6 +587,22 @@ async fn series_one(
     if let Some(up_next) = up_next_issue.as_ref() {
         links.push(up_next_link_json(&up_next.id));
     }
+    // WP-7.1: one `related` link per series relationship the caller can
+    // see, pointing at the related series' feed.
+    for (kind, other) in crate::api::series_relationships::visible_related(&app, &user, s.id).await
+    {
+        let title = match other.year {
+            Some(y) => format!("{}: {} ({y})", kind.label(), other.name),
+            None => format!("{}: {}", kind.label(), other.name),
+        };
+        links.push(json!({
+            "rel": "related",
+            "href": format!("/opds/v2/series/{}", other.id),
+            "type": NAV_CT,
+            "title": title,
+            "properties": { "folio:relationship": kind.as_str() },
+        }));
+    }
 
     // Series-level metadata at the feed root. Mirrors what v1
     // exposes in the `<feed>` element so clients render a series

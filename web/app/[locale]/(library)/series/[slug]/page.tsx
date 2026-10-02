@@ -22,6 +22,7 @@ import {
 import { Description } from "@/components/library/Description";
 import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
 import { SeriesProviderRangesCard } from "@/components/library/SeriesProviderRangesCard";
+import { SeriesRelatedSection } from "@/components/library/SeriesRelatedSection";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
 import { Stat } from "@/components/library/Stat";
 import {
@@ -650,6 +651,9 @@ export default async function SeriesPage({
           )}
         </StableTabsPanelStack>
       </Tabs>
+
+      {/* WP-7.1: reading-order chain + related series (admin add/remove). */}
+      <SeriesRelatedSection seriesSlug={series.slug} seriesId={series.id} />
 
       <IssuesPanel
         seriesSlug={series.slug}

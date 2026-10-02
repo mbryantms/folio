@@ -28,6 +28,7 @@ pub mod middleware;
 pub mod ocr;
 pub mod pages;
 pub mod reading;
+pub mod relationships;
 pub mod settings;
 pub mod slug;
 pub mod state;

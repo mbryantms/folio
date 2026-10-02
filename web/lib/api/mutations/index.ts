@@ -2419,6 +2419,8 @@ import type {
   LookupReq,
   LookupResp,
   ProviderRangeRow,
+  CreateSeriesRelationshipReq,
+  SeriesRelationshipView,
   SearchOverrides,
   SearchStartedResp,
   SyncStatusResp,
@@ -2837,6 +2839,55 @@ export function useDeleteProviderRangeSeries(seriesSlug: string) {
         });
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "provider-coverage"],
+        });
+      },
+    },
+  );
+}
+
+/** WP-7.1: relate this series to another (admin). The server writes the
+ *  inverse edge too, so both series' relationship lists are invalidated. */
+export function useCreateSeriesRelationship(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<SeriesRelationshipView, CreateSeriesRelationshipReq>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/relationships`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: "Related series added",
+      onSuccess: (row) => {
+        qc.invalidateQueries({
+          queryKey: queryKeys.seriesRelationships(seriesSlug),
+        });
+        // The inverse edge (and possibly chains) changed on the other side.
+        if (row) {
+          qc.invalidateQueries({
+            queryKey: queryKeys.seriesRelationships(row.series.slug),
+          });
+        }
+      },
+    },
+  );
+}
+
+/** WP-7.1: remove a relationship (and its inverse) by row id (admin). */
+export function useDeleteSeriesRelationship(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<null, { id: string; otherSlug: string }>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/relationships/${encodeURIComponent(input.id)}`,
+      method: "DELETE",
+    }),
+    {
+      successMessage: "Related series removed",
+      onSuccess: (_data, input) => {
+        qc.invalidateQueries({
+          queryKey: queryKeys.seriesRelationships(seriesSlug),
+        });
+        qc.invalidateQueries({
+          queryKey: queryKeys.seriesRelationships(input.otherSlug),
         });
       },
     },
