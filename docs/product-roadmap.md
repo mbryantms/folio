@@ -247,6 +247,27 @@ Exit: series carry typed, traversable relationships (manual and suggested), the 
 | 7.3 | Review UI and bulk accept | M | spec Phase 7 → 7.2 | Admin page listing pending suggestions grouped by confidence with reason text and both covers; accept / reject / edit kind; bulk-accept high confidence; per-series inline "Suggested" chips on the series page; audit rows for every decision | new admin route + components, `api/series_relationships.rs` | Accept creates the pair via WP-7.1; bulk accept audited once per batch; e2e smoke of accept flow |
 | 7.4 | Similar series | M | audit §3.6 | Content-based, explainable similarity with no ML: weighted overlap over creators (by role), characters, teams, genres, tags, publisher/imprint, story arcs, and accepted relationships, computed on demand with a small per-series cache invalidated by scan/apply; `GET /series/{slug}/similar` (cursor) returning the top matches with a "because" list; "Similar series" rail on the series page and an optional home rail; excludes series the user has hidden; respects library ACL | new `api/series_similar.rs`, `views/` or a dedicated similarity module, series page rail, `rails.rs` | Query-count guard in `perf_regressions.rs`; explanation list matches the overlap; ACL test; dev library produces sensible neighbours |
 
+### M7b — Relationship taxonomy and detection (decided 2026-10-02, after M7)
+
+Exit: Folio distinguishes publication history from narrative order and editions from content, detects every relationship type it has evidence for, and routes all of them through suggest → review → accept/edit/reject. Nothing is created without approval.
+
+**Decisions (owner, 2026-10-02):**
+- "Prequel of" stops being the inverse of "Sequel of". New pairs: `sequel_of`↔`has_sequel`, `prequel_of`↔`has_prequel`.
+- Name/volume continuation is **publication continuity** (`continues`↔`continued_by`, qualifier relaunch / retitle / merge / split / numbering), not a narrative sequel. The reading-order strip walks `continues` and `sequel_of`.
+- Arcs become valid targets. A shared arc yields `tie_in_to` (role main / tie-in / prelude / aftermath) toward the arc, replacing the pairwise arc → `crossover_with` source.
+- "Same universe" is derived from `universe` / `series_universe` membership and `SeriesGroup`, not suggested pairwise.
+- Kinds added: `annual_of`, `supplement_to`, `tie_in_to`, `companion_to`, `side_story_of`, `reprints`, `alternate_edition_of`, `translation_of`, and advanced `adaptation_of` / `reimagining_of` (comic-to-comic only).
+- Optional scope on links: issue ranges on either side, `coverage` (full / partial / unknown) for collects and reprints, a free-text note, and a continuation qualifier.
+- UI groups: Story · Publication history · Editions & contents · Advanced.
+- Not adopted: issue→issue "story continues" (deferred: no evidence source), `variant_of` (variants live on the issue), excerpts, spoiler flags, a separate franchise relation, a universal read-before/after edge, story-level entities. CBL lists remain the named reading orders.
+
+| WP | Title | Effort | Scope | Done when |
+|---|---|---|---|---|
+| 7.5 | Taxonomy and model | M | New kinds and inverses with groups; arc targets; range / coverage / note / qualifier columns; data migration (old `prequel_of` halves → `has_sequel`; suggested continuation `sequel_of` → `continues`); API and minimal UI kept working; continuation detector emits `continues` | Migration round-trips; inverse table test; existing dev edges migrate correctly |
+| 7.6 | Detectors | L → 7.5 | Annual, arc tie-in (with role), `issue_reprint` roll-up, alternate edition, supplement, translation; retire the pairwise `same_universe` and arc-crossover sources; derived same-universe query | Fixture per detector; dev-library sanity counts |
+| 7.7 | Relationship UI | M → 7.5 | Grouped "Relationship" picker; range / coverage / qualifier / note editing; arc-target picker; "Part of event" and derived "Same universe" sections; review page shows scope | Browser-verified on dev; vitest |
+| 7.8 | Provider links and external targets | M → 7.5 | Import provider series associations (Metron `associated`, GCD series bonds; APIs verified first); relationships to provider series not in the library ("missing volume") | Recorded-fixture tests; missing-volume link renders |
+
 ---
 
 ## 6. Dependency graph (hard edges only)
@@ -260,6 +281,9 @@ Exit: series carry typed, traversable relationships (manual and suggested), the 
 2.9 ──► 6.1
 7.1 ──► 7.2 ──► 7.3
 7.1 ──► 7.4
+7.5 ──► 7.6
+7.5 ──► 7.7
+7.5 ──► 7.8
 ```
 
 Everything else can be scheduled in any order inside its milestone. M1 has no external dependencies and should go first; M3 and M4 are independent of each other and of M2 except where the graph says otherwise, so they can interleave with M2 sessions when a change of pace helps.
@@ -316,3 +340,4 @@ None. Every audit item is now either scheduled (§5) or confirmed excluded (§2)
 - 2026-09-30: M3 and M5 fully merged; M4 merged except owner-run WP-4.1. M5 owner decisions recorded in the M5 status line.
 - 2026-10-01: M6 started and merged the same day; the owner deferred arm64 images (WP-6.5) and WP-6.6. WP-6.1–6.5 (CB7) landed as #934–#938.
 - 2026-10-01: M7 implemented the same day as a stacked chain #946 → #947 → #948 → #949, awaiting review.
+- 2026-10-02: M7b (relationship taxonomy and detection, WP-7.5–7.8) decided after reviewing a proposed taxonomy; adopted and excluded items listed under M7b.
