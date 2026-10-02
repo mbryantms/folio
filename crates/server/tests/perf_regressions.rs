@@ -641,7 +641,7 @@ const MAX_QUERIES_USER_EXPORT: u64 = 25; // observed ≈ 15
 // page hydrate; warm = served from the neighbour cache, hydrate only.
 // Both must stay flat in the neighbour count (9 here): a per-candidate
 // probe or a per-card hydrate would add ~9-40.
-const MAX_QUERIES_SIMILAR_COLD: u64 = 20; // observed ≈ 10
+const MAX_QUERIES_SIMILAR_COLD: u64 = 20; // observed ≈ 11
 const MAX_QUERIES_SIMILAR_WARM: u64 = 15; // observed ≈ 8
 
 #[tokio::test]

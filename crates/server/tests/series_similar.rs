@@ -821,3 +821,72 @@ async fn seed_series_run(db: &DatabaseConnection, series_id: Uuid, cv_id: &str) 
     .unwrap();
     run_id
 }
+
+#[tokio::test]
+async fn accepted_relationships_are_a_signal() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let state = app.state();
+    let db = state.db.clone();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = seed_library(&db, tmp.path()).await;
+    filler(&db, lib, 4).await;
+    // No shared metadata at all — only the curated link can relate them.
+    let relaunch = series(&db, lib, "Daredevil 2014").await;
+    let original = series(&db, lib, "Daredevil 2011").await;
+
+    let (status, body) = get(&app, &format!("/api/series/{relaunch}/similar"), &admin).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ids(&body), Vec::<String>::new());
+
+    // "Daredevil 2014 is a sequel of Daredevil 2011" (WP-7.1 stores the
+    // inverse edge too). Creating it drops the cached empty list.
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        &format!("/api/series/{relaunch}/relationships"),
+        &admin,
+        Some(serde_json::json!({"target": original.to_string(), "kind": "sequel_of"})),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body}");
+
+    let (_, body) = get(&app, &format!("/api/series/{relaunch}/similar"), &admin).await;
+    assert_eq!(ids(&body), vec![original.to_string()], "{body}");
+    let reason = &body["items"][0]["because"][0];
+    assert_eq!(reason["kind"], "relationship");
+    // Read from the neighbour's side: 2011 is the prequel of 2014.
+    assert_eq!(reason["role"], "prequel_of");
+    assert_eq!(reason["name"], "Daredevil 2014 (2020)");
+
+    let (_, body) = get(&app, &format!("/api/series/{original}/similar"), &admin).await;
+    assert_eq!(ids(&body), vec![relaunch.to_string()], "{body}");
+    assert_eq!(body["items"][0]["because"][0]["role"], "sequel_of");
+    assert_eq!(
+        body["items"][0]["because"][0]["name"],
+        "Daredevil 2011 (2020)"
+    );
+
+    // Deleting the edge drops it again.
+    let (_, rels) = get(
+        &app,
+        &format!("/api/series/{relaunch}/relationships"),
+        &admin,
+    )
+    .await;
+    let rel_id = rels["relationships"][0]["id"]
+        .as_str()
+        .expect("relationship id")
+        .to_owned();
+    let (status, _) = send(
+        &app,
+        Method::DELETE,
+        &format!("/api/series/{relaunch}/relationships/{rel_id}"),
+        &admin,
+        None,
+    )
+    .await;
+    assert!(status.is_success(), "{status}");
+    let (_, body) = get(&app, &format!("/api/series/{relaunch}/similar"), &admin).await;
+    assert_eq!(ids(&body), Vec::<String>::new(), "{body}");
+}

@@ -596,6 +596,7 @@ Default admin (first registered user becomes admin):
 - Architecture decisions per phase: [docs/dev/phase-status.md](docs/dev/phase-status.md)
 - Library scanner deep dive: [docs/dev/library-scanner.md](docs/dev/library-scanner.md)
 - Load baseline (`just perf-explain` EXPLAIN plans at 50k issues, `oha` recipes, `IssueCardRow` projection audit): [docs/dev/load-testing.md](docs/dev/load-testing.md)
+- Similar series (signals, IDF weights + caps, neighbour cache + invalidation hooks, per-request ACL / hidden filtering): [docs/dev/similar-series.md](docs/dev/similar-series.md)
 - Saved views (filter DSL, per-entity field registry, `filter_series` vs `filter_issues` compiler roots): [docs/dev/saved-views.md](docs/dev/saved-views.md)
 - Reader keyboard map: [docs/dev/reader-shortcuts.md](docs/dev/reader-shortcuts.md)
 - OPDS readiness audit: [docs/dev/opds-audit.md](docs/dev/opds-audit.md)

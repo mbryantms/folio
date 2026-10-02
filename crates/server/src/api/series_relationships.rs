@@ -287,6 +287,8 @@ pub async fn create(
     };
 
     if outcome.created {
+        // WP-7.4: relationships are a similar-series signal.
+        app.similarity.invalidate_all();
         record_admin_action!(
             db = &app.db,
             ctx = &ctx,
@@ -391,6 +393,8 @@ pub async fn delete(
     if let Err(e) = deleted {
         return internal(&e);
     }
+    // WP-7.4: relationships are a similar-series signal.
+    app.similarity.invalidate_all();
 
     record_admin_action!(
         db = &app.db,

@@ -22,8 +22,10 @@
 //!
 //! **Signals are additive [`Contribution`]s.** The junction overlap is
 //! one source ([`fetch_overlap`]); accepted series relationships
-//! (WP-7.1) slot in as one more source producing `ReasonKind::Relationship`
-//! contributions without touching the scorer.
+//! (WP-7.1, [`fetch_relationships`]) are another, producing
+//! `ReasonKind::Relationship` contributions at a flat
+//! [`RELATIONSHIP_WEIGHT`] — enough on its own to list a related series
+//! even when it shares no metadata.
 //!
 //! **Cache.** Results are computed on demand (two set-based queries) and
 //! kept in a small in-process LRU ([`SimilarityCache`]) keyed by series
@@ -461,10 +463,75 @@ async fn fetch_sizes<C: ConnectionTrait>(
         .collect())
 }
 
-/// Compute the unfiltered neighbour list for one series (2 queries; 1
-/// when the series shares nothing with anything).
+#[derive(Debug, FromQueryResult)]
+struct RelationshipRow {
+    series_id: Uuid,
+    library_id: Uuid,
+    age_rating: Option<String>,
+    kind: String,
+    target_name: String,
+}
+
+/// Accepted-relationship signal (WP-7.1 `series_relationship`). Every
+/// row counts — manual or suggested — because WP-7.2 suggestions live in
+/// their own table and only land here once accepted. Inverse rows are
+/// always stored, so the edges out of the target are its whole
+/// neighbourhood. The reason reads from the *candidate's* side
+/// (`kind.inverse()`, named after the target, with its year so same-name
+/// volumes stay distinguishable): on Daredevil (2014)'s page, Daredevil
+/// (2011) is "prequel of Daredevil (2014)". Flat
+/// [`RELATIONSHIP_WEIGHT`], not IDF-weighted: a curated link is strong
+/// evidence on its own.
+async fn fetch_relationships<C: ConnectionTrait>(
+    db: &C,
+    target: Uuid,
+) -> Result<(Vec<Contribution>, HashMap<Uuid, CandidateMeta>), DbErr> {
+    let rows = RelationshipRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        SELECT r.to_series_id AS series_id, s.library_id, s.age_rating,
+               r.kind,
+               t.name || COALESCE(' (' || t.year || ')', '') AS target_name
+          FROM series_relationship r
+          JOIN series s ON s.id = r.to_series_id AND s.removed_at IS NULL
+          JOIN series t ON t.id = r.from_series_id
+         WHERE r.from_series_id = $1
+        "#,
+        [target.into()],
+    ))
+    .all(db)
+    .await?;
+    let mut meta = HashMap::new();
+    let mut contributions = Vec::with_capacity(rows.len());
+    for r in rows {
+        let Ok(kind) = r.kind.parse::<crate::relationships::RelationshipKind>() else {
+            continue;
+        };
+        meta.entry(r.series_id).or_insert_with(|| CandidateMeta {
+            library_id: r.library_id,
+            age_rating: r.age_rating.clone(),
+        });
+        contributions.push(Contribution {
+            series_id: r.series_id,
+            kind: ReasonKind::Relationship,
+            role: Some(kind.inverse().as_str().to_owned()),
+            name: r.target_name,
+            value: RELATIONSHIP_WEIGHT,
+        });
+    }
+    Ok((contributions, meta))
+}
+
+/// Compute the unfiltered neighbour list for one series: the junction
+/// overlap + accepted relationships, then the candidate sizes for the
+/// breadth damping (3 queries; 2 when nothing is shared).
 pub async fn compute<C: ConnectionTrait>(db: &C, target: Uuid) -> Result<Vec<Neighbor>, DbErr> {
-    let (contributions, meta) = fetch_overlap(db, target).await?;
+    let (mut contributions, mut meta) = fetch_overlap(db, target).await?;
+    let (rel_contributions, rel_meta) = fetch_relationships(db, target).await?;
+    contributions.extend(rel_contributions);
+    for (id, m) in rel_meta {
+        meta.entry(id).or_insert(m);
+    }
     if contributions.is_empty() {
         return Ok(Vec::new());
     }
