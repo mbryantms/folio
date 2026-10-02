@@ -353,6 +353,9 @@ Items noticed during the audit that are real but small, to be picked up opportun
   - "Not in library" links are not exported to OPDS (no useful client behaviour for a provider page).
   - Real touch-device checks of the Related tab and dialogs belong with WP-4.1 (owner devices). Colour contrast is judged by eye until WP-8.5 adds axe checks.
   - Low-confidence noise seen on dev ("X-Men Unlimited → X-Men", "Marvel Holiday Special → Marvel") and the "Secret Wars" Battleworld main-series pick → WP-8.2.
+- Found during M8 (2026-10-02):
+  - Folio's MetronInfo output only matches the official XSD (v1.0/v1.1) in `<Credits>` (fixed in WP-8.1). The rest still uses pre-schema elements: `<Title>`, `<Year>/<Month>/<Day>` instead of `<CoverDate>`, flat `<Series>`/`<Publisher>`, `<ID>` without `<IDS>`, `<StoryArcs>` instead of `<Arcs>`. Bringing the whole document to the schema needs its own WP (composer + tolerant parser + XSD-shaped parity test), because writeback writes this file into archives.
+  - Metron-Tagger files use the role `Artist`; WP-8.1 keeps it as its own role rather than folding it into `penciller`. Revisit if creator pages split one person's art credits confusingly.
 
 ---
 
