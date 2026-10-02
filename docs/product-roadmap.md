@@ -234,7 +234,7 @@ Exit: notes are durable and browsable in context; issue-level queries exist; ent
 
 Exit: series carry typed, traversable relationships (manual and suggested), the scanner proposes them with confidence, and every series page offers "related" and "similar" rails that are explainable and never wrong-by-magic.
 
-**Status (2026-10-01): all four WPs implemented as one stacked PR chain, open for review:** 7.1 #946 → 7.4 #947 → 7.2 #948 → 7.3 #949 (each PR's base is the previous branch; retarget each to `main` before merging its base, or the squash-merge auto-closes it). Every WP was verified in a real browser against the dev library (dev DB migrated). Notes from implementation:
+**Status (2026-10-02): all four WPs merged** as a stacked chain: 7.1 #946 → 7.4 #947 → 7.2 #948 → 7.3 #949, plus the M7 status and M7b plan in #950. Stacked squash-merges need each next branch rebased with `git rebase --onto origin/main <old base head>` (otherwise add/add conflicts), and each PR retargeted to `main` before its base merges. Every WP was verified in a real browser against the dev library (dev DB migrated). Notes from implementation:
 - **7.1:** `has_spin_off` added as the inverse of `spin_off_of` (the kind list had none); contradictory directional pairs are refused (409); DELETE is `/series/{slug}/relationships/{id}`; the series page shows a sequel/prequel "Reading order" strip plus grouped links; OPDS 1.x and 2.0 emit `rel="related"`.
 - **7.4:** IDF-weighted overlap (creators by role, characters, teams, arcs, genres/tags, publisher/imprint, relationships) with per-kind caps and size damping; in-memory LRU on `AppState` with a global generation counter (single instance, D2) — every relationship or metadata write calls `state.similarity.invalidate_all()`; optional "Because you read X" home rail (`similar_series`, not auto-pinned). Found and fixed: the `perf_regressions.rs` query-count guards had read 0 for every endpoint since #208 (statement logging was off on the test pool).
 - **7.2:** suggestions only pair series within one library; sources are name/volume continuation, `AlternateSeries`, `SeriesGroup`, shared arcs (capped low past 10 series), collected-edition citations, shared provider volumes, `series_provider_range`, and uncommon shared characters/teams; high ≥ 0.8, medium ≥ 0.55. Dev library: 608 suggestions across 2,573 series in ~0.45 s.
@@ -261,12 +261,30 @@ Exit: Folio distinguishes publication history from narrative order and editions 
 - UI groups: Story · Publication history · Editions & contents · Advanced.
 - Not adopted: issue→issue "story continues" (deferred: no evidence source), `variant_of` (variants live on the issue), excerpts, spoiler flags, a separate franchise relation, a universal read-before/after edge, story-level entities. CBL lists remain the named reading orders.
 
+**Status (2026-10-02): all four WPs merged** as a stacked chain: 7.5 #955 (`breaking-change`) → 7.6 #956 (`breaking-change`) → 7.7 #957 → 7.8 #958. The full stack was tested together before merging (2358 Rust, 1110 web tests) and every WP was verified in a real browser; 7.6–7.8 used per-agent clones of the dev DB so parallel branches never shared migrations. Notes from implementation:
+- **7.5:** 31 kinds in four UI groups served by `GET /api/relationship-kinds`; arc targets (`tie_in_to` only, one-directional); `PATCH` keeps both halves in sync; on dev the 170 accepted continuation pairs migrated to `continues` and the manual Agents of Atlas link kept `sequel_of`.
+- **7.6:** detectors for annuals, arc tie-ins with roles, reprint roll-ups, collected-edition citations with ranges and coverage, alternate editions, facsimiles (as `reprints`), supplements, translations, and continuation qualifiers; suggestions carry scope and arc targets. Dev library: 535 pending suggestions in ~1 s; the retired pairwise same-universe and arc-crossover suggestions went stale.
+- **7.7:** owner requests delivered: a lazy-loaded **Related** tab (relationships, "Part of event", derived "Same universe", Similar series) so the issue list follows the tabs, and Related-tab covers that match the issue grid's column width at every cover-size setting. Owner-reported fixes: the kind picker's double scrollbar and its sticky headings painting over the scrollbar. An owner-requested UI polish pass fixed clipped focus rings in the shared `HorizontalScrollRail` (home, search and series rails too), the reading-order highlight, focus return from controlled dialogs, and horizontal page scroll at 768 px. Two CI-only test races (fixed sleeps, a same-tick focus assertion) were replaced with `waitFor`.
+- **7.8:** fixed two Metron bugs on main (`associated` always parsed empty and fed into `aliases`; reprints parsed but never persisted); "not in your library" links in `series_external_relationship`, promoted to internal links when the series is scanned in. GCD's API exposes no series bonds and ComicVine has no volume links, so only Metron feeds provider links.
+
 | WP | Title | Effort | Scope | Done when |
 |---|---|---|---|---|
 | 7.5 | Taxonomy and model | M | New kinds and inverses with groups; arc targets; range / coverage / note / qualifier columns; data migration (old `prequel_of` halves → `has_sequel`; suggested continuation `sequel_of` → `continues`); API and minimal UI kept working; continuation detector emits `continues` | Migration round-trips; inverse table test; existing dev edges migrate correctly |
 | 7.6 | Detectors | L → 7.5 | Annual, arc tie-in (with role), `issue_reprint` roll-up, alternate edition, supplement, translation; retire the pairwise `same_universe` and arc-crossover sources; derived same-universe query | Fixture per detector; dev-library sanity counts |
 | 7.7 | Relationship UI | M → 7.5 | Move relationships and "Similar series" off the page body into a new lazy-loaded **Related** tab on the series page (owner, 2026-10-02: the issue list should follow the tabs; queries run only when the tab opens; `?tab=related` deep link; count in the tab label); covers in the Related tab (similar-series rail, reading order, relationship cards) honour the series page's cover-size control (owner, 2026-10-02: today the rail hard-codes 160 px): `useCardSize` syncs across instances sharing a key (and across browser tabs via `storage`), and a shared helper derives the issue grid's effective `auto-fill minmax(size, 1fr)` column width so covers match exactly; grouped "Relationship" picker; range / coverage / qualifier / note editing; arc-target picker; "Part of event" and derived "Same universe" sections; review page shows scope | Browser-verified on dev; vitest |
 | 7.8 | Provider links and external targets | M → 7.5 | Research done 2026-10-02: only Metron exposes structured links (series `associated`, issue `reprints`; both untyped and symmetric); GCD's REST API serves no series bonds or reprints (DB-only), ComicVine has none. Scope: fix Metron `associated` parsing (wire key is `series`, not `name`; today it is always empty and wrongly fed into `aliases`; take aliases from `alt_names`); persist Metron issue reprints via the uncalled `writers::set_issue_reprints`; suggestions from `associated` (`see_also`, refined to `collects`/`annual_of` by `series_type`) and from reprint roll-ups (TPB/HC/Omnibus side `collects` high, single→single `reprints` medium); external targets in a separate `series_external_relationship` table (one-directional, `set_by`, provider id/name/url) promoted to an internal pair when the series is matched locally; `CACHE_SCHEMA_VERSION` bump. GCD bonds deferred until upstream exposes them | Recorded-fixture tests; missing-volume link renders; an external link promotes on scan-in |
+
+### M8 — Cleanup and hardening (decided 2026-10-02, after M7b)
+
+Exit: the correctness bugs found in M5–M7b are fixed, the relationship engine's known noise and review gaps are closed, the remaining performance unknowns are measured, and the M7b UI is covered by automated end-to-end and accessibility checks. Items with no evidence source or blocked upstream stay tracked in §7 instead.
+
+| WP | Title | Effort | Scope | Done when |
+|---|---|---|---|---|
+| 8.1 | Data correctness | M | Lowercase credit roles at the single write surface (`writers::set_issue_credits`) plus a migration that lowercases existing `issue_credits.role` rows and rebuilds the per-role CSV columns (today non-writeback provider applies leave `issues.writer` etc. empty, so writer filters and search miss them); verify Folio's MetronInfo credit shape against the official XSD, fix the composer, make the parser accept both shapes, extend `sidecar_parity.rs`; L-2: cap the email-token verifier at the real issuance TTLs (verification ~48 h, reset ~1 h); `/creators/{slug}` 404s when nothing is visible like the other entity pages; omit `DoublePage` when false | Regression test per bug; parity test covers MetronInfo credits; `security-audit.md` marks L-2 fixed |
+| 8.2 | Relationship tuning | M | Cross-library suggestions for the edition kinds only (`collects`, `reprints`, `alternate_edition_of`, `translation_of`), story kinds stay within one library; allow stale → rejected; optional kind override on bulk accept by ids; noise rules (an "Unlimited" or "Special" match must share more than the publisher's own name); arc main-series rule (an exact arc-name match wins, else the most issues in the arc); accepted arc tie-ins as a capped similarity signal without double-counting `issue_arcs`; clear the similarity cache from the job that promotes external links | Fixture tests per rule; dev-library before/after suggestion counts in the PR |
+| 8.3 | Performance and pagination | M | Collections bulk-add as one batched insert (restore its query guard from 110 to ~5); admin Runs tab on `useInfiniteQuery`; a 50k-issue measurement session (`just perf-explain`) for the similarity, suggestion-job and relationships queries; a ~500-link guard test for the unpaginated relationships GET | Query guards tightened; 50k numbers recorded in `docs/dev/load-testing.md` |
+| 8.4 | Markers and OPDS | M | Bulk-restore endpoint for marker Undo, then drop the `marker_write` burst from 600 to ~60; `has_favorites` smart-view filter; `page_hash` filled lazily when an archive is next opened and included in account export; OPDS parity: issue saved views in OPDS feeds and OPDS 2.0 feeds for arcs, characters and teams | Tests per item; OPDS feeds validate |
+| 8.5 | Test coverage | S | The relationship e2e spec runs in docker-smoke (reuse the reader-flow admin session instead of skipping without `E2E_ADMIN_*`; add two "X (2011)" / "X (2016)" fixture archives so a suggestion exists); axe-core checks in Playwright for the Related tab and `/admin/relationships` | The spec runs (not skips) in CI; axe reports no serious or critical issues |
 
 ---
 
@@ -303,34 +321,46 @@ Items noticed during the audit that are real but small, to be picked up opportun
 - Stale scanner env defaults noticed during WP-1.5: `docs/dev/library-scanner.md` and `.env.example` say `COMIC_SCAN_WORKER_COUNT` defaults to `min(cpu, 4)` and `COMIC_SCAN_HASH_BUFFER_KB` to 64; `config.rs` has `min(cpu, 8)` and 1024. Fix alongside WP-3.1.
 - `docs/dev/comic-reader-spec.md` and `library-scanner-spec.md` still describe the intended watcher and pub/sub as design; left as specs, not claims.
 - Found during M5 (2026-09-30):
-  - `/creators/{slug}` returns 200 with empty lists when nothing is visible; align it with the entity pages' 404.
-  - A single bulk-restore endpoint for marker Undo, after which the `marker_write` burst can drop from 600 to ~60.
-  - `has_favorites` smart-view filter (only notes/bookmarks/highlights exist).
-  - Issue saved views in OPDS feeds; multi-select on the issue-view detail page.
-  - `useAdminMetadataRuns` uses `useQuery` on a `next_cursor` response, so the admin Runs tab shows only the first 25 runs; convert to `useInfiniteQuery`.
-  - The arc/character/team entity pages have OPDS 1.x feeds only; no OPDS 2.0 equivalents yet.
+  - `/creators/{slug}` returns 200 with empty lists when nothing is visible; align it with the entity pages' 404. → WP-8.1
+  - A single bulk-restore endpoint for marker Undo, after which the `marker_write` burst can drop from 600 to ~60. → WP-8.4
+  - `has_favorites` smart-view filter (only notes/bookmarks/highlights exist). → WP-8.4
+  - Issue saved views in OPDS feeds (→ WP-8.4); multi-select on the issue-view detail page.
+  - `useAdminMetadataRuns` uses `useQuery` on a `next_cursor` response, so the admin Runs tab shows only the first 25 runs; convert to `useInfiniteQuery`. → WP-8.3
+  - The arc/character/team entity pages have OPDS 1.x feeds only; no OPDS 2.0 equivalents yet. → WP-8.4
 - Found during M6 (2026-10-01):
-  - Non-writeback provider apply leaves `issues.writer` and the other per-role credit columns empty: the CSV rebuild matches lowercase `'writer'` but the CV/Metron/GCD mappers write `Writer` (the `issue_credits` rows are correct).
-  - Folio's MetronInfo credit shape (`<Credit role="…"><Creator><Name>`) likely doesn't match the MetronInfo schema (`<Credit><Creator/><Roles><Role/></Roles></Credit>`); verify against the XSD.
-  - ComicTagger 1.5.5's page editor shows Folio's explicit `DoublePage="false"` as ticked (1.6 doesn't).
-  - L-2 (email-token expiry up to 30 days) is still open in `docs/dev/security-audit.md`.
+  - Non-writeback provider apply leaves `issues.writer` and the other per-role credit columns empty: the CSV rebuild matches lowercase `'writer'` but the CV/Metron/GCD mappers write `Writer` (the `issue_credits` rows are correct). → WP-8.1
+  - Folio's MetronInfo credit shape (`<Credit role="…"><Creator><Name>`) likely doesn't match the MetronInfo schema (`<Credit><Creator/><Roles><Role/></Roles></Credit>`); verify against the XSD. → WP-8.1
+  - ComicTagger 1.5.5's page editor shows Folio's explicit `DoublePage="false"` as ticked (1.6 doesn't). → WP-8.1
+  - L-2 (email-token expiry up to 30 days) is still open in `docs/dev/security-audit.md`. → WP-8.1
   - CBL import quota (20/h, 50 remote lists) is constant; make it a setting only if needed.
   - BZip2-coded 7z is unsupported (`bzip2-1.0.6` licence not in `deny.toml`); compressed 7z headers decode before Folio can cap memory.
-  - No backfill of `page_hash` for existing markers; `account_export` omits `page_hash`.
+  - No backfill of `page_hash` for existing markers; `account_export` omits `page_hash`. → WP-8.4
   - arm64 images (OP-3) and the locale-segment decision (WP-6.6, AR-2) deferred by the owner.
 - Found during M7 (2026-10-01):
-  - `GET /series/{slug}/relationships` is unpaginated (bounded by curation); revisit if bulk-accepted `same_universe` edges grow large.
+  - `GET /series/{slug}/relationships` is unpaginated (bounded by curation); revisit if bulk-accepted `same_universe` edges grow large. Guard test → WP-8.3; same-universe is now derived, not stored pairwise.
   - The series page's "Sequel of" / "Prequel of" groups repeat what the "Reading order" strip already shows; consider hiding them when a chain renders.
-  - Collections bulk-add fires one INSERT per member (104 queries for 100); the real query counts from #947 exposed it and its guard was raised to 110.
-  - Similarity weights are code constants, not settings; performance measured at 22k issues, not 50k.
-  - Suggestion engine: no `spin_off_of` source (no evidence distinguishes it); no cross-library suggestions; collected-edition and `SeriesGroup` sources are fixture-tested only (the dev library has neither).
-  - Review UI: bulk accept has no kind override; stale rows cannot be rejected; the relationship e2e spec skips in docker-smoke (no credentials or suggestion-yielding fixture).
+  - Collections bulk-add fires one INSERT per member (104 queries for 100); the real query counts from #947 exposed it and its guard was raised to 110. → WP-8.3
+  - Similarity weights are code constants, not settings; performance measured at 22k issues, not 50k (→ WP-8.3); weights stay constants unless tuning is requested.
+  - Suggestion engine: no `spin_off_of` source (no evidence distinguishes it); no cross-library suggestions; collected-edition and `SeriesGroup` sources are fixture-tested only (the dev library has neither). Cross-library edition suggestions → WP-8.2.
+  - Review UI: bulk accept has no kind override; stale rows cannot be rejected; the relationship e2e spec skips in docker-smoke (no credentials or suggestion-yielding fixture). → WP-8.2 / WP-8.5
+
+---
+
+- Found during M7b (2026-10-02), tracked until an evidence source or upstream change exists:
+  - No detectors for `spin_off_of`, `side_story_of` or `companion_to`, and the `merge` continuation qualifier is never inferred: nothing in the data distinguishes them. Metron's untyped links arrive as `see_also` and can be retyped in review.
+  - The reprint, facsimile, translation, collected-edition and `SeriesGroup` detectors are fixture-tested only; re-check counts once Metron applies have filled `issue_reprints` (WP-7.8 now persists them) or the library carries trades and series groups.
+  - Provider links come only from Metron series applies: GCD's REST API exposes no series bonds or reprints, and ComicVine has no volume links. Revisit if GCD adds bonds to its API.
+  - "Not in library" links are not exported to OPDS (no useful client behaviour for a provider page).
+  - Real touch-device checks of the Related tab and dialogs belong with WP-4.1 (owner devices). Colour contrast is judged by eye until WP-8.5 adds axe checks.
+  - Low-confidence noise seen on dev ("X-Men Unlimited → X-Men", "Marvel Holiday Special → Marvel") and the "Secret Wars" Battleworld main-series pick → WP-8.2.
 
 ---
 
 ## 8. Open decisions still needed from you
 
-None. Every audit item is now either scheduled (§5) or confirmed excluded (§2). Work can start with WP-1.1.
+- **BZip2-compressed 7z (from M6):** supporting it needs the `bzip2-1.0.6` licence added to `deny.toml`. Tracked until you decide whether to allow that licence.
+
+Everything else is scheduled (§5), tracked in §7, or confirmed excluded (§2).
 
 ## 9. Decision history
 
@@ -341,3 +371,4 @@ None. Every audit item is now either scheduled (§5) or confirmed excluded (§2)
 - 2026-10-01: M6 started and merged the same day; the owner deferred arm64 images (WP-6.5) and WP-6.6. WP-6.1–6.5 (CB7) landed as #934–#938.
 - 2026-10-01: M7 implemented the same day as a stacked chain #946 → #947 → #948 → #949, awaiting review.
 - 2026-10-02: M7b (relationship taxonomy and detection, WP-7.5–7.8) decided after reviewing a proposed taxonomy; adopted and excluded items listed under M7b.
+- 2026-10-02: M7 merged (#946–#949) and M7b merged (#955–#958). M8 (cleanup and hardening, WP-8.1–8.5) decided from the M5–M7b gap review; items with no evidence source stay tracked in §7. Deferred items (WP-4.1, arm64, WP-6.6, GCD bonds, issue-level story continuation) stay deferred.
