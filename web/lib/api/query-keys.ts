@@ -338,6 +338,9 @@ export const queryKeys = {
   /** Full per-provider issue-range coverage map for a series. */
   providerCoverageSeries: (slug: string) =>
     ["series", slug, "provider-coverage"] as const,
+  /** WP-7.1: direct relationships + sequel/prequel chain for a series. */
+  seriesRelationships: (slug: string) =>
+    ["series", slug, "relationships"] as const,
   /** Cover gallery for an issue (M5.2). */
   issueCovers: (issueId: string) => ["issues", issueId, "covers"] as const,
   // ── M6 admin surface ──

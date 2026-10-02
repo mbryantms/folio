@@ -792,6 +792,14 @@ export type DetectSourceResult = Schemas["DetectSourceResult"];
 export type ProviderCoverageResp = Schemas["ProviderCoverageResp"];
 export type ProviderCoverage = Schemas["ProviderCoverage"];
 export type CoverageSegment = Schemas["CoverageSegment"];
+// WP-7.1 series relationships
+export type RelationshipKind = Schemas["RelationshipKind"];
+export type RelationshipSource = Schemas["RelationshipSource"];
+export type SeriesRelationshipView = Schemas["SeriesRelationshipView"];
+export type SeriesChainEntry = Schemas["SeriesChainEntry"];
+export type SeriesRelationshipsResp = Schemas["SeriesRelationshipsResp"];
+export type CreateSeriesRelationshipReq =
+  Schemas["CreateSeriesRelationshipReq"];
 export type IssueCoversResp = Schemas["IssueCoversResp"];
 export type IssueCoverRow = Schemas["IssueCoverRow"];
 // M5 preview pane / proposed-diff

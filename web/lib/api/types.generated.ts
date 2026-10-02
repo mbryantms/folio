@@ -4487,6 +4487,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/relationships": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["series_relationships_list"];
+        put?: never;
+        post: operations["series_relationships_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/relationships/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["series_relationships_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/restore": {
         parameters: {
             query?: never;
@@ -6212,6 +6244,12 @@ export interface components {
             result_limit?: number | null;
             sort_field?: components["schemas"]["SortField"] | null;
             sort_order?: components["schemas"]["SortOrder"] | null;
+        };
+        CreateSeriesRelationshipReq: {
+            /** @description Read as "this series `kind` target" (e.g. `sequel_of`). */
+            kind: components["schemas"]["RelationshipKind"];
+            /** @description The other series — slug or UUID. */
+            target: string;
         };
         /**
          * @description Body for admin create-user (3.8 / audit D9). The server generates the
@@ -9496,6 +9534,17 @@ export interface components {
             /** @description `"string" | "bool" | "uint" | "duration"`. */
             kind: string;
         };
+        /**
+         * @description The kind of a directed relationship edge. Wire + DB form is snake_case
+         *     (`sequel_of`, …); the DB CHECK in the migration mirrors this list.
+         * @enum {string}
+         */
+        RelationshipKind: "sequel_of" | "prequel_of" | "spin_off_of" | "has_spin_off" | "crossover_with" | "collects" | "collected_in" | "same_universe" | "see_also";
+        /**
+         * @description Where an edge came from.
+         * @enum {string}
+         */
+        RelationshipSource: "manual" | "suggested";
         RemovedIssueView: {
             file_path: string;
             id: string;
@@ -9981,6 +10030,17 @@ export interface components {
             /** Format: uuid */
             run_id: string;
         };
+        /** @description One step of the sequel/prequel reading-order chain. */
+        SeriesChainEntry: {
+            /**
+             * Format: int32
+             * @description Signed reading-order offset: negative = read before this series,
+             *     `0` = this series, positive = read after. Entries sharing a
+             *     position are alternative branches.
+             */
+            position: number;
+            series: components["schemas"]["SeriesView"];
+        };
         SeriesListView: {
             items: components["schemas"]["SeriesView"][];
             next_cursor?: string | null;
@@ -10030,6 +10090,43 @@ export interface components {
             series_name?: string | null;
             /** Format: int32 */
             series_year?: number | null;
+        };
+        /**
+         * @description One direct relationship, from the requested series' point of view:
+         *     "this series `kind` `series`".
+         */
+        SeriesRelationshipView: {
+            /**
+             * Format: float
+             * @description Suggestion confidence (0–1); `null` for manual edges.
+             */
+            confidence?: number | null;
+            created_at: string;
+            /** @description Row id — pass to `DELETE /series/{slug}/relationships/{id}`. */
+            id: string;
+            kind: components["schemas"]["RelationshipKind"];
+            /** @description Display label for `kind` ("Sequel of", "Collected in", …). */
+            kind_label: string;
+            /**
+             * @description The other series, hydrated like a library-grid card (cover, issue
+             *     count, …).
+             */
+            series: components["schemas"]["SeriesView"];
+            source: components["schemas"]["RelationshipSource"];
+        };
+        SeriesRelationshipsResp: {
+            /**
+             * @description Sequel/prequel chain through this series in reading order (depth
+             *     ≤ 6 each way). Empty when the series has no sequel/prequel edges;
+             *     otherwise includes this series at position 0.
+             */
+            chain: components["schemas"]["SeriesChainEntry"][];
+            /**
+             * @description Direct relationships, oldest first. Bounded by curation (each edge
+             *     is admin-created or an accepted suggestion), so not paginated.
+             */
+            relationships: components["schemas"]["SeriesRelationshipView"][];
+            series_id: string;
         };
         /**
          * @description Response for `GET /series/{slug}/resume` — the issue (and page) the user
@@ -20742,6 +20839,140 @@ export interface operations {
                 content?: never;
             };
             /** @description series / range not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_relationships_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesRelationshipsResp"];
+                };
+            };
+            /** @description series not found or not visible */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_relationships_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSeriesRelationshipReq"];
+            };
+        };
+        responses: {
+            /** @description edge already existed; returned unchanged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesRelationshipView"];
+                };
+            };
+            /** @description edge (and its inverse) created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesRelationshipView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series or target not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description contradicts an existing relationship */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description self-relationship / invalid body */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_relationships_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                /** @description relationship row id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description edge and its inverse removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description malformed id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series / relationship not found */
             404: {
                 headers: {
                     [name: string]: unknown;

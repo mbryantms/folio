@@ -65,6 +65,7 @@ pub mod saved_views;
 pub mod scan_batches;
 pub mod scan_runs;
 pub mod series;
+pub mod series_relationships;
 pub mod server_info;
 pub mod server_releases;
 pub mod sessions;
