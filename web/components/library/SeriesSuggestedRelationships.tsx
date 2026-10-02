@@ -36,17 +36,42 @@ import type {
 } from "@/lib/api/types";
 import { seriesUrl } from "@/lib/urls";
 
+/** The other end of a suggestion: a series, or (WP-7.6) a story arc. */
+export type SuggestionOther = {
+  id: string;
+  name: string;
+  year?: number | null;
+  href: string;
+};
+
+function seriesOther(s: SeriesView): SuggestionOther {
+  return { id: s.id, name: s.name, year: s.year, href: seriesUrl(s) };
+}
+
+/** The suggestion's target (`to_series`, or `to_arc` for an arc tie-in). */
+export function suggestionTarget(
+  s: RelationshipSuggestionView,
+): SuggestionOther {
+  if (s.to_series) return seriesOther(s.to_series);
+  const arc = s.to_arc;
+  return {
+    id: arc?.id ?? "",
+    name: arc?.name ?? "Unknown arc",
+    href: arc ? `/arcs/${encodeURIComponent(arc.slug)}` : "#",
+  };
+}
+
 /** The suggestion as seen from `seriesId`: the kind this series would
- *  have, and the other series. */
+ *  have, and the other end. */
 export function fromPerspective(
   s: RelationshipSuggestionView,
   seriesId: string,
-): { kind: RelationshipKind; label: string; other: SeriesView } {
+): { kind: RelationshipKind; label: string; other: SuggestionOther } {
   const isFrom = s.from_series.id === seriesId;
   return {
     kind: isFrom ? s.kind : s.inverse_kind,
     label: isFrom ? s.kind_label : s.inverse_kind_label,
-    other: isFrom ? s.to_series : s.from_series,
+    other: isFrom ? suggestionTarget(s) : seriesOther(s.from_series),
   };
 }
 
@@ -104,7 +129,7 @@ function SuggestionChip({
     <li className="border-border bg-card flex items-center gap-1 rounded-full border border-dashed py-0.5 pr-1 pl-3 text-sm">
       <Tooltip>
         <TooltipTrigger asChild>
-          <Link href={seriesUrl(other)} className="hover:underline">
+          <Link href={other.href} className="hover:underline">
             <span className="text-muted-foreground">{label}</span>{" "}
             <span className="font-medium">{otherName}</span>
           </Link>

@@ -29,6 +29,7 @@ import * as React from "react";
 
 import { Cover } from "@/components/Cover";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
+import { suggestionTarget } from "@/components/library/SeriesSuggestedRelationships";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -437,6 +438,21 @@ export function RelationshipSuggestionsPanel() {
   );
 }
 
+/** An arc target (WP-7.6 arc tie-ins): no cover, links to the arc page. */
+function ArcEnd({ suggestion }: { suggestion: RelationshipSuggestionView }) {
+  const t = suggestionTarget(suggestion);
+  return (
+    <Link href={t.href} className="group flex min-w-0 items-center gap-2">
+      <span className="min-w-0">
+        <span className="line-clamp-2 text-sm font-medium group-hover:underline">
+          {t.name}
+        </span>
+        <span className="text-muted-foreground block text-xs">Story arc</span>
+      </span>
+    </Link>
+  );
+}
+
 function SeriesEnd({
   series,
 }: {
@@ -503,7 +519,7 @@ function SuggestionRow({
           <Checkbox
             className="mt-3"
             checked={selected}
-            aria-label={`Select ${s.from_series.name} ${s.kind_label.toLowerCase()} ${s.to_series.name}`}
+            aria-label={`Select ${s.from_series.name} ${s.kind_label.toLowerCase()} ${suggestionTarget(s).name}`}
             onClick={(e) => {
               e.preventDefault();
               onToggle({ shiftKey: e.shiftKey });
@@ -520,7 +536,11 @@ function SuggestionRow({
               </span>
             ) : null}
           </div>
-          <SeriesEnd series={s.to_series} />
+          {s.to_series ? (
+            <SeriesEnd series={s.to_series} />
+          ) : (
+            <ArcEnd suggestion={s} />
+          )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1 text-xs">
           <span className="text-foreground font-medium tabular-nums">
@@ -674,7 +694,7 @@ function EditKindPopover({
           <p className="text-muted-foreground text-sm">
             …
             <span className="text-foreground font-medium">
-              {s.to_series.name}
+              {suggestionTarget(s).name}
             </span>
           </p>
           <Button

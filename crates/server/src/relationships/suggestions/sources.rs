@@ -11,9 +11,10 @@
 //! `docs/dev/series-relationships.md` ("Suggestion engine").
 
 use super::citations;
-use super::{Candidate, EvidenceSource};
+use super::detectors;
+use super::{Candidate, EvidenceSource, Target};
 use crate::metadata::title_norm::{FormatClass, classify_format, infer_format_from_title};
-use crate::relationships::RelationshipKind;
+use crate::relationships::{RelationshipCoverage, RelationshipKind, RelationshipQualifier, Scope};
 use sea_orm::{ConnectionTrait, DbErr, FromQueryResult, Statement, Value};
 use serde_json::json;
 use std::collections::HashMap;
@@ -25,34 +26,13 @@ pub const SOURCE_ROW_LIMIT: i64 = 5000;
 /// annuals/specials that classify as non-collected and are skipped).
 const COLLECTED_ROW_LIMIT: i64 = SOURCE_ROW_LIMIT * 4;
 
-/// Series-group size above which `same_universe` confidence drops a bucket
-/// (a group like "Marvel" spanning hundreds of series is weak evidence and
-/// would flood the hub's page if bulk-accepted).
-const GROUP_SMALL: i64 = 12;
-const GROUP_LARGE: i64 = 40;
-
-/// Character/team density: a feature counts only when it appears in at
-/// most `DENSITY_DF_FRACTION` of the library's series that carry any
-/// character/team data, clamped to `DENSITY_MIN_DF..=DENSITY_MAX_DF`
-/// (rare = discriminating; "Captain America" in 60 series says nothing).
-/// Relative, because junction coverage varies wildly between libraries.
-const DENSITY_DF_FRACTION: f64 = 0.02;
-const DENSITY_MIN_DF: i64 = 3;
-const DENSITY_MAX_DF: i64 = 25;
-/// A story arc spanning more series than this is an event; links through
-/// it are capped at low confidence.
-const ARC_EVENT_SIZE: i64 = 10;
-/// Minimum shared rare features for a density pair.
-const DENSITY_MIN_SHARED: i64 = 5;
-/// Minimum overlap coefficient (shared / smaller set).
-const DENSITY_MIN_OVERLAP: f64 = 0.5;
-/// At most this many density suggestions per series (each side).
-const DENSITY_PER_SERIES: i64 = 3;
+/// Rows the arc tie-in query may return (one per arc × series).
+const ARC_ROW_LIMIT: i64 = SOURCE_ROW_LIMIT * 4;
 
 /// SQL expression mirroring [`entity::series::normalize_name`]: lowercase,
 /// keep alphanumerics, whitespace / `-` / `_` / `.` collapse to one space,
 /// other punctuation is dropped.
-fn norm_sql(expr: &str) -> String {
+pub(super) fn norm_sql(expr: &str) -> String {
     format!(
         "btrim(regexp_replace(regexp_replace(lower({expr}), '[^[:alnum:][:space:]._-]', '', 'g'), '[[:space:]._-]+', ' ', 'g'))"
     )
@@ -61,7 +41,7 @@ fn norm_sql(expr: &str) -> String {
 /// SQL expression: a normalized name minus trailing volume / year tokens
 /// ("x men vol 2" → "x men", "silk 2015" → "silk"). Years are 1930–2049 so
 /// "spider man 2099" keeps its number.
-fn base_sql(norm_expr: &str) -> String {
+pub(super) fn base_sql(norm_expr: &str) -> String {
     format!(
         "coalesce(nullif(regexp_replace({norm_expr}, '( (vol|volume|v) ?[0-9]{{1,3}}| (19[3-9][0-9]|20[0-4][0-9]))+$', ''), ''), {norm_expr})"
     )
@@ -101,19 +81,165 @@ pub fn base_name(norm: &str) -> String {
     }
 }
 
-fn stmt<C: ConnectionTrait>(conn: &C, sql: &str, values: Vec<Value>) -> Statement {
+pub(super) fn stmt<C: ConnectionTrait>(conn: &C, sql: &str, values: Vec<Value>) -> Statement {
     Statement::from_sql_and_values(conn.get_database_backend(), sql, values)
 }
 
-fn round2(x: f32) -> f32 {
+pub(super) fn round2(x: f32) -> f32 {
     (x * 100.0).round() / 100.0
 }
 
-fn label(name: &str, year: Option<i32>) -> String {
+pub(super) fn label(name: &str, year: Option<i32>) -> String {
     match year {
         Some(y) => format!("{name} ({y})"),
         None => name.to_owned(),
     }
+}
+
+/// Compact issue-number intervals into a range string ("1-6,9"), merging
+/// overlapping and adjacent ones (`next.lo <= prev.hi + 1`). Returns the
+/// string and whether the merged set is one contiguous run. Falls back to
+/// the overall `lo-hi` span (not contiguous) when the list would not fit
+/// [`MAX_RANGE_LEN`](crate::relationships::MAX_RANGE_LEN). `None` for an
+/// empty input.
+pub fn compact_ranges(intervals: &[(f64, f64)]) -> Option<(String, bool)> {
+    let mut v: Vec<(f64, f64)> = intervals
+        .iter()
+        .copied()
+        .filter(|(lo, hi)| lo.is_finite() && hi.is_finite() && lo <= hi)
+        .collect();
+    if v.is_empty() {
+        return None;
+    }
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mut runs: Vec<(f64, f64)> = Vec::new();
+    for (lo, hi) in v {
+        match runs.last_mut() {
+            Some(last) if lo <= last.1 + 1.0 => last.1 = last.1.max(hi),
+            _ => runs.push((lo, hi)),
+        }
+    }
+    let fmt = |(lo, hi): (f64, f64)| {
+        if lo == hi {
+            fmt_num(lo)
+        } else {
+            format!("{}-{}", fmt_num(lo), fmt_num(hi))
+        }
+    };
+    let contiguous = runs.len() == 1;
+    let text = runs.iter().copied().map(fmt).collect::<Vec<_>>().join(",");
+    if text.chars().count() <= crate::relationships::MAX_RANGE_LEN {
+        return Some((text, contiguous));
+    }
+    let lo = runs.first().map_or(0.0, |r| r.0);
+    let hi = runs.last().map_or(0.0, |r| r.1);
+    Some((fmt((lo, hi)), false))
+}
+
+/// [`compact_ranges`] over single issue numbers.
+pub fn compact_numbers(numbers: &[f64]) -> Option<(String, bool)> {
+    compact_ranges(&numbers.iter().map(|n| (*n, *n)).collect::<Vec<_>>())
+}
+
+/// Continuation qualifier (WP-7.6) for "`later` continues `earlier`", or
+/// `None` when the evidence doesn't say:
+///
+/// - `retitle`: the two share provider continuity under different names;
+/// - `split`: either series has a `series_provider_range` row (a provider
+///   splits that run across provider series);
+/// - `numbering`: the later series' first number continues upward past the
+///   earlier one's last (legacy numbering, not a restart);
+/// - `relaunch`: the later series restarts at #1 (or #0) after the earlier
+///   one's issues ended (its last issue year is not after the new start).
+pub(super) fn continuation_qualifier(
+    retitle: bool,
+    split: bool,
+    later_lo: Option<f64>,
+    later_first_year: Option<i32>,
+    earlier_hi: Option<f64>,
+    earlier_last_year: Option<i32>,
+) -> Option<RelationshipQualifier> {
+    if retitle {
+        return Some(RelationshipQualifier::Retitle);
+    }
+    if split {
+        return Some(RelationshipQualifier::Split);
+    }
+    let (lo, hi) = (later_lo?, earlier_hi?);
+    if lo > 1.0 && lo > hi {
+        return Some(RelationshipQualifier::Numbering);
+    }
+    let ended = match (earlier_last_year, later_first_year) {
+        (Some(e), Some(l)) => e <= l,
+        _ => true,
+    };
+    (lo <= 1.0 && ended).then_some(RelationshipQualifier::Relaunch)
+}
+
+/// SQL: a language code folded to ISO 639-1 where we know the mapping
+/// (`eng` / `EN` / `en-US` → `en`, `fre` / `fra` → `fr`, …). Mirrors
+/// [`norm_lang`].
+pub(super) fn lang_sql(expr: &str) -> String {
+    let base = format!("lower(split_part(replace(btrim(coalesce({expr}, '')), '_', '-'), '-', 1))");
+    let arms = LANG_3_TO_2
+        .iter()
+        .map(|(three, two)| format!("WHEN '{three}' THEN '{two}'"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("(CASE {base} {arms} ELSE {base} END)")
+}
+
+/// ISO 639-2 (bibliographic and terminology) → 639-1 for the languages
+/// comics are commonly published in.
+const LANG_3_TO_2: &[(&str, &str)] = &[
+    ("eng", "en"),
+    ("fre", "fr"),
+    ("fra", "fr"),
+    ("ger", "de"),
+    ("deu", "de"),
+    ("spa", "es"),
+    ("ita", "it"),
+    ("jpn", "ja"),
+    ("por", "pt"),
+    ("dut", "nl"),
+    ("nld", "nl"),
+    ("kor", "ko"),
+    ("chi", "zh"),
+    ("zho", "zh"),
+    ("rus", "ru"),
+    ("pol", "pl"),
+    ("swe", "sv"),
+    ("dan", "da"),
+    ("nor", "no"),
+    ("fin", "fi"),
+    ("cze", "cs"),
+    ("ces", "cs"),
+    ("gre", "el"),
+    ("ell", "el"),
+    ("tur", "tr"),
+    ("hun", "hu"),
+    ("ara", "ar"),
+    ("heb", "he"),
+    ("ind", "id"),
+    ("tha", "th"),
+    ("vie", "vi"),
+    ("ukr", "uk"),
+    ("cat", "ca"),
+];
+
+/// Rust twin of [`lang_sql`]. Empty when unknown.
+pub(super) fn norm_lang(raw: &str) -> String {
+    let base = raw
+        .trim()
+        .replace('_', "-")
+        .split('-')
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    LANG_3_TO_2
+        .iter()
+        .find(|(three, _)| *three == base)
+        .map_or(base, |(_, two)| (*two).to_owned())
 }
 
 // ───── AlternateSeries → crossover_with ─────
@@ -203,10 +329,11 @@ pub async fn alternate_series<C: ConnectionTrait>(
             let c = round2(c.clamp(0.05, 0.95));
             Candidate {
                 from: r.from_id,
-                to: r.to_id,
+                to: r.to_id.into(),
                 kind: RelationshipKind::CrossoverWith,
                 confidence: c,
                 source: EvidenceSource::AlternateSeries,
+                scope: Scope::default(),
                 reason: format!(
                     "{} of {} list \"{}\" as an alternate series ({})",
                     plural(r.n_issues, "issue", "issues"),
@@ -228,199 +355,308 @@ pub async fn alternate_series<C: ConnectionTrait>(
         .collect())
 }
 
-// ───── SeriesGroup → same_universe ─────
+// ───── story arcs → tie_in_to (series → arc), WP-7.6 ─────
 
 #[derive(Debug, FromQueryResult)]
-struct GroupRow {
-    hub_id: Uuid,
-    hub_name: String,
-    hub_year: Option<i32>,
-    other_id: Uuid,
-    other_name: String,
-    other_year: Option<i32>,
-    grp: String,
-    grp_n: i64,
+struct ArcSeriesRow {
+    arc_id: Uuid,
+    arc_name: String,
+    series_id: Uuid,
+    series_name: String,
+    series_year: Option<i32>,
+    series_norm: String,
+    /// Issues of this series in the arc.
+    n: i64,
+    /// Their numbers (for the edge's `from_range`).
+    numbers: Option<Vec<f64>>,
+    /// First / last cover month of those issues (`year * 12 + month`).
+    first_ym: Option<i32>,
+    last_ym: Option<i32>,
+    /// An issue title in the arc says Prelude / Road to …
+    t_prelude: bool,
+    /// An issue title in the arc says Aftermath / Epilogue.
+    t_after: bool,
 }
 
-/// Series sharing a ComicInfo `SeriesGroup`. Star-shaped: every member links
-/// to one hub (the member whose name equals the group, else the oldest), so
-/// a group of N yields N − 1 suggestions, not N².
-pub async fn series_group<C: ConnectionTrait>(
-    conn: &C,
-    library_id: Uuid,
-) -> Result<Vec<Candidate>, DbErr> {
-    let gnorm = norm_sql("s.series_group");
-    let sql = format!(
-        r#"
-        WITH g AS (
-            SELECT s.id, s.name, s.year, s.series_group, s.normalized_name, {gnorm} AS gnorm
-              FROM series s
-             WHERE s.library_id = $1 AND s.removed_at IS NULL
-               AND s.series_group IS NOT NULL AND btrim(s.series_group) <> ''
-        ), r AS (
-            SELECT g.*,
-                   row_number() OVER (PARTITION BY gnorm
-                                      ORDER BY (normalized_name = gnorm) DESC, year NULLS LAST, id) AS rk,
-                   count(*) OVER (PARTITION BY gnorm) AS grp_n
-              FROM g WHERE gnorm <> ''
-        )
-        SELECT h.id AS hub_id, h.name AS hub_name, h.year AS hub_year,
-               o.id AS other_id, o.name AS other_name, o.year AS other_year,
-               o.series_group AS grp, o.grp_n
-          FROM r h
-          JOIN r o ON o.gnorm = h.gnorm AND o.rk > 1
-         WHERE h.rk = 1 AND o.normalized_name <> h.normalized_name
-         LIMIT {SOURCE_ROW_LIMIT}
-        "#
-    );
-    let rows = GroupRow::find_by_statement(stmt(conn, &sql, vec![library_id.into()]))
-        .all(conn)
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| {
-            let c = if r.grp_n <= GROUP_SMALL {
-                0.85
-            } else if r.grp_n <= GROUP_LARGE {
-                0.7
-            } else {
-                0.5
-            };
-            Candidate {
-                from: r.other_id,
-                to: r.hub_id,
-                kind: RelationshipKind::SameUniverse,
-                confidence: c,
-                source: EvidenceSource::SeriesGroup,
-                reason: format!(
-                    "{} and {} share the series group \"{}\" ({} series in the group)",
-                    label(&r.other_name, r.other_year),
-                    label(&r.hub_name, r.hub_year),
-                    r.grp,
-                    r.grp_n
-                ),
-                evidence: json!({
-                    "source": "series_group",
-                    "series_group": r.grp,
-                    "group_size": r.grp_n,
-                }),
-            }
-        })
-        .collect())
+/// How sure the detector is about an arc's main series.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MainBy {
+    /// The series is named like the arc ("Secret Wars" ← `"Secret Wars"
+    /// Battleworld`).
+    Name,
+    /// Holds at least twice as many of the arc's issues as the runner-up.
+    Margin,
+    /// Two series hold (nearly) as many issues each: both are main, and
+    /// they get a `crossover_with` pair (a genuine two-title crossover).
+    CoMain,
+    /// Holds the most issues, without a clear margin.
+    Weak,
 }
 
-// ───── shared StoryArc → crossover_with ─────
-
-#[derive(Debug, FromQueryResult)]
-struct ArcRow {
-    hub_id: Uuid,
-    hub_name: String,
-    hub_year: Option<i32>,
-    other_id: Uuid,
-    other_name: String,
-    other_year: Option<i32>,
-    shared_arcs: i64,
-    hub_issues: i64,
-    other_issues: i64,
-    arc_names: Vec<String>,
-    /// Series count of the smallest shared arc.
-    smallest_arc: i64,
+/// Normalized name key for arc / series comparison: base name, minus a
+/// leading "the".
+pub(super) fn match_key(norm: &str) -> String {
+    let b = base_name(norm);
+    b.strip_prefix("the ").map_or(b.clone(), str::to_owned)
 }
 
-/// Story arcs (the `issue_arcs` junction) spanning several series. For each
-/// arc the series with the most issues in it is the hub and every other
-/// series links to it (an event with 40 tie-ins → 39 suggestions, not 780).
-/// Pairs are then aggregated across arcs. Series with the same normalized
-/// name are skipped (that's a run continuing, handled by name continuation).
-pub async fn story_arcs<C: ConnectionTrait>(
+/// The arc's own key plus, for ComicVine reading-list style names
+/// (`"Secret Wars" Battleworld`), the quoted family's key.
+fn arc_keys(name: &str) -> Vec<String> {
+    let mut keys = vec![match_key(&entity::series::normalize_name(name))];
+    let t = name.trim_start();
+    if let Some(rest) = t.strip_prefix('"')
+        && let Some(end) = rest.find('"')
+    {
+        let fam = match_key(&entity::series::normalize_name(&rest[..end]));
+        if !fam.is_empty() {
+            keys.push(fam);
+        }
+        let tail = match_key(&entity::series::normalize_name(&rest[end + 1..]));
+        if !tail.is_empty() {
+            keys.push(tail);
+        }
+    }
+    keys.retain(|k| !k.is_empty());
+    keys
+}
+
+/// Series-name markers of a prelude / aftermath.
+fn name_role(norm: &str) -> Option<RelationshipQualifier> {
+    let padded = format!(" {norm} ");
+    if padded.contains(" prelude ") || padded.contains(" road to ") {
+        Some(RelationshipQualifier::Prelude)
+    } else if padded.contains(" aftermath ") || padded.contains(" epilogue ") {
+        Some(RelationshipQualifier::Aftermath)
+    } else {
+        None
+    }
+}
+
+/// Story arcs (`issue_arcs`) spanning ≥ 2 series of the library. Every
+/// participating series gets `tie_in_to` **the arc** (an arc target, so an
+/// event with 60 tie-ins is 60 rows, never pairs) with a role:
+///
+/// - `main`: the series named like the arc (or its reading-list family),
+///   else the one holding the most of the arc's issues;
+/// - `prelude` / `aftermath`: an issue title or the series name says
+///   Prelude / Road to / Aftermath / Epilogue, or all of the series' arc
+///   issues are cover-dated before (after) the main series' arc span;
+/// - `tie_in`: everything else.
+///
+/// Confidence follows how unambiguous the main series is ([`MainBy`]). Two
+/// co-main series also get a `crossover_with` pair (WP-7.6 keeps
+/// `crossover_with` only from that and from ComicInfo `AlternateSeries`).
+/// One query; the per-arc role assignment is a linear pass over its
+/// arc-ordered rows.
+pub async fn arc_tie_ins<C: ConnectionTrait>(
     conn: &C,
     library_id: Uuid,
 ) -> Result<Vec<Candidate>, DbErr> {
     let sql = format!(
         r#"
         WITH per AS (
-            SELECT ia.arc_id, i.series_id, count(*) AS n
+            SELECT ia.arc_id, i.series_id, count(*) AS n,
+                   array_agg(DISTINCT i.sort_number) FILTER (WHERE i.sort_number IS NOT NULL) AS numbers,
+                   min(i.year * 12 + coalesce(i.month, 1)) AS first_ym,
+                   max(i.year * 12 + coalesce(i.month, 12)) AS last_ym,
+                   bool_or(coalesce(i.title, '') ~* '(prelude|road to)') AS t_prelude,
+                   bool_or(coalesce(i.title, '') ~* '(aftermath|epilogue)') AS t_after
               FROM issue_arcs ia
               JOIN issues i ON i.id = ia.issue_id
              WHERE i.library_id = $1 AND i.removed_at IS NULL
              GROUP BY 1, 2
-        ), multi AS (
-            SELECT arc_id FROM per GROUP BY arc_id HAVING count(*) >= 2
-        ), ranked AS (
-            SELECT p.arc_id, p.series_id, p.n,
-                   row_number() OVER (PARTITION BY p.arc_id ORDER BY p.n DESC, s.year NULLS LAST, s.id) AS rk,
-                   count(*) OVER (PARTITION BY p.arc_id) AS arc_n
-              FROM per p
-              JOIN multi USING (arc_id)
+        ), live AS (
+            SELECT p.* FROM per p
               JOIN series s ON s.id = p.series_id AND s.removed_at IS NULL
-        ), pairs AS (
-            SELECT h.series_id AS hub_id, o.series_id AS other_id, h.arc_id, h.n AS hub_n, o.n AS other_n,
-                   h.arc_n
-              FROM ranked h
-              JOIN ranked o ON o.arc_id = h.arc_id AND o.rk > 1
-             WHERE h.rk = 1
+        ), multi AS (
+            SELECT arc_id FROM live GROUP BY arc_id HAVING count(*) >= 2
         )
-        SELECT p.hub_id, hs.name AS hub_name, hs.year AS hub_year,
-               p.other_id, os.name AS other_name, os.year AS other_year,
-               count(*) AS shared_arcs, sum(p.hub_n)::bigint AS hub_issues,
-               sum(p.other_n)::bigint AS other_issues,
-               min(p.arc_n) AS smallest_arc,
-               (array_agg(a.name ORDER BY a.name))[1:5] AS arc_names
-          FROM pairs p
+        SELECT p.arc_id, a.name AS arc_name, p.series_id, s.name AS series_name,
+               s.year AS series_year, s.normalized_name AS series_norm, p.n, p.numbers,
+               p.first_ym, p.last_ym, p.t_prelude, p.t_after
+          FROM live p
+          JOIN multi USING (arc_id)
           JOIN story_arc a ON a.id = p.arc_id
-          JOIN series hs ON hs.id = p.hub_id
-          JOIN series os ON os.id = p.other_id
-         WHERE hs.normalized_name <> os.normalized_name
-         GROUP BY p.hub_id, hs.name, hs.year, p.other_id, os.name, os.year
-         ORDER BY count(*) DESC
-         LIMIT {SOURCE_ROW_LIMIT}
+          JOIN series s ON s.id = p.series_id
+         ORDER BY p.arc_id, p.n DESC, s.year NULLS LAST, s.id
+         LIMIT {ARC_ROW_LIMIT}
         "#
     );
-    let rows = ArcRow::find_by_statement(stmt(conn, &sql, vec![library_id.into()]))
+    let rows = ArcSeriesRow::find_by_statement(stmt(conn, &sql, vec![library_id.into()]))
         .all(conn)
         .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| {
-            let mut c: f32 = if r.other_issues >= 2 { 0.65 } else { 0.5 };
-            c += 0.1 * (r.shared_arcs.saturating_sub(1).min(3)) as f32;
-            // An event arc spanning dozens of series ("Secret Wars"
-            // Battleworld) links every tie-in to one hub; each such link
-            // is weak, so keep them out of medium/high.
-            if r.smallest_arc > ARC_EVENT_SIZE {
-                c = c.min(0.45);
+    let mut out = Vec::new();
+    for group in rows.chunk_by(|a, b| a.arc_id == b.arc_id) {
+        if group.len() >= 2 {
+            arc_group(group, &mut out);
+        }
+    }
+    Ok(out)
+}
+
+/// Roles and confidences for one arc's series (sorted by issue count desc).
+fn arc_group(group: &[ArcSeriesRow], out: &mut Vec<Candidate>) {
+    let arc = &group[0];
+    let keys = arc_keys(&arc.arc_name);
+    // Main by name: the largest series whose name matches the arc.
+    let by_name = group
+        .iter()
+        .position(|r| keys.contains(&match_key(&r.series_norm)));
+    let (mains, by): (Vec<usize>, MainBy) = match by_name {
+        Some(i) => (vec![i], MainBy::Name),
+        None => {
+            let (top, second) = (group[0].n, group[1].n);
+            let third = group.get(2).map_or(0, |r| r.n);
+            if top >= 2 * second {
+                (vec![0], MainBy::Margin)
+            } else if second >= 2 && 4 * second >= 3 * top && 2 * third <= second {
+                (vec![0, 1], MainBy::CoMain)
+            } else {
+                (vec![0], MainBy::Weak)
             }
-            let c = round2(c.min(0.9));
-            let arcs = r
-                .arc_names
-                .iter()
-                .map(|a| format!("\"{a}\""))
-                .collect::<Vec<_>>()
-                .join(", ");
-            Candidate {
-                from: r.other_id,
-                to: r.hub_id,
-                kind: RelationshipKind::CrossoverWith,
-                confidence: c,
-                source: EvidenceSource::StoryArc,
-                reason: format!(
-                    "{} and {} share {}: {}",
-                    label(&r.other_name, r.other_year),
-                    label(&r.hub_name, r.hub_year),
-                    plural(r.shared_arcs, "story arc", "story arcs"),
-                    arcs
+        }
+    };
+    // The main story's cover-date span (both mains for a co-main arc).
+    let span_lo = mains.iter().filter_map(|&i| group[i].first_ym).min();
+    let span_hi = mains.iter().filter_map(|&i| group[i].last_ym).max();
+    let main_names = mains
+        .iter()
+        .map(|&i| label(&group[i].series_name, group[i].series_year))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let why_main = match by {
+        MainBy::Name => "named after the arc".to_owned(),
+        MainBy::Margin => "holds most of the arc's issues".to_owned(),
+        MainBy::CoMain => "shares the arc's issues evenly with another series".to_owned(),
+        MainBy::Weak => "holds the most of the arc's issues, without a clear margin".to_owned(),
+    };
+    for (i, r) in group.iter().enumerate() {
+        let is_main = mains.contains(&i);
+        let flag_role = if r.t_prelude {
+            Some(RelationshipQualifier::Prelude)
+        } else if r.t_after {
+            Some(RelationshipQualifier::Aftermath)
+        } else {
+            name_role(&r.series_norm)
+        };
+        let date_role = match (r.first_ym, r.last_ym, span_lo, span_hi) {
+            (_, Some(last), Some(lo), _) if last < lo => Some(RelationshipQualifier::Prelude),
+            (Some(first), _, _, Some(hi)) if first > hi => Some(RelationshipQualifier::Aftermath),
+            _ => None,
+        };
+        let (role, c, why): (RelationshipQualifier, f32, String) = if is_main {
+            let c = match by {
+                MainBy::Name => 0.9,
+                MainBy::Margin => 0.75,
+                MainBy::CoMain => 0.6,
+                MainBy::Weak => 0.55,
+            };
+            (
+                RelationshipQualifier::Main,
+                c,
+                format!("main story: {why_main}"),
+            )
+        } else {
+            let clear = matches!(by, MainBy::Name | MainBy::Margin);
+            let base: f32 = match by {
+                MainBy::Name => 0.8,
+                MainBy::Margin => 0.7,
+                MainBy::CoMain | MainBy::Weak => 0.55,
+            };
+            match (flag_role, date_role) {
+                (Some(q), _) => (
+                    q,
+                    base,
+                    format!("{} (title says so); main story {main_names}", role_word(q)),
                 ),
-                evidence: json!({
-                    "source": "story_arc",
-                    "shared_arcs": r.shared_arcs,
-                    "smallest_arc_series": r.smallest_arc,
-                    "arc_names": r.arc_names,
-                    "issues_in_from": r.other_issues,
-                    "issues_in_to": r.hub_issues,
-                }),
+                (None, Some(q)) => (
+                    q,
+                    if clear { base - 0.05 } else { base },
+                    format!(
+                        "{}: its arc issues are cover-dated {} {main_names}'s",
+                        role_word(q),
+                        if q == RelationshipQualifier::Prelude {
+                            "before"
+                        } else {
+                            "after"
+                        }
+                    ),
+                ),
+                (None, None) => (
+                    RelationshipQualifier::TieIn,
+                    base,
+                    format!("tie-in; main story {main_names}"),
+                ),
             }
-        })
-        .collect())
+        };
+        let from_range = r
+            .numbers
+            .as_deref()
+            .and_then(compact_numbers)
+            .map(|(t, _)| t);
+        out.push(Candidate {
+            from: r.series_id,
+            to: Target::Arc(r.arc_id),
+            kind: RelationshipKind::TieInTo,
+            confidence: round2(c),
+            source: EvidenceSource::ArcTieIn,
+            reason: format!(
+                "{} has {} in the story arc \"{}\" — {}",
+                label(&r.series_name, r.series_year),
+                plural(r.n, "issue", "issues"),
+                arc.arc_name,
+                why
+            ),
+            evidence: json!({
+                "source": "arc_tie_in",
+                "arc_name": arc.arc_name,
+                "role": role.as_str(),
+                "main_by": format!("{by:?}").to_lowercase(),
+                "issues_in_arc": r.n,
+                "arc_series": group.len(),
+            }),
+            scope: Scope {
+                from_range,
+                qualifier: Some(role),
+                ..Scope::default()
+            },
+        });
+    }
+    if by == MainBy::CoMain {
+        let (a, b) = (&group[mains[0]], &group[mains[1]]);
+        out.push(Candidate {
+            from: a.series_id,
+            to: b.series_id.into(),
+            kind: RelationshipKind::CrossoverWith,
+            confidence: 0.65,
+            source: EvidenceSource::ArcCrossover,
+            reason: format!(
+                "{} and {} are both main titles of the story arc \"{}\" ({} and {} of its issues)",
+                label(&a.series_name, a.series_year),
+                label(&b.series_name, b.series_year),
+                arc.arc_name,
+                a.n,
+                b.n
+            ),
+            evidence: json!({
+                "source": "arc_crossover",
+                "arc_name": arc.arc_name,
+                "issues_in_from": a.n,
+                "issues_in_to": b.n,
+            }),
+            scope: Scope::default(),
+        });
+    }
+}
+
+fn role_word(q: RelationshipQualifier) -> &'static str {
+    match q {
+        RelationshipQualifier::Prelude => "prelude",
+        RelationshipQualifier::Aftermath => "aftermath",
+        RelationshipQualifier::Main => "main story",
+        _ => "tie-in",
+    }
 }
 
 // ───── name continuation → continues (WP-7.5: publication continuity) ─────
@@ -436,6 +672,12 @@ struct NameRow {
     prev_year: Option<i32>,
     prev_ord: Option<i32>,
     vol_folder: bool,
+    lo: Option<f64>,
+    iy_min: Option<i32>,
+    split: bool,
+    prev_hi: Option<f64>,
+    prev_iy_max: Option<i32>,
+    prev_split: bool,
 }
 
 /// Same title, later year or volume ("X (2011)" → "X (2016)", or a
@@ -454,16 +696,26 @@ pub async fn name_continuation<C: ConnectionTrait>(
     let parent_base = base_sql(&norm_sql("parent"));
     let name_base = base_sql("normalized_name");
     let vol_leaf = r"lower(coalesce(leaf, '')) ~ '^(vol(ume)?\.?|v) ?[0-9]{1,3}$'";
+    let lang = lang_sql("s.language_code");
     let sql = format!(
         r#"
         WITH s AS (
             SELECT s.id, s.name, s.year, s.volume, s.normalized_name,
-                   lower(coalesce(s.publisher, '')) AS pub,
-                   {leaf} AS leaf, {parent} AS parent
+                   lower(coalesce(s.publisher, '')) AS pub, {lang} AS lang,
+                   {leaf} AS leaf, {parent} AS parent,
+                   r.lo, r.hi, r.iy_min, r.iy_max,
+                   EXISTS (SELECT 1 FROM series_provider_range p WHERE p.series_id = s.id) AS split
               FROM series s
+              -- Per-series index lookup (robust to missing statistics).
+              CROSS JOIN LATERAL (
+                  SELECT min(i.sort_number) AS lo, max(i.sort_number) AS hi,
+                         min(i.year) AS iy_min, max(i.year) AS iy_max
+                    FROM issues i
+                   WHERE i.series_id = s.id AND i.removed_at IS NULL
+              ) r
              WHERE s.library_id = $1 AND s.removed_at IS NULL
         ), k AS (
-            SELECT id, name, year, pub,
+            SELECT id, name, year, pub, lang, lo, hi, iy_min, iy_max, split,
                    ({vol_leaf} AND parent IS NOT NULL) AS vol_folder,
                    CASE WHEN {vol_leaf} AND parent IS NOT NULL THEN {parent_base}
                         ELSE {name_base} END AS base,
@@ -476,12 +728,18 @@ pub async fn name_continuation<C: ConnectionTrait>(
                    lag(id)   OVER w AS prev_id,
                    lag(name) OVER w AS prev_name,
                    lag(year) OVER w AS prev_year,
-                   lag(ord)  OVER w AS prev_ord
+                   lag(ord)  OVER w AS prev_ord,
+                   lag(hi)   OVER w AS prev_hi,
+                   lag(iy_max) OVER w AS prev_iy_max,
+                   lag(split) OVER w AS prev_split
               FROM k
              WHERE base <> '' AND (year IS NOT NULL OR ord IS NOT NULL)
-            WINDOW w AS (PARTITION BY base, pub ORDER BY year NULLS LAST, ord NULLS LAST, id)
+            -- Language too (WP-7.6): the same title in another language is
+            -- a translation, not the next volume.
+            WINDOW w AS (PARTITION BY base, pub, lang ORDER BY year NULLS LAST, ord NULLS LAST, id)
         )
-        SELECT id, name, year, ord, prev_id, prev_name, prev_year, prev_ord, vol_folder
+        SELECT id, name, year, ord, prev_id, prev_name, prev_year, prev_ord, vol_folder,
+               lo, iy_min, split, prev_hi, prev_iy_max, coalesce(prev_split, false) AS prev_split
           FROM o
          WHERE prev_id IS NOT NULL
          LIMIT {SOURCE_ROW_LIMIT}
@@ -534,9 +792,21 @@ pub async fn name_continuation<C: ConnectionTrait>(
             ),
             _ => continue,
         };
+        let qualifier = (kind == RelationshipKind::Continues)
+            .then(|| {
+                continuation_qualifier(
+                    false,
+                    r.split || r.prev_split,
+                    r.lo,
+                    r.iy_min.or(r.year),
+                    r.prev_hi,
+                    r.prev_iy_max.or(r.prev_year),
+                )
+            })
+            .flatten();
         out.push(Candidate {
             from: r.id,
-            to: r.prev_id,
+            to: r.prev_id.into(),
             kind,
             confidence: c,
             source: EvidenceSource::NameContinuation,
@@ -548,7 +818,14 @@ pub async fn name_continuation<C: ConnectionTrait>(
                 "from_volume": r.ord,
                 "to_volume": r.prev_ord,
                 "volume_folder": r.vol_folder,
+                "from_first_issue": r.lo,
+                "to_last_issue": r.prev_hi,
+                "qualifier": qualifier.map(RelationshipQualifier::as_str),
             }),
+            scope: Scope {
+                qualifier,
+                ..Scope::default()
+            },
         });
     }
     Ok(out)
@@ -567,6 +844,7 @@ struct CollectedRow {
     title: Option<String>,
     notes: Option<String>,
     summary: Option<String>,
+    sort_number: Option<f64>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -580,14 +858,8 @@ struct ResolvedCitation {
 }
 
 fn is_collected(r: &CollectedRow) -> bool {
-    let class = |s: &Option<String>| s.as_deref().and_then(classify_format);
-    class(&r.format) == Some(FormatClass::Collected)
-        || class(&r.special_type) == Some(FormatClass::Collected)
-        || class(&r.series_type) == Some(FormatClass::Collected)
-        || matches!(
-            infer_format_from_title(&r.series_name, None),
-            Some("Omnibus" | "Hardcover" | "Graphic Novel" | "TPB")
-        )
+    let formats: Vec<String> = r.format.iter().chain(&r.special_type).cloned().collect();
+    collected_by(&r.series_name, r.series_type.as_deref(), &formats)
 }
 
 /// The collected edition's own title minus format words, as the fallback
@@ -628,7 +900,7 @@ pub async fn collected_editions<C: ConnectionTrait>(
     let sql = format!(
         r#"
         SELECT i.series_id, s.name AS series_name, s.normalized_name AS series_norm,
-               s.series_type, i.format, i.special_type, i.title, i.notes, i.summary
+               s.series_type, i.format, i.special_type, i.title, i.notes, i.summary, i.sort_number
           FROM issues i
           JOIN series s ON s.id = i.series_id AND s.removed_at IS NULL
          WHERE i.library_id = $1 AND i.removed_at IS NULL
@@ -645,6 +917,8 @@ pub async fn collected_editions<C: ConnectionTrait>(
     struct Cite {
         from: Uuid,
         from_name: String,
+        /// The citing issue's own number (→ the edge's `from_range`).
+        from_number: Option<f64>,
         name: String,
         explicit: bool,
         lo: f64,
@@ -678,6 +952,7 @@ pub async fn collected_editions<C: ConnectionTrait>(
                     cites.push(Cite {
                         from: r.series_id,
                         from_name: r.series_name.clone(),
+                        from_number: r.sort_number,
                         name,
                         explicit,
                         lo: c.lo,
@@ -742,7 +1017,18 @@ pub async fn collected_editions<C: ConnectionTrait>(
     .all(conn)
     .await?;
 
-    let mut out = Vec::with_capacity(resolved.len());
+    // Score each resolved citation, then roll them up per (edition, target)
+    // pair: an edition series citing "#1-6" in one issue and "#7-12" in the
+    // next is one suggestion with `to_range = "1-12"`.
+    struct Scored<'a> {
+        cite: &'a Cite,
+        to_name: String,
+        to_year: Option<i32>,
+        covered: i64,
+        n_candidates: i64,
+        confidence: f32,
+    }
+    let mut by_pair: HashMap<(Uuid, Uuid), Vec<Scored>> = HashMap::new();
     for r in resolved {
         let Some(cite) = usize::try_from(r.idx).ok().and_then(|i| cites.get(i)) else {
             continue;
@@ -764,35 +1050,82 @@ pub async fn collected_editions<C: ConnectionTrait>(
         if r.n_candidates > 1 && r.covered == 0 {
             c -= 0.1;
         }
-        let range = format!("#{}–{}", fmt_num(cite.lo), fmt_num(cite.hi));
+        by_pair
+            .entry((cite.from, r.to_id))
+            .or_default()
+            .push(Scored {
+                cite,
+                to_name: r.to_name,
+                to_year: r.to_year,
+                covered: r.covered,
+                n_candidates: r.n_candidates,
+                confidence: round2(c.max(0.05)),
+            });
+    }
+    let mut out = Vec::with_capacity(by_pair.len());
+    for ((from, to), mut parts) in by_pair {
+        parts.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(
+                    a.cite
+                        .lo
+                        .partial_cmp(&b.cite.lo)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
+        });
+        let best = &parts[0];
+        let ranges: Vec<(f64, f64)> = parts.iter().map(|p| (p.cite.lo, p.cite.hi)).collect();
+        // Coverage: the cited ranges, merged, leave no gap → `full` (the
+        // edition says it collects every issue in its span); a gap →
+        // `partial`.
+        let (to_range, contiguous) = compact_ranges(&ranges).unwrap_or_default();
+        let from_numbers: Vec<f64> = parts.iter().filter_map(|p| p.cite.from_number).collect();
+        let from_range = compact_numbers(&from_numbers).map(|(t, _)| t);
+        let shown = to_range.replace('-', "–");
         out.push(Candidate {
-            from: cite.from,
-            to: r.to_id,
+            from,
+            to: to.into(),
             kind: RelationshipKind::Collects,
-            confidence: round2(c.max(0.05)),
+            confidence: best.confidence,
             source: EvidenceSource::CollectedEdition,
             reason: format!(
-                "{} is a collected edition citing {} {} ({} of those issues are in the library)",
-                cite.from_name,
-                label(&r.to_name, r.to_year),
-                range,
-                r.covered
+                "{} is a collected edition citing {} #{} ({} of the best-covered citation's issues are in the library)",
+                best.cite.from_name,
+                label(&best.to_name, best.to_year),
+                shown,
+                best.covered
             ),
             evidence: json!({
                 "source": "collected_edition",
-                "cited_name": cite.name,
-                "name_explicit": cite.explicit,
-                "range_low": cite.lo,
-                "range_high": cite.hi,
-                "issues_in_library": r.covered,
-                "same_name_candidates": r.n_candidates,
+                "cited_name": best.cite.name,
+                "name_explicit": best.cite.explicit,
+                "range_low": best.cite.lo,
+                "range_high": best.cite.hi,
+                "issues_in_library": best.covered,
+                "same_name_candidates": best.n_candidates,
+                "cited_ranges": ranges
+                    .iter()
+                    .map(|(lo, hi)| format!("{}-{}", fmt_num(*lo), fmt_num(*hi)))
+                    .collect::<Vec<_>>(),
             }),
+            scope: Scope {
+                from_range,
+                to_range: (!to_range.is_empty()).then_some(to_range),
+                coverage: Some(if contiguous {
+                    RelationshipCoverage::Full
+                } else {
+                    RelationshipCoverage::Partial
+                }),
+                ..Scope::default()
+            },
         });
     }
     Ok(out)
 }
 
-fn plural(n: i64, one: &str, many: &str) -> String {
+pub(super) fn plural(n: i64, one: &str, many: &str) -> String {
     if n == 1 {
         format!("1 {one}")
     } else {
@@ -800,7 +1133,7 @@ fn plural(n: i64, one: &str, many: &str) -> String {
     }
 }
 
-fn fmt_num(n: f64) -> String {
+pub(super) fn fmt_num(n: f64) -> String {
     if n.fract() == 0.0 {
         format!("{}", n as i64)
     } else {
@@ -808,43 +1141,171 @@ fn fmt_num(n: f64) -> String {
     }
 }
 
-// ───── provider volume ids → continues / see_also ─────
+// ───── issue_reprints roll-up → collects / reprints (WP-7.6) ─────
 
-#[derive(Debug, FromQueryResult)]
-struct ProviderRow {
-    source: String,
-    pid: String,
-    id: Uuid,
-    name: String,
-    year: Option<i32>,
-    lo: Option<f64>,
-    hi: Option<f64>,
-    prev_id: Uuid,
-    prev_name: String,
-    prev_year: Option<i32>,
-    prev_lo: Option<f64>,
-    prev_hi: Option<f64>,
-    members: i64,
+/// A series is a collected edition (TPB / HC / omnibus / graphic novel) by
+/// its `series_type`, any of its issues' `Format` / `special_type`, or a
+/// name marker ("… TPB", "… Omnibus").
+pub(super) fn collected_by(name: &str, series_type: Option<&str>, formats: &[String]) -> bool {
+    series_type.and_then(classify_format) == Some(FormatClass::Collected)
+        || formats
+            .iter()
+            .any(|f| classify_format(f) == Some(FormatClass::Collected))
+        || matches!(
+            infer_format_from_title(name, None),
+            Some("Omnibus" | "Hardcover" | "Graphic Novel" | "TPB")
+        )
 }
 
-/// Local series that claim the **same provider volume** — one run split
-/// across several local series (folder per year, a relaunch filed
-/// separately, …). The series-level `external_ids` row is unique per
-/// provider id, so a second series can only claim it through its issues'
-/// ComicInfo (`comicvine_series_id` / `metron_series_id`). One
-/// representative issue per series (the first by `sort_number`, an
-/// index-only pick) is read, plus the series-level ids.
-///
-/// Members of a shared id are ordered by first issue number; adjacent
-/// members whose issue ranges are disjoint and ordered are `continues`
-/// (the provider sees one continuous run); overlapping ranges are
-/// `see_also` (likely duplicates or variant files of the same run).
-pub async fn provider_volumes<C: ConnectionTrait>(
+#[derive(Debug, FromQueryResult)]
+struct ReprintRow {
+    from_id: Uuid,
+    from_name: String,
+    from_year: Option<i32>,
+    from_series_type: Option<String>,
+    from_formats: Option<Vec<String>>,
+    to_id: Uuid,
+    to_name: String,
+    to_year: Option<i32>,
+    /// Distinct reprinted issues of `to`.
+    linked: i64,
+    /// … of which numbered (`sort_number` set).
+    linked_numbered: i64,
+    from_numbers: Option<Vec<f64>>,
+    to_numbers: Option<Vec<f64>>,
+    /// Issues of `to` in the library within the reprinted span.
+    in_span: i64,
+}
+
+/// `issue_reprints` (issue → reprinted issue, both in the library) rolled
+/// up per series pair. The reprinting side is the subject: `collects` when
+/// it is a collected edition ([`collected_by`]), else `reprints`. `to_range`
+/// is the reprinted numbers compacted ("1-6,9"), `from_range` the
+/// reprinting issues'; `coverage` is `full` when every issue of the target
+/// the library holds inside the reprinted span is linked, `partial` when
+/// some are not, `unknown` without issue numbers. Label-only rows
+/// (`reprinted_issue_id` NULL) are skipped. One grouped query.
+pub async fn reprint_rollup<C: ConnectionTrait>(
     conn: &C,
     library_id: Uuid,
 ) -> Result<Vec<Candidate>, DbErr> {
     let sql = format!(
         r#"
+        WITH r AS (
+            SELECT i.series_id AS from_id, t.series_id AS to_id, t.id AS tid,
+                   i.sort_number AS fnum, t.sort_number AS tnum
+              FROM issue_reprints rp
+              JOIN issues i ON i.id = rp.issue_id AND i.library_id = $1 AND i.removed_at IS NULL
+              JOIN issues t ON t.id = rp.reprinted_issue_id
+                           AND t.library_id = $1 AND t.removed_at IS NULL
+             WHERE t.series_id <> i.series_id
+        ), agg AS (
+            SELECT from_id, to_id,
+                   count(DISTINCT tid) AS linked,
+                   count(DISTINCT tid) FILTER (WHERE tnum IS NOT NULL) AS linked_numbered,
+                   array_agg(DISTINCT fnum) FILTER (WHERE fnum IS NOT NULL) AS from_numbers,
+                   array_agg(DISTINCT tnum) FILTER (WHERE tnum IS NOT NULL) AS to_numbers,
+                   min(tnum) AS lo, max(tnum) AS hi
+              FROM r GROUP BY 1, 2
+        )
+        SELECT a.from_id, f.name AS from_name, f.year AS from_year,
+               f.series_type AS from_series_type,
+               (SELECT array_agg(DISTINCT x.v) FROM (
+                    SELECT i.format AS v FROM issues i
+                     WHERE i.series_id = a.from_id AND i.removed_at IS NULL AND i.format IS NOT NULL
+                    UNION
+                    SELECT i.special_type FROM issues i
+                     WHERE i.series_id = a.from_id AND i.removed_at IS NULL
+                       AND i.special_type IS NOT NULL) x) AS from_formats,
+               a.to_id, t.name AS to_name, t.year AS to_year,
+               a.linked, a.linked_numbered, a.from_numbers, a.to_numbers,
+               (SELECT count(*) FROM issues x
+                 WHERE x.series_id = a.to_id AND x.removed_at IS NULL
+                   AND x.sort_number BETWEEN a.lo AND a.hi) AS in_span
+          FROM agg a
+          JOIN series f ON f.id = a.from_id AND f.removed_at IS NULL
+          JOIN series t ON t.id = a.to_id AND t.removed_at IS NULL
+         ORDER BY a.linked DESC
+         LIMIT {SOURCE_ROW_LIMIT}
+        "#
+    );
+    let rows = ReprintRow::find_by_statement(stmt(conn, &sql, vec![library_id.into()]))
+        .all(conn)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let formats = r.from_formats.clone().unwrap_or_default();
+            let collected = collected_by(&r.from_name, r.from_series_type.as_deref(), &formats);
+            let (kind, c) = if collected {
+                (
+                    RelationshipKind::Collects,
+                    if r.linked >= 3 { 0.9 } else { 0.85 },
+                )
+            } else {
+                (
+                    RelationshipKind::Reprints,
+                    if r.linked >= 2 { 0.7 } else { 0.65 },
+                )
+            };
+            let to = r.to_numbers.as_deref().and_then(compact_numbers);
+            let from_range = r
+                .from_numbers
+                .as_deref()
+                .and_then(compact_numbers)
+                .map(|(t, _)| t);
+            let coverage = match &to {
+                None => RelationshipCoverage::Unknown,
+                Some(_) if r.linked_numbered >= r.in_span => RelationshipCoverage::Full,
+                Some(_) => RelationshipCoverage::Partial,
+            };
+            let to_range = to.map(|(t, _)| t);
+            Candidate {
+                from: r.from_id,
+                to: r.to_id.into(),
+                kind,
+                confidence: c,
+                source: EvidenceSource::ReprintRollup,
+                reason: format!(
+                    "{} reprints {} of {}{}{}",
+                    label(&r.from_name, r.from_year),
+                    plural(r.linked, "issue", "issues"),
+                    label(&r.to_name, r.to_year),
+                    to_range
+                        .as_deref()
+                        .map(|t| format!(" (#{t})"))
+                        .unwrap_or_default(),
+                    if collected {
+                        " as a collected edition"
+                    } else {
+                        ""
+                    }
+                ),
+                evidence: json!({
+                    "source": "reprint_rollup",
+                    "linked_issues": r.linked,
+                    "issues_in_span": r.in_span,
+                    "collected_edition": collected,
+                    "coverage": coverage.as_str(),
+                }),
+                scope: Scope {
+                    from_range,
+                    to_range,
+                    coverage: Some(coverage),
+                    ..Scope::default()
+                },
+            }
+        })
+        .collect())
+}
+
+/// SQL CTEs `rep` + `claims(series_id, source, pid)`: every provider series a
+/// local series of library `$1` claims — its first issue's ComicInfo
+/// `comicvine_series_id` / `metron_series_id`, plus series-level
+/// `external_ids` (ComicVine / Metron / GCD). Starts with `WITH` and ends
+/// **inside** `claims`: the caller closes it with `)` and adds its own CTEs.
+pub(super) fn provider_claims_cte() -> &'static str {
+    r#"
         WITH rep AS (
             SELECT s.id AS series_id, r.cv, r.metron
               FROM series s
@@ -867,29 +1328,92 @@ pub async fn provider_volumes<C: ConnectionTrait>(
               JOIN series s ON s.id::text = e.entity_id
              WHERE e.entity_type = 'series' AND e.source IN ('comicvine', 'metron', 'gcd')
                AND s.library_id = $1 AND s.removed_at IS NULL
+"#
+}
+
+// ───── provider volume ids → continues / see_also ─────
+
+#[derive(Debug, FromQueryResult)]
+struct ProviderRow {
+    source: String,
+    pid: String,
+    id: Uuid,
+    name: String,
+    year: Option<i32>,
+    lo: Option<f64>,
+    hi: Option<f64>,
+    prev_id: Uuid,
+    prev_name: String,
+    prev_year: Option<i32>,
+    prev_lo: Option<f64>,
+    prev_hi: Option<f64>,
+    members: i64,
+    iy_min: Option<i32>,
+    prev_iy_max: Option<i32>,
+    /// The two claimants' base names differ (a retitle).
+    retitled: bool,
+    /// Either has a `series_provider_range` row.
+    split: bool,
+}
+
+/// Local series that claim the **same provider volume** — one run split
+/// across several local series (folder per year, a relaunch filed
+/// separately, …). The series-level `external_ids` row is unique per
+/// provider id, so a second series can only claim it through its issues'
+/// ComicInfo (`comicvine_series_id` / `metron_series_id`). One
+/// representative issue per series (the first by `sort_number`, an
+/// index-only pick) is read, plus the series-level ids.
+///
+/// Members of a shared id are ordered by first issue number; adjacent
+/// members whose issue ranges are disjoint and ordered are `continues`
+/// (the provider sees one continuous run); overlapping ranges are
+/// `see_also` (likely duplicates or variant files of the same run).
+pub async fn provider_volumes<C: ConnectionTrait>(
+    conn: &C,
+    library_id: Uuid,
+) -> Result<Vec<Candidate>, DbErr> {
+    let claims = provider_claims_cte();
+    let lang = lang_sql("s.language_code");
+    let base = base_sql("s.normalized_name");
+    let sql = format!(
+        r#"
+        {claims}
         ), shared AS (
             SELECT source, pid, count(*) AS members FROM claims
              GROUP BY 1, 2 HAVING count(*) BETWEEN 2 AND 12
         ), rng AS (
-            SELECT i.series_id, min(i.sort_number) AS lo, max(i.sort_number) AS hi
+            SELECT i.series_id, min(i.sort_number) AS lo, max(i.sort_number) AS hi,
+                   min(i.year) AS iy_min, max(i.year) AS iy_max
               FROM issues i
              WHERE i.series_id IN (SELECT c.series_id FROM claims c JOIN shared USING (source, pid))
                AND i.removed_at IS NULL AND i.sort_number IS NOT NULL
              GROUP BY 1
         ), o AS (
-            SELECT c.source, c.pid, sh.members, s.id, s.name, s.year, r.lo, r.hi,
+            -- Partitioned by language too: two claimants in different
+            -- languages are a translation (WP-7.6 translation detector), not
+            -- one run continuing.
+            SELECT c.source, c.pid, sh.members, s.id, s.name, s.year, r.lo, r.hi, r.iy_min,
+                   {base} AS base,
+                   EXISTS (SELECT 1 FROM series_provider_range p WHERE p.series_id = s.id) AS split,
                    lag(s.id)   OVER w AS prev_id,
                    lag(s.name) OVER w AS prev_name,
                    lag(s.year) OVER w AS prev_year,
                    lag(r.lo)   OVER w AS prev_lo,
-                   lag(r.hi)   OVER w AS prev_hi
+                   lag(r.hi)   OVER w AS prev_hi,
+                   lag(r.iy_max) OVER w AS prev_iy_max,
+                   lag({base}) OVER w AS prev_base,
+                   lag(EXISTS (SELECT 1 FROM series_provider_range p WHERE p.series_id = s.id))
+                       OVER w AS prev_split
               FROM claims c
               JOIN shared sh USING (source, pid)
               JOIN series s ON s.id = c.series_id
               LEFT JOIN rng r ON r.series_id = c.series_id
-            WINDOW w AS (PARTITION BY c.source, c.pid ORDER BY r.lo NULLS LAST, s.year NULLS LAST, s.id)
+            WINDOW w AS (PARTITION BY c.source, c.pid, {lang}
+                         ORDER BY r.lo NULLS LAST, s.year NULLS LAST, s.id)
         )
-        SELECT source, pid, id, name, year, lo, hi, prev_id, prev_name, prev_year, prev_lo, prev_hi, members
+        SELECT source, pid, id, name, year, lo, hi, prev_id, prev_name, prev_year, prev_lo, prev_hi,
+               members, iy_min, prev_iy_max, (base IS DISTINCT FROM prev_base) AS retitled,
+               split OR coalesce(prev_split, false) AS split
           FROM o WHERE prev_id IS NOT NULL
          LIMIT {SOURCE_ROW_LIMIT}
         "#
@@ -929,9 +1453,21 @@ pub async fn provider_volumes<C: ConnectionTrait>(
                     ),
                 )
             };
+            let qualifier = (kind == RelationshipKind::Continues)
+                .then(|| {
+                    continuation_qualifier(
+                        r.retitled,
+                        r.split,
+                        r.lo,
+                        r.iy_min.or(r.year),
+                        r.prev_hi,
+                        r.prev_iy_max.or(r.prev_year),
+                    )
+                })
+                .flatten();
             Candidate {
                 from: r.id,
-                to: r.prev_id,
+                to: r.prev_id.into(),
                 kind,
                 confidence: c,
                 source: EvidenceSource::ProviderVolume,
@@ -943,7 +1479,12 @@ pub async fn provider_volumes<C: ConnectionTrait>(
                     "members": r.members,
                     "from_range": [r.lo, r.hi],
                     "to_range": [r.prev_lo, r.prev_hi],
+                    "qualifier": qualifier.map(RelationshipQualifier::as_str),
                 }),
+                scope: Scope {
+                    qualifier,
+                    ..Scope::default()
+                },
             }
         })
         .collect())
@@ -1021,10 +1562,11 @@ pub async fn provider_ranges<C: ConnectionTrait>(
             };
             Candidate {
                 from: r.a_id,
-                to: r.b_id,
+                to: r.b_id.into(),
                 kind: RelationshipKind::SeeAlso,
                 confidence: 0.7,
                 source: EvidenceSource::ProviderRange,
+                scope: Scope::default(),
                 reason: format!(
                     "{} files {} {} under its series {}{}, which {} is matched to",
                     provider_label(&r.source),
@@ -1043,133 +1585,6 @@ pub async fn provider_ranges<C: ConnectionTrait>(
                     "provider_series_id": r.provider_series_id,
                     "range_low": r.range_low,
                     "range_high": r.range_high,
-                }),
-            }
-        })
-        .collect())
-}
-
-// ───── publisher + character/team density → same_universe ─────
-
-#[derive(Debug, FromQueryResult)]
-struct DensityRow {
-    a_id: Uuid,
-    a_name: String,
-    a_year: Option<i32>,
-    b_id: Uuid,
-    b_name: String,
-    b_year: Option<i32>,
-    publisher: String,
-    shared: i64,
-    overlap: f64,
-    sample: Vec<String>,
-}
-
-/// Same publisher plus a dense overlap of **uncommon** characters/teams
-/// (`series_characters` / `series_teams`). Only features present in at most
-/// a library-relative document-frequency cap (see `DENSITY_DF_FRACTION`) take part, which both makes the signal
-/// discriminating and bounds the self-join; each series keeps its top
-/// [`DENSITY_PER_SERIES`] partners (counted across both ends). Always low confidence (≤ 0.5): within
-/// one publisher "same universe" is nearly always true and rarely useful,
-/// and WP-7.1 flagged `same_universe` bloat.
-pub async fn character_density<C: ConnectionTrait>(
-    conn: &C,
-    library_id: Uuid,
-) -> Result<Vec<Candidate>, DbErr> {
-    let sql = format!(
-        r#"
-        WITH lib AS (
-            SELECT id FROM series
-             WHERE library_id = $1 AND removed_at IS NULL AND publisher IS NOT NULL
-        ), feat AS (
-            SELECT DISTINCT sc.series_id, 'c:' || coalesce(sc.character_id::text, lower(sc.character)) AS f,
-                   sc.character AS label
-              FROM series_characters sc JOIN lib ON lib.id = sc.series_id
-            UNION
-            SELECT DISTINCT st.series_id, 't:' || coalesce(st.team_id::text, lower(st.team)), st.team
-              FROM series_teams st JOIN lib ON lib.id = st.series_id
-        ), df AS (
-            SELECT f, count(DISTINCT series_id) AS n FROM feat GROUP BY f
-        ), cap AS (
-            SELECT least({DENSITY_MAX_DF}, greatest({DENSITY_MIN_DF},
-                   ceil(count(DISTINCT series_id) * {DENSITY_DF_FRACTION})::bigint)) AS max_df
-              FROM feat
-        ), rare AS (
-            SELECT DISTINCT ON (feat.series_id, feat.f) feat.series_id, feat.f, feat.label
-              FROM feat JOIN df USING (f) CROSS JOIN cap
-             WHERE df.n BETWEEN 2 AND cap.max_df
-        ), sz AS (
-            SELECT series_id, count(*) AS n FROM rare GROUP BY 1
-        ), pairs AS (
-            SELECT a.series_id AS a_id, b.series_id AS b_id, count(*) AS shared,
-                   (array_agg(a.label ORDER BY a.label))[1:5] AS sample
-              FROM rare a JOIN rare b ON a.f = b.f AND a.series_id < b.series_id
-             GROUP BY 1, 2
-            HAVING count(*) >= {DENSITY_MIN_SHARED}
-        ), scored AS (
-            SELECT p.*, p.shared::float8 / least(sa.n, sb.n) AS overlap
-              FROM pairs p
-              JOIN sz sa ON sa.series_id = p.a_id
-              JOIN sz sb ON sb.series_id = p.b_id
-        ), same_pub AS (
-            SELECT sc.*, x.name AS a_name, x.year AS a_year, y.name AS b_name, y.year AS b_year,
-                   x.publisher
-              FROM scored sc
-              JOIN series x ON x.id = sc.a_id
-              JOIN series y ON y.id = sc.b_id
-             WHERE lower(x.publisher) = lower(y.publisher)
-               AND sc.overlap >= {DENSITY_MIN_OVERLAP}
-               AND x.normalized_name <> y.normalized_name
-        ), ends AS (
-            -- Each pair once per end, so a series' rank counts partners on
-            -- both sides of the (a < b) pair.
-            SELECT a_id AS sid, a_id, b_id, overlap, shared FROM same_pub
-            UNION ALL
-            SELECT b_id, a_id, b_id, overlap, shared FROM same_pub
-        ), ranked AS (
-            SELECT a_id, b_id,
-                   row_number() OVER (PARTITION BY sid
-                                      ORDER BY overlap DESC, shared DESC, a_id, b_id) AS r
-              FROM ends
-        ), kept AS (
-            SELECT a_id, b_id FROM ranked GROUP BY a_id, b_id
-            HAVING max(r) <= {DENSITY_PER_SERIES}
-        )
-        SELECT sp.a_id, sp.a_name, sp.a_year, sp.b_id, sp.b_name, sp.b_year, sp.publisher,
-               sp.shared, sp.overlap, sp.sample
-          FROM same_pub sp
-          JOIN kept USING (a_id, b_id)
-         ORDER BY sp.overlap DESC, sp.shared DESC
-         LIMIT {SOURCE_ROW_LIMIT}
-        "#
-    );
-    let rows = DensityRow::find_by_statement(stmt(conn, &sql, vec![library_id.into()]))
-        .all(conn)
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| {
-            let c = round2((0.25 + 0.25 * r.overlap as f32).min(0.5));
-            Candidate {
-                from: r.a_id,
-                to: r.b_id,
-                kind: RelationshipKind::SameUniverse,
-                confidence: c,
-                source: EvidenceSource::CharacterDensity,
-                reason: format!(
-                    "{} and {} are both {} and share {} uncommon characters/teams (e.g. {})",
-                    label(&r.a_name, r.a_year),
-                    label(&r.b_name, r.b_year),
-                    r.publisher,
-                    r.shared,
-                    r.sample.join(", ")
-                ),
-                evidence: json!({
-                    "source": "character_density",
-                    "publisher": r.publisher,
-                    "shared_features": r.shared,
-                    "overlap": (r.overlap * 100.0).round() / 100.0,
-                    "sample": r.sample,
                 }),
             }
         })
@@ -1217,13 +1632,68 @@ pub async fn collect_all<C: ConnectionTrait>(
         }};
     }
     run!("alternate_series", alternate_series(conn, library_id));
-    run!("series_group", series_group(conn, library_id));
-    run!("story_arc", story_arcs(conn, library_id));
+    run!("arc_tie_in", arc_tie_ins(conn, library_id));
     run!("name_continuation", name_continuation(conn, library_id));
     run!("collected_edition", collected_editions(conn, library_id));
+    run!("reprint_rollup", reprint_rollup(conn, library_id));
     run!("provider_volume", provider_volumes(conn, library_id));
     run!("provider_range", provider_ranges(conn, library_id));
-    run!("character_density", character_density(conn, library_id));
+    // Name-based detectors share one catalogue query (WP-7.6).
+    match detectors::Catalogue::load(conn, library_id).await {
+        Ok(cat) => {
+            run!("annual", async { Ok::<_, DbErr>(detectors::annuals(&cat)) });
+            run!("alternate_edition", async {
+                Ok::<_, DbErr>(detectors::alternate_editions(&cat))
+            });
+            run!("facsimile", async {
+                Ok::<_, DbErr>(detectors::facsimiles(&cat))
+            });
+            run!("supplement", async {
+                Ok::<_, DbErr>(detectors::supplements(&cat))
+            });
+            run!(
+                "translation",
+                detectors::translations(conn, library_id, &cat)
+            );
+        }
+        Err(e) => {
+            tracing::warn!(library_id = %library_id, error = %e,
+                "relationship suggestions: series catalogue failed");
+            for name in [
+                "annual",
+                "alternate_edition",
+                "facsimile",
+                "supplement",
+                "translation",
+            ] {
+                counts.insert(name, 0);
+                failed.push(name);
+            }
+        }
+    }
+    // An annual is not the next volume of its main series: drop the
+    // continuation candidates on a pair the annual detector claims.
+    let annual_pairs: std::collections::HashSet<(Uuid, Target)> = all
+        .iter()
+        .filter(|c: &&Candidate| c.kind == RelationshipKind::AnnualOf)
+        .flat_map(|c| {
+            [
+                (c.from, c.to),
+                (c.to.series().unwrap_or(c.from), Target::Series(c.from)),
+            ]
+        })
+        .collect();
+    if !annual_pairs.is_empty() {
+        all.retain(|c: &Candidate| {
+            !(matches!(
+                c.kind,
+                RelationshipKind::Continues | RelationshipKind::SeeAlso
+            ) && matches!(
+                c.source,
+                EvidenceSource::NameContinuation | EvidenceSource::ProviderVolume
+            ) && annual_pairs.contains(&(c.from, c.to)))
+        });
+    }
     (all, counts, failed)
 }
 
@@ -1239,6 +1709,54 @@ mod tests {
         assert_eq!(base_name("spider man 2099"), "spider man 2099");
         assert_eq!(base_name("1602"), "1602");
         assert_eq!(base_name("saga"), "saga");
+    }
+
+    #[test]
+    fn compact_ranges_merges_adjacent_runs() {
+        assert_eq!(
+            compact_numbers(&[3.0, 1.0, 2.0, 4.0, 5.0, 6.0, 9.0]),
+            Some(("1-6,9".into(), false))
+        );
+        assert_eq!(compact_numbers(&[7.0]), Some(("7".into(), true)));
+        assert_eq!(
+            compact_ranges(&[(1.0, 6.0), (7.0, 12.0)]),
+            Some(("1-12".into(), true))
+        );
+        assert_eq!(compact_numbers(&[]), None);
+        // Too long for a range column: falls back to the span.
+        let many: Vec<f64> = (0..60).map(|n| f64::from(n * 2)).collect();
+        assert_eq!(compact_numbers(&many), Some(("0-118".into(), false)));
+    }
+
+    #[test]
+    fn continuation_qualifier_rules() {
+        use RelationshipQualifier as Q;
+        let q = continuation_qualifier;
+        assert_eq!(
+            q(true, true, Some(1.0), None, Some(5.0), None),
+            Some(Q::Retitle)
+        );
+        assert_eq!(
+            q(false, true, Some(1.0), None, Some(5.0), None),
+            Some(Q::Split)
+        );
+        assert_eq!(
+            q(false, false, Some(600.0), None, Some(12.0), None),
+            Some(Q::Numbering)
+        );
+        assert_eq!(
+            q(false, false, Some(1.0), Some(2016), Some(22.0), Some(2015)),
+            Some(Q::Relaunch)
+        );
+        assert_eq!(
+            q(false, false, Some(1.0), Some(2014), Some(22.0), Some(2016)),
+            None,
+            "the earlier run hadn't ended"
+        );
+        assert_eq!(q(false, false, None, None, Some(5.0), None), None);
+        assert_eq!(norm_lang("eng"), "en");
+        assert_eq!(norm_lang("en-US"), "en");
+        assert_eq!(norm_lang("FRE"), "fr");
     }
 
     #[test]

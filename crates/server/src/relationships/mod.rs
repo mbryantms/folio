@@ -590,6 +590,25 @@ impl Scope {
         *self == Self::default()
     }
 
+    /// The scope with the fields `kind` doesn't take dropped: `coverage`
+    /// unless [`RelationshipKind::allows_coverage`], a `qualifier` outside
+    /// [`RelationshipKind::qualifiers`]. Ranges and the note fit every kind.
+    /// Used when a suggestion is accepted as a different kind (WP-7.6): the
+    /// proposed scope is kept where it still means something instead of
+    /// failing the accept.
+    pub fn fitted(mut self, kind: RelationshipKind) -> Self {
+        if !kind.allows_coverage() {
+            self.coverage = None;
+        }
+        if self
+            .qualifier
+            .is_some_and(|q| !kind.qualifiers().contains(&q))
+        {
+            self.qualifier = None;
+        }
+        self
+    }
+
     /// Validate against `kind`: ranges ≤ [`MAX_RANGE_LEN`] chars, note ≤
     /// [`MAX_NOTE_LEN`], `coverage` only on collects / reprints (and
     /// inverses), `qualifier` only from `kind`'s own set.

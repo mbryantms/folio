@@ -60,7 +60,7 @@ pair's two halves share it.
 | Story | `tie_in_to` | `has_tie_in` | Tie-in to / Has tie-in (role folded in: "Prelude to", "Aftermath of", "Main story of"; "Has prelude", …) |
 | Story | `crossover_with` | itself | Crossover with |
 | Story | `companion_to` | itself | Companion to |
-| Story | `same_universe` | itself | Same universe as (manual; WP-7.6 derives it) |
+| Story | `same_universe` | itself | Same universe as (manual only; "same universe" is derived from `universe` / `series_universe` membership and `SeriesGroup`, rendered by WP-7.7 — the engine no longer suggests it) |
 | Story | `see_also` | itself | See also |
 | Publication history | `continues` | `continued_by` | Continues / Continued by (qualifier: relaunch, retitle, merge, split, numbering) |
 | Publication history | `annual_of` | `has_annual` | Annual of / Has annual |
@@ -352,24 +352,36 @@ seed old-shape rows → up → assert → new-only rows → down → assert → 
 
 An apalis job proposes relationships from evidence already in the DB. It
 **never creates edges**: it writes candidate rows that an admin accepts
-(which calls `create_pair` with `source = suggested`) or rejects.
+(which calls `create_pair_scoped`, or `create_arc_edge` for an arc target,
+with `source = suggested` and the proposed scope) or rejects. WP-7.6 added
+the detectors (annual, arc tie-in, reprint roll-up, alternate edition,
+facsimile, supplement, translation, continuation qualifiers), scope and arc
+targets on suggestions, and retired the pairwise `same_universe` and
+arc-crossover sources.
 
 Code: `crates/server/src/relationships/suggestions/` (`mod.rs` = merge,
-upsert and review service; `sources.rs` = one set-based query per evidence
-source; `citations.rs` = the "Collects X #1-6" parser), the job in
+upsert and review service; `sources.rs` = one set-based query per SQL
+evidence source; `detectors.rs` = the name-based detectors over one shared
+series catalogue; `citations.rs` = the "Collects X #1-6" parser), the job in
 `crates/server/src/jobs/relationship_suggest.rs`, and the API in
 `crates/server/src/api/relationship_suggestions.rs`.
 
 ### Schema
 
-`series_relationship_suggestion` (migration
-`m20270502_000001_relationship_suggestion`, entity
+`series_relationship_suggestion` (migrations
+`m20270502_000001_relationship_suggestion` and, for arc targets and scope,
+`m20270506_000001_relationship_suggestion_scope` (WP-7.6); entity
 `entity::series_relationship_suggestion`):
 
 | column | type | notes |
 |---|---|---|
 | `id` | `uuid` PK | |
-| `from_series_id`, `to_series_id` | `uuid` FK → `series` ON DELETE CASCADE | "*from* `kind` *to*" |
+| `from_series_id` | `uuid` FK → `series` ON DELETE CASCADE | "*from* `kind` *to*" |
+| `to_series_id` | `uuid` NULL FK → `series` ON DELETE CASCADE | NULL for an arc target |
+| `to_arc_id` | `uuid` NULL FK → `story_arc` ON DELETE CASCADE | WP-7.6 arc target (`tie_in_to` only) |
+| `from_range`, `to_range` | `text` NULL | proposed issue ranges (≤ 100 chars), read from *from*'s side |
+| `coverage` | `text` NULL | `full` / `partial` / `unknown`; collects / reprints only |
+| `qualifier` | `text` NULL | continuation qualifier (`continues`) or tie-in role (`tie_in_to`) |
 | `kind` | `text` | canonical kinds only (below) |
 | `confidence` | `real` | 0–1 |
 | `bucket` | `text` | `high` (≥ 0.8) / `medium` (≥ 0.55) / `low` |
@@ -381,7 +393,13 @@ source; `citations.rs` = the "Collects X #1-6" parser), the job in
 | `reviewed_at` | `timestamptz` NULL | |
 | `reviewed_by` | `uuid` NULL FK → `users` ON DELETE SET NULL | |
 
-`UNIQUE (from_series_id, to_series_id, kind)`. **Canonical form**, enforced
+Exactly one target (`series_relationship_suggestion_target_chk`), an arc
+target only for `tie_in_to` (`…_arc_kind_chk`), and the same coverage /
+qualifier / range CHECKs as `series_relationship`. Uniqueness is two
+partial unique indexes (WP-7.6 replaced `UNIQUE (from, to, kind)`):
+`(from_series_id, to_series_id, kind) WHERE to_series_id IS NOT NULL` and
+`(from_series_id, to_arc_id, kind) WHERE to_arc_id IS NOT NULL`. The
+migration's down is lossy (arc rows deleted, scope dropped). **Canonical form**, enforced
 by CHECKs (rewritten by WP-7.5): self-inverse kinds (`crossover_with`,
 `companion_to`, `same_universe`, `see_also`, `alternate_edition_of`) are
 stored with `from < to`, so A→B and B→A are one row; directional kinds are
@@ -403,35 +421,69 @@ Every query is scoped to **one library**: suggestions only link series in
 the same library. Libraries are usually split by publisher or format, cross-
 library continuations are rare, and per-library scoping keeps a run
 proportional to the library that was just scanned. Removed series are
-ignored. Pair-producing sources use a star (members → hub) or adjacency
-(`lag()` over an ordered partition) shape, never all-pairs, and each query
-caps its output at 5000 rows.
+ignored. Pair-producing SQL sources use a star, adjacency (`lag()` over an
+ordered partition) or per-pair `GROUP BY` shape, never all-pairs, and each
+query caps its output (5000 rows; 20000 for the arc rows). The name-based
+detectors (`detectors.rs`) share **one** catalogue query (every live series
+with its issue aggregates, read through per-series index lookups) and match
+through hash indexes on the normalized base name (`match_key`: base name
+minus a leading "the"), never pairwise.
 
-| source | kind | confidence |
-|---|---|---|
-| **Name continuation**: series grouped by `(base name, publisher)`, where the base name is `normalized_name` minus a trailing `vol N` / `vN` / year (1930–2049) token, or the parent folder's name when the series folder is just `Vol N`; each series pairs with its predecessor by `(year, volume)` | `continues` (later → earlier; `sequel_of` before WP-7.5) | consecutive volumes 0.9 · later volume with a gap 0.65 · later year, no volumes 0.7 · year and volume order disagree 0.45 · same name and same year → `see_also` 0.35 |
-| **AlternateSeries**: ComicInfo `AlternateSeries` on issues of A, split on `,`/`;`, matched to a series by normalized name (closest year to the citing issues wins; A's own title is ignored) | `crossover_with` | plain value 0.75 · ComicVine reading-list style `"Avengers" Civil War` 0.5 · +0.05 for ≥ 3 issues · −0.05 when several series share the name · −0.15 when the year gap is > 3 |
-| **SeriesGroup**: series sharing a normalized `series_group`; star onto the member whose name equals the group (else the oldest) | `same_universe` | group ≤ 12 series 0.85 · ≤ 40 0.7 · larger 0.5 |
-| **Story arc**: arcs in `issue_arcs` spanning ≥ 2 series; star onto the series with the most issues in the arc, aggregated across arcs; same-name pairs skipped | `crossover_with` | 0.5 (one issue on the far side) or 0.65 (≥ 2), +0.1 per extra shared arc (max 0.9) · capped at 0.45 when the smallest shared arc spans > 10 series (event tie-ins) |
-| **Collected edition**: issues whose `Format` / `special_type` / series type / series name marks a TPB, HC, omnibus or graphic novel; their title, notes and a "Collects…"/"Reprints…" summary are parsed for `Name #lo-hi` (or `issues lo-hi`) citations; an unnamed citation means the edition's own title minus format words | `collects` (edition → collected series) | issue coverage in the library ≥ 80% 0.85 · ≥ 50% 0.7 · some 0.55 · none 0.4 · −0.1 for an unnamed citation · −0.1 when the name is ambiguous and nothing is covered |
-| **Shared provider volume**: local series whose first issue's ComicInfo `comicvine_series_id` / `metron_series_id`, or whose series-level `external_ids`, name the same provider series (2–12 claimants). The series-level `external_ids` row is unique per provider id, so a second claimant only shows up through its issues | `continues` when issue ranges are disjoint and ordered (the provider sees one continuous run split into several local series; `sequel_of` before WP-7.5), else `see_also` (overlapping numbers: probably duplicate copies) | 0.8 · `see_also` 0.6 (0.55 without issue numbers) |
-| **Provider range**: a `series_provider_range` row on A pointing at provider series P while another local series B is matched to P | `see_also` | 0.7. Not `continues`: the range sits inside A (A is not read entirely before or after B), and B usually duplicates those issues rather than continuing them |
-| **Character/team density**: same publisher, sharing ≥ 5 *uncommon* characters/teams (`series_characters` / `series_teams`) with overlap ≥ 0.5 of the smaller set. "Uncommon" means present in at most 2% of the library's series that have character data (clamped to 3–25), which also bounds the self-join. Each series keeps at most 3 partners, counted across both ends | `same_universe` | 0.25 + 0.25 × overlap, so **always low** (≤ 0.5) |
+| source (`evidence.sources[].source`) | kind → target | scope | confidence |
+|---|---|---|---|
+| **Name continuation** (`name_continuation`): series grouped by `(base name, publisher, language)`, where the base name is `normalized_name` minus a trailing `vol N` / `vN` / year (1930–2049) token, or the parent folder's name when the series folder is just `Vol N`; each series pairs with its predecessor by `(year, volume)` | `continues` (later → earlier) | `qualifier` (below) | consecutive volumes 0.9 · later volume with a gap 0.65 · later year, no volumes 0.7 · year and volume order disagree 0.45 · same name and same year → `see_also` 0.35 |
+| **AlternateSeries** (`alternate_series`): ComicInfo `AlternateSeries` on issues of A, split on `,`/`;`, matched to a series by normalized name (closest year to the citing issues wins; A's own title is ignored) | `crossover_with` | — | plain value 0.75 · ComicVine reading-list style `"Avengers" Civil War` 0.5 · +0.05 for ≥ 3 issues · −0.05 when several series share the name · −0.15 when the year gap is > 3 |
+| **Arc tie-in** (`arc_tie_in`, WP-7.6): each story arc in `issue_arcs` spanning ≥ 2 series; every participating series → the **arc** | `tie_in_to` → arc | `qualifier` = role, `from_range` = its issues in the arc | by how unambiguous the main series is: main named like the arc (or its reading-list family, `"Secret Wars" Battleworld`) → main 0.9, tie-ins 0.8 · main holds ≥ 2× the runner-up's issues → 0.75 / 0.7 · two co-mains (runner-up ≥ 75% of the top, ≥ 2 issues, third ≤ half) → 0.6 / 0.55 · otherwise most issues → 0.55 / 0.55 · a role inferred from dates only −0.05 when main is clear |
+| **Arc crossover** (`arc_crossover`, WP-7.6): the two co-main series of one arc (a genuine two-title crossover) | `crossover_with` | — | 0.65 |
+| **Collected edition** (`collected_edition`): issues whose `Format` / `special_type` / series type / series name marks a TPB, HC, omnibus or graphic novel; their title, notes and a "Collects…"/"Reprints…" summary are parsed for `Name #lo-hi` (or `issues lo-hi`) citations; an unnamed citation means the edition's own title minus format words. WP-7.6 rolls citations up **per (edition, target) pair** | `collects` (edition → collected series) | `to_range` = the cited ranges merged ("1-6,9-10"), `from_range` = the citing issues, `coverage` = `full` when the merged ranges leave no gap, else `partial` | issue coverage in the library ≥ 80% 0.85 · ≥ 50% 0.7 · some 0.55 · none 0.4 · −0.1 for an unnamed citation · −0.1 when the name is ambiguous and nothing is covered (the pair takes its best citation) |
+| **Reprint roll-up** (`reprint_rollup`, WP-7.6): `issue_reprints` rows (issue → reprinted issue, both in the library, different series) grouped per series pair. Label-only rows are skipped | `collects` when the reprinting series is a collected edition (format / `special_type` / series type / name marker), else `reprints` | `to_range` = reprinted numbers compacted ("1-6,9"), `from_range` = the reprinting issues, `coverage` = `full` when every target issue the library holds inside the reprinted span is linked, `partial` otherwise, `unknown` without numbers | `collects` 0.85 (0.9 with ≥ 3 issues) · `reprints` 0.65 (0.7 with ≥ 2) |
+| **Shared provider volume** (`provider_volume`): local series of the same language whose first issue's ComicInfo `comicvine_series_id` / `metron_series_id`, or whose series-level `external_ids`, name the same provider series (2–12 claimants) | `continues` when issue ranges are disjoint and ordered, else `see_also` (overlapping numbers: probably duplicate copies) | `qualifier` (below) | 0.8 · `see_also` 0.6 (0.55 without issue numbers) |
+| **Provider range** (`provider_range`): a `series_provider_range` row on A pointing at provider series P while another local series B is matched to P | `see_also` | — | 0.7. Not `continues`: the range sits inside A, and B usually duplicates those issues |
+| **Annual** (`annual`, WP-7.6): a series named "X Annual" / "X Annuals" (before a year / volume), with Metron series type "Annual Series" (stored in `series.series_type`), or whose issues are ≥ 80% `Format` / `special_type` Annual → main series X by base name, same publisher (unknown allowed), overlapping or adjacent years; the volume whose years contain the annual's wins | `annual_of` | — | name signal 0.9, type / format signal 0.8 · −0.15 when only adjacent / overlapping · −0.35 when years are unknown · −0.15 when several volumes fit equally · −0.1 when a publisher is unknown. The name-continuation / provider `continues` / `see_also` candidate on the same pair is dropped (an annual isn't the next volume) |
+| **Alternate edition** (`alternate_edition`, WP-7.6): same base title once an edition marker is stripped — Deluxe (Edition), Director's Cut, Remastered, Colo(u)rized, Artist's / Gallery / Special / Treasury Edition, Absolute, Unlimited — and overlapping years or issue range inside the original's; the edition can't predate the original | `alternate_edition_of` (self-inverse) | — | 0.6 · "Unlimited" 0.4 · +0.05 with both overlaps · −0.05 several candidates · −0.05 unknown publisher. "Absolute" counts only for a collected edition ("Absolute Carnage" is an event); a collected edition of a singles run is left to the collects sources |
+| **Facsimile** (`facsimile`, WP-7.6): "X #N Facsimile Edition" (number from the name, else the facsimile's first issue) — not an alternate edition | `reprints` | `to_range` = N, `coverage` = `full` | 0.75 when the target's issue range holds N, else 0.6 · −0.1 several candidates |
+| **Supplement** (`supplement`, WP-7.6): Handbook / Guidebook / Sourcebook anywhere in the name, or a name ending in Guide / Saga / Spotlight / Special (occasion words like Wedding / Holiday / Halloween dropped), whose remaining title names a series of the same publisher; the parent volume running at the time wins | `supplement_to` | — | handbook / guidebook / sourcebook 0.6 · guide / saga 0.55 · spotlight 0.5 · special 0.45 · −0.05 several candidates · −0.05 unknown publisher |
+| **Translation** (`translation`, WP-7.6): the same work in another `series.language_code` (folded to ISO 639-1: `eng`/`EN` → `en`) | `translation_of` (later → original, the earlier series) | — | same provider series (issue ComicInfo ids / series `external_ids`) 0.7 · one lists the other's title in `aliases` / `alternate_names` 0.6 (the carrier is the translation unless the years say otherwise) · same base title + shared writers / pencillers 0.55 (0.6 with ≥ 2). Never high |
 
-`same_universe` is deliberately conservative (WP-7.1 flagged that bulk-
-accepting it bloats the series page and traversal). Only an explicit
-`SeriesGroup` can reach high, and big groups decay to medium/low.
+**Continuation qualifier** (WP-7.6) on `continues` from name continuation
+and provider volumes, in this order; null when the evidence doesn't say:
+
+- `retitle`: provider continuity under different base names;
+- `split`: either series has a `series_provider_range` row (a provider
+  splits that run across provider series);
+- `numbering`: the later series' first number is > 1 and above the earlier
+  one's last (legacy numbering continues);
+- `relaunch`: the later series starts at #1 (or #0) and the earlier one's
+  last issue year is not after the new start.
+
+`merge` is never inferred.
+
+**Retired in WP-7.6** (their pending rows go `stale` on the next run through
+the normal stale mechanism; accepted edges and reviewed rows stay):
+
+- `series_group` — the SeriesGroup star → `same_universe`;
+- `character_density` — publisher + uncommon character/team overlap →
+  `same_universe`;
+- `story_arc` — the pairwise shared-arc → `crossover_with` star (replaced by
+  the arc tie-in detector; `crossover_with` now comes only from
+  AlternateSeries and from two co-main series of one arc).
+
+"Same universe" is now derived from `universe` / `series_universe`
+membership and `SeriesGroup`, not suggested pairwise (WP-7.7 renders it).
 
 **Merging.** Candidates landing on the same canonical row merge: confidence
 is the strongest source's plus 0.05 for each additional distinct source
 (max 0.99), reasons are joined strongest first, and `evidence.sources`
-keeps one entry per source.
+keeps one entry per source. **Scope** merges field by field from the
+strongest source that set it; a candidate folded onto the canonical
+direction (e.g. `collected_in` → `collects`) has its ranges mirrored, and
+fields the kind doesn't take (or over-long ranges) are dropped.
 
 ### Dedupe, rejection memory, cap
 
 Per run, after merging:
 
-1. Drop a proposal whose `(from, to)` already has an edge with the same kind
+1. Drop a proposal whose `(from, to)` (series or arc target) already has an edge with the same kind
    **or its inverse** (the inverse would 409 on accept). Because edges are
    stored as pairs, one lookup covers both orientations. WP-7.5:
    `sequel_of` and `continues` are **equivalent** here
@@ -447,8 +499,9 @@ Per run, after merging:
 3. Keep the top **1000** by confidence (`MAX_SUGGESTIONS_PER_RUN`; ties by
    ids, so it's deterministic). The rest count as `capped` in the report
    and come back on a later run once reviews free up room.
-4. Upsert: new rows insert as `pending`; a still-pending row gets its
-   confidence, bucket, reason and evidence refreshed when they changed, and
+4. Upsert (one statement per target type, each on its partial unique
+   index): new rows insert as `pending`; a still-pending row gets its
+   confidence, bucket, reason, evidence and scope refreshed when they changed, and
    a `stale` row is revived to `pending`. The
    `ON CONFLICT … WHERE status IN ('pending', 'stale')` guard means a review
    racing the run is never overwritten.
@@ -475,8 +528,13 @@ Per run, after merging:
   `info` "run complete" line with the full report. Runs that inserted or
   changed rows write a `library_events` row (category `series`, action
   `generated`, `detail.kind = "relationship_suggestions"`, `detail.report`).
-- **Runtime**: the stress test (3,000 series, 7,496 proposals) runs in
-  about 0.25 s. The real dev library (2,573 series) takes about 0.45 s.
+- **Runtime** (WP-7.6, debug build): the stress test (6,000 series:
+  1,500 two-volume titles plus 1,500 annuals, all in one 4,500-series arc;
+  7,500 proposals, 1,000 written) runs in about 0.3–0.4 s, cold. The real
+  dev library (2,573 series) takes about 1 s. Per-series aggregates use
+  `CROSS JOIN LATERAL` index lookups (`issues_series_sortnum_idx`) rather
+  than a join on a grouped subquery, which planned badly on freshly
+  inserted, un-analyzed data (12 s).
 
 ### Service API
 
@@ -486,7 +544,9 @@ pub async fn generate_for_library<C: ConnectionTrait>(conn: &C, library_id: Uuid
     -> Result<RunReport, DbErr>;
 pub async fn accept<C: ConnectionTrait + TransactionTrait>(
     conn: &C, id: Uuid, actor: Uuid, kind_override: Option<RelationshipKind>,
-) -> Result<AcceptOutcome, ReviewError>;   // AcceptOutcome { suggestion, kind, pair: PairOutcome }
+) -> Result<AcceptOutcome, ReviewError>;
+// AcceptOutcome { suggestion, kind, forward, inverse: Option<Model> /* None for an arc edge */, created }
+pub fn scope_of(row: &Model) -> Scope;     // the proposed scope (WP-7.6)
 pub async fn reject<C: ConnectionTrait + TransactionTrait>(conn: &C, id: Uuid, actor: Uuid)
     -> Result<series_relationship_suggestion::Model, ReviewError>;
 pub async fn list<C: ConnectionTrait>(
@@ -514,7 +574,12 @@ pub const MAX_BULK: usize = 500;
   transaction) and locks the row `FOR UPDATE`, so a double accept can't
   create twice. A `kind_override` different from the suggested kind
   records `modified` + `accepted_kind`. The override reads in the row's
-  `from → to` direction.
+  `from → to` direction. WP-7.6: the proposed scope goes to the edge
+  (`create_pair_scoped`, the inverse half mirrored; or `create_arc_edge`
+  for an arc target). Scope fields the overriding kind doesn't take are
+  **dropped** (`Scope::fitted`), not an error; an arc suggestion accepted
+  as a kind that can't target an arc is `PairError::ArcKind` (422). Bulk
+  accept goes through the same `accept`.
 - **Seam for bulk accept**: loop `accept` inside one outer transaction (each
   call becomes a savepoint, so one conflict doesn't sink the batch), write
   **one** audit row for the batch, and call
@@ -542,8 +607,11 @@ pub const MAX_BULK: usize = 500;
   "items": [{
     "id": "…",
     "from_series": { /* SeriesView (cover_url, slug, …) */ },
-    "to_series":   { /* SeriesView */ },
-    "kind": "sequel_of", "kind_label": "Sequel of",
+    "to_series":   { /* SeriesView */ },       // null for an arc target (WP-7.6)
+    "to_arc": null,                            // { id, slug, name } for an arc tie-in
+    "kind": "continues", "kind_label": "Continues",   // tie-in role folded in ("Prelude to")
+    "from_range": null, "to_range": null,      // WP-7.6 proposed scope
+    "coverage": null, "qualifier": "relaunch", "qualifier_label": "Relaunch",
     "confidence": 0.9, "bucket": "high",
     "reason": "Daredevil vol. 4 (2014) follows Daredevil vol. 3 (2011) — same title, next volume",
     "evidence": { "sources": [ { "source": "name_continuation", "confidence": 0.9, … } ] },
@@ -556,7 +624,7 @@ pub const MAX_BULK: usize = 500;
 }
 // AcceptRelationshipSuggestionResp
 { "suggestion": { /* view, status accepted|modified */ }, "relationship_id": "…",
-  "inverse_id": "…", "kind": "sequel_of", "created": true }
+  "inverse_id": "…" /* null for an arc edge */, "kind": "sequel_of", "created": true }
 ```
 
 Errors: `400` malformed id / cursor; `403` non-admin; `404` unknown
@@ -663,16 +731,25 @@ heuristic versions; a second run marked none.
 
 ### Gaps
 
-- No `spin_off_of` source: nothing in the DB distinguishes a spin-off from
-  a crossover or same-universe title.
+- **No spin-off, side-story or companion detectors.** Nothing in the DB
+  separates a spin-off from a crossover, a same-universe title or a new
+  volume: ComicInfo has no field for it, Metron `associated` series are
+  untyped (WP-7.8), shared characters say "same universe" at best, and a
+  name prefix ("Venom: Lethal Protector") is as often a mini-series of the
+  same line. `side_story_of` and `companion_to` have even less signal.
+  These stay manual.
+- `issue_reprints` is not filled from providers yet (WP-7.8 wires Metron
+  reprints), so the reprint roll-up finds nothing on most libraries today;
+  label-only reprint rows (`reprinted_issue_id` NULL) are skipped.
+- Translation evidence needs `series.language_code` to be right; a library
+  tagged entirely in one language (the dev library: `en` / `eng` / `EN`)
+  yields none. Without years, only alias evidence gives a direction.
+- The continuation qualifier `merge` is never inferred, and `split` comes
+  only from `series_provider_range` (the classic "one title split into
+  two" has no evidence source).
+- The derived "same universe" query and its section are WP-7.7.
 - Cross-library suggestions are out of scope by design (see above).
 - Bulk accept has no kind override (accept-as-modified is per row).
-- WP-7.5 kept the detectors as they were (only the continuation sources
-  switched to `continues`). Annual, arc tie-in, reprint, alternate-edition,
-  supplement and translation detectors, the continuation qualifier and the
-  retirement of the pairwise `same_universe` / arc-crossover sources are
-  WP-7.6. Suggestions carry no scope, so an accepted suggestion creates an
-  unscoped edge.
 
 ## Web
 
@@ -741,6 +818,22 @@ view's `kind_label` / `inverse_kind_label`.
 - `web/tests/library/series-related-section.test.tsx`: chain order and
   highlight, grouping by UI group and kind, scope captions, arc tie-ins,
   admin gating, and empty state.
+- WP-7.6, same integration file: one fixture-driven test per detector —
+  annual (name / series type / format signals, volume containment,
+  publisher mismatch, two equally fitting volumes), arc tie-in (main by
+  name, tie-in, prelude by series name and by date, aftermath by issue
+  title and by date, co-main crossover, single-series arc ignored),
+  reprint roll-up ranges and coverage (`full` / `partial`, label-only rows
+  ignored) plus citation roll-up, alternate edition (Director's Cut, Deluxe,
+  "Absolute" singles ignored), facsimile → `reprints`, supplements,
+  translation (shared creators, alias, provider series; language splits the
+  continuation partitions), each continuation qualifier; the retired
+  pairwise `same_universe` / arc-crossover rows going stale; accepting an
+  arc / scoped suggestion (arc edge with role and range, mirrored inverse
+  scope, a dropped qualifier on edit-kind, 422 for a non-arc kind, bulk
+  accept); and the stress cap with the new sources.
+  `crates/server/tests/migration_relationship_suggestion_scope.rs`: the
+  WP-7.6 migration's down → up → CHECKs → lossy down → up round trip.
 - `crates/server/tests/relationship_suggestions.rs` (WP-7.2): a fixture
   library with one cluster per evidence source (expected kind, bucket and
   reason), canonical dedupe of reversed self-inverse candidates, existing-

@@ -23,7 +23,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use entity::{library, series, series_relationship_suggestion as sug};
+use entity::{library, series, series_relationship_suggestion as sug, story_arc};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 use serde::{Deserialize, Serialize};
 use shared::error::ApiErrorCode;
@@ -36,13 +36,14 @@ use uuid::Uuid;
 use super::extractors::Validated;
 use super::respond;
 use super::series::SeriesView;
+use super::series_relationships::RelationshipArcRef;
 use crate::auth::RequireAdmin;
 use crate::middleware::RequestContext;
 use crate::record_admin_action;
-use crate::relationships::RelationshipKind;
 use crate::relationships::suggestions::{
     self, ReviewError, SuggestionBucket, SuggestionCursor, SuggestionFilter, SuggestionStatus,
 };
+use crate::relationships::{RelationshipCoverage, RelationshipKind, RelationshipQualifier};
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -58,22 +59,39 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(list_for_series))
 }
 
-/// One suggestion, both series hydrated like library-grid cards (covers
-/// for the review UI). Reads "`from_series` `kind` `to_series`".
+/// One suggestion, both ends hydrated (series like library-grid cards, for
+/// the review UI's covers). Reads "`from_series` `kind` `to_series`" — or,
+/// for an arc tie-in (WP-7.6), "`from_series` `kind` `to_arc`". Exactly one
+/// of `to_series` / `to_arc` is set.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RelationshipSuggestionView {
     pub id: String,
     pub from_series: SeriesView,
-    pub to_series: SeriesView,
+    /// The target series; `null` for an arc target.
+    pub to_series: Option<SeriesView>,
+    /// The target story arc (`tie_in_to` only; WP-7.6); `null` for a series
+    /// target.
+    pub to_arc: Option<RelationshipArcRef>,
     /// Canonical kind (one direction of each directional pair —
     /// `continues`, `sequel_of`, `collects`, … — or a self-inverse kind).
     pub kind: RelationshipKind,
-    /// Display label for `kind` ("Continues", …).
+    /// Display label for `kind`, a tie-in role folded in ("Continues",
+    /// "Prelude to", …).
     pub kind_label: String,
     /// The kind read from `to_series`' side (WP-7.5), so a series page can
     /// caption a suggestion without the kind catalogue.
     pub inverse_kind: RelationshipKind,
     pub inverse_kind_label: String,
+    /// Proposed scope (WP-7.6), read from `from_series`' side; accepting
+    /// passes it to the edge (fields an overriding kind doesn't take are
+    /// dropped).
+    pub from_range: Option<String>,
+    pub to_range: Option<String>,
+    /// `collects` / `reprints` only.
+    pub coverage: Option<RelationshipCoverage>,
+    /// Continuation qualifier (`continues`) or tie-in role (`tie_in_to`).
+    pub qualifier: Option<RelationshipQualifier>,
+    pub qualifier_label: Option<String>,
     /// 0–1.
     pub confidence: f32,
     pub bucket: SuggestionBucket,
@@ -176,7 +194,9 @@ pub struct AcceptRelationshipSuggestionResp {
     /// The `from → to` edge row (pass to
     /// `DELETE /series/{slug}/relationships/{id}` to undo).
     pub relationship_id: String,
-    pub inverse_id: String,
+    /// The inverse half; `null` for an arc edge (WP-7.6: arc edges have no
+    /// inverse row).
+    pub inverse_id: Option<String>,
     /// The kind created (`from kind to`).
     pub kind: RelationshipKind,
     /// `false` when the edge already existed (nothing new was inserted).
@@ -413,7 +433,7 @@ pub async fn accept(
         Ok(o) => o,
         Err(e) => return review_error(e),
     };
-    if out.pair.created {
+    if out.created {
         // WP-7.4: relationships are a similar-series signal. The service
         // fn only has a connection, so every caller that accepts (this
         // handler, WP-7.3's bulk accept) invalidates after it commits.
@@ -427,19 +447,26 @@ pub async fn accept(
         target = ("relationship_suggestion", id.to_string()),
         payload = serde_json::json!({
             "from_series_id": out.suggestion.from_series_id.to_string(),
-            "to_series_id": out.suggestion.to_series_id.to_string(),
+            "to_series_id": out.suggestion.to_series_id.map(|u| u.to_string()),
+            "to_arc_id": out.suggestion.to_arc_id.map(|u| u.to_string()),
             "suggested_kind": out.suggestion.kind,
             "kind": out.kind.as_str(),
             "status": out.suggestion.status,
             "confidence": out.suggestion.confidence,
-            "relationship_id": out.pair.forward.id.to_string(),
-            "inverse_id": out.pair.inverse.id.to_string(),
-            "created": out.pair.created,
+            "relationship_id": out.forward.id.to_string(),
+            "inverse_id": out.inverse.as_ref().map(|r| r.id.to_string()),
+            "scope": {
+                "from_range": out.forward.from_range,
+                "to_range": out.forward.to_range,
+                "coverage": out.forward.coverage,
+                "qualifier": out.forward.qualifier,
+            },
+            "created": out.created,
         }),
     );
-    let relationship_id = out.pair.forward.id.to_string();
-    let inverse_id = out.pair.inverse.id.to_string();
-    let created = out.pair.created;
+    let relationship_id = out.forward.id.to_string();
+    let inverse_id = out.inverse.as_ref().map(|r| r.id.to_string());
+    let created = out.created;
     let kind = out.kind;
     let view = match hydrate(&app, vec![out.suggestion]).await {
         Ok(mut v) if !v.is_empty() => v.remove(0),
@@ -490,7 +517,8 @@ pub async fn reject(
         target = ("relationship_suggestion", id.to_string()),
         payload = serde_json::json!({
             "from_series_id": row.from_series_id.to_string(),
-            "to_series_id": row.to_series_id.to_string(),
+            "to_series_id": row.to_series_id.map(|u| u.to_string()),
+            "to_arc_id": row.to_arc_id.map(|u| u.to_string()),
             "kind": row.kind,
             "confidence": row.confidence,
         }),
@@ -537,7 +565,8 @@ pub async fn reopen(
         target = ("relationship_suggestion", id.to_string()),
         payload = serde_json::json!({
             "from_series_id": after.from_series_id.to_string(),
-            "to_series_id": after.to_series_id.to_string(),
+            "to_series_id": after.to_series_id.map(|u| u.to_string()),
+            "to_arc_id": after.to_arc_id.map(|u| u.to_string()),
             "kind": after.kind,
             "previous_status": before.status,
             "rejected_at": before.reviewed_at.map(|t| t.to_rfc3339()),
@@ -827,8 +856,9 @@ pub async fn run(
         .into_response()
 }
 
-/// Rows → views with both series hydrated in one batch. A row whose series
-/// vanished (can't happen under the FK cascade, but a race with a delete
+/// Rows → views with both ends hydrated in one batch (series via
+/// `hydrate_series`, arcs as `{id, slug, name}`). A row whose series or arc
+/// vanished (can't happen under the FK cascades, but a race with a delete
 /// could) is dropped.
 async fn hydrate(
     app: &AppState,
@@ -839,7 +869,7 @@ async fn hydrate(
     }
     let ids: HashSet<Uuid> = rows
         .iter()
-        .flat_map(|r| [r.from_series_id, r.to_series_id])
+        .flat_map(|r| std::iter::once(r.from_series_id).chain(r.to_series_id))
         .collect();
     let models = series::Entity::find()
         .filter(series::Column::Id.is_in(ids.into_iter().collect::<Vec<_>>()))
@@ -850,18 +880,52 @@ async fn hydrate(
         .into_iter()
         .map(|v| (v.id.clone(), v))
         .collect();
+    let arc_ids: HashSet<Uuid> = rows.iter().filter_map(|r| r.to_arc_id).collect();
+    let arcs: HashMap<Uuid, RelationshipArcRef> = if arc_ids.is_empty() {
+        HashMap::new()
+    } else {
+        story_arc::Entity::find()
+            .filter(story_arc::Column::Id.is_in(arc_ids.into_iter().collect::<Vec<_>>()))
+            .all(&app.db)
+            .await?
+            .into_iter()
+            .map(|a| {
+                (
+                    a.id,
+                    RelationshipArcRef {
+                        id: a.id.to_string(),
+                        slug: a.slug,
+                        name: a.name,
+                    },
+                )
+            })
+            .collect()
+    };
     Ok(rows
         .into_iter()
         .filter_map(|r| {
             let kind: RelationshipKind = r.kind.parse().ok()?;
+            let qualifier: Option<RelationshipQualifier> =
+                r.qualifier.as_deref().and_then(|q| q.parse().ok());
+            let (to_series, to_arc) = match (r.to_series_id, r.to_arc_id) {
+                (Some(t), _) => (Some(views.get(&t.to_string())?.clone()), None),
+                (None, Some(a)) => (None, Some(arcs.get(&a)?.clone())),
+                (None, None) => return None,
+            };
             Some(RelationshipSuggestionView {
                 id: r.id.to_string(),
                 from_series: views.get(&r.from_series_id.to_string())?.clone(),
-                to_series: views.get(&r.to_series_id.to_string())?.clone(),
+                to_series,
+                to_arc,
                 kind,
-                kind_label: kind.label().to_owned(),
+                kind_label: kind.display_label(qualifier),
                 inverse_kind: kind.inverse(),
-                inverse_kind_label: kind.inverse().label().to_owned(),
+                inverse_kind_label: kind.inverse().display_label(qualifier),
+                from_range: r.from_range,
+                to_range: r.to_range,
+                coverage: r.coverage.as_deref().and_then(|c| c.parse().ok()),
+                qualifier,
+                qualifier_label: qualifier.map(|q| q.label().to_owned()),
                 confidence: r.confidence,
                 bucket: r.bucket.parse().unwrap_or(SuggestionBucket::Low),
                 reason: r.reason,

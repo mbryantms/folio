@@ -11510,7 +11510,6 @@
         "required": [
           "suggestion",
           "relationship_id",
-          "inverse_id",
           "kind",
           "created"
         ],
@@ -11520,7 +11519,11 @@
             "description": "`false` when the edge already existed (nothing new was inserted)."
           },
           "inverse_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The inverse half; `null` for an arc edge (WP-7.6: arc edges have no\ninverse row)."
           },
           "kind": {
             "$ref": "#/components/schemas/RelationshipKind",
@@ -23775,11 +23778,10 @@
       },
       "RelationshipSuggestionView": {
         "type": "object",
-        "description": "One suggestion, both series hydrated like library-grid cards (covers\nfor the review UI). Reads \"`from_series` `kind` `to_series`\".",
+        "description": "One suggestion, both ends hydrated (series like library-grid cards, for\nthe review UI's covers). Reads \"`from_series` `kind` `to_series`\" — or,\nfor an arc tie-in (WP-7.6), \"`from_series` `kind` `to_arc`\". Exactly one\nof `to_series` / `to_arc` is set.",
         "required": [
           "id",
           "from_series",
-          "to_series",
           "kind",
           "kind_label",
           "inverse_kind",
@@ -23812,12 +23814,30 @@
             "format": "float",
             "description": "0–1."
           },
+          "coverage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipCoverage",
+                "description": "`collects` / `reprints` only."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "created_at": {
             "type": "string"
           },
           "evidence": {
             "type": "object",
             "description": "Structured evidence: `{ \"sources\": [ { \"source\": \"story_arc\", \"confidence\": 0.65, \"reason\": \"…\", … } ] }`."
+          },
+          "from_range": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Proposed scope (WP-7.6), read from `from_series`' side; accepting\npasses it to the edge (fields an overriding kind doesn't take are\ndropped)."
           },
           "from_series": {
             "$ref": "#/components/schemas/SeriesView"
@@ -23838,7 +23858,24 @@
           },
           "kind_label": {
             "type": "string",
-            "description": "Display label for `kind` (\"Continues\", …)."
+            "description": "Display label for `kind`, a tie-in role folded in (\"Continues\",\n\"Prelude to\", …)."
+          },
+          "qualifier": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipQualifier",
+                "description": "Continuation qualifier (`continues`) or tie-in role (`tie_in_to`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qualifier_label": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "reason": {
             "type": "string",
@@ -23859,8 +23896,33 @@
           "status": {
             "$ref": "#/components/schemas/SuggestionStatus"
           },
+          "to_arc": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipArcRef",
+                "description": "The target story arc (`tie_in_to` only; WP-7.6); `null` for a series\ntarget."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "to_range": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "to_series": {
-            "$ref": "#/components/schemas/SeriesView"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SeriesView",
+                "description": "The target series; `null` for an arc target."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "updated_at": {
             "type": "string"
