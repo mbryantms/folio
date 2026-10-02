@@ -603,6 +603,18 @@ async fn series_one(
             "properties": { "folio:relationship": kind.as_str() },
         }));
     }
+    // WP-7.7: series → story-arc edges. Story arcs have no OPDS 2.0 feed
+    // yet, so the link targets the 1.x acquisition feed and says so in
+    // `type` (clients follow by type).
+    for link in crate::api::series_relationships::visible_related_arcs(&app, &user, s.id).await {
+        links.push(json!({
+            "rel": "related",
+            "href": format!("/opds/v1/arcs/{}", url_escape(&link.arc.slug)),
+            "type": "application/atom+xml;profile=opds-catalog;kind=acquisition",
+            "title": format!("{}: {}", link.label, link.arc.name),
+            "properties": { "folio:relationship": "tie_in_to" },
+        }));
+    }
 
     // Series-level metadata at the feed root. Mirrors what v1
     // exposes in the `<feed>` element so clients render a series

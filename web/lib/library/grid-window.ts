@@ -95,3 +95,22 @@ export function estimateRowHeight(
   const cover = columnWidth * 1.5;
   return cover + textBlockHeight + rowGap;
 }
+
+/**
+ * The real column width of an `auto-fill, minmax(minSize, 1fr)` grid at
+ * `containerWidth` (WP-7.7): the column count the browser picks
+ * (`computeColumnsPerRow`), then the `1fr` stretch
+ * (`computeColumnWidth`) — `(W − gap·(cols − 1)) / cols` with
+ * `cols = max(1, floor((W + gap) / (minSize + gap)))`. Lets surfaces that
+ * aren't that grid (rails, strips) render covers at exactly the issue
+ * grid's width. Falls back to `minSize` before the first measurement.
+ */
+export function effectiveColumnWidth(
+  containerWidth: number,
+  minSize: number,
+  gap: number = GRID_GAP_PX,
+): number {
+  if (containerWidth <= 0) return minSize;
+  const cols = computeColumnsPerRow(containerWidth, minSize, gap);
+  return computeColumnWidth(containerWidth, cols, gap);
+}

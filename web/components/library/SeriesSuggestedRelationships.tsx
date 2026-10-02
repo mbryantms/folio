@@ -129,7 +129,10 @@ function SuggestionChip({
     <li className="border-border bg-card flex items-center gap-1 rounded-full border border-dashed py-0.5 pr-1 pl-3 text-sm">
       <Tooltip>
         <TooltipTrigger asChild>
-          <Link href={other.href} className="hover:underline">
+          <Link
+            href={other.href}
+            className="focus-visible:ring-ring rounded-sm hover:underline focus-visible:ring-2 focus-visible:outline-none"
+          >
             <span className="text-muted-foreground">{label}</span>{" "}
             <span className="font-medium">{otherName}</span>
           </Link>

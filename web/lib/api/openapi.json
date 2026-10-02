@@ -11052,6 +11052,64 @@
         }
       }
     },
+    "/api/series/{slug}/same-universe": {
+      "get": {
+        "operationId": "series_same_universe",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque continuation token from a previous page's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1–60 (default 24).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_SameUniverseItem"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid cursor"
+          },
+          "404": {
+            "description": "series not found or not visible"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/scan": {
       "post": {
         "operationId": "series_scan_series",
@@ -16178,6 +16236,52 @@
                 },
                 "updated_at": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CursorPage_SameUniverseItem": {
+        "type": "object",
+        "description": "Cursor-paginated list response. `total` is populated only on the first\npage of paginated lists where the count is cheap; bounded lists omit it.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One series sharing a universe or series group with the requested one.",
+              "required": [
+                "series",
+                "shared"
+              ],
+              "properties": {
+                "series": {
+                  "$ref": "#/components/schemas/SeriesView"
+                },
+                "shared": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SharedUniverse"
+                  },
+                  "description": "What is shared (universes first, then series groups; by name)."
                 }
               }
             }
@@ -24507,6 +24611,26 @@
           }
         }
       },
+      "SameUniverseItem": {
+        "type": "object",
+        "description": "One series sharing a universe or series group with the requested one.",
+        "required": [
+          "series",
+          "shared"
+        ],
+        "properties": {
+          "series": {
+            "$ref": "#/components/schemas/SeriesView"
+          },
+          "shared": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SharedUniverse"
+            },
+            "description": "What is shared (universes first, then series groups; by name)."
+          }
+        }
+      },
       "SavedViewBatchReq": {
         "type": "object",
         "description": "Request for the saved-view batch endpoint.",
@@ -25788,6 +25912,14 @@
             ],
             "description": "Per-series reading-direction override. `\"ltr\"` / `\"rtl\"` /\n`\"ttb\"` or `None` meaning \"Auto — inherit from user pref /\nlibrary default at read time\". The reader consults this above\nthe user and library defaults but below ComicInfo `<Manga>`.\nEditable via `PATCH /series/{slug}` and set automatically by\nthe M3 scanner heuristic when ≥80% of a series's issues\ndeclare manga."
           },
+          "relationship_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "WP-7.7: direct relationships (series + story-arc edges) the caller\ncan see — the series page's \"Related\" tab label. Detail-only."
+          },
           "slug": {
             "type": "string"
           },
@@ -26057,6 +26189,30 @@
             "description": "Current effective values resolved from the DB overlay. Secret\nrows are returned as the literal string `\"<set>\"` so this surface\nnever leaks credentials. Order matches `registry`."
           }
         }
+      },
+      "SharedUniverse": {
+        "type": "object",
+        "required": [
+          "via",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Universe name, or the series-group value as this series spells it."
+          },
+          "via": {
+            "$ref": "#/components/schemas/SharedUniverseVia"
+          }
+        }
+      },
+      "SharedUniverseVia": {
+        "type": "string",
+        "description": "What two series share.",
+        "enum": [
+          "universe",
+          "series_group"
+        ]
       },
       "SidebarEntryView": {
         "type": "object",

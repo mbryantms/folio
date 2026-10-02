@@ -843,7 +843,11 @@ async fn series_one(
     let up_next_link = render_up_next_feed_link(up_next_issue.as_ref().map(|i| i.id.as_str()));
     // WP-7.1: `rel="related"` per series relationship the caller can see.
     let related = crate::api::series_relationships::visible_related(&app, &user, s.id).await;
-    let related_links = render_related_series_links(&related);
+    let mut related_links = render_related_series_links(&related);
+    // WP-7.7: series → story-arc edges link to the arc's acquisition feed.
+    let related_arcs =
+        crate::api::series_relationships::visible_related_arcs(&app, &user, s.id).await;
+    related_links.push_str(&render_related_arc_links(&related_arcs));
     let now = chrono::Utc::now().to_rfc3339();
     let body = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -887,6 +891,26 @@ fn render_related_series_links(
         out.push_str(&format!(
             "  <link rel=\"related\" href=\"/opds/v1/series/{id}\" type=\"{acq}\" title=\"{title}\"/>\n",
             id = other.id,
+            acq = ACQ_CT,
+            title = xml_escape(&title),
+        ));
+    }
+    out
+}
+
+/// WP-7.7: one feed-level `<link rel="related">` per visible series →
+/// story-arc edge, pointing at the arc's acquisition feed
+/// (`/opds/v1/arcs/{slug}`), titled with the role ("Prelude to: Secret
+/// Wars").
+fn render_related_arc_links(
+    related: &[crate::api::series_relationships::RelatedArcLink],
+) -> String {
+    let mut out = String::new();
+    for link in related {
+        let title = format!("{}: {}", link.label, link.arc.name);
+        out.push_str(&format!(
+            "  <link rel=\"related\" href=\"/opds/v1/arcs/{slug}\" type=\"{acq}\" title=\"{title}\"/>\n",
+            slug = xml_escape(&url_escape(&link.arc.slug)),
             acq = ACQ_CT,
             title = xml_escape(&title),
         ));

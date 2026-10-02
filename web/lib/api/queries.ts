@@ -1592,10 +1592,12 @@ export function entityNextPage(page: {
 export function useEntityListInfinite(
   kind: EntityKindPath,
   filters: EntityListFilters = {},
+  opts?: { enabled?: boolean },
 ) {
   const rest = stripCursor(filters);
   return useInfiniteQuery({
     queryKey: queryKeys.entityList(kind, filters),
+    enabled: opts?.enabled ?? true,
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       jsonFetch<EntityListView>(
@@ -2382,6 +2384,7 @@ export function useUserProgress() {
 // ───────── metadata-providers-1.0 ─────────
 
 import type {
+  ArcTieInListView,
   BatchListResp,
   BatchStatusResp,
   CandidatesResp,
@@ -2394,6 +2397,7 @@ import type {
   ProviderRangesListResp,
   RelationshipCatalogue,
   RelationshipSuggestionListView,
+  SameUniverseListView,
   SeriesRelationshipsResp,
   SuggestionBucket,
   SuggestionStatusFilter,
@@ -2697,15 +2701,63 @@ export function useProviderCoverageSeries(seriesSlug: string) {
 /** WP-7.1: direct relationships + reading-order chain. Not paginated —
  *  relationships are curated (admin-made or accepted suggestions), so the
  *  set is bounded by domain like `/me/sessions`. */
-export function useSeriesRelationships(seriesSlug: string) {
+export function useSeriesRelationships(
+  seriesSlug: string,
+  opts?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: queryKeys.seriesRelationships(seriesSlug),
     queryFn: () =>
       jsonFetch<SeriesRelationshipsResp>(
         `/series/${encodeURIComponent(seriesSlug)}/relationships`,
       ),
-    enabled: !!seriesSlug,
+    enabled: (opts?.enabled ?? true) && !!seriesSlug,
     staleTime: 30_000,
+  });
+}
+
+/** WP-7.7: series sharing a universe or series group with this one
+ *  (`GET /series/{slug}/same-universe`), derived on read. Cursor-paginated;
+ *  `enabled` lets the Related tab defer the fetch until it opens. */
+export function useSameUniverseInfinite(
+  seriesSlug: string,
+  opts?: { enabled?: boolean; limit?: number },
+) {
+  const limit = opts?.limit ?? 24;
+  return useInfiniteQuery({
+    queryKey: queryKeys.seriesSameUniverse(seriesSlug),
+    enabled: (opts?.enabled ?? true) && !!seriesSlug,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<SameUniverseListView>(
+        `/series/${encodeURIComponent(seriesSlug)}/same-universe${buildQuery({ limit, cursor: pageParam })}`,
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** `getNextPageParam` for the arc tie-in list (exported + tested so a
+ *  refactor can't swallow `next_cursor` and truncate the list). */
+export function arcTieInsNextPage(page: {
+  next_cursor?: string | null;
+}): string | undefined {
+  return page.next_cursor ?? undefined;
+}
+
+/** WP-7.7: series tying in to a story arc (`GET /arcs/{slug}/tie-ins`),
+ *  ordered by role (prelude, main story, tie-in, aftermath) so pages
+ *  group without reordering. */
+export function useArcTieInsInfinite(arcSlug: string, limit = 60) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.arcTieIns(arcSlug),
+    enabled: !!arcSlug,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<ArcTieInListView>(
+        `/arcs/${encodeURIComponent(arcSlug)}/tie-ins${buildQuery({ limit, cursor: pageParam })}`,
+      ),
+    getNextPageParam: arcTieInsNextPage,
   });
 }
 

@@ -825,6 +825,11 @@ export type UpdateSeriesRelationshipReq =
   Schemas["UpdateSeriesRelationshipReq"];
 export type ArcTieInView = Schemas["ArcTieInView"];
 export type ArcTieInListView = Schemas["CursorPage_ArcTieInView"];
+// WP-7.7 derived "Same universe"
+export type SharedUniverseVia = Schemas["SharedUniverseVia"];
+export type SharedUniverse = Schemas["SharedUniverse"];
+export type SameUniverseItem = Schemas["SameUniverseItem"];
+export type SameUniverseListView = Schemas["CursorPage_SameUniverseItem"];
 // WP-7.2 relationship suggestions
 export type SuggestionBucket = Schemas["SuggestionBucket"];
 export type SuggestionStatus = Schemas["SuggestionStatus"];

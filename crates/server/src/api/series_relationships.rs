@@ -870,9 +870,12 @@ pub async fn delete(
     StatusCode::NO_CONTENT.into_response()
 }
 
-/// Keyset position for `GET /arcs/{slug}/tie-ins`: `(created_at, id)`.
+/// Keyset position for `GET /arcs/{slug}/tie-ins`:
+/// `(role rank, created_at, id)` — see [`TIE_IN_ROLE_RANK_SQL`].
 #[derive(Debug, Serialize, Deserialize)]
 struct TieInCursor {
+    #[serde(rename = "k")]
+    rank: i32,
     #[serde(rename = "t")]
     created_at: String,
     #[serde(rename = "i")]
@@ -882,7 +885,14 @@ struct TieInCursor {
 #[derive(Debug, FromQueryResult)]
 struct TieInIdRow {
     id: Uuid,
+    rank: i32,
 }
+
+/// Reading order of tie-in roles, so the arc page can group a paginated
+/// list by role without reordering as pages load: prelude, main story,
+/// tie-in (and unset), aftermath.
+const TIE_IN_ROLE_RANK_SQL: &str = "(CASE r.qualifier WHEN 'prelude' THEN 0 \
+     WHEN 'main' THEN 1 WHEN 'aftermath' THEN 3 ELSE 2 END)";
 
 #[derive(Debug, FromQueryResult)]
 struct CountRow {
@@ -890,10 +900,12 @@ struct CountRow {
 }
 
 /// `GET /arcs/{slug}/tie-ins` core: series with a `tie_in_to` edge to the
-/// arc, oldest first, cursor-paginated (`total` on the first page). The
-/// arc must be visible to the caller (same 404 gate as `/arcs/{slug}`);
-/// tying-in series are filtered by the entity pages' series ACL in SQL so
-/// pages are never short.
+/// arc, grouped by role (prelude, main story, tie-in, aftermath) and
+/// oldest first within a role, cursor-paginated (`total` on the first
+/// page). The arc must be visible to the caller (same 404 gate as
+/// `/arcs/{slug}`); tying-in series are filtered by the entity pages'
+/// series ACL in SQL so pages are never short. Admins also see removed
+/// series (WP-7.7, as `series::list` does).
 pub(crate) async fn arc_tie_ins_handler(
     app: &AppState,
     user: &CurrentUser,
@@ -905,7 +917,7 @@ pub(crate) async fn arc_tie_ins_handler(
     let after = match cursor {
         Some(c) => match decode_cursor::<TieInCursor>(c) {
             Ok(k) => match chrono::DateTime::parse_from_rfc3339(&k.created_at) {
-                Ok(t) => Some((t, k.id)),
+                Ok(t) => Some((k.rank, t, k.id)),
                 Err(_) => return bad_cursor(),
             },
             Err(_) => return bad_cursor(),
@@ -920,7 +932,8 @@ pub(crate) async fn arc_tie_ins_handler(
     let limit = limit.unwrap_or(60).clamp(1, 100);
 
     let mut params: Vec<Value> = vec![Value::from(arc.id)];
-    let Some(svis) = ep::series_visible_sql(&visible, &mut params) else {
+    let include_removed = user.role == "admin";
+    let Some(svis) = ep::series_visible_sql_for(&visible, &mut params, include_removed) else {
         return Json(CursorPage::<ArcTieInView>::paginated(
             Vec::new(),
             None,
@@ -949,11 +962,17 @@ pub(crate) async fn arc_tie_ins_handler(
     };
     let mut page_params = params;
     let keyset = match after {
-        Some((t, id)) => {
+        Some((rank, t, id)) => {
+            page_params.push(Value::from(rank));
             page_params.push(Value::from(t));
             page_params.push(Value::from(id));
-            let (a, b) = (page_params.len() - 1, page_params.len());
-            format!(" AND (r.created_at, r.id) > (${a}, ${b})")
+            let n = page_params.len();
+            format!(
+                " AND ({TIE_IN_ROLE_RANK_SQL}, r.created_at, r.id) > (${}, ${}, ${})",
+                n - 2,
+                n - 1,
+                n
+            )
         }
         None => String::new(),
     };
@@ -961,17 +980,22 @@ pub(crate) async fn arc_tie_ins_handler(
     let limit_param = page_params.len();
     let ids = TieInIdRow::find_by_statement(Statement::from_sql_and_values(
         app.db.get_database_backend(),
-        format!("SELECT r.id {base}{keyset} ORDER BY r.created_at, r.id LIMIT ${limit_param}"),
+        format!(
+            "SELECT r.id, {TIE_IN_ROLE_RANK_SQL} AS rank {base}{keyset} \
+             ORDER BY rank, r.created_at, r.id LIMIT ${limit_param}"
+        ),
         page_params,
     ))
     .all(&app.db)
     .await;
-    let mut ids: Vec<Uuid> = match ids {
-        Ok(r) => r.into_iter().map(|r| r.id).collect(),
+    let mut ranked: Vec<(Uuid, i32)> = match ids {
+        Ok(r) => r.into_iter().map(|r| (r.id, r.rank)).collect(),
         Err(e) => return internal(&e),
     };
-    let has_more = ids.len() as u64 > limit;
-    ids.truncate(usize::try_from(limit).unwrap_or(100));
+    let has_more = ranked.len() as u64 > limit;
+    ranked.truncate(usize::try_from(limit).unwrap_or(100));
+    let rank_of: HashMap<Uuid, i32> = ranked.iter().copied().collect();
+    let ids: Vec<Uuid> = ranked.into_iter().map(|(id, _)| id).collect();
 
     let rows = match rel::Entity::find()
         .filter(rel::Column::Id.is_in(ids.clone()))
@@ -996,12 +1020,16 @@ pub(crate) async fn arc_tie_ins_handler(
         .into_iter()
         .map(|v| (v.id.clone(), v))
         .collect();
-    let mut last: Option<(String, Uuid)> = None;
+    let mut last: Option<(i32, String, Uuid)> = None;
     let items: Vec<ArcTieInView> = ids
         .iter()
         .filter_map(|id| {
             let r = by_id.remove(id)?;
-            last = Some((r.created_at.to_rfc3339(), r.id));
+            last = Some((
+                rank_of.get(&r.id).copied().unwrap_or(2),
+                r.created_at.to_rfc3339(),
+                r.id,
+            ));
             let series = views.get(&r.from_series_id.to_string())?.clone();
             let kind: RelationshipKind = r.kind.parse().ok()?;
             let scope = Scope::of(&r);
@@ -1021,7 +1049,14 @@ pub(crate) async fn arc_tie_ins_handler(
         })
         .collect();
     let next_cursor = if has_more {
-        last.and_then(|(t, id)| encode_cursor(&TieInCursor { created_at: t, id }).ok())
+        last.and_then(|(rank, t, id)| {
+            encode_cursor(&TieInCursor {
+                rank,
+                created_at: t,
+                id,
+            })
+            .ok()
+        })
     } else {
         None
     };
@@ -1103,6 +1138,87 @@ fn arc_ref_of(a: &story_arc::Model) -> RelationshipArcRef {
         slug: a.slug.clone(),
         name: a.name.clone(),
     }
+}
+
+/// WP-7.7: how many direct relationships the series page's Related tab
+/// lists for `user` — series edges whose other end is visible plus arc
+/// edges whose arc is visible (the same filters as the `GET`), so the tab
+/// label can show a count without the full relationships payload. `None`
+/// on a DB error (the label then shows no count).
+pub(crate) async fn visible_relationship_count(
+    app: &AppState,
+    user: &CurrentUser,
+    series_id: Uuid,
+) -> Option<i64> {
+    let edges = relationships::direct(&app.db, series_id).await.ok()?;
+    let arc_edges = relationships::arc_edges(&app.db, series_id).await.ok()?;
+    let ids: HashSet<Uuid> = edges.iter().filter_map(|e| e.to_series_id).collect();
+    let visible = visible_series(app, user, ids).await.ok()?;
+    let series_n = edges
+        .iter()
+        .filter(|e| e.to_series_id.is_some_and(|id| visible.contains_key(&id)))
+        .count();
+    let arc_n = if arc_edges.is_empty() {
+        0
+    } else {
+        let arc_ids: Vec<Uuid> = arc_edges.iter().filter_map(|e| e.to_arc_id).collect();
+        let acl = access::for_user(app, user).await;
+        let vis = super::entity_pages::visible_arc_ids(app, &acl, &arc_ids)
+            .await
+            .ok()?;
+        arc_edges
+            .iter()
+            .filter(|e| e.to_arc_id.is_some_and(|id| vis.contains(&id)))
+            .count()
+    };
+    i64::try_from(series_n + arc_n).ok()
+}
+
+/// One story arc this series ties in to, for the OPDS "related" links
+/// (WP-7.7).
+pub(crate) struct RelatedArcLink {
+    /// "Tie-in to", "Prelude to", … (role folded in).
+    pub label: String,
+    pub arc: story_arc::Model,
+}
+
+/// Arc edges of `series_id` whose arc `user` can see, in creation order —
+/// the OPDS feeds' arc "related" links. Errors degrade to an empty list.
+pub(crate) async fn visible_related_arcs(
+    app: &AppState,
+    user: &CurrentUser,
+    series_id: Uuid,
+) -> Vec<RelatedArcLink> {
+    let Ok(edges) = relationships::arc_edges(&app.db, series_id).await else {
+        return Vec::new();
+    };
+    if edges.is_empty() {
+        return Vec::new();
+    }
+    let arc_ids: Vec<Uuid> = edges.iter().filter_map(|e| e.to_arc_id).collect();
+    let acl = access::for_user(app, user).await;
+    let Ok(visible) = super::entity_pages::visible_arc_ids(app, &acl, &arc_ids).await else {
+        return Vec::new();
+    };
+    let Ok(arcs) = story_arc::Entity::find()
+        .filter(story_arc::Column::Id.is_in(visible.iter().copied().collect::<Vec<_>>()))
+        .all(&app.db)
+        .await
+    else {
+        return Vec::new();
+    };
+    let arcs: HashMap<Uuid, story_arc::Model> = arcs.into_iter().map(|a| (a.id, a)).collect();
+    edges
+        .into_iter()
+        .filter_map(|e| {
+            let kind = e.kind.parse::<RelationshipKind>().ok()?;
+            let qualifier = e.qualifier.as_deref().and_then(|q| q.parse().ok());
+            Some(RelatedArcLink {
+                label: kind.display_label(qualifier),
+                arc: arcs.get(&e.to_arc_id?)?.clone(),
+            })
+        })
+        .collect()
 }
 
 /// One related series for the OPDS "related" links.

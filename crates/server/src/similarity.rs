@@ -187,6 +187,9 @@ pub struct Contribution {
     pub role: Option<String>,
     pub name: String,
     pub value: f64,
+    /// Relationships only: the display label (tie-in role folded in,
+    /// WP-7.7), lower-cased. `None` falls back to the kind's label.
+    pub label: Option<String>,
 }
 
 /// Library + rating of a candidate, carried so the per-request ACL
@@ -273,7 +276,9 @@ pub fn score(
             .take(MAX_REASONS)
             .map(|c| Reason {
                 kind: c.kind,
-                label: relationship_label(c.kind, c.role.as_deref()),
+                label: c
+                    .label
+                    .or_else(|| relationship_label(c.kind, c.role.as_deref())),
                 role: c.role,
                 name: c.name,
                 weight: round3(c.value),
@@ -427,6 +432,7 @@ async fn fetch_overlap<C: ConnectionTrait>(
             role: (kind == ReasonKind::Creator).then_some(r.role),
             name: r.label,
             value: weight * idf(r.n, r.df),
+            label: None,
         });
     }
     Ok((contributions, meta))
@@ -484,6 +490,7 @@ struct RelationshipRow {
     library_id: Uuid,
     age_rating: Option<String>,
     kind: String,
+    qualifier: Option<String>,
     target_name: String,
 }
 
@@ -506,7 +513,7 @@ async fn fetch_relationships<C: ConnectionTrait>(
         DbBackend::Postgres,
         r#"
         SELECT r.to_series_id AS series_id, s.library_id, s.age_rating,
-               r.kind,
+               r.kind, r.qualifier,
                t.name || COALESCE(' (' || t.year || ')', '') AS target_name
           FROM series_relationship r
           JOIN series s ON s.id = r.to_series_id AND s.removed_at IS NULL
@@ -527,12 +534,16 @@ async fn fetch_relationships<C: ConnectionTrait>(
             library_id: r.library_id,
             age_rating: r.age_rating.clone(),
         });
+        // WP-7.7: a tie-in role reads as itself ("has prelude", not "has
+        // tie-in"); the stored qualifier is shared by both halves.
+        let qualifier = r.qualifier.as_deref().and_then(|q| q.parse().ok());
         contributions.push(Contribution {
             series_id: r.series_id,
             kind: ReasonKind::Relationship,
             role: Some(kind.inverse().as_str().to_owned()),
             name: r.target_name,
             value: RELATIONSHIP_WEIGHT,
+            label: Some(kind.inverse().display_label(qualifier).to_lowercase()),
         });
     }
     Ok((contributions, meta))
@@ -692,6 +703,7 @@ mod tests {
             role: role.map(str::to_owned),
             name: name.to_owned(),
             value,
+            label: None,
         }
     }
 

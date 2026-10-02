@@ -13,7 +13,7 @@ tests in
 
 | Endpoint | What | Paging |
 |---|---|---|
-| `GET /api/series/{slug}/similar` | Neighbours of one series. Feeds the "Similar series" rail on the series page. | Keyset cursor over `(score DESC, series_id ASC)`; `total` on the first page only; `limit` 1–50 (default 20). |
+| `GET /api/series/{slug}/similar` | Neighbours of one series. Feeds the "Similar series" rail in the series page's Related tab. | Keyset cursor over `(score DESC, series_id ASC)`; `total` on the first page only; `limit` 1–50 (default 20). |
 | `GET /api/me/similar-series` | Optional home rail: neighbours of the series the caller read most recently (`seed`), minus every series they've already started. | Same cursor; the cursor pins the seed so later pages don't switch seeds. |
 
 The home rail is the system saved view `similar_series`
@@ -34,8 +34,10 @@ where a reason is `{ kind, role?, name, weight }`:
   `name` of a relationship reason is this series with its year.
 - `label` (relationships only, WP-7.5): the kind's display label,
   lower-cased — e.g. "continued by Agents of Atlas (2020)" — so the web
-  needn't map kinds itself. Arc-target edges never contribute (the signal
-  joins on `to_series_id`).
+  needn't map kinds itself. A tie-in role is folded in (WP-7.7): a
+  `tie_in_to` edge with role `prelude` reads "prelude to Secret Wars
+  (2015)", its other side "has prelude …", not "tie-in to" / "has tie-in".
+  Arc-target edges never contribute (the signal joins on `to_series_id`).
 - `weight`: that entity's contribution (before the per-kind cap).
 
 The web renders up to three reasons as a caption (a relationship reason
@@ -213,3 +215,18 @@ Change a weight or cap in `similarity.rs`, rerun
 paging) plus the unit tests in `similarity.rs`, and sanity-check a few
 dev-library series. The integration fixtures are sized against
 `MIN_SCORE`; a large weight cut can push their neighbours under it.
+
+## Series page rail (WP-7.7)
+
+The "Similar series" rail lives in the series page's **Related** tab
+(`web/components/library/SeriesRelatedTab.tsx`), below the relationships
+and the "Same universe" section. The tab panel is unmounted while
+inactive, so `GET /series/{slug}/similar` fires only when the tab opens.
+
+Its cards are sized by the page's card-size slider (Issues panel → View
+options, key `folio.series.cardSize`) instead of a fixed 160 px:
+`SimilarSeriesRail` takes `itemWidthPx`, which the tab sets to the issue
+grid's effective column width (`useGridColumnWidth` over
+`effectiveColumnWidth`, see `series-relationships.md` → "Related tab"), so
+the covers match the grid exactly and follow the slider live. Without the
+prop the rail falls back to 160 px.

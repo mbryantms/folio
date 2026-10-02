@@ -14,6 +14,21 @@ import { cn } from "@/lib/utils";
  *  rather than a strip of dimmed cover art. */
 const LEFT_FADE_PX = 36;
 
+/** Breathing room (px) the track keeps on every side of its cards so
+ *  anything a card paints *outside* its own box — a focus-visible ring,
+ *  a `ring-2 ring-offset-2` highlight (the reading-order "This series"
+ *  card, the "View all" button's focus ring) — isn't clipped by the
+ *  scroller. `overflow-x: auto` clips the y axis too, so without this the
+ *  top and bottom of every ring were shaved off. 4px = the largest ring
+ *  used by any rail child (2px ring + 2px offset). The track's `p-1`
+ *  MUST match; the scroller's `-my-1` cancels the vertical half so the
+ *  rail's outer box (and every existing layout) doesn't move. */
+export const RAIL_RING_ROOM_PX = 4;
+
+/** Fallback card gap when the track's computed `column-gap` is unreadable
+ *  (the default track is `gap-3`). */
+const DEFAULT_GAP_PX = 12;
+
 /**
  * Horizontal scrolling rail used by every home/detail surface that
  * surfaces a strip of cards.
@@ -41,7 +56,11 @@ export function HorizontalScrollRail({
   viewAllLabel = "View all",
   itemWidthPx,
   initialScrollIndex,
+  anchorAlign = "start",
   className,
+  as: Track = "div",
+  trackLabel,
+  trackClassName,
 }: {
   children: React.ReactNode;
   /** When set, a trailing tile linking to the full view is appended. */
@@ -59,7 +78,20 @@ export function HorizontalScrollRail({
    *  index isn't known up front — the rail watches the DOM and auto-finds
    *  it whenever it appears, even when the body loads asynchronously. */
   initialScrollIndex?: number;
+  /** Where the initial-scroll anchor lands: `start` (just right of the
+   *  left fade — the CBL window's next-to-read card) or `center` (the
+   *  reading-order strip, so the series before *and* after stay visible). */
+  anchorAlign?: "start" | "center";
   className?: string;
+  /** Element for the track. Use `ol` / `ul` when the cards are an ordered
+   *  / unordered list (each child must then be an `<li>`; the "View all"
+   *  tile is wrapped in one too). */
+  as?: "div" | "ol" | "ul";
+  /** Accessible name for a list track (`aria-label`). */
+  trackLabel?: string;
+  /** Extra classes for the track (e.g. a tighter `gap-*`). Padding is
+   *  owned by the rail — see `RAIL_RING_ROOM_PX`. */
+  trackClassName?: string;
 }) {
   const scrollerRef = React.useRef<HTMLDivElement>(null);
   const [canLeft, setCanLeft] = React.useState(false);
@@ -112,13 +144,22 @@ export function HorizontalScrollRail({
       }
       if (!anchor) return false;
       // Subtract the row's content edge so the card aligns with the
-      // viewport's left padding (the inner row uses `px-1`). Then pull
+      // viewport's left padding (the inner row uses `p-1`). Then pull
       // back by `LEFT_FADE_PX` so the card sits to the *right* of the
       // left-edge fade gradient — without this offset the anchor lands
       // directly under the fade and reads as darkened on first load.
       const rowRect = row.getBoundingClientRect();
       const cardRect = anchor.getBoundingClientRect();
-      const desired = Math.max(0, cardRect.left - rowRect.left - LEFT_FADE_PX);
+      const desired = Math.max(
+        0,
+        anchorAlign === "center"
+          ? cardRect.left - rowRect.left - (el.clientWidth - cardRect.width) / 2
+          : cardRect.left - rowRect.left - LEFT_FADE_PX,
+      );
+      // Not overflowing yet (cards still at their pre-measure width):
+      // the scroll would clamp to 0, so wait for the resize that makes
+      // the anchor reachable.
+      if (desired > 1 && el.scrollWidth <= el.clientWidth) return false;
       // Mark done as soon as the anchor is resolved — even when it's
       // already at column 0 (desired ≈ 0) — so we stop watching and
       // never fight the user's later manual scroll.
@@ -150,7 +191,10 @@ export function HorizontalScrollRail({
       attributeFilter: ["data-rail-current"],
     });
 
-    const ro = new ResizeObserver(() => recompute());
+    const ro = new ResizeObserver(() => {
+      recompute();
+      attemptInitialScroll();
+    });
     ro.observe(el);
     // Observe each child so a card resizing also re-runs the check.
     for (const child of Array.from(el.children)) ro.observe(child);
@@ -160,7 +204,7 @@ export function HorizontalScrollRail({
       ro.disconnect();
       el.removeEventListener("scroll", recompute);
     };
-  }, [recompute, initialScrollIndex]);
+  }, [recompute, initialScrollIndex, anchorAlign]);
 
   const scrollBy = (dir: "left" | "right") => {
     const el = scrollerRef.current;
@@ -168,38 +212,53 @@ export function HorizontalScrollRail({
     // Step one card at a time so users can keep their place — the
     // previous 85%-of-viewport jump was disorienting on rails with
     // many small cards. Card width is read from the first child so
-    // the step matches whatever density the user has picked; gap-3
-    // (12px) is added so consecutive clicks land cleanly on cell
+    // the step matches whatever density the user has picked; the
+    // track's gap is added so consecutive clicks land cleanly on cell
     // boundaries.
     const row = el.firstElementChild;
     const firstCard = row?.children.item(0);
+    const gap =
+      row instanceof HTMLElement
+        ? Number.parseFloat(getComputedStyle(row).columnGap) || DEFAULT_GAP_PX
+        : DEFAULT_GAP_PX;
     const cardWidth =
       firstCard instanceof HTMLElement
-        ? firstCard.offsetWidth + 12
+        ? firstCard.offsetWidth + gap
         : el.clientWidth * 0.5;
     const delta = cardWidth * (dir === "left" ? -1 : 1);
     el.scrollBy({ left: delta, behavior: "smooth" });
   };
 
+  const ViewAllWrap = Track === "div" ? "div" : "li";
+
   return (
-    <div className={cn("group/rail relative", className)}>
+    // `flow-root` keeps the scroller's negative block margins inside this
+    // box (no margin collapse through it), so the fades / chevrons below
+    // stay anchored to the cards.
+    <div className={cn("group/rail relative flow-root", className)}>
       <div
         ref={scrollerRef}
         // overflow-x-auto + scrollbar-hidden utility ([no-scrollbar]
         // matches a Tailwind plugin used elsewhere; falls back to inline
         // styles below if the plugin isn't loaded). The bottom padding
         // is density-driven so compact mode can trim the otherwise-
-        // empty strip beneath the cards.
-        className="[scrollbar-width:none] overflow-x-auto [&::-webkit-scrollbar]:hidden"
+        // empty strip beneath the cards. `-my-1` hands the track's
+        // vertical ring room back (see `RAIL_RING_ROOM_PX`).
+        className="-my-1 [scrollbar-width:none] overflow-x-auto [&::-webkit-scrollbar]:hidden"
         style={{
           scrollbarWidth: "none",
           paddingBottom: "var(--density-rail-pb)",
         }}
+        data-testid="rail-scroller"
       >
-        <div className="flex gap-3 px-1">
+        <Track
+          className={cn("flex gap-3 p-1", trackClassName)}
+          aria-label={trackLabel}
+          data-testid="rail-track"
+        >
           {children}
           {viewAllHref && (
-            <div
+            <ViewAllWrap
               className="flex shrink-0 items-center"
               style={itemWidthPx ? { width: `${itemWidthPx}px` } : undefined}
             >
@@ -209,9 +268,9 @@ export function HorizontalScrollRail({
                   <ArrowRight aria-hidden="true" className="ml-1 h-3.5 w-3.5" />
                 </Link>
               </Button>
-            </div>
+            </ViewAllWrap>
           )}
-        </div>
+        </Track>
       </div>
 
       {/* Edge fades — pointer-events disabled so they never intercept
@@ -254,7 +313,7 @@ export function HorizontalScrollRail({
           // treatment + the project's standard `bg-primary` button
           // styling so the scroll affordance reads as a real button
           // against any cover art behind it.
-          "bg-primary/90 text-primary-foreground hover:bg-primary absolute top-[42%] left-1 z-10 inline-flex h-14 w-7 -translate-y-1/2 items-center justify-center rounded-md shadow-md ring-2 ring-white/20 backdrop-blur transition-all duration-150 ease-out focus-visible:ring-offset-2 focus-visible:outline-none",
+          "bg-primary/90 text-primary-foreground hover:bg-primary ring-offset-background ring-primary-foreground/20 focus-visible:ring-ring absolute top-[42%] left-1 z-10 inline-flex h-14 w-7 -translate-y-1/2 items-center justify-center rounded-md shadow-md ring-2 backdrop-blur transition-all duration-150 ease-out focus-visible:ring-offset-2 focus-visible:outline-none",
           canLeft
             ? "scale-100 opacity-0 group-hover/rail:opacity-100 focus-visible:opacity-100"
             : "pointer-events-none scale-95 opacity-0",
@@ -268,7 +327,7 @@ export function HorizontalScrollRail({
         tabIndex={canRight ? 0 : -1}
         onClick={() => scrollBy("right")}
         className={cn(
-          "bg-primary/90 text-primary-foreground hover:bg-primary absolute top-[42%] right-1 z-10 inline-flex h-14 w-7 -translate-y-1/2 items-center justify-center rounded-md shadow-md ring-2 ring-white/20 backdrop-blur transition-all duration-150 ease-out focus-visible:ring-offset-2 focus-visible:outline-none",
+          "bg-primary/90 text-primary-foreground hover:bg-primary ring-offset-background ring-primary-foreground/20 focus-visible:ring-ring absolute top-[42%] right-1 z-10 inline-flex h-14 w-7 -translate-y-1/2 items-center justify-center rounded-md shadow-md ring-2 backdrop-blur transition-all duration-150 ease-out focus-visible:ring-offset-2 focus-visible:outline-none",
           canRight
             ? "scale-100 opacity-0 group-hover/rail:opacity-100 focus-visible:opacity-100"
             : "pointer-events-none scale-95 opacity-0",
