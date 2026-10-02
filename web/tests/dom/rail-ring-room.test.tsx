@@ -18,7 +18,13 @@
  * Class assertions are deliberate here: the bug was purely a missing
  * padding / margin pair, and jsdom has no layout to measure.
  */
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SeriesRelationshipsResp, SeriesView } from "@/lib/api/types";
 
@@ -198,6 +204,8 @@ describe("Controlled dialogs return focus", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     });
-    expect(document.activeElement).toBe(remove);
+    // Radix hands focus back asynchronously (after the close transition),
+    // so poll instead of asserting on the same tick.
+    await waitFor(() => expect(document.activeElement).toBe(remove));
   });
 });
