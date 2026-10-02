@@ -669,7 +669,7 @@ async fn fixture_library_yields_one_suggestion_per_source() {
         .join("\n");
 
     // Name continuation: consecutive volumes → high.
-    let dd = find(&all, f.dd_2014, f.dd_2011, "sequel_of").expect(&dump);
+    let dd = find(&all, f.dd_2014, f.dd_2011, "continues").expect(&dump);
     assert_eq!(dd.bucket, "high");
     assert!((dd.confidence - 0.9).abs() < 1e-6);
     assert!(
@@ -680,7 +680,7 @@ async fn fixture_library_yields_one_suggestion_per_source() {
     );
     assert_eq!(sources(dd), vec!["name_continuation"]);
     // Year gap only → medium.
-    let thor = find(&all, f.thor_2018, f.thor_2014, "sequel_of").expect(&dump);
+    let thor = find(&all, f.thor_2018, f.thor_2014, "continues").expect(&dump);
     assert_eq!(thor.bucket, "medium");
     assert!(thor.reason.contains("4 years later"), "{}", thor.reason);
 
@@ -713,8 +713,8 @@ async fn fixture_library_yields_one_suggestion_per_source() {
     assert!(col.reason.contains("#1–6"), "{}", col.reason);
     assert_eq!(col.evidence["sources"][0]["issues_in_library"], 6);
 
-    // Shared provider volume with disjoint ranges → sequel_of.
-    let pv = find(&all, f.usm_relaunch, f.ucsm, "sequel_of").expect(&dump);
+    // Shared provider volume with disjoint ranges → continues.
+    let pv = find(&all, f.usm_relaunch, f.ucsm, "continues").expect(&dump);
     assert_eq!(sources(pv), vec!["provider_volume"]);
     assert!(pv.reason.contains("424242"), "{}", pv.reason);
 
@@ -732,14 +732,18 @@ async fn fixture_library_yields_one_suggestion_per_source() {
     assert_eq!(dens.evidence["sources"][0]["shared_features"], 5);
 
     // Existing manual edge isn't re-suggested.
-    assert!(find(&all, f.atlas_2009, f.atlas_2007, "sequel_of").is_none());
+    assert!(find(&all, f.atlas_2009, f.atlas_2007, "continues").is_none());
     assert!(report.skipped_existing_edge >= 1, "{report:?}");
 
     // Every row is pending, canonical, and has a reason + evidence.
     for r in &all {
         assert_eq!(r.status, "pending");
         assert!(!r.reason.is_empty());
-        assert!(!["prequel_of", "has_spin_off", "collected_in"].contains(&r.kind.as_str()));
+        assert!(
+            r.kind.parse::<RelationshipKind>().unwrap().is_canonical(),
+            "{}",
+            r.kind
+        );
         if ["crossover_with", "same_universe", "see_also"].contains(&r.kind.as_str()) {
             assert!(r.from_series_id < r.to_series_id);
         }
@@ -773,7 +777,7 @@ async fn rejected_suggestions_never_reappear_and_pending_ones_refresh() {
     let f = fixture(&app, &db).await;
     relationship_suggest::run(&db, f.lib).await.unwrap();
 
-    let thor = find(&rows(&db).await, f.thor_2018, f.thor_2014, "sequel_of")
+    let thor = find(&rows(&db).await, f.thor_2018, f.thor_2014, "continues")
         .unwrap()
         .clone();
     let (status, body) = call_json(
@@ -792,7 +796,7 @@ async fn rejected_suggestions_never_reappear_and_pending_ones_refresh() {
     );
 
     // Tamper with a pending row so the rerun has something to refresh.
-    let dd = find(&rows(&db).await, f.dd_2014, f.dd_2011, "sequel_of")
+    let dd = find(&rows(&db).await, f.dd_2014, f.dd_2011, "continues")
         .unwrap()
         .clone();
     sug::ActiveModel {
@@ -811,7 +815,7 @@ async fn rejected_suggestions_never_reappear_and_pending_ones_refresh() {
     assert_eq!(report.updated, 1);
 
     let after = rows(&db).await;
-    let thor_after = find(&after, f.thor_2018, f.thor_2014, "sequel_of").unwrap();
+    let thor_after = find(&after, f.thor_2018, f.thor_2014, "continues").unwrap();
     assert_eq!(thor_after.status, "rejected");
     assert_eq!(
         thor_after.updated_at,
@@ -822,7 +826,7 @@ async fn rejected_suggestions_never_reappear_and_pending_ones_refresh() {
             .unwrap()
             .updated_at
     );
-    let dd_after = find(&after, f.dd_2014, f.dd_2011, "sequel_of").unwrap();
+    let dd_after = find(&after, f.dd_2014, f.dd_2011, "continues").unwrap();
     assert!(
         (dd_after.confidence - 0.9).abs() < 1e-6,
         "pending row refreshed"
@@ -851,7 +855,7 @@ async fn accept_creates_the_pair_and_is_never_resuggested() {
     let all = rows(&db).await;
 
     // Plain accept.
-    let dd = find(&all, f.dd_2014, f.dd_2011, "sequel_of")
+    let dd = find(&all, f.dd_2014, f.dd_2011, "continues")
         .unwrap()
         .clone();
     let generation = app.state().similarity.generation();
@@ -865,7 +869,7 @@ async fn accept_creates_the_pair_and_is_never_resuggested() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["suggestion"]["status"], "accepted");
-    assert_eq!(body["kind"], "sequel_of");
+    assert_eq!(body["kind"], "continues");
     assert_eq!(body["created"], true);
     assert!(
         app.state().similarity.generation() > generation,
@@ -882,7 +886,7 @@ async fn accept_creates_the_pair_and_is_never_resuggested() {
         .await
         .unwrap()
         .expect("forward edge");
-    assert_eq!(fwd.kind, "sequel_of");
+    assert_eq!(fwd.kind, "continues");
     assert_eq!(fwd.source, "suggested");
     assert!((fwd.confidence.unwrap() - 0.9).abs() < 1e-6);
     assert_eq!(fwd.created_by, Some(admin.user_id));
@@ -893,7 +897,7 @@ async fn accept_creates_the_pair_and_is_never_resuggested() {
         .await
         .unwrap()
         .expect("inverse edge");
-    assert_eq!(inv.kind, "prequel_of");
+    assert_eq!(inv.kind, "continued_by");
     assert_eq!(
         audit_count(&db, "admin.relationship_suggestion.accept").await,
         1
@@ -964,7 +968,7 @@ async fn accept_creates_the_pair_and_is_never_resuggested() {
     let after = rows(&db).await;
     assert_eq!(after.len(), all.len());
     assert_eq!(
-        find(&after, f.dd_2014, f.dd_2011, "sequel_of")
+        find(&after, f.dd_2014, f.dd_2011, "continues")
             .unwrap()
             .status,
         "accepted"
@@ -978,7 +982,7 @@ async fn accept_refuses_a_contradicting_edge() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let f = fixture(&app, &db).await;
     relationship_suggest::run(&db, f.lib).await.unwrap();
-    let thor = find(&rows(&db).await, f.thor_2018, f.thor_2014, "sequel_of")
+    let thor = find(&rows(&db).await, f.thor_2018, f.thor_2014, "continues")
         .unwrap()
         .clone();
     // An admin meanwhile linked them the other way round.
@@ -1347,8 +1351,8 @@ async fn bulk_accept_by_ids_is_one_batch_with_partial_failures() {
     let f = fixture(&app, &db).await;
     relationship_suggest::run(&db, f.lib).await.unwrap();
     let all = rows(&db).await;
-    let dd = find(&all, f.dd_2014, f.dd_2011, "sequel_of").unwrap().id;
-    let thor = find(&all, f.thor_2018, f.thor_2014, "sequel_of")
+    let dd = find(&all, f.dd_2014, f.dd_2011, "continues").unwrap().id;
+    let thor = find(&all, f.thor_2018, f.thor_2014, "continues")
         .unwrap()
         .id;
     let (a, b) = ordered(f.ff_1998, f.ff_2012);
@@ -1412,7 +1416,7 @@ async fn bulk_accept_by_ids_is_one_batch_with_partial_failures() {
         rel::Entity::find()
             .filter(rel::Column::FromSeriesId.eq(f.dd_2014))
             .filter(rel::Column::ToSeriesId.eq(f.dd_2011))
-            .filter(rel::Column::Kind.eq("sequel_of"))
+            .filter(rel::Column::Kind.eq("continues"))
             .filter(rel::Column::Source.eq("suggested"))
             .one(&db)
             .await
@@ -1604,7 +1608,7 @@ async fn reopen_clears_a_rejection() {
     let f = fixture(&app, &db).await;
     relationship_suggest::run(&db, f.lib).await.unwrap();
     let before = rows(&db).await.len();
-    let thor = find(&rows(&db).await, f.thor_2018, f.thor_2014, "sequel_of")
+    let thor = find(&rows(&db).await, f.thor_2018, f.thor_2014, "continues")
         .unwrap()
         .id;
 
@@ -1698,7 +1702,7 @@ async fn stale_rows_are_hidden_and_revive_when_produced_again() {
     let f = fixture(&app, &db).await;
     let first = relationship_suggest::run(&db, f.lib).await.unwrap();
     assert_eq!(first.marked_stale, 0, "{first:?}");
-    let thor = find(&rows(&db).await, f.thor_2018, f.thor_2014, "sequel_of")
+    let thor = find(&rows(&db).await, f.thor_2018, f.thor_2014, "continues")
         .unwrap()
         .id;
     let pending_before = rows(&db)
@@ -1803,4 +1807,77 @@ async fn stale_rows_are_hidden_and_revive_when_produced_again() {
     rename_series(&db, f.thor_2018, "Mighty Thor Reborn").await;
     relationship_suggest::run(&db, f.lib).await.unwrap();
     assert_eq!(status_of(&db, thor).await, "rejected");
+}
+
+/// WP-7.5: the continuation sources now emit `continues`, and an existing
+/// `sequel_of` edge or a reviewed `sequel_of` row (pre-WP-7.5 rejection
+/// memory) satisfies a `continues` suggestion for the same ordered pair —
+/// and vice versa — so nothing is double-suggested.
+#[tokio::test]
+async fn sequel_of_and_continues_dedupe_each_other() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let f = fixture(&app, &db).await;
+    // A legacy rejected `sequel_of` row for the Daredevil volumes.
+    exec(
+        &db,
+        "INSERT INTO series_relationship_suggestion \
+           (id, from_series_id, to_series_id, kind, confidence, bucket, reason, status) \
+         VALUES ($1, $2, $3, 'sequel_of', 0.9, 'high', 'legacy', 'rejected')",
+        vec![Uuid::now_v7().into(), f.dd_2014.into(), f.dd_2011.into()],
+    )
+    .await;
+    // A manual `continues` edge between the Thor volumes, written the other
+    // way round (2014 continued_by 2018).
+    relationships::create_pair(
+        &db,
+        f.thor_2014,
+        f.thor_2018,
+        RelationshipKind::ContinuedBy,
+        RelationshipSource::Manual,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let report = relationship_suggest::run(&db, f.lib).await.unwrap();
+    let all = rows(&db).await;
+    assert!(find(&all, f.dd_2014, f.dd_2011, "continues").is_none());
+    assert!(find(&all, f.thor_2018, f.thor_2014, "continues").is_none());
+    // The fixture's manual `sequel_of` Atlas edge covers `continues` too.
+    assert!(find(&all, f.atlas_2009, f.atlas_2007, "continues").is_none());
+    assert!(report.skipped_reviewed >= 1, "{report:?}");
+    assert!(report.skipped_existing_edge >= 2, "{report:?}");
+    // Other continuations are still proposed, as `continues`.
+    let pv = find(&all, f.usm_relaunch, f.ucsm, "continues").expect("provider volume");
+    assert_eq!(pv.status, "pending");
+    assert!(
+        all.iter()
+            .all(|r| r.kind != "sequel_of" || r.status != "pending")
+    );
+
+    // Accepting a `continues` suggestion while a `has_sequel` edge already
+    // runs the other way is a contradiction (409), across the two kinds.
+    relationships::create_pair(
+        &db,
+        f.usm_relaunch,
+        f.ucsm,
+        RelationshipKind::HasSequel,
+        RelationshipSource::Manual,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let err = server::relationships::suggestions::accept(&db, pv.id, Uuid::now_v7(), None).await;
+    assert!(
+        matches!(
+            err,
+            Err(server::relationships::suggestions::ReviewError::Pair(
+                relationships::PairError::Conflict { .. }
+            ))
+        ),
+        "{err:?}"
+    );
 }

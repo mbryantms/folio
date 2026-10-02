@@ -6,7 +6,7 @@
  * with this series on either end (`GET /series/{slug}/relationship-
  * suggestions`, cursor-paginated — "Show more" walks the next page).
  *
- * Each chip reads from this series' point of view ("Sequel of Daredevil")
+ * Each chip reads from this series' point of view ("Sequel to Daredevil")
  * — a suggestion stored as `other kind this` shows the inverse kind — with
  * the engine's reason in a tooltip, and one-click accept / reject. Accept
  * invalidates both series' relationship blocks and the similar-series
@@ -34,7 +34,6 @@ import type {
   RelationshipSuggestionView,
   SeriesView,
 } from "@/lib/api/types";
-import { INVERSE_KIND, kindLabel } from "@/lib/relationships";
 import { seriesUrl } from "@/lib/urls";
 
 /** The suggestion as seen from `seriesId`: the kind this series would
@@ -44,10 +43,9 @@ export function fromPerspective(
   seriesId: string,
 ): { kind: RelationshipKind; label: string; other: SeriesView } {
   const isFrom = s.from_series.id === seriesId;
-  const kind = isFrom ? s.kind : INVERSE_KIND[s.kind];
   return {
-    kind,
-    label: kindLabel(kind),
+    kind: isFrom ? s.kind : s.inverse_kind,
+    label: isFrom ? s.kind_label : s.inverse_kind_label,
     other: isFrom ? s.to_series : s.from_series,
   };
 }

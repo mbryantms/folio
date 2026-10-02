@@ -47,6 +47,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { RelationshipKindSelect } from "@/components/library/RelationshipKindSelect";
 import { FilterPill } from "@/components/ui/filter-pill";
 import { NativeSelect } from "@/components/ui/native-select";
 import {
@@ -54,13 +55,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   useAcceptRelationshipSuggestion,
@@ -72,6 +66,7 @@ import {
 } from "@/lib/api/mutations";
 import {
   useLibraryList,
+  useRelationshipKinds,
   useRelationshipSuggestionsInfinite,
 } from "@/lib/api/queries";
 import type {
@@ -82,7 +77,7 @@ import type {
   SuggestionStatusFilter,
 } from "@/lib/api/types";
 import { useSelection } from "@/lib/selection/use-selection";
-import { kindLabel, RELATIONSHIP_KINDS } from "@/lib/relationships";
+import { kindLabel } from "@/lib/relationships";
 import { seriesUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
@@ -489,7 +484,10 @@ function SuggestionRow({
   const reopen = useReopenRelationshipSuggestion();
   const busy = accept.isPending || reject.isPending || reopen.isPending;
   const sources = evidenceSources(s.evidence);
-  const acceptedKind = s.accepted_kind ? kindLabel(s.accepted_kind) : null;
+  const catalogue = useRelationshipKinds();
+  const acceptedKind = s.accepted_kind
+    ? kindLabel(catalogue.data, s.accepted_kind)
+    : null;
 
   return (
     <li
@@ -643,8 +641,8 @@ function SuggestionRow({
   );
 }
 
-/** "Edit kind": pick any of the nine kinds (read "from `kind` to") and
- *  accept as modified. */
+/** "Edit kind": pick any kind from the grouped catalogue (read "from
+ *  `kind` to") and accept as modified. */
 function EditKindPopover({
   suggestion: s,
   disabled,
@@ -668,21 +666,11 @@ function EditKindPopover({
           <p className="text-sm">
             <span className="font-medium">{s.from_series.name}</span> is…
           </p>
-          <Select
+          <RelationshipKindSelect
             value={kind}
-            onValueChange={(v) => setKind(v as RelationshipKind)}
-          >
-            <SelectTrigger aria-label="Relationship kind">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {RELATIONSHIP_KINDS.map((k) => (
-                <SelectItem key={k.value} value={k.value}>
-                  {k.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            onChange={setKind}
+            ariaLabel="Relationship kind"
+          />
           <p className="text-muted-foreground text-sm">
             …
             <span className="text-foreground font-medium">

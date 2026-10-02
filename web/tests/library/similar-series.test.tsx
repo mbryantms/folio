@@ -87,6 +87,25 @@ describe("because formatting", () => {
         weight: 6,
       }),
     ).toBe("sequel of Daredevil");
+    // WP-7.5: the server-sent label wins over the humanized kind.
+    expect(
+      reasonLabel({
+        kind: "relationship",
+        role: "has_sequel",
+        label: "has sequel",
+        name: "Daredevil",
+        weight: 6,
+      }),
+    ).toBe("has sequel Daredevil");
+    expect(
+      reasonLabel({
+        kind: "relationship",
+        role: "sequel_of",
+        label: "sequel to",
+        name: "Daredevil",
+        weight: 6,
+      }),
+    ).toBe("sequel to Daredevil");
   });
 
   it("joins the strongest reasons in server order", () => {

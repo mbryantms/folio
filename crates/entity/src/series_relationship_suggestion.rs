@@ -18,8 +18,9 @@ pub struct Model {
     /// Subject: "`from` `kind` `to`" (e.g. *from* is a sequel of *to*).
     pub from_series_id: Uuid,
     pub to_series_id: Uuid,
-    /// Canonical kind only: `sequel_of | spin_off_of | collects |
-    /// crossover_with | same_universe | see_also` (DB CHECK).
+    /// Canonical kind only (DB CHECK): one direction of each directional
+    /// pair (`sequel_of`, `continues`, `collects`, …) or a self-inverse kind
+    /// stored with `from < to` (WP-7.5, `m20270505`).
     pub kind: String,
     /// 0.0–1.0.
     pub confidence: f32,
