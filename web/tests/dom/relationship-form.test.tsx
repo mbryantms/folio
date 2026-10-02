@@ -6,7 +6,13 @@
  * Series | Story arc target toggle, and server 422 field errors bound to
  * their inputs via `applyServerErrors`.
  */
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RelationshipCatalogue } from "@/lib/api/types";
@@ -339,9 +345,8 @@ describe("<TargetPicker>", () => {
     fireEvent.click(screen.getByRole("button", { name: "Choose a series" }));
     const input = screen.getByPlaceholderText("Search series…");
     fireEvent.change(input, { target: { value: "saga" } });
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 250));
-    });
+    // The search is debounced; wait for the options instead of sleeping.
+    await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(2));
     // Rows are cmdk options inside the ScrollArea (one scroller, themed
     // scrollbar), not hand-rolled buttons in a native `overflow-auto`.
     const scroll = screen.getByTestId("relationship-target-scroll");

@@ -4,7 +4,13 @@
  * + URL sync, and the tab-label count. The real query hooks run against
  * a mocked `apiFetch`, so the test sees exactly which endpoints fire.
  */
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -108,25 +114,31 @@ describe("Related tab", () => {
     await act(async () => {
       fireEvent.mouseDown(trigger, { button: 0 });
       fireEvent.click(trigger);
-      await new Promise((r) => setTimeout(r, 20));
     });
-    expect(screen.getByTestId("series-related-tab")).toBeTruthy();
-    const fired = relatedCalls();
-    expect(fired.some((p) => p === "/series/saga/relationships")).toBe(true);
-    expect(fired.some((p) => p.startsWith("/series/saga/same-universe"))).toBe(
-      true,
+    // Poll rather than sleep: lazy panels mount and fetch asynchronously,
+    // and CI runners are slower than a laptop.
+    await waitFor(() =>
+      expect(screen.getByTestId("series-related-tab")).toBeTruthy(),
     );
-    expect(fired.some((p) => p.startsWith("/series/saga/similar"))).toBe(true);
+    await waitFor(() => {
+      const fired = relatedCalls();
+      expect(fired.some((p) => p === "/series/saga/relationships")).toBe(true);
+      expect(
+        fired.some((p) => p.startsWith("/series/saga/same-universe")),
+      ).toBe(true);
+      expect(fired.some((p) => p.startsWith("/series/saga/similar"))).toBe(
+        true,
+      );
+    });
     // The URL follows the tab, other params kept.
     expect(window.location.search).toBe("?q=x&tab=related");
   });
 
   it("opens straight on the Related tab from ?tab=related", async () => {
     renderPage("related");
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 20));
-    });
-    expect(screen.getByTestId("series-related-tab")).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByTestId("series-related-tab")).toBeTruthy(),
+    );
     expect(screen.getByRole("tab", { name: /Related/ }).dataset.state).toBe(
       "active",
     );
@@ -138,11 +150,13 @@ describe("Related tab", () => {
     expect(trigger.textContent).toBe("Related3");
     await act(async () => {
       fireEvent.mouseDown(trigger, { button: 0 });
-      await new Promise((r) => setTimeout(r, 20));
     });
-    // The loaded relationships (none) replace the server snapshot.
-    expect(screen.getByRole("tab", { name: /Related/ }).textContent).toBe(
-      "Related",
+    // The loaded relationships (none) replace the server snapshot once the
+    // query resolves; poll for it (a fixed 20 ms sleep raced on CI).
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /Related/ }).textContent).toBe(
+        "Related",
+      ),
     );
   });
 });
