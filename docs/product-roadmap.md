@@ -234,12 +234,39 @@ Exit: notes are durable and browsable in context; issue-level queries exist; ent
 
 Exit: series carry typed, traversable relationships (manual and suggested), the scanner proposes them with confidence, and every series page offers "related" and "similar" rails that are explainable and never wrong-by-magic.
 
+**Status (2026-10-01): all four WPs implemented as one stacked PR chain, open for review:** 7.1 #946 → 7.4 #947 → 7.2 #948 → 7.3 #949 (each PR's base is the previous branch; retarget each to `main` before merging its base, or the squash-merge auto-closes it). Every WP was verified in a real browser against the dev library (dev DB migrated). Notes from implementation:
+- **7.1:** `has_spin_off` added as the inverse of `spin_off_of` (the kind list had none); contradictory directional pairs are refused (409); DELETE is `/series/{slug}/relationships/{id}`; the series page shows a sequel/prequel "Reading order" strip plus grouped links; OPDS 1.x and 2.0 emit `rel="related"`.
+- **7.4:** IDF-weighted overlap (creators by role, characters, teams, arcs, genres/tags, publisher/imprint, relationships) with per-kind caps and size damping; in-memory LRU on `AppState` with a global generation counter (single instance, D2) — every relationship or metadata write calls `state.similarity.invalidate_all()`; optional "Because you read X" home rail (`similar_series`, not auto-pinned). Found and fixed: the `perf_regressions.rs` query-count guards had read 0 for every endpoint since #208 (statement logging was off on the test pool).
+- **7.2:** suggestions only pair series within one library; sources are name/volume continuation, `AlternateSeries`, `SeriesGroup`, shared arcs (capped low past 10 series), collected-edition citations, shared provider volumes, `series_provider_range`, and uncommon shared characters/teams; high ≥ 0.8, medium ≥ 0.55. Dev library: 608 suggestions across 2,573 series in ~0.45 s.
+- **7.3:** `/admin/relationships` review page; bulk accept by ids (≤ 500) or `bucket=high` (500 per call, returns `remaining`), one transaction with a savepoint per item, one audit row per batch; `reopen` clears a rejection; new `stale` status for pending rows a rerun no longer produces (needs the `breaking-change` label: response-enum value added); admin-only "Suggested" chips on the series page; opt-in Playwright spec (skips without `E2E_ADMIN_*` credentials).
+
 | WP | Title | Effort | Audit | Scope | Files | Done when |
 |---|---|---|---|---|---|---|
 | 7.1 | Relationship schema, API, and manual editing | M | spec §5.2 / Phase 7 | `series_relationship(from_series, to_series, kind, source, confidence, created_by, created_at)` with kinds `sequel_of / prequel_of / spin_off_of / crossover_with / collects / collected_in / same_universe / see_also`; inverse pair auto-created and kept in sync; unique on `(from, to, kind)`; `GET/POST/DELETE /series/{slug}/relationships`; recursive traversal query (CTE, depth ≤ 6) for "chain" views; admin audit via `record_admin_action!`; "Related" section on the series page with add/remove; OPDS related links | migration, new `crates/entity/src/series_relationship.rs`, new `api/series_relationships.rs`, series page component, `api/opds*.rs` | Inverse-pair and cycle tests; CTE depth cap test; audit-check passes; series page renders a chain |
 | 7.2 | Suggestion engine | L | spec Phase 7 → 7.1 | apalis job after each library scan (and on demand) that proposes relationships from evidence already in the DB: ComicInfo `AlternateSeries`/`SeriesGroup`, shared `StoryArc` across series (crossover), name continuation with year gap ("X (2011)" → "X (2016)" = sequel), `<Format>`/`special_type` collected editions whose `Notes`/title cite issue ranges (collects), shared provider volume ids and `series_provider_range` (same run split), publisher + shared characters/teams density (same universe); each suggestion carries a confidence bucket and a human-readable reason; per-scan cap 1000; dedupes against accepted/rejected; rejected suggestions are remembered | new `jobs/relationship_suggest.rs`, `library/scanner` post-scan hook, migration (`series_relationship_suggestion`) | Fixture library yields the expected suggestions with reasons; rejected ones do not reappear; runtime bounded on the stress fixture |
 | 7.3 | Review UI and bulk accept | M | spec Phase 7 → 7.2 | Admin page listing pending suggestions grouped by confidence with reason text and both covers; accept / reject / edit kind; bulk-accept high confidence; per-series inline "Suggested" chips on the series page; audit rows for every decision | new admin route + components, `api/series_relationships.rs` | Accept creates the pair via WP-7.1; bulk accept audited once per batch; e2e smoke of accept flow |
 | 7.4 | Similar series | M | audit §3.6 | Content-based, explainable similarity with no ML: weighted overlap over creators (by role), characters, teams, genres, tags, publisher/imprint, story arcs, and accepted relationships, computed on demand with a small per-series cache invalidated by scan/apply; `GET /series/{slug}/similar` (cursor) returning the top matches with a "because" list; "Similar series" rail on the series page and an optional home rail; excludes series the user has hidden; respects library ACL | new `api/series_similar.rs`, `views/` or a dedicated similarity module, series page rail, `rails.rs` | Query-count guard in `perf_regressions.rs`; explanation list matches the overlap; ACL test; dev library produces sensible neighbours |
+
+### M7b — Relationship taxonomy and detection (decided 2026-10-02, after M7)
+
+Exit: Folio distinguishes publication history from narrative order and editions from content, detects every relationship type it has evidence for, and routes all of them through suggest → review → accept/edit/reject. Nothing is created without approval.
+
+**Decisions (owner, 2026-10-02):**
+- "Prequel of" stops being the inverse of "Sequel of". New pairs: `sequel_of`↔`has_sequel`, `prequel_of`↔`has_prequel`.
+- Name/volume continuation is **publication continuity** (`continues`↔`continued_by`, qualifier relaunch / retitle / merge / split / numbering), not a narrative sequel. The reading-order strip walks `continues` and `sequel_of`.
+- Arcs become valid targets. A shared arc yields `tie_in_to` (role main / tie-in / prelude / aftermath) toward the arc, replacing the pairwise arc → `crossover_with` source.
+- "Same universe" is derived from `universe` / `series_universe` membership and `SeriesGroup`, not suggested pairwise.
+- Kinds added: `annual_of`, `supplement_to`, `tie_in_to`, `companion_to`, `side_story_of`, `reprints`, `alternate_edition_of`, `translation_of`, and advanced `adaptation_of` / `reimagining_of` (comic-to-comic only).
+- Optional scope on links: issue ranges on either side, `coverage` (full / partial / unknown) for collects and reprints, a free-text note, and a continuation qualifier.
+- UI groups: Story · Publication history · Editions & contents · Advanced.
+- Not adopted: issue→issue "story continues" (deferred: no evidence source), `variant_of` (variants live on the issue), excerpts, spoiler flags, a separate franchise relation, a universal read-before/after edge, story-level entities. CBL lists remain the named reading orders.
+
+| WP | Title | Effort | Scope | Done when |
+|---|---|---|---|---|
+| 7.5 | Taxonomy and model | M | New kinds and inverses with groups; arc targets; range / coverage / note / qualifier columns; data migration (old `prequel_of` halves → `has_sequel`; suggested continuation `sequel_of` → `continues`); API and minimal UI kept working; continuation detector emits `continues` | Migration round-trips; inverse table test; existing dev edges migrate correctly |
+| 7.6 | Detectors | L → 7.5 | Annual, arc tie-in (with role), `issue_reprint` roll-up, alternate edition, supplement, translation; retire the pairwise `same_universe` and arc-crossover sources; derived same-universe query | Fixture per detector; dev-library sanity counts |
+| 7.7 | Relationship UI | M → 7.5 | Move relationships and "Similar series" off the page body into a new lazy-loaded **Related** tab on the series page (owner, 2026-10-02: the issue list should follow the tabs; queries run only when the tab opens; `?tab=related` deep link; count in the tab label); covers in the Related tab (similar-series rail, reading order, relationship cards) honour the series page's cover-size control (owner, 2026-10-02: today the rail hard-codes 160 px): `useCardSize` syncs across instances sharing a key (and across browser tabs via `storage`), and a shared helper derives the issue grid's effective `auto-fill minmax(size, 1fr)` column width so covers match exactly; grouped "Relationship" picker; range / coverage / qualifier / note editing; arc-target picker; "Part of event" and derived "Same universe" sections; review page shows scope | Browser-verified on dev; vitest |
+| 7.8 | Provider links and external targets | M → 7.5 | Research done 2026-10-02: only Metron exposes structured links (series `associated`, issue `reprints`; both untyped and symmetric); GCD's REST API serves no series bonds or reprints (DB-only), ComicVine has none. Scope: fix Metron `associated` parsing (wire key is `series`, not `name`; today it is always empty and wrongly fed into `aliases`; take aliases from `alt_names`); persist Metron issue reprints via the uncalled `writers::set_issue_reprints`; suggestions from `associated` (`see_also`, refined to `collects`/`annual_of` by `series_type`) and from reprint roll-ups (TPB/HC/Omnibus side `collects` high, single→single `reprints` medium); external targets in a separate `series_external_relationship` table (one-directional, `set_by`, provider id/name/url) promoted to an internal pair when the series is matched locally; `CACHE_SCHEMA_VERSION` bump. GCD bonds deferred until upstream exposes them | Recorded-fixture tests; missing-volume link renders; an external link promotes on scan-in |
 
 ---
 
@@ -254,6 +281,9 @@ Exit: series carry typed, traversable relationships (manual and suggested), the 
 2.9 ──► 6.1
 7.1 ──► 7.2 ──► 7.3
 7.1 ──► 7.4
+7.5 ──► 7.6
+7.5 ──► 7.7
+7.5 ──► 7.8
 ```
 
 Everything else can be scheduled in any order inside its milestone. M1 has no external dependencies and should go first; M3 and M4 are independent of each other and of M2 except where the graph says otherwise, so they can interleave with M2 sessions when a change of pace helps.
@@ -288,6 +318,13 @@ Items noticed during the audit that are real but small, to be picked up opportun
   - BZip2-coded 7z is unsupported (`bzip2-1.0.6` licence not in `deny.toml`); compressed 7z headers decode before Folio can cap memory.
   - No backfill of `page_hash` for existing markers; `account_export` omits `page_hash`.
   - arm64 images (OP-3) and the locale-segment decision (WP-6.6, AR-2) deferred by the owner.
+- Found during M7 (2026-10-01):
+  - `GET /series/{slug}/relationships` is unpaginated (bounded by curation); revisit if bulk-accepted `same_universe` edges grow large.
+  - The series page's "Sequel of" / "Prequel of" groups repeat what the "Reading order" strip already shows; consider hiding them when a chain renders.
+  - Collections bulk-add fires one INSERT per member (104 queries for 100); the real query counts from #947 exposed it and its guard was raised to 110.
+  - Similarity weights are code constants, not settings; performance measured at 22k issues, not 50k.
+  - Suggestion engine: no `spin_off_of` source (no evidence distinguishes it); no cross-library suggestions; collected-edition and `SeriesGroup` sources are fixture-tested only (the dev library has neither).
+  - Review UI: bulk accept has no kind override; stale rows cannot be rejected; the relationship e2e spec skips in docker-smoke (no credentials or suggestion-yielding fixture).
 
 ---
 
@@ -302,3 +339,5 @@ None. Every audit item is now either scheduled (§5) or confirmed excluded (§2)
 - 2026-09-29: exclusion list ruled on. Pulled back in and planned: relationship suggestion engine (M7), similar series (WP-7.4), GCD provider (WP-6.1), page-hash marker anchoring (WP-6.2). All other proposed exclusions confirmed excluded. An earlier edit the same day had these four backwards; corrected.
 - 2026-09-30: M3 and M5 fully merged; M4 merged except owner-run WP-4.1. M5 owner decisions recorded in the M5 status line.
 - 2026-10-01: M6 started and merged the same day; the owner deferred arm64 images (WP-6.5) and WP-6.6. WP-6.1–6.5 (CB7) landed as #934–#938.
+- 2026-10-01: M7 implemented the same day as a stacked chain #946 → #947 → #948 → #949, awaiting review.
+- 2026-10-02: M7b (relationship taxonomy and detection, WP-7.5–7.8) decided after reviewing a proposed taxonomy; adopted and excluded items listed under M7b.
