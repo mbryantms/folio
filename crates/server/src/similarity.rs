@@ -25,7 +25,10 @@
 //! (WP-7.1, [`fetch_relationships`]) are another, producing
 //! `ReasonKind::Relationship` contributions at a flat
 //! [`RELATIONSHIP_WEIGHT`] — enough on its own to list a related series
-//! even when it shares no metadata.
+//! even when it shares no metadata. Accepted arc tie-ins (WP-8.2,
+//! [`fetch_arc_tie_ins`]) are a third: an arc reason per arc both series
+//! tie in to, deduped against the `issue_arcs` arc signal (max) and under
+//! the same arc cap.
 //!
 //! **Cache.** Results are computed on demand (two set-based queries) and
 //! kept in a small in-process LRU ([`SimilarityCache`]) keyed by series
@@ -158,9 +161,11 @@ pub struct Reason {
     /// kind (`sequel_of`, …) for relationships; absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
-    /// Relationships only: the kind's display label, lower-cased
-    /// ("sequel to", "continued by"; WP-7.5), so clients don't need the
-    /// kind catalogue to caption a reason.
+    /// Relationships: the kind's display label, lower-cased ("sequel to",
+    /// "continued by"; WP-7.5), so clients don't need the kind catalogue
+    /// to caption a reason. Arcs (WP-8.2): `"both tie in to"` when the
+    /// shared arc comes from accepted tie-in edges rather than issue
+    /// tagging. Absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// Display name of the shared entity (or the related series).
@@ -187,8 +192,9 @@ pub struct Contribution {
     pub role: Option<String>,
     pub name: String,
     pub value: f64,
-    /// Relationships only: the display label (tie-in role folded in,
-    /// WP-7.7), lower-cased. `None` falls back to the kind's label.
+    /// Relationships: the display label (tie-in role folded in, WP-7.7),
+    /// lower-cased; `None` falls back to the kind's label. Arcs:
+    /// [`TIE_IN_LABEL`] for the accepted-tie-in signal (WP-8.2).
     pub label: Option<String>,
 }
 
@@ -549,14 +555,97 @@ async fn fetch_relationships<C: ConnectionTrait>(
     Ok((contributions, meta))
 }
 
+#[derive(Debug, FromQueryResult)]
+struct TieInRow {
+    series_id: Uuid,
+    library_id: Uuid,
+    age_rating: Option<String>,
+    arc_name: String,
+    df: i64,
+    n: i64,
+}
+
+/// Accepted-arc-tie-in signal (WP-8.2): two series that both have an
+/// accepted `tie_in_to` edge to the same story arc (WP-7.5 arc targets,
+/// accepted from the WP-7.6 arc tie-in suggestions or made by hand).
+/// Each shared arc contributes `ARC weight × idf`, where `df` counts the
+/// live series tied in to that arc — a 60-title event counts for much less
+/// than a two-title crossover.
+///
+/// **No double count with the `issue_arcs` arc signal**: the contribution
+/// is an [`ReasonKind::Arc`] reason named after the same arc, so
+/// [`score`]'s per-(candidate, kind, entity) dedupe keeps only the larger
+/// of the two (the curated edge or the issue tagging, never both), and the
+/// arc kind's cap (6.0) bounds every arc reason together. The tie-in can
+/// only *add* when the issues aren't tagged with the arc (a manual edge,
+/// or tagging the scanner never rolled up) or when fewer series tie in
+/// than carry the tag. The reason reads "both tie in to Secret Wars"
+/// (`label`).
+async fn fetch_arc_tie_ins<C: ConnectionTrait>(
+    db: &C,
+    target: Uuid,
+) -> Result<(Vec<Contribution>, HashMap<Uuid, CandidateMeta>), DbErr> {
+    let rows = TieInRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"
+        WITH mine AS (
+            SELECT DISTINCT r.to_arc_id FROM series_relationship r
+             WHERE r.from_series_id = $1 AND r.kind = 'tie_in_to' AND r.to_arc_id IS NOT NULL
+        ), peers AS MATERIALIZED (
+            SELECT DISTINCT r.from_series_id AS series_id, r.to_arc_id
+              FROM series_relationship r
+              JOIN mine USING (to_arc_id)
+              JOIN series s ON s.id = r.from_series_id AND s.removed_at IS NULL
+             WHERE r.kind = 'tie_in_to'
+        ), df AS (
+            SELECT to_arc_id, count(*) AS df FROM peers GROUP BY 1
+        ), n AS (SELECT count(*) AS n FROM series WHERE removed_at IS NULL)
+        SELECT p.series_id, s.library_id, s.age_rating, a.name AS arc_name, df.df, n.n
+          FROM peers p
+          JOIN df USING (to_arc_id)
+          JOIN story_arc a ON a.id = p.to_arc_id
+          JOIN series s ON s.id = p.series_id
+         CROSS JOIN n
+         WHERE p.series_id <> $1
+        "#,
+        [target.into()],
+    ))
+    .all(db)
+    .await?;
+    let mut meta = HashMap::new();
+    let mut contributions = Vec::with_capacity(rows.len());
+    for r in rows {
+        meta.entry(r.series_id).or_insert_with(|| CandidateMeta {
+            library_id: r.library_id,
+            age_rating: r.age_rating.clone(),
+        });
+        contributions.push(Contribution {
+            series_id: r.series_id,
+            kind: ReasonKind::Arc,
+            role: None,
+            name: r.arc_name,
+            value: ReasonKind::Arc.weight() * idf(r.n, r.df),
+            label: Some(TIE_IN_LABEL.to_owned()),
+        });
+    }
+    Ok((contributions, meta))
+}
+
+/// `label` of an arc reason that comes from accepted tie-in edges
+/// (WP-8.2): the web renders "both tie in to <arc>".
+pub const TIE_IN_LABEL: &str = "both tie in to";
+
 /// Compute the unfiltered neighbour list for one series: the junction
-/// overlap + accepted relationships, then the candidate sizes for the
-/// breadth damping (3 queries; 2 when nothing is shared).
+/// overlap + accepted relationships + shared accepted arc tie-ins, then
+/// the candidate sizes for the breadth damping (4 queries; 3 when nothing
+/// is shared).
 pub async fn compute<C: ConnectionTrait>(db: &C, target: Uuid) -> Result<Vec<Neighbor>, DbErr> {
     let (mut contributions, mut meta) = fetch_overlap(db, target).await?;
     let (rel_contributions, rel_meta) = fetch_relationships(db, target).await?;
+    let (tie_contributions, tie_meta) = fetch_arc_tie_ins(db, target).await?;
     contributions.extend(rel_contributions);
-    for (id, m) in rel_meta {
+    contributions.extend(tie_contributions);
+    for (id, m) in rel_meta.into_iter().chain(tie_meta) {
         meta.entry(id).or_insert(m);
     }
     if contributions.is_empty() {
@@ -794,6 +883,38 @@ mod tests {
         assert_eq!(out[0].series_id, a);
         assert_eq!(out[0].score, 3.0);
         assert!(out.len() == 1 || out[1].score < 1.0 + 1e-9);
+    }
+
+    #[test]
+    fn tie_in_and_issue_arc_signals_take_the_max() {
+        // WP-8.2: the same arc from issue tagging (1.2) and from accepted
+        // tie-in edges (2.4) counts once, at the larger value, with the
+        // tie-in's label; the arc cap bounds both signals together.
+        let a = Uuid::from_u128(1);
+        let mut tie = c(a, ReasonKind::Arc, None, "Secret Wars", 2.4);
+        tie.label = Some(TIE_IN_LABEL.to_owned());
+        let contribs = vec![c(a, ReasonKind::Arc, None, "Secret Wars", 1.2), tie];
+        let out = score(contribs, &meta(&[a]), &HashMap::new(), &HashMap::new());
+        assert_eq!(out[0].score, 2.4);
+        assert_eq!(out[0].because.len(), 1);
+        assert_eq!(out[0].because[0].label.as_deref(), Some(TIE_IN_LABEL));
+        // Tagging stronger than the edge: the tagged reason wins, no label.
+        let mut tie = c(a, ReasonKind::Arc, None, "Secret Wars", 0.5);
+        tie.label = Some(TIE_IN_LABEL.to_owned());
+        let contribs = vec![tie, c(a, ReasonKind::Arc, None, "secret wars", 1.2)];
+        let out = score(contribs, &meta(&[a]), &HashMap::new(), &HashMap::new());
+        assert_eq!(out[0].score, 1.2);
+        assert_eq!(out[0].because[0].label, None);
+        // Many shared arcs stay under the arc cap.
+        let contribs: Vec<_> = (0..5)
+            .map(|i| {
+                let mut t = c(a, ReasonKind::Arc, None, &format!("Event {i}"), 3.0);
+                t.label = Some(TIE_IN_LABEL.to_owned());
+                t
+            })
+            .collect();
+        let out = score(contribs, &meta(&[a]), &HashMap::new(), &HashMap::new());
+        assert_eq!(out[0].score, 6.0);
     }
 
     #[test]

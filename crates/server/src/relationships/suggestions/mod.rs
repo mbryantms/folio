@@ -33,8 +33,12 @@
 //!   versa, and the same holds for reviewed rows (rejection memory).
 //! - **Cap.** At most [`MAX_SUGGESTIONS_PER_RUN`] rows are written per run
 //!   (highest confidence first).
-//! - **Scope.** Suggestions only link series in the **same library**; every
-//!   source query is library-scoped.
+//! - **Scope.** Story and publication kinds only link series in the **same
+//!   library**. The edition kinds (`collects`, `reprints`,
+//!   `alternate_edition_of`, `translation_of`) may pair two libraries
+//!   (WP-8.2): their sources look up targets across libraries, and a row is
+//!   owned — written, deduped against and staled — by the run of its
+//!   canonical `from` series' library only.
 //!
 //! See `docs/dev/series-relationships.md` ("Suggestion engine").
 
@@ -431,8 +435,20 @@ pub struct RunReport {
     pub library_id: Uuid,
     /// Raw candidates per source (before merge / filtering).
     pub by_source: BTreeMap<String, usize>,
-    /// Distinct canonical proposals after merging.
+    /// Distinct canonical proposals after merging (and the library
+    /// ownership filter).
     pub proposals: usize,
+    /// WP-8.2: proposals pairing a series of this library with one in
+    /// another library (edition kinds only).
+    pub cross_library: usize,
+    /// WP-8.2: proposals dropped because their canonical `from` series is
+    /// in another library (that library's run owns the row), or because a
+    /// non-edition kind would have crossed libraries.
+    pub skipped_other_library: usize,
+    /// WP-8.2: external links promoted to series relationships (pairs
+    /// created) by the promotion pass before this run. The job invalidates
+    /// the similar-series cache when non-zero.
+    pub promoted_pairs: usize,
     /// Dropped: an edge with this kind (or its inverse) already exists.
     pub skipped_existing_edge: usize,
     /// Dropped: a reviewed (accepted / rejected / modified) row exists.
@@ -479,6 +495,39 @@ fn key_set(rows: Vec<KeyRow>) -> HashSet<RowKey> {
 }
 
 #[derive(Debug, FromQueryResult)]
+struct SeriesLib {
+    id: Uuid,
+    library_id: Uuid,
+}
+
+/// Library of every series a proposal names (one query).
+async fn series_libraries<C: ConnectionTrait>(
+    conn: &C,
+    proposals: &[Proposal],
+) -> Result<HashMap<Uuid, Uuid>, DbErr> {
+    let ids: Vec<Uuid> = proposals
+        .iter()
+        .flat_map(|p| [Some(p.from), p.to.series()])
+        .flatten()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    Ok(SeriesLib::find_by_statement(Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "SELECT id, library_id FROM series WHERE id = ANY($1)",
+        [Value::from(ids)],
+    ))
+    .all(conn)
+    .await?
+    .into_iter()
+    .map(|r| (r.id, r.library_id))
+    .collect())
+}
+
+#[derive(Debug, FromQueryResult)]
 struct UpsertRow {
     inserted: bool,
     changed: bool,
@@ -503,7 +552,35 @@ pub async fn generate_for_library<C: ConnectionTrait>(
     let (candidates, counts, failed) = sources::collect_all(conn, library_id).await;
     report.by_source = counts.into_iter().map(|(k, v)| (k.to_owned(), v)).collect();
     report.failed_sources = failed.into_iter().map(str::to_owned).collect();
-    let proposals = merge(candidates);
+    let mut proposals = merge(candidates);
+
+    // WP-8.2 library ownership. The edition sources may look across
+    // libraries; a row belongs to the run of its (canonical) `from`
+    // series' library — the same key the rejection memory, the dedupe sets
+    // and stale marking use — so only that run writes it. Story and
+    // publication kinds never pair two libraries.
+    let libs = series_libraries(conn, &proposals).await?;
+    proposals.retain(|p| {
+        if libs.get(&p.from) != Some(&library_id) {
+            report.skipped_other_library += 1;
+            return false;
+        }
+        let to_lib = match p.to {
+            Target::Series(t) => libs.get(&t).copied(),
+            Target::Arc(_) => Some(library_id),
+        };
+        match to_lib {
+            Some(l) if l == library_id => true,
+            Some(_) if p.kind.may_cross_libraries() => {
+                report.cross_library += 1;
+                true
+            }
+            _ => {
+                report.skipped_other_library += 1;
+                false
+            }
+        }
+    });
     report.proposals = proposals.len();
 
     // Existing edges touching this library (bounded by curation), series
@@ -611,6 +688,8 @@ pub async fn generate_for_library<C: ConnectionTrait>(
     tracing::info!(
         library_id = %library_id,
         proposals = report.proposals,
+        cross_library = report.cross_library,
+        skipped_other_library = report.skipped_other_library,
         inserted = report.inserted,
         updated = report.updated,
         unchanged = report.unchanged,
@@ -826,14 +905,19 @@ pub fn scope_of(row: &sug::Model) -> Scope {
     }
 }
 
-async fn lock_pending<C: ConnectionTrait>(conn: &C, id: Uuid) -> Result<sug::Model, ReviewError> {
+/// Lock the row `FOR UPDATE` and check it is in one of `allowed`.
+async fn lock_in<C: ConnectionTrait>(
+    conn: &C,
+    id: Uuid,
+    allowed: &[SuggestionStatus],
+) -> Result<sug::Model, ReviewError> {
     let row = sug::Entity::find_by_id(id)
         .lock_exclusive()
         .one(conn)
         .await?
         .ok_or(ReviewError::NotFound)?;
     let status = row.status.parse().unwrap_or(SuggestionStatus::Pending);
-    if status != SuggestionStatus::Pending {
+    if !allowed.contains(&status) {
         return Err(ReviewError::AlreadyReviewed { status });
     }
     Ok(row)
@@ -866,7 +950,7 @@ where
     C: ConnectionTrait + TransactionTrait,
 {
     let txn = conn.begin().await?;
-    let row = lock_pending(&txn, id).await?;
+    let row = lock_in(&txn, id, &[SuggestionStatus::Pending]).await?;
     let suggested: RelationshipKind = row
         .kind
         .parse()
@@ -941,14 +1025,22 @@ where
     })
 }
 
-/// Reject a pending suggestion. The row stays forever as `rejected`, which
-/// is what keeps the engine from proposing it again.
+/// Reject a pending — or (WP-8.2) stale — suggestion. The row stays
+/// forever as `rejected`, which is what keeps the engine from proposing it
+/// again: rejecting a stale row is how an owner dismisses a suggestion for
+/// good, so it can't come back as `pending` when its evidence returns.
+/// Accept still needs a `pending` row (a stale row's evidence is gone).
 pub async fn reject<C>(conn: &C, id: Uuid, actor: Uuid) -> Result<sug::Model, ReviewError>
 where
     C: ConnectionTrait + TransactionTrait,
 {
     let txn = conn.begin().await?;
-    let row = lock_pending(&txn, id).await?;
+    let row = lock_in(
+        &txn,
+        id,
+        &[SuggestionStatus::Pending, SuggestionStatus::Stale],
+    )
+    .await?;
     let now = Utc::now().fixed_offset();
     let out = set_status(&txn, row, SuggestionStatus::Rejected, None, actor, now).await?;
     txn.commit().await?;
@@ -1019,9 +1111,21 @@ pub struct BulkOutcome {
 /// (nothing commits). Duplicate ids are processed once. At most
 /// [`MAX_BULK`] ids.
 ///
+/// `kind` (WP-8.2) accepts every item as that kind instead of its
+/// suggested one — read in each row's `from → to` direction, recorded as
+/// `modified` where it differs, scope fields the kind doesn't take dropped
+/// ([`Scope::fitted`]), exactly as a per-row override in [`accept`]. An arc
+/// suggestion accepted as a kind that can't target an arc fails that item
+/// (`PairError::ArcKind`), not the batch.
+///
 /// The caller writes one audit row for the batch and, when
 /// `created > 0`, calls `AppState::similarity.invalidate_all()` once.
-pub async fn bulk_accept<C>(conn: &C, ids: &[Uuid], actor: Uuid) -> Result<BulkOutcome, DbErr>
+pub async fn bulk_accept<C>(
+    conn: &C,
+    ids: &[Uuid],
+    actor: Uuid,
+    kind: Option<RelationshipKind>,
+) -> Result<BulkOutcome, DbErr>
 where
     C: ConnectionTrait + TransactionTrait,
 {
@@ -1032,7 +1136,7 @@ where
         if !seen.insert(id) {
             continue;
         }
-        match accept(&txn, id, actor, None).await {
+        match accept(&txn, id, actor, kind).await {
             Ok(o) => {
                 if o.created {
                     out.created += 1;
@@ -1128,7 +1232,8 @@ pub struct SuggestionFilter {
     /// asked for by name).
     pub status: Option<SuggestionStatus>,
     pub bucket: Option<SuggestionBucket>,
-    /// Series' library (both ends share it — suggestions are same-library).
+    /// Either end's library (WP-8.2: an edition suggestion may pair two
+    /// libraries).
     pub library_id: Option<Uuid>,
     /// Suggestions with this series on either end.
     pub series_id: Option<Uuid>,
@@ -1164,14 +1269,19 @@ fn filter_condition(filter: &SuggestionFilter) -> Condition {
         None => cond = cond.add(sug::Column::Status.ne(SuggestionStatus::Stale.as_str())),
     }
     if let Some(lib) = filter.library_id {
+        // WP-8.2: an edition suggestion may pair two libraries; it matches
+        // a library filter when either end is in that library.
+        let in_lib = || {
+            sea_orm::sea_query::Query::select()
+                .column(entity::series::Column::Id)
+                .from(entity::series::Entity)
+                .and_where(entity::series::Column::LibraryId.eq(lib))
+                .to_owned()
+        };
         cond = cond.add(
-            sug::Column::FromSeriesId.in_subquery(
-                sea_orm::sea_query::Query::select()
-                    .column(entity::series::Column::Id)
-                    .from(entity::series::Entity)
-                    .and_where(entity::series::Column::LibraryId.eq(lib))
-                    .to_owned(),
-            ),
+            Condition::any()
+                .add(sug::Column::FromSeriesId.in_subquery(in_lib()))
+                .add(sug::Column::ToSeriesId.in_subquery(in_lib())),
         );
     }
     if let Some(sid) = filter.series_id {

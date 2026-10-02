@@ -81,6 +81,7 @@ editor on every book).
 | publisher | 0.5 | 0.5 | no |
 | imprint | 1.0 | 1.0 | no |
 | relationship (any kind) | 6.0 flat, no IDF | 6.0 | no |
+| arc via accepted tie-ins (WP-8.2) | 3.0 × IDF over tie-in membership | shares the story-arc 6.0 | no |
 
 Rules on top of that:
 
@@ -97,6 +98,22 @@ Rules on top of that:
   dropped (one shared rare writer clears it; a shared genre alone does
   not). The top `MAX_NEIGHBORS = 100` are kept, with their top
   `MAX_REASONS = 5` reasons.
+- **Accepted arc tie-ins** (WP-8.2, `fetch_arc_tie_ins`): two series that
+  both have an accepted `tie_in_to` edge to the same story arc share that
+  arc. It contributes an **arc** reason (`label: "both tie in to"`, the web
+  reads "both tie in to Secret Wars") worth `3.0 × idf`, where `df` is the
+  number of live series tied in to that arc. **No double count with the
+  `issue_arcs` / `series_arcs` signal**: both are arc reasons named after
+  the same arc, so the per-(candidate, kind, entity) dedupe keeps only the
+  larger one, and every arc reason shares the arc cap (6.0). The tie-in
+  only adds when the issues aren't tagged with the arc (a manual edge) or
+  when fewer series are accepted tie-ins than carry the tag (a higher IDF).
+  Why max rather than a sum under a combined cap: both say "these two are
+  in the same event"; adding them would count one fact twice. On the dev
+  library, after accepting the Planet Hulk and Weirdworld tie-ins to
+  `"Secret Wars" Battleworld`, Weirdworld's reason on Planet Hulk's rail
+  became "both tie in to" at 2.735 (df 2) instead of the tagged arc at
+  1.436 (df 60).
 - **Relationships** count whatever their `source` (`manual` or
   `suggested`): suggestions live in the WP-7.2 table and only reach
   `series_relationship` once accepted. A related series is listed even
@@ -107,7 +124,7 @@ The weights are constants in `similarity.rs` (`ReasonKind::weight` /
 
 ## Query shape
 
-A cache miss costs three statements:
+A cache miss costs four statements (WP-8.2 added the tie-in query):
 
 1. **Overlap** (`OVERLAP_SQL`): the target's entities (`feats`), every
    series carrying one of them (`postings`, one index probe per kind:
@@ -120,7 +137,10 @@ A cache miss costs three statements:
    then over 2 minutes on the dev library. Scoring moved to Rust.
 2. **Relationships**: edges out of the target (inverse rows are stored,
    so that's the whole neighbourhood), joined to both series for names.
-3. **Sizes**: distinct creators / characters / teams per candidate, for
+3. **Arc tie-ins** (WP-8.2): the target's accepted `tie_in_to` arcs, every
+   series tied in to them (`series_relationship_to_arc` index), `df` per
+   arc.
+4. **Sizes**: distinct creators / characters / teams per candidate, for
    the damping.
 
 On the dev library (2,573 series, 22k issues, 73k series credits) the
@@ -129,7 +149,7 @@ the largest (The Amazing Spider-Man 1989: 701 credits, ~20k overlap
 rows). A cache hit fires no scoring queries; the request itself is slug
 lookup + grants + hidden lookup + page hydrate. The perf guard in
 `crates/server/tests/perf_regressions.rs` bounds both: cold ≤ 20
-(observed 11), warm ≤ 15 (observed 8).
+(observed 11 before WP-8.2 added the tie-in query), warm ≤ 15 (observed 8).
 
 ## Cache
 
@@ -150,7 +170,12 @@ cleared) by
   `apply_issue`, `metadata::composite::apply_composite`),
 - manual metadata edits (issue PATCH and bulk metadata through
   `manual_rewrite_after_edit`; series PATCH),
-- relationship create / delete (`api::series_relationships`).
+- relationship create / delete (`api::series_relationships`),
+- WP-8.2: an external link promoted to a series relationship — the
+  metadata-apply job's post-apply external-id write, the external-ids admin
+  endpoints, the provider-range reconcile, the scanner's folder-tag pass and
+  the suggestion job, each only when the promotion created a pair (see
+  `series-relationships.md` → "Promotion").
 
 Per-series invalidation would be wrong: changing series B moves it into
 or out of A's list and shifts every IDF. A compute that raced an

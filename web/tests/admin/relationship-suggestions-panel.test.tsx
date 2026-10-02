@@ -5,10 +5,17 @@
  * kind, confidence and reason with expandable evidence; per-row accept /
  * reject / reopen and the bulk paths call the right mutations.
  */
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  RelationshipCatalogue,
   RelationshipSuggestionView,
   SeriesView,
   SuggestionStatus,
@@ -26,6 +33,7 @@ const m = vi.hoisted(() => ({
   bulkAccept: vi.fn(),
   bulkReject: vi.fn(),
   run: vi.fn(),
+  catalogue: undefined as unknown,
 }));
 
 function series(id: string, name: string, year: number): SeriesView {
@@ -79,7 +87,7 @@ function suggestion(
 }
 
 vi.mock("@/lib/api/queries", () => ({
-  useRelationshipKinds: () => ({ data: undefined }),
+  useRelationshipKinds: () => ({ data: m.catalogue }),
   useLibraryList: () => ({
     data: [{ id: "lib-1", name: "Comics", slug: "comics" }],
     isLoading: false,
@@ -149,9 +157,30 @@ class NoopObserver {
 }
 vi.stubGlobal("IntersectionObserver", NoopObserver);
 
+const CATALOGUE = {
+  groups: [
+    { group: "story", label: "Story" },
+    { group: "editions", label: "Editions & contents" },
+  ],
+  kinds: [
+    { kind: "sequel_of", label: "Sequel to", group: "story" },
+    { kind: "see_also", label: "See also", group: "story" },
+    { kind: "collects", label: "Collects", group: "editions" },
+  ].map((k) => ({
+    ...k,
+    inverse: k.kind,
+    inverse_label: k.label,
+    symmetric: false,
+    qualifiers: [],
+    allows_coverage: false,
+    allows_arc_target: false,
+  })),
+} as unknown as RelationshipCatalogue;
+
 beforeEach(() => {
   vi.clearAllMocks();
   m.filters.length = 0;
+  m.catalogue = undefined;
 });
 
 const lastFilters = () => m.filters[m.filters.length - 1]!;
@@ -253,6 +282,70 @@ describe("<RelationshipSuggestionsPanel>", () => {
     fireEvent.click(accept!);
     expect(m.bulkAccept).toHaveBeenCalledWith(
       { ids: ["s1", "s2"] },
+      expect.anything(),
+    );
+  });
+
+  it("bulk-accepts the selection as another kind (WP-8.2)", async () => {
+    m.catalogue = CATALOGUE;
+    render(<RelationshipSuggestionsPanel />);
+    const opener = screen.getByRole("button", { name: "Select…" });
+    fireEvent.click(opener);
+    const boxes = screen.getAllByRole("checkbox");
+    fireEvent.click(boxes[0]!);
+    fireEvent.click(boxes[1]!);
+    const acceptAs = screen.getByRole("button", { name: "Accept as…" });
+    acceptAs.focus();
+    fireEvent.click(acceptAs);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Accept 2 suggestions as…")).toBeTruthy();
+    // Opens on the first selected row's kind.
+    const picker = within(dialog).getByRole("combobox", { name: "Accept as" });
+    expect(picker.textContent).toContain("Sequel to");
+    fireEvent.click(picker);
+    fireEvent.click(await screen.findByRole("option", { name: /See also/ }));
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("combobox", { name: "Accept as" }).textContent,
+      ).toContain("See also"),
+    );
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Accept as see also" }),
+    );
+    expect(m.bulkAccept).toHaveBeenCalledWith(
+      { ids: ["s1", "s2"], kind: "see_also" },
+      expect.anything(),
+    );
+    // Cancel closes the dialog and hands focus back to the opener.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(acceptAs));
+  });
+
+  it("rejects stale rows, singly and in bulk (WP-8.2)", () => {
+    render(<RelationshipSuggestionsPanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Stale" }));
+    expect(lastFilters().status).toBe("stale");
+    const row = within(screen.getAllByTestId("relationship-suggestion")[0]!);
+    // A stale row can't be accepted, only rejected.
+    expect(row.queryByRole("button", { name: "Accept" })).toBeNull();
+    fireEvent.click(row.getByRole("button", { name: "Reject" }));
+    expect(m.reject).toHaveBeenCalledWith({ id: "s1" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Select…" }));
+    const toolbar = screen.getByRole("toolbar");
+    expect(
+      within(toolbar).queryByRole("button", { name: "Accept" }),
+    ).toBeNull();
+    expect(
+      within(toolbar).queryByRole("button", { name: "Accept as…" }),
+    ).toBeNull();
+    fireEvent.click(screen.getAllByRole("checkbox")[1]!);
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Reject" }));
+    const confirm = screen.getByRole("alertdialog");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Reject" }));
+    expect(m.bulkReject).toHaveBeenCalledWith(
+      { ids: ["s2"] },
       expect.anything(),
     );
   });

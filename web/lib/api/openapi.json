@@ -1556,7 +1556,7 @@
             "description": "library not found"
           },
           "422": {
-            "description": "neither or both of `ids` / `bucket`, a bucket other than `high`, `library_id` without `bucket`, or more than 500 ids"
+            "description": "neither or both of `ids` / `bucket`, a bucket other than `high`, `library_id` without `bucket`, `kind` without `ids`, or more than 500 ids"
           }
         }
       }
@@ -1694,7 +1694,7 @@
         ],
         "responses": {
           "200": {
-            "description": "suggestion marked rejected; it will not be proposed again",
+            "description": "suggestion (pending or stale) marked rejected; it will not be proposed again",
             "content": {
               "application/json": {
                 "schema": {
@@ -1713,7 +1713,7 @@
             "description": "suggestion not found"
           },
           "409": {
-            "description": "already reviewed"
+            "description": "already reviewed (accepted / rejected / modified)"
           }
         }
       }
@@ -13115,7 +13115,7 @@
       },
       "BulkAcceptRelationshipSuggestionsReq": {
         "type": "object",
-        "description": "Bulk accept: explicit `ids`, **or** a bucket selection. Exactly one of\n`ids` / `bucket` must be set.\n\n- `ids`: 1–500 suggestion ids, processed in order (duplicates once).\n- `bucket`: only `\"high\"` — the pending high-confidence rows (optionally\n  one `library_id`), highest confidence first, at most 500 per request.\n  The response's `remaining` says how many are left; send the request\n  again to take the next batch. Medium / low rows are only bulk-accepted\n  by explicit ids, after a reviewer has looked at them.",
+        "description": "Bulk accept: explicit `ids`, **or** a bucket selection. Exactly one of\n`ids` / `bucket` must be set.\n\n- `ids`: 1–500 suggestion ids, processed in order (duplicates once),\n  optionally with a `kind` override for the whole selection (WP-8.2).\n- `bucket`: only `\"high\"` — the pending high-confidence rows (optionally\n  one `library_id`), highest confidence first, at most 500 per request.\n  The response's `remaining` says how many are left; send the request\n  again to take the next batch. Medium / low rows are only bulk-accepted\n  by explicit ids, after a reviewer has looked at them.",
         "properties": {
           "bucket": {
             "oneOf": [
@@ -13136,6 +13136,17 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          "kind": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelationshipKind",
+                "description": "`ids` mode only (WP-8.2): accept every selected suggestion as this\nkind (read \"from `kind` to\" per row) instead of its suggested one.\nRows whose kind differs are recorded as `modified`; scope fields the\nkind doesn't take are dropped. An arc suggestion can only be\naccepted as `tie_in_to` (others fail that item as `invalid`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "library_id": {
             "type": [
@@ -26602,7 +26613,7 @@
               "string",
               "null"
             ],
-            "description": "Relationships only: the kind's display label, lower-cased\n(\"sequel to\", \"continued by\"; WP-7.5), so clients don't need the\nkind catalogue to caption a reason."
+            "description": "Relationships: the kind's display label, lower-cased (\"sequel to\",\n\"continued by\"; WP-7.5), so clients don't need the kind catalogue\nto caption a reason. Arcs (WP-8.2): `\"both tie in to\"` when the\nshared arc comes from accepted tie-in edges rather than issue\ntagging. Absent otherwise."
           },
           "name": {
             "type": "string",

@@ -261,6 +261,9 @@ pub struct ProviderLinkReport {
     pub removed: usize,
     /// Rows promoted right away (their target is already local).
     pub promoted: usize,
+    /// … of which became series relationships (WP-8.2: the caller
+    /// invalidates the similar-series cache when non-zero).
+    pub pairs_created: usize,
 }
 
 /// Store a provider's linked series for `series` as `set_by = 'provider'`
@@ -394,7 +397,9 @@ pub async fn record_provider_links<C: ConnectionTrait>(
         )
         .unwrap_or(0);
     }
-    report.promoted = promote_series_rows(conn, series.id).await?;
+    let p = promote_series_rows(conn, series.id).await?;
+    report.promoted = p.total();
+    report.pairs_created = p.pairs_created;
     Ok(report)
 }
 
@@ -470,15 +475,38 @@ pub async fn resolve_rows<C: ConnectionTrait>(
     )
 }
 
+/// What one promotion pass did (WP-8.2: split so callers holding an
+/// `AppState` can tell whether a series relationship was created — that
+/// changes similar-series scores — or only provider rows were marked).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct Promoted {
+    /// User rows turned into series relationship pairs.
+    pub pairs_created: usize,
+    /// Provider rows newly marked `promoted_series_id` (no edge yet: the
+    /// suggestion engine proposes the pair).
+    pub marked: usize,
+}
+
+impl Promoted {
+    pub fn total(self) -> usize {
+        self.pairs_created + self.marked
+    }
+}
+
 /// Promote resolved rows: a `user` row becomes a manual pair (same kind and
 /// qualifier, `created_by` kept) and is deleted; a `provider` row is marked
 /// `promoted_series_id` (the suggestion engine proposes the pair). A user
 /// row whose pair contradicts an existing edge (`PairError::Conflict`) is
-/// left in place and logged. Dismissed rows are skipped. Returns the rows
-/// promoted (created pairs + newly marked rows).
-async fn promote<C: ConnectionTrait>(conn: &C, resolved: Vec<Resolved>) -> Result<usize, DbErr> {
+/// left in place and logged. Dismissed rows are skipped.
+///
+/// Takes only a connection, so **callers that hold an `AppState` must call
+/// `state.similarity.invalidate_all()` when `pairs_created > 0`** (the
+/// metadata-apply job, the suggestion job, the scanner's folder-tag pass
+/// and the external-id admin endpoints do).
+async fn promote<C: ConnectionTrait>(conn: &C, resolved: Vec<Resolved>) -> Result<Promoted, DbErr> {
+    let mut n = Promoted::default();
     if resolved.is_empty() {
-        return Ok(0);
+        return Ok(n);
     }
     let target: HashMap<Uuid, Uuid> = resolved
         .into_iter()
@@ -489,7 +517,6 @@ async fn promote<C: ConnectionTrait>(conn: &C, resolved: Vec<Resolved>) -> Resul
         .filter(ext::Column::DismissedAt.is_null())
         .all(conn)
         .await?;
-    let mut n = 0;
     for row in rows {
         let Some(&to) = target.get(&row.id) else {
             continue;
@@ -504,7 +531,7 @@ async fn promote<C: ConnectionTrait>(conn: &C, resolved: Vec<Resolved>) -> Resul
                     .filter(ext::Column::Id.eq(row.id))
                     .exec(conn)
                     .await?;
-                n += 1;
+                n.marked += 1;
             }
             continue;
         }
@@ -536,7 +563,7 @@ async fn promote<C: ConnectionTrait>(conn: &C, resolved: Vec<Resolved>) -> Resul
                     kind = row.kind,
                     "external relationship promoted to a series relationship"
                 );
-                n += 1;
+                n.pairs_created += 1;
             }
             Err(PairError::Db(e)) => return Err(e),
             Err(e) => {
@@ -557,7 +584,7 @@ async fn promote<C: ConnectionTrait>(conn: &C, resolved: Vec<Resolved>) -> Resul
 pub async fn promote_series_rows<C: ConnectionTrait>(
     conn: &C,
     series_id: Uuid,
-) -> Result<usize, DbErr> {
+) -> Result<Promoted, DbErr> {
     let resolved = resolve_where(conn, "e.from_series_id = $1", vec![series_id.into()]).await?;
     promote(conn, resolved).await
 }
@@ -572,9 +599,9 @@ pub async fn promote_for_provider_id<C: ConnectionTrait>(
     series_id: Uuid,
     source: &str,
     id: &str,
-) -> Result<usize, DbErr> {
+) -> Result<Promoted, DbErr> {
     if ExternalSource::parse(source).is_none() {
-        return Ok(0);
+        return Ok(Promoted::default());
     }
     let filter = "e.dismissed_at IS NULL AND ((e.source = $1 AND e.provider_series_id = $2) \
          OR EXISTS (SELECT 1 FROM metadata_cache c \
@@ -595,6 +622,8 @@ pub async fn promote_for_provider_id<C: ConnectionTrait>(
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PromotionReport {
     pub promoted: usize,
+    /// … of which became series relationships (WP-8.2).
+    pub pairs_created: usize,
     /// Provider rows whose local match went away (mark cleared).
     pub unmarked: usize,
     /// Label-only reprints resolved to a local issue.
@@ -645,7 +674,8 @@ pub async fn promote_library<C: ConnectionTrait>(
     let reprints_resolved =
         crate::metadata::writers::resolve_pending_reprints(conn, Some(library_id), None).await?;
     Ok(PromotionReport {
-        promoted,
+        promoted: promoted.total(),
+        pairs_created: promoted.pairs_created,
         unmarked,
         reprints_resolved,
     })

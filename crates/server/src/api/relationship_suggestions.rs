@@ -6,9 +6,9 @@
 //! |---|---|---|
 //! | `GET`  | `/admin/relationship-suggestions` | cursor-paginated list (`status`, `bucket`, `library_id`) |
 //! | `POST` | `/admin/relationship-suggestions/{id}/accept` | body `{ "kind"?: RelationshipKind }` |
-//! | `POST` | `/admin/relationship-suggestions/{id}/reject` | |
+//! | `POST` | `/admin/relationship-suggestions/{id}/reject` | pending or stale (WP-8.2) → rejected |
 //! | `POST` | `/admin/relationship-suggestions/{id}/reopen` | rejected → pending |
-//! | `POST` | `/admin/relationship-suggestions/bulk-accept` | `{ "ids": [...] }` or `{ "bucket": "high", "library_id"? }` |
+//! | `POST` | `/admin/relationship-suggestions/bulk-accept` | `{ "ids": [...], "kind"? }` or `{ "bucket": "high", "library_id"? }` |
 //! | `POST` | `/admin/relationship-suggestions/bulk-reject` | `{ "ids": [...] }` |
 //! | `POST` | `/admin/relationship-suggestions/run` | enqueue a run (`?library_id=` or every library) |
 //! | `GET`  | `/series/{slug}/relationship-suggestions` | pending suggestions touching one series |
@@ -220,7 +220,8 @@ pub struct RunRelationshipSuggestionsResp {
 /// Bulk accept: explicit `ids`, **or** a bucket selection. Exactly one of
 /// `ids` / `bucket` must be set.
 ///
-/// - `ids`: 1–500 suggestion ids, processed in order (duplicates once).
+/// - `ids`: 1–500 suggestion ids, processed in order (duplicates once),
+///   optionally with a `kind` override for the whole selection (WP-8.2).
 /// - `bucket`: only `"high"` — the pending high-confidence rows (optionally
 ///   one `library_id`), highest confidence first, at most 500 per request.
 ///   The response's `remaining` says how many are left; send the request
@@ -238,6 +239,14 @@ pub struct BulkAcceptRelationshipSuggestionsReq {
     #[garde(skip)]
     #[serde(default)]
     pub library_id: Option<Uuid>,
+    /// `ids` mode only (WP-8.2): accept every selected suggestion as this
+    /// kind (read "from `kind` to" per row) instead of its suggested one.
+    /// Rows whose kind differs are recorded as `modified`; scope fields the
+    /// kind doesn't take are dropped. An arc suggestion can only be
+    /// accepted as `tie_in_to` (others fail that item as `invalid`).
+    #[garde(skip)]
+    #[serde(default)]
+    pub kind: Option<RelationshipKind>,
 }
 
 /// Bulk reject: 1–500 explicit ids (no bucket mode — a reviewer picks them).
@@ -488,11 +497,11 @@ pub async fn accept(
     path = "/admin/relationship-suggestions/{id}/reject",
     params(("id" = String, Path, description = "suggestion id")),
     responses(
-        (status = 200, body = RelationshipSuggestionView, description = "suggestion marked rejected; it will not be proposed again"),
+        (status = 200, body = RelationshipSuggestionView, description = "suggestion (pending or stale) marked rejected; it will not be proposed again"),
         (status = 400, description = "malformed id"),
         (status = 403, description = "admin only"),
         (status = 404, description = "suggestion not found"),
-        (status = 409, description = "already reviewed"),
+        (status = 409, description = "already reviewed (accepted / rejected / modified)"),
     )
 )]
 #[handler]
@@ -591,7 +600,7 @@ pub async fn reopen(
         (status = 200, body = BulkReviewRelationshipSuggestionsResp, description = "batch committed; per-item refusals listed in `failed`"),
         (status = 403, description = "admin only"),
         (status = 404, description = "library not found"),
-        (status = 422, description = "neither or both of `ids` / `bucket`, a bucket other than `high`, `library_id` without `bucket`, or more than 500 ids"),
+        (status = 422, description = "neither or both of `ids` / `bucket`, a bucket other than `high`, `library_id` without `bucket`, `kind` without `ids`, or more than 500 ids"),
     )
 )]
 #[handler]
@@ -634,7 +643,7 @@ pub async fn bulk_accept(
         }
         (None, None) => unreachable!("validate_bulk_accept requires ids or bucket"),
     };
-    let out = match suggestions::bulk_accept(&app.db, &ids, actor.id).await {
+    let out = match suggestions::bulk_accept(&app.db, &ids, actor.id, req.kind).await {
         Ok(o) => o,
         Err(e) => return internal(&e),
     };
@@ -659,6 +668,7 @@ pub async fn bulk_accept(
         action = "admin.relationship_suggestion.bulk_accept",
         payload = serde_json::json!({
             "mode": mode,
+            "kind": req.kind.map(RelationshipKind::as_str),
             "bucket": req.bucket.map(SuggestionBucket::as_str),
             "library_id": req.library_id.map(|l| l.to_string()),
             "requested": resp.requested,
@@ -734,6 +744,12 @@ fn validate_bulk_accept(req: &BulkAcceptRelationshipSuggestionsReq) -> Result<()
     }
     if req.library_id.is_some() && req.ids.is_some() {
         errs.push(field("library_id", "`library_id` only applies to `bucket`"));
+    }
+    if req.kind.is_some() && req.ids.is_none() {
+        errs.push(field(
+            "kind",
+            "`kind` only applies to `ids`; accept a bucket as suggested",
+        ));
     }
     if errs.is_empty() {
         return Ok(());

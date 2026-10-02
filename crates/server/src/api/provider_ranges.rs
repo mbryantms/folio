@@ -588,14 +588,19 @@ pub async fn detect_series(
             provider_series_id.clone(),
             "series",
         );
-        let _ = crate::metadata::writers::set_external_id(
+        if let Ok((_, promoted_pairs)) = crate::metadata::writers::set_external_id_promoting(
             &app.db,
             "series",
             &s.id.to_string(),
             &identifier,
             crate::metadata::writers::SetBy::Provider(source),
         )
-        .await;
+        .await
+            && promoted_pairs > 0
+        {
+            // WP-8.2: a promoted external link is a similar-series signal.
+            app.similarity.invalidate_all();
+        }
 
         let Some(provider) = crate::metadata::apply::build_provider(&app, source) else {
             continue;

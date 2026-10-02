@@ -2563,25 +2563,30 @@ pub fn parse_series_folder_tags(folder_name: &str) -> Vec<crate::metadata::ident
 /// `set_external_id`'s precedence rule.
 ///
 /// metadata-providers-1.0 M8.
+///
+/// Returns how many external links the ids promoted to series
+/// relationships (WP-8.2): this runs on every scan, mutating or not, so the
+/// caller drops the similar-series cache itself when it's non-zero.
 pub async fn write_series_folder_tags<C: ConnectionTrait>(
     db: &C,
     series_id: Uuid,
     folder_name: &str,
 ) -> Result<usize, sea_orm::DbErr> {
     let identifiers = parse_series_folder_tags(folder_name);
-    let count = identifiers.len();
     let series_id_str = series_id.to_string();
+    let mut promoted_pairs = 0;
     for identifier in identifiers {
-        crate::metadata::writers::set_external_id(
+        promoted_pairs += crate::metadata::writers::set_external_id_promoting(
             db,
             "series",
             &series_id_str,
             &identifier,
             crate::metadata::writers::SetBy::ScannerFolderTag,
         )
-        .await?;
+        .await?
+        .1;
     }
-    Ok(count)
+    Ok(promoted_pairs)
 }
 
 /// Persist every MetronInfo `<ID source="...">` row as an

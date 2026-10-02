@@ -13,11 +13,17 @@
  * bulk accept / reject (one batch, one audit row), and "Accept all high"
  * takes the pending high-confidence rows (up to 500 per request) behind an
  * AlertDialog.
+ *
+ * WP-8.2: bulk "Accept as…" applies one kind to the whole selection (a
+ * dialog around the shared `RelationshipKindSelect`), and stale rows can
+ * be rejected — singly or selected in the Stale view — so a suggestion
+ * the owner never wants back is dismissed for good.
  */
 
 import {
   Check,
   ChevronDown,
+  ListChecks,
   Loader2,
   Play,
   RotateCcw,
@@ -48,12 +54,21 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { RelationshipKindSelect } from "@/components/library/RelationshipKindSelect";
 import { FilterPill } from "@/components/ui/filter-pill";
 import { NativeSelect } from "@/components/ui/native-select";
 import {
   Popover,
   PopoverContent,
+  PopoverPortalContainer,
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -149,6 +164,7 @@ export function RelationshipSuggestionsPanel() {
   const [libraryId, setLibraryId] = React.useState<string | null>(null);
   const [confirmHigh, setConfirmHigh] = React.useState(false);
   const [confirmBulkReject, setConfirmBulkReject] = React.useState(false);
+  const [acceptAsOpen, setAcceptAsOpen] = React.useState(false);
   // Controlled confirms (no trigger): hand focus back to the opener.
   const returnFocus = useReturnFocus();
 
@@ -190,6 +206,10 @@ export function RelationshipSuggestionsPanel() {
   const run = useRunRelationshipSuggestions();
   const bulkPending = bulkAccept.isPending || bulkReject.isPending;
   const selectedIds = [...selection.selected];
+  const selectedItems = items.filter((s) => selection.selected.has(s.id));
+  // Pending rows can be accepted or rejected in bulk; stale rows (WP-8.2)
+  // only rejected — their evidence is gone, so accepting them is refused.
+  const selectable = status === "pending" || status === "stale";
 
   const libraryList = libraries.data ?? [];
   const libraryName = libraryId
@@ -296,7 +316,7 @@ export function RelationshipSuggestionsPanel() {
               {f.label}
             </FilterPill>
           ))}
-          {status === "pending" && items.length > 0 && !selection.selectMode ? (
+          {selectable && items.length > 0 && !selection.selectMode ? (
             <Button
               size="sm"
               variant="ghost"
@@ -314,17 +334,31 @@ export function RelationshipSuggestionsPanel() {
         count={selection.count}
         total={items.length}
         primary={[
-          {
-            id: "accept",
-            label: "Accept",
-            icon: Check,
-            onClick: () =>
-              bulkAccept.mutate(
-                { ids: selectedIds },
-                { onSuccess: () => selection.exit() },
-              ),
-            disabled: bulkPending || selection.count === 0,
-          },
+          ...(status === "pending"
+            ? [
+                {
+                  id: "accept",
+                  label: "Accept",
+                  icon: Check,
+                  onClick: () =>
+                    bulkAccept.mutate(
+                      { ids: selectedIds },
+                      { onSuccess: () => selection.exit() },
+                    ),
+                  disabled: bulkPending || selection.count === 0,
+                },
+                {
+                  id: "accept-as",
+                  label: "Accept as…",
+                  icon: ListChecks,
+                  onClick: () => {
+                    returnFocus.capture();
+                    setAcceptAsOpen(true);
+                  },
+                  disabled: bulkPending || selection.count === 0,
+                },
+              ]
+            : []),
           {
             id: "reject",
             label: "Reject",
@@ -363,7 +397,10 @@ export function RelationshipSuggestionsPanel() {
               <SuggestionRow
                 key={s.id}
                 suggestion={s}
-                selectable={selection.selectMode && s.status === "pending"}
+                selectable={
+                  selection.selectMode &&
+                  (s.status === "pending" || s.status === "stale")
+                }
                 selected={selection.isSelected(s.id)}
                 onToggle={(ev) => selection.toggle(s.id, ev)}
               />
@@ -415,6 +452,25 @@ export function RelationshipSuggestionsPanel() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <BulkAcceptAsDialog
+        open={acceptAsOpen}
+        onOpenChange={setAcceptAsOpen}
+        onCloseAutoFocus={returnFocus.onCloseAutoFocus}
+        selected={selectedItems}
+        pending={bulkAccept.isPending}
+        onAccept={(kind) =>
+          bulkAccept.mutate(
+            { ids: selectedIds, kind },
+            {
+              onSuccess: () => {
+                setAcceptAsOpen(false);
+                selection.exit();
+              },
+            },
+          )
+        }
+      />
 
       <AlertDialog open={confirmBulkReject} onOpenChange={setConfirmBulkReject}>
         <AlertDialogContent onCloseAutoFocus={returnFocus.onCloseAutoFocus}>
@@ -653,6 +709,18 @@ function SuggestionRow({
                   Reject
                 </Button>
               </>
+            ) : s.status === "stale" ? (
+              // WP-8.2: dismiss a stale suggestion for good (rejection
+              // memory keeps it from coming back when its evidence does).
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => reject.mutate({ id: s.id })}
+              >
+                <X className="mr-1 size-3.5" />
+                Reject
+              </Button>
             ) : s.status === "rejected" ? (
               <Button
                 size="sm"
@@ -724,5 +792,89 @@ function EditKindPopover({
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+/** Bulk "Accept as…" (WP-8.2): one kind for the whole selection, read
+ *  "from `kind` to" on each row. Rows whose kind differs are recorded as
+ *  modified; scope the kind doesn't take is dropped server-side. */
+function BulkAcceptAsDialog({
+  open,
+  onOpenChange,
+  onCloseAutoFocus,
+  selected,
+  pending,
+  onAccept,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCloseAutoFocus: (e: Event) => void;
+  selected: RelationshipSuggestionView[];
+  pending: boolean;
+  onAccept: (kind: RelationshipKind) => void;
+}) {
+  const catalogue = useRelationshipKinds();
+  const [portal, setPortal] = React.useState<HTMLElement | null>(null);
+  const [kind, setKind] = React.useState<RelationshipKind>("see_also");
+  const firstKind = selected[0]?.kind;
+  // Start from the first selected row's kind each time the dialog opens.
+  const [openedFor, setOpenedFor] = React.useState(false);
+  if (open !== openedFor) {
+    setOpenedFor(open);
+    if (open && firstKind) setKind(firstKind);
+  }
+  const count = selected.length;
+  const arcRows = selected.filter((s) => s.to_arc).length;
+  const label = kindLabel(catalogue.data, kind);
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        ref={setPortal}
+        onCloseAutoFocus={onCloseAutoFocus}
+        // The kind picker portals into the dialog and may overflow it.
+        className="overflow-visible sm:max-w-md"
+      >
+        <DialogHeader>
+          <DialogTitle>
+            Accept {count} suggestion{count === 1 ? "" : "s"} as…
+          </DialogTitle>
+          <DialogDescription>
+            Every selected suggestion is linked with this kind, read from its
+            left series to its right one. Suggestions with a different kind are
+            recorded as modified; ranges or coverage the kind doesn’t take are
+            dropped.
+          </DialogDescription>
+        </DialogHeader>
+        <PopoverPortalContainer value={portal}>
+          <RelationshipKindSelect
+            value={kind}
+            onChange={setKind}
+            ariaLabel="Accept as"
+          />
+        </PopoverPortalContainer>
+        {arcRows > 0 && kind !== "tie_in_to" ? (
+          <p className="text-muted-foreground text-sm">
+            {arcRows} story-arc suggestion{arcRows === 1 ? "" : "s"} can only be
+            accepted as a tie-in and will be skipped.
+          </p>
+        ) : null}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={pending || count === 0}
+            onClick={() => onAccept(kind)}
+          >
+            {pending ? (
+              <Loader2 className="mr-1 size-3.5 animate-spin" />
+            ) : (
+              <Check className="mr-1 size-3.5" />
+            )}
+            Accept as {label.toLowerCase()}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

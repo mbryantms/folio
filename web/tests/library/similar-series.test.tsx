@@ -106,6 +106,18 @@ describe("because formatting", () => {
         weight: 6,
       }),
     ).toBe("sequel to Daredevil");
+    // WP-8.2: an arc shared through accepted tie-in edges.
+    expect(
+      reasonLabel({
+        kind: "arc",
+        label: "both tie in to",
+        name: "Secret Wars",
+        weight: 2,
+      }),
+    ).toBe("both tie in to Secret Wars");
+    expect(reasonLabel({ kind: "arc", name: "Secret Wars", weight: 2 })).toBe(
+      "arc Secret Wars",
+    );
   });
 
   it("joins the strongest reasons in server order", () => {

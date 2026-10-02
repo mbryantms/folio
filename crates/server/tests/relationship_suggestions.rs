@@ -2932,3 +2932,491 @@ async fn accepting_scoped_and_arc_suggestions_creates_the_right_edges() {
     assert_eq!(report.inserted, 0, "{report:?}");
     assert!(report.skipped_existing_edge >= 2, "{report:?}");
 }
+
+// ───── WP-8.2: relationship tuning ─────
+
+async fn grant(db: &DatabaseConnection, user_id: Uuid, library_id: Uuid) {
+    let now = Utc::now().fixed_offset();
+    entity::library_user_access::ActiveModel {
+        user_id: Set(user_id),
+        library_id: Set(library_id),
+        age_rating_max: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+async fn library_of(db: &DatabaseConnection, series: Uuid) -> Uuid {
+    entity::series::Entity::find_by_id(series)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+        .library_id
+}
+
+/// A singles library and a trades library: one cross-library pair per
+/// edition source, plus story / publication look-alikes that must stay
+/// inside their own library.
+struct TwoLibs {
+    singles: Uuid,
+    trades: Uuid,
+    saga: Uuid,
+    saga_tpb: Uuid,
+    hom: Uuid,
+    hom_dc: Uuid,
+    rom: Uuid,
+    rom_fax: Uuid,
+    schtroumpfs: Uuid,
+    smurfs: Uuid,
+}
+
+async fn two_libraries(app: &TestApp, db: &DatabaseConnection) -> TwoLibs {
+    let singles = mk_library(app, db, "singles").await;
+    let trades = mk_library(app, db, "trades").await;
+    let image = |name, year| S {
+        publisher: Some("Image"),
+        ..s(name, year)
+    };
+    // Collected edition in the trades library citing a singles run.
+    let saga = mk_run(db, singles, image("Saga", 2012), 1..=12, 2012).await;
+    let saga_tpb = mk_series(db, trades, image("Saga Vol. 1 TPB", 2014)).await;
+    mk_issue(
+        db,
+        trades,
+        saga_tpb,
+        I {
+            number: 1.0,
+            format: Some("TPB"),
+            notes: Some("Collects Saga #1-6."),
+            ..Default::default()
+        },
+    )
+    .await;
+    // Alternate edition and facsimile filed with the trades.
+    let hom = mk_run(db, singles, s("House of M", 2005), 1..=8, 2005).await;
+    let hom_dc = mk_run(
+        db,
+        trades,
+        s("House of M Director's Cut", 2005),
+        1..=1,
+        2005,
+    )
+    .await;
+    let rom = mk_run(db, singles, s("ROM", 1979), 1..=3, 1979).await;
+    let rom_fax = mk_run(db, trades, s("ROM #1 Facsimile Edition", 2019), 1..=1, 2019).await;
+    // Translation: the English edition (trades) lists the French title.
+    let schtroumpfs = mk_run(
+        db,
+        singles,
+        S {
+            lang: Some("fr"),
+            ..s("Les Schtroumpfs", 1959)
+        },
+        1..=1,
+        1959,
+    )
+    .await;
+    let smurfs = mk_run(
+        db,
+        trades,
+        S {
+            lang: Some("en"),
+            aliases: &["Les Schtroumpfs"],
+            ..s("The Smurfs", 1981)
+        },
+        1..=1,
+        1981,
+    )
+    .await;
+    // Story / publication look-alikes across the two libraries: a later
+    // volume, an annual and a special. None of them may pair.
+    mk_run(db, singles, s("Thor", 2014), 1..=8, 2014).await;
+    mk_run(db, trades, s("Thor", 2018), 1..=8, 2018).await;
+    mk_run(db, trades, image("Saga Annual", 2013), 1..=1, 2013).await;
+    mk_run(db, singles, s("Fantastic Four", 2018), 1..=12, 2018).await;
+    mk_run(
+        db,
+        trades,
+        s("Fantastic Four: Wedding Special", 2018),
+        1..=1,
+        2018,
+    )
+    .await;
+    TwoLibs {
+        singles,
+        trades,
+        saga,
+        saga_tpb,
+        hom,
+        hom_dc,
+        rom,
+        rom_fax,
+        schtroumpfs,
+        smurfs,
+    }
+}
+
+#[tokio::test]
+async fn edition_kinds_pair_series_across_libraries() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let t = two_libraries(&app, &db).await;
+
+    // The singles run writes only rows whose (canonical) `from` is a
+    // singles series: the alternate edition (House of M sorts first).
+    let r1 = relationship_suggest::run(&db, t.singles).await.unwrap();
+    let after_singles = rows(&db).await;
+    for r in &after_singles {
+        assert_eq!(library_of(&db, r.from_series_id).await, t.singles);
+    }
+    assert!(r1.skipped_other_library >= 1, "{r1:?}");
+    // The trades run owns the rest.
+    let r2 = relationship_suggest::run(&db, t.trades).await.unwrap();
+    let all = rows(&db).await;
+    let d = dump(&all);
+
+    let col = find(&all, t.saga_tpb, t.saga, "collects").expect(&d);
+    assert_eq!(col.to_range.as_deref(), Some("1-6"), "{d}");
+    assert_eq!(sources(col), vec!["collected_edition"]);
+    let (a, b) = ordered(t.hom, t.hom_dc);
+    assert!(find(&all, a, b, "alternate_edition_of").is_some(), "{d}");
+    let fax = find(&all, t.rom_fax, t.rom, "reprints").expect(&d);
+    assert_eq!(fax.to_range.as_deref(), Some("1"));
+    assert!(
+        find(&all, t.smurfs, t.schtroumpfs, "translation_of").is_some(),
+        "{d}"
+    );
+    // Story and publication kinds never cross: no continues (Thor), no
+    // annual_of (Saga Annual), no supplement_to (the Wedding Special).
+    assert_eq!(all.len(), 4, "exactly the four edition pairs: {d}");
+    assert_eq!(r1.cross_library + r2.cross_library, 4, "{r1:?} {r2:?}");
+
+    // Idempotent and stable across both libraries' runs: nothing new,
+    // nothing staled by the other library's run.
+    for lib in [t.singles, t.trades, t.singles] {
+        let r = relationship_suggest::run(&db, lib).await.unwrap();
+        assert_eq!((r.inserted, r.marked_stale), (0, 0), "{r:?}");
+    }
+
+    // The review page's library filter matches either end.
+    let (status, body) = call_json(
+        &app,
+        Method::GET,
+        &format!(
+            "/api/admin/relationship-suggestions?limit=200&library_id={}",
+            t.singles
+        ),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], 4, "{body}");
+    assert!(
+        body["bucket_counts"]["high"].as_u64().unwrap() > 0,
+        "{body}"
+    );
+
+    // Rejection memory holds for a cross-library row.
+    let (status, _) = call_json(
+        &app,
+        Method::POST,
+        &format!("/api/admin/relationship-suggestions/{}/reject", col.id),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let r = relationship_suggest::run(&db, t.trades).await.unwrap();
+    assert!(r.skipped_reviewed >= 1, "{r:?}");
+    assert_eq!(status_of(&db, col.id).await, "rejected");
+}
+
+#[tokio::test]
+async fn cross_library_edges_show_only_to_users_who_see_both_series() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let narrow = register(&app, "narrow@example.com").await;
+    let wide = register(&app, "wide@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let t = two_libraries(&app, &db).await;
+    for u in [&narrow, &wide] {
+        demote_to_user(&db, u.user_id).await;
+        grant(&db, u.user_id, t.singles).await;
+    }
+    grant(&db, wide.user_id, t.trades).await;
+    relationship_suggest::run(&db, t.trades).await.unwrap();
+    let col = find(&rows(&db).await, t.saga_tpb, t.saga, "collects")
+        .unwrap()
+        .id;
+
+    // Suggestions are admin-only.
+    let (status, _) = call_json(
+        &app,
+        Method::GET,
+        "/api/admin/relationship-suggestions",
+        &narrow,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        &format!("/api/admin/relationship-suggestions/{col}/accept"),
+        &admin,
+        Some(serde_json::json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let saga_slug = entity::series::Entity::find_by_id(t.saga)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .slug;
+    let uri = format!("/api/series/{saga_slug}/relationships");
+    let related = |body: &serde_json::Value| -> Vec<String> {
+        body["relationships"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["series"]["id"].as_str().unwrap_or_default().to_owned())
+            .collect()
+    };
+    let (status, body) = call_json(&app, Method::GET, &uri, &wide, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(related(&body), vec![t.saga_tpb.to_string()], "{body}");
+    let (status, body) = call_json(&app, Method::GET, &uri, &narrow, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        related(&body).is_empty(),
+        "the trades series is in a library the user can't see: {body}"
+    );
+}
+
+#[tokio::test]
+async fn stale_rows_can_be_rejected_for_good() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let f = fixture(&app, &db).await;
+    relationship_suggest::run(&db, f.lib).await.unwrap();
+    let all = rows(&db).await;
+    let thor = find(&all, f.thor_2018, f.thor_2014, "continues")
+        .unwrap()
+        .id;
+    let dd = find(&all, f.dd_2014, f.dd_2011, "continues").unwrap().id;
+
+    // Both lose their evidence and go stale.
+    rename_series(&db, f.thor_2018, "Mighty Thor Reborn").await;
+    rename_series(&db, f.dd_2014, "Daredevil Reborn").await;
+    relationship_suggest::run(&db, f.lib).await.unwrap();
+    assert_eq!(status_of(&db, thor).await, "stale");
+    assert_eq!(status_of(&db, dd).await, "stale");
+
+    // Single reject of a stale row.
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        &format!("/api/admin/relationship-suggestions/{thor}/reject"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "rejected");
+    // Bulk reject of a stale row.
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        "/api/admin/relationship-suggestions/bulk-reject",
+        &admin,
+        Some(serde_json::json!({ "ids": [dd] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["succeeded"], serde_json::json!([dd.to_string()]));
+    assert_eq!(status_of(&db, dd).await, "rejected");
+    // Accept still refuses a stale row; a rejected one can't be rejected
+    // twice.
+    let (status, _) = call_json(
+        &app,
+        Method::POST,
+        &format!("/api/admin/relationship-suggestions/{thor}/reject"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // The evidence comes back: the rows stay rejected (rejection memory),
+    // they are not revived to pending.
+    rename_series(&db, f.thor_2018, "Thor").await;
+    rename_series(&db, f.dd_2014, "Daredevil").await;
+    let r = relationship_suggest::run(&db, f.lib).await.unwrap();
+    assert_eq!(r.revived, 0, "{r:?}");
+    assert!(r.skipped_reviewed >= 2, "{r:?}");
+    assert_eq!(status_of(&db, thor).await, "rejected");
+    assert_eq!(status_of(&db, dd).await, "rejected");
+}
+
+#[tokio::test]
+async fn bulk_accept_by_ids_takes_an_optional_kind() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let f = fixture(&app, &db).await;
+    relationship_suggest::run(&db, f.lib).await.unwrap();
+    let all = rows(&db).await;
+    let dd = find(&all, f.dd_2014, f.dd_2011, "continues")
+        .unwrap()
+        .clone();
+    let col = find(&all, f.saga_deluxe, f.saga, "collects")
+        .unwrap()
+        .clone();
+    assert_eq!(col.coverage.as_deref(), Some("full"), "a scoped proposal");
+    let arc = all
+        .iter()
+        .find(|r| r.to_arc_id.is_some())
+        .expect("an arc suggestion")
+        .clone();
+
+    // `kind` needs `ids`.
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        "/api/admin/relationship-suggestions/bulk-accept",
+        &admin,
+        Some(serde_json::json!({ "bucket": "high", "kind": "see_also" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["details"][0]["field"], "kind", "{body}");
+
+    let (status, body) = call_json(
+        &app,
+        Method::POST,
+        "/api/admin/relationship-suggestions/bulk-accept",
+        &admin,
+        Some(serde_json::json!({
+            "ids": [dd.id, col.id, arc.id],
+            "kind": "see_also",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["succeeded"],
+        serde_json::json!([dd.id.to_string(), col.id.to_string()]),
+        "{body}"
+    );
+    assert_eq!(body["created"], 2);
+    // An arc suggestion only accepts arc-capable kinds: that item fails,
+    // the batch commits.
+    assert_eq!(body["failed"][0]["id"], arc.id.to_string());
+    assert_eq!(body["failed"][0]["code"], "invalid");
+    assert_eq!(status_of(&db, arc.id).await, "pending");
+
+    for (row, from, to) in [(&dd, f.dd_2014, f.dd_2011), (&col, f.saga_deluxe, f.saga)] {
+        let after = sug::Entity::find_by_id(row.id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.status, "modified");
+        assert_eq!(after.accepted_kind.as_deref(), Some("see_also"));
+        let edge = rel::Entity::find()
+            .filter(rel::Column::FromSeriesId.eq(from))
+            .filter(rel::Column::ToSeriesId.eq(to))
+            .one(&db)
+            .await
+            .unwrap()
+            .expect("edge");
+        assert_eq!(edge.kind, "see_also");
+        // Scope the new kind doesn't take is dropped (Scope::fitted).
+        assert_eq!(edge.qualifier, None);
+        assert_eq!(edge.coverage, None);
+    }
+
+    // One audit row for the batch, carrying the kind.
+    assert_eq!(
+        audit_count(&db, "admin.relationship_suggestion.bulk_accept").await,
+        1
+    );
+    assert_eq!(
+        audit_count(&db, "admin.relationship_suggestion.accept").await,
+        0
+    );
+    let audit = entity::audit_log::Entity::find()
+        .filter(entity::audit_log::Column::Action.eq("admin.relationship_suggestion.bulk_accept"))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(audit.payload["kind"], "see_also");
+    assert_eq!(audit.payload["accepted"], 2);
+}
+
+#[tokio::test]
+async fn noise_rules_drop_publisher_only_and_unlimited_matches() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib = mk_library(&app, &db, "noise").await;
+    // "Marvel Holiday Special" → "Marvel": only the publisher's name.
+    let holiday = mk_series(
+        &db,
+        lib,
+        S {
+            name: "Marvel Holiday Special",
+            ..Default::default()
+        },
+    )
+    .await;
+    for n in [1991, 1992, 2011] {
+        mk_issue(
+            &db,
+            lib,
+            holiday,
+            I {
+                number: f64::from(n),
+                ..Default::default()
+            },
+        )
+        .await;
+    }
+    mk_run(&db, lib, s("Marvel", 2020), 1..=6, 2020).await;
+    // "X-Men Unlimited" (#1-14) → "X-Men" (#157-207): an anthology, not
+    // an edition, even though the years overlap.
+    mk_run(&db, lib, s("X-Men Unlimited", 2005), 1..=14, 2005).await;
+    mk_run(&db, lib, s("X-Men", 2004), 157..=207, 2005).await;
+    // Controls that must survive.
+    let ff = mk_run(&db, lib, s("Fantastic Four", 2018), 1..=12, 2018).await;
+    let wedding = mk_run(
+        &db,
+        lib,
+        s("Fantastic Four: Wedding Special", 2018),
+        1..=1,
+        2018,
+    )
+    .await;
+    let hom = mk_run(&db, lib, s("House of M", 2005), 1..=8, 2005).await;
+    let hom_dc = mk_run(&db, lib, s("House of M Director's Cut", 2005), 1..=1, 2005).await;
+
+    relationship_suggest::run(&db, lib).await.unwrap();
+    let all = rows(&db).await;
+    let d = dump(&all);
+    let kinds = |k: &str| all.iter().filter(|r| r.kind == k).count();
+    assert_eq!(kinds("supplement_to"), 1, "{d}");
+    assert!(find(&all, wedding, ff, "supplement_to").is_some(), "{d}");
+    assert_eq!(kinds("alternate_edition_of"), 1, "{d}");
+    let (a, b) = ordered(hom, hom_dc);
+    assert!(find(&all, a, b, "alternate_edition_of").is_some(), "{d}");
+}

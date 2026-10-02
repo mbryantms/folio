@@ -5,7 +5,8 @@
 //! watcher-scoped, or series-scoped — see `library::scanner`), and on demand
 //! from `POST /api/admin/relationship-suggestions/run`. The job is bounded
 //! regardless of what triggered it: every evidence query is set-based and
-//! library-scoped, and at most
+//! starts from this library's series (the WP-8.2 edition sources look up
+//! targets in other libraries by key), and at most
 //! [`MAX_SUGGESTIONS_PER_RUN`](crate::relationships::suggestions::MAX_SUGGESTIONS_PER_RUN)
 //! rows are written per run.
 //!
@@ -86,7 +87,7 @@ pub async fn handle(job: RelationshipSuggestJob, state: Data<AppState>) -> Resul
     // queue a follow-up (they may have changed the evidence).
     let mut conn = state.jobs.redis.clone();
     let _: Result<(), _> = conn.del(queued_key(library_id)).await;
-    if let Err(e) = run(&state.db, library_id).await {
+    if let Err(e) = run_with_state(&state, library_id).await {
         // Logged, not retried: the next scan re-runs it, and a retry storm
         // on a persistent SQL error would only repeat the failure.
         tracing::error!(library_id = %library_id, error = %e, "relationship suggest: run failed");
@@ -94,9 +95,21 @@ pub async fn handle(job: RelationshipSuggestJob, state: Data<AppState>) -> Resul
     Ok(())
 }
 
+/// [`run`], then drop the similar-series cache when the promotion pass
+/// turned external links into series relationships (WP-8.2: the promotion
+/// code only has a connection, so the job does it). What the worker runs.
+pub async fn run_with_state(state: &AppState, library_id: Uuid) -> anyhow::Result<RunReport> {
+    let report = run(&state.db, library_id).await?;
+    if report.promoted_pairs > 0 {
+        state.similarity.invalidate_all();
+    }
+    Ok(report)
+}
+
 /// Generate suggestions for `library_id` and record the `library_events`
-/// row. Public so tests and the on-demand path can run it without a worker.
-/// A library that no longer exists is a no-op.
+/// row. Public so tests can run it without a worker. A library that no
+/// longer exists is a no-op. Doesn't touch the similar-series cache (no
+/// `AppState`): [`run_with_state`] does, from `report.promoted_pairs`.
 pub async fn run(db: &DatabaseConnection, library_id: Uuid) -> anyhow::Result<RunReport> {
     use sea_orm::EntityTrait;
     if entity::library::Entity::find_by_id(library_id)
@@ -112,11 +125,14 @@ pub async fn run(db: &DatabaseConnection, library_id: Uuid) -> anyhow::Result<Ru
     // WP-7.8: resolve external links and label-only reprints whose target
     // was scanned in / matched since the last run, before the sources read
     // them. Best-effort: a failure only delays promotion to the next run.
+    let mut promoted_pairs = 0;
     match crate::relationships::external::promote_library(db, library_id).await {
         Ok(p) if p.promoted + p.unmarked > 0 || p.reprints_resolved > 0 => {
+            promoted_pairs = p.pairs_created;
             tracing::info!(
                 library_id = %library_id,
                 promoted = p.promoted,
+                pairs_created = p.pairs_created,
                 unmarked = p.unmarked,
                 reprints_resolved = p.reprints_resolved,
                 "relationship suggest: external links promoted"
@@ -128,7 +144,8 @@ pub async fn run(db: &DatabaseConnection, library_id: Uuid) -> anyhow::Result<Ru
                 "relationship suggest: external-link promotion failed");
         }
     }
-    let report = suggestions::generate_for_library(db, library_id).await?;
+    let mut report = suggestions::generate_for_library(db, library_id).await?;
+    report.promoted_pairs = promoted_pairs;
     if report.inserted + report.updated + report.marked_stale > 0 {
         event_log::record(
             db,

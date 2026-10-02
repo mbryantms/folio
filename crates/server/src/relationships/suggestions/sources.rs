@@ -400,25 +400,32 @@ pub(super) fn match_key(norm: &str) -> String {
     b.strip_prefix("the ").map_or(b.clone(), str::to_owned)
 }
 
-/// The arc's own key plus, for ComicVine reading-list style names
-/// (`"Secret Wars" Battleworld`), the quoted family's key.
+/// The keys a main series may be named by, **in priority order**: the
+/// arc's own name, then — for ComicVine reading-list style names
+/// (`"Secret Wars" Battleworld`) — the quoted family ("Secret Wars").
+/// WP-8.2: the tail alone ("Battleworld") no longer names a main series.
 fn arc_keys(name: &str) -> Vec<String> {
     let mut keys = vec![match_key(&entity::series::normalize_name(name))];
     let t = name.trim_start();
     if let Some(rest) = t.strip_prefix('"')
         && let Some(end) = rest.find('"')
     {
-        let fam = match_key(&entity::series::normalize_name(&rest[..end]));
-        if !fam.is_empty() {
-            keys.push(fam);
-        }
-        let tail = match_key(&entity::series::normalize_name(&rest[end + 1..]));
-        if !tail.is_empty() {
-            keys.push(tail);
-        }
+        keys.push(match_key(&entity::series::normalize_name(&rest[..end])));
     }
     keys.retain(|k| !k.is_empty());
+    keys.dedup();
     keys
+}
+
+/// WP-8.2 main-series rule, step 1: the series named exactly like the arc
+/// (its [`match_key`] equals the arc's), else one named like the arc's
+/// reading-list family; among several of the same name, the one with the
+/// most issues in the arc (`group` is sorted by issue count). `None` →
+/// step 2, the most issues in the arc ([`MainBy::Margin`] /
+/// [`MainBy::CoMain`] / [`MainBy::Weak`]).
+fn main_by_name(group: &[ArcSeriesRow], keys: &[String]) -> Option<usize> {
+    keys.iter()
+        .find_map(|k| group.iter().position(|r| match_key(&r.series_norm) == *k))
 }
 
 /// Series-name markers of a prelude / aftermath.
@@ -499,10 +506,7 @@ pub async fn arc_tie_ins<C: ConnectionTrait>(
 fn arc_group(group: &[ArcSeriesRow], out: &mut Vec<Candidate>) {
     let arc = &group[0];
     let keys = arc_keys(&arc.arc_name);
-    // Main by name: the largest series whose name matches the arc.
-    let by_name = group
-        .iter()
-        .position(|r| keys.contains(&match_key(&r.series_norm)));
+    let by_name = main_by_name(group, &keys);
     let (mains, by): (Vec<usize>, MainBy) = match by_name {
         Some(i) => (vec![i], MainBy::Name),
         None => {
@@ -890,9 +894,11 @@ fn fallback_name(norm: &str) -> String {
 }
 
 /// Collected editions (`Format` / `special_type` / series type / a title
-/// marker like "TPB" or "Omnibus") whose notes, title or "Collects …"
-/// summary cite issue ranges of another series. The citation parsing is in
-/// [`citations`]; resolution against the library is one set-based query.
+/// marker like "TPB" or "Omnibus") of this library whose notes, title or
+/// "Collects …" summary cite issue ranges of another series. The citation
+/// parsing is in [`citations`]; resolution is one set-based query against
+/// **every** library (WP-8.2: `collects` may cross libraries; a target in
+/// the edition's own library wins a coverage tie).
 pub async fn collected_editions<C: ConnectionTrait>(
     conn: &C,
     library_id: Uuid,
@@ -976,16 +982,20 @@ pub async fn collected_editions<C: ConnectionTrait>(
             SELECT * FROM unnest($2::int[], $3::text[]::uuid[], $4::text[], $5::float8[], $6::float8[])
                        AS c(idx, from_id, name_norm, lo, hi)
         ), t AS (
-            SELECT id, name, year, normalized_name, {base} AS base
-              FROM series WHERE library_id = $1 AND removed_at IS NULL
+            -- WP-8.2: `collects` may cross libraries (trades are often
+            -- filed in a library of their own), so every live series is a
+            -- target; the edition's own library wins a tie.
+            SELECT id, name, year, normalized_name, {base} AS base,
+                   (library_id <> $1) AS elsewhere
+              FROM series WHERE removed_at IS NULL
         ), m AS (
-            SELECT c.idx, c.lo, c.hi, t.id, t.name, t.year
+            SELECT c.idx, c.lo, c.hi, t.id, t.name, t.year, t.elsewhere
               FROM c JOIN t ON t.normalized_name = c.name_norm AND t.id <> c.from_id
             UNION
-            SELECT c.idx, c.lo, c.hi, t.id, t.name, t.year
+            SELECT c.idx, c.lo, c.hi, t.id, t.name, t.year, t.elsewhere
               FROM c JOIN t ON t.base = c.name_norm AND t.id <> c.from_id
         ), scored AS (
-            SELECT m.idx, m.id AS to_id, m.name AS to_name, m.year AS to_year,
+            SELECT m.idx, m.id AS to_id, m.name AS to_name, m.year AS to_year, m.elsewhere,
                    (SELECT count(*) FROM issues i
                      WHERE i.series_id = m.id AND i.removed_at IS NULL
                        AND i.sort_number BETWEEN m.lo AND m.hi) AS covered,
@@ -994,7 +1004,7 @@ pub async fn collected_editions<C: ConnectionTrait>(
         )
         SELECT DISTINCT ON (idx) idx, to_id, to_name, to_year, covered, n_candidates
           FROM scored
-         ORDER BY idx, covered DESC, to_year NULLS LAST, to_id
+         ORDER BY idx, covered DESC, elsewhere, to_year NULLS LAST, to_id
         "#
     );
     let idx: Vec<i32> = (0..cites.len() as i32).collect();
@@ -1177,8 +1187,8 @@ struct ReprintRow {
     in_span: i64,
 }
 
-/// `issue_reprints` (issue → reprinted issue, both in the library) rolled
-/// up per series pair. The reprinting side is the subject: `collects` when
+/// `issue_reprints` (issue of this library → reprinted issue, in any
+/// library since WP-8.2) rolled up per series pair. The reprinting side is the subject: `collects` when
 /// it is a collected edition ([`collected_by`]), else `reprints`. `to_range`
 /// is the reprinted numbers compacted ("1-6,9"), `from_range` the
 /// reprinting issues'; `coverage` is `full` when every issue of the target
@@ -1196,8 +1206,8 @@ pub async fn reprint_rollup<C: ConnectionTrait>(
                    i.sort_number AS fnum, t.sort_number AS tnum
               FROM issue_reprints rp
               JOIN issues i ON i.id = rp.issue_id AND i.library_id = $1 AND i.removed_at IS NULL
-              JOIN issues t ON t.id = rp.reprinted_issue_id
-                           AND t.library_id = $1 AND t.removed_at IS NULL
+              -- WP-8.2: the reprinted issue may be in any library.
+              JOIN issues t ON t.id = rp.reprinted_issue_id AND t.removed_at IS NULL
              WHERE t.series_id <> i.series_id
         ), agg AS (
             SELECT from_id, to_id,
@@ -1596,6 +1606,7 @@ pub async fn provider_ranges<C: ConnectionTrait>(
 #[derive(Debug, FromQueryResult)]
 struct AssocSeries {
     id: Uuid,
+    library_id: Uuid,
     name: String,
     year: Option<i32>,
     series_type: Option<String>,
@@ -1609,6 +1620,14 @@ struct AssocSeries {
 /// untyped, so the kind comes from the two **local** series types / names
 /// ([`crate::relationships::external::provider_kind`]): `collects` (edition
 /// → singles) or `annual_of` when the types say so, else `see_also`.
+///
+/// WP-8.2: a `collects` link may pair two libraries (a trade library and a
+/// singles library), so rows of **every** library are resolved and a pair
+/// is kept when either end is in this library; the engine's ownership
+/// filter then keeps the rows whose canonical `from` is here and drops a
+/// cross-library pair of any non-edition kind. Resolving every library's
+/// rows keeps this symmetric: whichever library owns a pair, its run sees
+/// it. Provider rows are bounded by curation (a few per applied series).
 pub async fn provider_associated<C: ConnectionTrait>(
     conn: &C,
     library_id: Uuid,
@@ -1617,8 +1636,8 @@ pub async fn provider_associated<C: ConnectionTrait>(
     let resolved = external::resolve_where(
         conn,
         "e.set_by = 'provider' AND e.dismissed_at IS NULL AND e.from_series_id IN \
-           (SELECT id FROM series WHERE library_id = $1 AND removed_at IS NULL)",
-        vec![library_id.into()],
+           (SELECT id FROM series WHERE removed_at IS NULL)",
+        vec![],
     )
     .await?;
     if resolved.is_empty() {
@@ -1639,9 +1658,9 @@ pub async fn provider_associated<C: ConnectionTrait>(
     series_ids.extend(rows.values().map(|r| r.from_series_id));
     let series: HashMap<Uuid, AssocSeries> = AssocSeries::find_by_statement(stmt(
         conn,
-        "SELECT id, name, year, series_type FROM series \
-          WHERE id = ANY($1) AND library_id = $2 AND removed_at IS NULL",
-        vec![series_ids.into(), library_id.into()],
+        "SELECT id, library_id, name, year, series_type FROM series \
+          WHERE id = ANY($1) AND removed_at IS NULL",
+        vec![series_ids.into()],
     ))
     .all(conn)
     .await?
@@ -1649,16 +1668,19 @@ pub async fn provider_associated<C: ConnectionTrait>(
     .map(|s| (s.id, s))
     .collect();
     let mut out = Vec::new();
-    for r in resolved
-        .into_iter()
-        .take(usize::try_from(SOURCE_ROW_LIMIT).unwrap_or(5000))
-    {
+    for r in resolved {
+        if out.len() >= usize::try_from(SOURCE_ROW_LIMIT).unwrap_or(5000) {
+            break;
+        }
         let (Some(row), Some(b)) = (rows.get(&r.ext_id), series.get(&r.series_id)) else {
             continue;
         };
         let Some(a) = series.get(&row.from_series_id) else {
             continue;
         };
+        if a.library_id != library_id && b.library_id != library_id {
+            continue;
+        }
         let (mut kind, mut confidence) = external::provider_kind(
             a.series_type.as_deref(),
             &a.name,
@@ -1768,23 +1790,37 @@ pub async fn collect_all<C: ConnectionTrait>(
     run!("provider_volume", provider_volumes(conn, library_id));
     run!("provider_range", provider_ranges(conn, library_id));
     run!("provider_associated", provider_associated(conn, library_id));
-    // Name-based detectors share one catalogue query (WP-7.6).
+    // Name-based detectors share one catalogue query (WP-7.6). WP-8.2: the
+    // edition detectors also see the other libraries' series that could
+    // pair with this library's (story / publication kinds stay local).
     match detectors::Catalogue::load(conn, library_id).await {
         Ok(cat) => {
             run!("annual", async { Ok::<_, DbErr>(detectors::annuals(&cat)) });
-            run!("alternate_edition", async {
-                Ok::<_, DbErr>(detectors::alternate_editions(&cat))
-            });
-            run!("facsimile", async {
-                Ok::<_, DbErr>(detectors::facsimiles(&cat))
-            });
             run!("supplement", async {
                 Ok::<_, DbErr>(detectors::supplements(&cat))
             });
-            run!(
-                "translation",
-                detectors::translations(conn, library_id, &cat)
-            );
+            match cat.with_other_libraries(conn, library_id).await {
+                Ok(wide) => {
+                    run!("alternate_edition", async {
+                        Ok::<_, DbErr>(detectors::alternate_editions(&wide))
+                    });
+                    run!("facsimile", async {
+                        Ok::<_, DbErr>(detectors::facsimiles(&wide))
+                    });
+                    run!(
+                        "translation",
+                        detectors::translations(conn, library_id, &wide)
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(library_id = %library_id, error = %e,
+                        "relationship suggestions: cross-library catalogue failed");
+                    for name in ["alternate_edition", "facsimile", "translation"] {
+                        counts.insert(name, 0);
+                        failed.push(name);
+                    }
+                }
+            }
         }
         Err(e) => {
             tracing::warn!(library_id = %library_id, error = %e,
@@ -1918,6 +1954,102 @@ mod tests {
         assert_eq!(norm_lang("eng"), "en");
         assert_eq!(norm_lang("en-US"), "en");
         assert_eq!(norm_lang("FRE"), "fr");
+    }
+
+    fn arc_row(arc: &str, series: &str, year: i32, n: i64) -> ArcSeriesRow {
+        ArcSeriesRow {
+            arc_id: Uuid::from_u128(7),
+            arc_name: arc.to_owned(),
+            series_id: Uuid::now_v7(),
+            series_name: series.to_owned(),
+            series_year: Some(year),
+            series_norm: entity::series::normalize_name(series),
+            n,
+            numbers: None,
+            first_ym: None,
+            last_ym: None,
+            t_prelude: false,
+            t_after: false,
+        }
+    }
+
+    fn main_of(group: &[ArcSeriesRow]) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        arc_group(group, &mut out);
+        out.iter()
+            .filter(|c| c.scope.qualifier == Some(RelationshipQualifier::Main))
+            .map(|c| {
+                let name = group
+                    .iter()
+                    .find(|r| r.series_id == c.from)
+                    .map(|r| r.series_name.clone())
+                    .unwrap_or_default();
+                (
+                    name,
+                    c.evidence["main_by"].as_str().unwrap_or("").to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn arc_main_series_rule_name_branch() {
+        // WP-8.2 step 1: the series named exactly like the arc wins, even
+        // over the reading-list family's series and over more issues.
+        let arc = "\"Secret Wars\" Battleworld";
+        let group = vec![
+            arc_row(arc, "Secret Wars", 2015, 9),
+            arc_row(arc, "Planet Hulk", 2015, 5),
+            arc_row(arc, "Secret Wars: Battleworld", 2015, 4),
+        ];
+        assert_eq!(
+            main_of(&group),
+            vec![("Secret Wars: Battleworld".to_owned(), "name".to_owned())]
+        );
+        // No exact match: the family's series wins ("Secret Wars").
+        let group = vec![
+            arc_row(arc, "Planet Hulk", 2015, 5),
+            arc_row(arc, "Secret Wars", 2015, 4),
+            arc_row(arc, "Battleworld", 2015, 3),
+        ];
+        assert_eq!(
+            main_of(&group),
+            vec![("Secret Wars".to_owned(), "name".to_owned())],
+            "the tail alone (\"Battleworld\") doesn't name the main series"
+        );
+        // Several volumes of the arc's name: the one with more arc issues.
+        let group = vec![
+            arc_row("Secret Wars", "Secret Wars", 2015, 9),
+            arc_row("Secret Wars", "Secret Wars", 1984, 2),
+            arc_row("Secret Wars", "Thors", 2015, 4),
+        ];
+        let m = main_of(&group);
+        assert_eq!(m.len(), 1);
+        assert_eq!(group[0].series_year, Some(2015));
+        assert_eq!(m[0].1, "name");
+    }
+
+    #[test]
+    fn arc_main_series_rule_most_issues_branch() {
+        // WP-8.2 step 2: nothing named like the arc — most issues wins.
+        let group = vec![
+            arc_row("Dark Reign", "Dark Avengers", 2009, 8),
+            arc_row("Dark Reign", "Thunderbolts", 2009, 3),
+            arc_row("Dark Reign", "Secret Warriors", 2009, 1),
+        ];
+        assert_eq!(
+            main_of(&group),
+            vec![("Dark Avengers".to_owned(), "margin".to_owned())]
+        );
+        let group = vec![
+            arc_row("Dark Reign", "Dark Avengers", 2009, 5),
+            arc_row("Dark Reign", "Thunderbolts", 2009, 3),
+            arc_row("Dark Reign", "Secret Warriors", 2009, 3),
+        ];
+        assert_eq!(
+            main_of(&group),
+            vec![("Dark Avengers".to_owned(), "weak".to_owned())]
+        );
     }
 
     #[test]

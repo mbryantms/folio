@@ -287,6 +287,28 @@ async fn put_external_id<C: ConnectionTrait>(
     set_by: SetBy,
     override_user: bool,
 ) -> Result<SetExternalIdOutcome, DbErr> {
+    put_external_id_promoting(
+        db,
+        entity_type,
+        entity_id,
+        identifier,
+        set_by,
+        override_user,
+    )
+    .await
+    .map(|(outcome, _)| outcome)
+}
+
+/// [`put_external_id`], also returning how many external links the
+/// promotion hook turned into series relationships (WP-8.2).
+async fn put_external_id_promoting<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: &str,
+    identifier: &Identifier,
+    set_by: SetBy,
+    override_user: bool,
+) -> Result<(SetExternalIdOutcome, usize), DbErr> {
     let url = identifier.url.clone().or_else(|| {
         crate::metadata::identifier::canonical_url(identifier.source, entity_type, &identifier.id)
     });
@@ -331,11 +353,14 @@ async fn put_external_id<C: ConnectionTrait>(
                     "skipping external_id write: a stronger tier owns this row"
                 );
             }
-            return Ok(if kept_by_user {
-                SetExternalIdOutcome::KeptUserValue { same_value }
-            } else {
-                SetExternalIdOutcome::KeptProviderValue { same_value }
-            });
+            return Ok((
+                if kept_by_user {
+                    SetExternalIdOutcome::KeptUserValue { same_value }
+                } else {
+                    SetExternalIdOutcome::KeptProviderValue { same_value }
+                },
+                0,
+            ));
         }
     }
 
@@ -360,9 +385,12 @@ async fn put_external_id<C: ConnectionTrait>(
                 .await?;
             reclaimed_from = Some(owner.entity_id);
         } else {
-            return Ok(SetExternalIdOutcome::SkippedConflict {
-                owner: owner.entity_id,
-            });
+            return Ok((
+                SetExternalIdOutcome::SkippedConflict {
+                    owner: owner.entity_id,
+                },
+                0,
+            ));
         }
     }
 
@@ -397,17 +425,20 @@ async fn put_external_id<C: ConnectionTrait>(
     // so anything that was waiting for that provider record resolves now —
     // external series links (`series_external_relationship`) and label-only
     // reprints. The suggestion run repeats both per library, so a missed
-    // hook only delays them.
+    // hook only delays them. WP-8.2: the pairs created are returned so a
+    // caller holding an `AppState` can drop the similar-series cache.
+    let mut promoted_pairs = 0;
     match entity_type {
         "series" => {
             if let Ok(series_id) = Uuid::parse_str(entity_id) {
-                crate::relationships::external::promote_for_provider_id(
+                promoted_pairs = crate::relationships::external::promote_for_provider_id(
                     db,
                     series_id,
                     identifier.source.as_str(),
                     &identifier.id,
                 )
-                .await?;
+                .await?
+                .pairs_created;
             }
         }
         "issue" => {
@@ -420,10 +451,13 @@ async fn put_external_id<C: ConnectionTrait>(
         }
         _ => {}
     }
-    Ok(match reclaimed_from {
-        Some(from) => SetExternalIdOutcome::Reclaimed { from },
-        None => SetExternalIdOutcome::Set,
-    })
+    Ok((
+        match reclaimed_from {
+            Some(from) => SetExternalIdOutcome::Reclaimed { from },
+            None => SetExternalIdOutcome::Set,
+        },
+        promoted_pairs,
+    ))
 }
 
 /// Public surface for external-ID writes — used by the
@@ -436,6 +470,21 @@ pub async fn set_external_id<C: ConnectionTrait>(
     set_by: SetBy,
 ) -> Result<SetExternalIdOutcome, DbErr> {
     put_external_id(db, entity_type, entity_id, identifier, set_by, false).await
+}
+
+/// [`set_external_id`], also returning how many external links
+/// (`series_external_relationship` user rows) the promotion hook turned
+/// into series relationships. WP-8.2: the hook has no `AppState`, so a
+/// caller that holds one calls `state.similarity.invalidate_all()` when
+/// this is non-zero — a new edge is a similar-series signal.
+pub async fn set_external_id_promoting<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: &str,
+    identifier: &Identifier,
+    set_by: SetBy,
+) -> Result<(SetExternalIdOutcome, usize), DbErr> {
+    put_external_id_promoting(db, entity_type, entity_id, identifier, set_by, false).await
 }
 
 /// [`set_external_id`] with an explicit user-precedence override.
