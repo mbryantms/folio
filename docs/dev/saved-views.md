@@ -49,6 +49,7 @@ guards the mirror.
 | `rating`                                | caller's own series rating (`user_ratings`, `target_type='series'`) | caller's own issue rating (`target_type='issue'`) |
 | `special_type`, `format`, `story_arc`, `title` | —                             | `issues.*` (`title` = the issue's own title) |
 | `has_notes`, `has_bookmarks`, `has_highlights` (WP-5.7) | the caller has a marker of that kind on any (non-removed) issue of the series | the caller has a marker of that kind on the issue |
+| `has_favorites` (WP-8.4) | the caller starred something on any (non-removed) issue of the series: a `favorite` marker or any marker with `is_favorite` | same, on the issue |
 | `read_progress`, `last_read`, `read_count`, `unread_issues`, `collection_completeness`, `metadata_completeness` | per-series rollups | — |
 
 ### `is_empty` / `is_not_empty`
@@ -71,15 +72,20 @@ them).
 
 ### Annotation filters (WP-5.7)
 
-`has_notes` / `has_bookmarks` / `has_highlights` are boolean fields
-(`is_true` / `is_false`, no value) compiled to
+`has_notes` / `has_bookmarks` / `has_highlights` / `has_favorites` are
+boolean fields (`is_true` / `is_false`, no value) compiled to
 `[NOT] EXISTS (SELECT 1 FROM markers m JOIN issues mi … WHERE m.user_id =
 <viewer> AND m.kind = '<kind>' AND …)`. Markers are private, so the probe
 is **always** scoped to the viewing user — another user's notes never
 make a row match, and a shared system view evaluates per viewer. Markers
-on removed issues don't count. `favorite` markers have no filter. The
+on removed issues don't count. `has_favorites` (WP-8.4) matches
+`(m.kind = 'favorite' OR m.is_favorite)` — favorite is both a kind (the
+page-level star) and a flag on any marker, the same union the
+/bookmarks "Favorites" chip shows; it reuses `Source::MarkerExists`
+with the `favorite` kind, special-cased in `marker_predicate`. The
 series-level probe is served by `markers_user_series_kind_idx`
-(`m20270307`).
+(`m20270307`); the favourite flag arm filters within the same
+`(user_id, series_id)` prefix.
 
 ## The compiler
 
@@ -131,9 +137,19 @@ read-status chips carry over as `rating between` / `read_status in`.
 Facets with no equivalent on the target entity (metadata completeness in
 issues mode) are reported as dropped and toasted.
 
+## OPDS
+
+Pinned or sidebar-visible filter views appear in the OPDS personal feeds
+(`/opds/v1/views`, `/opds/v2/views`, and each page under `/opds/*/pages/
+{slug}`), both kinds since WP-8.4. `/opds/*/views/{id}` dispatches on
+kind: a `filter_series` view renders series subsection / navigation
+entries; a `filter_issues` view renders issue acquisition entries (v1)
+or publications (v2) through `opds::issue_view_issues`, which runs the
+same `compile_issues` root as `…/issue-results` (ACL, age-rating cap,
+the view's sort) capped at the view's `result_limit`, like the series
+feed. Another user's view is a 404 on both protocols.
+
 ## Not (yet) covered
 
-- OPDS feeds only expose `filter_series` views; issue views don't appear
-  in `/opds/*/views`.
 - The issue-view detail page has no multi-select toolbar (the series
   view's bulk actions are series-shaped).

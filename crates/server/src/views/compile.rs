@@ -724,10 +724,17 @@ fn marker_predicate(
         ViewEntity::Series => "m.series_id = series.id",
         ViewEntity::Issue => "m.issue_id = issues.id",
     };
+    // `favorite` (WP-8.4) is both a kind and a flag on any marker; match
+    // either, like the /bookmarks "Favorites" chip.
+    let kind_clause = if kind == "favorite" {
+        "(m.kind = 'favorite' OR m.is_favorite)".to_owned()
+    } else {
+        format!("m.kind = '{kind}'")
+    };
     let exists = format!(
         "EXISTS (SELECT 1 FROM markers m \
          JOIN issues mi ON mi.id = m.issue_id AND mi.removed_at IS NULL \
-         WHERE m.user_id = $1 AND m.kind = '{kind}' AND {owner})"
+         WHERE m.user_id = $1 AND {kind_clause} AND {owner})"
     );
     let expr = match cond.op {
         Op::IsTrue => Expr::cust_with_values(exists, [ctx.user_id]),
@@ -1746,6 +1753,31 @@ mod tests {
         );
         // Removed issues' markers never count.
         assert!(sql.contains("mi.removed_at IS NULL"), "SQL: {sql}");
+    }
+
+    #[test]
+    fn has_favorites_matches_the_kind_or_the_flag() {
+        let sql = issues_sql(vec![cond(Field::HasFavorites, Op::IsTrue, json!(null))]).unwrap();
+        assert!(
+            sql.contains("(m.kind = 'favorite' OR m.is_favorite)")
+                && sql.contains("m.issue_id = issues.id")
+                && sql.contains("mi.removed_at IS NULL"),
+            "SQL: {sql}"
+        );
+        let uid = Uuid::from_u128(0xfa7);
+        let dsl = dsl_all(vec![cond(Field::HasFavorites, Op::IsFalse, json!(null))]);
+        let series = compile(&CompileInput {
+            user_id: uid,
+            ..make(dsl)
+        })
+        .unwrap()
+        .to_string(PostgresQueryBuilder);
+        assert!(
+            series.contains("NOT EXISTS (SELECT 1 FROM markers m")
+                && series.contains("m.series_id = series.id")
+                && series.contains(&uid.to_string()),
+            "SQL: {series}"
+        );
     }
 
     #[test]

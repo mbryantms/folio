@@ -303,6 +303,8 @@ export type MarkerView = {
   selection?: MarkerSelection | null;
   body?: string | null;
   color?: string | null;
+  /** WP-6.2 page-image anchor; carried through Undo (WP-8.4). */
+  page_hash?: string | null;
   created_at: string;
   updated_at: string;
   series_name?: string | null;
@@ -320,6 +322,12 @@ export type MarkerListView = {
 export type MarkerCountView = Schemas["MarkerCountView"];
 export type MarkerBulkDeleteReq = Schemas["BulkDeleteReq"];
 export type MarkerBulkDeleteResp = Schemas["BulkDeleteResp"];
+export type RestoreMarkerItem = Schemas["RestoreMarkerItem"];
+export type RestoreMarkersReq = Schemas["RestoreMarkersReq"];
+export type RestoreMarkersResp = {
+  restored: MarkerView[];
+  skipped: number;
+};
 export type MarkerSearchHit = {
   id: string;
   kind: MarkerKind;

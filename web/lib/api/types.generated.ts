@@ -3046,6 +3046,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/markers/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /me/markers/restore` — undo a marker delete in one request
+         *     (WP-8.4). The client sends the snapshots it captured before the
+         *     delete; each is re-inserted under its original id with its content,
+         *     tags, colour, region, selection, and page hash. Owner-scoped (rows
+         *     are always written for the caller) and ACL-checked per issue; one
+         *     `marker_write` token per request, however many markers it restores.
+         */
+        post: operations["markers_restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/markers/search": {
         parameters: {
             query?: never;
@@ -7596,6 +7620,11 @@ export interface components {
             is_favorite: boolean;
             issue: components["schemas"]["IssueRef"];
             kind: string;
+            /**
+             * @description Hex BLAKE3 of the page image at `page_index` (WP-6.2). `None` until
+             *     the page could be hashed.
+             */
+            page_hash?: string | null;
             /** Format: int32 */
             page_index: number;
             region?: Record<string, never> | null;
@@ -7657,6 +7686,12 @@ export interface components {
             issue: components["schemas"]["IssueRef"];
             /** Format: int32 */
             last_page: number;
+            /**
+             * @description Hex BLAKE3 of the page image at `last_page` (WP-6.2), so an import
+             *     can re-anchor the position to its image in a different copy of the
+             *     archive. `None` until the page could be hashed.
+             */
+            page_hash?: string | null;
             /** Format: double */
             percent: number;
             /**
@@ -7871,7 +7906,7 @@ export interface components {
          *     JSON constant.
          * @enum {string}
          */
-        Field: "library" | "name" | "year" | "volume" | "total_issues" | "publisher" | "imprint" | "status" | "age_rating" | "language_code" | "created_at" | "updated_at" | "genres" | "tags" | "writer" | "penciller" | "inker" | "colorist" | "letterer" | "cover_artist" | "editor" | "translator" | "characters" | "teams" | "locations" | "read_progress" | "last_read" | "read_count" | "read_status" | "unread_issues" | "collection_completeness" | "metadata_completeness" | "special_type" | "format" | "story_arc" | "title" | "rating" | "has_notes" | "has_bookmarks" | "has_highlights";
+        Field: "library" | "name" | "year" | "volume" | "total_issues" | "publisher" | "imprint" | "status" | "age_rating" | "language_code" | "created_at" | "updated_at" | "genres" | "tags" | "writer" | "penciller" | "inker" | "colorist" | "letterer" | "cover_artist" | "editor" | "translator" | "characters" | "teams" | "locations" | "read_progress" | "last_read" | "read_count" | "read_status" | "unread_issues" | "collection_completeness" | "metadata_completeness" | "special_type" | "format" | "story_arc" | "title" | "rating" | "has_notes" | "has_bookmarks" | "has_highlights" | "has_favorites";
         /**
          * @description One field's provenance: which source set it, when, and (for provider
          *     sources) which external record it came from.
@@ -8735,6 +8770,13 @@ export interface components {
              *     flag — see `is_favorite`.
              */
             kind: string;
+            /**
+             * @description Hex BLAKE3 of the page image the marker is anchored to (WP-6.2).
+             *     `None` until the page could be hashed; the Undo flow sends it
+             *     back on `POST /me/markers/restore` so the restored marker keeps
+             *     its image anchor.
+             */
+            page_hash?: string | null;
             /** Format: int32 */
             page_index: number;
             /**
@@ -10252,6 +10294,60 @@ export interface components {
              *     the process is actually running. Empty when nothing needs a restart.
              */
             pending: components["schemas"]["RestartPendingItem"][];
+        };
+        /**
+         * @description One deleted marker as the client snapshotted it (a [`MarkerView`]
+         *     projection). Same field rules as [`CreateMarkerReq`], plus the
+         *     identity the restore keeps: the original `id`, `created_at`, and
+         *     `page_hash`.
+         */
+        RestoreMarkerItem: {
+            body?: string | null;
+            color?: string | null;
+            /**
+             * Format: date-time
+             * @description The original creation time (RFC 3339). Defaults to now; a future
+             *     timestamp is clamped to now.
+             */
+            created_at?: string | null;
+            /**
+             * Format: uuid
+             * @description The deleted marker's id. Restored under the same id, so a link to
+             *     it (`/markers/{id}`) keeps working. An id that already exists is
+             *     skipped (a repeated Undo is a no-op).
+             */
+            id: string;
+            is_favorite?: boolean;
+            issue_id: string;
+            /** @description `'bookmark' | 'note' | 'favorite' | 'highlight'`. */
+            kind: string;
+            /**
+             * @description The page-image anchor the marker had (WP-6.2). Omit when unknown;
+             *     a restored marker without one is hashed lazily the next time the
+             *     issue's archive is opened.
+             */
+            page_hash?: string | null;
+            /** Format: int32 */
+            page_index: number;
+            region?: unknown;
+            selection?: unknown;
+            tags?: string[];
+        };
+        /** @description Body for `POST /me/markers/restore`. */
+        RestoreMarkersReq: {
+            /** @description At most 500 snapshots (the bulk-delete cap). */
+            markers: components["schemas"]["RestoreMarkerItem"][];
+        };
+        RestoreMarkersResp: {
+            /** @description The markers re-inserted, in request order. */
+            restored: components["schemas"]["MarkerView"][];
+            /**
+             * Format: int32
+             * @description Snapshots not restored: the id already exists (a repeated Undo,
+             *     or another user's row), the issue is gone or no longer visible,
+             *     or the page no longer exists.
+             */
+            skipped: number;
         };
         RestoreResponse: {
             issue_id: string;
@@ -18470,6 +18566,43 @@ export interface operations {
                 };
                 content?: never;
             };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    markers_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreMarkersReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreMarkersResp"];
+                };
+            };
+            /** @description validation (per-field `error.details`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description marker write rate limit */
             429: {
                 headers: {
                     [name: string]: unknown;

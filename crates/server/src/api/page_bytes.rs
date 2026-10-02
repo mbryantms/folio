@@ -92,9 +92,15 @@ pub async fn serve(
 
     let (arc, pread) = match app
         .zip_lru
-        .get_or_open_indexed(&row.id, std::path::Path::new(&row.file_path))
+        .get_or_open_indexed_tracked(&row.id, std::path::Path::new(&row.file_path))
     {
-        Ok(pair) => pair,
+        Ok((pair, opened)) => {
+            if opened {
+                // WP-8.4: fill legacy anchors' page hashes off the hot path.
+                crate::reading::page_hash_backfill::spawn_on_open(&app, &row);
+            }
+            pair
+        }
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %row.id, "zip_lru open failed");
             return error(
@@ -399,9 +405,14 @@ async fn serve_variant(
     // Miss: extract the full page, render off-thread.
     let (arc, _pread) = match app
         .zip_lru
-        .get_or_open_indexed(&row.id, std::path::Path::new(&row.file_path))
+        .get_or_open_indexed_tracked(&row.id, std::path::Path::new(&row.file_path))
     {
-        Ok(pair) => pair,
+        Ok((pair, opened)) => {
+            if opened {
+                crate::reading::page_hash_backfill::spawn_on_open(app, row);
+            }
+            pair
+        }
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %row.id, "zip_lru open failed");
             return error(

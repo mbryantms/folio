@@ -12,19 +12,41 @@ import type * as Mutations from "@/lib/api/mutations/markers";
 
 // vi.mock factories are hoisted above imports, so anything they close over
 // must be hoisted too.
-const { toast, createMutate, updateMutate } = vi.hoisted(() => ({
-  toast: Object.assign(vi.fn(), {
-    error: vi.fn(),
-    success: vi.fn(),
-    loading: vi.fn(),
-    dismiss: vi.fn(),
-    message: vi.fn(),
-    info: vi.fn(),
-    warning: vi.fn(),
-  }),
-  createMutate: vi.fn(),
-  updateMutate: vi.fn(),
+const { PERSISTED } = vi.hoisted(() => ({
+  PERSISTED: {
+    id: "m-del",
+    user_id: "u-1",
+    series_id: "s-1",
+    issue_id: "issue-1",
+    page_index: 2,
+    kind: "note",
+    is_favorite: false,
+    tags: ["plot"],
+    region: null,
+    selection: null,
+    body: "keep me",
+    color: "violet",
+    page_hash: "b".repeat(64),
+    created_at: "2026-09-01T10:00:00+00:00",
+    updated_at: "2026-09-01T10:00:00+00:00",
+  },
 }));
+const { toast, createMutate, updateMutate, deleteMutate, restoreMutate } =
+  vi.hoisted(() => ({
+    toast: Object.assign(vi.fn(), {
+      error: vi.fn(),
+      success: vi.fn(),
+      loading: vi.fn(),
+      dismiss: vi.fn(),
+      message: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+    }),
+    createMutate: vi.fn(),
+    updateMutate: vi.fn(),
+    deleteMutate: vi.fn(),
+    restoreMutate: vi.fn(),
+  }));
 vi.mock("sonner", () => ({ toast }));
 
 vi.mock("@/lib/api/queries", async (importOriginal) => ({
@@ -32,12 +54,15 @@ vi.mock("@/lib/api/queries", async (importOriginal) => ({
   useMarkerTags: () => ({
     data: { items: [{ tag: "action" }, { tag: "adventure" }] },
   }),
+  // The persisted rows the overlay already holds (Undo restores from it).
+  useIssueMarkers: () => ({ data: { items: [PERSISTED] } }),
 }));
 vi.mock("@/lib/api/mutations/markers", async (importOriginal) => ({
   ...(await importOriginal<typeof Mutations>()),
   useCreateMarker: () => ({ mutate: createMutate, isPending: false }),
   useUpdateMarker: () => ({ mutate: updateMutate, isPending: false }),
-  useDeleteMarker: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteMarker: () => ({ mutate: deleteMutate, isPending: false }),
+  useRestoreMarkers: () => ({ mutate: restoreMutate, isPending: false }),
 }));
 
 import { MarkerEditor } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/MarkerEditor";
@@ -75,10 +100,13 @@ beforeEach(() => {
   } as never);
 });
 afterEach(() => {
+  deleteMutate.mockReset();
+  restoreMutate.mockReset();
   createMutate.mockReset();
   updateMutate.mockReset();
   toast.mockReset();
   toast.error.mockReset();
+  toast.success.mockReset();
 });
 
 describe("MarkerEditor (jsdom)", () => {
@@ -135,6 +163,41 @@ describe("MarkerEditor (jsdom)", () => {
     fireEvent.change(input, { target: { value: "" } });
     fireEvent.keyDown(input, { key: "Backspace" });
     expect(screen.queryByRole("button", { name: "Remove action" })).toBeNull();
+  });
+
+  it("delete offers an Undo that restores the persisted row in one request (WP-8.4)", async () => {
+    useReaderStore.getState().beginMarkerEdit(
+      {
+        kind: "note",
+        page_index: 2,
+        region: null,
+        selection: null,
+        body: "keep me",
+        is_favorite: false,
+        tags: ["plot"],
+      },
+      "m-del",
+    );
+    renderEditor();
+    fireEvent.click(await screen.findByRole("button", { name: /delete/i }));
+    await waitFor(() => expect(deleteMutate).toHaveBeenCalledTimes(1));
+    // Run the delete's onSuccess, then click the toast's Undo.
+    deleteMutate.mock.calls[0]?.[1]?.onSuccess?.();
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "Removed",
+        expect.objectContaining({
+          action: expect.objectContaining({ label: "Undo" }),
+        }),
+      ),
+    );
+    const undo = toast.success.mock.calls[0]?.[1]?.action as {
+      onClick: () => void;
+    };
+    undo.onClick();
+    expect(restoreMutate).toHaveBeenCalledTimes(1);
+    expect(restoreMutate).toHaveBeenCalledWith([PERSISTED]);
+    expect(createMutate).not.toHaveBeenCalled();
   });
 
   it("cancel on a dirty draft closes the sheet and offers Undo; pristine cancel is silent", async () => {

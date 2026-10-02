@@ -134,6 +134,10 @@ pub struct Inner {
     /// ACL applied per request). Invalidated by scans, metadata applies
     /// and manual metadata edits. See [`crate::similarity`].
     pub similarity: Arc<crate::similarity::SimilarityCache>,
+    /// Issues with a lazy page-hash backfill running (WP-8.4), so a
+    /// burst of archive opens starts at most one task per issue. See
+    /// [`crate::reading::page_hash_backfill`].
+    pub page_hash_backfill_inflight: Arc<std::sync::Mutex<HashSet<String>>>,
 }
 
 impl AppState {
@@ -217,6 +221,7 @@ impl AppState {
             )),
             watchers: Arc::new(crate::library::watcher::WatcherRegistry::new()),
             similarity: Arc::new(crate::similarity::SimilarityCache::new()),
+            page_hash_backfill_inflight: Arc::new(std::sync::Mutex::new(HashSet::new())),
         }))
     }
 

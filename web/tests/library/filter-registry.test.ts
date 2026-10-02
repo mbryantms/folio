@@ -54,6 +54,7 @@ const ALL_FIELDS: Field[] = [
   "has_notes",
   "has_bookmarks",
   "has_highlights",
+  "has_favorites",
 ];
 
 const ALL_OPS: Op[] = [
@@ -160,11 +161,12 @@ describe("filter field registry", () => {
     expect(opTakesNoValue("equals")).toBe(false);
   });
 
-  it("marker filters are boolean and offered on both entities (WP-5.7)", () => {
+  it("marker filters are boolean and offered on both entities (WP-5.7, WP-8.4)", () => {
     for (const f of [
       "has_notes",
       "has_bookmarks",
       "has_highlights",
+      "has_favorites",
     ] as Field[]) {
       const spec = specFor(f);
       expect(spec.kind).toBe("bool");

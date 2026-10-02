@@ -6761,6 +6761,39 @@
         }
       }
     },
+    "/api/me/markers/restore": {
+      "post": {
+        "summary": "`POST /me/markers/restore` — undo a marker delete in one request\n(WP-8.4). The client sends the snapshots it captured before the\ndelete; each is re-inserted under its original id with its content,\ntags, colour, region, selection, and page hash. Owner-scoped (rows\nare always written for the caller) and ACL-checked per issue; one\n`marker_write` token per request, however many markers it restores.",
+        "operationId": "markers_restore",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreMarkersReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreMarkersResp"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "validation (per-field `error.details`)"
+          },
+          "429": {
+            "description": "marker write rate limit"
+          }
+        }
+      }
+    },
     "/api/me/markers/search": {
       "get": {
         "operationId": "markers_search",
@@ -18197,6 +18230,13 @@
           "kind": {
             "type": "string"
           },
+          "page_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Hex BLAKE3 of the page image at `page_index` (WP-6.2). `None` until\nthe page could be hashed."
+          },
           "page_index": {
             "type": "integer",
             "format": "int32"
@@ -18422,6 +18462,13 @@
           "last_page": {
             "type": "integer",
             "format": "int32"
+          },
+          "page_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Hex BLAKE3 of the page image at `last_page` (WP-6.2), so an import\ncan re-anchor the position to its image in a different copy of the\narchive. `None` until the page could be hashed."
           },
           "percent": {
             "type": "number",
@@ -19061,7 +19108,8 @@
           "rating",
           "has_notes",
           "has_bookmarks",
-          "has_highlights"
+          "has_highlights",
+          "has_favorites"
         ]
       },
       "FieldProvenanceRow": {
@@ -20995,6 +21043,13 @@
           "kind": {
             "type": "string",
             "description": "`'bookmark' | 'note' | 'highlight' | 'favorite'`. Favorite is\nboth a kind (re-introduced 2026-05-20) and, for any marker, a\nflag — see `is_favorite`."
+          },
+          "page_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Hex BLAKE3 of the page image the marker is anchored to (WP-6.2).\n`None` until the page could be hashed; the Undo flow sends it\nback on `POST /me/markers/restore` so the restored marker keeps\nits image anchor."
           },
           "page_index": {
             "type": "integer",
@@ -24621,6 +24676,112 @@
               "$ref": "#/components/schemas/RestartPendingItem"
             },
             "description": "Boot-only settings whose persisted value now differs from the value\nthe process is actually running. Empty when nothing needs a restart."
+          }
+        }
+      },
+      "RestoreMarkerItem": {
+        "type": "object",
+        "description": "One deleted marker as the client snapshotted it (a [`MarkerView`]\nprojection). Same field rules as [`CreateMarkerReq`], plus the\nidentity the restore keeps: the original `id`, `created_at`, and\n`page_hash`.",
+        "required": [
+          "id",
+          "issue_id",
+          "page_index",
+          "kind"
+        ],
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(yellow|green|blue|red|violet|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The original creation time (RFC 3339). Defaults to now; a future\ntimestamp is clamped to now."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The deleted marker's id. Restored under the same id, so a link to\nit (`/markers/{id}`) keeps working. An id that already exists is\nskipped (a repeated Undo is a no-op)."
+          },
+          "is_favorite": {
+            "type": "boolean"
+          },
+          "issue_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`'bookmark' | 'note' | 'favorite' | 'highlight'`."
+          },
+          "page_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The page-image anchor the marker had (WP-6.2). Omit when unknown;\na restored marker without one is hashed lazily the next time the\nissue's archive is opened.",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "page_index": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "region": {},
+          "selection": {},
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "RestoreMarkersReq": {
+        "type": "object",
+        "description": "Body for `POST /me/markers/restore`.",
+        "required": [
+          "markers"
+        ],
+        "properties": {
+          "markers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RestoreMarkerItem"
+            },
+            "description": "At most 500 snapshots (the bulk-delete cap)."
+          }
+        }
+      },
+      "RestoreMarkersResp": {
+        "type": "object",
+        "required": [
+          "restored",
+          "skipped"
+        ],
+        "properties": {
+          "restored": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MarkerView"
+            },
+            "description": "The markers re-inserted, in request order."
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Snapshots not restored: the id already exists (a repeated Undo,\nor another user's row), the issue is gone or no longer visible,\nor the page no longer exists.",
+            "minimum": 0
           }
         }
       },

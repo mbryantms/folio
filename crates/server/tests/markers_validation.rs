@@ -306,11 +306,11 @@ async fn captured_text_is_editable_and_round_trips() {
 async fn marker_writes_share_a_rate_limit_bucket() {
     let (app, auth, _issue, _tmp) = setup().await;
     // An empty bulk delete is the cheapest write (no marker query), so it
-    // drains the bucket quickly. Burst is 600; the bucket refills at
-    // 10/s while the loop runs, so the 429 lands somewhere after that.
+    // drains the bucket quickly. Burst is 60 (WP-8.4); the bucket refills
+    // at 10/s while the loop runs, so the 429 lands somewhere after that.
     let mut allowed = 0;
     let mut limited = None;
-    for _ in 0..3000 {
+    for _ in 0..600 {
         let (s, b) = http(
             &app,
             Method::POST,
@@ -327,7 +327,7 @@ async fn marker_writes_share_a_rate_limit_bucket() {
         allowed += 1;
     }
     let body = limited.expect("marker write bucket never tripped");
-    assert!(allowed >= 600, "tripped after only {allowed} writes");
+    assert!(allowed >= 60, "tripped after only {allowed} writes");
     assert_eq!(body["error"]["code"], "rate_limited");
 
     // The bucket is shared by every write route…

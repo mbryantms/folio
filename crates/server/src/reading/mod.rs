@@ -6,5 +6,6 @@
 //! `m20261204_000001_user_series_progress_view`).
 
 pub mod page_hash;
+pub mod page_hash_backfill;
 pub mod page_remap;
 pub mod series_progress;

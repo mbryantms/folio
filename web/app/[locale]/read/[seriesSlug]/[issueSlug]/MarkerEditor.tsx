@@ -17,11 +17,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { useMarkerTags } from "@/lib/api/queries";
+import { useIssueMarkers, useMarkerTags } from "@/lib/api/queries";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import {
   useCreateMarker,
   useDeleteMarker,
+  useRestoreMarkers,
   useUpdateMarker,
 } from "@/lib/api/mutations/markers";
 import type { MarkerSelection } from "@/lib/api/types";
@@ -69,6 +70,10 @@ export function MarkerEditor({
 
   const { copy: copyText } = useCopyToClipboard();
   const create = useCreateMarker();
+  const restore = useRestoreMarkers();
+  // The overlay already holds this query; reading it here costs no
+  // request and gives Undo the persisted row (id, colour, page hash).
+  const issueMarkers = useIssueMarkers(issueId);
   const update = useUpdateMarker(editingMarkerId ?? "", issueId);
   const del = useDeleteMarker(editingMarkerId ?? "", issueId, {
     silent: true,
@@ -278,11 +283,16 @@ export function MarkerEditor({
 
   function handleDelete() {
     if (!editingMarkerId || !pendingMarker) return;
-    // Snapshot the marker before delete so Undo can recreate it. We
-    // capture the *editor's current view* of the marker (which mirrors
-    // the persisted row at open time — unsaved edits would have gone
-    // through `update.mutate` first if the user clicked Save).
-    const snapshot = {
+    // Snapshot the persisted row before delete so Undo restores it in
+    // one request with its id, colour and page hash (WP-8.4). Unsaved
+    // edits would have gone through `update.mutate` first if the user
+    // clicked Save, so the cached row is the current state.
+    const persisted = issueMarkers.data?.items.find(
+      (m) => m.id === editingMarkerId,
+    );
+    // Fallback when the cache doesn't hold the row: re-create from the
+    // editor's view of the marker.
+    const draft = {
       issue_id: issueId,
       page_index: pendingMarker.page_index,
       kind: pendingMarker.kind,
@@ -299,7 +309,8 @@ export function MarkerEditor({
           duration: UNDO_TOAST_DURATION_MS,
           action: {
             label: "Undo",
-            onClick: () => create.mutate(snapshot),
+            onClick: () =>
+              persisted ? restore.mutate([persisted]) : create.mutate(draft),
           },
         });
         close();

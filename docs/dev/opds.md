@@ -55,8 +55,13 @@ realm="Folio"` so reader apps prompt for credentials.
 Linked from the root feed. Membership, library ACL and age-rating caps
 come from the same `api::entity_pages` core as the web landing pages, so
 a feed never lists an entity (or issue) the caller can't see; an entity
-with no visible appearance 404s. OPDS 1.x only — the v2 content
-negotiation deliberately skips these paths (no `/opds/v2` twin yet).
+with no visible appearance 404s. Each has an OPDS 2.0 twin under
+`/opds/v2/{characters,teams,arcs,publishers}[/{slug}]` (WP-8.4): the
+indexes are navigation feeds, character / team / arc feeds are
+publications (arcs with per-publication `previous` / `next` links, like
+the v1 PSE nav), and a publisher feed is series navigation. The v2 root
+links all four, and `Accept: application/opds+json` on a v1 entity path
+308-redirects to its twin.
 
 | Endpoint | Returns | Notes |
 |---|---|---|
@@ -84,10 +89,10 @@ Facet groups exposed:
 | `/opds/v1/lists/{cbl_id}` | One reading list | Issues in reading order. |
 | `/opds/v1/collections` | The user's named collections | |
 | `/opds/v1/collections/{id}` | One collection | Mixed series + issue entries. |
-| `/opds/v1/views` | The user's saved filter views | |
-| `/opds/v1/views/{view_id}` | One filter view's series | Same compile path as the web view. |
+| `/opds/v1/views` | The user's saved filter views | Series views and (WP-8.4) issue views. |
+| `/opds/v1/views/{view_id}` | One filter view's results | A series view lists series subsections; an issue view lists issue acquisition entries (v2: publications). Same compile paths as the web view, capped at the view's result limit. |
 | `/opds/v1/pages` | The user's custom Pages | Drill-in to per-page feeds. |
-| `/opds/v1/pages/{slug}` | One Page's pinned views | Per-kind dispatch: filter → /views, CBL → /lists, collection → /collections. |
+| `/opds/v1/pages/{slug}` | One Page's pinned views | Per-kind dispatch: series or issue filter → /views, CBL → /lists, collection → /collections. |
 
 ### Acquisition + streaming
 

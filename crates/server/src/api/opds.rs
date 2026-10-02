@@ -46,7 +46,7 @@ mod entities;
 
 use crate::api::collections::ensure_want_to_read_seeded;
 use crate::api::saved_views::{
-    KIND_CBL, KIND_COLLECTION, KIND_FILTER_SERIES, SYSTEM_KEY_WANT_TO_READ,
+    KIND_CBL, KIND_COLLECTION, KIND_FILTER_ISSUES, KIND_FILTER_SERIES, SYSTEM_KEY_WANT_TO_READ,
 };
 use crate::audit::{self, AuditEntry};
 use crate::auth::{CurrentUser, RequireProgressScope};
@@ -54,7 +54,7 @@ use crate::library::access;
 use crate::middleware::{RequestContext, rate_limit};
 use crate::state::AppState;
 use crate::views::{
-    compile::{self, CompileInput},
+    compile::{self, CompileInput, IssueCompileInput},
     dsl::{FilterDsl, MatchMode, SortField, SortOrder},
 };
 
@@ -194,12 +194,9 @@ async fn negotiate_opds_v2(req: Request, next: Next) -> Response {
         && accept.contains("application/opds+json")
         && suffix != "issues/{id}/file"
         && !suffix.starts_with("issues/")
-        // WP-5.5 entity feeds are OPDS 1.x only (no v2 twin yet) —
-        // serve Atom rather than redirect to a 404.
-        && !["characters", "teams", "arcs", "publishers"]
-            .iter()
-            .any(|p| suffix == *p || suffix.starts_with(&format!("{p}/")))
     {
+        // The WP-5.5 entity feeds redirect too since WP-8.4 gave them
+        // `/opds/v2` twins.
         let mut target = format!("/opds/v2/{suffix}");
         if let Some(q) = req.uri().query() {
             target.push('?');
@@ -3010,8 +3007,9 @@ async fn collection_acq(
 }
 
 /// `GET /opds/v1/views` — navigation feed of the user's pinned or
-/// sidebar-visible **filter** views (`kind = 'filter_series'`). CBL +
-/// collection saved views are filtered out — they have dedicated routes.
+/// sidebar-visible **filter** views: series views (`filter_series`) and,
+/// since WP-8.4, issue views (`filter_issues`). CBL + collection saved
+/// views are filtered out — they have dedicated routes.
 async fn views_nav(State(app): State<AppState>, user: CurrentUser) -> Response {
     let pins = match user_view_pin::Entity::find()
         .filter(user_view_pin::Column::UserId.eq(user.id))
@@ -3036,7 +3034,7 @@ async fn views_nav(State(app): State<AppState>, user: CurrentUser) -> Response {
     }
     let rows = match saved_view::Entity::find()
         .filter(saved_view::Column::Id.is_in(visible_ids.iter().copied().collect::<Vec<_>>()))
-        .filter(saved_view::Column::Kind.eq(KIND_FILTER_SERIES))
+        .filter(saved_view::Column::Kind.is_in([KIND_FILTER_SERIES, KIND_FILTER_ISSUES]))
         .filter(
             // Include system filter views (user_id IS NULL) AND the
             // caller's own. The pin row already gates visibility, but
@@ -3073,10 +3071,12 @@ async fn views_nav(State(app): State<AppState>, user: CurrentUser) -> Response {
     ))
 }
 
-/// `GET /opds/v1/views/{id}` — acquisition feed (series-subsection
-/// entries) of a filter view's results. Drives the same compile path as
-/// `/me/saved-views/{id}/results` so OPDS sees identical data to the web
-/// UI. Library ACL is enforced server-side by the compiler.
+/// `GET /opds/v1/views/{id}` — acquisition feed of a filter view's
+/// results: series-subsection entries for a series view, issue
+/// acquisition entries for an issue view (WP-8.4). Drives the same
+/// compile paths as `/me/saved-views/{id}/results` and
+/// `…/issue-results` so OPDS sees identical data to the web UI. Library
+/// ACL is enforced server-side by the compiler.
 async fn view_acq(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -3087,7 +3087,7 @@ async fn view_acq(
         Ok(None) => return not_found(),
         Err(e) => return server_error(e.to_string()),
     };
-    if view.kind != KIND_FILTER_SERIES {
+    if view.kind != KIND_FILTER_SERIES && view.kind != KIND_FILTER_ISSUES {
         // 404 to avoid leaking whether the id exists in another kind.
         return not_found();
     }
@@ -3095,6 +3095,32 @@ async fn view_acq(
         && owner != user.id
     {
         return not_found();
+    }
+    if view.kind == KIND_FILTER_ISSUES {
+        let issues = match issue_view_issues(&app, &user, &view).await {
+            Ok(i) => i,
+            Err(e) => return server_error(e),
+        };
+        let feed_id = format!("urn:view:{id}");
+        let self_href = format!("/opds/v1/views/{id}");
+        let body = build_acquisition_feed(
+            &app,
+            AcquisitionFeedArgs {
+                feed_id: &feed_id,
+                title: &view.name,
+                self_href: &self_href,
+                issues: &issues,
+                pagination: "",
+                user_id: user.id,
+                // A filter result is a discovery list, not a reading order.
+                sequential_nav: false,
+                up_next_issue_id: None,
+                feed_last_read_date: None,
+                entry_positions: None,
+            },
+        )
+        .await;
+        return atom(body);
     }
     let filter = match dsl_from_view(&view) {
         Ok(f) => f,
@@ -3228,9 +3254,9 @@ async fn pages_nav(State(app): State<AppState>, user: CurrentUser) -> Response {
 /// `show_in_sidebar = true`. A pin that's neither is unscoped state
 /// the user has saved but isn't actively using; hide it.
 ///
-/// Pin kinds: only filter-views are exposed today. The mixed
-/// `collection` kind would also work but lives at /opds/v1/lists
-/// already, so we defer the cross-link until M7 unifies the surface.
+/// Pin kinds: series and issue filter views (both via `/views/{id}`),
+/// CBL reading lists (`/lists/{id}`) and collections
+/// (`/collections/{id}`).
 async fn page_acq(
     State(app): State<AppState>,
     user: CurrentUser,
@@ -3280,6 +3306,7 @@ async fn page_acq(
         .filter(
             Condition::any()
                 .add(saved_view::Column::Kind.eq(KIND_FILTER_SERIES))
+                .add(saved_view::Column::Kind.eq(KIND_FILTER_ISSUES))
                 .add(saved_view::Column::Kind.eq(KIND_CBL))
                 .add(saved_view::Column::Kind.eq(KIND_COLLECTION)),
         )
@@ -3323,8 +3350,9 @@ async fn page_acq(
                 format!("urn:collection:{}", v.id),
                 format!("/opds/v1/collections/{}", v.id),
             ),
-            // Default branch covers KIND_FILTER_SERIES; anything else
-            // was filtered out by the SQL above.
+            // Default branch covers KIND_FILTER_SERIES and
+            // KIND_FILTER_ISSUES (both served by `/views/{id}`); anything
+            // else was filtered out by the SQL above.
             _ => (
                 format!("urn:view:{}", v.id),
                 format!("/opds/v1/views/{}", v.id),
@@ -3525,6 +3553,57 @@ pub(crate) fn dsl_from_view(view: &saved_view::Model) -> Result<FilterDsl, serde
         match_mode: mode,
         conditions,
     })
+}
+
+/// WP-8.4: run an issue-level (`filter_issues`) saved view for an OPDS
+/// feed. Same compiler, ACL and age-rating cap as
+/// `/me/saved-views/{id}/issue-results`; capped at the view's
+/// `result_limit` like the series-view feed. Returns full rows (the
+/// acquisition entries render dc:* metadata from them) in result order.
+pub(crate) async fn issue_view_issues(
+    app: &AppState,
+    user: &CurrentUser,
+    view: &saved_view::Model,
+) -> Result<Vec<issue::Model>, String> {
+    #[derive(FromQueryResult)]
+    struct IdRow {
+        id: String,
+    }
+    let filter = dsl_from_view(view).map_err(|e| e.to_string())?;
+    let sort_field = view
+        .sort_field
+        .as_deref()
+        .and_then(SortField::parse)
+        .unwrap_or(SortField::CreatedAt);
+    let sort_order = match view.sort_order.as_deref() {
+        Some("asc") => SortOrder::Asc,
+        _ => SortOrder::Desc,
+    };
+    let view_limit = view.result_limit.unwrap_or(50).clamp(1, 200) as u64;
+    let visible = access::for_user(app, user).await;
+    let input = IssueCompileInput {
+        dsl: &filter,
+        sort_field,
+        sort_order,
+        limit: view_limit,
+        cursor: None,
+        user_id: user.id,
+        visible_libraries: visible.clone(),
+    };
+    let stmt = compile::compile_issues(&input).map_err(|e| e.to_string())?;
+    let (sql, values) = stmt.build(PostgresQueryBuilder);
+    let raw = Statement::from_sql_and_values(app.db.get_database_backend(), sql, values);
+    let rows = IdRow::find_by_statement(raw)
+        .all(&app.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    // The compiler over-fetches one row for its cursor; drop it.
+    let ids: Vec<String> = rows
+        .into_iter()
+        .take(view_limit as usize)
+        .map(|r| r.id)
+        .collect();
+    Ok(fetch_visible_issues_preserving_order(app, &ids, &visible).await)
 }
 
 /// Render a single `<entry>` for a navigation feed. Used by `/lists`,

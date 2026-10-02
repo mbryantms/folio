@@ -85,8 +85,41 @@ if a later replacement restores the image the next rescan moves it back
 and clears the tag. Legacy (NULL-hash) anchors are not stamped by a
 rescan, because stamping the image at a guessed ordinal would make the
 guess permanent. They pick up a hash on their next progress write or
-archive edit. Markers have no page-moving edit path, so a legacy marker
-only gains a hash through an archive edit.
+archive edit, or from the lazy backfill below.
+
+**Lazy backfill (WP-8.4).** Anchors written before WP-6.2 get their hash
+the next time the issue is opened for reading, not from a library-wide
+job. [`reading::page_hash_backfill`](../../crates/server/src/reading/page_hash_backfill.rs)
+runs when the page server (`GET /issues/{id}/pages/{n}`, including the
+`?w=` variant path on a cache miss) or the OPDS-PSE streamer opens the
+issue's archive in the shared `zip_lru` cache (a cache miss, so once per
+open, not per page), and when the reader's per-issue marker fetch
+(`GET /me/issues/{id}/markers`) returns a marker without a hash — the
+reader may serve every page from cached width variants without ever
+opening the archive. The work is spawned off the request path, one task
+per issue at a time (an in-flight set on `AppState`). Each pass:
+
+- finds the page ordinals with an unhashed marker or progress row (one
+  query; `markers(issue_id, page_index)` and the partial
+  `progress_records_issue_unhashed_idx` from `m20270604`), ordinals past
+  the page count excluded, at most `MAX_PAGES_PER_OPEN` = 32 of them;
+- hashes each page through the cached reader, releasing its lock between
+  pages so page serving isn't starved;
+- stamps every unhashed row on that page with `… AND page_hash IS NULL`
+  (a concurrent capture or re-anchor wins) and **without** bumping
+  `updated_at`.
+
+An issue with more pending pages finishes on later opens. The stamp
+records the page the anchor points at now, i.e. the page the reader
+shows for it. Markers tagged `page-removed` are skipped: their ordinal is
+a guessed neighbour of a page that no longer exists.
+
+Restored markers (`POST /me/markers/restore`, the Undo of a delete) keep
+the `page_hash` the client snapshotted; a snapshot without one is filled
+by the same backfill.
+
+The account export (`GET /me/export`) carries `page_hash` on every
+progress row and marker.
 
 Re-anchoring moves bump `updated_at`. A hash-only re-stamp does not, so
 it doesn't wake `GET /progress?since=` sync clients. Progress `percent`
@@ -112,6 +145,7 @@ reset the position.
 sticky-finished and bulk-mark tests. Anchoring:
 `crates/server/tests/page_hash_anchoring.rs` (capture, reordered
 replacement, ordinal fallback for legacy rows, drift note + recovery,
-editor re-stamp), `markers_archive_edit.rs` (WP-1.2 edit map), and the
+editor re-stamp), `page_hash_backfill.rs` (lazy backfill: stamping,
+the per-open bound, the page-server and marker-fetch triggers, export), `markers_archive_edit.rs` (WP-1.2 edit map), and the
 `reading::page_remap` unit tests. Web: `web/tests/dom/progress-lifecycle.test.tsx`
 and `web/tests/reader/progress-writer.test.ts`.

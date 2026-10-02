@@ -188,7 +188,7 @@ impl ZipLru {
         issue_id: &str,
         path: &Path,
     ) -> Result<Arc<Mutex<CachedReader>>, ArchiveError> {
-        Ok(self.get_or_open_entry(issue_id, path)?.0)
+        Ok(self.get_or_open_entry(issue_id, path)?.0.0)
     }
 
     /// Like [`Self::get_or_open`] but also returns the [`PreadIndex`] for the
@@ -199,6 +199,18 @@ impl ZipLru {
         issue_id: &str,
         path: &Path,
     ) -> Result<CachedArchive, ArchiveError> {
+        Ok(self.get_or_open_entry(issue_id, path)?.0)
+    }
+
+    /// Like [`Self::get_or_open_indexed`], plus whether this call opened
+    /// the archive (a cache miss). The page server uses the flag to kick
+    /// off once-per-open work (the WP-8.4 page-hash backfill) without
+    /// repeating it on every page request.
+    pub fn get_or_open_indexed_tracked(
+        &self,
+        issue_id: &str,
+        path: &Path,
+    ) -> Result<(CachedArchive, bool), ArchiveError> {
         self.get_or_open_entry(issue_id, path)
     }
 
@@ -206,12 +218,12 @@ impl ZipLru {
         &self,
         issue_id: &str,
         path: &Path,
-    ) -> Result<CachedArchive, ArchiveError> {
+    ) -> Result<(CachedArchive, bool), ArchiveError> {
         {
             let mut cache = self.inner.lock().unwrap();
             if let Some(existing) = cache.get(issue_id) {
                 metrics::counter!(HITS).increment(1);
-                return Ok(existing.clone());
+                return Ok((existing.clone(), false));
             }
         }
 
@@ -228,7 +240,7 @@ impl ZipLru {
         // Honor the racing entry to keep a single live handle per issue.
         if let Some(existing) = cache.get(issue_id) {
             metrics::counter!(HITS).increment(1);
-            return Ok(existing.clone());
+            return Ok((existing.clone(), false));
         }
         let evicted = cache.push(issue_id.to_owned(), entry.clone());
         if evicted.is_some() {
@@ -236,7 +248,7 @@ impl ZipLru {
         }
         metrics::counter!(MISSES).increment(1);
         metrics::gauge!(OPEN_FDS).set(cache.len() as f64);
-        Ok(entry)
+        Ok((entry, true))
     }
 
     pub fn invalidate(&self, issue_id: &str) {

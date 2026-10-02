@@ -125,6 +125,10 @@ pub enum Field {
     HasBookmarks,
     /// Same, for `highlight` markers.
     HasHighlights,
+    /// The caller has starred something on the issue / series (WP-8.4):
+    /// a `favorite` marker or any marker with `is_favorite` set — the
+    /// same union the /bookmarks "Favorites" chip shows.
+    HasFavorites,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]

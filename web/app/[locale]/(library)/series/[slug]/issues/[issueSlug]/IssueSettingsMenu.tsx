@@ -48,12 +48,12 @@ import {
   useGenerateIssuePageMap,
   useRegenerateIssueCover,
   useRemoveCollectionEntry,
+  useRestoreMarkers,
   useScanIssue,
   useUpsertIssueProgress,
 } from "@/lib/api/mutations";
 import { useCollections, useIssueMarkers, useMe } from "@/lib/api/queries";
 import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
-import { markerToCreateReq } from "@/lib/markers/recreate";
 import { issueUrl, readerUrl } from "@/lib/urls";
 import { useShareLink } from "@/lib/ui/use-share-link";
 import type { IssueDetailView } from "@/lib/api/types";
@@ -153,6 +153,7 @@ export function IssueSettingsMenu({
     (m) => m.kind === "bookmark" && m.page_index === 0,
   );
   const createMarker = useCreateMarker();
+  const restoreMarkers = useRestoreMarkers();
   const deleteMarker = useDeleteMarker(existingBookmark?.id ?? "", issue.id, {
     silent: true,
   });
@@ -165,7 +166,7 @@ export function IssueSettingsMenu({
             duration: UNDO_TOAST_DURATION_MS,
             action: {
               label: "Undo",
-              onClick: () => createMarker.mutate(markerToCreateReq(snapshot)),
+              onClick: () => restoreMarkers.mutate([snapshot]),
             },
           }),
       });

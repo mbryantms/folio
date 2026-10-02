@@ -48,7 +48,7 @@ use uuid::Uuid;
 use crate::api::collections::ensure_want_to_read_seeded;
 use crate::api::opds;
 use crate::api::saved_views::{
-    KIND_CBL, KIND_COLLECTION, KIND_FILTER_SERIES, SYSTEM_KEY_WANT_TO_READ,
+    KIND_CBL, KIND_COLLECTION, KIND_FILTER_ISSUES, KIND_FILTER_SERIES, SYSTEM_KEY_WANT_TO_READ,
 };
 use crate::auth::CurrentUser;
 use crate::library::access;
@@ -60,6 +60,8 @@ use crate::views::{
 };
 
 use super::{error, not_found};
+
+mod entities;
 
 const NAV_CT: &str = "application/opds+json";
 
@@ -94,6 +96,15 @@ pub fn routes() -> Router<AppState> {
         // mirror of /opds/v1/pages.
         .route("/opds/v2/pages", get(pages_nav))
         .route("/opds/v2/pages/{slug}", get(page_acq))
+        // WP-8.4 — entity feeds, JSON mirror of /opds/v1/{characters,…}.
+        .route("/opds/v2/characters", get(entities::characters_nav))
+        .route("/opds/v2/characters/{slug}", get(entities::character_feed))
+        .route("/opds/v2/teams", get(entities::teams_nav))
+        .route("/opds/v2/teams/{slug}", get(entities::team_feed))
+        .route("/opds/v2/arcs", get(entities::arcs_nav))
+        .route("/opds/v2/arcs/{slug}", get(entities::arc_feed))
+        .route("/opds/v2/publishers", get(entities::publishers_nav))
+        .route("/opds/v2/publishers/{slug}", get(entities::publisher_feed))
         .layer(rate_limit::OPDS_CATALOG.build());
     let stream = Router::new()
         .route("/opds/v2/issues/{id}/file", get(super::opds::download))
@@ -208,6 +219,8 @@ async fn root(State(app): State<AppState>, user: CurrentUser) -> Response {
         json!({ "title": "Saved views", "href": "/opds/v2/views", "type": NAV_CT }),
         json!({ "title": "Browse", "href": "/opds/v2/browse", "type": NAV_CT }),
     ]);
+    // WP-8.4: the entity feeds, same order as the v1 root.
+    navigation.extend(entities::root_navigation());
 
     let body = json!({
         "metadata": {
@@ -603,14 +616,13 @@ async fn series_one(
             "properties": { "folio:relationship": kind.as_str() },
         }));
     }
-    // WP-7.7: series → story-arc edges. Story arcs have no OPDS 2.0 feed
-    // yet, so the link targets the 1.x acquisition feed and says so in
-    // `type` (clients follow by type).
+    // WP-7.7: series → story-arc edges, pointing at the arc's OPDS 2.0
+    // feed (WP-8.4; it targeted the 1.x feed before v2 arcs existed).
     for link in crate::api::series_relationships::visible_related_arcs(&app, &user, s.id).await {
         links.push(json!({
             "rel": "related",
-            "href": format!("/opds/v1/arcs/{}", url_escape(&link.arc.slug)),
-            "type": "application/atom+xml;profile=opds-catalog;kind=acquisition",
+            "href": format!("/opds/v2/arcs/{}", url_escape(&link.arc.slug)),
+            "type": NAV_CT,
             "title": format!("{}: {}", link.label, link.arc.name),
             "properties": { "folio:relationship": "tie_in_to" },
         }));
@@ -1345,7 +1357,8 @@ async fn views_nav(State(app): State<AppState>, user: CurrentUser) -> Response {
     }
     let rows = match saved_view::Entity::find()
         .filter(saved_view::Column::Id.is_in(visible_ids.iter().copied().collect::<Vec<_>>()))
-        .filter(saved_view::Column::Kind.eq(KIND_FILTER_SERIES))
+        // Series and (WP-8.4) issue filter views.
+        .filter(saved_view::Column::Kind.is_in([KIND_FILTER_SERIES, KIND_FILTER_ISSUES]))
         .filter(
             Condition::any()
                 .add(saved_view::Column::UserId.is_null())
@@ -1391,13 +1404,34 @@ async fn view_acq(
         Ok(None) => return not_found(),
         Err(e) => return server_error(e.to_string()),
     };
-    if view.kind != KIND_FILTER_SERIES {
+    if view.kind != KIND_FILTER_SERIES && view.kind != KIND_FILTER_ISSUES {
         return not_found();
     }
     if let Some(owner) = view.user_id
         && owner != user.id
     {
         return not_found();
+    }
+    if view.kind == KIND_FILTER_ISSUES {
+        // WP-8.4: an issue view's results are publications.
+        let issues = match opds::issue_view_issues(&app, &user, &view).await {
+            Ok(i) => i,
+            Err(e) => return server_error(e),
+        };
+        let publications = build_publications(&app, &user, &issues).await;
+        return json_response(json!({
+            "metadata": {
+                "title": view.name,
+                "identifier": format!("urn:view:{id}"),
+                "numberOfItems": publications.len(),
+            },
+            "links": [{
+                "rel": "self",
+                "href": format!("/opds/v2/views/{id}"),
+                "type": NAV_CT,
+            }],
+            "publications": publications,
+        }));
     }
     let filter = match opds::dsl_from_view(&view) {
         Ok(f) => f,
@@ -1561,6 +1595,7 @@ async fn page_acq(
         .filter(
             Condition::any()
                 .add(saved_view::Column::Kind.eq(KIND_FILTER_SERIES))
+                .add(saved_view::Column::Kind.eq(KIND_FILTER_ISSUES))
                 .add(saved_view::Column::Kind.eq(KIND_CBL))
                 .add(saved_view::Column::Kind.eq(KIND_COLLECTION)),
         )

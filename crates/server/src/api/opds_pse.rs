@@ -132,9 +132,15 @@ pub async fn stream(
     // of which don't apply here verbatim.
     let (arc, pread) = match app
         .zip_lru
-        .get_or_open_indexed(&issue_row.id, std::path::Path::new(&issue_row.file_path))
+        .get_or_open_indexed_tracked(&issue_row.id, std::path::Path::new(&issue_row.file_path))
     {
-        Ok(pair) => pair,
+        Ok((pair, opened)) => {
+            if opened {
+                // WP-8.4: fill legacy anchors' page hashes off the hot path.
+                crate::reading::page_hash_backfill::spawn_on_open(&app, &issue_row);
+            }
+            pair
+        }
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %issue_row.id, "pse: zip_lru open failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "archive_unreadable");
