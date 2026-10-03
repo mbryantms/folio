@@ -339,8 +339,7 @@ the last one carries the final state.
 ## Series-scope fan-out
 
 Series-scope apply ([`apply_series_via_sidecar`](../../crates/server/src/metadata/apply.rs))
-walks every active issue in the series, composes XML per issue (using
-the series-level provider detail merged with each issue's DB row),
+walks every active issue in the series, composes XML per issue,
 claims the per-issue mutex around each iteration, and calls the
 `rewrite_one_issue` helper inline. Failures accumulate in
 `ApplyOutcome.sidecar_skip_reasons` rather than abort the whole fan-out
@@ -349,6 +348,139 @@ claims the per-issue mutex around each iteration, and calls the
 A single series-scope rescan fires at the end so the scanner re-ingests
 every freshly-written XML in one pass (the per-issue jobs use
 `skip_rescan = true` here).
+
+### What a series apply may write into an issue
+
+The series apply fetches **one** provider record — the series (CV
+volume, Metron series, GCD series) — and makes no per-issue provider
+calls. The composer reads `provider.description` / `title` / dates /
+credits / `source_url` as *issue* values, so each issue is composed from
+[`sidecar_compose::series_payload_for_issue`](../../crates/server/src/metadata/sidecar_compose.rs),
+an allowlist projection of the series record:
+
+| Series-record field | Reaches the issue XML? |
+|---|---|
+| series name / sort name / type, volume, years, aliases, publisher, imprint, identifiers, source bookkeeping | yes — series identity |
+| `format`, `language_code`, `age_rating`, `genres` | **fill-only**: only when the issue has no value of its own (run-wide attributes) |
+| `description`, `deck`, `notes`, `title`, number, dates, page count, credits / characters / teams / locations / arcs / tags / concepts / objects / universes, reprints, variants, cover, ratings, price / sku, `source_url` | **never** — issue-level slots keep the issue's own value |
+
+A field added to `GenericMetadata` later is dropped by default until
+someone decides it is series-shaped.
+
+The series description goes to **`series.summary`**, in both library
+modes, through `apply::write_series_scalar_fields` (the same per-field
+provenance + fill/replace + user-pin rules as every series scalar; a
+user-pinned series description is never replaced). ComicInfo/MetronInfo
+have no series-description slot, and the scanner's only series-summary
+write (`reconcile_status`, from `series.json`) fills an empty column only,
+so the rescan neither carries nor clobbers it. The DB-direct
+`apply_series` path (`write_series_fields`) only ever wrote the series
+row and was never affected.
+
+**The bug this closes (v0.33.x).** Before the projection, the composer
+got the series record verbatim: `prefer_user_opt_str(pinned,
+issue.summary, provider.description)` is `provider.or(db)`, so the
+series description replaced every un-pinned issue's `<Summary>`, the
+series page URL replaced each `<Web>`, GCD series notes replaced
+`<Notes>`, and Metron series genres replaced `<Genre>`. The rescan then
+ingested the leaked `<Summary>` into `issues.summary` (file-tier
+provenance, or — after #970's timestamp-aware gate — even over an older
+provider row). Owner report: Fantastic Four (2001), all 173 issues
+carried the CV volume description (raw CV HTML). Tests:
+`crates/server/tests/series_apply_issue_descriptions.rs`.
+
+### Repairing issues a series apply overwrote
+
+Deploy the fix first: otherwise the next series apply — including an
+auto-apply from the weekly refresh in a library with
+`metadata_auto_apply_strong_matches` — re-corrupts them.
+
+**1. Detect** (read-only). An issue whose description, HTML-stripped and
+case-folded, equals its series' description — the `series` row or any
+cached provider series record matched to it — and that at least one
+other issue in the series shares (a one-shot's issue and series blurbs
+can legitimately match), with no user pin:
+
+```sql
+WITH norm_issue AS (
+  SELECT i.id AS issue_id, i.series_id, i.file_path,
+         lower(btrim(regexp_replace(regexp_replace(i.summary, '<[^>]*>', ' ', 'g'), '\s+', ' ', 'g'))) AS txt
+  FROM issues i
+  WHERE i.removed_at IS NULL AND i.state = 'active' AND i.summary IS NOT NULL
+),
+series_texts AS (
+  SELECT s.id AS series_id,
+         lower(btrim(regexp_replace(regexp_replace(s.summary, '<[^>]*>', ' ', 'g'), '\s+', ' ', 'g'))) AS txt
+  FROM series s WHERE s.summary IS NOT NULL
+  UNION
+  SELECT x.entity_id::uuid,
+         lower(btrim(regexp_replace(regexp_replace(c.payload->>'description', '<[^>]*>', ' ', 'g'), '\s+', ' ', 'g')))
+  FROM external_ids x
+  JOIN metadata_cache c
+    ON c.entity = 'series' AND c.provider = x.source AND c.external_id = x.external_id
+  WHERE x.entity_type = 'series' AND c.payload->>'description' IS NOT NULL
+),
+dup AS (
+  SELECT series_id, txt FROM norm_issue WHERE txt <> ''
+  GROUP BY 1, 2 HAVING count(*) >= 2
+)
+SELECT n.issue_id, n.series_id, n.file_path
+FROM norm_issue n
+JOIN dup d ON d.series_id = n.series_id AND d.txt = n.txt
+WHERE EXISTS (SELECT 1 FROM series_texts st
+              WHERE st.series_id = n.series_id AND st.txt = n.txt)
+  AND NOT EXISTS (
+    SELECT 1 FROM field_provenance fp
+    WHERE fp.entity_type = 'issue' AND fp.entity_id = n.issue_id
+      AND fp.field IN ('description', 'summary') AND fp.set_by = 'user');
+```
+
+The `series` row may hold a *later* description than the one that
+leaked (a second apply from another provider), and the cache row can
+have expired, so also eyeball the looser signal — one text on ≥ 3
+issues of a series. Folio's leak is the subset with a series-scope run
+(`metadata_run.scope = 'series'`, `items_applied > 0`) and
+`issues.last_sidecar_rewrite_at` set just after it; a repeated summary
+with neither came from an external tagger, not from this bug. (Dev DB,
+2026-10-03: the strict query finds Fantastic Four (2001), 173 issues;
+the loose one adds Spawn (2016) 160, Ice Cream Man (2023) 38, Secret
+Warriors (2010) 26 and S.H.I.E.L.D. (2011) 6, none of which were ever
+sidecar-rewritten or series-applied, plus short runs sharing a
+solicitation.)
+
+**2. Restore.** In order of preference:
+
+- **`.bak` restore**, where one survives next to the archive
+  (`<file>.bak`, `.bak.N`): copy it back over the archive, then
+  force-rescan the series. No provider quota. It also reverts anything
+  else that rewrite changed, so only use a backup from that rewrite.
+- **Per-issue re-fetch** — the default. Series page → ⋯ → *Fetch
+  metadata* → **All issues** (`POST /api/series/{slug}/metadata/batch?scope=all`;
+  not "Only missing or partial", which skips issues whose description
+  is merely wrong, not empty). That queues one issue-scope search per
+  active issue (cap `REFRESH_BATCH_CAP` = 200 per click) under one
+  `metadata_batch`; then the toast's *Review* link
+  (`/admin/metadata?tab=review&batch=<id>`) → **Accept all strong**
+  and, for needs-review rows, **Fill missing**
+  (`POST /api/metadata/batch/{id}/apply`, also capped at 200 with a
+  `remainder` to re-trigger). In a writeback library the composer writes
+  each picked issue description whatever the mode (see "Rescan ingest of
+  provider values"), and with #970 the rescan ingests it. Quota per
+  issue and enabled provider: one issue search (a second broad search
+  when the series-narrowed one is empty) plus one issue-detail fetch at
+  apply (cached for 24 h); ComicVine allows 200 requests per resource
+  per hour, so a 173-issue run takes roughly two hours of CV budget —
+  the limiter paces it. Issues a provider doesn't describe keep the
+  leaked text; clear those by hand.
+- **Clearing the leaked text** is not a shortcut in a writeback library:
+  the archive is canonical, so blanking `issues.summary` alone is undone
+  by the next rescan, and the issue PATCH that would rewrite the archive
+  records a **user** pin, which then blocks the provider fill. Only use
+  it for issues no provider describes (and accept the pin), or as a
+  DB-direct-library step before a fill-missing re-fetch.
+
+Never run either against a production library before testing the recipe
+on a copy.
 
 ## User-edit drift (M6)
 
@@ -532,6 +664,11 @@ When reviewing PRs that touch the metadata apply path:
   `SIDECAR_ISSUE_PROVENANCE_FIELDS` — the XML can't say "ComicVine set
   this", so the apply records it; the scanner's own file-tier writes
   are guarded and won't downgrade those rows on the follow-up rescan).
+- **Composing a series-level provider record into an issue**: reject.
+  A series-scope apply hands each issue
+  `sidecar_compose::series_payload_for_issue(&series_detail, issue)`,
+  never the series record itself — the composer reads description /
+  title / dates / credits / `source_url` as issue values.
 - **`MetadataField::iter()` without an `is_junction()` / `is_cover()`
   guard**: reject. Junctions go through `writers::set_issue_*` (cache
   rebuild side effect); variants go through `set_issue_variants`;

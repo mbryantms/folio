@@ -713,7 +713,7 @@ through the sidecar composer on writeback libraries.
 | `binding` | used → format fallback (`hardcover`; `trade paperback`) and hardcover upgrade of a collected format. `softcover` and `squarebound` alone are ignored as ambiguous |
 | `color` | deliberately unused: `GenericMetadata` has no black-and-white slot, and ComicInfo `BlackAndWhite` is scanner-owned |
 | `dimensions`, `paper_stock` | deliberately unused: physical attributes with no Folio, ComicInfo or MetronInfo field |
-| `notes` | used → `GenericMetadata.notes` on the series detail (shown in the preview; the series apply has no series-notes column) |
+| `notes` | used → `GenericMetadata.notes` on the series detail (shown in the preview; the series apply has no series-notes column and never composes series notes into an issue's `<Notes>`) |
 
 **`Publisher`**
 
