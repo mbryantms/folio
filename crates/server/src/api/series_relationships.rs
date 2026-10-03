@@ -391,7 +391,7 @@ pub async fn list(
         Err(e) => return internal(&e),
     };
     visible.push(s.clone());
-    let views: HashMap<String, SeriesView> = super::series::hydrate_series(&app, visible)
+    let views: HashMap<String, SeriesView> = super::series::hydrate_series(&app, visible, user.id)
         .await
         .into_iter()
         .map(|v| (v.id.clone(), v))
@@ -586,7 +586,7 @@ pub async fn create(
         );
     }
 
-    let Some(view) = super::series::hydrate_series(&app, vec![target])
+    let Some(view) = super::series::hydrate_series(&app, vec![target], actor.id)
         .await
         .into_iter()
         .next()
@@ -790,7 +790,7 @@ pub async fn update(
         Ok(None) => return readback_failed(),
         Err(e) => return internal(&e),
     };
-    let Some(view) = super::series::hydrate_series(&app, vec![target])
+    let Some(view) = super::series::hydrate_series(&app, vec![target], actor.id)
         .await
         .into_iter()
         .next()
@@ -1027,11 +1027,12 @@ pub(crate) async fn arc_tie_ins_handler(
         Ok(r) => r,
         Err(e) => return internal(&e),
     };
-    let views: HashMap<String, SeriesView> = super::series::hydrate_series(app, series_rows)
-        .await
-        .into_iter()
-        .map(|v| (v.id.clone(), v))
-        .collect();
+    let views: HashMap<String, SeriesView> =
+        super::series::hydrate_series(app, series_rows, user.id)
+            .await
+            .into_iter()
+            .map(|v| (v.id.clone(), v))
+            .collect();
     let mut last: Option<(i32, String, Uuid)> = None;
     let items: Vec<ArcTieInView> = ids
         .iter()

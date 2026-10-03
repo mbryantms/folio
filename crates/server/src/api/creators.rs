@@ -461,7 +461,7 @@ pub async fn get_one(
             }
         }
     };
-    let hydrated = hydrate_series(&app, series_rows).await;
+    let hydrated = hydrate_series(&app, series_rows, user.id).await;
     let series_by_id: HashMap<String, SeriesView> =
         hydrated.into_iter().map(|s| (s.id.clone(), s)).collect();
 

@@ -322,7 +322,7 @@ const DEFAULT_LIMIT: u64 = 50;
 #[handler]
 pub async fn list(
     State(app): State<AppState>,
-    _admin: RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
     Query(q): Query<SuggestionListQuery>,
 ) -> Response {
     let filter = SuggestionFilter {
@@ -331,7 +331,7 @@ pub async fn list(
         library_id: q.library_id,
         series_id: None,
     };
-    list_page(&app, &filter, q.cursor.as_deref(), q.limit).await
+    list_page(&app, admin.id, &filter, q.cursor.as_deref(), q.limit).await
 }
 
 #[utoipa::path(
@@ -352,7 +352,7 @@ pub async fn list(
 #[handler]
 pub async fn list_for_series(
     State(app): State<AppState>,
-    _admin: RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
     Path(slug): Path<String>,
     Query(q): Query<SeriesSuggestionQuery>,
 ) -> Response {
@@ -365,11 +365,12 @@ pub async fn list_for_series(
         series_id: Some(s.id),
         ..Default::default()
     };
-    list_page(&app, &filter, q.cursor.as_deref(), q.limit).await
+    list_page(&app, admin.id, &filter, q.cursor.as_deref(), q.limit).await
 }
 
 async fn list_page(
     app: &AppState,
+    viewer: Uuid,
     filter: &SuggestionFilter,
     cursor: Option<&str>,
     limit: Option<u64>,
@@ -392,7 +393,7 @@ async fn list_page(
             Ok(p) => p,
             Err(e) => return internal(&e),
         };
-    let items = match hydrate(app, page.items).await {
+    let items = match hydrate(app, viewer, page.items).await {
         Ok(v) => v,
         Err(e) => return internal(&e),
     };
@@ -477,7 +478,7 @@ pub async fn accept(
     let inverse_id = out.inverse.as_ref().map(|r| r.id.to_string());
     let created = out.created;
     let kind = out.kind;
-    let view = match hydrate(&app, vec![out.suggestion]).await {
+    let view = match hydrate(&app, actor.id, vec![out.suggestion]).await {
         Ok(mut v) if !v.is_empty() => v.remove(0),
         Ok(_) => return readback_failed(),
         Err(e) => return internal(&e),
@@ -532,7 +533,7 @@ pub async fn reject(
             "confidence": row.confidence,
         }),
     );
-    match hydrate(&app, vec![row]).await {
+    match hydrate(&app, actor.id, vec![row]).await {
         Ok(mut v) if !v.is_empty() => Json(v.remove(0)).into_response(),
         Ok(_) => readback_failed(),
         Err(e) => internal(&e),
@@ -582,7 +583,7 @@ pub async fn reopen(
             "rejected_by": before.reviewed_by.map(|u| u.to_string()),
         }),
     );
-    match hydrate(&app, vec![after]).await {
+    match hydrate(&app, actor.id, vec![after]).await {
         Ok(mut v) if !v.is_empty() => Json(ReopenRelationshipSuggestionResp {
             suggestion: v.remove(0),
         })
@@ -878,6 +879,7 @@ pub async fn run(
 /// could) is dropped.
 async fn hydrate(
     app: &AppState,
+    viewer: Uuid,
     rows: Vec<sug::Model>,
 ) -> Result<Vec<RelationshipSuggestionView>, sea_orm::DbErr> {
     if rows.is_empty() {
@@ -891,7 +893,7 @@ async fn hydrate(
         .filter(series::Column::Id.is_in(ids.into_iter().collect::<Vec<_>>()))
         .all(&app.db)
         .await?;
-    let views: HashMap<String, SeriesView> = super::series::hydrate_series(app, models)
+    let views: HashMap<String, SeriesView> = super::series::hydrate_series(app, models, viewer)
         .await
         .into_iter()
         .map(|v| (v.id.clone(), v))

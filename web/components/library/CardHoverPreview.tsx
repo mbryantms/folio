@@ -42,10 +42,13 @@ export function SeriesHoverPreview({ series }: { series: SeriesView }) {
   ]
     .filter(Boolean)
     .join(" · ");
-  const finished = series.progress_summary?.finished ?? 0;
-  const total = series.progress_summary?.total ?? issueCount ?? 0;
-  const pct =
-    total > 0 ? Math.round((Math.min(finished, total) / total) * 100) : 0;
+  // Every list surface ships the viewer's `progress_summary` (batched in
+  // `hydrate_series`). If it's ever absent, hide the bar rather than claim
+  // "0 / N read" for a series the user may well have read.
+  const progress = series.progress_summary ?? null;
+  const total = progress?.total ?? 0;
+  const finished = Math.min(progress?.finished ?? 0, total);
+  const pct = total > 0 ? Math.round((finished / total) * 100) : 0;
   const genres = (series.genres ?? []).slice(0, 4);
 
   return (
@@ -69,7 +72,7 @@ export function SeriesHoverPreview({ series }: { series: SeriesView }) {
             <span className="text-muted-foreground text-xs">{meta}</span>
           ) : null}
         </div>
-        {total > 0 ? (
+        {progress && total > 0 ? (
           <div className="space-y-1">
             <Progress
               value={pct}

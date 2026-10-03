@@ -596,3 +596,196 @@ async fn series_list_read_status_filter_partitions_by_progress() {
     let (st, _names) = series_names(&app, &session, "read_status=bogus").await;
     assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+// ── progress_summary on list surfaces (series-card hover preview) ──
+
+async fn authed_json(
+    app: &TestApp,
+    session: &str,
+    csrf: &str,
+    method: Method,
+    uri: &str,
+    body: Option<serde_json::Value>,
+) -> (StatusCode, serde_json::Value) {
+    let mut req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(
+            header::COOKIE,
+            format!("__Host-comic_session={session}; __Host-comic_csrf={csrf}"),
+        )
+        .header("X-CSRF-Token", csrf);
+    let body = match body {
+        Some(b) => {
+            req = req.header(header::CONTENT_TYPE, "application/json");
+            Body::from(b.to_string())
+        }
+        None => Body::empty(),
+    };
+    let resp = app
+        .router
+        .clone()
+        .oneshot(req.body(body).unwrap())
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
+fn find_series(items: &serde_json::Value, id: Uuid) -> &serde_json::Value {
+    items["items"]
+        .as_array()
+        .expect("items array")
+        .iter()
+        .find(|s| s["id"] == id.to_string())
+        .unwrap_or_else(|| panic!("series {id} missing from {items}"))
+}
+
+/// Bug: the series-card hover preview read `progress_summary`, which only
+/// `GET /series/{slug}` populated — every list surface sent `None`, so the
+/// preview always showed "0 / N". `hydrate_series` now batches the
+/// viewer's progress for the whole page, matching the detail endpoint.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_surfaces_carry_the_viewers_progress_summary() {
+    let app = TestApp::spawn().await;
+    let (alice, a_session, a_csrf) = register_authed(&app, "alice-list@example.com").await;
+    let (bob, b_session, b_csrf) = register_authed(&app, "bob-list@example.com").await;
+    let (lib, series_id, issues) = seed_series_with_issues(&app, "Progress", 3).await;
+    // Bob is not admin: give him the library so he sees the series.
+    {
+        let db = Database::connect(&app.db_url).await.unwrap();
+        let now = Utc::now().fixed_offset();
+        entity::library_user_access::ActiveModel {
+            user_id: Set(bob),
+            library_id: Set(lib),
+            age_rating_max: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+    }
+    // Alice finishes 2 of 3 and is partway through the third.
+    finish_issue(&app, alice, &issues[0]).await;
+    finish_issue(&app, alice, &issues[1]).await;
+    {
+        let db = Database::connect(&app.db_url).await.unwrap();
+        let now = Utc::now().fixed_offset();
+        ProgressAM {
+            user_id: Set(alice),
+            issue_id: Set(issues[2].clone()),
+            last_page: Set(5),
+            percent: Set(25.0),
+            finished: Set(false),
+            finished_at: Set(None),
+            updated_at: Set(now),
+            device: Set(None),
+            is_backfill: Set(false),
+            run: Set(0),
+            page_hash: Set(None),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+    }
+    let expected = serde_json::json!({
+        "total": 3,
+        "finished": 2,
+        "in_progress": 1,
+        "finished_pages": 40,
+    });
+
+    // Library grid / home "recently added" rails: GET /api/series.
+    let (st, list) = authed_json(&app, &a_session, &a_csrf, Method::GET, "/api/series", None).await;
+    assert_eq!(st, StatusCode::OK, "{list}");
+    let s = find_series(&list, series_id);
+    assert_eq!(s["progress_summary"], expected, "alice list: {s}");
+
+    // Detail endpoint agrees with the list.
+    let (st, detail) = authed_json(
+        &app,
+        &a_session,
+        &a_csrf,
+        Method::GET,
+        &format!("/api/series/{series_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{detail}");
+    assert_eq!(detail["progress_summary"], expected, "alice detail");
+
+    // Saved-view rail path (home pins run the same `run_filter_query`).
+    let preview = serde_json::json!({
+        "filter": {
+            "match_mode": "all",
+            "conditions": [
+                { "group_id": 0, "field": "name", "op": "contains", "value": "Progress" }
+            ]
+        },
+        "sort_field": "name",
+        "sort_order": "asc",
+        "result_limit": 12,
+    });
+    let (st, rail) = authed_json(
+        &app,
+        &a_session,
+        &a_csrf,
+        Method::POST,
+        "/api/me/saved-views/preview",
+        Some(preview.clone()),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{rail}");
+    let s = find_series(&rail, series_id);
+    assert_eq!(s["progress_summary"], expected, "alice saved view: {s}");
+
+    // Bob has read nothing: zeros, same total — never Alice's progress.
+    let zero = serde_json::json!({
+        "total": 3,
+        "finished": 0,
+        "in_progress": 0,
+        "finished_pages": 0,
+    });
+    let (st, list) = authed_json(&app, &b_session, &b_csrf, Method::GET, "/api/series", None).await;
+    assert_eq!(st, StatusCode::OK, "{list}");
+    assert_eq!(find_series(&list, series_id)["progress_summary"], zero);
+    let (st, rail) = authed_json(
+        &app,
+        &b_session,
+        &b_csrf,
+        Method::POST,
+        "/api/me/saved-views/preview",
+        Some(preview),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{rail}");
+    assert_eq!(find_series(&rail, series_id)["progress_summary"], zero);
+}
+
+/// Removed issues leave both the list summary's total and its finished
+/// count, same as the detail endpoint.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_progress_summary_ignores_removed_issues() {
+    let app = TestApp::spawn().await;
+    let (alice, session, csrf) = register_authed(&app, "carol-list@example.com").await;
+    let (_lib, series_id, issues) = seed_series_with_issues(&app, "Removed", 3).await;
+    finish_issue(&app, alice, &issues[0]).await;
+    finish_issue(&app, alice, &issues[1]).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    entity::issue::ActiveModel {
+        id: Set(issues[1].clone()),
+        removed_at: Set(Some(now)),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+
+    let (st, list) = authed_json(&app, &session, &csrf, Method::GET, "/api/series", None).await;
+    assert_eq!(st, StatusCode::OK, "{list}");
+    let summary = &find_series(&list, series_id)["progress_summary"];
+    assert_eq!(summary["total"], 2, "{summary}");
+    assert_eq!(summary["finished"], 1, "{summary}");
+}
