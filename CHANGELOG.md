@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.33.1](https://github.com/mbryantms/folio/compare/v0.33.0...v0.33.1) (2026-10-03)
+
+
+### Changed
+
+* batched collections bulk-add, paged admin runs, 50k M7 measurements (WP-8.3) ([#967](https://github.com/mbryantms/folio/issues/967)) ([8c13ea9](https://github.com/mbryantms/folio/commit/8c13ea9534fd9c25b10803531c313289333d1db0))
+
 ## [0.33.0](https://github.com/mbryantms/folio/compare/v0.32.0...v0.33.0) (2026-10-03)
 
 
