@@ -39,6 +39,17 @@ pmOnFail: ignore
 # rot — once every dependent's range clears the vulnerable versions,
 # DELETE the entry rather than letting renovate bump it forever
 # (renovate majors on overrides are disabled in renovate.json).
+# Accepted npm advisories that no version bump or override can fix. Each
+# entry needs a rationale in SECURITY-EXCEPTIONS.md (and a mirror in
+# osv-scanner.toml for the daily OSV sweep). Revisit every dep-bump pass.
+auditConfig:
+  ignoreGhsas:
+    # braces <=3.0.3 stack-exhaustion DoS (high). No patched release exists
+    # (3.0.3 is the latest). Dev-only: eslint-config-next /
+    # @next/eslint-plugin-next > fast-glob > micromatch > braces. Accepted
+    # 2026-10-03; delete when braces ships a fix.
+    - GHSA-vfj7-8cjw-p6xm
+
 overrides:
   # GHSA lodash prototype-pollution line; transitive dev/tooling copies.
   # Delete when `pnpm why lodash` shows no in-range <4.18.0 consumers.

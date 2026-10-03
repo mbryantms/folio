@@ -10,8 +10,22 @@ the root [`package.json`](package.json) `pnpm.overrides` block.
 
 ## Accepted
 
-_None._ Every npm advisory the gates surface is currently remediated by a
-`pnpm-workspace.yaml` override; `auditConfig.ignoreGhsas` is empty.
+Each entry is listed in `pnpm-workspace.yaml` `auditConfig.ignoreGhsas` (the
+`pnpm audit` gates) and mirrored in `osv-scanner.toml` (the daily OSV sweep).
+
+### GHSA-vfj7-8cjw-p6xm — `braces` <=3.0.3 stack-exhaustion DoS (high)
+
+- **Accepted:** 2026-10-03.
+- **Why no fix:** no patched release exists; 3.0.3 is the latest `braces`, so
+  there is nothing to pin an override to.
+- **Reach:** dev dependencies only —
+  `eslint-config-next` / `@next/eslint-plugin-next` > `fast-glob` >
+  `micromatch` > `braces`. It runs during linting over the repository's own
+  glob patterns, never on user input, and is not in the production images
+  (`pnpm audit --prod` is clean).
+- **Delete when:** `braces` ships a patched release (then remove the ignore
+  from both files and let the lockfile pick it up, adding an override if a
+  consumer's range pins the old version).
 
 ## Resolved
 
