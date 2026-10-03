@@ -12,6 +12,12 @@
 //! Visibility (GET) is granted to anyone who can see the library;
 //! editing (POST/DELETE) is admin-only and audited. Manual rows land
 //! `set_by='user'`.
+//!
+//! `POST …/provider-ranges/detect` runs detection for every provider
+//! that can enumerate issues ([`crate::metadata::series_link`]): it
+//! resolves the series' Metron / GCD id even when the series was only
+//! matched through ComicVine, then maps the issue runs those providers
+//! file under a different series ([`crate::metadata::auto_split`]).
 
 use axum::{
     Extension, Json,
@@ -31,9 +37,11 @@ use uuid::Uuid;
 use super::error;
 use crate::audit::{self, AuditEntry};
 use crate::auth::{CurrentUser, RequireAdmin};
+use crate::metadata::auto_split::GapStatus;
 use crate::metadata::identifier::Source;
 use crate::metadata::matcher::canonical_issue_number;
 use crate::metadata::range_map::ranges_overlap;
+use crate::metadata::series_link::{self, LinkCandidate, LinkMethod, SourceStatus};
 use crate::middleware::RequestContext;
 use crate::state::AppState;
 use server_macros::handler;
@@ -47,7 +55,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(detect_series))
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ProviderRangeRow {
     pub id: String,
     pub source: String,
@@ -531,22 +539,69 @@ pub async fn delete_series(
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DetectResp {
     pub results: Vec<DetectSourceResult>,
+    /// Set when two or more providers were scanned: whether they found the
+    /// same uncovered runs. Disagreement is normal (each provider routes
+    /// its own issues through its own ranges); it's shown so the admin
+    /// knows the providers split the run differently.
+    pub agreement: Option<DetectAgreement>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DetectAgreement {
+    pub agree: bool,
+    pub summary: String,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DetectSourceResult {
     pub source: String,
     pub source_label: String,
-    /// The matched provider series the detector scanned against.
-    pub provider_series_id: String,
-    /// Issue numbers that series reported. `0` ⇒ the provider couldn't
-    /// enumerate it (e.g. ComicVine, or an empty/failed response).
+    pub status: SourceStatus,
+    /// The provider series the detector scanned against (or, for a
+    /// provider that can't enumerate, the series it is linked to).
+    pub provider_series_id: Option<String>,
+    pub provider_series_name: Option<String>,
+    pub provider_series_year: Option<i32>,
+    pub provider_series_url: Option<String>,
+    /// How that provider series was found.
+    pub resolved_via: Option<LinkMethod>,
+    /// The provider series id was recorded on the series' external ids
+    /// during this run (a cross-reference or a strict search match).
+    pub id_recorded: bool,
+    /// Distinct issue numbers the provider series lists. `0` ⇒ not
+    /// enumerated.
     pub covered_count: u32,
-    /// Local issue ranges the matched series didn't cover ("600..611").
+    /// Local numbered issues the provider series lists.
+    pub matched_local: u32,
+    /// Local issue runs the provider series didn't cover ("600..611").
     pub gaps: Vec<String>,
+    /// Per-run outcome, aligned with `gaps`.
+    pub gap_details: Vec<DetectGap>,
     /// Range mappings created this run.
     pub created: Vec<ProviderRangeRow>,
-    /// Set when the detector errored for this source (provider call failed).
+    /// Automated range mappings the provider series now covers itself —
+    /// likely stale (e.g. after a re-match). Reported only; never removed
+    /// automatically.
+    pub stale_ranges: Vec<ProviderRangeRow>,
+    /// Uncovered issues with a non-numeric number (annuals, `14AU`) —
+    /// excluded from range detection.
+    pub uncovered_specials: u32,
+    /// Possible provider series for the admin to confirm
+    /// (`needs_confirmation`). Never written automatically.
+    pub candidates: Vec<LinkCandidate>,
+    /// What failed for this provider (`error` / `rate_limited` / a note
+    /// for `no_series`).
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DetectGap {
+    pub low: String,
+    pub high: String,
+    pub issue_count: u32,
+    pub status: GapStatus,
+    pub provider_series_id: Option<String>,
+    pub provider_series_name: Option<String>,
     pub error: Option<String>,
 }
 
@@ -572,20 +627,13 @@ pub async fn detect_series(
         Err(resp) => return resp,
     };
 
-    // The provider series this run was matched to come from the run's
-    // *applied candidates* (recorded synchronously on apply) — under
-    // writeback the series-level `external_ids` aren't written until a
-    // later rescan, so they're unreliable here. Latest applied per source.
-    let targets = applied_series_targets(&app, s.id).await;
-
-    let mut results = Vec::new();
-    for (source, provider_series_id) in targets {
-        // Reconcile the main series-level linkage too — under writeback it
-        // isn't persisted at apply time, so this is what makes the matched
-        // Metron/CV id show in the External IDs card + header.
+    // Reconcile the applied series-level linkage first — under writeback
+    // it isn't persisted at apply time, so this is what makes the matched
+    // Metron/CV id show in the External IDs card + header.
+    for (source, provider_series_id) in series_link::applied_series_targets(&app.db, s.id).await {
         let identifier = crate::metadata::identifier::Identifier::with_canonical_url(
             source,
-            provider_series_id.clone(),
+            provider_series_id,
             "series",
         );
         if let Ok((_, promoted_pairs)) = crate::metadata::writers::set_external_id_promoting(
@@ -601,64 +649,32 @@ pub async fn detect_series(
             // WP-8.2: a promoted external link is a similar-series signal.
             app.similarity.invalidate_all();
         }
-
-        let Some(provider) = crate::metadata::apply::build_provider(&app, source) else {
-            continue;
-        };
-        let (covered_count, gaps, created, error) =
-            match crate::metadata::auto_split::detect_and_map(
-                &app.db,
-                &s,
-                source,
-                &provider_series_id,
-                &*provider,
-            )
-            .await
-            {
-                Ok(o) => (
-                    o.covered_count as u32,
-                    o.gaps
-                        .into_iter()
-                        .map(|(lo, hi)| format!("{lo}..{hi}"))
-                        .collect(),
-                    o.created,
-                    None,
-                ),
-                Err(e) => (0, Vec::new(), Vec::new(), Some(e.to_string())),
-            };
-        // Re-read the freshly-written rows for the response.
-        let created_rows: Vec<ProviderRangeRow> = if created.is_empty() {
-            Vec::new()
-        } else {
-            let ids: Vec<String> = created
-                .iter()
-                .map(|c| format!("{}|{}|{}", c.provider_series_id, c.range_low, c.range_high))
-                .collect();
-            fetch_rows(&app, s.id)
-                .await
-                .into_iter()
-                .filter(|r| {
-                    ids.contains(&format!(
-                        "{}|{}|{}",
-                        r.provider_series_id,
-                        r.range_low.clone().unwrap_or_default(),
-                        r.range_high.clone().unwrap_or_default()
-                    ))
-                })
-                .collect()
-        };
-        results.push(DetectSourceResult {
-            source: source.as_str().to_owned(),
-            source_label: source.label().to_owned(),
-            provider_series_id,
-            covered_count,
-            gaps,
-            created: created_rows,
-            error,
-        });
     }
 
+    let detected = series_link::detect_series(&app, &s).await;
+    let all_rows = fetch_rows(&app, s.id).await;
+    let results: Vec<DetectSourceResult> = detected
+        .into_iter()
+        .map(|d| to_result(d, &all_rows))
+        .collect();
+    let agreement = agreement(&results);
+
     let total_created: usize = results.iter().map(|r| r.created.len()).sum();
+    let ids_recorded: Vec<serde_json::Value> = results
+        .iter()
+        .filter(|r| r.id_recorded)
+        .map(|r| {
+            serde_json::json!({
+                "source": r.source,
+                "provider_series_id": r.provider_series_id,
+                "via": r.resolved_via,
+            })
+        })
+        .collect();
+    let per_source: Vec<serde_json::Value> = results
+        .iter()
+        .map(|r| serde_json::json!({ "source": r.source, "status": r.status }))
+        .collect();
     audit::record(
         &app.db,
         AuditEntry {
@@ -666,52 +682,145 @@ pub async fn detect_series(
             action: "admin.series.provider_range_detect",
             target_type: Some("series"),
             target_id: Some(s.id.to_string()),
-            payload: serde_json::json!({ "created": total_created }),
+            payload: serde_json::json!({
+                "created": total_created,
+                "ids_recorded": ids_recorded,
+                "sources": per_source,
+            }),
             ip: ctx.ip_string(),
             user_agent: ctx.user_agent.clone(),
         },
     )
     .await;
 
-    Json(DetectResp { results }).into_response()
+    Json(DetectResp { results, agreement }).into_response()
 }
 
-/// Latest applied provider series per source for `series_id`, from the
-/// run candidates (most-recent `applied_at` wins).
-async fn applied_series_targets(app: &AppState, series_id: Uuid) -> Vec<(Source, String)> {
-    use entity::{metadata_run, metadata_run_candidate};
-    use sea_orm::QueryOrder;
-
-    let run_ids: Vec<Uuid> = metadata_run::Entity::find()
-        .filter(metadata_run::Column::Scope.eq("series"))
-        .filter(metadata_run::Column::ScopeEntityId.eq(series_id.to_string()))
-        .all(&app.db)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| r.id)
+fn to_result(d: series_link::SourceDetect, all_rows: &[ProviderRangeRow]) -> DetectSourceResult {
+    let source = d.source;
+    let outcome = d.outcome.unwrap_or_default();
+    let created_keys: Vec<String> = outcome
+        .created
+        .iter()
+        .map(|c| format!("{}|{}|{}", c.provider_series_id, c.range_low, c.range_high))
         .collect();
-    if run_ids.is_empty() {
-        return Vec::new();
+    let row_key = |r: &ProviderRangeRow| {
+        format!(
+            "{}|{}|{}",
+            r.provider_series_id,
+            r.range_low.clone().unwrap_or_default(),
+            r.range_high.clone().unwrap_or_default()
+        )
+    };
+    let created: Vec<ProviderRangeRow> = all_rows
+        .iter()
+        .filter(|r| r.source == source.as_str() && created_keys.contains(&row_key(r)))
+        .cloned()
+        .collect();
+    let stale_ids: Vec<String> = outcome
+        .stale_range_ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect();
+    let stale_ranges: Vec<ProviderRangeRow> = all_rows
+        .iter()
+        .filter(|r| stale_ids.contains(&r.id))
+        .cloned()
+        .collect();
+    let link = d.link.as_ref();
+    DetectSourceResult {
+        source: source.as_str().to_owned(),
+        source_label: source.label().to_owned(),
+        status: d.status,
+        provider_series_id: link.map(|l| l.external_id.clone()),
+        provider_series_name: link.and_then(|l| l.name.clone()),
+        provider_series_year: link.and_then(|l| l.year),
+        provider_series_url: link.and_then(|l| {
+            crate::metadata::identifier::canonical_url(source, "series", &l.external_id)
+        }),
+        resolved_via: link.map(|l| l.method),
+        id_recorded: link.is_some_and(|l| l.written),
+        covered_count: outcome.covered_count as u32,
+        matched_local: outcome.matched_local as u32,
+        gaps: outcome
+            .gaps
+            .iter()
+            .map(|(lo, hi)| format!("{lo}..{hi}"))
+            .collect(),
+        gap_details: outcome
+            .gap_outcomes
+            .into_iter()
+            .map(|g| DetectGap {
+                low: g.low,
+                high: g.high,
+                issue_count: g.issue_count as u32,
+                status: g.status,
+                provider_series_id: g.provider_series_id,
+                provider_series_name: g.provider_series_name,
+                error: g.error,
+            })
+            .collect(),
+        created,
+        stale_ranges,
+        uncovered_specials: outcome.uncovered_specials as u32,
+        candidates: d.candidates,
+        error: d.error,
     }
-    let cands = metadata_run_candidate::Entity::find()
-        .filter(metadata_run_candidate::Column::RunId.is_in(run_ids))
-        .filter(metadata_run_candidate::Column::AppliedAt.is_not_null())
-        .order_by_desc(metadata_run_candidate::Column::AppliedAt)
-        .all(&app.db)
-        .await
-        .unwrap_or_default();
+}
 
-    let mut seen = std::collections::HashSet::new();
-    let mut targets = Vec::new();
-    for c in cands {
-        if let Ok(src) = Source::from_str(&c.source)
-            && seen.insert(src)
-        {
-            targets.push((src, c.external_id));
-        }
+/// Compare the uncovered runs of every scanned provider.
+fn agreement(results: &[DetectSourceResult]) -> Option<DetectAgreement> {
+    let scanned: Vec<&DetectSourceResult> = results
+        .iter()
+        .filter(|r| r.status == SourceStatus::Scanned)
+        .collect();
+    if scanned.len() < 2 {
+        return None;
     }
-    targets
+    let describe = |r: &DetectSourceResult| {
+        if r.gap_details.is_empty() {
+            "no split".to_owned()
+        } else {
+            r.gap_details
+                .iter()
+                .map(|g| {
+                    if g.low == g.high {
+                        format!("#{}", g.low)
+                    } else {
+                        format!("#{}–{}", g.low, g.high)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    };
+    let first = &scanned[0].gaps;
+    let agree = scanned.iter().all(|r| &r.gaps == first);
+    let labels: Vec<&str> = scanned.iter().map(|r| r.source_label.as_str()).collect();
+    let summary = if agree {
+        if first.is_empty() {
+            format!(
+                "{} agree: no issues outside the matched series.",
+                labels.join(" and ")
+            )
+        } else {
+            format!(
+                "{} agree: {} sit outside the matched series.",
+                labels.join(" and "),
+                describe(scanned[0])
+            )
+        }
+    } else {
+        let parts: Vec<String> = scanned
+            .iter()
+            .map(|r| format!("{} {}", r.source_label, describe(r)))
+            .collect();
+        format!(
+            "Providers split this run differently ({}). Each provider routes only its own issues, so both mappings can coexist.",
+            parts.join("; ")
+        )
+    };
+    Some(DetectAgreement { agree, summary })
 }
 
 // ───────── shared ─────────
@@ -827,5 +936,61 @@ mod tests {
         assert_eq!(cv.segments[0].low, "1");
         assert_eq!(cv.segments[0].high, "611");
         assert_eq!(cv.segments[0].issue_count, 5);
+    }
+
+    fn scanned(label: &str, gaps: &[(&str, &str)]) -> DetectSourceResult {
+        DetectSourceResult {
+            source: label.to_lowercase(),
+            source_label: label.into(),
+            status: SourceStatus::Scanned,
+            provider_series_id: Some("1".into()),
+            provider_series_name: None,
+            provider_series_year: None,
+            provider_series_url: None,
+            resolved_via: Some(LinkMethod::Linked),
+            id_recorded: false,
+            covered_count: 10,
+            matched_local: 4,
+            gaps: gaps.iter().map(|(l, h)| format!("{l}..{h}")).collect(),
+            gap_details: gaps
+                .iter()
+                .map(|(l, h)| DetectGap {
+                    low: (*l).into(),
+                    high: (*h).into(),
+                    issue_count: 2,
+                    status: GapStatus::Mapped,
+                    provider_series_id: None,
+                    provider_series_name: None,
+                    error: None,
+                })
+                .collect(),
+            created: Vec::new(),
+            stale_ranges: Vec::new(),
+            uncovered_specials: 0,
+            candidates: Vec::new(),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn agreement_needs_two_scanned_providers_and_compares_gaps() {
+        let one = vec![scanned("Metron", &[("600", "611")])];
+        assert!(agreement(&one).is_none());
+
+        let same = vec![
+            scanned("Metron", &[("600", "611")]),
+            scanned("GCD", &[("600", "611")]),
+        ];
+        let a = agreement(&same).unwrap();
+        assert!(a.agree);
+        assert!(a.summary.contains("#600–611"), "{}", a.summary);
+
+        let differ = vec![
+            scanned("Metron", &[("600", "611")]),
+            scanned("GCD", &[("417", "611")]),
+        ];
+        let a = agreement(&differ).unwrap();
+        assert!(!a.agree);
+        assert!(a.summary.contains("GCD #417–611"), "{}", a.summary);
     }
 }

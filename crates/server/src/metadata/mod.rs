@@ -50,6 +50,7 @@ pub mod range_map;
 pub mod ratcliff;
 pub mod rate_limit;
 pub mod refresh;
+pub mod series_link;
 pub mod sidecar_compose;
 pub mod title_norm;
 pub mod writeback_progress;

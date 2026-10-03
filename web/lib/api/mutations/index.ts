@@ -3006,6 +3006,10 @@ export function useDetectProviderRangesSeries(seriesSlug: string) {
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "provider-coverage"],
         });
+        // Detection records the Metron / GCD series id it resolves.
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "external-ids"],
+        });
       },
     },
   );

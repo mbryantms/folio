@@ -9,8 +9,12 @@
  * series (e.g. Fantastic Four #600–611 → Metron "Fantastic Four (2012)").
  * Driven by the per-provider coverage map so the reader sees the whole
  * picture at a glance instead of reconstructing the split from a bare
- * list of exceptions. Source-agnostic — GCD appears automatically once
- * that provider is added.
+ * list of exceptions. Source-agnostic.
+ *
+ * "Detect from providers" checks every provider that can list a series'
+ * issues (Metron, GCD) — resolving this series' id there even when it was
+ * only matched through ComicVine — and shows the per-provider outcome
+ * (`<ProviderDetectResults>`), including matches to confirm.
  *
  * Visible to anyone who can see the library; add / remove / detect are
  * admin-only (the API enforces it too). Renders nothing when there's no
@@ -42,12 +46,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  ProviderDetectResults,
+  formatGap,
+} from "@/components/library/ProviderDetectResults";
+import {
+  useAddExternalIdSeries,
   useAddProviderRangeSeries,
   useDeleteProviderRangeSeries,
   useDetectProviderRangesSeries,
 } from "@/lib/api/mutations";
 import { useMe, useProviderCoverageSeries } from "@/lib/api/queries";
-import type { CoverageSegment, DetectResp } from "@/lib/api/types";
+import type {
+  CoverageSegment,
+  DetectResp,
+  LinkCandidate,
+  ProviderRangeRow,
+} from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
 const SOURCES: Array<{ value: string; label: string }> = [
@@ -113,9 +127,39 @@ export function SeriesProviderRangesCard({
   const add = useAddProviderRangeSeries(seriesSlug);
   const remove = useDeleteProviderRangeSeries(seriesSlug);
   const detect = useDetectProviderRangesSeries(seriesSlug);
+  const addExternalId = useAddExternalIdSeries(seriesSlug);
   const [detectResult, setDetectResult] = React.useState<DetectResp | null>(
     null,
   );
+  /** `source:external_id` of the candidate being confirmed. */
+  const [confirmingId, setConfirmingId] = React.useState<string | null>(null);
+
+  const runDetect = () =>
+    detect.mutate(undefined, {
+      onSuccess: (data) => setDetectResult(data),
+    });
+
+  // Confirming a candidate records it as a user-set external id, then
+  // re-runs detection against it.
+  const onConfirmCandidate = (source: string, c: LinkCandidate) => {
+    setConfirmingId(`${source}:${c.external_id}`);
+    addExternalId.mutate(
+      { source, external_id: c.external_id, external_url: c.url ?? null },
+      {
+        onSuccess: () => runDetect(),
+        onSettled: () => setConfirmingId(null),
+      },
+    );
+  };
+
+  const onRemoveStale = (sourceLabel: string, row: ProviderRangeRow) =>
+    setConfirmRemove({
+      id: row.id,
+      sourceLabel,
+      range: formatGap(row.range_low ?? "", row.range_high ?? ""),
+      seriesName:
+        row.provider_series_name ?? `series ${row.provider_series_id}`,
+    });
 
   const providers = coverage.data?.providers ?? [];
   const [adding, setAdding] = React.useState(false);
@@ -190,10 +234,11 @@ export function SeriesProviderRangesCard({
         </div>
       ) : providers.length === 0 && !adding ? (
         <p className="text-muted-foreground text-sm">
-          No provider series mapped yet. Match this series to a provider, then
-          use <span className="font-medium">Detect from providers</span> — if a
-          provider (Metron/GCD) splits part of the run (e.g. a legacy
-          renumbering) into a separate series, it&rsquo;ll show here.
+          No provider series mapped yet. Use{" "}
+          <span className="font-medium">Detect from providers</span> to find
+          this series on Metron and GCD (even if it was only matched through
+          ComicVine). If a provider files part of the run (e.g. a legacy
+          renumbering) as a separate series, it&rsquo;ll show here.
         </p>
       ) : (
         <div className="space-y-4">
@@ -325,29 +370,12 @@ export function SeriesProviderRangesCard({
       )}
 
       {isAdmin && detectResult && (
-        <div className="border-border/60 text-muted-foreground space-y-1 rounded-md border p-2 text-xs">
-          {detectResult.results.length === 0 ? (
-            <p>
-              No matched provider series to scan yet — apply a series match
-              first.
-            </p>
-          ) : (
-            detectResult.results.map((r) => (
-              <p key={`${r.source}:${r.provider_series_id}`}>
-                <span className="font-medium">{r.source_label}</span> ·{" "}
-                {r.error
-                  ? `error: ${r.error}`
-                  : r.covered_count === 0
-                    ? "provider returned no issue list (nothing to split)"
-                    : `scanned ${r.covered_count} issues; ${
-                        r.gaps.length
-                          ? `gaps ${r.gaps.join(", ")}; `
-                          : "no gaps; "
-                      }created ${r.created.length} mapping(s)`}
-              </p>
-            ))
-          )}
-        </div>
+        <ProviderDetectResults
+          result={detectResult}
+          confirmingId={confirmingId}
+          onConfirm={onConfirmCandidate}
+          onRemoveStale={onRemoveStale}
+        />
       )}
 
       {isAdmin && !adding && (
@@ -355,12 +383,8 @@ export function SeriesProviderRangesCard({
           <Button
             variant="ghost"
             size="sm"
-            disabled={detect.isPending}
-            onClick={() =>
-              detect.mutate(undefined, {
-                onSuccess: (data) => setDetectResult(data),
-              })
-            }
+            disabled={detect.isPending || confirmingId !== null}
+            onClick={runDetect}
           >
             {detect.isPending ? (
               <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />

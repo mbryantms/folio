@@ -420,6 +420,23 @@ pub struct ProviderSeriesRef {
     pub url: Option<String>,
 }
 
+/// A provider series found through a **curated cross-reference** — the
+/// provider's own record of another provider's id for the same series
+/// (Metron stores `cv_id` / `gcd_id` on every series). Returned by
+/// [`MetadataProvider::find_series_by_cross_ref`]; provider range
+/// detection uses it to resolve a series' Metron / GCD id when the series
+/// was only ever matched through ComicVine.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CrossRefSeries {
+    /// This provider's series id.
+    pub external_id: String,
+    pub name: Option<String>,
+    pub year_began: Option<i32>,
+    /// Every other provider id the record carries (e.g. the GCD id on a
+    /// Metron series found by its ComicVine id).
+    pub identifiers: Vec<crate::metadata::identifier::Identifier>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReprintCandidate {
     pub label: String,
@@ -528,11 +545,36 @@ pub trait MetadataProvider: Send + Sync + 'static {
     /// Default `Ok(vec![])` means "enumeration unsupported" — auto-split
     /// then skips this provider, which is the right behaviour for a
     /// lumper like ComicVine that needs no split. Splitter providers
-    /// (Metron, and GCD when added) override it.
+    /// (Metron, GCD) override it and [`Self::enumerates_series_issues`].
     async fn list_series_issue_numbers(
         &self,
         _series_external_id: &str,
     ) -> ProviderResult<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    /// `true` when [`Self::list_series_issue_numbers`] is implemented —
+    /// i.e. the provider can enumerate a series' issue numbers, which is
+    /// what provider range detection needs. Lumpers (ComicVine) keep the
+    /// default `false`, so detection reports them as "can't enumerate"
+    /// without spending a request.
+    fn enumerates_series_issues(&self) -> bool {
+        false
+    }
+
+    /// Find this provider's series by **another** provider's series id,
+    /// using the provider's own curated cross-reference (one request).
+    /// `source` is the provider the `external_id` belongs to.
+    ///
+    /// Default `Ok(vec![])` means "no cross-reference index". Metron
+    /// overrides it (`/api/series/?cv_id=` / `?gcd_id=`). More than one
+    /// result means the cross-reference is ambiguous; callers must not
+    /// treat that as a confident match.
+    async fn find_series_by_cross_ref(
+        &self,
+        _source: Source,
+        _external_id: &str,
+    ) -> ProviderResult<Vec<CrossRefSeries>> {
         Ok(Vec::new())
     }
 

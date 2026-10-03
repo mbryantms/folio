@@ -24,6 +24,8 @@
 //! Endpoints we use:
 //! - `GET /api/series/?name=...` — series search.
 //! - `GET /api/series/{id}/` — series detail.
+//! - `GET /api/series/?cv_id=...` / `?gcd_id=...` — cross-reference lookup
+//!   (provider range detection, [`crate::metadata::series_link`]).
 //! - `GET /api/issue/?series_id=...&number=...` — issue search.
 //! - `GET /api/issue/{id}/` — issue detail.
 //!
@@ -50,9 +52,9 @@ use crate::metadata::http;
 use crate::metadata::identifier::{Identifier, Source};
 use crate::metadata::matcher::canonical_issue_number;
 use crate::metadata::provider::{
-    ConditionalFetch, CreditCandidate, EntityCandidate, GenericMetadata, IssueCandidate,
-    IssueQuery, MetadataProvider, ProviderError, ProviderResult, ProviderSeriesRef, QuotaSnapshot,
-    ReprintCandidate, SeriesCandidate, SeriesQuery, VariantCoverCandidate,
+    ConditionalFetch, CreditCandidate, CrossRefSeries, EntityCandidate, GenericMetadata,
+    IssueCandidate, IssueQuery, MetadataProvider, ProviderError, ProviderResult, ProviderSeriesRef,
+    QuotaSnapshot, ReprintCandidate, SeriesCandidate, SeriesQuery, VariantCoverCandidate,
 };
 use crate::metadata::rate_limit::{self, BucketDef, Reservation};
 use async_trait::async_trait;
@@ -436,6 +438,12 @@ struct MSeriesList {
     year_began: Option<i32>,
     issue_count: Option<i32>,
     modified: Option<String>,
+    /// Curated cross-references — the list serializer carries them, so a
+    /// `?cv_id=` lookup yields the GCD id in the same request.
+    #[serde(default)]
+    cv_id: Option<i64>,
+    #[serde(default)]
+    gcd_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -699,6 +707,33 @@ fn associated_to_ref(a: &MAssociated) -> Option<ProviderSeriesRef> {
         label: label.to_owned(),
         name,
         year,
+    })
+}
+
+/// A `?cv_id=` / `?gcd_id=` list row → [`CrossRefSeries`], carrying the
+/// row's own cross-references as identifiers.
+fn series_list_to_cross_ref(s: &MSeriesList) -> Option<CrossRefSeries> {
+    let external_id = s.id?.to_string();
+    let mut identifiers = Vec::new();
+    if let Some(cv) = s.cv_id {
+        identifiers.push(Identifier::with_canonical_url(
+            Source::ComicVine,
+            cv.to_string(),
+            "series",
+        ));
+    }
+    if let Some(gcd) = s.gcd_id {
+        identifiers.push(Identifier::with_canonical_url(
+            Source::Gcd,
+            gcd.to_string(),
+            "series",
+        ));
+    }
+    Some(CrossRefSeries {
+        external_id,
+        name: s.series.as_deref().map(strip_display_year),
+        year_began: s.year_began,
+        identifiers,
     })
 }
 
@@ -1158,6 +1193,35 @@ impl MetadataProvider for MetronClient {
             }
         }
         Ok(numbers)
+    }
+
+    fn enumerates_series_issues(&self) -> bool {
+        true
+    }
+
+    async fn find_series_by_cross_ref(
+        &self,
+        source: Source,
+        external_id: &str,
+    ) -> ProviderResult<Vec<CrossRefSeries>> {
+        // Metron's series filter takes the numeric ComicVine / GCD ids
+        // (`SeriesFilter.cv_id` / `.gcd_id`, exact lookups).
+        let param = match source {
+            Source::ComicVine => "cv_id",
+            Source::Gcd => "gcd_id",
+            _ => return Ok(Vec::new()),
+        };
+        let id = external_id.trim();
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()) {
+            return Ok(Vec::new());
+        }
+        let params = vec![(param, id.to_owned())];
+        let envelope: Paged<MSeriesList> = self.request("/api/series/", &params).await?;
+        Ok(envelope
+            .results
+            .iter()
+            .filter_map(series_list_to_cross_ref)
+            .collect())
     }
 
     async fn fetch_cover(&self, url: &str) -> ProviderResult<Vec<u8>> {

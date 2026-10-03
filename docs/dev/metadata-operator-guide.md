@@ -209,9 +209,10 @@ responses on 2026-10-01:
   suddenly come back sparse, check the Providers card's last error and
   file an issue with the response.
 - **Series splits.** GCD splits long runs differently from ComicVine
-  (e.g. Fantastic Four (1961) ends at #416 on GCD). After a manual
-  series apply from GCD, **Detect from providers** maps the uncovered
-  issue range onto the right GCD series automatically.
+  (e.g. Fantastic Four (1961) ends at #416 on GCD). **Detect from
+  providers** (series page → Details) maps the uncovered issue range onto
+  the right GCD series. The series doesn't need a GCD match first: see
+  [Detect from providers](#detect-from-providers) below.
 - **Covers aren't downloadable.** GCD serves every cover from
   `files1.comics.org`, which sits behind a Cloudflare bot challenge.
   The challenge refuses server-side downloads and browser hotlinks
@@ -567,6 +568,45 @@ drop the legacy DB-direct apply branch — flag a maintainer.
   releases on TTL; a still-running rewrite holds the lock until it
   finishes. Subsequent applies for the same issue skip with
   `archive busy (mutex)` in `ApplyOutcome.sidecar_skip_reasons`.
+
+## Detect from providers
+
+The **Detect from providers** button on a series' Details tab (admins
+only) checks every provider that can list a series' issues, which today
+means Metron and GCD. ComicVine can't list issues, so it shows "Can't
+list issues".
+
+- **No match needed.** If the series was only ever matched through
+  ComicVine, detection finds the Metron and GCD series itself: first from
+  ids Folio already has, then from Metron's own cross-reference (a
+  ComicVine id leads to the Metron series and its GCD id in one Metron
+  request), and last from a series search.
+- **Search matches are strict.** A searched series is used automatically
+  only when its name and start year match exactly, its publisher doesn't
+  conflict, no other result matches as well, and its issue list contains
+  at least half of your numbered issues. Anything weaker shows under
+  **Needs confirmation** with the reason ("start year differs", "lists
+  only 30% of the local issues"). **Use this series** saves it as your
+  choice and runs detection again. Nothing is written until you confirm.
+- **What gets written.** A series id found automatically is saved to the
+  series' external IDs (you'll see it in the External IDs card). Each
+  issue run the provider files under a different series becomes a range
+  mapping, shown as an **override** in the coverage bars.
+- **Annuals and specials** (`Annual 1`, `14AU`) are never put in a
+  range; the result counts them.
+- **Stale mappings.** If the matched series now lists the issues of an
+  automatic mapping (for example after you re-matched the series), the
+  result flags it with a remove button. Folio never removes a mapping
+  on its own.
+- **Disagreement.** Metron and GCD often split a run differently. The
+  result says so; both mappings coexist because each provider uses only
+  its own.
+- **Budget.** One click uses at most a few requests per provider: about
+  1 Metron cross-reference, the issue list pages, and up to 3 uncovered
+  runs (a search plus one issue list each). GCD's 100/hour bucket and
+  Metron's 20/minute burst limit apply. A provider that hits its limit
+  shows **Rate limited**, and the others still run. Run it again later
+  to finish.
 
 ## Files referenced
 
