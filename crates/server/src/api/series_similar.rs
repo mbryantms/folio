@@ -383,6 +383,12 @@ struct StartedRow {
 
 /// Every non-removed series the caller has opened, most recent activity
 /// first. Seeds the home rail and is excluded from it.
+///
+/// Progress counts on live (active, non-removed) issues only — the On Deck
+/// rail's rule. The predicate also lets the progress → issue join use the
+/// covering `issues_active_id_series_idx` (index-only); without it the
+/// planner hashed a seq scan of the whole `issues` heap on every home-page
+/// load (WP-8.3, 50k-issue measurement).
 async fn started_series(app: &AppState, user_id: Uuid) -> Result<Vec<StartedRow>, sea_orm::DbErr> {
     StartedRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -392,6 +398,7 @@ async fn started_series(app: &AppState, user_id: Uuid) -> Result<Vec<StartedRow>
                 SELECT i.series_id, max(p.updated_at) AS last_activity
                   FROM progress_records p
                   JOIN issues i ON i.id = p.issue_id
+                   AND i.state = 'active' AND i.removed_at IS NULL
                  WHERE p.user_id = $1
                    AND (p.last_page > 0 OR p.finished)
                  GROUP BY i.series_id

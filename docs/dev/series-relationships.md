@@ -622,6 +622,10 @@ Per run, after merging:
   `CROSS JOIN LATERAL` index lookups (`issues_series_sortnum_idx`) rather
   than a join on a grouped subquery, which planned badly on freshly
   inserted, un-analyzed data (12 s).
+  At 50,000 issues / 2,500 series (WP-8.3, `docs/dev/load-testing.md`
+  "M7 surfaces"), a full run with 1,690 proposals takes about 0.5–0.6 s
+  after the collected-edition source stopped evaluating its series regex
+  once per issue (it was about 0.9 s).
 
 ### Service API
 

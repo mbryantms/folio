@@ -150,6 +150,9 @@ rows). A cache hit fires no scoring queries; the request itself is slug
 lookup + grants + hidden lookup + page hydrate. The perf guard in
 `crates/server/tests/perf_regressions.rs` bounds both: cold ≤ 20
 (observed 11 before WP-8.2 added the tie-in query), warm ≤ 15 (observed 8).
+At 50,000 issues (WP-8.3, `docs/dev/load-testing.md` "M7 surfaces") the
+overlap takes about 32 ms for a typical series and about 125 ms for a
+1,000-credit one; a warm request is under 2 ms.
 
 ## Cache
 
@@ -200,7 +203,7 @@ Applied per request, never cached:
   cover menu, which writes that dismissal.
 - **Removed series** never enter the cached list.
 - **Home rail only**: excludes every series the caller has started
-  (progress with `last_page > 0` or `finished`), and the seed. The seed
+  (progress with `last_page > 0` or `finished` on a live issue), and the seed. The seed
   is the most recently read visible, unhidden series; if its neighbours
   are all filtered out, the next two most recent are tried.
 

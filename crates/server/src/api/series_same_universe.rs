@@ -104,11 +104,18 @@ struct CountRow {
 
 /// The shared-membership CTE (`$1` = the source series id): one row per
 /// (other series, shared thing).
+///
+/// The series-group split is `unnest(regexp_split_to_array(…))`, not the
+/// equivalent `regexp_split_to_table(…)`: the planner assumes a set-returning
+/// function yields 1,000 rows but estimates `unnest` of an array at 10. At
+/// 2,500 series the 1,000-row guess put both statements past
+/// `jit_above_cost`, and JIT compilation (~13 ms) cost ten times the query
+/// itself (WP-8.3, `docs/dev/load-testing.md` "M7 surfaces").
 const SHARED_CTE: &str = r"
 WITH src_groups AS (
     SELECT DISTINCT lower(btrim(g)) AS key, btrim(g) AS name
       FROM series s0,
-           regexp_split_to_table(COALESCE(s0.series_group, ''), '\s*[,;]\s*') AS g
+           unnest(regexp_split_to_array(COALESCE(s0.series_group, ''), '\s*[,;]\s*')) AS g
      WHERE s0.id = $1 AND btrim(g) <> ''
 ),
 shared AS (
@@ -121,7 +128,7 @@ shared AS (
     UNION
     SELECT s2.id AS sid, 'series_group'::text AS via, sg.name AS name
       FROM series s2
-      CROSS JOIN LATERAL regexp_split_to_table(s2.series_group, '\s*[,;]\s*') AS g
+      CROSS JOIN LATERAL unnest(regexp_split_to_array(s2.series_group, '\s*[,;]\s*')) AS g
       JOIN src_groups sg ON sg.key = lower(btrim(g))
      WHERE s2.series_group IS NOT NULL AND s2.id <> $1
 )";

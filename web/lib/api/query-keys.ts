@@ -371,8 +371,7 @@ export const queryKeys = {
     library_id?: string;
     scope?: string;
     status?: string;
-    before?: string;
-  }) => ["admin", "metadata", "runs", filters] as const,
+  }) => ["admin", "metadata", "runs", "list", filters] as const,
   adminMetadataRun: (id: string) => ["admin", "metadata", "runs", id] as const,
   adminMetadataRecentApplies: (limit: number) =>
     ["admin", "metadata", "recent-applies", limit] as const,

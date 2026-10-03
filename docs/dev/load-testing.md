@@ -10,6 +10,9 @@ This is the 50,000-issue baseline for Folio's list, filter and sort paths
    changed, and the current plan for the ones it left alone.
 3. **The AR-1 projection audit** of `issue::Entity::find()` call sites.
 4. **An `oha` recipe** for HTTP load, mapped to the spec §18.3 scenarios.
+5. **The M7 surfaces at 50,000 issues** (WP-8.3): similar series,
+   relationships, same universe, arc tie-ins, the suggestion queue and a
+   full `relationship_suggest` job run.
 
 Scanner throughput is documented separately in
 [`scanner-perf.md`](scanner-perf.md).
@@ -80,7 +83,24 @@ these steps:
      don't fail the run. At this scale that is only `series` (2,500 rows,
      about 150 pages), where the planner can legitimately prefer a scan.
 
-`PERF_SERIES` and `PERF_ISSUES_PER_SERIES` resize the library.
+7. **Phase 2, the M7 set** (WP-8.3; `PERF_M7=0` skips it). See
+   [M7 surfaces at 50,000 issues](#m7-surfaces-at-50000-issues-wp-83).
+   [`scripts/perf/seed_relationships.sql`](../../scripts/perf/seed_relationships.sql)
+   layers arcs, universes, series groups, AlternateSeries and curated
+   links onto the catalogue. The run then times three full
+   `relationship_suggest` job runs, bulk-accepts 501 suggestions through
+   the API, and drives
+   [`scripts/perf/endpoints-m7.txt`](../../scripts/perf/endpoints-m7.txt)
+   the same way as phase 1. A third column `cold` there skips the warm-up
+   request, so similar series is measured on an in-process cache miss.
+   - `job-*` labels (whole-library batch work) never fail the gate; their
+     seq scans are listed with `[batch]`.
+   - [`scripts/perf/expected_seqscans.txt`](../../scripts/perf/expected_seqscans.txt)
+     holds reviewed `label | table | reason` exceptions, listed as
+     `[expected]`.
+
+`PERF_SERIES` and `PERF_ISSUES_PER_SERIES` resize the library (phase 2's
+seed assumes the default 2,500 series).
 `PERF_SERVER_BIN` runs a prebuilt binary instead of building the working
 tree. The "before" numbers below came from an `origin/main` build run
 against the same database.
@@ -337,6 +357,152 @@ continue-reading     Nested Loop: Bitmap Index Scan progress_records_user_update
 cbl-entries          Index Scan using cbl_entries_list_position_uniq (cbl_list_id)
                        + hydrate: Bitmap Index Scan on issues_pkey (id = ANY) [50 rows]                    [0.3 ms]
 ```
+
+## M7 surfaces at 50,000 issues (WP-8.3)
+
+The M7 / M7b relationship and similarity work (WP-7.1–7.8) was measured on
+the 22k-issue dev library. This is the same set at the 50,000-issue stress
+scale, from phase 2 of `just perf-explain`.
+
+### Dataset
+
+The stress fixture has credits, characters, genres and tags but none of
+what the M7 surfaces read, so
+[`seed_relationships.sql`](../../scripts/perf/seed_relationships.sql)
+adds it deterministically on top of the scanned catalogue:
+
+| what | shape | rows |
+|---|---|---:|
+| story arcs | 100, each named like its main series. Arc 1 is a mega-event: its main series plus one issue of every 6th series (~420 series). The other 99 have 4–17 tie-in series. | `issue_arcs` 3,127 · `series_arcs` 1,590 |
+| universes | 8, holding 60 % of the series (~190 each) | `series_universes` 1,500 |
+| series groups | every 5th series (groups of ~10; every 50th carries two) | 500 series |
+| AlternateSeries | issue 1 of every 25th series names the next series | 100 issues |
+| "large" series | every fixture writer + penciller credit (1,000) and 300 shared characters, in 40 arcs. This mirrors the dev library's Amazing Spider-Man 1989 (701 credits). | — |
+| curated links | 50 six-series `sequel_of` chains, plus one hub series with 200 `see_also` links, as inverse pairs | 1,000 rows |
+| from the job | the first run proposes 1,690 and writes the 1,000-row cap. 101 high-bucket rows are bulk-accepted, plus 400 more by explicit id (mega-event tie-ins first). | 1,401 edges · 1,000 pending · 501 accepted |
+
+### Results
+
+These figures come from a debug build with `auto_explain` per-node timing
+on, on a shared workstation (load average 10–25 during the runs). As in
+the top-ten table, treat them as relative.
+
+**Endpoints** (final run, after the fixes below):
+
+| endpoint | request | Σ SQL ms | slowest stmt ms | stmts | wall ms | gate |
+|---|---|---:|---:|---:|---:|---|
+| similar-large-cold | `GET /series/{large}/similar`, cache miss | 140.3 | 123.6 (overlap) | 11 | 454 | `series_tags` [expected] |
+| similar-large-warm | same, neighbour cache hit | 1.7 | 0.7 | 8 | 47 | — |
+| similar-typical-cold | `GET /series/{typical}/similar`, cache miss | 43.8 | 32.1 (overlap) | 11 | 116 | — |
+| similar-typical-warm | same, cache hit | 4.0 | 1.8 | 8 | 53 | — |
+| similar-home-rail | `GET /me/similar-series` | 14.8 | 13.4 (started series) | 8 | 44 | — (**was `issues`**) |
+| relationships-chain | `GET /series/{s}/relationships`, middle of a 6-series chain | 0.6 | 0.2 | 12 | 44 | — |
+| relationships-hub | same, 200 curated links | 9.8 | 4.5 (hydrate) | 12 | 40 | — |
+| relationships-typical | same, no links | 0.3 | 0.0 | 11 | 44 | — |
+| same-universe | `GET /series/{s}/same-universe` (195 series) | 5.3 | 1.7 | 9 | 34 | — (**was 29.0 ms Σ**) |
+| same-universe-page2 | keyset page 2 | 5.4 | 3.3 | 8 | 42 | — |
+| arc-tie-ins-mega | `GET /arcs/{mega}/tie-ins` (184 accepted tie-ins) | 18.6 | 10.6 (arc counts) | 11 | 91 | — |
+| arc-tie-ins-mega-page2 | keyset page 2 | 8.1 | 3.6 | 10 | 38 | — |
+| arc-tie-ins-typical | `GET /arcs/{arc}/tie-ins` | 1.8 | 0.9 | 11 | 42 | — |
+| suggestions-pending | `GET /admin/relationship-suggestions?limit=50` (1,000 pending) | 3.9 | 1.3 | 10 | 39 | — |
+| suggestions-page2 | keyset page 2 | 4.8 | 1.8 | 8 | 45 | — |
+| suggestions-library | `?library_id=…&bucket=medium` | 5.7 | 2.0 | 10 | 33 | — |
+| suggestions-all | `?status=all` | 3.8 | 1.0 | 10 | 25 | — |
+| suggestions-series | `GET /series/{s}/relationship-suggestions` | 1.1 | 0.5 | 11 | 18 | — |
+
+**The `relationship_suggest` job.** The first run proposes 1,690
+candidates and writes 1,000 (the cap). The rerun follows 501 accepts.
+`job elapsed` is the job's own `RunReport.elapsed_ms`; "wall" runs from
+the `POST …/run` to the job's "run complete" log line.
+
+| run | before fixes: job elapsed / wall ms | after: job elapsed / wall ms |
+|---|---:|---:|
+| first run (1,000 inserted) | 925 / 1,054 | 585 / 744 |
+| rerun after accepts | 874 / 1,053 | 506 / 638 |
+| with `auto_explain` on (plans) | 933 / 1,055 | 573 / 673 |
+
+Per-source times (rerun, after) in ms:
+
+- `name_continuation` 72, `provider_volume` 76, `translation` 71,
+  `collected_edition` 37 (was 393), `arc_tie_in` 37, `alternate_series` 19.
+- Every other source is ≤ 3.
+- The remaining ~200 ms is merge, dedupe, the upserts and stale marking.
+
+The job stays linear in the library: the per-series aggregates are
+`CROSS JOIN LATERAL` index lookups over all 2,500 series. Its scans of
+`issues` (the collected-edition and per-series reads) are whole-library
+by design, and are reported `[batch]`.
+
+**Bulk accept** (API, debug build): the high bucket (101 rows) took
+133 ms; 400 explicit ids took 394 ms, about 1 ms per accept including the
+inverse-pair write and audit row.
+
+### Fixed in WP-8.3
+
+1. **Home "similar series" rail: seq scan of `issues` on every load.**
+   `started_series` joined `progress_records → issues` without the
+   active-issue predicate, so the covering `issues_active_id_series_idx`
+   could not serve it. The planner hashed a seq scan of the 65 MB heap,
+   which was the only gate failure in the first run. The join now requires
+   a live issue (`state = 'active' AND removed_at IS NULL`, the On Deck
+   rule) and is an index-only scan. On the same database, measured with
+   psql: 24–42 ms → 10–12 ms. The behaviour changes slightly: progress on a
+   removed issue no longer marks its series "started".
+2. **Same universe: JIT on a 1.6 ms query.** The planner estimates
+   `regexp_split_to_table` at 1,000 rows per call. Over 500 grouped series
+   that put both statements (count and page) past `jit_above_cost`, and
+   JIT compilation took ~13–15 ms each. The equivalent
+   `unnest(regexp_split_to_array(…))` is estimated at 10 rows and doesn't
+   JIT. The count statement went from 27.0 ms to 1.8 ms (psql
+   `EXPLAIN ANALYZE`), and Σ SQL for the request from 29.0 ms to 5.3 ms.
+3. **Suggestion job, collected-edition source: regex per issue.** The
+   series-level marker (series type, or a format word such as "TPB" or
+   "Omnibus" in the name) sat inside an `OR` in the join filter. Postgres
+   therefore evaluated the regex once per issue row (50,000 times) instead
+   of once per series. A `MATERIALIZED` CTE now computes it per series.
+   With psql the query went from 399 ms to 48 ms, and the job from about
+   0.9 s to about 0.55 s.
+
+No index was missing, so this WP adds no migration.
+
+### Findings, not fixed (no redesign in this WP)
+
+- **Similar series, cold, large series.** The overlap query is about
+  125 ms for the 1,000-credit series (77,843 posting rows before the
+  document-frequency filter; 55,396 after) and about 32 ms for a typical
+  one. That is about 2× the dev library's 60 ms for 2.5× the overlap rows,
+  so it is linear. Most of it is 1,000 `series_credits_role_person_idx`
+  probes and the `live`/`df` aggregation. The df cut-off
+  (`df ≤ n × 0.5`) applies only after every posting is collected. Pruning
+  common entities before the postings join (for example a per-entity df
+  table) would cut the large case, but it is a redesign of the scoring
+  query. The in-process cache makes it a once-per-invalidation cost: warm
+  requests take 1.7 ms. The `series_tags` seq scan is a fixture artifact:
+  every stress series carries all eight tags.
+- **JIT elsewhere in the job.** Two job statements still JIT, the
+  name-continuation catalogue (~21 ms of JIT) and the detectors' catalogue
+  (~13 ms), because the planner over-estimates them. This is harmless for
+  a background job. The scanner's `story_arc` split
+  (`metadata_rollup.rs`, `metadata/writers.rs`) and the AlternateSeries
+  source use the same `regexp_split_to_table` shape and may JIT on larger
+  libraries.
+- **`series_universes` has no `universe_id`-leading index.** Same universe
+  finds the other members through the `(series_id, universe_id)` primary
+  key, which works on Postgres 18 thanks to skip scan ("Index Searches:
+  1"). On Postgres 17 it would be a full index scan of a table that grows
+  with series × universes. That is cheap at 1,500 rows, but worth an index
+  if PG17 support matters.
+- **Arc tie-ins** do the arc's series and issue counts as two
+  `InitPlan`s per request (10.6 ms for the 420-series mega-event). This
+  grows with arc size, not library size, so it is fine.
+- **`GET /series/{slug}/relationships`** stays flat: 12 statements
+  whether a series has 0, 2 (plus a 6-series chain) or 200 links.
+  `perf_regressions.rs` now guards it with 500 links and a 13-node chain
+  (≤ 15 queries, observed 12).
+- **Harness bug, fixed:** `perf-explain.sh` killed only the subshell
+  wrapping the server binary, so with `PERF_KEEP=1` the old server
+  survived. On the next run it consumed jobs from the reused Redis. The
+  binary is now `exec`ed.
 
 ## AR-1: the `issue::Entity::find()` audit
 

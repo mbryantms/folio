@@ -2746,13 +2746,14 @@ export interface paths {
         put?: never;
         /**
          * Multi-select Tranche M3: append many (entry_kind, ref_id) members
-         *     to a collection in one round-trip. Per-row insert semantics
-         *     match `add_entry` — including the partial-unique idempotent skip,
-         *     which the response surfaces as `already_present`. Each member
-         *     gets its own light validation + existence check so a single
-         *     bad id in the batch can't poison the rest.
-         * @description Position counter walks forward from the collection's current max,
-         *     incrementing per accepted insert; concurrent bulk-add races have
+         *     to a collection in one round-trip. Per-member semantics match
+         *     `add_entry` — including the partial-unique idempotent skip, which
+         *     the response surfaces as `already_present`. Each member gets its
+         *     own light validation + existence check so a single bad id in the
+         *     batch can't poison the rest. The existence checks, dedupe, position
+         *     numbering and inserts all run as one set-based statement (WP-8.3).
+         * @description Positions continue from the collection's current max, in submitted
+         *     order over the members that land; concurrent bulk-add races have
          *     the same theoretical position-collision risk as the single-add
          *     endpoint (none enforced at the schema level today), so callers
          *     shouldn't fire two bulk-adds against the same collection in

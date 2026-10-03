@@ -770,6 +770,100 @@ async fn bulk_add_counts_added_and_already_present_and_not_found() {
     assert_eq!(items.len(), 3);
 }
 
+/// WP-8.3: the set-based bulk-add must keep the per-row loop's semantics —
+/// submitted order, positions continuing from the current max (existing
+/// gaps untouched), in-batch duplicates counted as `already_present`
+/// (first occurrence wins), unknown refs as `not_found`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_add_keeps_submitted_order_positions_and_in_batch_dedupe() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "bulk-order@example.com").await;
+    let (_l1, series_a, issue_a) = seed_series_with_issue(&app, "order-a").await;
+    let (_l2, series_b, issue_b) = seed_series_with_issue(&app, "order-b").await;
+    let (_l3, series_c, issue_c) = seed_series_with_issue(&app, "order-c").await;
+    let cid = create_collection(&app, &auth, "Order Pile").await;
+    let single_url = format!("/api/me/collections/{cid}/entries");
+
+    // Positions 0, 1, 2 — then drop the middle one so the collection has a gap.
+    let mut middle = String::new();
+    for (i, body) in [
+        serde_json::json!({"entry_kind": "issue", "ref_id": &issue_a}),
+        serde_json::json!({"entry_kind": "series", "ref_id": series_c.to_string()}),
+        serde_json::json!({"entry_kind": "issue", "ref_id": &issue_c}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (status, created) =
+            http(&app, Method::POST, &single_url, Some(&auth), Some(body)).await;
+        assert_eq!(status, StatusCode::CREATED, "{created:#?}");
+        if i == 1 {
+            middle = created["id"].as_str().unwrap().to_owned();
+        }
+    }
+    let (status, _) = http(
+        &app,
+        Method::DELETE,
+        &format!("/api/me/collections/{cid}/entries/{middle}"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert!(status.is_success(), "remove middle: {status}");
+
+    let url = format!("/api/me/collections/{cid}/members/bulk-add");
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &url,
+        Some(&auth),
+        Some(serde_json::json!({
+            "members": [
+                { "entry_kind": "issue",  "ref_id": &issue_b },
+                { "entry_kind": "series", "ref_id": series_a.to_string() },
+                { "entry_kind": "issue",  "ref_id": &issue_b },               // in-batch dup
+                { "entry_kind": "issue",  "ref_id": &issue_a },               // already in
+                { "entry_kind": "series", "ref_id": Uuid::now_v7().to_string() }, // unknown
+                { "entry_kind": "junk",   "ref_id": "x" },                    // invalid
+                { "entry_kind": "series", "ref_id": series_b.to_string() },
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    assert_eq!(body["added"].as_u64(), Some(3), "{body:#?}");
+    assert_eq!(body["already_present"].as_u64(), Some(2), "{body:#?}");
+    assert_eq!(body["not_found"].as_u64(), Some(1), "{body:#?}");
+    assert_eq!(body["invalid"].as_u64(), Some(1), "{body:#?}");
+
+    let (status, list) = http(&app, Method::GET, &single_url, Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let got: Vec<(i64, String)> = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            let id = e["issue"]["id"]
+                .as_str()
+                .or_else(|| e["series"]["id"].as_str())
+                .unwrap()
+                .to_owned();
+            (e["position"].as_i64().unwrap(), id)
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (0, issue_a.clone()),
+            (2, issue_c.clone()),
+            (3, issue_b.clone()),
+            (4, series_a.to_string()),
+            (5, series_b.to_string()),
+        ],
+        "positions continue past the gap in submitted order"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bulk_add_with_invalid_kind_or_ref_counts_invalid() {
     let app = TestApp::spawn().await;

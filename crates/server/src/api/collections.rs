@@ -28,7 +28,7 @@ use chrono::Utc;
 use entity::{collection_entry, external_id, issue, saved_view, series, user_view_pin};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, ModelTrait,
-    QueryFilter, QueryOrder, TransactionTrait,
+    QueryFilter, QueryOrder, Statement, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -828,14 +828,15 @@ pub async fn add_entry(
     )
 )]
 /// Multi-select Tranche M3: append many (entry_kind, ref_id) members
-/// to a collection in one round-trip. Per-row insert semantics
-/// match `add_entry` — including the partial-unique idempotent skip,
-/// which the response surfaces as `already_present`. Each member
-/// gets its own light validation + existence check so a single
-/// bad id in the batch can't poison the rest.
+/// to a collection in one round-trip. Per-member semantics match
+/// `add_entry` — including the partial-unique idempotent skip, which
+/// the response surfaces as `already_present`. Each member gets its
+/// own light validation + existence check so a single bad id in the
+/// batch can't poison the rest. The existence checks, dedupe, position
+/// numbering and inserts all run as one set-based statement (WP-8.3).
 ///
-/// Position counter walks forward from the collection's current max,
-/// incrementing per accepted insert; concurrent bulk-add races have
+/// Positions continue from the collection's current max, in submitted
+/// order over the members that land; concurrent bulk-add races have
 /// the same theoretical position-collision risk as the single-add
 /// endpoint (none enforced at the schema level today), so callers
 /// shouldn't fire two bulk-adds against the same collection in
@@ -871,54 +872,23 @@ pub async fn bulk_add_members(
             .into_response();
     }
 
-    // Seed the position counter from the collection's current max.
-    // Increment as each insert lands so members keep their submitted
-    // order in the collection.
-    let mut next_pos = match collection_entry::Entity::find()
-        .filter(collection_entry::Column::SavedViewId.eq(id))
-        .order_by_desc(collection_entry::Column::Position)
-        .one(&app.db)
-        .await
-    {
-        Ok(Some(m)) => m.position + 1,
-        Ok(None) => 0,
-        Err(e) => {
-            tracing::error!(error = %e, "collections: bulk-add max-position lookup failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-        }
-    };
-
-    let mut added: u32 = 0;
-    let mut already_present: u32 = 0;
-    let mut not_found: u32 = 0;
     let mut invalid: u32 = 0;
-    let now = Utc::now().fixed_offset();
 
-    // PERF-1: validate existence in two batched queries instead of ~2 per
-    // member. The pre-fix loop ran a per-member `count()` for the series *and*
-    // issue kinds, so a 500-member add cost up to ~1000 round-trips. We still
-    // insert per-row below — the two partial-unique indexes
-    // (`collection_entries_{series,issue}_uniq`, each `WHERE … IS NOT NULL`)
-    // can't be expressed as an `insert_many` ON CONFLICT target, so the proven
-    // per-row unique-violation handling stays.
-    struct Candidate {
-        entry_kind: String,
-        series_id: Option<Uuid>,
-        issue_id: Option<String>,
-    }
-    let mut candidates: Vec<Candidate> = Vec::with_capacity(req.members.len());
-    let mut want_series: Vec<Uuid> = Vec::new();
-    let mut want_issues: Vec<String> = Vec::new();
-    for member in req.members {
+    // Shape validation stays in Rust (no round-trip). Every well-formed
+    // member becomes a candidate tagged with its submitted ordinal, so the
+    // set-based insert below can keep the submitted order.
+    let mut series_refs: Vec<String> = Vec::new();
+    let mut series_ords: Vec<i32> = Vec::new();
+    let mut issue_refs: Vec<String> = Vec::new();
+    let mut issue_ords: Vec<i32> = Vec::new();
+    for (ord, member) in req.members.into_iter().enumerate() {
+        // `ord` < MAX_MEMBERS (500), so the cast can't truncate.
+        let ord = i32::try_from(ord).unwrap_or(i32::MAX);
         match member.entry_kind.as_str() {
             ENTRY_KIND_SERIES => match Uuid::parse_str(&member.ref_id) {
                 Ok(uid) => {
-                    want_series.push(uid);
-                    candidates.push(Candidate {
-                        entry_kind: member.entry_kind,
-                        series_id: Some(uid),
-                        issue_id: None,
-                    });
+                    series_refs.push(uid.to_string());
+                    series_ords.push(ord);
                 }
                 Err(_) => invalid += 1,
             },
@@ -926,102 +896,137 @@ pub async fn bulk_add_members(
                 if member.ref_id.is_empty() || member.ref_id.len() > 128 {
                     invalid += 1;
                 } else {
-                    want_issues.push(member.ref_id.clone());
-                    candidates.push(Candidate {
-                        entry_kind: member.entry_kind,
-                        series_id: None,
-                        issue_id: Some(member.ref_id),
-                    });
+                    issue_refs.push(member.ref_id);
+                    issue_ords.push(ord);
                 }
             }
             _ => invalid += 1,
         }
     }
-
-    // Two batched existence probes, projected to just the id column so the
-    // large `issue.comic_info_raw` blob never loads.
-    let existing_series: HashSet<Uuid> = if want_series.is_empty() {
-        HashSet::new()
-    } else {
-        match series::Entity::find()
-            .filter(series::Column::Id.is_in(want_series))
-            .select_only()
-            .column(series::Column::Id)
-            .into_tuple::<Uuid>()
-            .all(&app.db)
-            .await
-        {
-            Ok(ids) => ids.into_iter().collect(),
-            Err(e) => {
-                tracing::error!(error = %e, "collections: bulk-add series existence query failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        }
-    };
-    let existing_issues: HashSet<String> = if want_issues.is_empty() {
-        HashSet::new()
-    } else {
-        match issue::Entity::find()
-            .filter(issue::Column::Id.is_in(want_issues))
-            .select_only()
-            .column(issue::Column::Id)
-            .into_tuple::<String>()
-            .all(&app.db)
-            .await
-        {
-            Ok(ids) => ids.into_iter().collect(),
-            Err(e) => {
-                tracing::error!(error = %e, "collections: bulk-add issue existence query failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        }
-    };
-
-    for cand in candidates {
-        // Skip rows whose referenced series/issue doesn't exist — preserves the
-        // `not_found` vs `already_present` split the per-member checks gave.
-        let present = match (&cand.series_id, &cand.issue_id) {
-            (Some(sid), _) => existing_series.contains(sid),
-            (_, Some(iid)) => existing_issues.contains(iid),
-            _ => false,
-        };
-        if !present {
-            not_found += 1;
-            continue;
-        }
-
-        let insert = collection_entry::ActiveModel {
-            id: Set(Uuid::now_v7()),
-            saved_view_id: Set(id),
-            position: Set(next_pos),
-            entry_kind: Set(cand.entry_kind),
-            series_id: Set(cand.series_id),
-            issue_id: Set(cand.issue_id),
-            added_at: Set(now),
-        }
-        .insert(&app.db)
-        .await;
-        match insert {
-            Ok(_) => {
-                added += 1;
-                next_pos += 1;
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("collection_entries_series_uniq")
-                    || msg.contains("collection_entries_issue_uniq")
-                {
-                    already_present += 1;
-                } else {
-                    tracing::warn!(error = %e, collection = %id, "bulk-add insert failed");
-                    // Treat unknown errors as `invalid` to keep the contract
-                    // simple — the caller doesn't get to distinguish "DB
-                    // hiccup" from "bad ref_id".
-                    invalid += 1;
-                }
-            }
-        }
+    let candidates = series_refs.len() + issue_refs.len();
+    if candidates == 0 {
+        return (
+            StatusCode::OK,
+            Json(BulkAddMembersResp {
+                added: 0,
+                already_present: 0,
+                not_found: 0,
+                invalid,
+            }),
+        )
+            .into_response();
     }
+    // One fresh v7 id per candidate (the per-row insert used `now_v7()`
+    // too); ids of rows that don't land are simply discarded.
+    let new_ids: Vec<String> = (0..candidates)
+        .map(|_| Uuid::now_v7().to_string())
+        .collect();
+
+    // WP-8.3: one set-based statement instead of one INSERT per member
+    // (104 queries for 100 members). Semantics match the per-row loop:
+    //   * `found`: the ref resolves to a real series / issue (any state —
+    //     same as the old `find_by_id` probe); the rest are `not_found`.
+    //   * `fresh`: drops refs already in the collection and in-batch
+    //     duplicates (first occurrence wins). Both used to surface as a
+    //     partial-unique violation → `already_present`.
+    //   * positions continue from the collection's current max + 1 in
+    //     submitted order, contiguous over the rows that land — existing
+    //     gaps are left alone.
+    //   * the two partial uniques (`collection_entries_{series,issue}_uniq`)
+    //     can't share one ON CONFLICT target, and an untargeted
+    //     ON CONFLICT would make the deferrable position unique an arbiter
+    //     (an error), so each kind gets its own data-modifying CTE with its
+    //     own partial-index arbiter. A concurrent add of the same ref is
+    //     then skipped (`already_present`) rather than failing the batch.
+    // The concurrent-bulk-add position caveat in the doc comment stands; a
+    // position collision (deferred unique) now fails the whole batch with a
+    // 500 instead of counting the one colliding member as `invalid`.
+    const BULK_ADD_SQL: &str = r#"
+        WITH input AS (
+            SELECT 'series'::text AS entry_kind, s.ref::uuid AS series_id,
+                   NULL::text AS issue_id, s.ord
+              FROM unnest($2::text[], $3::int[]) AS s(ref, ord)
+            UNION ALL
+            SELECT 'issue', NULL::uuid, i.ref, i.ord
+              FROM unnest($4::text[], $5::int[]) AS i(ref, ord)
+        ),
+        found AS (
+            SELECT inp.* FROM input inp
+             WHERE (inp.series_id IS NOT NULL
+                    AND EXISTS (SELECT 1 FROM series s WHERE s.id = inp.series_id))
+                OR (inp.issue_id IS NOT NULL
+                    AND EXISTS (SELECT 1 FROM issues i WHERE i.id = inp.issue_id))
+        ),
+        fresh AS (
+            SELECT DISTINCT ON (f.series_id, f.issue_id) f.*
+              FROM found f
+             WHERE NOT EXISTS (SELECT 1 FROM collection_entries ce
+                                WHERE ce.saved_view_id = $1 AND ce.series_id = f.series_id)
+               AND NOT EXISTS (SELECT 1 FROM collection_entries ce
+                                WHERE ce.saved_view_id = $1 AND ce.issue_id = f.issue_id)
+             ORDER BY f.series_id, f.issue_id, f.ord
+        ),
+        numbered AS (
+            SELECT fr.entry_kind, fr.series_id, fr.issue_id,
+                   ((SELECT COALESCE(MAX(ce.position) + 1, 0) FROM collection_entries ce
+                      WHERE ce.saved_view_id = $1)
+                    + row_number() OVER (ORDER BY fr.ord) - 1)::int AS position,
+                   ($6::text[])[row_number() OVER (ORDER BY fr.ord)]::uuid AS id
+              FROM fresh fr
+        ),
+        ins_series AS (
+            INSERT INTO collection_entries
+                   (id, saved_view_id, position, entry_kind, series_id, issue_id, added_at)
+            SELECT n.id, $1, n.position, n.entry_kind, n.series_id, NULL, now()
+              FROM numbered n WHERE n.series_id IS NOT NULL
+            ON CONFLICT (saved_view_id, series_id) WHERE series_id IS NOT NULL DO NOTHING
+            RETURNING 1
+        ),
+        ins_issue AS (
+            INSERT INTO collection_entries
+                   (id, saved_view_id, position, entry_kind, series_id, issue_id, added_at)
+            SELECT n.id, $1, n.position, n.entry_kind, NULL, n.issue_id, now()
+              FROM numbered n WHERE n.issue_id IS NOT NULL
+            ON CONFLICT (saved_view_id, issue_id) WHERE issue_id IS NOT NULL DO NOTHING
+            RETURNING 1
+        )
+        SELECT (SELECT count(*) FROM found) AS found,
+               (SELECT count(*) FROM ins_series) + (SELECT count(*) FROM ins_issue) AS added
+    "#;
+    let row = app
+        .db
+        .query_one_raw(Statement::from_sql_and_values(
+            app.db.get_database_backend(),
+            BULK_ADD_SQL,
+            [
+                id.into(),
+                series_refs.into(),
+                series_ords.into(),
+                issue_refs.into(),
+                issue_ords.into(),
+                new_ids.into(),
+            ],
+        ))
+        .await;
+    let counts = row.and_then(|r| {
+        let r = r.ok_or_else(|| sea_orm::DbErr::RecordNotFound("bulk-add counts".into()))?;
+        Ok((
+            r.try_get::<i64>("", "found")?,
+            r.try_get::<i64>("", "added")?,
+        ))
+    });
+    let (found, added) = match counts {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, collection = %id, "collections: bulk-add insert failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let as_u32 = |n: i64| u32::try_from(n.max(0)).unwrap_or(u32::MAX);
+    let candidates = i64::try_from(candidates).unwrap_or(i64::MAX);
+    let not_found = as_u32(candidates - found);
+    let already_present = as_u32(found - added);
+    let added = as_u32(added);
 
     (
         StatusCode::OK,

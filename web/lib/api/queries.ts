@@ -2902,25 +2902,32 @@ export function useAdminMetadataProviders() {
   });
 }
 
+/**
+ * Metadata-run history for the admin Runs tab, newest first. Keyset-paged
+ * on `(started_at, id)`: the server returns an opaque `next_cursor` that
+ * goes back as `before=`. Infinite query + sentinel (WP-8.3) — a plain
+ * `useQuery` here showed only the first 25 runs.
+ */
 export function useAdminMetadataRuns(filters: {
   library_id?: string;
   scope?: string;
   status?: string;
-  before?: string;
 }) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: queryKeys.adminMetadataRuns(filters),
-    queryFn: () => {
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
       const params = new URLSearchParams();
       if (filters.library_id) params.set("library_id", filters.library_id);
       if (filters.scope) params.set("scope", filters.scope);
       if (filters.status) params.set("status", filters.status);
-      if (filters.before) params.set("before", filters.before);
+      if (pageParam) params.set("before", pageParam);
       const qs = params.toString();
       return jsonFetch<RunsListResp>(
         `/admin/metadata/runs${qs ? `?${qs}` : ""}`,
       );
     },
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
     staleTime: 15_000,
   });
 }

@@ -1,11 +1,13 @@
 "use client";
 
 /**
- * Runs tab — paginated metadata_run history.
+ * Runs tab — metadata_run history, newest first. Infinite query + an
+ * IntersectionObserver sentinel walks every page (WP-8.3); the filter
+ * pills drive server-side `scope` / `status` params.
  */
 
 import { ChevronRight, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,10 +23,31 @@ export function RunsTab() {
     scope: scope || undefined,
     status: status || undefined,
   });
-  const rows = runs.data?.runs ?? [];
+  const rows = runs.data?.pages.flatMap((p) => p.runs) ?? [];
+
+  // Auto-fetch the next page when the sentinel nears the viewport. Depend
+  // on the three fields, not the result object (fresh identity per render).
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = runs;
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          if (hasNextPage && !isFetchingNextPage) {
+            void fetchNextPage();
+          }
+        }
+      },
+      { rootMargin: "400px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_28rem]">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_28rem]">
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="text-muted-foreground">Scope:</span>
@@ -88,6 +111,20 @@ export function RunsTab() {
               />
             ))}
           </ul>
+        )}
+        <div
+          ref={sentinelRef}
+          aria-hidden
+          data-testid="runs-sentinel"
+          className={hasNextPage ? "h-12" : "hidden"}
+        />
+        {isFetchingNextPage && (
+          <p
+            role="status"
+            className="text-muted-foreground flex items-center justify-center gap-2 text-xs"
+          >
+            <Loader2 className="h-3 w-3 animate-spin" /> Loading more runs…
+          </p>
         )}
       </div>
 

@@ -6049,8 +6049,8 @@
     },
     "/api/me/collections/{id}/members/bulk-add": {
       "post": {
-        "summary": "Multi-select Tranche M3: append many (entry_kind, ref_id) members\nto a collection in one round-trip. Per-row insert semantics\nmatch `add_entry` — including the partial-unique idempotent skip,\nwhich the response surfaces as `already_present`. Each member\ngets its own light validation + existence check so a single\nbad id in the batch can't poison the rest.",
-        "description": "Position counter walks forward from the collection's current max,\nincrementing per accepted insert; concurrent bulk-add races have\nthe same theoretical position-collision risk as the single-add\nendpoint (none enforced at the schema level today), so callers\nshouldn't fire two bulk-adds against the same collection in\nparallel.",
+        "summary": "Multi-select Tranche M3: append many (entry_kind, ref_id) members\nto a collection in one round-trip. Per-member semantics match\n`add_entry` — including the partial-unique idempotent skip, which\nthe response surfaces as `already_present`. Each member gets its\nown light validation + existence check so a single bad id in the\nbatch can't poison the rest. The existence checks, dedupe, position\nnumbering and inserts all run as one set-based statement (WP-8.3).",
+        "description": "Positions continue from the collection's current max, in submitted\norder over the members that land; concurrent bulk-add races have\nthe same theoretical position-collision risk as the single-add\nendpoint (none enforced at the schema level today), so callers\nshouldn't fire two bulk-adds against the same collection in\nparallel.",
         "operationId": "collections_bulk_add_members",
         "parameters": [
           {
