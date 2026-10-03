@@ -887,13 +887,10 @@ jobs:
           docker compose -f compose.test.yml run --rm smoke
       # Browser walk-through against the SAME booted stack, through the Rust
       # origin on localhost:8080: register → library → scan → reader → page
-      # turn → progress persisted (web/tests/e2e/reader-flow.spec.ts), plus
-      # the relationship review flow and axe on the M7b surfaces
-      # (relationship-review.spec.ts; both share the admin session the
-      # `setup` project registers). This is the gate that lets web
-      # render-path minors auto-merge: it exercises hydration, event
-      # handlers, the proxy hop, cookies/CSRF and the scan pipeline, which no
-      # vitest or Rust test reaches.
+      # turn → progress persisted (web/tests/e2e/reader-flow.spec.ts). This is
+      # the gate that lets web render-path minors auto-merge: it exercises
+      # hydration, event handlers, the proxy hop, cookies/CSRF and the scan
+      # pipeline, which no vitest or Rust test reaches.
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         if: env.SMOKE == 'true'
         with:
@@ -919,7 +916,7 @@ jobs:
         # --with-deps every time (OS libs are not cached); the browser download
         # itself is skipped on a cache hit.
         run: pnpm --filter web exec playwright install --with-deps chromium
-      - name: Playwright e2e (reader flow, relationships, a11y)
+      - name: Playwright reader flow
         if: env.SMOKE == 'true'
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:8080
