@@ -254,7 +254,7 @@ pub async fn same_universe(
         Ok(m) => m,
         Err(e) => return internal(&e),
     };
-    let views: HashMap<String, SeriesView> = hydrate_series(&app, models)
+    let views: HashMap<String, SeriesView> = hydrate_series(&app, models, user.id)
         .await
         .into_iter()
         .map(|v| (v.id.clone(), v))

@@ -167,7 +167,7 @@ pub async fn similar(
     };
     let visible = filter_visible(&neighbors, &acl, &hidden, &HashSet::new());
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    match build_page(&app, visible, cursor.as_ref(), limit, None).await {
+    match build_page(&app, user.id, visible, cursor.as_ref(), limit, None).await {
         Ok((items, next_cursor, total)) => Json(SimilarSeriesListView {
             items,
             next_cursor,
@@ -241,7 +241,16 @@ pub async fn home_rail(
         if visible.is_empty() {
             continue;
         }
-        return match build_page(&app, visible, cursor.as_ref(), limit, Some(seed.series_id)).await {
+        return match build_page(
+            &app,
+            user.id,
+            visible,
+            cursor.as_ref(),
+            limit,
+            Some(seed.series_id),
+        )
+        .await
+        {
             Ok((items, next_cursor, total)) => Json(SimilarSeriesRailView {
                 seed: Some(SimilarSeed {
                     id: seed.series_id.to_string(),
@@ -281,6 +290,7 @@ fn filter_visible<'a>(
 /// hydrate it into series cards.
 async fn build_page(
     app: &AppState,
+    viewer: Uuid,
     visible: Vec<&Neighbor>,
     cursor: Option<&SimilarCursor>,
     limit: u64,
@@ -321,7 +331,7 @@ async fn build_page(
         .iter()
         .filter_map(|n| by_id.remove(&n.series_id))
         .collect();
-    let views = hydrate_series(app, ordered).await;
+    let views = hydrate_series(app, ordered, viewer).await;
     let mut view_by_id: HashMap<String, SeriesView> =
         views.into_iter().map(|v| (v.id.clone(), v)).collect();
     let items = page

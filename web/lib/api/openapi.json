@@ -26394,7 +26394,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/SeriesProgressSummary",
-                "description": "Per-user read progress across the entire series — server-computed\nso the UI doesn't have to paginate the issue list to compute \"X of N\nread\". `None` on the list endpoint; populated only on `get_one`."
+                "description": "Per-user read progress across the entire series — server-computed\nso the UI doesn't have to paginate the issue list to compute \"X of N\nread\". Populated on `get_one` and by `hydrate_series` on every list\nsurface (one batched query per page — see\n[`fetch_progress_summaries`]); both paths share that query, so a card's\nhover preview and the detail page always agree."
               },
               {
                 "type": "null"

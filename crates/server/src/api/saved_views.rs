@@ -2223,7 +2223,7 @@ async fn run_filter_query(app: &AppState, input: CompileInput<'_>) -> axum::resp
 
     // hydrate_series attaches `issue_count` + `cover_url`. Skipping it
     // — as we did originally — was the M7 home page's empty-cover bug.
-    let items = crate::api::series::hydrate_series(app, rows).await;
+    let items = crate::api::series::hydrate_series(app, rows, input.user_id).await;
     // Saved-view results don't surface a total today — saved views are
     // capped at `result_limit` (12 by default) and the caller knows
     // that ceiling. Leaving `None` so we don't pretend we counted.

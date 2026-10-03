@@ -667,7 +667,7 @@ pub async fn list_entries(
         None
     };
 
-    let items = hydrate_entries(&app, rows).await;
+    let items = hydrate_entries(&app, rows, user.id).await;
     Json(CollectionEntriesView {
         items,
         next_cursor,
@@ -804,7 +804,7 @@ pub async fn add_entry(
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
 
-    let hydrated = hydrate_entries(&app, vec![entry]).await;
+    let hydrated = hydrate_entries(&app, vec![entry], user.id).await;
     let first = hydrated.into_iter().next().unwrap_or(CollectionEntryView {
         id: entry_id.to_string(),
         position: next_pos,
@@ -1274,6 +1274,7 @@ pub async fn reorder_entries(
 async fn hydrate_entries(
     app: &AppState,
     rows: Vec<collection_entry::Model>,
+    viewer: Uuid,
 ) -> Vec<CollectionEntryView> {
     if rows.is_empty() {
         return Vec::new();
@@ -1294,7 +1295,7 @@ async fn hydrate_entries(
             .await
             .unwrap_or_default()
     };
-    let hydrated_series = hydrate_series(app, series_rows).await;
+    let hydrated_series = hydrate_series(app, series_rows, viewer).await;
     let series_by_id: HashMap<Uuid, SeriesView> = hydrated_series
         .into_iter()
         .filter_map(|v| Uuid::parse_str(&v.id).ok().map(|id| (id, v)))

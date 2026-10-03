@@ -407,7 +407,7 @@ pub async fn create(
             let Some(target) = target else {
                 return internal_msg();
             };
-            let Some(sv) = super::series::hydrate_series(&app, vec![target])
+            let Some(sv) = super::series::hydrate_series(&app, vec![target], actor.id)
                 .await
                 .into_iter()
                 .next()

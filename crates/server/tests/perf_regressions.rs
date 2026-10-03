@@ -619,13 +619,17 @@ const MAX_QUERIES_ON_DECK: u64 = 20; // observed ≈ 9-12 after batching (was �
 const MAX_QUERIES_ON_DECK_AT_SCALE: u64 = 20;
 const MAX_QUERIES_MARKERS: u64 = 10; // observed ≈ 2
 const MAX_QUERIES_READING_LOG: u64 = 30; // observed ≈ 9
-const MAX_QUERIES_SERIES: u64 = 20; // observed ≈ 7
+// +1 (bug fix): `hydrate_series` batches the viewer's `progress_summary`
+// for the card hover preview — one grouped query per page, on every list
+// surface that hydrates series (similar / relationships below included).
+const MAX_QUERIES_SERIES: u64 = 20; // observed 8 (7 before the progress batch)
 const MAX_QUERIES_ADMIN_STATS: u64 = 20; // observed ≈ 6
 // PERF-12 (audit 2026-07): guards for the endpoints PERF-1/PERF-8 fixed —
 // a future re-introduced per-member probe or serialized lookup ships loud.
 // WP-7.8: +1 — `relationship_count` includes external (not-in-library)
 // links: one indexed lookup on `series_external_relationship`.
-const MAX_QUERIES_SERIES_DETAIL: u64 = 17; // observed 16 (15 before WP-7.8)
+// The progress summary now shares the list's one grouped query (was two).
+const MAX_QUERIES_SERIES_DETAIL: u64 = 17; // observed 15 (16 before the shared progress query)
 const MAX_QUERIES_ISSUE_DETAIL: u64 = 20; // observed ≈ 9 (parallel try_join set)
 // The pre-PERF-1 shape cost ~3 queries per member (~300 for the 100-member
 // batch below); PERF-1 batched the existence probes but still inserted one
@@ -638,7 +642,7 @@ const MAX_QUERIES_BULK_ADD: u64 = 5; // observed 3 (was 104)
 // are curated). The guard seeds ~500 direct links plus a 6-deep chain each
 // way on one series: every edge, chain node and card must come from a fixed
 // number of set-based queries — a per-edge hydrate would add ~500.
-const MAX_QUERIES_RELATIONSHIPS: u64 = 15; // observed 12
+const MAX_QUERIES_RELATIONSHIPS: u64 = 15; // observed 13 (+1 progress batch)
 const RELATIONSHIPS_WALL: Duration = Duration::from_secs(5);
 // WP-2.1: the export is 10 section reads + 1 pinned-view hydrate + 3
 // identity batches (issues / series / libraries) + the user row + auth.
@@ -648,8 +652,8 @@ const MAX_QUERIES_USER_EXPORT: u64 = 25; // observed ≈ 15
 // page hydrate; warm = served from the neighbour cache, hydrate only.
 // Both must stay flat in the neighbour count (9 here): a per-candidate
 // probe or a per-card hydrate would add ~9-40.
-const MAX_QUERIES_SIMILAR_COLD: u64 = 20; // observed ≈ 11
-const MAX_QUERIES_SIMILAR_WARM: u64 = 15; // observed ≈ 8
+const MAX_QUERIES_SIMILAR_COLD: u64 = 20; // observed 13 (+1 progress batch)
+const MAX_QUERIES_SIMILAR_WARM: u64 = 15; // observed 9 (+1 progress batch)
 
 #[tokio::test]
 async fn realistic_dataset_endpoints_respond_correctly() {
@@ -717,7 +721,20 @@ async fn realistic_dataset_endpoints_respond_correctly() {
     for s in series_items {
         let count = s["issue_count"].as_i64().unwrap_or(0);
         assert!(count > 0, "series row missing issue_count: {s}");
+        // The card hover preview reads the viewer's progress off the list
+        // row; it must come from the one batched query, on every row.
+        assert_eq!(
+            s["progress_summary"]["total"].as_i64(),
+            Some(count),
+            "series row missing progress_summary: {s}"
+        );
     }
+    // `seed_progress` finished issue #1 of the first three series.
+    let started = series_items
+        .iter()
+        .filter(|s| s["progress_summary"]["finished"].as_i64() == Some(1))
+        .count();
+    assert_eq!(started, 3, "per-viewer finished counts on /api/series");
     assert_quick(elapsed, "/api/series");
     assert_query_count(snap.taken(), MAX_QUERIES_SERIES, "/api/series");
 

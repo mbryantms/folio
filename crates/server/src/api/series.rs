@@ -879,7 +879,10 @@ pub struct SeriesView {
     pub latest_year: Option<i32>,
     /// Per-user read progress across the entire series — server-computed
     /// so the UI doesn't have to paginate the issue list to compute "X of N
-    /// read". `None` on the list endpoint; populated only on `get_one`.
+    /// read". Populated on `get_one` and by `hydrate_series` on every list
+    /// surface (one batched query per page — see
+    /// [`fetch_progress_summaries`]); both paths share that query, so a card's
+    /// hover preview and the detail page always agree.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress_summary: Option<SeriesProgressSummary>,
     /// Calling user's rating for this series, 0..=5 in half-star steps.
@@ -2196,7 +2199,7 @@ pub async fn list(
                 std::collections::HashMap::new()
             }
         };
-        let mut items = hydrate_series(&app, page_rows).await;
+        let mut items = hydrate_series(&app, page_rows, user.id).await;
         for item in items.iter_mut() {
             if let Ok(uuid) = Uuid::parse_str(&item.id)
                 && let Some(s) = snippets.get(&uuid).cloned()
@@ -2257,17 +2260,24 @@ pub async fn list(
     let page: Vec<series::Model> = rows.into_iter().take(limit as usize).collect();
 
     Json(SeriesListView {
-        items: hydrate_series(&app, page).await,
+        items: hydrate_series(&app, page, user.id).await,
         next_cursor,
         total,
     })
     .into_response()
 }
 
-/// Attach `issue_count` + `cover_url` to a batch of series rows. Issue count
-/// excludes soft-deleted and confirmed-removed issues so the UI doesn't see
-/// stale rows.
-pub(crate) async fn hydrate_series(app: &AppState, rows: Vec<series::Model>) -> Vec<SeriesView> {
+/// Attach `issue_count` + `cover_url` + the viewer's `progress_summary` to a
+/// batch of series rows. Issue count excludes soft-deleted and
+/// confirmed-removed issues so the UI doesn't see stale rows.
+///
+/// `viewer` is the calling user: the progress summary counts only *their*
+/// `progress_records` (one grouped query for the whole page).
+pub(crate) async fn hydrate_series(
+    app: &AppState,
+    rows: Vec<series::Model>,
+    viewer: Uuid,
+) -> Vec<SeriesView> {
     if rows.is_empty() {
         return Vec::new();
     }
@@ -2350,6 +2360,11 @@ pub(crate) async fn hydrate_series(app: &AppState, rows: Vec<series::Model>) -> 
     // the series rollup so all three agree.
     let tiers = fetch_metadata_completeness_tiers(app, &rows).await;
 
+    // Per-viewer read progress for the card hover preview — one grouped
+    // query over the page, shared with `get_one` so the numbers match.
+    let page_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+    let progress = fetch_progress_summaries(app, viewer, &page_ids).await;
+
     rows.into_iter()
         .map(|s| {
             let series_id = s.id;
@@ -2363,6 +2378,11 @@ pub(crate) async fn hydrate_series(app: &AppState, rows: Vec<series::Model>) -> 
                 v.metron_id = *metron;
             }
             v.metadata_completeness_tier = tiers.get(&series_id).cloned();
+            v.progress_summary = Some(progress_summary_for(
+                &progress,
+                series_id,
+                v.issue_count.unwrap_or(0),
+            ));
             v
         })
         .collect()
@@ -3288,15 +3308,12 @@ pub async fn get_one(
     // not the 100-issue page the client typically pulls. Two cheap counts
     // (finished / in-progress) plus the active-issue count we already
     // have, so the UI can render "n / N" without paginating.
-    v.progress_summary = Some(
-        compute_progress_summary(
-            &app,
-            series_id_for_lookups,
-            user.id,
-            count.unwrap_or(0) as i64,
-        )
-        .await,
-    );
+    let progress = fetch_progress_summaries(&app, user.id, &[series_id_for_lookups]).await;
+    v.progress_summary = Some(progress_summary_for(
+        &progress,
+        series_id_for_lookups,
+        count.unwrap_or(0) as i64,
+    ));
 
     // Calling user's series rating, if any. A miss returns None — the
     // widget shows an empty 5-star control.
@@ -3386,71 +3403,106 @@ pub(crate) async fn fetch_series_snippets(
         .collect())
 }
 
-/// Count finished / in-progress active issues for `user_id` within
-/// `series_id`. The two counts come from the same join so we read the
-/// progress table once.
-async fn compute_progress_summary(
+/// Per-series progress counts for one user, as returned by
+/// [`fetch_progress_summaries`]. Series the user hasn't touched are absent.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct SeriesProgressCounts {
+    finished: i64,
+    in_progress: i64,
+    finished_pages: i64,
+}
+
+/// Batched per-user read progress for a set of series — the single source
+/// for `SeriesView.progress_summary` on both `get_one` and every list
+/// surface (`hydrate_series`), so the hover preview and the detail page can
+/// never disagree.
+///
+/// One grouped query over `progress_records` joined to the series' active,
+/// non-removed issues. `finished` is the row's current-run flag (a
+/// "Read from beginning" restart clears it — see
+/// `docs/dev/reading-progress.md`); `in_progress` is an unfinished row past
+/// the cover (`last_page > 0`); `finished_pages` sums `page_count` over
+/// finished issues (null / negative counts as 0). Only `user_id`'s own rows
+/// are counted.
+pub(crate) async fn fetch_progress_summaries(
     app: &AppState,
-    series_id: Uuid,
     user_id: Uuid,
-    total: i64,
-) -> SeriesProgressSummary {
-    use entity::progress_record;
-    // Two-step lookup avoids needing a SeaORM `Related<Issue>` impl on
-    // progress_record (which we don't have, and shouldn't add just for
-    // this read path). Pulling the (id, page_count) pairs lets the
-    // progress join compute `finished_pages` without a second SQL hop.
+    series_ids: &[Uuid],
+) -> HashMap<Uuid, SeriesProgressCounts> {
+    use sea_orm::{Statement, Value};
+    if series_ids.is_empty() {
+        return HashMap::new();
+    }
     #[derive(FromQueryResult)]
-    struct IssueIdAndPages {
-        id: String,
-        page_count: Option<i32>,
+    struct Row {
+        series_id: Uuid,
+        finished: i64,
+        in_progress: i64,
+        finished_pages: i64,
     }
-    let issue_rows: Vec<IssueIdAndPages> = issue::Entity::find()
-        .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null())
-        .select_only()
-        .column(issue::Column::Id)
-        .column(issue::Column::PageCount)
-        .into_model::<IssueIdAndPages>()
-        .all(&app.db)
-        .await
-        .unwrap_or_default();
-    if issue_rows.is_empty() {
-        return SeriesProgressSummary {
-            total,
-            finished: 0,
-            in_progress: 0,
-            finished_pages: 0,
-        };
-    }
-    let pages_by_id: std::collections::HashMap<String, i64> = issue_rows
+    let mut params: Vec<Value> = Vec::with_capacity(series_ids.len() + 1);
+    params.push(Value::from(user_id));
+    let placeholders: Vec<String> = series_ids
         .iter()
-        .map(|r| (r.id.clone(), i64::from(r.page_count.unwrap_or(0).max(0))))
+        .map(|id| {
+            params.push(Value::from(*id));
+            format!("${}", params.len())
+        })
         .collect();
-    let issue_ids: Vec<String> = issue_rows.into_iter().map(|r| r.id).collect();
-    let progress_rows = progress_record::Entity::find()
-        .filter(progress_record::Column::UserId.eq(user_id))
-        .filter(progress_record::Column::IssueId.is_in(issue_ids))
-        .all(&app.db)
-        .await
-        .unwrap_or_default();
-    let mut finished: i64 = 0;
-    let mut in_progress: i64 = 0;
-    let mut finished_pages: i64 = 0;
-    for r in progress_rows {
-        if r.finished {
-            finished += 1;
-            finished_pages += pages_by_id.get(&r.issue_id).copied().unwrap_or(0);
-        } else if r.last_page > 0 {
-            in_progress += 1;
+    let sql = format!(
+        r#"
+        SELECT i.series_id AS series_id,
+               COUNT(*) FILTER (WHERE pr.finished)::bigint AS finished,
+               COUNT(*) FILTER (WHERE NOT pr.finished AND pr.last_page > 0)::bigint
+                   AS in_progress,
+               COALESCE(SUM(GREATEST(COALESCE(i.page_count, 0), 0))
+                   FILTER (WHERE pr.finished), 0)::bigint AS finished_pages
+          FROM progress_records pr
+          JOIN issues i ON i.id = pr.issue_id
+         WHERE pr.user_id = $1
+           AND i.state = 'active' AND i.removed_at IS NULL
+           AND i.series_id IN ({placeholders})
+         GROUP BY i.series_id
+    "#,
+        placeholders = placeholders.join(",")
+    );
+    let backend = app.db.get_database_backend();
+    let stmt = Statement::from_sql_and_values(backend, sql, params);
+    match Row::find_by_statement(stmt).all(&app.db).await {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.series_id,
+                    SeriesProgressCounts {
+                        finished: r.finished,
+                        in_progress: r.in_progress,
+                        finished_pages: r.finished_pages,
+                    },
+                )
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "series progress summary query failed");
+            HashMap::new()
         }
     }
+}
+
+/// Build the wire summary for one series from the batched counts. `total` is
+/// the caller's active-issue count (`issue_count` on lists, the same
+/// `removed_at IS NULL` count on `get_one`).
+fn progress_summary_for(
+    progress: &HashMap<Uuid, SeriesProgressCounts>,
+    series_id: Uuid,
+    total: i64,
+) -> SeriesProgressSummary {
+    let c = progress.get(&series_id).copied().unwrap_or_default();
     SeriesProgressSummary {
         total,
-        finished,
-        in_progress,
-        finished_pages,
+        finished: c.finished,
+        in_progress: c.in_progress,
+        finished_pages: c.finished_pages,
     }
 }
 

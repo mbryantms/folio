@@ -1080,7 +1080,7 @@ pub(crate) async fn series_handler(
             Err(e) => return internal(e, "series hydrate"),
         }
     };
-    let mut by_id: HashMap<String, SeriesView> = hydrate_series(app, models)
+    let mut by_id: HashMap<String, SeriesView> = hydrate_series(app, models, user.id)
         .await
         .into_iter()
         .map(|s| (s.id.clone(), s))
