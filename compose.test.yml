@@ -47,8 +47,8 @@ services:
       # without this the default `localhost:3000` points at nothing inside
       # the container and every page 502s.
       COMIC_WEB_UPSTREAM_URL: http://web:3000
-      # The Playwright reader-flow spec registers the first user (auto-admin)
-      # through the sign-in page. Defaults to false; a fresh volume seeds the
+      # The Playwright `setup` project (web/tests/e2e/admin.setup.ts)
+      # registers the first user (auto-admin) through the sign-in page. Defaults to false; a fresh volume seeds the
       # app_setting overlay from this value, so always `down --volumes`.
       COMIC_LOCAL_REGISTRATION_OPEN: "true"
       # 5/min/IP on login+register is hostile to a browser suite that
@@ -59,8 +59,10 @@ services:
     ports:
       - "127.0.0.1:${SMOKE_APP_PORT:-8080}:8080"
     volumes:
-      # A generated library (three-page CBZ) so a scan has something to find —
-      # an empty root fails validation before the scan starts. Generate with
+      # A generated library (three series: the reader-flow CBZ plus two
+      # volumes of one title for the relationship-suggestion spec) so a scan
+      # has something to find — an empty root fails validation before the
+      # scan starts. Generate with
       # `node web/tests/e2e/fixtures/make-library.mjs`; override the path via
       # SMOKE_LIBRARY_DIR.
       - ${SMOKE_LIBRARY_DIR:-./web/tests/e2e/.library}:/library:ro

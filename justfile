@@ -632,9 +632,12 @@ docker-test:
     docker compose -f compose.test.yml down --volumes --remove-orphans
 
 # Browser walk-through against the same stack (what CI's docker-smoke job
-# runs after the curl smoke): register → library → scan → reader → page turn
-# → progress persisted. Needs `just docker-build` first and a free :8080
-# (override with SMOKE_APP_PORT=18080 while `just dev` is running).
+# runs after the curl smoke): the `setup` project registers the admin and
+# scans the fixture library, then reader-flow (reader → page turn → progress
+# persisted) and relationship-review (accept a suggestion + axe on the M7b
+# surfaces) run from that admin session. Needs `just docker-build` first and
+# a free :8080 (override with SMOKE_APP_PORT=18080 while `just dev` is
+# running).
 docker-e2e:
     @echo "==> Playwright reader flow against folio:dev + folio-web:dev"
     node web/tests/e2e/fixtures/make-library.mjs

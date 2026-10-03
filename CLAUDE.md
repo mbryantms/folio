@@ -114,6 +114,14 @@ Default admin (first registered user becomes admin):
   while `just dev` holds :8080). `compose.test.yml` has its own compose
   project name (`folio-smoke`) so it never recreates the dev services.
   Specs use unprefixed URLs (`/sign-in`, not `/en/sign-in`).
+  **Only the `setup` project registers** ([`admin.setup.ts`](web/tests/e2e/admin.setup.ts):
+  first-user admin + library + scan, saved as a shared `storageState`);
+  specs that need the admin go in the `chromium-admin` project (match list
+  in [`playwright.config.ts`](web/playwright.config.ts)), which depends on
+  `setup` — never register a user from a spec, or it races for the
+  first-user admin role. Fixture series come from
+  `web/tests/e2e/fixtures/make-library.mjs` (bump `FIXTURE_SERIES` in
+  `support/admin.ts` when adding one).
 - CBR tests run against the committed `fixtures/synthetic-3page.cbr`
   (RAR5, stored entries, written by `fixtures/make-cbr-fixture.py`);
   drop any real `.cbr` under `fixtures/` to exercise compressed archives.

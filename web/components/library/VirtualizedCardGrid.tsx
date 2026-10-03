@@ -171,7 +171,11 @@ export function VirtualizedCardGrid({
               }}
             >
               {items.slice(start, end).map((item) => (
-                <div key={item.id}>{renderCard(item)}</div>
+                // Each row is a `role="list"`: its cells must be list
+                // items (axe `aria-required-children`, WP-8.5).
+                <div key={item.id} role="listitem">
+                  {renderCard(item)}
+                </div>
               ))}
             </div>
           );

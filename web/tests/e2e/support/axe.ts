@@ -22,6 +22,18 @@ export async function expectNoAxeViolations(
   page: Page,
   label: string,
 ): Promise<void> {
+  // Let entry transitions (popover / dialog fade + zoom, tab slide) finish:
+  // axe reads computed colours, and a half-faded element reports a
+  // contrast that never exists at rest.
+  await page.waitForFunction(() =>
+    document
+      .getAnimations()
+      .every(
+        (a) =>
+          a.playState !== "running" ||
+          a.effect?.getTiming().iterations === Infinity,
+      ),
+  );
   const results = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
   const violations = results.violations.map((v) => ({
     id: v.id,

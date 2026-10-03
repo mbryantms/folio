@@ -1,13 +1,25 @@
 #!/usr/bin/env node
 /**
- * Generate the library the Playwright reader-flow spec scans.
+ * Generate the library the Playwright docker-smoke suite scans.
  *
  *   node web/tests/e2e/fixtures/make-library.mjs [outDir]
  *
- * Writes `<outDir>/Test Series (2020)/Test Series 001.cbz`: a STORED zip of
- * three real, decodable portrait PNGs (100x150, solid colour, distinct bytes
- * per page). Mirrors the Rust fixture helpers (crates/server/tests/
- * scanner_smoke.rs `write_minimal_cbz`) but with pixels the browser can draw:
+ * Writes three series folders, one issue each:
+ *
+ *   - `Test Series (2020)/Test Series 001.cbz` — what `reader-flow.spec.ts`
+ *     reads: three pages, no ComicInfo (folder-name inference only).
+ *   - `Relay (2011)/Relay (2011) 001.cbz` and `Relay (2016)/Relay (2016)
+ *     001.cbz` — the same title in two volumes, with a ComicInfo.xml
+ *     (Series `Relay`, Volume 1 / 2, Year 2011 / 2016, a shared publisher
+ *     and writer). The post-scan relationship-suggestion run's
+ *     name-continuation detector proposes "Relay (2016) continues Relay
+ *     (2011)" (consecutive volumes → 0.9, the high bucket), which
+ *     `relationship-review.spec.ts` accepts from `/admin/relationships`.
+ *
+ * Each archive is a STORED zip of real, decodable portrait PNGs (100x150,
+ * solid colour, distinct bytes per page and per archive). Mirrors the Rust
+ * fixture helpers (crates/server/tests/scanner_smoke.rs `write_minimal_cbz`)
+ * but with pixels the browser can draw:
  *   - stored, not deflated: the archive ratio guard drops entries whose
  *     compressed size is 0 or ratio > 200 (crates/archive/src/cbz.rs);
  *   - real PNG signature: readers content-sniff pages (image_sniff.rs);
@@ -15,6 +27,8 @@
  *   - one series FOLDER: archives at the library root are ignored
  *     (scanner/enumerate.rs, spec §2.2);
  *   - distinct bytes per page: content dedupe hashes every entry.
+ * The output is deterministic (fixed zip timestamps, no randomness), so a
+ * rerun writes byte-identical archives.
  * Default outDir is web/tests/e2e/.library (gitignored); compose.test.yml
  * bind-mounts it at /library via SMOKE_LIBRARY_DIR.
  */
@@ -111,14 +125,78 @@ function zipStored(entries) {
   return Buffer.concat([...locals, cd, eocd]);
 }
 
-const seriesDir = join(outDir, "Test Series (2020)");
+/** ComicInfo.xml for one issue (only the fields the scanner needs). */
+function comicInfo({ series, volume, year, number, publisher, writer, genre }) {
+  return Buffer.from(
+    `<?xml version="1.0" encoding="utf-8"?>
+<ComicInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Series>${series}</Series>
+  <Number>${number}</Number>
+  <Volume>${volume}</Volume>
+  <Year>${year}</Year>
+  <Month>1</Month>
+  <Publisher>${publisher}</Publisher>
+  <Writer>${writer}</Writer>
+  <Genre>${genre}</Genre>
+  <LanguageISO>en</LanguageISO>
+  <PageCount>2</PageCount>
+</ComicInfo>
+`,
+    "utf8",
+  );
+}
+
+/** Write `<outDir>/<folder>/<file>` as a stored CBZ of `entries`. */
+function writeCbz(folder, file, entries) {
+  const dir = join(outDir, folder);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, file);
+  writeFileSync(path, zipStored(entries));
+  const pages = entries.filter(([name]) => name.endsWith(".png")).length;
+  console.log(`wrote ${path} (${pages} pages)`);
+}
+
 rmSync(outDir, { recursive: true, force: true });
-mkdirSync(seriesDir, { recursive: true });
-const pages = [
+
+writeCbz("Test Series (2020)", "Test Series 001.cbz", [
   ["page-001.png", png(100, 150, [200, 40, 40])],
   ["page-002.png", png(100, 150, [40, 160, 60])],
   ["page-003.png", png(100, 150, [40, 80, 220])],
-];
-const cbz = join(seriesDir, "Test Series 001.cbz");
-writeFileSync(cbz, zipStored(pages));
-console.log(`wrote ${cbz} (${pages.length} pages)`);
+]);
+
+// Two volumes of one title → a pending `continues` suggestion after the scan.
+for (const [volume, year, colours] of [
+  [
+    1,
+    2011,
+    [
+      [180, 120, 30],
+      [30, 120, 180],
+    ],
+  ],
+  [
+    2,
+    2016,
+    [
+      [120, 30, 180],
+      [30, 180, 120],
+    ],
+  ],
+]) {
+  writeCbz(`Relay (${year})`, `Relay (${year}) 001.cbz`, [
+    [
+      "ComicInfo.xml",
+      comicInfo({
+        series: "Relay",
+        volume,
+        year,
+        number: 1,
+        publisher: "Folio Test Comics",
+        writer: "Ada Fixture",
+        genre: "Science Fiction",
+      }),
+    ],
+    ["page-001.png", png(100, 150, colours[0])],
+    ["page-002.png", png(100, 150, colours[1])],
+  ]);
+}

@@ -185,7 +185,7 @@ export function TopbarSearchInline({ className }: { className?: string }) {
       role="combobox"
       aria-expanded={open}
       aria-haspopup="listbox"
-      aria-controls="topbar-search-panel"
+      aria-controls={open ? "topbar-search-panel" : undefined}
     >
       <div className="relative">
         <Search
@@ -209,7 +209,7 @@ export function TopbarSearchInline({ className }: { className?: string }) {
           }
           aria-label="Search the library"
           aria-autocomplete="list"
-          aria-controls="topbar-search-panel"
+          aria-controls={open ? "topbar-search-panel" : undefined}
           className="border-border bg-muted/40 focus-visible:ring-ring h-9 w-full rounded-md border pr-8 pl-8 text-sm transition-colors focus:bg-transparent focus-visible:ring-2 focus-visible:outline-none"
         />
         {raw ? (
