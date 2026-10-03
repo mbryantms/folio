@@ -340,6 +340,15 @@ Default admin (first registered user becomes admin):
     in `scanner/process.rs`, the `skip` set on
     `metadata_rollup::replace_issue_metadata_skipping`). On rescan of a
     non-writeback library, file values refresh only file-tier columns.
+    **Writeback exception (#970):** in a writeback library the archive is
+    canonical, so a provider row protects a column only while it is
+    *newer* than the issue's `last_sidecar_rewrite_at` (or the issue was
+    never sidecar-rewritten). A provider value Folio itself wrote into
+    the archive is therefore ingested by the post-rewrite rescan — that
+    is the intended path, not a violation; the rewrite job stamps the
+    apply's provider rows at the rewrite time
+    (`writers::write_field_provenance_at`). User pins stay protected
+    everywhere, and non-writeback libraries keep the rule unchanged.
 
   See [`docs/dev/metadata-providers.md`](docs/dev/metadata-providers.md)
   for the architecture, [`metadata-operator-guide.md`](docs/dev/metadata-operator-guide.md)
