@@ -11,12 +11,16 @@
  */
 import { useQueryClient } from "@tanstack/react-query";
 
+import { markerToRestoreItem } from "@/lib/markers/recreate";
+
 import type {
   CreateMarkerReq,
   MarkerBulkDeleteResp,
   MarkerView,
+  RestoreMarkersResp,
   UpdateMarkerReq,
 } from "../types";
+import { queryKeys } from "../query-keys";
 import { useApiMutation } from "./_core";
 
 /** Create a marker — bookmark / note / favorite / highlight. The
@@ -80,8 +84,7 @@ export function useUpdateMarker(id: string, issueId: string) {
 /** `silent: true` suppresses the default "Removed" toast for callers
  *  that compose their own (a) Reader keybinds emit kind-specific
  *  labels like "Removed bookmark on page X"; (b) every delete surface
- *  pairs the toast with an Undo action via `markerToCreateReq` +
- *  `useCreateMarker`. The 8 marker-delete call sites all use
+ *  pairs the toast with an Undo action via `useRestoreMarkers`. The 8 marker-delete call sites all use
  *  `silent: true` post-M3.5 — see docs/dev/notifications-audit.md
  *  §F-8 / cleanup plan M3.5. */
 export function useDeleteMarker(
@@ -148,6 +151,36 @@ export function useBulkDeleteMarkers() {
     }),
     {
       onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ["markers", "list"] });
+        qc.invalidateQueries({ queryKey: ["markers", "count"] });
+        qc.invalidateQueries({ queryKey: ["markers", "tags"] });
+      },
+    },
+  );
+}
+
+/** Undo for every marker delete (WP-8.4): re-insert the snapshots the
+ *  call site captured before deleting, in ONE `POST /me/markers/restore`
+ *  however many markers there are (a 500-marker bulk delete included).
+ *  The server keeps each snapshot's id, created_at and page hash.
+ *
+ *  Silent on success, like the per-marker re-create it replaces — the
+ *  restored markers reappearing is the feedback; errors still toast.
+ *  Invalidates every per-issue overlay the snapshots touched plus the
+ *  global feed, count and tag rollup. */
+export function useRestoreMarkers() {
+  const qc = useQueryClient();
+  return useApiMutation<RestoreMarkersResp, MarkerView[]>(
+    (snapshots) => ({
+      path: "/me/markers/restore",
+      method: "POST",
+      body: { markers: snapshots.map(markerToRestoreItem) },
+    }),
+    {
+      onSuccess: (_data, snapshots) => {
+        for (const issueId of new Set(snapshots.map((m) => m.issue_id))) {
+          qc.invalidateQueries({ queryKey: queryKeys.issueMarkers(issueId) });
+        }
         qc.invalidateQueries({ queryKey: ["markers", "list"] });
         qc.invalidateQueries({ queryKey: ["markers", "count"] });
         qc.invalidateQueries({ queryKey: ["markers", "tags"] });

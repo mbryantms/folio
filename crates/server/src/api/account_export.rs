@@ -152,6 +152,10 @@ pub struct ExportProgress {
     pub finished_at: Option<String>,
     pub is_backfill: bool,
     pub device: Option<String>,
+    /// Hex BLAKE3 of the page image at `last_page` (WP-6.2), so an import
+    /// can re-anchor the position to its image in a different copy of the
+    /// archive. `None` until the page could be hashed.
+    pub page_hash: Option<String>,
     pub updated_at: String,
 }
 
@@ -170,6 +174,9 @@ pub struct ExportMarker {
     pub body: Option<String>,
     pub color: Option<String>,
     pub hidden_from_log: bool,
+    /// Hex BLAKE3 of the page image at `page_index` (WP-6.2). `None` until
+    /// the page could be hashed.
+    pub page_hash: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -519,6 +526,7 @@ async fn build_export(
             finished_at: p.finished_at.map(|t| t.to_rfc3339()),
             is_backfill: p.is_backfill,
             device: p.device,
+            page_hash: p.page_hash,
             updated_at: p.updated_at.to_rfc3339(),
         })
         .collect();
@@ -746,6 +754,7 @@ pub(crate) fn export_marker(m: marker::Model, refs: &Refs) -> ExportMarker {
         body: m.body,
         color: m.color,
         hidden_from_log: m.hidden_from_log,
+        page_hash: m.page_hash,
         created_at: m.created_at.to_rfc3339(),
         updated_at: m.updated_at.to_rfc3339(),
     }

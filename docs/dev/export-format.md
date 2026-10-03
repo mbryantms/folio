@@ -96,6 +96,7 @@ One row per issue the user has opened or marked.
 | `finished_at` | timestamp \| null |
 | `is_backfill` | bool — set by bulk/sync writes, not active reading |
 | `device` | string \| null |
+| `page_hash` | string \| null — hex BLAKE3 of the page image at `last_page` ([`reading-progress.md`](reading-progress.md#page-anchoring-when-the-archive-changes)); null until the page could be hashed |
 | `updated_at` | timestamp |
 
 ### `markers` — `markers`
@@ -115,6 +116,7 @@ Bookmarks, notes, favorites and highlights. Every column is exported.
 | `body` | string \| null — Markdown; required for notes |
 | `color` | string \| null — palette token |
 | `hidden_from_log` | bool |
+| `page_hash` | string \| null — hex BLAKE3 of the page image at `page_index`; null until the page could be hashed |
 | `created_at`, `updated_at` | timestamp |
 
 ### `collections` — `saved_views` (`kind = collection`) + `collection_entries`
@@ -370,3 +372,5 @@ verbatim.
 
 - **v1** (2026-09-29, WP-2.1) — initial shape.
 - **notes v1** (2026-09-30, WP-5.1) — notes export (`folio-notes-export` v1).
+- **v1, additive** (2026-10-02, WP-8.4) — `page_hash` on `progress` rows and
+  `markers` (also in the notes export's JSON form). No version bump.

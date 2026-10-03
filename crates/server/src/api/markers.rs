@@ -23,9 +23,13 @@
 //!     region / selection — `selection.text` is user-editable). Same
 //!     validation gates via `Validated<UpdateMarkerReq>`.
 //!
-//! The four write routes share the `marker_write` per-IP rate-limit
-//! bucket (WP-5.3, audit SE-5).
-//!   - `DELETE /me/markers/{id}`.
+//!   - `DELETE /me/markers/{id}` and `POST /me/markers/bulk-delete`.
+//!   - `POST /me/markers/restore` — the Undo of a delete (WP-8.4): one
+//!     request re-inserts every snapshot the client captured before the
+//!     delete, keeping the original ids, page hashes, and content.
+//!
+//! The write routes share the `marker_write` per-IP rate-limit bucket
+//! (WP-5.3, audit SE-5).
 //!
 //! All endpoints scope by `library_user_access` against the issue's
 //! library so admins see everything and regular users only see markers
@@ -128,6 +132,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(update))
         .routes(routes!(delete_one))
         .routes(routes!(bulk_delete))
+        .routes(routes!(restore))
         .route_layer(rate_limit::MARKER_WRITE.build());
     OpenApiRouter::new()
         .routes(routes!(list))
@@ -165,6 +170,14 @@ pub struct MarkerView {
     /// Markdown body. Required when `kind = 'note'`, optional elsewhere.
     pub body: Option<String>,
     pub color: Option<String>,
+    /// Hex BLAKE3 of the page image the marker is anchored to (WP-6.2).
+    /// `None` until the page could be hashed; the Undo flow sends it
+    /// back on `POST /me/markers/restore` so the restored marker keeps
+    /// its image anchor.
+    pub page_hash: Option<String>,
+    /// Hidden from the reading-log feed. Carried so Undo restores the
+    /// marker exactly (WP-8.4).
+    pub hidden_from_log: bool,
     pub created_at: String,
     pub updated_at: String,
     /// Hydrated for the global `/me/markers` feed so the index page can
@@ -573,6 +586,8 @@ fn to_view(m: marker::Model) -> MarkerView {
         selection: m.selection,
         body: m.body,
         color: m.color,
+        page_hash: m.page_hash,
+        hidden_from_log: m.hidden_from_log,
         created_at: m.created_at.to_rfc3339(),
         updated_at: m.updated_at.to_rfc3339(),
         series_name: None,
@@ -1336,9 +1351,10 @@ pub async fn list_for_issue(
     // ACL: fetch_visible_issue returns 404/403 if the caller can't
     // reach this issue, before we leak whether they have markers on
     // it.
-    if let Err(resp) = fetch_visible_issue(&app, &user, &issue_id).await {
-        return resp.into_response();
-    }
+    let issue_row = match fetch_visible_issue(&app, &user, &issue_id).await {
+        Ok(r) => r,
+        Err(resp) => return resp.into_response(),
+    };
     let rows = match marker::Entity::find()
         .filter(marker::Column::UserId.eq(user.id))
         .filter(marker::Column::IssueId.eq(issue_id))
@@ -1353,6 +1369,14 @@ pub async fn list_for_issue(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+    // The reader calls this on mount. A marker without a page hash
+    // predates WP-6.2 (or a restore that had none): hash its page in the
+    // background (WP-8.4). The reader may serve every page from cached
+    // width variants without ever opening the archive, so the page
+    // server's open hook alone could miss these.
+    if rows.iter().any(|m| m.page_hash.is_none()) {
+        crate::reading::page_hash_backfill::spawn_on_open(&app, &issue_row);
+    }
     let items: Vec<MarkerView> = rows.into_iter().map(to_view).collect();
     Json(IssueMarkersView { items }).into_response()
 }
@@ -1678,6 +1702,295 @@ pub async fn bulk_delete(
         }),
     )
         .into_response()
+}
+
+/// Most snapshots one restore accepts — the bulk-delete cap, so the Undo
+/// of a maximal bulk delete is one request.
+const MAX_RESTORE: usize = 500;
+
+/// `page_hash` is a hex BLAKE3 digest (64 lowercase hex chars).
+fn valid_page_hash_opt(value: &Option<String>, _: &()) -> garde::Result {
+    match value.as_deref() {
+        Some(h) if h.len() != 64 || !h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) => {
+            Err(garde::Error::new(
+                "page_hash must be 64 lowercase hex characters",
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// One deleted marker as the client snapshotted it (a [`MarkerView`]
+/// projection). Same field rules as [`CreateMarkerReq`], plus the
+/// identity the restore keeps: the original `id`, `created_at`, and
+/// `page_hash`.
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
+pub struct RestoreMarkerItem {
+    /// The deleted marker's id. Restored under the same id, so a link to
+    /// it (`/markers/{id}`) keeps working. An id that already exists is
+    /// skipped (a repeated Undo is a no-op).
+    #[garde(skip)]
+    pub id: Uuid,
+    #[garde(length(min = 1, max = MAX_ISSUE_ID_LEN))]
+    pub issue_id: String,
+    #[garde(range(min = 0))]
+    pub page_index: i32,
+    /// `'bookmark' | 'note' | 'favorite' | 'highlight'`.
+    #[garde(custom(valid_kind))]
+    pub kind: String,
+    #[serde(default)]
+    #[garde(custom(valid_region_opt))]
+    pub region: Option<serde_json::Value>,
+    #[serde(default)]
+    #[garde(custom(valid_selection_opt))]
+    pub selection: Option<serde_json::Value>,
+    #[serde(default)]
+    #[garde(inner(length(bytes, max = MAX_BODY_BYTES)))]
+    pub body: Option<String>,
+    #[serde(default)]
+    #[garde(custom(valid_color_opt))]
+    #[schema(pattern = "^(yellow|green|blue|red|violet|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})$")]
+    pub color: Option<String>,
+    #[serde(default)]
+    #[garde(skip)]
+    pub is_favorite: bool,
+    #[serde(default)]
+    #[garde(skip)]
+    pub tags: Vec<String>,
+    /// The page-image anchor the marker had (WP-6.2). Omit when unknown;
+    /// a restored marker without one is hashed lazily the next time the
+    /// issue's archive is opened.
+    #[serde(default)]
+    #[garde(custom(valid_page_hash_opt))]
+    #[schema(pattern = "^[0-9a-f]{64}$")]
+    pub page_hash: Option<String>,
+    /// The deleted marker's reading-log visibility. Defaults to `false`.
+    #[serde(default)]
+    #[garde(skip)]
+    pub hidden_from_log: bool,
+    /// The original creation time (RFC 3339). Defaults to now; a future
+    /// timestamp is clamped to now.
+    #[serde(default)]
+    #[garde(skip)]
+    pub created_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+}
+
+/// Body for `POST /me/markers/restore`.
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
+pub struct RestoreMarkersReq {
+    /// At most 500 snapshots (the bulk-delete cap).
+    #[garde(length(max = MAX_RESTORE), dive)]
+    pub markers: Vec<RestoreMarkerItem>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RestoreMarkersResp {
+    /// The markers re-inserted, in request order.
+    pub restored: Vec<MarkerView>,
+    /// Snapshots not restored: the id already exists (a repeated Undo,
+    /// or another user's row), the issue is gone or no longer visible,
+    /// or the page no longer exists.
+    pub skipped: u32,
+}
+
+/// A snapshot that passed the per-item rules, ready to insert.
+struct RestoreRow {
+    item: RestoreMarkerItem,
+    body: Option<String>,
+    region: Option<serde_json::Value>,
+    selection: Option<serde_json::Value>,
+    tags: Vec<String>,
+}
+
+/// Apply the create-path normalisation to one snapshot. A failure is the
+/// whole request's 422: the snapshots came from this server, so a bad one
+/// means a bad client, not a stale row.
+fn prepare_restore(mut item: RestoreMarkerItem) -> Result<RestoreRow, MarkerError> {
+    let body = item
+        .body
+        .take()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty());
+    validate_shape(&item.kind, item.region.as_ref(), body.as_deref())?;
+    let region = normalize_region(item.region.take())?;
+    let selection = normalize_selection(item.selection.take())?;
+    let tags = normalize_tags(std::mem::take(&mut item.tags))?;
+    Ok(RestoreRow {
+        item,
+        body,
+        region,
+        selection,
+        tags,
+    })
+}
+
+/// `POST /me/markers/restore` — undo a marker delete in one request
+/// (WP-8.4). The client sends the snapshots it captured before the
+/// delete; each is re-inserted under its original id with its content,
+/// tags, colour, region, selection, and page hash. Owner-scoped (rows
+/// are always written for the caller) and ACL-checked per issue; one
+/// `marker_write` token per request, however many markers it restores.
+#[utoipa::path(
+    operation_id = "markers_restore",    post,
+    path = "/me/markers/restore",
+    request_body = RestoreMarkersReq,
+    responses(
+        (status = 200, body = RestoreMarkersResp),
+        (status = 422, description = "validation (per-field `error.details`)"),
+        (status = 429, description = "marker write rate limit"),
+    )
+)]
+#[handler]
+pub async fn restore(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Validated(req): Validated<RestoreMarkersReq>,
+) -> impl IntoResponse {
+    use std::collections::{HashMap, HashSet};
+
+    let requested = req.markers.len();
+    let mut seen = HashSet::with_capacity(requested);
+    let mut rows = Vec::with_capacity(requested);
+    for item in req.markers {
+        if !seen.insert(item.id) {
+            continue;
+        }
+        match prepare_restore(item) {
+            Ok(r) => rows.push(r),
+            Err(e) => return e.into_response(),
+        }
+    }
+    if rows.is_empty() {
+        return Json(RestoreMarkersResp {
+            restored: Vec::new(),
+            skipped: requested as u32,
+        })
+        .into_response();
+    }
+
+    // ACL: one issue fetch + one grant lookup for the whole batch.
+    let issue_ids: Vec<String> = rows
+        .iter()
+        .map(|r| r.item.issue_id.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let issues = match issue::Entity::find()
+        .filter(issue::Column::Id.is_in(issue_ids))
+        .all(&app.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "markers: restore issue fetch failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let visible = access::for_user(&app, &user).await;
+    let mut allowed: HashMap<String, issue::Model> = HashMap::with_capacity(issues.len());
+    for row in issues {
+        if access::issue_allowed(&app, &visible, &row).await {
+            allowed.insert(row.id.clone(), row);
+        }
+    }
+
+    // Ids that already exist (a repeated Undo, or — vanishingly — another
+    // user's row) are skipped, never overwritten.
+    let ids: Vec<Uuid> = rows.iter().map(|r| r.item.id).collect();
+    let existing: HashSet<Uuid> = match marker::Entity::find()
+        .select_only()
+        .column(marker::Column::Id)
+        .filter(marker::Column::Id.is_in(ids))
+        .into_tuple::<Uuid>()
+        .all(&app.db)
+        .await
+    {
+        Ok(v) => v.into_iter().collect(),
+        Err(e) => {
+            tracing::error!(error = %e, "markers: restore id lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    let now = Utc::now().fixed_offset();
+    let mut order: Vec<Uuid> = Vec::with_capacity(rows.len());
+    let mut models: Vec<marker::ActiveModel> = Vec::with_capacity(rows.len());
+    for r in rows {
+        if existing.contains(&r.item.id) {
+            continue;
+        }
+        let Some(issue_row) = allowed.get(&r.item.issue_id) else {
+            continue;
+        };
+        if r.item.page_index >= issue_row.page_count.unwrap_or(i32::MAX) {
+            continue;
+        }
+        let created = r.item.created_at.map_or(now, |t| t.min(now));
+        order.push(r.item.id);
+        models.push(marker::ActiveModel {
+            id: Set(r.item.id),
+            user_id: Set(user.id),
+            series_id: Set(issue_row.series_id),
+            issue_id: Set(issue_row.id.clone()),
+            page_index: Set(r.item.page_index),
+            kind: Set(r.item.kind),
+            is_favorite: Set(r.item.is_favorite),
+            tags: Set(r.tags),
+            region: Set(r.region),
+            selection: Set(r.selection),
+            body: Set(r.body),
+            color: Set(r
+                .item
+                .color
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty())),
+            created_at: Set(created),
+            // A restore is a change sync clients must see.
+            updated_at: Set(now),
+            hidden_from_log: Set(r.item.hidden_from_log),
+            page_hash: Set(r.item.page_hash),
+        });
+    }
+
+    let mut restored = Vec::new();
+    if !models.is_empty() {
+        // One multi-row INSERT; ON CONFLICT covers a concurrent Undo of
+        // the same snapshot racing past the lookup above.
+        let res = marker::Entity::insert_many(models)
+            .on_conflict(
+                sea_orm::sea_query::OnConflict::column(marker::Column::Id)
+                    .do_nothing()
+                    .to_owned(),
+            )
+            .exec_without_returning(&app.db)
+            .await;
+        if let Err(e) = res {
+            tracing::error!(error = %e, "markers: restore insert failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+        // Read back the caller's rows, in request order.
+        let written = match marker::Entity::find()
+            .filter(marker::Column::Id.is_in(order.clone()))
+            .filter(marker::Column::UserId.eq(user.id))
+            .all(&app.db)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(error = %e, "markers: restore read-back failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        };
+        let mut by_id: HashMap<Uuid, marker::Model> =
+            written.into_iter().map(|m| (m.id, m)).collect();
+        restored = order
+            .iter()
+            .filter_map(|id| by_id.remove(id))
+            .map(to_view)
+            .collect();
+    }
+    let skipped = (requested - restored.len()) as u32;
+    Json(RestoreMarkersResp { restored, skipped }).into_response()
 }
 
 #[cfg(test)]

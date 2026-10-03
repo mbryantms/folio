@@ -462,6 +462,13 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     kind: "bool",
     allowedOps: BOOL_OPS,
   },
+  // WP-8.4: a `favorite` marker or any marker starred with `is_favorite`.
+  {
+    id: "has_favorites",
+    label: "Has My Favorites",
+    kind: "bool",
+    allowedOps: BOOL_OPS,
+  },
 ] as const;
 
 /** Whether `spec` can be used on a view of `entity`. */

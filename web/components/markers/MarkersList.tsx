@@ -35,11 +35,10 @@ import {
 } from "@/lib/api/queries";
 import {
   useBulkDeleteMarkers,
-  useCreateMarker,
   useDeleteMarker,
+  useRestoreMarkers,
   useUpdateMarker,
 } from "@/lib/api/mutations";
-import { markerToCreateReq } from "@/lib/markers/recreate";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useContainerWidth } from "@/lib/use-container-width";
 import { useSelection } from "@/lib/selection/use-selection";
@@ -166,7 +165,7 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
   );
   const selection = useSelection(items);
   const bulkDelete = useBulkDeleteMarkers();
-  const createMarker = useCreateMarker();
+  const restoreMarkers = useRestoreMarkers();
   // Header total — global (the list endpoint carries no per-filter
   // count), so it reads as "you've saved N markers" regardless of the
   // active chips.
@@ -178,7 +177,7 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
     const ids = Array.from(selection.selected);
     if (ids.length === 0) return;
     // Snapshot the selected rows BEFORE the delete invalidates the
-    // cache, so Undo can recreate them from stable values. Marker
+    // cache, so Undo can restore them from stable values. Marker
     // deletes are the AlertDialog-confirm exception — they use an Undo
     // toast instead (CLAUDE.md notifications convention).
     const snapshots = items.filter((m) => selection.isSelected(m.id));
@@ -190,16 +189,13 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
           duration: UNDO_TOAST_DURATION_MS,
           action: {
             label: "Undo",
-            onClick: () => {
-              for (const m of snapshots) {
-                createMarker.mutate(markerToCreateReq(m));
-              }
-            },
+            // One request for the whole selection (WP-8.4).
+            onClick: () => restoreMarkers.mutate(snapshots),
           },
         });
       },
     });
-  }, [bulkDelete, createMarker, items, selection]);
+  }, [bulkDelete, restoreMarkers, items, selection]);
 
   // Esc exits select mode; Cmd/Ctrl+A selects every loaded card.
   // Dormant while focus is in a form field (the search input).
@@ -808,7 +804,7 @@ function MarkerCard({
 }) {
   const inSelect = selectMode?.isActive ?? false;
   const del = useDeleteMarker(marker.id, marker.issue_id, { silent: true });
-  const create = useCreateMarker();
+  const restore = useRestoreMarkers();
   const update = useUpdateMarker(marker.id, marker.issue_id);
   const router = useRouter();
   const jumpHref = buildJumpHref(marker);
@@ -884,7 +880,7 @@ function MarkerCard({
       destructive: true,
       onSelect: () => {
         // Capture the snapshot before the row vanishes from the list
-        // so Undo can recreate from a stable value (we can't read
+        // so Undo can restore from a stable value (we can't read
         // `marker` after the cache invalidation drops it).
         const snapshot = marker;
         del.mutate(undefined, {
@@ -893,7 +889,7 @@ function MarkerCard({
               duration: UNDO_TOAST_DURATION_MS,
               action: {
                 label: "Undo",
-                onClick: () => create.mutate(markerToCreateReq(snapshot)),
+                onClick: () => restore.mutate([snapshot]),
               },
             }),
         });
@@ -902,7 +898,7 @@ function MarkerCard({
     });
     return list;
   }, [
-    create,
+    restore,
     del,
     hasRegion,
     jumpHref,

@@ -30,6 +30,7 @@ vi.mock("@/lib/api/mutations", () => {
     useBulkDeleteMarkers: m,
     useCreateMarker: m,
     useDeleteMarker: m,
+    useRestoreMarkers: m,
     useUpdateMarker: m,
   };
 });

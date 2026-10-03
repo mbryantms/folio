@@ -6,11 +6,11 @@ import { toast } from "sonner";
 import {
   useCreateMarker,
   useDeleteMarkerById,
+  useRestoreMarkers,
 } from "@/lib/api/mutations/markers";
 import { useIssueMarkers } from "@/lib/api/queries";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type { MarkerKind, MarkerView } from "@/lib/api/types";
-import { markerToCreateReq } from "@/lib/markers/recreate";
 
 /**
  * Toggle a page-level marker of one `kind` (bookmark / favorite) at a
@@ -44,6 +44,7 @@ export function usePageMarkerToggle(
     [markers.data, pageIndex, kind],
   );
   const create = useCreateMarker();
+  const restore = useRestoreMarkers();
   // Id arrives at mutate() time, so the hook is never bound to "" and
   // doesn't re-derive on every page turn. `silent` so the caller's
   // labelled Undo toast is the only success signal.
@@ -59,7 +60,7 @@ export function usePageMarkerToggle(
               duration: UNDO_TOAST_DURATION_MS,
               action: {
                 label: "Undo",
-                onClick: () => create.mutate(markerToCreateReq(snapshot)),
+                onClick: () => restore.mutate([snapshot]),
               },
             }),
         });
@@ -71,7 +72,7 @@ export function usePageMarkerToggle(
         created ? { onSuccess: () => toast.success(created) } : undefined,
       );
     },
-    [existing, del, create, issueId, pageIndex, kind],
+    [existing, del, create, restore, issueId, pageIndex, kind],
   );
 
   return { existing, toggle };

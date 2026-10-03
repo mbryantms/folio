@@ -829,3 +829,179 @@ async fn migration_backfills_entities_and_links() {
     assert_eq!(s, StatusCode::OK, "{body}");
     assert_eq!(body["total"], 1);
 }
+
+// ───── WP-8.4: OPDS 2.0 entity feeds ─────
+
+/// Shape checks every OPDS 2.0 feed must pass (the same rules the
+/// `opds_v2.rs` suite applies): `metadata.title`, typed links with a
+/// `self`, and navigation entries / publications carrying what a client
+/// needs to render and follow them.
+fn assert_opds2_feed(body: &serde_json::Value) {
+    assert!(body["metadata"]["title"].is_string(), "title: {body}");
+    let links = body["links"].as_array().expect("links");
+    for l in links {
+        assert!(l["rel"].is_string() && l["href"].is_string(), "link: {l}");
+        assert_eq!(l["type"], "application/opds+json", "link type: {l}");
+    }
+    assert!(
+        links.iter().any(|l| l["rel"] == "self"),
+        "self link: {body}"
+    );
+    for n in body["navigation"].as_array().into_iter().flatten() {
+        assert!(n["title"].is_string() && n["href"].is_string(), "nav: {n}");
+    }
+    for p in body["publications"].as_array().into_iter().flatten() {
+        assert!(p["metadata"]["title"].is_string(), "publication: {p}");
+        assert!(
+            p["links"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|l| l["rel"] == "http://opds-spec.org/acquisition"),
+            "acquisition link: {p}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn opds_v2_entity_feeds_mirror_v1_and_are_acl_filtered() {
+    let app = TestApp::spawn().await;
+    let f = fixture(&app).await;
+    add_entity(&f.db, "character", "batman", "Batman").await;
+    add_entity(&f.db, "character", "joker", "Joker").await;
+    add_character(&f.db, &f.a_issues[0], "Batman", None).await;
+    add_character(&f.db, &f.b_issues[0], "Joker", None).await;
+    add_entity(&f.db, "team", "gotham-sirens", "Gotham Sirens").await;
+    exec(
+        &f.db,
+        "INSERT INTO issue_teams (issue_id, team) VALUES ($1, 'Gotham Sirens')",
+        vec![f.a_issues[1].clone().into()],
+    )
+    .await;
+    add_entity(&f.db, "publisher", "dc-comics", "DC Comics").await;
+
+    // Root navigation links all four entity feeds.
+    let (s, root) = get_json(&app, "/opds/v2", &f.user).await;
+    assert_eq!(s, StatusCode::OK);
+    let hrefs: Vec<&str> = root["navigation"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["href"].as_str().unwrap())
+        .collect();
+    for p in ["characters", "teams", "arcs", "publishers"] {
+        assert!(
+            hrefs.contains(&format!("/opds/v2/{p}").as_str()),
+            "{hrefs:?}"
+        );
+    }
+
+    // Index: navigation entries, hidden-library entities excluded.
+    let (s, nav) = get_json(&app, "/opds/v2/characters", &f.user).await;
+    assert_eq!(s, StatusCode::OK, "{nav}");
+    assert_opds2_feed(&nav);
+    let entries = nav["navigation"].as_array().unwrap();
+    assert_eq!(entries.len(), 1, "{nav}");
+    assert_eq!(entries[0]["href"], "/opds/v2/characters/batman");
+    assert_eq!(entries[0]["title"], "Batman");
+    assert_eq!(nav["metadata"]["numberOfItems"], 1);
+
+    // Detail: the entity's issues as publications, same set as v1.
+    let (s, feed) = get_json(&app, "/opds/v2/characters/batman", &f.user).await;
+    assert_eq!(s, StatusCode::OK, "{feed}");
+    assert_opds2_feed(&feed);
+    let pubs = feed["publications"].as_array().unwrap();
+    assert_eq!(pubs.len(), 1);
+    assert!(
+        feed["metadata"]["identifier"]
+            .as_str()
+            .unwrap()
+            .starts_with("urn:folio:characters:"),
+        "{feed}"
+    );
+    let (_, v1) = get_text(&app, "/opds/v1/characters/batman", &f.user).await;
+    assert_eq!(v1.matches("<entry>").count(), pubs.len());
+    let (s, _) = get_json(&app, "/opds/v2/characters/joker", &f.user).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    let (s, team) = get_json(&app, "/opds/v2/teams/gotham-sirens", &f.user).await;
+    assert_eq!(s, StatusCode::OK, "{team}");
+    assert_opds2_feed(&team);
+    assert_eq!(team["publications"].as_array().unwrap().len(), 1);
+
+    // Publishers list series as navigation.
+    let (s, publisher) = get_json(&app, "/opds/v2/publishers/dc-comics", &f.user).await;
+    assert_eq!(s, StatusCode::OK, "{publisher}");
+    assert_opds2_feed(&publisher);
+    assert_eq!(publisher["navigation"][0]["title"], "Detective Comics");
+
+    // A v1 entity path asked for as OPDS 2.0 now redirects to its twin.
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/opds/v1/characters/batman")
+        .header(header::ACCEPT, "application/opds+json")
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                f.user.session, f.user.csrf
+            ),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(
+        resp.headers().get(header::LOCATION).unwrap(),
+        "/opds/v2/characters/batman"
+    );
+}
+
+#[tokio::test]
+async fn opds_v2_arc_feed_is_a_reading_order_with_sequential_links() {
+    let app = TestApp::spawn().await;
+    let f = fixture(&app).await;
+    let arc = add_entity(&f.db, "story_arc", "knightfall", "Knightfall").await;
+    for (i, pos) in [(2usize, 1), (0, 2), (1, 3)] {
+        exec(
+            &f.db,
+            "INSERT INTO issue_arcs (issue_id, arc_id, position_in_arc) VALUES ($1, $2, $3)",
+            vec![f.a_issues[i].clone().into(), arc.into(), pos.into()],
+        )
+        .await;
+    }
+    let (s, feed) = get_json(&app, "/opds/v2/arcs/knightfall", &f.user).await;
+    assert_eq!(s, StatusCode::OK, "{feed}");
+    assert_opds2_feed(&feed);
+    assert_eq!(feed["metadata"]["title"], "Knightfall");
+    let pubs = feed["publications"].as_array().unwrap();
+    let ids: Vec<String> = pubs
+        .iter()
+        .map(|p| p["metadata"]["identifier"].as_str().unwrap().to_owned())
+        .collect();
+    let want: Vec<String> = [2, 0, 1]
+        .iter()
+        .map(|&i| format!("urn:folio:issue:{}", f.a_issues[i]))
+        .collect();
+    assert_eq!(ids, want, "arc reading order");
+    // Reading-sequence feed: middle publication links both neighbours.
+    let rels: Vec<&str> = pubs[1]["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|l| l["rel"].as_str())
+        .collect();
+    assert!(
+        rels.contains(&"next") && rels.contains(&"previous"),
+        "{rels:?}"
+    );
+    // Up-link to the arcs index.
+    assert!(
+        feed["links"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| l["rel"] == "up" && l["href"] == "/opds/v2/arcs"),
+        "{feed}"
+    );
+}

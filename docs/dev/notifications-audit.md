@@ -109,7 +109,7 @@ Each of these should be a single shared helper or constant.
 | `useUpdateCblList` | ✅ toasts `"Saved"` | Already toasted at audit time |
 | `useDeleteCollection` | ✅ toasts `"Collection deleted"` | Already toasted at audit time |
 | `useUpdateCollection` | ✅ toasts `"Saved"` | Already toasted at audit time |
-| `useDeleteMarker` | ✅ toasts `"Removed"` (with Undo via call-site `silent: true` opt-in) | Cleanup M3.5: 8 call sites now capture the marker state and offer an 8 s Undo |
+| `useDeleteMarker` | ✅ toasts `"Removed"` (with Undo via call-site `silent: true` opt-in) | Cleanup M3.5: 8 call sites now capture the marker state and offer an 8 s Undo. WP-8.4: Undo is one `POST /me/markers/restore` (`useRestoreMarkers`, silent on success) for one marker or a whole bulk delete, keeping each marker's id, colour, page hash and `hidden_from_log` |
 | `useRemoveCollectionEntry` | ✅ toasts `"Removed"` | Already toasted at audit time |
 | `useClearMatchEntry` | ✅ toasts `"Match cleared"` | Already toasted at audit time |
 | `useReorderMarkers` | Silent (intentional) | Drag settles visually |

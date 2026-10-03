@@ -770,3 +770,228 @@ async fn marker_filters_are_scoped_to_the_viewing_user() {
     let r = preview_ids(&app, &me, series, flag("has_notes", "is_true")).await;
     assert!(names(&r).is_empty(), "{r}");
 }
+
+// ───── WP-8.4: has_favorites ─────
+
+#[tokio::test]
+async fn has_favorites_matches_favorite_kind_or_starred_markers() {
+    let app = TestApp::spawn().await;
+    let me = register(&app, "stars@example.com").await;
+    let other = register(&app, "other-stars@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let fx = seed(&app, tmp.path(), me.user_id).await;
+
+    // A `favorite`-kind marker, a starred note, an unstarred bookmark,
+    // and someone else's favourite.
+    add_marker(&db, me.user_id, &fx.annual_2018, "favorite").await;
+    add_marker(&db, me.user_id, &fx.regular_2019, "note").await;
+    db.execute_raw(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DbBackend::Postgres,
+        "UPDATE markers SET is_favorite = true WHERE user_id = $1 AND issue_id = $2",
+        [me.user_id.into(), fx.regular_2019.clone().into()],
+    ))
+    .await
+    .unwrap();
+    add_marker(&db, me.user_id, &fx.annual_2019_unread, "bookmark").await;
+    add_marker(&db, other.user_id, &fx.annual_2019_read, "favorite").await;
+
+    let issues = "/api/me/saved-views/preview-issues";
+    let series = "/api/me/saved-views/preview";
+    let flag = |op: &str| json!([{"field": "has_favorites", "op": op}]);
+
+    let r = preview_ids(&app, &me, issues, flag("is_true")).await;
+    let mut got = ids(&r);
+    got.sort();
+    let mut want = vec![fx.annual_2018.clone(), fx.regular_2019.clone()];
+    want.sort();
+    assert_eq!(got, want, "{r}");
+
+    let r = preview_ids(&app, &me, issues, flag("is_false")).await;
+    let without = ids(&r);
+    assert!(without.contains(&fx.annual_2019_unread), "{r}");
+    // Another user's favourite never counts for `me`.
+    assert!(without.contains(&fx.annual_2019_read), "{r}");
+    assert!(!without.contains(&fx.annual_2018), "{r}");
+
+    let r = preview_ids(&app, &me, series, flag("is_true")).await;
+    assert_eq!(names(&r), vec!["Batman"]);
+
+    // Saved as an issue view, it round-trips through validation.
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/saved-views",
+        &me,
+        Some(json!({
+            "kind": "filter_issues",
+            "name": "Starred issues",
+            "filter": {"match_mode": "all", "conditions": flag("is_true")},
+            "sort_field": "name",
+            "sort_order": "asc",
+            "result_limit": 12,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+}
+
+// ───── WP-8.4: issue views in the OPDS personal feeds ─────
+
+async fn get_raw(app: &TestApp, uri: &str, auth: &Authed) -> (StatusCode, String) {
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                auth.session, auth.csrf
+            ),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    (status, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+/// The Atom document parses end to end (the OPDS 1.x suites check
+/// content by substring; this also proves it is well-formed XML).
+fn assert_well_formed_xml(xml: &str) {
+    let mut reader = quick_xml::reader::Reader::from_str(xml);
+    loop {
+        match reader.read_event() {
+            Ok(quick_xml::events::Event::Eof) => break,
+            Ok(_) => {}
+            Err(e) => panic!("malformed XML at {}: {e}\n{xml}", reader.buffer_position()),
+        }
+    }
+}
+
+#[tokio::test]
+async fn issue_views_appear_in_the_opds_personal_feeds() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "opds-issues@example.com").await;
+    let stranger = register(&app, "opds-stranger@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = seed(&app, tmp.path(), auth.user_id).await;
+
+    let (status, view) = http(
+        &app,
+        Method::POST,
+        "/api/me/saved-views",
+        &auth,
+        Some(json!({
+            "kind": "filter_issues",
+            "name": "Unread annuals 2019",
+            "filter": unread_annuals_2019(),
+            "sort_field": "name",
+            "sort_order": "asc",
+            "result_limit": 12,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{view}");
+    let id = view["id"].as_str().unwrap().to_owned();
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/saved-views/{id}/pin"),
+        &auth,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Same result set the web rail shows.
+    let (_, web) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/saved-views/{id}/issue-results"),
+        &auth,
+        None,
+    )
+    .await;
+    let want = ids(&web);
+    assert_eq!(want, vec![fx.annual_2019_unread.clone()]);
+
+    // ── OPDS 1.x ──
+    let (s, nav) = get_raw(&app, "/opds/v1/views", &auth).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_well_formed_xml(&nav);
+    assert!(
+        nav.contains(&format!(r#"href="/opds/v1/views/{id}""#)),
+        "{nav}"
+    );
+    let (s, acq) = get_raw(&app, &format!("/opds/v1/views/{id}"), &auth).await;
+    assert_eq!(s, StatusCode::OK, "{acq}");
+    assert_well_formed_xml(&acq);
+    assert!(acq.contains("<title>Unread annuals 2019</title>"), "{acq}");
+    assert_eq!(acq.matches("<entry>").count(), 1, "{acq}");
+    assert!(acq.contains(&fx.annual_2019_unread), "{acq}");
+    assert!(!acq.contains(&fx.annual_2018), "{acq}");
+    assert!(
+        acq.contains(r#"rel="http://opds-spec.org/acquisition""#),
+        "issue entries are acquisitions: {acq}"
+    );
+    let (s, page) = get_raw(&app, "/opds/v1/pages/home", &auth).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(
+        page.contains(&format!(r#"href="/opds/v1/views/{id}""#)),
+        "{page}"
+    );
+
+    // ── OPDS 2.0 ──
+    let (s, nav) = http(&app, Method::GET, "/opds/v2/views", &auth, None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(
+        nav["navigation"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["href"] == format!("/opds/v2/views/{id}")),
+        "{nav}"
+    );
+    let (s, feed) = http(
+        &app,
+        Method::GET,
+        &format!("/opds/v2/views/{id}"),
+        &auth,
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{feed}");
+    assert_eq!(feed["metadata"]["title"], "Unread annuals 2019");
+    assert_eq!(feed["links"][0]["rel"], "self");
+    let got: Vec<String> = feed["publications"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            p["metadata"]["identifier"]
+                .as_str()
+                .unwrap()
+                .trim_start_matches("urn:folio:issue:")
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(got, want);
+    let (s, page) = http(&app, Method::GET, "/opds/v2/pages/home", &auth, None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(
+        page["navigation"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["href"] == format!("/opds/v2/views/{id}")),
+        "{page}"
+    );
+
+    // Private to its owner on both protocols.
+    let (s, _) = get_raw(&app, &format!("/opds/v1/views/{id}"), &stranger).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = get_raw(&app, &format!("/opds/v2/views/{id}"), &stranger).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}

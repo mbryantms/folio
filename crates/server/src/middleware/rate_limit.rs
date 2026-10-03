@@ -211,15 +211,20 @@ pub const NOTES_EXPORT: Bucket = Bucket {
 };
 
 /// Marker writes — `POST /me/markers`, `PATCH` / `DELETE
-/// /me/markers/{id}`, `POST /me/markers/bulk-delete` (WP-5.3, audit SE-5).
-/// 10/s/IP sustained with a burst of 600: a person adding notes never
-/// comes close, and the burst covers the bookmarks page's "Undo" of a
-/// maximal 500-marker bulk delete, which re-creates each row with its own
-/// POST. A runaway script trips it within a minute.
+/// /me/markers/{id}`, `POST /me/markers/bulk-delete`, `POST
+/// /me/markers/restore` (WP-5.3, audit SE-5; burst cut in WP-8.4).
+/// 10/s/IP sustained with a burst of 60. Every UI action is now one
+/// request: Undo of any delete, including a 500-marker bulk delete, is a
+/// single `restore` call (it used to be one `POST` per marker, which is
+/// what the old 600 burst covered). The busiest human pattern left is
+/// key-repeat on the reader's `b` / `s` toggles — a create or delete per
+/// page turn, a handful per second — and a burst of 60 absorbs six
+/// seconds of that on top of the 10/s refill, plus the delete + Undo
+/// round trips around it. A runaway script still trips it in seconds.
 pub const MARKER_WRITE: Bucket = Bucket {
     name: "marker_write",
     period: Duration::from_millis(100),
-    burst: 600,
+    burst: 60,
 };
 
 // ───────── error handler ─────────

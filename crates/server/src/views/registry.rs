@@ -740,6 +740,17 @@ const SPECS: &[FieldSpec] = &[
         allowed_ops: BOOL_OPS,
         enum_values: &[],
     },
+    // ─── WP-8.4: favourites (kind `favorite` OR the `is_favorite` flag) ──
+    FieldSpec {
+        field: Field::HasFavorites,
+        kind: FieldKind::Bool,
+        id: "has_favorites",
+        label: "Has My Favorites",
+        source: Some(Source::MarkerExists("favorite")),
+        issue_source: Some(Source::MarkerExists("favorite")),
+        allowed_ops: BOOL_OPS,
+        enum_values: &[],
+    },
 ];
 
 pub fn spec_for(field: Field) -> &'static FieldSpec {
@@ -776,7 +787,7 @@ mod tests {
         // and a matching `FieldSpec` row. Forgetting both leaves the
         // count unchanged but `spec_for` would panic at runtime — the
         // mismatch is the alarm.
-        const KNOWN_FIELD_COUNT: usize = 40;
+        const KNOWN_FIELD_COUNT: usize = 41;
         assert_eq!(SPECS.len(), KNOWN_FIELD_COUNT);
         for spec in SPECS {
             let looked_up = spec_for(spec.field);

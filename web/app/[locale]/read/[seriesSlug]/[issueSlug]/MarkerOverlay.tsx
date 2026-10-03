@@ -17,9 +17,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useIssueMarkers, useIssuePageTextRegions } from "@/lib/api/queries";
-import { useCreateMarker, useDeleteMarker } from "@/lib/api/mutations/markers";
+import {
+  useDeleteMarker,
+  useRestoreMarkers,
+} from "@/lib/api/mutations/markers";
 import { primaryPointerIsCoarse } from "@/lib/reader/coarse-pointer";
-import { markerToCreateReq } from "@/lib/markers/recreate";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import {
   useReaderStore,
@@ -932,7 +934,7 @@ function PagePin({
   onEdit: () => void;
 }) {
   const del = useDeleteMarker(marker.id, issueId, { silent: true });
-  const create = useCreateMarker();
+  const restore = useRestoreMarkers();
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -967,7 +969,7 @@ function PagePin({
                     duration: UNDO_TOAST_DURATION_MS,
                     action: {
                       label: "Undo",
-                      onClick: () => create.mutate(markerToCreateReq(snapshot)),
+                      onClick: () => restore.mutate([snapshot]),
                     },
                   }),
               });

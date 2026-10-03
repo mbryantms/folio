@@ -632,12 +632,16 @@ async fn opds_series_feeds_link_arc_edges_to_the_arc_feed() {
         .filter(|l| l["rel"] == "related")
         .collect();
     assert_eq!(related.len(), 1, "{body}");
-    assert_eq!(related[0]["href"], "/opds/v1/arcs/secret-wars");
+    // WP-8.4: the v2 feed links the arc's OPDS 2.0 feed, not the 1.x one.
+    assert_eq!(related[0]["href"], "/opds/v2/arcs/secret-wars");
     assert_eq!(related[0]["title"], "Prelude to: Secret Wars");
-    assert_eq!(
-        related[0]["type"],
-        "application/atom+xml;profile=opds-catalog;kind=acquisition"
-    );
+    assert_eq!(related[0]["type"], "application/opds+json");
+    assert_eq!(related[0]["properties"]["folio:relationship"], "tie_in_to");
+    // …and that feed exists for this user.
+    let (status, arc) =
+        call_json(&app, Method::GET, "/opds/v2/arcs/secret-wars", &user, None).await;
+    assert_eq!(status, StatusCode::OK, "{arc}");
+    assert_eq!(arc["metadata"]["title"], "Secret Wars");
 
     // Admin sees both arc links.
     let (_, xml) = call(
