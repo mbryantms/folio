@@ -53,8 +53,9 @@ use crate::metadata::identifier::{Identifier, Source};
 use crate::metadata::matcher::canonical_issue_number;
 use crate::metadata::provider::{
     ConditionalFetch, CreditCandidate, CrossRefSeries, EntityCandidate, GenericMetadata,
-    IssueCandidate, IssueQuery, MetadataProvider, ProviderError, ProviderResult, ProviderSeriesRef,
-    QuotaSnapshot, ReprintCandidate, SeriesCandidate, SeriesQuery, VariantCoverCandidate,
+    IssueCandidate, IssueListOpts, IssueQuery, MetadataProvider, ProviderError, ProviderIssue,
+    ProviderResult, ProviderSeriesIssues, ProviderSeriesRef, QuotaSnapshot, ReprintCandidate,
+    SeriesCandidate, SeriesQuery, VariantCoverCandidate,
 };
 use crate::metadata::rate_limit::{self, BucketDef, Reservation};
 use async_trait::async_trait;
@@ -64,6 +65,7 @@ use redis::aio::ConnectionManager;
 use reqwest::header::{ACCEPT, AUTHORIZATION, IF_MODIFIED_SINCE, IF_NONE_MATCH};
 use sea_orm::DatabaseConnection;
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -1197,6 +1199,71 @@ impl MetadataProvider for MetronClient {
 
     fn enumerates_series_issues(&self) -> bool {
         true
+    }
+
+    /// `GET /api/issue/?series_id=<id>&page_size=100&page=N` — the same
+    /// listing [`Self::list_series_issue_numbers`] walks, keeping each
+    /// issue's id and cover date (the list serializer carries both).
+    async fn list_series_issues(
+        &self,
+        series_external_id: &str,
+        opts: &IssueListOpts,
+    ) -> ProviderResult<ProviderSeriesIssues> {
+        let max_pages = if opts.max_pages == 0 {
+            50
+        } else {
+            opts.max_pages
+        };
+        let mut out = ProviderSeriesIssues {
+            complete: true,
+            dates_complete: true,
+            ..Default::default()
+        };
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut page = 1u32;
+        loop {
+            if out.requests >= max_pages {
+                out.complete = false;
+                tracing::warn!(
+                    series_id = series_external_id,
+                    pages = out.requests,
+                    "metron: series issue listing hit its page cap; coverage may be incomplete"
+                );
+                break;
+            }
+            let params = vec![
+                ("series_id", series_external_id.to_owned()),
+                ("page_size", "100".to_owned()),
+                ("page", page.to_string()),
+            ];
+            let envelope: Paged<MIssueListItem> = self.request("/api/issue/", &params).await?;
+            out.requests += 1;
+            for it in &envelope.results {
+                if out.series_name.is_none()
+                    && let Some(sr) = it.series.as_ref()
+                {
+                    out.series_name = sr.name.clone().filter(|s| !s.trim().is_empty());
+                    out.year_began = sr.year_began;
+                }
+                let Some(raw) = it.number.clone().or_else(|| it.issue.clone()) else {
+                    continue;
+                };
+                let number = canonical_issue_number(&raw);
+                if number.is_empty() || !seen.insert(number.clone()) {
+                    continue;
+                }
+                out.issues.push(ProviderIssue {
+                    external_id: it.id.map(|i| i.to_string()),
+                    number,
+                    cover_date: parse_date(&it.cover_date),
+                });
+            }
+            if envelope.next.is_none() || envelope.results.is_empty() {
+                break;
+            }
+            page += 1;
+        }
+        Ok(out)
     }
 
     async fn find_series_by_cross_ref(

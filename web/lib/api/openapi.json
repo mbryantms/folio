@@ -10742,6 +10742,128 @@
         }
       }
     },
+    "/api/series/{slug}/provider-coverage/accept": {
+      "post": {
+        "operationId": "provider_coverage_accept",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptCoverageReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptOutcome"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series not found / never analysed"
+          },
+          "409": {
+            "description": "the analysis hasn't finished"
+          },
+          "422": {
+            "description": "unknown source / series not a candidate"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/provider-coverage/analysis": {
+      "get": {
+        "operationId": "provider_coverage_analysis",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverageAnalysisResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series not found / never analysed"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/provider-coverage/analyze": {
+      "post": {
+        "operationId": "provider_coverage_analyze",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeCoverageReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverageJobResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/provider-ranges": {
       "get": {
         "operationId": "provider_ranges_list_series",
@@ -11665,6 +11787,25 @@
           "rose"
         ]
       },
+      "AcceptCoverageReq": {
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "main_series_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Use this candidate as the main series instead of the largest\ncoverer (\"Choose series\"). Must be one of the analysis' candidates."
+          },
+          "source": {
+            "type": "string",
+            "description": "`comicvine` | `metron` | `gcd`."
+          }
+        }
+      },
       "AcceptMetadataResp": {
         "type": "object",
         "properties": {
@@ -11674,6 +11815,60 @@
               "null"
             ],
             "description": "RFC3339 time the issue is marked \"metadata complete\", or `null` after\nun-accepting. The issue's completeness tier reads `accepted` while set."
+          }
+        }
+      },
+      "AcceptOutcome": {
+        "type": "object",
+        "description": "What an accept wrote.",
+        "required": [
+          "source",
+          "main_written",
+          "ranges_created",
+          "ranges_skipped",
+          "stale_ranges"
+        ],
+        "properties": {
+          "main_note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the main id wasn't written, if it wasn't."
+          },
+          "main_series_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "main_written": {
+            "type": "boolean",
+            "description": "The series-level id was written (or refreshed) this call."
+          },
+          "ranges_created": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposedRange"
+            },
+            "description": "Ranges written: `\"low..high → id\"`."
+          },
+          "ranges_skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposedRange"
+            },
+            "description": "Ranges not written (already mapped / conflicting), with the reason."
+          },
+          "source": {
+            "type": "string"
+          },
+          "stale_ranges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageRangeRef"
+            },
+            "description": "Existing automated ranges the accepted proposal no longer supports\n(reported, never deleted)."
           }
         }
       },
@@ -12157,6 +12352,15 @@
           },
           "source_label": {
             "type": "string"
+          }
+        }
+      },
+      "AnalyzeCoverageReq": {
+        "type": "object",
+        "properties": {
+          "auto_accept": {
+            "type": "boolean",
+            "description": "Accept high-confidence, conflict-free proposals automatically\n(series id as provider-set, ranges as automated rows)."
           }
         }
       },
@@ -13682,6 +13886,19 @@
           }
         }
       },
+      "CandidateOrigin": {
+        "type": "string",
+        "description": "Where a candidate provider series came from.",
+        "enum": [
+          "user_link",
+          "linked",
+          "applied",
+          "range",
+          "bridge",
+          "search",
+          "issue_search"
+        ]
+      },
       "CandidateRow": {
         "type": "object",
         "required": [
@@ -15073,6 +15290,296 @@
           }
         }
       },
+      "CoverageAnalysisResp": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "series_id",
+          "state",
+          "auto_accept",
+          "requested_at",
+          "local_issues",
+          "providers",
+          "auto_accepted"
+        ],
+        "properties": {
+          "auto_accept": {
+            "type": "boolean"
+          },
+          "auto_accepted": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AcceptOutcome"
+            },
+            "description": "Proposals accepted automatically by this job."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "local_issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageLocalIssue"
+            },
+            "description": "The grid's rows (empty until the job is done)."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderCoverageView"
+            },
+            "description": "One column per provider (empty until the job is done)."
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "series_id": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CoverageJobState"
+          }
+        }
+      },
+      "CoverageCandidateView": {
+        "type": "object",
+        "description": "A candidate as shown to the admin.",
+        "required": [
+          "provider_series_id",
+          "origin",
+          "strict",
+          "listed_count",
+          "local_matches",
+          "assigned",
+          "partial"
+        ],
+        "properties": {
+          "assigned": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Local issues the proposal assigns to it.",
+            "minimum": 0
+          },
+          "listed_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Distinct issue numbers the series lists.",
+            "minimum": 0
+          },
+          "local_matches": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Local issues it lists with a non-conflicting date.",
+            "minimum": 0
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "$ref": "#/components/schemas/CandidateOrigin"
+          },
+          "partial": {
+            "type": "boolean"
+          },
+          "provider_series_id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "strict": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "CoverageCell": {
+        "type": "object",
+        "description": "One grid cell: where a provider puts a local issue.",
+        "required": [
+          "number"
+        ],
+        "properties": {
+          "date_match": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DateMatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "number": {
+            "type": "string"
+          },
+          "provider_issue_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider_series_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`None` ⇒ no candidate series of this provider has the issue."
+          }
+        }
+      },
+      "CoverageConfidence": {
+        "type": "string",
+        "description": "Confidence of a provider's proposal.",
+        "enum": [
+          "high",
+          "medium",
+          "low",
+          "none"
+        ]
+      },
+      "CoverageJobResp": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "state",
+          "queued"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string"
+          },
+          "queued": {
+            "type": "boolean",
+            "description": "`false` when an analysis for this series was already in flight and\nits job is returned instead."
+          },
+          "state": {
+            "$ref": "#/components/schemas/CoverageJobState"
+          }
+        }
+      },
+      "CoverageJobState": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "done",
+          "failed"
+        ]
+      },
+      "CoverageLocalIssue": {
+        "type": "object",
+        "description": "One local issue row of the grid.",
+        "required": [
+          "number",
+          "special"
+        ],
+        "properties": {
+          "month": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "number": {
+            "type": "string",
+            "description": "Canonical number — the row key."
+          },
+          "special": {
+            "type": "boolean",
+            "description": "Annual / letter-suffixed / fractional — never a range bound."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "CoverageRangeRef": {
+        "type": "object",
+        "description": "An existing range row the proposal disagrees with.",
+        "required": [
+          "id",
+          "provider_series_id",
+          "set_by",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "provider_series_id": {
+            "type": "string"
+          },
+          "provider_series_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "range_high": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "range_low": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "set_by": {
+            "type": "string"
+          }
+        }
+      },
       "CoverageSegment": {
         "type": "object",
         "required": [
@@ -15128,6 +15635,19 @@
             "description": "`true` ⇒ a range-override sub-series; `false` ⇒ the series-level\ndefault mapping."
           }
         }
+      },
+      "CoverageStatus": {
+        "type": "string",
+        "description": "One provider's outcome.",
+        "enum": [
+          "analyzed",
+          "not_configured",
+          "not_listable",
+          "no_candidates",
+          "partial",
+          "rate_limited",
+          "error"
+        ]
       },
       "CreateAppPasswordReq": {
         "type": "object",
@@ -16776,6 +17296,16 @@
             "format": "int64"
           }
         }
+      },
+      "DateMatch": {
+        "type": "string",
+        "description": "How a provider issue's cover date compares with the local issue's.",
+        "enum": [
+          "confirmed",
+          "year",
+          "unknown",
+          "conflict"
+        ]
       },
       "DayBucket": {
         "type": "object",
@@ -23007,6 +23537,63 @@
           }
         }
       },
+      "ProposedRange": {
+        "type": "object",
+        "required": [
+          "provider_series_id",
+          "low",
+          "high",
+          "issue_count",
+          "status"
+        ],
+        "properties": {
+          "declared_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "high": {
+            "type": "string"
+          },
+          "issue_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "low": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider_series_id": {
+            "type": "string"
+          },
+          "provider_series_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProposedRangeStatus"
+          }
+        }
+      },
+      "ProposedRangeStatus": {
+        "type": "string",
+        "description": "What would happen to a proposed range on accept.",
+        "enum": [
+          "new",
+          "already_mapped",
+          "conflict"
+        ]
+      },
       "ProviderBudget": {
         "type": "object",
         "description": "Per-provider remaining budget for the batch's pacing warning.",
@@ -23069,6 +23656,140 @@
             "items": {
               "$ref": "#/components/schemas/ProviderCoverage"
             }
+          }
+        }
+      },
+      "ProviderCoverageView": {
+        "type": "object",
+        "description": "One provider's proposal.",
+        "required": [
+          "source",
+          "source_label",
+          "status",
+          "confidence",
+          "confidence_reasons",
+          "requests",
+          "request_budget",
+          "candidates",
+          "cells",
+          "proposed_ranges",
+          "uncovered",
+          "unranged_specials",
+          "stale_ranges",
+          "conflicts",
+          "has_changes",
+          "auto_acceptable"
+        ],
+        "properties": {
+          "auto_acceptable": {
+            "type": "boolean",
+            "description": "Eligible for automatic acceptance: high confidence, changes, no\nconflicts."
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageCandidateView"
+            }
+          },
+          "cells": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageCell"
+            },
+            "description": "Aligned with the analysis' `local_issues`."
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/CoverageConfidence"
+          },
+          "confidence_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "conflicts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Existing user-set data that disagrees (blocks auto-accept)."
+          },
+          "current_series_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The series' current series-level id for this provider."
+          },
+          "current_series_set_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_changes": {
+            "type": "boolean",
+            "description": "Accepting would change something (main id or new ranges)."
+          },
+          "main_series_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proposed_ranges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProposedRange"
+            }
+          },
+          "request_budget": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The request bound it held to.",
+            "minimum": 0
+          },
+          "requests": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Network requests this provider spent on the analysis.",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": "string"
+          },
+          "stale_ranges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageRangeRef"
+            },
+            "description": "Existing automated ranges the proposal no longer supports."
+          },
+          "status": {
+            "$ref": "#/components/schemas/CoverageStatus"
+          },
+          "uncovered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Local numbers no candidate series has."
+          },
+          "unranged_specials": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Specials assigned to a non-main series (can't be ranged)."
           }
         }
       },
@@ -23412,6 +24133,7 @@
           "backfill",
           "hash_backfill",
           "relationship_suggest",
+          "provider_coverage",
           "total"
         ],
         "properties": {
@@ -23459,6 +24181,11 @@
           "post_scan_thumbs": {
             "type": "integer",
             "format": "int64"
+          },
+          "provider_coverage": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pending provider coverage analyses (one per series request)."
           },
           "relationship_suggest": {
             "type": "integer",

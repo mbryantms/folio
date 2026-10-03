@@ -2407,6 +2407,10 @@ export function useUnhideReadingLogEvent() {
 // ───────── metadata-providers-1.0 ─────────
 
 import type {
+  AcceptCoverageReq,
+  AcceptOutcome,
+  AnalyzeCoverageReq,
+  CoverageJobResp,
   ApplyAcceptedResp,
   ApplyCoverPolicy,
   ApplyMode,
@@ -2415,7 +2419,6 @@ import type {
   BatchApplyResp,
   BatchCreatedResp,
   CompositeApplyResp,
-  DetectResp,
   ExternalIdRow,
   LookupReq,
   LookupResp,
@@ -2991,28 +2994,64 @@ export function useDeleteExternalRelationship(seriesSlug: string) {
   );
 }
 
-export function useDetectProviderRangesSeries(seriesSlug: string) {
+/** Queue a provider-coverage analysis (background job). The card polls
+ *  `useProviderCoverageAnalysis` for the result. */
+export function useAnalyzeProviderCoverage(seriesSlug: string) {
   const qc = useQueryClient();
-  return useApiMutation<DetectResp, void>(
-    () => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/provider-ranges/detect`,
+  return useApiMutation<CoverageJobResp, AnalyzeCoverageReq>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/provider-coverage/analyze`,
       method: "POST",
+      body: input,
     }),
     {
       onSuccess: () => {
         qc.invalidateQueries({
-          queryKey: ["series", seriesSlug, "provider-ranges"],
+          queryKey: ["series", seriesSlug, "provider-coverage", "analysis"],
         });
+      },
+    },
+  );
+}
+
+/** Accept one provider's coverage proposal (optionally with a chosen
+ *  main series). Writes the series id + range rows. */
+export function useAcceptProviderCoverage(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<AcceptOutcome, AcceptCoverageReq>(
+    (input) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/provider-coverage/accept`,
+      method: "POST",
+      body: input,
+    }),
+    {
+      successMessage: (data) => acceptSummary(data),
+      onSuccess: () => {
+        // Prefix match also refreshes the analysis grid.
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "provider-coverage"],
         });
-        // Detection records the Metron / GCD series id it resolves.
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "provider-ranges"],
+        });
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "external-ids"],
         });
       },
     },
   );
+}
+
+/** Toast text for an accept: what changed, after the fact. */
+export function acceptSummary(data: AcceptOutcome | null): string {
+  if (!data) return "Coverage accepted";
+  const parts: string[] = [];
+  if (data.main_written) parts.push("series linked");
+  const n = data.ranges_created.length;
+  if (n > 0) parts.push(`${n} range${n === 1 ? "" : "s"} added`);
+  if (parts.length === 0)
+    return data.main_note ?? "Nothing to change — already mapped";
+  return `Coverage accepted: ${parts.join(", ")}`;
 }
 
 export function useAddExternalIdIssue(seriesSlug: string, issueSlug: string) {

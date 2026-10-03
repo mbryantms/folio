@@ -305,31 +305,21 @@ pub async fn detect_with_coverage<C: ConnectionTrait>(
         go.provider_series_id = Some(alt.series_id.clone());
         go.provider_series_name = alt.series_name.clone();
 
-        let now = Utc::now().fixed_offset();
-        let model = series_provider_range::ActiveModel {
-            id: Set(Uuid::new_v4()),
-            series_id: Set(series_row.id),
-            source: Set(source.as_str().to_owned()),
-            provider_series_id: Set(alt.series_id.clone()),
-            provider_series_url: Set(crate::metadata::identifier::canonical_url(
-                source,
-                "series",
-                &alt.series_id,
-            )),
-            provider_series_name: Set(alt.series_name.clone()),
-            range_low: Set(Some(low.canonical.clone())),
-            range_high: Set(Some(high.canonical.clone())),
-            declared_year: Set(alt.year_began),
-            // Auto-detected — not 'user', so a later refresh / a user edit
-            // can override it.
-            set_by: Set("cross_reference".to_owned()),
-            first_set_at: Set(now),
-            last_synced_at: Set(now),
-        };
-        // Tolerate a unique-index conflict (a concurrent apply-hook /
-        // detect already wrote this exact mapping) — report it as
-        // already mapped without aborting detection of the other gaps.
-        if let Err(e) = model.insert(db).await {
+        // Auto-detected — not 'user', so a later refresh / a user edit can
+        // override it.
+        if let Err(e) = insert_detected_range(
+            db,
+            series_row.id,
+            source,
+            &alt.series_id,
+            alt.series_name.clone(),
+            &low.canonical,
+            &high.canonical,
+            alt.year_began,
+            "cross_reference",
+        )
+        .await
+        {
             tracing::info!(
                 series_id = %series_row.id,
                 source = source.as_str(),
@@ -378,7 +368,7 @@ impl LocalIssue {
 
 /// A canonical number's numeric value, when it is a plain number
 /// (`"600"`, `"600.1"`, `"-1"`). `NaN` / `inf` don't count.
-fn numeric_value(canonical: &str) -> Option<f64> {
+pub(crate) fn numeric_value(canonical: &str) -> Option<f64> {
     canonical.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
@@ -436,34 +426,94 @@ fn numeric_gaps<'a>(
     });
     numeric.dedup_by(|a, b| a.canonical == b.canonical);
 
-    let mut covered_vals: Vec<f64> = covered.iter().filter_map(|c| numeric_value(c)).collect();
-    covered_vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    // Is any covered number strictly between `lo` and `hi`?
-    let covered_between = |lo: f64, hi: f64| {
-        let i = covered_vals.partition_point(|v| *v <= lo);
-        covered_vals.get(i).is_some_and(|v| *v < hi)
-    };
-
+    let covered_vals: Vec<f64> = covered.iter().filter_map(|c| numeric_value(c)).collect();
     let mut runs: Vec<Vec<&LocalIssue>> = Vec::new();
-    let mut current: Vec<&LocalIssue> = Vec::new();
+    let mut pending: Vec<(f64, &LocalIssue)> = Vec::new();
     for li in numeric {
         if covered.contains(&li.canonical) {
-            if !current.is_empty() {
-                runs.push(std::mem::take(&mut current));
-            }
+            // A covered local issue always ends the current run.
+            runs.extend(split_runs(std::mem::take(&mut pending), &covered_vals));
             continue;
         }
-        if let Some(prev) = current.last()
-            && covered_between(prev.value.unwrap(), li.value.unwrap())
+        pending.push((li.value.unwrap(), li));
+    }
+    runs.extend(split_runs(pending, &covered_vals));
+    runs
+}
+
+/// Split `items` (already in ascending numeric order) into maximal runs,
+/// cutting between two consecutive items whenever a `blocker` value lies
+/// strictly between them. Shared by the split detector (blockers = the
+/// numbers the matched series lists) and provider coverage
+/// ([`crate::metadata::coverage`]: blockers = the main series' numbers and
+/// every local issue assigned elsewhere), so a written `[low, high]` range
+/// never swallows an issue another series carries.
+pub(crate) fn split_runs<T>(items: Vec<(f64, T)>, blockers: &[f64]) -> Vec<Vec<T>> {
+    let mut sorted: Vec<f64> = blockers.iter().copied().filter(|v| v.is_finite()).collect();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let blocked_between = |lo: f64, hi: f64| {
+        let i = sorted.partition_point(|v| *v <= lo);
+        sorted.get(i).is_some_and(|v| *v < hi)
+    };
+    let mut runs: Vec<Vec<T>> = Vec::new();
+    let mut current: Vec<T> = Vec::new();
+    let mut prev: Option<f64> = None;
+    for (v, item) in items {
+        if let Some(p) = prev
+            && blocked_between(p, v)
+            && !current.is_empty()
         {
             runs.push(std::mem::take(&mut current));
         }
-        current.push(li);
+        current.push(item);
+        prev = Some(v);
     }
     if !current.is_empty() {
         runs.push(current);
     }
     runs
+}
+
+/// Insert one automatically detected `series_provider_range` row — the
+/// single write path for detector-created ranges (the split detector and
+/// provider coverage). `set_by` is `cross_reference` for automated rows,
+/// so a later refresh or a user edit can override them. Callers check
+/// overlap first; a unique-index conflict comes back as the error.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn insert_detected_range<C: ConnectionTrait>(
+    db: &C,
+    series_id: Uuid,
+    source: Source,
+    provider_series_id: &str,
+    provider_series_name: Option<String>,
+    low: &str,
+    high: &str,
+    declared_year: Option<i32>,
+    set_by: &str,
+) -> Result<Uuid, sea_orm::DbErr> {
+    let now = Utc::now().fixed_offset();
+    let id = Uuid::new_v4();
+    series_provider_range::ActiveModel {
+        id: Set(id),
+        series_id: Set(series_id),
+        source: Set(source.as_str().to_owned()),
+        provider_series_id: Set(provider_series_id.to_owned()),
+        provider_series_url: Set(crate::metadata::identifier::canonical_url(
+            source,
+            "series",
+            provider_series_id,
+        )),
+        provider_series_name: Set(provider_series_name),
+        range_low: Set(Some(low.to_owned())),
+        range_high: Set(Some(high.to_owned())),
+        declared_year: Set(declared_year),
+        set_by: Set(set_by.to_owned()),
+        first_set_at: Set(now),
+        last_synced_at: Set(now),
+    }
+    .insert(db)
+    .await?;
+    Ok(id)
 }
 
 /// Automated ranges whose local issues the matched series now lists

@@ -4663,6 +4663,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/provider-coverage/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["provider_coverage_accept"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/provider-coverage/analysis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["provider_coverage_analysis"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/provider-coverage/analyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["provider_coverage_analyze"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/provider-ranges": {
         parameters: {
             query?: never;
@@ -5019,12 +5067,39 @@ export interface components {
          * @enum {string}
          */
         AccentColor: "amber" | "blue" | "emerald" | "rose";
+        AcceptCoverageReq: {
+            /**
+             * @description Use this candidate as the main series instead of the largest
+             *     coverer ("Choose series"). Must be one of the analysis' candidates.
+             */
+            main_series_id?: string | null;
+            /** @description `comicvine` | `metron` | `gcd`. */
+            source: string;
+        };
         AcceptMetadataResp: {
             /**
              * @description RFC3339 time the issue is marked "metadata complete", or `null` after
              *     un-accepting. The issue's completeness tier reads `accepted` while set.
              */
             metadata_review_accepted_at?: string | null;
+        };
+        /** @description What an accept wrote. */
+        AcceptOutcome: {
+            /** @description Why the main id wasn't written, if it wasn't. */
+            main_note?: string | null;
+            main_series_id?: string | null;
+            /** @description The series-level id was written (or refreshed) this call. */
+            main_written: boolean;
+            /** @description Ranges written: `"low..high → id"`. */
+            ranges_created: components["schemas"]["ProposedRange"][];
+            /** @description Ranges not written (already mapped / conflicting), with the reason. */
+            ranges_skipped: components["schemas"]["ProposedRange"][];
+            source: string;
+            /**
+             * @description Existing automated ranges the accepted proposal no longer supports
+             *     (reported, never deleted).
+             */
+            stale_ranges: components["schemas"]["CoverageRangeRef"][];
         };
         AcceptRelationshipSuggestionReq: {
             kind?: components["schemas"]["RelationshipKind"] | null;
@@ -5208,6 +5283,13 @@ export interface components {
             range_low?: string | null;
             source: string;
             source_label: string;
+        };
+        AnalyzeCoverageReq: {
+            /**
+             * @description Accept high-confidence, conflict-free proposals automatically
+             *     (series id as provider-set, ranges as automated rows).
+             */
+            auto_accept?: boolean;
         };
         AppPasswordCreatedView: {
             created_at: string;
@@ -5884,6 +5966,11 @@ export interface components {
             issue_id: string;
             reason: string;
         };
+        /**
+         * @description Where a candidate provider series came from.
+         * @enum {string}
+         */
+        CandidateOrigin: "user_link" | "linked" | "applied" | "range" | "bridge" | "search" | "issue_search";
         CandidateRow: {
             applied_at?: string | null;
             bucket: string;
@@ -6462,6 +6549,97 @@ export interface components {
         ContinueReadingView: {
             items: components["schemas"]["ContinueReadingCard"][];
         };
+        CoverageAnalysisResp: {
+            auto_accept: boolean;
+            /** @description Proposals accepted automatically by this job. */
+            auto_accepted: components["schemas"]["AcceptOutcome"][];
+            error?: string | null;
+            /** Format: date-time */
+            finished_at?: string | null;
+            job_id: string;
+            /** @description The grid's rows (empty until the job is done). */
+            local_issues: components["schemas"]["CoverageLocalIssue"][];
+            /** @description One column per provider (empty until the job is done). */
+            providers: components["schemas"]["ProviderCoverageView"][];
+            /** Format: date-time */
+            requested_at: string;
+            series_id: string;
+            /** Format: date-time */
+            started_at?: string | null;
+            state: components["schemas"]["CoverageJobState"];
+        };
+        /** @description A candidate as shown to the admin. */
+        CoverageCandidateView: {
+            /**
+             * Format: int32
+             * @description Local issues the proposal assigns to it.
+             */
+            assigned: number;
+            /**
+             * Format: int32
+             * @description Distinct issue numbers the series lists.
+             */
+            listed_count: number;
+            /**
+             * Format: int32
+             * @description Local issues it lists with a non-conflicting date.
+             */
+            local_matches: number;
+            name?: string | null;
+            origin: components["schemas"]["CandidateOrigin"];
+            partial: boolean;
+            provider_series_id: string;
+            publisher?: string | null;
+            strict: boolean;
+            url?: string | null;
+            /** Format: int32 */
+            year?: number | null;
+        };
+        /** @description One grid cell: where a provider puts a local issue. */
+        CoverageCell: {
+            date_match?: components["schemas"]["DateMatch"] | null;
+            number: string;
+            provider_issue_id?: string | null;
+            /** @description `None` ⇒ no candidate series of this provider has the issue. */
+            provider_series_id?: string | null;
+        };
+        /**
+         * @description Confidence of a provider's proposal.
+         * @enum {string}
+         */
+        CoverageConfidence: "high" | "medium" | "low" | "none";
+        CoverageJobResp: {
+            job_id: string;
+            /**
+             * @description `false` when an analysis for this series was already in flight and
+             *     its job is returned instead.
+             */
+            queued: boolean;
+            state: components["schemas"]["CoverageJobState"];
+        };
+        /** @enum {string} */
+        CoverageJobState: "queued" | "running" | "done" | "failed";
+        /** @description One local issue row of the grid. */
+        CoverageLocalIssue: {
+            /** Format: int32 */
+            month?: number | null;
+            /** @description Canonical number — the row key. */
+            number: string;
+            /** @description Annual / letter-suffixed / fractional — never a range bound. */
+            special: boolean;
+            /** Format: int32 */
+            year?: number | null;
+        };
+        /** @description An existing range row the proposal disagrees with. */
+        CoverageRangeRef: {
+            id: string;
+            provider_series_id: string;
+            provider_series_name?: string | null;
+            range_high?: string | null;
+            range_low?: string | null;
+            reason: string;
+            set_by: string;
+        };
         CoverageSegment: {
             /** Format: int32 */
             declared_year?: number | null;
@@ -6483,6 +6661,11 @@ export interface components {
              */
             via_range: boolean;
         };
+        /**
+         * @description One provider's outcome.
+         * @enum {string}
+         */
+        CoverageStatus: "analyzed" | "not_configured" | "not_listable" | "no_candidates" | "partial" | "rate_limited" | "error";
         CreateAppPasswordReq: {
             /**
              * @description Free-form label so the user can tell their tokens apart.
@@ -7088,6 +7271,11 @@ export interface components {
             /** Format: int64 */
             orphan_sessions: number;
         };
+        /**
+         * @description How a provider issue's cover date compares with the local issue's.
+         * @enum {string}
+         */
+        DateMatch: "confirmed" | "year" | "unknown" | "conflict";
         DayBucket: {
             /** Format: int64 */
             active_ms: number;
@@ -9663,6 +9851,23 @@ export interface components {
             /** @description RFC 3339 timestamp of the most recent progress write. */
             updated_at: string;
         };
+        ProposedRange: {
+            /** Format: int32 */
+            declared_year?: number | null;
+            high: string;
+            /** Format: int32 */
+            issue_count: number;
+            low: string;
+            note?: string | null;
+            provider_series_id: string;
+            provider_series_name?: string | null;
+            status: components["schemas"]["ProposedRangeStatus"];
+        };
+        /**
+         * @description What would happen to a proposed range on accept.
+         * @enum {string}
+         */
+        ProposedRangeStatus: "new" | "already_mapped" | "conflict";
         /** @description Per-provider remaining budget for the batch's pacing warning. */
         ProviderBudget: {
             /** Format: int32 */
@@ -9679,6 +9884,48 @@ export interface components {
         };
         ProviderCoverageResp: {
             providers: components["schemas"]["ProviderCoverage"][];
+        };
+        /** @description One provider's proposal. */
+        ProviderCoverageView: {
+            /**
+             * @description Eligible for automatic acceptance: high confidence, changes, no
+             *     conflicts.
+             */
+            auto_acceptable: boolean;
+            candidates: components["schemas"]["CoverageCandidateView"][];
+            /** @description Aligned with the analysis' `local_issues`. */
+            cells: components["schemas"]["CoverageCell"][];
+            confidence: components["schemas"]["CoverageConfidence"];
+            confidence_reasons: string[];
+            /** @description Existing user-set data that disagrees (blocks auto-accept). */
+            conflicts: string[];
+            /** @description The series' current series-level id for this provider. */
+            current_series_id?: string | null;
+            current_series_set_by?: string | null;
+            error?: string | null;
+            /** @description Accepting would change something (main id or new ranges). */
+            has_changes: boolean;
+            main_series_id?: string | null;
+            proposed_ranges: components["schemas"]["ProposedRange"][];
+            /**
+             * Format: int32
+             * @description The request bound it held to.
+             */
+            request_budget: number;
+            /**
+             * Format: int32
+             * @description Network requests this provider spent on the analysis.
+             */
+            requests: number;
+            source: string;
+            source_label: string;
+            /** @description Existing automated ranges the proposal no longer supports. */
+            stale_ranges: components["schemas"]["CoverageRangeRef"][];
+            status: components["schemas"]["CoverageStatus"];
+            /** @description Local numbers no candidate series has. */
+            uncovered: string[];
+            /** @description Specials assigned to a non-main series (can't be ranged). */
+            unranged_specials: string[];
         };
         /** @description The most recent provider error, for the admin card. */
         ProviderLastError: {
@@ -9835,6 +10082,11 @@ export interface components {
             post_scan_search: number;
             /** Format: int64 */
             post_scan_thumbs: number;
+            /**
+             * Format: int64
+             * @description Pending provider coverage analyses (one per series request).
+             */
+            provider_coverage: number;
             /**
              * Format: int64
              * @description Pending relationship-suggestion runs (one per library; WP-7.2).
@@ -22198,6 +22450,133 @@ export interface operations {
                 };
             };
             /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    provider_coverage_accept: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptCoverageReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcceptOutcome"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found / never analysed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the analysis hasn't finished */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown source / series not a candidate */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    provider_coverage_analysis: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverageAnalysisResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found / never analysed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    provider_coverage_analyze: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnalyzeCoverageReq"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverageJobResp"];
+                };
+            };
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;

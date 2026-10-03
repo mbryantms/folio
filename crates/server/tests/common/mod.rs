@@ -813,6 +813,30 @@ impl TestApp {
         .await
     }
 
+    /// Spawn with ComicVine, Metron AND GCD configured, each pointed at a
+    /// wiremock base URL — provider coverage analyses all three.
+    pub async fn spawn_with_all_providers(
+        comicvine_base: String,
+        metron_base: String,
+        gcd_base: String,
+    ) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            comicvine_api_key: Some("cv-key".into()),
+            comicvine_enabled: true,
+            comicvine_base_url: Some(comicvine_base),
+            metron_username: Some("metron-user".into()),
+            metron_password: Some("metron-pass".into()),
+            metron_enabled: true,
+            metron_base_url: Some(metron_base),
+            gcd_username: Some("gcd-user".into()),
+            gcd_password: Some("gcd-pass".into()),
+            gcd_enabled: true,
+            gcd_base_url: Some(gcd_base),
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
     /// Spawn with BOTH ComicVine + Metron configured — needed by the
     /// composite (multi-provider) merge tests so `build_provider`
     /// returns a client for each source.

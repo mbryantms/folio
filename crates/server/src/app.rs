@@ -159,6 +159,7 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(api::metadata_search::routes())
         .merge(api::external_ids::routes())
         .merge(api::provider_ranges::routes())
+        .merge(api::provider_coverage::routes())
         .merge(api::series_relationships::routes())
         .merge(api::series_external_relationships::routes())
         .merge(api::series_same_universe::routes())

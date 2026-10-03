@@ -31,6 +31,7 @@ pub mod completeness;
 pub mod composite;
 pub mod cover_block;
 pub mod cover_hash_cache;
+pub mod coverage;
 pub mod diff;
 pub mod drift;
 pub mod field;

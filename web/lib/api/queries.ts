@@ -2394,6 +2394,7 @@ import type {
   ExternalIdsListResp,
   IssueCoversResp,
   ProviderCoverageResp,
+  CoverageAnalysisResp,
   ProviderRangesListResp,
   RelationshipCatalogue,
   RelationshipSuggestionListView,
@@ -2683,6 +2684,36 @@ export function useProviderRangesSeries(seriesSlug: string) {
       ),
     enabled: !!seriesSlug,
     staleTime: 30_000,
+  });
+}
+
+/**
+ * Latest provider-coverage analysis for a series (admin). `null` when the
+ * series was never analysed (404). Polls every 2 s while the background
+ * job is queued / running, then stops.
+ */
+export function useProviderCoverageAnalysis(
+  seriesSlug: string,
+  { enabled = true }: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: queryKeys.providerCoverageAnalysis(seriesSlug),
+    queryFn: async () => {
+      try {
+        return await jsonFetch<CoverageAnalysisResp>(
+          `/series/${encodeURIComponent(seriesSlug)}/provider-coverage/analysis`,
+        );
+      } catch (e) {
+        if (e instanceof HttpError && e.status === 404) return null;
+        throw e;
+      }
+    },
+    enabled: enabled && !!seriesSlug,
+    staleTime: 30_000,
+    refetchInterval: (query) => {
+      const state = query.state.data?.state;
+      return state === "queued" || state === "running" ? 2_000 : false;
+    },
   });
 }
 

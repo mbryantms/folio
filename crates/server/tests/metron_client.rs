@@ -641,3 +641,68 @@ async fn last_error_is_recorded_then_cleared_on_success() {
             .is_none()
     );
 }
+
+/// Provider coverage listing: issue ids, canonical numbers and cover dates
+/// from `/api/issue/?series_id=`, every page walked; a page cap returns a
+/// partial list flagged `complete = false`.
+#[tokio::test]
+async fn list_series_issues_carries_ids_and_cover_dates() {
+    use server::metadata::provider::IssueListOpts;
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/issue/"))
+        .and(query_param("series_id", "200"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "count": 3, "next": "https://metron.cloud/api/issue/?page=2", "previous": null,
+            "results": [
+                {"id": 1, "number": "001", "cover_date": "1998-11-01",
+                 "series": {"id": 200, "name": "Daredevil", "year_began": 1998}},
+                {"id": 2, "number": "2", "cover_date": "1998-12-01"},
+            ]
+        })))
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/issue/"))
+        .and(query_param("series_id", "200"))
+        .and(query_param("page", "2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "count": 3, "next": null, "previous": null,
+            "results": [{"id": 3, "number": "3", "cover_date": null}]
+        })))
+        .mount(&mock)
+        .await;
+    let app = TestApp::spawn().await;
+    let client = MetronClient::with_base_url("u", "p", mock.uri(), app.state().jobs.redis.clone());
+
+    let list = client
+        .list_series_issues("200", &IssueListOpts::default())
+        .await
+        .unwrap();
+    assert!(list.complete);
+    assert_eq!(list.requests, 2);
+    assert_eq!(list.series_name.as_deref(), Some("Daredevil"));
+    assert_eq!(list.year_began, Some(1998));
+    let numbers: Vec<&str> = list.issues.iter().map(|i| i.number.as_str()).collect();
+    assert_eq!(numbers, ["1", "2", "3"], "canonical numbers");
+    assert_eq!(list.issues[0].external_id.as_deref(), Some("1"));
+    assert_eq!(
+        list.issues[0].cover_date,
+        chrono::NaiveDate::from_ymd_opt(1998, 11, 1)
+    );
+    assert_eq!(list.issues[2].cover_date, None);
+
+    let capped = client
+        .list_series_issues(
+            "200",
+            &IssueListOpts {
+                date_hint: Vec::new(),
+                max_pages: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!capped.complete);
+    assert_eq!(capped.issues.len(), 2);
+}

@@ -236,10 +236,25 @@ pub async fn coverage_series(
             let Ok(src) = Source::from_str(&p.source) else {
                 continue;
             };
-            if let Some((name, year)) =
-                crate::metadata::cache::series_display_meta(&app.db, src, &seg.provider_series_id)
-                    .await
+            // Detail cache first, then the coverage issue-list cache (which
+            // carries a GCD series' name even when only a link found it).
+            let meta = match crate::metadata::cache::series_display_meta(
+                &app.db,
+                src,
+                &seg.provider_series_id,
+            )
+            .await
             {
+                Some((Some(n), y)) => Some((Some(n), y)),
+                other => crate::metadata::coverage::cached_series_label(
+                    &app.jobs.redis,
+                    src,
+                    &seg.provider_series_id,
+                )
+                .await
+                .or(other),
+            };
+            if let Some((name, year)) = meta {
                 if seg.provider_series_name.is_none() {
                     seg.provider_series_name = name;
                 }

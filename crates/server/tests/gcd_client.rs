@@ -818,6 +818,69 @@ async fn list_series_issue_numbers_enumerates_the_split_run() {
     assert!(!numbers.iter().any(|n| n == "600"));
 }
 
+/// Provider coverage listing: ids + numbers from the issue index, the
+/// display name from the summary, and cover dates only from the overview
+/// pages holding the hinted numbers (#1 and #5 are both on page 1).
+#[tokio::test]
+async fn list_series_issues_dates_hinted_numbers_from_the_overview() {
+    use server::metadata::provider::IssueListOpts;
+    let mock = MockServer::start().await;
+    mount(&mock, "/api/series/1482/", fixture("series_1482")).await;
+    mount(&mock, "/api/publisher/78/", fixture("publisher_78")).await;
+    Mock::given(method("GET"))
+        .and(path("/api/series/1482/overview/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(fixture("series_1482_overview_p1")))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    let app = TestApp::spawn().await;
+    let c = client(&app, &mock);
+    let opts = IssueListOpts {
+        date_hint: vec!["1".into(), "5".into()],
+        max_pages: 0,
+    };
+    let list = c.list_series_issues("1482", &opts).await.expect("list");
+    assert_eq!(list.series_name.as_deref(), Some("Fantastic Four"));
+    assert_eq!(list.year_began, Some(1961));
+    assert_eq!(
+        list.issues.len(),
+        416,
+        "variants fold onto their base number"
+    );
+    let one = list.issues.iter().find(|i| i.number == "1").unwrap();
+    assert_eq!(
+        one.external_id.as_deref(),
+        Some("16556"),
+        "the base issue, not a variant"
+    );
+    assert_eq!(one.cover_date, chrono::NaiveDate::from_ymd_opt(1961, 11, 1));
+    assert!(
+        list.issues
+            .iter()
+            .find(|i| i.number == "5")
+            .unwrap()
+            .cover_date
+            .is_some()
+    );
+    // Page 1 dates #1–50 only; #416 stays undated (number-only fallback).
+    assert!(
+        list.issues
+            .iter()
+            .find(|i| i.number == "416")
+            .unwrap()
+            .cover_date
+            .is_none()
+    );
+    assert!(!list.dates_complete);
+    // Series detail + publisher + one overview page.
+    assert_eq!(list.requests, 3);
+
+    // Everything is cached now: a second listing sends nothing.
+    let again = c.list_series_issues("1482", &opts).await.unwrap();
+    assert_eq!(again.requests, 0);
+    assert_eq!(again.issues, list.issues);
+}
+
 #[tokio::test]
 async fn auth_quota_and_schema_errors_classify() {
     let mock = MockServer::start().await;

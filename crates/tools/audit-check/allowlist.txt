@@ -149,3 +149,6 @@ upload              # POST /uploads — transient image staging (data_dir/upload
 # `list` (GET /admin/relationship-suggestions) is already exempt via the
 # admin_users.rs entry above (bare-name match).
 list_for_series     # GET /series/{slug}/relationship-suggestions — read-only pending suggestions for one series
+
+# ── provider_coverage.rs (provider-independent coverage) ────
+coverage_analysis   # GET /series/{slug}/provider-coverage/analysis — read-only job status + coverage grid

@@ -338,6 +338,10 @@ export const queryKeys = {
   /** Full per-provider issue-range coverage map for a series. */
   providerCoverageSeries: (slug: string) =>
     ["series", slug, "provider-coverage"] as const,
+  /** Latest provider-coverage analysis job (grid + proposals). Nested
+   *  under `providerCoverageSeries` so a mapping change invalidates it. */
+  providerCoverageAnalysis: (slug: string) =>
+    ["series", slug, "provider-coverage", "analysis"] as const,
   /** WP-7.1: direct relationships + sequel/prequel chain for a series. */
   seriesRelationships: (slug: string) =>
     ["series", slug, "relationships"] as const,
