@@ -671,3 +671,89 @@ async fn non_writeback_library_keeps_wp25_protection() {
         "file-tier columns still refresh"
     );
 }
+
+/// `selected_fields` contract shared by both apply paths: ABSENT means
+/// "apply everything" (one-click apply, legacy clients); an EMPTY list
+/// means the user unticked every row and applies nothing. The web's
+/// one-click apply used to send `[]`, which the DB-direct gate (rightly)
+/// read as "nothing", so one-click silently applied nothing outside
+/// writeback libraries.
+async fn apply_single_with(f: &Fixture, run_id: Uuid, selected: Option<&[&str]>, mode: &str) {
+    let row = issue_row(f).await;
+    let mut body = json!({
+        "run_id": run_id,
+        "ordinal": 0,
+        "mode": mode,
+        "apply_cover": false,
+        "cover_overwrite_policy": "when_missing",
+        "override_user_edits": false,
+        "override_external_id_sources": [],
+    });
+    if let Some(sel) = selected {
+        body["selected_fields"] = json!(sel);
+    }
+    post(
+        f,
+        &format!(
+            "/api/series/{}/issues/{}/metadata/apply",
+            row.series_id, row.slug
+        ),
+        body,
+    )
+    .await;
+}
+
+/// DB-direct libraries: the apply job writes the columns itself (no
+/// sidecar rewrite, no rescan), so only the apply queue is drained.
+async fn run_apply_only(f: &Fixture) {
+    let state = f.app.state();
+    let apply_hash = state
+        .jobs
+        .metadata_apply_issue_storage
+        .get_config()
+        .job_data_hash();
+    for job in drain::<server::jobs::metadata_apply::ApplyIssueJob>(&f.app, apply_hash).await {
+        server::jobs::metadata_apply::handle_issue(job, apalis::prelude::Data::new(f.app.state()))
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn empty_selection_writes_nothing_in_writeback_library() {
+    let f = fixture(true).await;
+    let run_id = seed_run(&f, NEW_SUMMARY, "unused").await;
+
+    apply_single_with(&f, run_id, Some(&[]), "replace_all").await;
+    run_pipeline(&f).await;
+
+    assert_eq!(
+        archive_summary(&f.archive).as_deref(),
+        Some(OLD_SUMMARY),
+        "every row unticked: the archive keeps its own description"
+    );
+    assert_eq!(issue_row(&f).await.summary.as_deref(), Some(OLD_SUMMARY));
+}
+
+#[tokio::test]
+async fn absent_selection_applies_everything_db_direct() {
+    let f = fixture(false).await;
+    let run_id = seed_run(&f, NEW_SUMMARY, "unused").await;
+
+    // What the web's one-click apply sends: no `selected_fields` at all.
+    apply_single_with(&f, run_id, None, "replace_all").await;
+    run_apply_only(&f).await;
+
+    assert_eq!(issue_row(&f).await.summary.as_deref(), Some(NEW_SUMMARY));
+}
+
+#[tokio::test]
+async fn empty_selection_applies_nothing_db_direct() {
+    let f = fixture(false).await;
+    let run_id = seed_run(&f, NEW_SUMMARY, "unused").await;
+
+    apply_single_with(&f, run_id, Some(&[]), "replace_all").await;
+    run_apply_only(&f).await;
+
+    assert_eq!(issue_row(&f).await.summary.as_deref(), Some(OLD_SUMMARY));
+}

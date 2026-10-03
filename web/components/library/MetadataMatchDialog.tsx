@@ -386,8 +386,9 @@ export function MetadataMatchForm({
   };
 
   // M8: one-click apply for `single_good_match`. Skips the preview
-  // pane — empty `selected_fields` is the apply-all signal the
-  // backend already understands. Operator can still cancel via Esc
+  // pane, so it sends NO `selected_fields`: absent = apply everything,
+  // while an empty list means "every row unticked" and applies nothing
+  // (the server's per-field gate). Operator can still cancel via Esc
   // since the mutation finalizes asynchronously.
   const onOneClickApply = () => {
     if (!runId) return;
@@ -398,7 +399,6 @@ export function MetadataMatchForm({
       mode,
       apply_cover: applyCover,
       override_user_edits: overrideUserEdits,
-      selected_fields: [],
       override_external_id_sources: [],
     });
   };

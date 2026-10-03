@@ -2357,15 +2357,16 @@ const SIDECAR_ISSUE_PROVENANCE_FIELDS: &[MetadataField] = &[
 /// Blank the preview-pane rows the user left unticked so the composer
 /// falls back to the issue's own value for them (the DB-direct path's
 /// `should_apply` gate, applied to the sidecar payload). Only the rows the
-/// preview shows ([`merge::scope_fields`] for an issue) are masked; an
-/// absent or empty set is the "apply everything" signal (legacy clients,
-/// one-click apply) and leaves the payload untouched. A composite apply's
-/// merged payload already carries only its kept fields.
+/// preview shows ([`merge::scope_fields`] for an issue) are masked. Same
+/// contract as the DB-direct gate: an ABSENT set (`None`: legacy clients,
+/// one-click apply) is "apply everything" and leaves the payload untouched;
+/// an EMPTY set means the user unticked every row, so every row is masked.
+/// A composite apply's merged payload already carries only its kept fields.
 fn mask_unselected_issue_fields(
     mut detail: GenericMetadata,
     selected: Option<&std::collections::HashSet<String>>,
 ) -> GenericMetadata {
-    let Some(selected) = selected.filter(|s| !s.is_empty()) else {
+    let Some(selected) = selected else {
         return detail;
     };
     let empty = GenericMetadata::default();
