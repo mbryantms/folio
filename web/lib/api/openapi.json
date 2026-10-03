@@ -17076,12 +17076,81 @@
           "compact"
         ]
       },
+      "DetectAgreement": {
+        "type": "object",
+        "required": [
+          "agree",
+          "summary"
+        ],
+        "properties": {
+          "agree": {
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      },
+      "DetectGap": {
+        "type": "object",
+        "required": [
+          "low",
+          "high",
+          "issue_count",
+          "status"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "high": {
+            "type": "string"
+          },
+          "issue_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "low": {
+            "type": "string"
+          },
+          "provider_series_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider_series_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/GapStatus"
+          }
+        }
+      },
       "DetectResp": {
         "type": "object",
         "required": [
           "results"
         ],
         "properties": {
+          "agreement": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DetectAgreement",
+                "description": "Set when two or more providers were scanned: whether they found the\nsame uncovered runs. Disagreement is normal (each provider routes\nits own issues through its own ranges); it's shown so the admin\nknows the providers split the run differently."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "results": {
             "type": "array",
             "items": {
@@ -17095,16 +17164,29 @@
         "required": [
           "source",
           "source_label",
-          "provider_series_id",
+          "status",
+          "id_recorded",
           "covered_count",
+          "matched_local",
           "gaps",
-          "created"
+          "gap_details",
+          "created",
+          "stale_ranges",
+          "uncovered_specials",
+          "candidates"
         ],
         "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinkCandidate"
+            },
+            "description": "Possible provider series for the admin to confirm\n(`needs_confirmation`). Never written automatically."
+          },
           "covered_count": {
             "type": "integer",
             "format": "int32",
-            "description": "Issue numbers that series reported. `0` ⇒ the provider couldn't\nenumerate it (e.g. ComicVine, or an empty/failed response).",
+            "description": "Distinct issue numbers the provider series lists. `0` ⇒ not\nenumerated.",
             "minimum": 0
           },
           "created": {
@@ -17119,24 +17201,90 @@
               "string",
               "null"
             ],
-            "description": "Set when the detector errored for this source (provider call failed)."
+            "description": "What failed for this provider (`error` / `rate_limited` / a note\nfor `no_series`)."
+          },
+          "gap_details": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetectGap"
+            },
+            "description": "Per-run outcome, aligned with `gaps`."
           },
           "gaps": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Local issue ranges the matched series didn't cover (\"600..611\")."
+            "description": "Local issue runs the provider series didn't cover (\"600..611\")."
+          },
+          "id_recorded": {
+            "type": "boolean",
+            "description": "The provider series id was recorded on the series' external ids\nduring this run (a cross-reference or a strict search match)."
+          },
+          "matched_local": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Local numbered issues the provider series lists.",
+            "minimum": 0
           },
           "provider_series_id": {
-            "type": "string",
-            "description": "The matched provider series the detector scanned against."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The provider series the detector scanned against (or, for a\nprovider that can't enumerate, the series it is linked to)."
+          },
+          "provider_series_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider_series_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider_series_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "resolved_via": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LinkMethod",
+                "description": "How that provider series was found."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "source": {
             "type": "string"
           },
           "source_label": {
             "type": "string"
+          },
+          "stale_ranges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderRangeRow"
+            },
+            "description": "Automated range mappings the provider series now covers itself —\nlikely stale (e.g. after a re-match). Reported only; never removed\nautomatically."
+          },
+          "status": {
+            "$ref": "#/components/schemas/SourceStatus"
+          },
+          "uncovered_specials": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Uncovered issues with a non-numeric number (annuals, `14AU`) —\nexcluded from range detection.",
+            "minimum": 0
           }
         }
       },
@@ -19212,6 +19360,17 @@
           }
         }
       },
+      "GapStatus": {
+        "type": "string",
+        "description": "What happened to one uncovered run of local issues.",
+        "enum": [
+          "mapped",
+          "already_mapped",
+          "unresolved",
+          "skipped",
+          "error"
+        ]
+      },
       "HashBackfillStartResp": {
         "type": "object",
         "description": "Response for `POST /libraries/{slug}/hash-backfill`.",
@@ -20553,6 +20712,70 @@
             "$ref": "#/components/schemas/WatcherStatus"
           }
         }
+      },
+      "LinkCandidate": {
+        "type": "object",
+        "description": "A provider series the admin may confirm (medium-confidence search hit).",
+        "required": [
+          "external_id",
+          "name",
+          "score",
+          "reason"
+        ],
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "issue_overlap": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Share of the local numbered issues the candidate lists, when it was\nenumerated (the top candidate only)."
+          },
+          "name": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it wasn't linked automatically."
+          },
+          "score": {
+            "type": "number",
+            "format": "float",
+            "description": "Matcher text score (0–100)."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "LinkMethod": {
+        "type": "string",
+        "description": "How a provider series id was found.",
+        "enum": [
+          "linked",
+          "applied",
+          "bridge",
+          "search"
+        ]
       },
       "ListResp": {
         "type": "object",
@@ -26968,6 +27191,20 @@
             "type": "string"
           }
         }
+      },
+      "SourceStatus": {
+        "type": "string",
+        "description": "One provider's outcome for a detection click.",
+        "enum": [
+          "scanned",
+          "not_enumerable",
+          "not_configured",
+          "no_series",
+          "needs_confirmation",
+          "rate_limited",
+          "skipped",
+          "error"
+        ]
       },
       "SpecialEntry": {
         "type": "object",

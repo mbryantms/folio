@@ -58,6 +58,18 @@ async fn auto_split_detects_relaunch_block_and_creates_range() {
         .mount(&metron)
         .await;
 
+    // The alternate series' own issue list confirms it carries the gap
+    // (the detector rejects a same-numbered issue of an unrelated series).
+    Mock::given(method("GET"))
+        .and(path("/api/issue/"))
+        .and(query_param("series_id", "62349"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(paged(json!([
+            {"id": 20519, "number": "600"},
+            {"id": 20520, "number": "601"},
+        ]))))
+        .mount(&metron)
+        .await;
+
     let app = TestApp::spawn().await;
     let db = app.state().db.clone();
     let tmp = tempfile::tempdir().unwrap();
@@ -106,9 +118,81 @@ async fn auto_split_detects_relaunch_block_and_creates_range() {
         .await
         .unwrap();
     assert!(again.created.is_empty(), "second run creates nothing new");
+    assert_eq!(
+        again.gap_outcomes[0].status,
+        auto_split::GapStatus::AlreadyMapped
+    );
     let rows = entity::series_provider_range::Entity::find()
         .all(&db)
         .await
         .unwrap();
     assert_eq!(rows.len(), 1, "still just one row");
+}
+
+/// A same-numbered issue of an unrelated series doesn't make a range: the
+/// candidate series must list most of the gap itself.
+#[tokio::test]
+async fn auto_split_rejects_alternate_series_that_lacks_the_gap() {
+    let metron = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/issue/"))
+        .and(query_param("series_id", "MAIN"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(paged(json!([
+            {"id": 1, "number": "1"},
+        ]))))
+        .mount(&metron)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/issue/"))
+        .and(query_param("number", "50"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(paged(json!([
+            {"id": 77, "number": "50", "series": {"id": 555, "name": "Fantastic Four", "year_began": 2022}},
+        ]))))
+        .mount(&metron)
+        .await;
+    // Series 555 has a #50 search hit but its issue list is #1–3.
+    Mock::given(method("GET"))
+        .and(path("/api/issue/"))
+        .and(query_param("series_id", "555"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(paged(json!([
+            {"id": 1, "number": "1"}, {"id": 2, "number": "2"}, {"id": 3, "number": "3"},
+        ]))))
+        .mount(&metron)
+        .await;
+
+    let app = TestApp::spawn().await;
+    let db = app.state().db.clone();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = seed_library(&db, tmp.path()).await;
+    let series_id = SeriesSeed::new(lib, "Fantastic Four").insert(&db).await;
+    for n in [1.0_f64, 50.0, 51.0] {
+        let p = tmp.path().join(format!("ff-{n}.cbz"));
+        IssueSeed::new(lib, series_id, &p, format!("ff issue {n}").as_bytes(), n)
+            .insert(&db)
+            .await;
+    }
+    let series_row = entity::series::Entity::find_by_id(series_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let provider: Arc<dyn server::metadata::provider::MetadataProvider> = Arc::new(
+        MetronClient::with_base_url("u", "p", metron.uri(), app.state().jobs.redis.clone()),
+    );
+    let outcome = auto_split::detect_and_map(&db, &series_row, Source::Metron, "MAIN", &*provider)
+        .await
+        .unwrap();
+    assert!(outcome.created.is_empty());
+    assert_eq!(outcome.gaps, vec![("50".to_owned(), "51".to_owned())]);
+    assert_eq!(
+        outcome.gap_outcomes[0].status,
+        auto_split::GapStatus::Unresolved
+    );
+    assert!(
+        entity::series_provider_range::Entity::find()
+            .all(&db)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

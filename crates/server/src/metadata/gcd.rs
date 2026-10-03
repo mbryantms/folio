@@ -2482,6 +2482,10 @@ impl MetadataProvider for GcdClient {
         Ok(self.issue_detail_to_metadata(&v, external_id).await)
     }
 
+    fn enumerates_series_issues(&self) -> bool {
+        true
+    }
+
     async fn list_series_issue_numbers(
         &self,
         series_external_id: &str,

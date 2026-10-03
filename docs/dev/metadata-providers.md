@@ -753,6 +753,101 @@ Fixtures under `crates/server/tests/fixtures/gcd/` are recorded upstream
 responses. Re-record with `curl 'https://www.comics.org/api/<route>?format=json'`
 (anonymous is fine for a handful of calls at 30/h; keep to 1 req/s).
 
+## Provider range detection ("Detect from providers")
+
+Providers disagree on series boundaries. ComicVine lumps a run into one
+volume; Metron and GCD split a legacy-renumbered relaunch into its own
+series (GCD ends Fantastic Four (1961) at #416). The local series stays
+whole and the exceptions live in `series_provider_range` (see CLAUDE.md,
+"Provider series-boundary divergence"). Detection writes those rows.
+
+**Entry points.** The Details-tab button
+(`POST /api/series/{slug}/provider-ranges/detect`, admin, audited as
+`admin.series.provider_range_detect`) runs
+[`metadata/series_link.rs`](../../crates/server/src/metadata/series_link.rs)
+for every provider. The post-apply hook (`jobs/metadata_apply.rs`,
+manual series applies only) runs the detector alone for the providers
+the apply matched.
+
+**Resolving the provider series.** Only providers that can list a
+series' issues can show a split (`MetadataProvider::enumerates_series_issues`:
+Metron, GCD). For each one, in order (Metron first, because its
+cross-reference row also carries the GCD id):
+
+1. **Linked**: a series `external_ids` row for that source (a `user` row
+   wins), or the latest applied run candidate.
+2. **Bridge, cache** (free): a cached series detail of a provider we're
+   linked to that lists the target id, or a cached target series whose
+   identifiers list one of ours (used only when exactly one matches).
+3. **Bridge, network**: Metron's curated cross-reference
+   (`GET /api/series/?cv_id=` or `?gcd_id=`, one request,
+   `find_series_by_cross_ref`). For GCD, the linked Metron series'
+   detail `gcd_id` (7-day cache). An ambiguous cross-reference (more than
+   one row) is ignored.
+4. **Search**: the provider's series search, `PreFilter::from_library`
+   (blacklist + hard year gate), then `matcher::score_series`. A
+   candidate is **strict** when it is at least MEDIUM, its sanitized name
+   equals the local name, its start year equals the local year, its
+   publisher doesn't conflict (unknown is fine: Metron's list and a cold
+   GCD cache carry none) and it has no format mismatch. It is used only
+   when it is the single strict candidate **and** its own issue list
+   carries at least half of the local numbered issues
+   (`MIN_CONFIRM_OVERLAP`; free for GCD because the search fills the
+   index cache, and reused by the detector). Everything else that buckets
+   MEDIUM or better comes back as `needs_confirmation` candidates (top 3)
+   and is **never written**. The admin's "Use this series" writes a
+   `user` external id through the normal external-ids endpoint and runs
+   detection again.
+
+Ids found by steps 2–4 are recorded with
+`writers::set_external_id_promoting` and `SetBy::Provider(attestor)`
+(`metron` for a Metron cross-reference, the provider itself for a search
+hit). The writer keeps the user-precedence rule. If another live series
+already owns that provider id, nothing is written and the source reports
+`no_series` with a note.
+
+**Detecting the split**
+([`metadata/auto_split.rs`](../../crates/server/src/metadata/auto_split.rs)):
+
+- Gaps are computed over the **numerically numbered** local issues in
+  numeric order. Annuals, letter suffixes (`14AU`) and vulgar fractions
+  are counted (`uncovered_specials`) but never put in a range: a range
+  bound like `"Annual 1"` can't be matched by `range_map::issue_in_range`.
+  Runs are cut at every covered local issue and at every number the
+  matched series lists between two uncovered local issues, so a range
+  never swallows an issue the main series carries. Duplicate numbers
+  count once.
+- Per run (at most `MAX_GAPS_RESOLVED` = 3 per provider per click): one
+  broad issue search for the run's first issue, candidates restricted to
+  that number, up to 4 detail probes for a missing series id, then the
+  candidate series' own issue list must carry at least half of the run.
+  A same-numbered issue of an unrelated series is not enough.
+- Existing ranges are never overwritten. An overlapping run is
+  `already_mapped`. An automated range whose issues the matched series
+  now lists itself (or that points at the matched series) is reported in
+  `stale_ranges`, not deleted.
+- A rate-limit or credentials failure stops that provider (`rate_limited`
+  / `error`); rows written before it stay written and are listed. Other
+  providers carry on.
+- When two or more providers were scanned, `agreement` says whether they
+  found the same uncovered runs. Disagreement is normal: each provider
+  routes its own issues through its own rows.
+
+**Cost per click** (cold caches): Metron 1 cross-reference + ⌈n/100⌉
+enumeration pages + per run (1 search + ≤ 4 probes + 1 enumeration);
+GCD 0 requests when bridged, else 1–4 search pages; enumeration 0–1;
+per run 1–2 searches + 1 series. A click stops starting new providers
+after `DETECT_TIME_BUDGET` (40 s) so it stays inside the 60 s JSON route
+timeout.
+
+**Where the rows are used.** Issue search narrowing and the year gate
+(`orchestrator::run_issue_search`), the sidecar apply's series-identity
+overlay (`apply_series_via_sidecar`), the coverage card
+(`/provider-coverage`), the issue page's alternate-series list
+(`api/issues.rs`), the folder-name health check
+(`scanner/folder_checks.rs`), and the relationship engine (the `split`
+continuation qualifier and the `provider_range` → `see_also` source).
+
 ## Adding a new provider
 
 1. Implement `MetadataProvider` in `metadata/<name>.rs`. Look at

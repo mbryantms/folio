@@ -7208,26 +7208,82 @@ export interface components {
          * @enum {string}
          */
         Density: "comfortable" | "compact";
+        DetectAgreement: {
+            agree: boolean;
+            summary: string;
+        };
+        DetectGap: {
+            error?: string | null;
+            high: string;
+            /** Format: int32 */
+            issue_count: number;
+            low: string;
+            provider_series_id?: string | null;
+            provider_series_name?: string | null;
+            status: components["schemas"]["GapStatus"];
+        };
         DetectResp: {
+            agreement?: components["schemas"]["DetectAgreement"] | null;
             results: components["schemas"]["DetectSourceResult"][];
         };
         DetectSourceResult: {
             /**
+             * @description Possible provider series for the admin to confirm
+             *     (`needs_confirmation`). Never written automatically.
+             */
+            candidates: components["schemas"]["LinkCandidate"][];
+            /**
              * Format: int32
-             * @description Issue numbers that series reported. `0` ⇒ the provider couldn't
-             *     enumerate it (e.g. ComicVine, or an empty/failed response).
+             * @description Distinct issue numbers the provider series lists. `0` ⇒ not
+             *     enumerated.
              */
             covered_count: number;
             /** @description Range mappings created this run. */
             created: components["schemas"]["ProviderRangeRow"][];
-            /** @description Set when the detector errored for this source (provider call failed). */
+            /**
+             * @description What failed for this provider (`error` / `rate_limited` / a note
+             *     for `no_series`).
+             */
             error?: string | null;
-            /** @description Local issue ranges the matched series didn't cover ("600..611"). */
+            /** @description Per-run outcome, aligned with `gaps`. */
+            gap_details: components["schemas"]["DetectGap"][];
+            /** @description Local issue runs the provider series didn't cover ("600..611"). */
             gaps: string[];
-            /** @description The matched provider series the detector scanned against. */
-            provider_series_id: string;
+            /**
+             * @description The provider series id was recorded on the series' external ids
+             *     during this run (a cross-reference or a strict search match).
+             */
+            id_recorded: boolean;
+            /**
+             * Format: int32
+             * @description Local numbered issues the provider series lists.
+             */
+            matched_local: number;
+            /**
+             * @description The provider series the detector scanned against (or, for a
+             *     provider that can't enumerate, the series it is linked to).
+             */
+            provider_series_id?: string | null;
+            provider_series_name?: string | null;
+            provider_series_url?: string | null;
+            /** Format: int32 */
+            provider_series_year?: number | null;
+            resolved_via?: components["schemas"]["LinkMethod"] | null;
             source: string;
             source_label: string;
+            /**
+             * @description Automated range mappings the provider series now covers itself —
+             *     likely stale (e.g. after a re-match). Reported only; never removed
+             *     automatically.
+             */
+            stale_ranges: components["schemas"]["ProviderRangeRow"][];
+            status: components["schemas"]["SourceStatus"];
+            /**
+             * Format: int32
+             * @description Uncovered issues with a non-numeric number (annuals, `14AU`) —
+             *     excluded from range detection.
+             */
+            uncovered_specials: number;
         };
         DeviceBucket: {
             /** Format: int64 */
@@ -7953,6 +8009,11 @@ export interface components {
             /** Format: int64 */
             issues: number;
         };
+        /**
+         * @description What happened to one uncovered run of local issues.
+         * @enum {string}
+         */
+        GapStatus: "mapped" | "already_mapped" | "unresolved" | "skipped" | "error";
         /** @description Response for `POST /libraries/{slug}/hash-backfill`. */
         HashBackfillStartResp: {
             /** @description `false` when there was nothing pending (no job pushed). */
@@ -8554,6 +8615,33 @@ export interface components {
             library_slug: string;
             watcher: components["schemas"]["WatcherStatus"];
         };
+        /** @description A provider series the admin may confirm (medium-confidence search hit). */
+        LinkCandidate: {
+            external_id: string;
+            /**
+             * Format: float
+             * @description Share of the local numbered issues the candidate lists, when it was
+             *     enumerated (the top candidate only).
+             */
+            issue_overlap?: number | null;
+            name: string;
+            publisher?: string | null;
+            /** @description Why it wasn't linked automatically. */
+            reason: string;
+            /**
+             * Format: float
+             * @description Matcher text score (0–100).
+             */
+            score: number;
+            url?: string | null;
+            /** Format: int32 */
+            year?: number | null;
+        };
+        /**
+         * @description How a provider series id was found.
+         * @enum {string}
+         */
+        LinkMethod: "linked" | "applied" | "bridge" | "search";
         ListResp: {
             entries: components["schemas"]["DirEntry"][];
             /**
@@ -11297,6 +11385,11 @@ export interface components {
             metroninfo: string;
             series_json: string;
         };
+        /**
+         * @description One provider's outcome for a detection click.
+         * @enum {string}
+         */
+        SourceStatus: "scanned" | "not_enumerable" | "not_configured" | "no_series" | "needs_confirmation" | "rate_limited" | "skipped" | "error";
         /** @description A non-main-run issue: special_type-tagged, fractional, or unnumbered. */
         SpecialEntry: {
             number_raw?: string | null;
