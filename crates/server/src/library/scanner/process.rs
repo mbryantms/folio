@@ -962,18 +962,39 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         // `summary` / `description` alias the same column (PATCH pins
         // write `summary`; provider applies write `description`) —
         // accept either, mirroring the composer's pin check.
+        //
+        // Writeback libraries (both archive flags on) invert D4 for the
+        // provider tier only: there the archive is canonical and Folio
+        // itself composed its XML, so a provider value recorded at or
+        // before the issue's `last_sidecar_rewrite_at` is *in* the file
+        // — ingest it (the rewrite job stamps an apply's provenance at
+        // the rewrite instant). Protection still holds for a provider
+        // value the XML never received (DB-direct fallback for a refused
+        // CBR/CB7, or applied before writeback was switched on): its row
+        // is newer than the last sidecar rewrite, or there is none.
+        // User pins protect unconditionally (user > provider > file).
         let provenance =
             crate::metadata::writers::fetch_field_provenance_tiers(db, "issue", &row.id).await?;
+        let sidecar_canonical = lib.allow_archive_writeback && lib.metadata_writeback_enabled;
+        let last_sidecar_rewrite_at = row.last_sidecar_rewrite_at;
         let protected = |f: crate::metadata::MetadataField| {
             let owned = |k: &str| {
-                provenance
-                    .get(k)
-                    .is_some_and(|sb| !crate::metadata::writers::is_file_tier_set_by(sb))
+                provenance.get(k).is_some_and(|p| {
+                    if p.set_by == "user" {
+                        return true;
+                    }
+                    if crate::metadata::writers::is_file_tier_set_by(&p.set_by) {
+                        return false;
+                    }
+                    let carried_by_xml = sidecar_canonical
+                        && last_sidecar_rewrite_at.is_some_and(|at| p.set_at <= at);
+                    !carried_by_xml
+                })
             };
             owned(&f.key())
                 || (matches!(f, crate::metadata::MetadataField::Description) && owned("summary"))
         };
-        let user_pinned = |k: &str| provenance.get(k).is_some_and(|sb| sb == "user");
+        let user_pinned = |k: &str| provenance.get(k).is_some_and(|p| p.set_by == "user");
         use crate::metadata::MetadataField as F;
         // Junctions the rollup must leave alone (their rows were written
         // by a provider apply or a user edit; the CSV read-cache columns

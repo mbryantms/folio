@@ -1021,6 +1021,11 @@ pub(crate) async fn apply_issue_via_sidecar(
     detail: GenericMetadata,
     resolver: &ProvResolver<'_>,
 ) -> Result<ApplyOutcome, ApplyError> {
+    // The composer writes every provider value it is handed (unless the
+    // field is user-pinned), so the preview pane's per-field opt-in has to
+    // be applied to the payload itself — otherwise an unticked row still
+    // lands in the XML and, via the scoped rescan, in the DB.
+    let detail = mask_unselected_issue_fields(detail, args.selected_fields.as_ref());
     let Some(series_row) = entity::series::Entity::find_by_id(row.series_id)
         .one(&state.db)
         .await?
@@ -2348,6 +2353,34 @@ const SIDECAR_ISSUE_PROVENANCE_FIELDS: &[MetadataField] = &[
     MetadataField::Tags,
     MetadataField::Genres,
 ];
+
+/// Blank the preview-pane rows the user left unticked so the composer
+/// falls back to the issue's own value for them (the DB-direct path's
+/// `should_apply` gate, applied to the sidecar payload). Only the rows the
+/// preview shows ([`merge::scope_fields`] for an issue) are masked; an
+/// absent or empty set is the "apply everything" signal (legacy clients,
+/// one-click apply) and leaves the payload untouched. A composite apply's
+/// merged payload already carries only its kept fields.
+fn mask_unselected_issue_fields(
+    mut detail: GenericMetadata,
+    selected: Option<&std::collections::HashSet<String>>,
+) -> GenericMetadata {
+    let Some(selected) = selected.filter(|s| !s.is_empty()) else {
+        return detail;
+    };
+    let empty = GenericMetadata::default();
+    for &field in crate::metadata::merge::scope_fields(crate::metadata::merge::MergeScope::Issue) {
+        if !selected.contains(&field.key()) {
+            crate::metadata::composite::copy_field(
+                &mut detail,
+                &empty,
+                field,
+                crate::metadata::merge::MergeScope::Issue,
+            );
+        }
+    }
+    detail
+}
 
 /// Composer pin vocabulary per field: `summary`/`description` alias
 /// the same issue-summary column (PATCH pins write `summary`, provider

@@ -243,6 +243,69 @@ takes pre-serialized XML strings and performs the atomic swap:
     still writes no entity rows; it only builds the payload. Drift-flush
     jobs carry no payload.
 
+### Rescan ingest of provider values
+
+Step 10 runs right after step 9 queues the rescan, so the rescan almost
+always sees the apply's **provider** `field_provenance` rows. The
+scanner's WP-2.5 tier gate (`process.rs` `protected()`) is what keeps a
+non-writeback library's provider values safe from a retag; applied
+unchanged to a writeback library it refused to ingest the very XML Folio
+had just written — the archive got the new `<Summary>`, `issues.summary`
+kept the old text, and every later apply of the same field was frozen the
+same way (owner report: Chew #14, v0.33.0). It hit every column and
+junction in `SIDECAR_ISSUE_PROVENANCE_FIELDS`.
+
+The gate is now timestamp-aware in writeback libraries (both flags on):
+
+- the rewrite job records the apply's provenance rows **at** the
+  rewrite's `last_sidecar_rewrite_at` (`apply_post_rewrite_writes(…,
+  rewritten_at)` → `writers::write_field_provenance_at`), i.e. "this
+  value is in the archive as of that rewrite";
+- a provider-tier row protects its column / junction only when it is
+  **newer** than `last_sidecar_rewrite_at` (or the issue was never
+  sidecar-rewritten): a value the XML doesn't carry — a DB-direct
+  fallback for a refused CBR/CB7, or an apply from before writeback was
+  switched on. Otherwise the rescan ingests the file, so the archive
+  stays canonical (an external retag of a Folio-written provider field
+  is ingested too);
+- `user` rows protect unconditionally (user > provider > file); the
+  composer already wrote the pinned value into the XML.
+
+Non-writeback libraries are untouched: any provider row protects, as
+before. Tests: `crates/server/tests/writeback_provider_ingest.rs`.
+
+The preview pane's per-field opt-in is applied to the payload before
+composing (`mask_unselected_issue_fields`): an unticked row is blanked so
+the composer keeps the issue's own value for it. An absent or empty
+`selected_fields` (legacy clients, one-click apply) composes everything,
+as before. The composite path's merged payload already carries only the
+kept fields. `mode` (fill-missing vs replace-all) is still not consulted
+by the composer — a ticked field is written even when the issue already
+has a value.
+
+**Stuck issues from before the fix.** An issue applied on an affected
+release has the provider value in its archive and the old one in its
+column, with provenance rows a few milliseconds newer than
+`last_sidecar_rewrite_at` — so a plain rescan still protects them.
+Re-applying the issue heals it. For bulk repair, re-stamp the rows the
+rewrite job wrote (provider tier, within a minute after the rewrite) to
+the rewrite time, then force-rescan the affected series:
+
+```sql
+UPDATE field_provenance fp
+SET set_at = i.last_sidecar_rewrite_at
+FROM issues i
+JOIN libraries l ON l.id = i.library_id
+WHERE fp.entity_type = 'issue'
+  AND fp.entity_id = i.id
+  AND l.allow_archive_writeback AND l.metadata_writeback_enabled
+  AND i.last_sidecar_rewrite_at IS NOT NULL
+  AND fp.set_by NOT IN ('user', 'comicinfo', 'metroninfo', 'series_json',
+                        'scanner_inference', 'scanner_folder_tag')
+  AND fp.set_at > i.last_sidecar_rewrite_at
+  AND fp.set_at <= i.last_sidecar_rewrite_at + interval '1 minute';
+```
+
 Steps 2–5 cover the two failure classes that used to be silent: a
 refused format never reaches the job, and a failed rewrite is audited
 (`archive.errored` library event) without any of step 10.

@@ -584,7 +584,7 @@ pub fn build_merged_detail(
 
 /// Copy one field's value from `src` detail into `merged`. Mirrors the
 /// `GenericMetadata` accessors `apply` reads per field.
-fn copy_field(
+pub(crate) fn copy_field(
     merged: &mut GenericMetadata,
     src: &GenericMetadata,
     field: MetadataField,

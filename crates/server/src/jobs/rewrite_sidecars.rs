@@ -221,9 +221,12 @@ pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Resu
     }
 
     // The XML is in the archive and the rescan is queued: now record
-    // what the apply decided (provenance, variants, sync stamp).
+    // what the apply decided (provenance, variants, sync stamp). The
+    // provenance rows are stamped at the rewrite time so the rescan —
+    // which may well run after this — sees them as carried by the XML
+    // and ingests the values instead of protecting the stale columns.
     if let Some(post) = &job.post_apply {
-        apply_post_rewrite_writes(&state, &job.issue_id, post).await;
+        apply_post_rewrite_writes(&state, &job.issue_id, post, result.rewritten_at).await;
     }
 
     Ok(())
@@ -297,20 +300,35 @@ async fn requeue_busy(state: &AppState, job: &RewriteIssueSidecarsJob) {
 /// the `last_metadata_sync_at` stamp. Best-effort — a failure here never
 /// fails the job; each is logged. Exposed for the inline series path and
 /// the integration tests.
-pub async fn apply_post_rewrite_writes(state: &AppState, issue_id: &str, post: &PostRewriteWrites) {
+///
+/// `rewritten_at` is the archive's new `last_sidecar_rewrite_at`. The
+/// provenance rows are recorded **at** that instant: in a writeback
+/// library the scanner lets a provider-tier field follow the file only
+/// when its provenance is no newer than the last sidecar rewrite (the
+/// XML carries it). Stamping them `now()` — a few ms after the rewrite —
+/// made every value this apply wrote look like DB-only drift, so the
+/// scoped rescan protected the old column and the new value never left
+/// the archive (owner bug: Chew #14's picked description).
+pub async fn apply_post_rewrite_writes(
+    state: &AppState,
+    issue_id: &str,
+    post: &PostRewriteWrites,
+    rewritten_at: chrono::DateTime<chrono::FixedOffset>,
+) {
     use crate::metadata::writers::{self, SetBy};
     for p in &post.provenance {
         let Ok(field) = <crate::metadata::MetadataField as std::str::FromStr>::from_str(&p.field)
         else {
             continue;
         };
-        if let Err(e) = writers::write_field_provenance(
+        if let Err(e) = writers::write_field_provenance_at(
             &state.db,
             "issue",
             issue_id,
             field,
             SetBy::Provider(p.source),
             p.source_external_id.clone(),
+            rewritten_at,
         )
         .await
         {
@@ -369,6 +387,8 @@ pub(crate) struct RewriteResult {
     #[allow(dead_code)]
     pub summary: RebuildSummary,
     pub backup_path: Option<PathBuf>,
+    /// The `last_sidecar_rewrite_at` this rewrite stamped.
+    pub rewritten_at: chrono::DateTime<chrono::FixedOffset>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -657,6 +677,7 @@ pub(crate) async fn rewrite_one_issue(
         archive_path,
         summary,
         backup_path: backup,
+        rewritten_at: now,
     })
 }
 
