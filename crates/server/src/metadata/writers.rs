@@ -112,20 +112,42 @@ pub fn is_file_tier_set_by(set_by: &str) -> bool {
     FILE_SOURCED_SET_BY.contains(&set_by)
 }
 
-/// `field key → set_by` for every provenance row on an entity. Generic
-/// over the connection so the scanner can call it inside its ingest
-/// transaction (the apply path has its own `DatabaseConnection` copy).
+/// One provenance row as the scanner's tier gate sees it: who set the
+/// field and when. `set_at` lets a writeback library tell a provider
+/// value the archive's XML already carries (recorded at or before the
+/// last sidecar rewrite) from one it doesn't.
+#[derive(Clone, Debug)]
+pub struct ProvenanceTier {
+    pub set_by: String,
+    pub set_at: chrono::DateTime<chrono::FixedOffset>,
+}
+
+/// `field key → (set_by, set_at)` for every provenance row on an entity.
+/// Generic over the connection so the scanner can call it inside its
+/// ingest transaction (the apply path has its own `DatabaseConnection`
+/// copy).
 pub async fn fetch_field_provenance_tiers<C: ConnectionTrait>(
     db: &C,
     entity_type: &str,
     entity_id: &str,
-) -> Result<std::collections::HashMap<String, String>, DbErr> {
+) -> Result<std::collections::HashMap<String, ProvenanceTier>, DbErr> {
     let rows = field_provenance::Entity::find()
         .filter(field_provenance::Column::EntityType.eq(entity_type))
         .filter(field_provenance::Column::EntityId.eq(entity_id))
         .all(db)
         .await?;
-    Ok(rows.into_iter().map(|r| (r.field, r.set_by)).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            (
+                r.field,
+                ProvenanceTier {
+                    set_by: r.set_by,
+                    set_at: r.set_at,
+                },
+            )
+        })
+        .collect())
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -661,12 +683,37 @@ pub async fn write_field_provenance<C: ConnectionTrait>(
     set_by: SetBy,
     source_external_id: Option<String>,
 ) -> Result<(), DbErr> {
+    write_field_provenance_at(
+        db,
+        entity_type,
+        entity_id,
+        field,
+        set_by,
+        source_external_id,
+        chrono::Utc::now().fixed_offset(),
+    )
+    .await
+}
+
+/// [`write_field_provenance`] with an explicit `set_at`. The sidecar
+/// rewrite job records an apply's provider rows at the archive's
+/// `last_sidecar_rewrite_at`, so the scanner can see the XML it is about
+/// to ingest carries exactly those values (`scanner::process` tier gate).
+pub async fn write_field_provenance_at<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: &str,
+    field: crate::metadata::MetadataField,
+    set_by: SetBy,
+    source_external_id: Option<String>,
+    set_at: chrono::DateTime<chrono::FixedOffset>,
+) -> Result<(), DbErr> {
     let am = field_provenance::ActiveModel {
         entity_type: Set(entity_type.into()),
         entity_id: Set(entity_id.into()),
         field: Set(field.key()),
         set_by: Set(set_by.as_str()),
-        set_at: Set(chrono::Utc::now().fixed_offset()),
+        set_at: Set(set_at),
         source_external_id: Set(source_external_id),
     };
     field_provenance::Entity::insert(am)

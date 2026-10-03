@@ -713,7 +713,7 @@ through the sidecar composer on writeback libraries.
 | `binding` | used → format fallback (`hardcover`; `trade paperback`) and hardcover upgrade of a collected format. `softcover` and `squarebound` alone are ignored as ambiguous |
 | `color` | deliberately unused: `GenericMetadata` has no black-and-white slot, and ComicInfo `BlackAndWhite` is scanner-owned |
 | `dimensions`, `paper_stock` | deliberately unused: physical attributes with no Folio, ComicInfo or MetronInfo field |
-| `notes` | used → `GenericMetadata.notes` on the series detail (shown in the preview; the series apply has no series-notes column) |
+| `notes` | used → `GenericMetadata.notes` on the series detail (shown in the preview; the series apply has no series-notes column and never composes series notes into an issue's `<Notes>`) |
 
 **`Publisher`**
 
@@ -886,5 +886,10 @@ update (`api/issues.rs::update_issue_with_user_pins`), so a pin can no
 longer be lost while the edit lands.
 
 Libraries **with** writeback are the inverse model: the archive is
-canonical and the rescan re-ingests what the composer wrote (see
-[metadata-sidecar-writeback.md](metadata-sidecar-writeback.md)).
+canonical and the rescan re-ingests what the composer wrote. There the
+provider tier protects a column only while the archive's XML does **not**
+carry its value — the provenance row is newer than the issue's
+`last_sidecar_rewrite_at`, or the issue was never sidecar-rewritten (a
+DB-direct fallback for a refused CBR/CB7, or an apply from before the
+library enabled writeback). User pins protect in both models. See
+[metadata-sidecar-writeback.md](metadata-sidecar-writeback.md#rescan-ingest-of-provider-values).
