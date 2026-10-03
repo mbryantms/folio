@@ -749,12 +749,16 @@ async fn record_series_provider_links(
 /// One series-scope rescan fires at the end so the scanner ingests all
 /// freshly-written XMLs in a single pass.
 ///
-/// The composer uses **series-level provider data** for every issue —
-/// it doesn't make N per-issue provider calls. This means issue-level
-/// fields that the provider has (e.g. issue title, cover_date) only
-/// land if they were already in the issue's DB row. The series apply
-/// is structurally a "refresh the series shape across all issues"
-/// operation; per-issue refresh is the issue-scope apply path.
+/// The composer gets only the **series-shaped** part of the series-level
+/// provider record ([`series_payload_for_issue`]) — no N per-issue
+/// provider calls, and no series value lands in an issue-level slot:
+/// each issue keeps its own description, title, dates, credits, … The
+/// series description goes to `series.summary` via
+/// [`write_series_scalar_fields`]. The series apply is structurally a
+/// "refresh the series shape across all issues" operation; per-issue
+/// refresh is the issue-scope apply path.
+///
+/// [`series_payload_for_issue`]: crate::metadata::sidecar_compose::series_payload_for_issue
 ///
 /// Failure mode: per-issue errors (no provider id, write failure)
 /// accumulate in `ApplyOutcome.sidecar_skip_reasons`. The rescan
@@ -855,7 +859,13 @@ pub(crate) async fn apply_series_via_sidecar(
                 )
             })
         });
-        let (provider_for_issue, series_ids_for_issue) = match covering {
+        // Only the series-shaped part of the series record reaches an
+        // issue's XML: a series description / notes / URL composed as
+        // issue values overwrote every issue's own `<Summary>` (and, via
+        // the rescan, `issues.summary`). See `series_payload_for_issue`.
+        let mut provider_for_issue =
+            crate::metadata::sidecar_compose::series_payload_for_issue(&series_detail, issue_row);
+        let series_ids_for_issue = match covering {
             Some(r) => {
                 // Override only the series *name* with the splitter's — the
                 // identity readers see. Deliberately NOT `volume`: the range
@@ -865,18 +875,14 @@ pub(crate) async fn apply_series_via_sidecar(
                 // numeric volume — writing a year there would corrupt it and
                 // disagree with the rest of the run. The year is surfaced for
                 // display via the coverage / alternate-series API instead.
-                let mut p = series_detail.clone();
                 if let Some(name) = r.provider_series_name.as_deref().filter(|s| !s.is_empty()) {
-                    p.series_name = Some(name.to_owned());
+                    provider_for_issue.series_name = Some(name.to_owned());
                 }
                 let mut ids = series_external_ids.clone();
                 ids.insert(source.as_str().to_owned(), r.provider_series_id.clone());
-                (std::borrow::Cow::Owned(p), std::borrow::Cow::Owned(ids))
+                std::borrow::Cow::Owned(ids)
             }
-            None => (
-                std::borrow::Cow::Borrowed(&series_detail),
-                std::borrow::Cow::Borrowed(&series_external_ids),
-            ),
+            None => std::borrow::Cow::Borrowed(&series_external_ids),
         };
 
         let ctx = crate::metadata::sidecar_compose::ComposeContext {

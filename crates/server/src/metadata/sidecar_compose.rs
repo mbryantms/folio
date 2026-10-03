@@ -127,6 +127,71 @@ pub fn merge_provider_identifiers(
     merged
 }
 
+/// Project a **series-level** provider record down to the payload a
+/// series-scope apply may compose into one of the series' issues.
+///
+/// The composer reads `provider.description` / `title` / dates / credits
+/// / … as *issue* values, so handing it the series record verbatim made
+/// a series apply stamp the series description into every issue's
+/// `<Summary>` (and, via the rescan, `issues.summary`) — Fantastic Four
+/// (2001), 173 issues. This is an allowlist so a field added to
+/// [`GenericMetadata`] later is dropped (the issue keeps its own value)
+/// until someone decides it is series-shaped:
+///
+/// - **series identity** (carried through): series name / sort name /
+///   type / volume / years / aliases, publisher / imprint, identifiers,
+///   and the source bookkeeping the composer's attribution line needs;
+/// - **run-wide attributes** (fill-only): `format`, `language_code`,
+///   `age_rating`, `genres` describe the whole run, so they fill an issue
+///   that has none but never replace the issue's own value;
+/// - **everything else is dropped**: description, deck, notes, title,
+///   number, dates, page count, credits / characters / teams / locations /
+///   arcs / tags / concepts / objects / universes, reprints, variants,
+///   cover, ratings, price / sku, and `source_url` (the series page must
+///   not replace the issue's `<Web>`). Those come only from an
+///   issue-scope apply. The series description reaches `series.summary`
+///   through `apply::write_series_scalar_fields`, not through the XML.
+pub fn series_payload_for_issue(series: &GenericMetadata, issue: &issue::Model) -> GenericMetadata {
+    fn issue_lacks(v: Option<&str>) -> bool {
+        v.is_none_or(|s| s.trim().is_empty())
+    }
+    GenericMetadata {
+        series_name: series.series_name.clone(),
+        series_sort_name: series.series_sort_name.clone(),
+        series_type: series.series_type.clone(),
+        series_external_id: series.series_external_id.clone(),
+        volume: series.volume,
+        year_began: series.year_began,
+        year_end: series.year_end,
+        aliases: series.aliases.clone(),
+        publisher: series.publisher.clone(),
+        imprint: series.imprint.clone(),
+        identifiers: series.identifiers.clone(),
+        format: series
+            .format
+            .clone()
+            .filter(|_| issue_lacks(issue.format.as_deref())),
+        language_code: series
+            .language_code
+            .clone()
+            .filter(|_| issue_lacks(issue.language_code.as_deref())),
+        age_rating: series
+            .age_rating
+            .clone()
+            .filter(|_| issue_lacks(issue.age_rating.as_deref())),
+        genres: if issue_lacks(issue.genre.as_deref()) {
+            series.genres.clone()
+        } else {
+            Vec::new()
+        },
+        source_provider: series.source_provider,
+        source_external_id: series.source_external_id.clone(),
+        fetched_at: series.fetched_at,
+        upstream_modified_at: series.upstream_modified_at,
+        ..Default::default()
+    }
+}
+
 // ───────── public composers ─────────
 
 /// Produce a fresh `ComicInfo` ready for [`parsers::comicinfo::serialize`].
@@ -1921,5 +1986,59 @@ mod tests {
         let mi = compose_metroninfo(&ctx);
         assert_eq!(mi.writer().as_deref(), Some("Wanda Writer, Second Scribe"));
         assert_eq!(mi.editor().as_deref(), Some("Eddie Editor"));
+    }
+
+    /// A series-scope apply hands each issue only the series-shaped part
+    /// of the series record: the series description / title / URL / notes
+    /// never reach issue slots, run-wide attributes only fill gaps.
+    #[test]
+    fn series_payload_for_issue_keeps_issue_slots() {
+        let series = make_series("Saga");
+        let mut issue = make_issue("Own title");
+        issue.summary = Some("Own summary.".into());
+        issue.genre = Some("Space Opera".into());
+        issue.web_url = Some("https://example.com/issue-1".into());
+        issue.language_code = None;
+        let mut record = make_provider();
+        record.notes = Some("Series notes.".into());
+        record.source_url = Some("https://example.com/series".into());
+        record.genres = vec!["Science Fiction".into()];
+        record.language_code = Some("en".into());
+
+        let p = series_payload_for_issue(&record, &issue);
+        assert_eq!(p.description, None);
+        assert_eq!(p.title, None);
+        assert_eq!(p.notes, None);
+        assert_eq!(p.source_url, None);
+        assert_eq!(p.cover_date, None);
+        assert!(p.credits.is_empty() && p.characters.is_empty());
+        assert!(p.genres.is_empty(), "issue has its own genres");
+        assert_eq!(p.language_code.as_deref(), Some("en"), "fills a gap");
+        assert_eq!(p.series_name.as_deref(), Some("Saga"));
+        assert_eq!(p.publisher.as_deref(), Some("Image Comics"));
+        assert_eq!(p.source_provider, record.source_provider);
+
+        let ids = empty_ids();
+        let ctx = ComposeContext {
+            provider: &p,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &ids,
+            series_external_ids: &ids,
+            issue_user_pins: &empty_pins(),
+            series_user_pins: &empty_pins(),
+        };
+        let ci = compose_comicinfo(&ctx);
+        assert_eq!(ci.summary.as_deref(), Some("Own summary."));
+        assert_eq!(ci.title.as_deref(), Some("Own title"));
+        assert_eq!(ci.genre.as_deref(), Some("Space Opera"));
+        assert_eq!(ci.web.as_deref(), Some("https://example.com/issue-1"));
+        assert_eq!(ci.publisher.as_deref(), Some("Image Comics"));
+        let mi = compose_metroninfo(&ctx);
+        assert_eq!(mi.summary.as_deref(), Some("Own summary."));
+
+        issue.genre = None;
+        let p = series_payload_for_issue(&record, &issue);
+        assert_eq!(p.genres, vec!["Science Fiction".to_owned()]);
     }
 }
