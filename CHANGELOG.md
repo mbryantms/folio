@@ -13,6 +13,21 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.33.2](https://github.com/mbryantms/folio/compare/v0.33.1...v0.33.2) (2026-10-03)
+
+
+### Fixed
+
+* **metadata:** provider-applied fields reach the DB in writeback libraries ([#970](https://github.com/mbryantms/folio/issues/970)) ([6369ee2](https://github.com/mbryantms/folio/commit/6369ee2cba6eb90a9dcaad9fef5162ef16d8df46))
+* **series:** show read progress in series card hover previews ([#971](https://github.com/mbryantms/folio/issues/971)) ([7738212](https://github.com/mbryantms/folio/commit/773821292425da802907ce88b690293ce6a7d2f5))
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.76 ([#975](https://github.com/mbryantms/folio/issues/975)) ([4807592](https://github.com/mbryantms/folio/commit/4807592099d555845145dc49af67bf819485bc34))
+* update dependency next to v16.3.8 ([#978](https://github.com/mbryantms/folio/issues/978)) ([3624aec](https://github.com/mbryantms/folio/commit/3624aec526047670819aa4c75007274e17fde3ee))
+* update nextjs monorepo to v16.3.8 ([#977](https://github.com/mbryantms/folio/issues/977)) ([2e1d52e](https://github.com/mbryantms/folio/commit/2e1d52e864ca1a888078d67ef0d5a260a0fb697f))
+
 ## [0.33.1](https://github.com/mbryantms/folio/compare/v0.33.0...v0.33.1) (2026-10-03)
 
 
