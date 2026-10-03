@@ -13,6 +13,37 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.33.0](https://github.com/mbryantms/folio/compare/v0.32.0...v0.33.0) (2026-10-03)
+
+
+### Added
+
+* marker bulk restore, has_favorites, page_hash backfill, OPDS parity (WP-8.4) ([#964](https://github.com/mbryantms/folio/issues/964)) ([c56fd69](https://github.com/mbryantms/folio/commit/c56fd6973b902c98f8904e20f1721277f440c7d7))
+* **relationships:** provider links and external targets (WP-7.8) ([#958](https://github.com/mbryantms/folio/issues/958)) ([3168eef](https://github.com/mbryantms/folio/commit/3168eef4420359f15e4e0f4fdb0b5f44a88b6c7d))
+* **relationships:** Related tab, link editing, arc targets and same universe (WP-7.7) ([#957](https://github.com/mbryantms/folio/issues/957)) ([b38edc0](https://github.com/mbryantms/folio/commit/b38edc019d4c57e716b932a79d6d532fb4979141))
+* **relationships:** relationship detectors (WP-7.6) ([#956](https://github.com/mbryantms/folio/issues/956)) ([2b19f8d](https://github.com/mbryantms/folio/commit/2b19f8d09fbb3923f0f26f5e9b3625d1e8dc4d7c))
+* **relationships:** relationship taxonomy, arc targets and scoped links (WP-7.5) ([#955](https://github.com/mbryantms/folio/issues/955)) ([e90dfd2](https://github.com/mbryantms/folio/commit/e90dfd20c10471b2df287a3b35262612f9288712))
+* **relationships:** series relationship schema, API, and manual editing (WP-7.1) ([#946](https://github.com/mbryantms/folio/issues/946)) ([d7345a7](https://github.com/mbryantms/folio/commit/d7345a76db10684f1522d4631d7e0c47bed8ca69))
+* **relationships:** suggestion engine (WP-7.2) ([#948](https://github.com/mbryantms/folio/issues/948)) ([bf9775c](https://github.com/mbryantms/folio/commit/bf9775c86ae5b97dc46f6a6fb09f3ca1f0dd3fe4))
+* **relationships:** suggestion review UI and bulk accept (WP-7.3) ([#949](https://github.com/mbryantms/folio/issues/949)) ([5b6e50b](https://github.com/mbryantms/folio/commit/5b6e50b68ad65b65c7745ddbcfd194101659af31))
+* **relationships:** suggestion tuning — cross-library editions, stale reject, bulk kind, noise rules (WP-8.2) ([#963](https://github.com/mbryantms/folio/issues/963)) ([d29fb4e](https://github.com/mbryantms/folio/commit/d29fb4eebe3126ef441f562e50adcec5f84c8ab7))
+* **series:** explainable similar series (WP-7.4) ([#947](https://github.com/mbryantms/folio/issues/947)) ([18dacf7](https://github.com/mbryantms/folio/commit/18dacf7635a3ec6557632eb396a2dafbb3ff4d0c))
+
+
+### Fixed
+
+* data correctness — credit roles, MetronInfo credits, L-2, /creators 404 (WP-8.1) ([#962](https://github.com/mbryantms/folio/issues/962)) ([a32e9c2](https://github.com/mbryantms/folio/commit/a32e9c2e877e12dce012664e9b98bf72154b8073))
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.75 ([#952](https://github.com/mbryantms/folio/issues/952)) ([d3c2e39](https://github.com/mbryantms/folio/commit/d3c2e39b62a542190f513887d1d306c5660959da))
+* update dependency browserslist@&lt;4.28.9 to v4.29.3 ([#960](https://github.com/mbryantms/folio/issues/960)) ([8a3b884](https://github.com/mbryantms/folio/commit/8a3b88403030a276e99e87a6f9f078af86afca12))
+* update dependency lucide-react to v1.49.0 ([#965](https://github.com/mbryantms/folio/issues/965)) ([db01f77](https://github.com/mbryantms/folio/commit/db01f77c25a26086e3c673ac6e27e56bbc43d693))
+* update dependency next-intl to v4.14.8 ([#954](https://github.com/mbryantms/folio/issues/954)) ([b856a46](https://github.com/mbryantms/folio/commit/b856a46c52c583db9153ab16c842605aaa8067fb))
+* update nextjs monorepo to v16.3.7 ([#951](https://github.com/mbryantms/folio/issues/951)) ([ce3fed5](https://github.com/mbryantms/folio/commit/ce3fed5a3a843889d5e31eb17dac00ea3c24c38c))
+* update taiki-e/install-action digest to 83ac0ad ([#959](https://github.com/mbryantms/folio/issues/959)) ([7b15dd8](https://github.com/mbryantms/folio/commit/7b15dd819134fbefcf6da37f7a0b21ad17db1b69))
+
 ## [0.32.0](https://github.com/mbryantms/folio/compare/v0.31.0...v0.32.0) (2026-10-01)
 
 
