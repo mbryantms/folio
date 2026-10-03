@@ -39,3 +39,10 @@ reason = "`proc-macro-error2` unmaintained — build-time proc-macro via sea-bae
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0192"
 reason = "`ttf-parser` unmaintained — transitive via owned_ttf_parser -> ab_glyph -> imageproc -> comic-text-detector, i.e. the optional OCR/ML stack's debug-image text rendering. Not reachable from the core reader/scanner request paths."
+
+# ── npm (mirrored from pnpm-workspace.yaml auditConfig.ignoreGhsas) ──
+# Rationale for each lives in SECURITY-EXCEPTIONS.md.
+
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+reason = "`braces` <=3.0.3 stack-exhaustion DoS — no patched release exists (3.0.3 is the latest). Dev-only lint toolchain path (eslint-config-next / @next/eslint-plugin-next > fast-glob > micromatch > braces); never in the shipped images. Delete when braces ships a fix."

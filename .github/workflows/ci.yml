@@ -543,14 +543,11 @@ jobs:
             web/.next/diagnostics/analyze/
           if-no-files-found: ignore
           retention-days: 14
-      # Playwright is intentionally not run in CI. The current specs
-      # only cover two static-degradation a11y checks (sign-in,
-      # forgot-password); the reader-flow walk-through that would
-      # justify the ~3-min CI cost is `test.skip`-ed pending a
-      # fixture harness (live Rust origin + seeded library). Spec
-      # files stay in `web/tests/e2e/` so contributors can still run
-      # them locally via `pnpm --filter web run test:e2e`. Restore
-      # this step once the harness lands.
+      # Playwright does not run in this job: the specs need a live Rust
+      # origin and a seeded library, so they run in the docker-smoke job
+      # against the booted production images (reader flow, relationship
+      # review, axe a11y checks; see "Playwright e2e" there). Locally:
+      # `just docker-build && just docker-e2e`.
       # Blocking as of the 2026-06 dependency audit: the dep tree is
       # high-clean (transitive highs remediated via root
       # `pnpm.overrides`), so a new high-severity advisory now fails CI.
@@ -887,10 +884,13 @@ jobs:
           docker compose -f compose.test.yml run --rm smoke
       # Browser walk-through against the SAME booted stack, through the Rust
       # origin on localhost:8080: register → library → scan → reader → page
-      # turn → progress persisted (web/tests/e2e/reader-flow.spec.ts). This is
-      # the gate that lets web render-path minors auto-merge: it exercises
-      # hydration, event handlers, the proxy hop, cookies/CSRF and the scan
-      # pipeline, which no vitest or Rust test reaches.
+      # turn → progress persisted (web/tests/e2e/reader-flow.spec.ts), plus
+      # the relationship review flow and axe on the M7b surfaces
+      # (relationship-review.spec.ts; both share the admin session the
+      # `setup` project registers). This is the gate that lets web
+      # render-path minors auto-merge: it exercises hydration, event
+      # handlers, the proxy hop, cookies/CSRF and the scan pipeline, which no
+      # vitest or Rust test reaches.
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         if: env.SMOKE == 'true'
         with:
@@ -916,7 +916,7 @@ jobs:
         # --with-deps every time (OS libs are not cached); the browser download
         # itself is skipped on a cache hit.
         run: pnpm --filter web exec playwright install --with-deps chromium
-      - name: Playwright reader flow
+      - name: Playwright e2e (reader flow, relationships, a11y)
         if: env.SMOKE == 'true'
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:8080
