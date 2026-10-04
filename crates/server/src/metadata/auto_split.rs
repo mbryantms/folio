@@ -15,7 +15,7 @@
 //! issue-number list (the trait default), so this no-ops for them.
 
 use crate::metadata::identifier::Source;
-use crate::metadata::matcher::canonical_issue_number;
+use crate::metadata::matcher::{canonical_issue_number, issue_number_compare_key};
 use crate::metadata::provider::{IssueQuery, MetadataProvider, ProviderError};
 use crate::metadata::range_map;
 use chrono::Utc;
@@ -156,7 +156,7 @@ pub async fn detect_with_coverage<C: ConnectionTrait>(
 ) -> anyhow::Result<DetectOutcome> {
     let covered: HashSet<String> = covered_numbers
         .iter()
-        .map(|n| canonical_issue_number(n))
+        .map(|n| issue_number_compare_key(n))
         .collect();
     let covered_count = covered.len();
     tracing::debug!(
@@ -175,13 +175,10 @@ pub async fn detect_with_coverage<C: ConnectionTrait>(
     //    loading full issue rows would drag the large `comic_info_raw` /
     //    `pages` JSON for every issue.
     let local = load_local_issues(db, series_row.id).await?;
-    let matched_local = local
-        .iter()
-        .filter(|li| covered.contains(&li.canonical))
-        .count();
+    let matched_local = local.iter().filter(|li| covered.contains(&li.key)).count();
     let uncovered_specials = local
         .iter()
-        .filter(|li| li.value.is_none() && !covered.contains(&li.canonical))
+        .filter(|li| li.value.is_none() && !covered.contains(&li.key))
         .count();
 
     // Existing ranges for this (series, source) — never clobbered; a
@@ -350,6 +347,9 @@ pub async fn detect_with_coverage<C: ConnectionTrait>(
 #[derive(Clone, Debug)]
 pub(crate) struct LocalIssue {
     pub(crate) canonical: String,
+    /// Comparison key against provider listings
+    /// ([`issue_number_compare_key`]: `"½"` and `"0.5"` agree).
+    pub(crate) key: String,
     pub(crate) value: Option<f64>,
     pub(crate) year: Option<i32>,
 }
@@ -359,6 +359,7 @@ impl LocalIssue {
         let canonical = canonical_issue_number(raw);
         let value = numeric_value(&canonical);
         Self {
+            key: issue_number_compare_key(&canonical),
             canonical,
             value,
             year,
@@ -430,7 +431,7 @@ fn numeric_gaps<'a>(
     let mut runs: Vec<Vec<&LocalIssue>> = Vec::new();
     let mut pending: Vec<(f64, &LocalIssue)> = Vec::new();
     for li in numeric {
-        if covered.contains(&li.canonical) {
+        if covered.contains(&li.key) {
             // A covered local issue always ends the current run.
             runs.extend(split_runs(std::mem::take(&mut pending), &covered_vals));
             continue;
@@ -541,7 +542,7 @@ fn stale_ranges(
                     )
                 })
                 .collect();
-            !inside.is_empty() && inside.iter().all(|li| covered.contains(&li.canonical))
+            !inside.is_empty() && inside.iter().all(|li| covered.contains(&li.key))
         })
         .map(|r| r.id)
         .collect()
@@ -576,7 +577,7 @@ async fn resolve_alternate_series(
         .filter(|c| {
             c.issue_number
                 .as_deref()
-                .is_none_or(|n| canonical_issue_number(n) == representative.canonical)
+                .is_none_or(|n| issue_number_compare_key(n) == representative.key)
         })
         .collect();
 
@@ -616,12 +617,9 @@ async fn resolve_alternate_series(
             .list_series_issue_numbers(&alt.series_id)
             .await?
             .iter()
-            .map(|n| canonical_issue_number(n))
+            .map(|n| issue_number_compare_key(n))
             .collect();
-        let hits = gap
-            .iter()
-            .filter(|li| listed.contains(&li.canonical))
-            .count();
+        let hits = gap.iter().filter(|li| listed.contains(&li.key)).count();
         if hits * 2 >= gap.len() {
             return Ok(Some(alt));
         }

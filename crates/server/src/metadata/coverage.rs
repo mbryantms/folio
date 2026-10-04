@@ -56,7 +56,9 @@
 
 use crate::metadata::auto_split::{self, numeric_value};
 use crate::metadata::identifier::{Identifier, Source};
-use crate::metadata::matcher::{self, SeriesQueryFacts, canonical_issue_number};
+use crate::metadata::matcher::{
+    self, SeriesQueryFacts, canonical_issue_number, issue_number_compare_key,
+};
 use crate::metadata::orchestrator::{PreFilter, pre_filter_series};
 use crate::metadata::provider::{
     IssueListOpts, IssueQuery, MetadataProvider, ProviderError, ProviderIssue,
@@ -256,10 +258,11 @@ pub fn provider_issue_for<'a>(
     year: Option<i32>,
     month: Option<i32>,
 ) -> Option<&'a ProviderIssue> {
+    let wanted = issue_number_compare_key(canonical_number);
     let mut hits = list
         .issues
         .iter()
-        .filter(|i| i.number == canonical_number)
+        .filter(|i| issue_number_compare_key(&i.number) == wanted)
         .collect::<Vec<_>>();
     hits.sort_by_key(|i| std::cmp::Reverse(date_match(year, month, i.cover_date).rank()));
     hits.into_iter()
@@ -284,7 +287,11 @@ pub async fn cached_series_label(
 /// One local active issue with a number.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LocalCovIssue {
+    /// Canonical number: the grid row key and the range bound.
     pub canonical: String,
+    /// What provider listings are matched on
+    /// ([`issue_number_compare_key`]: `"½"` and `"0.5"` agree).
+    pub key: String,
     /// Numeric value for plain numbers; `None` for annuals / `14AU` / `½`.
     pub value: Option<f64>,
     pub year: Option<i32>,
@@ -296,6 +303,7 @@ impl LocalCovIssue {
         let canonical = canonical_issue_number(raw);
         let value = numeric_value(&canonical);
         Self {
+            key: issue_number_compare_key(&canonical),
             canonical,
             value,
             year,
@@ -327,7 +335,7 @@ pub async fn load_local<C: ConnectionTrait>(
             continue;
         };
         let li = LocalCovIssue::new(raw, year, month);
-        match out.iter_mut().find(|o| o.canonical == li.canonical) {
+        match out.iter_mut().find(|o| o.key == li.key) {
             // Two files of one number: keep the dated one.
             Some(existing) => {
                 if existing.year.is_none() {
@@ -529,7 +537,7 @@ pub fn compute_cover(
         .map(|li| {
             let mut opts: Vec<(usize, DateMatch)> = Vec::new();
             for (ci, listing) in listings.iter().enumerate() {
-                let Some(dates) = listing.get(li.canonical.as_str()) else {
+                let Some(dates) = listing.get(li.key.as_str()) else {
                     continue;
                 };
                 let best = dates
@@ -940,9 +948,25 @@ impl SeriesFacts {
         (years.iter().min().copied(), years.iter().max().copied())
     }
 
-    /// The local series' start year for the strict check.
+    /// The local series' start year for scoring.
     fn start_year(&self) -> Option<i32> {
         self.series.year.or(self.year_bounds().0)
+    }
+
+    /// Start years a strict match may carry: the series' own year and the
+    /// earliest local cover year. A folder's year often names when the
+    /// owner's run starts or a later relaunch (the Fantastic Four folder
+    /// says 2001; its #½ and #1 are cover-dated 1998-01, the year every
+    /// provider gives the volume), while the earliest cover date is
+    /// evidence the provider series starts with these very issues.
+    fn strict_years(&self) -> Vec<i32> {
+        let mut years: Vec<i32> = self.series.year.into_iter().collect();
+        if let Some(y) = self.year_bounds().0
+            && !years.contains(&y)
+        {
+            years.push(y);
+        }
+        years
     }
 
     fn best_name_score(&self, name: &str) -> f32 {
@@ -1122,6 +1146,7 @@ pub async fn analyze_provider<C: ConnectionTrait>(
         year: max_year.or(facts.series.year),
         ..query_facts.clone()
     };
+    let strict_years = facts.strict_years();
     let mut hits: Vec<(SeriesCandidate, f32, f32, bool)> = Vec::new();
     for name in &facts.names {
         if pending.len() >= MAX_CANDIDATES || !budget.can_spend(search_cost(source)) {
@@ -1155,8 +1180,7 @@ pub async fn analyze_provider<C: ConnectionTrait>(
             }
             let score = matcher::score_series(&query_facts, &c);
             let strict = ns >= 0.999
-                && query_facts.year.is_some()
-                && c.year == query_facts.year
+                && c.year.is_some_and(|y| strict_years.contains(&y))
                 && score.publisher > 0.0
                 && !score.format_mismatch;
             if !hits.iter().any(|(h, ..)| h.external_id == c.external_id) {
@@ -1249,7 +1273,7 @@ pub async fn analyze_provider<C: ConnectionTrait>(
                 if ic
                     .issue_number
                     .as_deref()
-                    .is_some_and(|n| canonical_issue_number(n) != li.canonical)
+                    .is_some_and(|n| issue_number_compare_key(n) != li.key)
                 {
                     continue;
                 }
@@ -1313,24 +1337,28 @@ fn halt(out: &mut ProviderAnalysis, h: Halt) {
     }
 }
 
-/// The first issue of each contiguous run of uncovered local issues
-/// (numeric ones first), for gap issue searches.
+/// The first issue of each contiguous run of uncovered numeric local
+/// issues, for gap issue searches — longest run first, so the
+/// [`MAX_GAP_SEARCHES`] go to the blocks that matter (Fantastic Four's
+/// #600–611 before a lone #½), then numeric order.
 fn gap_representatives<'a>(
     local: &'a [LocalCovIssue],
     uncovered: &[usize],
 ) -> Vec<&'a LocalCovIssue> {
-    let mut out: Vec<&LocalCovIssue> = Vec::new();
+    let mut runs: Vec<(usize, usize)> = Vec::new(); // (first index, length)
     let mut prev: Option<usize> = None;
     for &i in uncovered {
         if local[i].value.is_none() {
             continue;
         }
-        if prev.is_none_or(|p| p + 1 != i) {
-            out.push(&local[i]);
+        match runs.last_mut() {
+            Some((_, len)) if prev == Some(i.wrapping_sub(1)) => *len += 1,
+            _ => runs.push((i, 1)),
         }
         prev = Some(i);
     }
-    out
+    runs.sort_by_key(|(first, len)| (std::cmp::Reverse(*len), *first));
+    runs.into_iter().map(|(first, _)| &local[first]).collect()
 }
 
 /// List `pending` candidates (within the budget) and keep the ones that
@@ -1348,7 +1376,7 @@ async fn list_candidates<C: ConnectionTrait>(
 ) {
     let source = provider.id();
     let hint: Vec<String> = facts.local.iter().map(|l| l.canonical.clone()).collect();
-    let local_numbers: HashSet<&str> = facts.local.iter().map(|l| l.canonical.as_str()).collect();
+    let local_numbers: HashSet<&str> = facts.local.iter().map(|l| l.key.as_str()).collect();
     let span = facts.numeric_span();
     for mut cand in pending {
         if budget.timed_out() {
@@ -1408,9 +1436,14 @@ async fn list_candidates<C: ConnectionTrait>(
         if let Some(n) = cand.name.as_deref() {
             cand.name_score = cand.name_score.max(facts.best_name_score(n));
         }
+        // Listings are matched on the comparison key (`"½"` → `"0.5"`).
         cand.listed = list
             .issues
             .into_iter()
+            .map(|mut i| {
+                i.number = issue_number_compare_key(&i.number);
+                i
+            })
             .filter(|i| {
                 local_numbers.contains(i.number.as_str())
                     || numeric_value(&i.number)
@@ -1588,7 +1621,7 @@ pub fn build_view(
                 let pi = c
                     .listed
                     .iter()
-                    .filter(|p| p.number == li.canonical)
+                    .filter(|p| p.number == li.key)
                     .max_by_key(|p| date_match(li.year, li.month, p.cover_date).rank());
                 CoverageCell {
                     number: li.canonical.clone(),
@@ -1728,7 +1761,7 @@ pub fn build_view(
                 .iter()
                 .filter(|li| {
                     c.listed.iter().any(|p| {
-                        p.number == li.canonical
+                        p.number == li.key
                             && date_match(li.year, li.month, p.cover_date) != DateMatch::Conflict
                     })
                 })
@@ -2139,6 +2172,38 @@ mod tests {
         let c3 = cand("M", &[("1", None)]);
         let cover = compute_cover(&local, std::slice::from_ref(&c3), None);
         assert_eq!(confidence(&[c3], &cover).0, CoverageConfidence::Low);
+    }
+
+    #[test]
+    fn half_issues_match_across_spellings() {
+        // The owner's "000.5" vs ComicVine / Metron's "½".
+        let local = LocalCovIssue::new("000.5", Some(1998), Some(1));
+        assert_eq!(local.canonical, "0.5");
+        assert_eq!(local.key, "0.5");
+        let list = ProviderSeriesIssues {
+            issues: vec![ProviderIssue {
+                external_id: Some("h".into()),
+                number: "½".into(),
+                cover_date: d(1998, 1),
+            }],
+            ..Default::default()
+        };
+        let hit = provider_issue_for(&list, "0.5", Some(1998), Some(1)).unwrap();
+        assert_eq!(hit.external_id.as_deref(), Some("h"));
+    }
+
+    #[test]
+    fn gap_searches_take_the_longest_run_first() {
+        let local = vec![
+            li("0.5", 1998, 1),
+            li("1", 1998, 1),
+            li("600", 2012, 1),
+            li("601", 2012, 2),
+            li("602", 2012, 3),
+        ];
+        let reps = gap_representatives(&local, &[0, 2, 3, 4]);
+        let firsts: Vec<&str> = reps.iter().map(|l| l.canonical.as_str()).collect();
+        assert_eq!(firsts, vec!["600", "0.5"]);
     }
 
     #[test]

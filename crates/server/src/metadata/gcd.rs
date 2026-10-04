@@ -658,6 +658,12 @@ impl GcdClient {
                 if key.is_empty() {
                     continue;
                 }
+                // The first overview row of a number is its base issue;
+                // a later same-numbered row (`"500 [Director's Cut]"`)
+                // must not replace its id.
+                if dated.contains(&key) {
+                    continue;
+                }
                 let Some(issue) = issues
                     .iter_mut()
                     .find(|i| issue_number_key(&i.number) == key)
@@ -1137,6 +1143,9 @@ pub(crate) fn name_key(raw: &str) -> String {
 
 /// The issue number from a GCD descriptor: `"1 [British]"` → `"1"`,
 /// `"1 - Capítulo Uno"` → `"1"`, `"v2#3"` → `"3"`, `"[nn]"` stays.
+/// Dual-numbered issues keep their primary number: `"42 (471) [Direct
+/// Edition]"` → `"42"`, `"500 (71)"` → `"500"` (see
+/// [`crate::metadata::matcher::split_legacy_number`]).
 pub(crate) fn descriptor_number(descriptor: &str) -> String {
     let mut s = descriptor.trim();
     if !s.starts_with('[')
@@ -1154,6 +1163,9 @@ pub(crate) fn descriptor_number(descriptor: &str) -> String {
         && vol.bytes().all(|b| b.is_ascii_digit())
     {
         s = num;
+    }
+    if let Some((primary, _)) = crate::metadata::matcher::split_legacy_number(s) {
+        s = primary;
     }
     s.trim().to_owned()
 }
@@ -2165,8 +2177,12 @@ fn series_to_candidate(v: &Value) -> Option<SeriesCandidate> {
 }
 
 fn issue_number_of(v: &Value) -> Option<String> {
+    // The overview's `number` repeats the descriptor's annotations
+    // (`"42 (471)"`, `"500 [Director's Cut]"`), so it gets the same
+    // cleanup.
     str_field(v, &["number", "issue_number"])
-        .or_else(|| str_field(v, &["descriptor"]).map(|d| descriptor_number(&d)))
+        .or_else(|| str_field(v, &["descriptor"]))
+        .map(|n| descriptor_number(&n))
         .filter(|n| !n.is_empty())
 }
 
@@ -2735,6 +2751,13 @@ mod tests {
         assert_eq!(descriptor_number("1 - Capítulo Uno"), "1");
         assert_eq!(descriptor_number("v2#3"), "3");
         assert_eq!(descriptor_number("[nn]"), "[nn]");
+        // Dual numbering (Fantastic Four 1998, GCD series 11218).
+        assert_eq!(descriptor_number("42 (471) [Direct Edition]"), "42");
+        assert_eq!(descriptor_number("70 (499) [Newsstand]"), "70");
+        assert_eq!(descriptor_number("500 (71) [Direct Edition]"), "500");
+        assert_eq!(descriptor_number("500 [Director's Cut]"), "500");
+        assert_eq!(descriptor_number("605.1"), "605.1");
+        assert_eq!(descriptor_number("1 (of 4)"), "1 (of 4)");
         assert_eq!(descriptor_number(""), "");
     }
 
