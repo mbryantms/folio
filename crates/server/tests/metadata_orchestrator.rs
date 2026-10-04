@@ -616,6 +616,7 @@ fn opts_with_cover(cover_png: &[u8], relax_year_gate: bool) -> orchestrator::Sea
         cover_hasher: Some(Arc::new(move |url: String| {
             Box::pin(async move { (url == CANDIDATE_COVER_URL).then_some(hash) })
         })),
+        direct: None,
     }
 }
 

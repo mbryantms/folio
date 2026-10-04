@@ -5530,6 +5530,13 @@ export interface components {
              */
             in_flight: number;
             /**
+             * @description Per provider: how many searched children were answered by a direct
+             *     lookup through series coverage vs a provider search (with why it
+             *     fell back). Empty until a child that may use direct lookups has
+             *     finished searching.
+             */
+            lookups: components["schemas"]["BatchLookupCount"][];
+            /**
              * Format: int64
              * @description `multi_good` | `single_bad_cover` | `multi_bad_cover` — needs a look.
              */
@@ -5612,6 +5619,11 @@ export interface components {
             jobs_enqueued: number;
             jobs_failed: number;
         };
+        BatchFallbackCount: {
+            /** Format: int64 */
+            count: number;
+            reason: components["schemas"]["FallbackReason"];
+        };
         BatchListResp: {
             batches: components["schemas"]["BatchListRow"][];
         };
@@ -5623,6 +5635,23 @@ export interface components {
             items_total: number;
             scope: string;
             status: string;
+        };
+        /** @description One provider's direct-lookup vs search tally across a batch. */
+        BatchLookupCount: {
+            /**
+             * Format: int64
+             * @description Issues answered from the provider series' issue list — no search.
+             */
+            direct: number;
+            /** @description Why those issues searched, most frequent first. */
+            fallbacks: components["schemas"]["BatchFallbackCount"][];
+            /**
+             * Format: int64
+             * @description Issues that ran a provider search.
+             */
+            search: number;
+            /** @description `"comicvine"` | `"metron"` | `"gcd"`. */
+            source: string;
         };
         /**
          * @description Per-state tally of a batch's member runs — drives the dashboard progress
@@ -8143,6 +8172,11 @@ export interface components {
          * @enum {string}
          */
         ExternalSource: "metron" | "comicvine" | "gcd";
+        /**
+         * @description Why a batch issue fell back from a direct lookup to a search.
+         * @enum {string}
+         */
+        FallbackReason: "no_target" | "list_unavailable" | "not_listed" | "date_conflict" | "detail_unavailable" | "rejected_by_matcher";
         /**
          * @description All filterable fields. Per-field metadata (kind, allowed ops, SQL
          *     column) lives in [`super::registry`]. Adding a field is a two-step:

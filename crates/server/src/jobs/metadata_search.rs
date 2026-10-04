@@ -154,7 +154,7 @@ pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Resul
         Some(series_id),
         SearchOpts {
             relax_year_gate: !year_asserted,
-            cover_hasher: None,
+            ..SearchOpts::default()
         },
     )
     .await
@@ -200,6 +200,13 @@ pub struct SearchIssueJob {
     /// WP-2.8: see [`SearchSeriesJob::year_asserted`].
     #[serde(default)]
     pub year_asserted: bool,
+    /// Batch children: let each provider answer from its series' cached
+    /// issue list (one cached detail fetch) instead of searching when the
+    /// issue's provider series is known ([`crate::metadata::direct_lookup`]).
+    /// `false` for the single-issue dialog search, which should show
+    /// alternatives.
+    #[serde(default)]
+    pub direct_lookup: bool,
 }
 
 pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<(), Error> {
@@ -211,6 +218,7 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
         facts,
         series_targets,
         year_asserted,
+        direct_lookup,
     } = job;
     tracing::info!(
         run_id = %run_id,
@@ -229,6 +237,14 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
     }
     let thresholds = thresholds(&state);
     let alt_cap = state.cfg().metadata_alternate_cover_fetch_cap;
+    let direct = if direct_lookup {
+        Some(crate::metadata::direct_lookup::DirectLookupCtx {
+            redis: state.jobs.redis.clone(),
+            cover_month: issue_cover_month(&state, &issue_id).await,
+        })
+    } else {
+        None
+    };
     match orchestrator::run_issue_search_with(
         &state.db,
         run_id,
@@ -241,6 +257,7 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
         SearchOpts {
             relax_year_gate: !year_asserted,
             cover_hasher: None,
+            direct,
         },
     )
     .await
@@ -268,6 +285,22 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
 }
 
 // ───────── helpers ─────────
+
+/// The issue's cover month (the year rides in the job's facts) — the
+/// direct lookup's cover-date check. `None` on any miss: the lookup then
+/// compares years only.
+async fn issue_cover_month(state: &AppState, issue_id: &str) -> Option<i32> {
+    use sea_orm::{EntityTrait, QuerySelect};
+    entity::issue::Entity::find_by_id(issue_id.to_owned())
+        .select_only()
+        .column(entity::issue::Column::Month)
+        .into_tuple::<Option<i32>>()
+        .one(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+}
 
 /// Build the per-search [`PreFilter`] from the library row when one
 /// is in scope. Cross-library bulk-refresh paths (no `library_id`)
@@ -570,6 +603,9 @@ pub async fn enqueue_issue_search(
             facts,
             series_targets,
             year_asserted: false,
+            // Batch children (and their quota resumes) answer covered
+            // issues by direct lookup; see `SearchIssueJob::direct_lookup`.
+            direct_lookup: batch_id.is_some(),
         })
         .await
     {

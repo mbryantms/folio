@@ -455,9 +455,11 @@ solicitation.)
   force-rescan the series. No provider quota. It also reverts anything
   else that rewrite changed, so only use a backup from that rewrite.
 - **Per-issue re-fetch** — the default. Series page → ⋯ → *Fetch
-  metadata* → **All issues** (`POST /api/series/{slug}/metadata/batch?scope=all`;
-  not "Only missing or partial", which skips issues whose description
-  is merely wrong, not empty). That queues one issue-scope search per
+  metadata* → **Only missing or partial**
+  (`POST /api/series/{slug}/metadata/batch?scope=incomplete`), which
+  selects the step-1 strict set (description = series description,
+  shared, not user-pinned) plus incomplete issues; **All issues**
+  (`scope=all`) also works. That queues one issue-scope search per
   active issue (cap `REFRESH_BATCH_CAP` = 200 per click) under one
   `metadata_batch`; then the toast's *Review* link
   (`/admin/metadata?tab=review&batch=<id>`) → **Accept all strong**
@@ -466,11 +468,14 @@ solicitation.)
   `remainder` to re-trigger). In a writeback library the composer writes
   each picked issue description whatever the mode (see "Rescan ingest of
   provider values"), and with #970 the rescan ingests it. Quota per
-  issue and enabled provider: one issue search (a second broad search
-  when the series-narrowed one is empty) plus one issue-detail fetch at
-  apply (cached for 24 h); ComicVine allows 200 requests per resource
-  per hour, so a 173-issue run takes roughly two hours of CV budget —
-  the limiter paces it. Issues a provider doesn't describe keep the
+  issue and enabled provider: with the series' provider series known
+  (coverage accepted / applied), one issue-detail fetch and no search —
+  the batch looks the issue up in the cached issue list (see
+  `metadata-providers.md` § "Batch direct lookups") and the apply reuses
+  that detail; otherwise one issue search (a second broad search when
+  the series-narrowed one is empty) plus the detail at apply. ComicVine
+  allows 200 requests per resource per hour; the limiter paces a
+  173-issue run either way. Issues a provider doesn't describe keep the
   leaked text; clear those by hand.
 - **Clearing the leaked text** is not a shortcut in a writeback library:
   the archive is canonical, so blanking `issues.summary` alone is undone

@@ -33,6 +33,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { BatchLookupSummary } from "@/components/admin/metadata/BatchLookupSummary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -217,6 +218,7 @@ function BatchReview({
           )}
           {a.in_flight > 0 && <span>{a.in_flight} searching…</span>}
         </div>
+        <BatchLookupSummary lookups={a.lookups} />
         {data.exceeds_budget && (
           <p className={`text-xs ${statusToneText("warning")}`}>
             This batch exceeds the provider&rsquo;s daily budget — items beyond

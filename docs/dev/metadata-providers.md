@@ -973,7 +973,84 @@ overview pages per series (9). Warm (24 h): one search per provider.
 **Reusing coverage for per-issue lookups.** After an accept, a local
 issue's provider series is `range_map::fold_targets(...)`, and its
 provider issue is `provider_issue_for(provider_issues(...), number,
-year, month)` — no search needed, one detail fetch.
+year, month)` — no search needed, one detail fetch. Metadata batches do
+exactly this (next section).
+
+## Batch direct lookups (series coverage)
+
+Every metadata batch child — series page "Fetch metadata → All issues /
+Only missing or partial", a grid selection, a saved view, and their
+quota resumes — is a `SearchIssueJob` with `direct_lookup = true`
+(`enqueue_issue_search` sets it whenever a `batch_id` is present; the
+single-issue dialog search keeps `false` so the operator still sees
+alternatives). For each enabled provider,
+`orchestrator::run_issue_search_with` → `direct_issue_candidate`:
+
+1. **Target**: the provider's `EffectiveTarget` from the job's
+   `series_targets` (`range_map::resolve_for_issue` → `fold_targets`: a
+   covering range row, else the series-level external id). An annual
+   only uses a range target, as the search does.
+2. **List**: `direct_lookup::resolve_issue_id` →
+   `coverage::provider_issues_with` (Redis, 24 h; date hint = this number,
+   so GCD reads only the overview page holding it) →
+   `coverage::lookup_provider_issue(list, canonical, year, month)`.
+3. **Detail**: `apply::fetch_issue_detail_cached` — the same
+   `metadata_cache` issue row (24 h, conditional revalidation) the apply
+   reads, so the later apply is free.
+4. **Score**: `lookup::issue_candidate_from_detail` → the ordinary
+   `score_issue_candidates` (cover pHash when the local issue has one)
+   under the hard year gate (`declared_year` for a range), then the
+   usual `finalize_ranking`. The bucket is the matcher's: nothing is
+   forced to High, and the cover-Hamming ladder is untouched.
+   `RankedCandidate.coverage` (→ `score_breakdown.coverage`:
+   `{provider_series_id, via_range, date, reason}`) labels it "matched by
+   series coverage (number + cover date)" in the dialog.
+
+**Falls back to today's search** (narrowed, then broad) with a recorded
+`FallbackReason` when: there's no target (`no_target`); the provider
+can't list issues, the listing failed or came back page-capped and the
+number isn't in it (`list_unavailable`); the number isn't listed
+(`not_listed`); every same-numbered entry's cover date conflicts
+(`date_conflict`, ±6 months / year ±1 as in coverage); the detail fetch
+failed (`detail_unavailable`); or the matcher rejected it
+(`rejected_by_matcher`: the hard year gate dropped it, or a cover
+comparison landed LOW — a wrong mapping). A text-only LOW is kept: the
+narrowed search would return the same issue with the same score. A
+listing that fails (non-quota) or is page-capped is skipped for
+`LIST_MISS_TTL_SECS` (1 h) so later issues of the batch don't re-request
+it.
+
+**Observability.** Each run stores `query.coverage_lookups =
+[{source, path: direct|search, fallback?, provider_issue_id?}]`;
+`GET /api/metadata/batch/{id}` tallies them into
+`aggregate.lookups[] = {source, direct, search, fallbacks[{reason,
+count}]}` (ComicVine, Metron, GCD order), shown under the Review tab's
+batch header.
+
+**Cost.** Per covered issue per provider: 0 searches + 1 detail fetch
+(which the apply then reuses), instead of 1–2 searches + 1 detail at
+apply; plus each provider series' issue list once per 24 h (ComicVine
+⌈n/100⌉, Metron ⌈n/100⌉, GCD index + one overview page per 50 numbers).
+`tests/metadata_batch_direct_lookup.rs` asserts 10 covered Fantastic
+Four issues → 0 ComicVine / 0 Metron searches, 10 details each, lists
+fetched once (CV 2 pages, Metron 3).
+
+**Bucket.** With no local cover hash a correct direct candidate scores
+on text alone — the FF fixture lands MEDIUM (67.5: the 2001 folder year
+vs the 1998 volume), so it goes to "needs review" (bulk *Fill missing*),
+not "Accept all strong". With a cover hash, a 0-bit match lands HIGH
+through the ladder. Letting a date-confirmed coverage match raise MEDIUM
+to HIGH is a proposal, not implemented.
+
+**"Only missing or partial"** (`scope=incomplete`) also selects issues
+whose description equals the series description (`series.summary` or a
+cached provider series description matched to it), HTML-stripped,
+whitespace-collapsed and case-folded, shared by ≥ 2 issues, and not
+user-pinned (`field_provenance` `description`/`summary` `set_by =
+'user'`) — `api::metadata_search::series_description_leaks`, the strict
+query from `metadata-sidecar-writeback.md` § "Repairing issues a series
+apply overwrote". They are selected whatever their completeness tier
+(including *Accepted*).
 
 ## Adding a new provider
 

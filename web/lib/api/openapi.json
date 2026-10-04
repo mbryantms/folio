@@ -12912,7 +12912,8 @@
           "applied",
           "awaiting_quota",
           "failed",
-          "in_flight"
+          "in_flight",
+          "lookups"
         ],
         "properties": {
           "applied": {
@@ -12932,6 +12933,13 @@
             "type": "integer",
             "format": "int64",
             "description": "Still queued / searching."
+          },
+          "lookups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatchLookupCount"
+            },
+            "description": "Per provider: how many searched children were answered by a direct\nlookup through series coverage vs a provider search (with why it\nfell back). Empty until a child that may use direct lookups has\nfinished searching."
           },
           "needs_review": {
             "type": "integer",
@@ -13144,6 +13152,22 @@
           }
         }
       },
+      "BatchFallbackCount": {
+        "type": "object",
+        "required": [
+          "reason",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/FallbackReason"
+          }
+        }
+      },
       "BatchListResp": {
         "type": "object",
         "required": [
@@ -13184,6 +13208,39 @@
           },
           "status": {
             "type": "string"
+          }
+        }
+      },
+      "BatchLookupCount": {
+        "type": "object",
+        "description": "One provider's direct-lookup vs search tally across a batch.",
+        "required": [
+          "source",
+          "direct",
+          "search",
+          "fallbacks"
+        ],
+        "properties": {
+          "direct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues answered from the provider series' issue list — no search."
+          },
+          "fallbacks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatchFallbackCount"
+            },
+            "description": "Why those issues searched, most frequent first."
+          },
+          "search": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues that ran a provider search."
+          },
+          "source": {
+            "type": "string",
+            "description": "`\"comicvine\"` | `\"metron\"` | `\"gcd\"`."
           }
         }
       },
@@ -19741,6 +19798,18 @@
           "metron",
           "comicvine",
           "gcd"
+        ]
+      },
+      "FallbackReason": {
+        "type": "string",
+        "description": "Why a batch issue fell back from a direct lookup to a search.",
+        "enum": [
+          "no_target",
+          "list_unavailable",
+          "not_listed",
+          "date_conflict",
+          "detail_unavailable",
+          "rejected_by_matcher"
         ]
       },
       "Field": {
