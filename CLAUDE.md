@@ -508,14 +508,27 @@ Default admin (first registered user becomes admin):
     apply ([`apply_series_via_sidecar`](crates/server/src/metadata/apply.rs)),
     the coverage map, and the issue surface all route through it — don't
     re-derive the effective target ad hoc.
-  - **Auto-detection**:
+  - **Coverage (detection)**:
+    [`metadata::coverage`](crates/server/src/metadata/coverage.rs) is the
+    one mechanism that maps a local series onto provider series. Per
+    provider (ComicVine, Metron, GCD) it lists candidate series' issues
+    (number + cover date; cached 24 h via `coverage::provider_issues`),
+    assigns each local issue to the series that lists its number with a
+    non-conflicting cover date, and takes a minimum set cover: the
+    largest coverer is the main, the rest become `series_provider_range`
+    rows. It runs as the `provider_coverage` job — from the Details tab's
+    **Analyze coverage**, and after a series match per
+    `metadata.coverage_after_series_apply` (`off` | `manual_only` default
+    | `all`), seeded with the chosen series. Results are **proposals**:
+    nothing is written until Accept unless the job's High-confidence rule
+    holds AND `metadata.coverage_auto_accept` is on; user-set ids/ranges
+    are never overwritten and stale automatic ranges are only reported.
+    Issue numbers go through `canonical_issue_number` (GCD dual legacy
+    numbering like `"42 (471)"` → 42; `½` compares as 0.5) — never match
+    provider issues by number without the date check.
     [`metadata::auto_split`](crates/server/src/metadata/auto_split.rs)
-    runs after a *manual* series apply (and on the "Detect from
-    providers" button) — enumerates the matched series' issue numbers,
-    finds the contiguous block it doesn't cover, resolves the alternate
-    series, and writes the range row. Only splitter providers implement
-    `MetadataProvider::list_series_issue_numbers`; lumpers use the
-    no-op default → no split. Gated to manual applies to spare budget.
+    remains as the shared range/run library (and the server-side detect
+    endpoint); it no longer runs automatically after applies.
   - **Year gate**: the issue-search gate uses the mapped sub-series'
     `declared_year` when a range applies (so a 2012 relaunch isn't
     dropped against a 2001 parent), and the *broad/unmapped* path is
