@@ -290,7 +290,7 @@
       ]
     },
     {
-      "description": "The Rust toolchain moves atomically: rust-toolchain.toml, the Dockerfile `rust:X.Y` builder tag and every dtolnay/rust-toolchain@<version> workflow ref land in one PR, or CI compiles with a different rustc than the repo pins. Minor/patch toolchain bumps auto-merge: clippy runs with -D warnings, the whole suite and the Docker build+smoke run on the new compiler, so a bump that breaks anything simply stays open. NOTE: CI jobs pin dtolnay/rust-toolchain@1.96.0 on purpose - that is the MSRV (Cargo.toml rust-version) and dtolnay publishes those refs as branches, not tags, so Renovate cannot bump them; bumping MSRV is a human decision made in Cargo.toml + ci.yml together.",
+      "description": "The Rust toolchain moves atomically: rust-toolchain.toml is the single source of truth for every build (the Dockerfile builder rides the floating `rust:1` tag and copies rust-toolchain.toml before compiling, so the image tag no longer has to track it). Minor/patch toolchain bumps auto-merge: clippy runs with -D warnings, the whole suite and the Docker build+smoke run on the new compiler, so a bump that breaks anything simply stays open. NOTE: CI jobs pin dtolnay/rust-toolchain@1.96.0 on purpose - that is the MSRV (Cargo.toml rust-version) and dtolnay publishes those refs as branches, not tags, so Renovate cannot bump them; bumping MSRV is a human decision made in Cargo.toml + ci.yml together.",
       "groupName": "rust-toolchain",
       "matchPackageNames": [
         "rust",
