@@ -13,6 +13,26 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.34.0](https://github.com/mbryantms/folio/compare/v0.33.2...v0.34.0) (2026-10-04)
+
+
+### Added
+
+* **metadata:** provider range detection uses GCD/Metron for every series ([#983](https://github.com/mbryantms/folio/issues/983)) ([e25dcf1](https://github.com/mbryantms/folio/commit/e25dcf1dc055d61a2e0bb8669d442bc629bf151c))
+* **metadata:** provider-independent series coverage across ComicVine, Metron and GCD ([#984](https://github.com/mbryantms/folio/issues/984)) ([182a14a](https://github.com/mbryantms/folio/commit/182a14ae6b4b0b11affbfe0918f68ceb73c2fcb7))
+
+
+### Fixed
+
+* **metadata:** coverage handles GCD dual numbering and the Fantastic Four 1998–2012 run ([#986](https://github.com/mbryantms/folio/issues/986)) ([15f0b32](https://github.com/mbryantms/folio/commit/15f0b322f9fb221e45feab31d31cc53c0642947c))
+
+
+### Dependencies
+
+* update dependency @ai-sdk/provider-utils@&lt;4.0.34 to v4.0.57 ([#981](https://github.com/mbryantms/folio/issues/981)) ([eb86355](https://github.com/mbryantms/folio/commit/eb86355ac13d291993d68fae6872365cbbd94f0c))
+* update dependency pnpm to v12.8.2 ([#982](https://github.com/mbryantms/folio/issues/982)) ([dafe8cf](https://github.com/mbryantms/folio/commit/dafe8cfe5f4ee2501036e2d5f7abde134d35dff8))
+* update docker/dockerfile:1.27 docker digest to 4edf897 ([#979](https://github.com/mbryantms/folio/issues/979)) ([426a510](https://github.com/mbryantms/folio/commit/426a510c387e7b67f2ee5af12047fe29ee54ff71))
+
 ## [0.33.2](https://github.com/mbryantms/folio/compare/v0.33.1...v0.33.2) (2026-10-03)
 
 
