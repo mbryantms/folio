@@ -179,12 +179,20 @@ jobs:
           elapsed=$(($(date +%s) - start))
           echo "| cargo test --doc | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
 
+  # Sharded 4 ways (`nextest --partition count:N/4`): each shard compiles
+  # the same test binaries (shared rust-cache key) and runs a quarter of the
+  # tests against its own Postgres + Redis services. rust-check gates on the
+  # aggregate matrix result, so the required check name is unchanged.
   rust-test:
-    name: Rust — test
+    name: Rust — test (${{ matrix.shard }}/4)
     runs-on: ubuntu-24.04
     needs: [changes]
     if: needs.changes.outputs.rust == 'true'
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       CARGO_INCREMENTAL: 0
       # Full debuginfo is the bulk of the debug target dir (every workspace
@@ -245,7 +253,11 @@ jobs:
             echo "${avail_gb} GB free; skipping cleanup"
           fi
       - uses: dtolnay/rust-toolchain@1.96.0
+      # One cache entry for all four shards (identical builds). Concurrent
+      # saves of the same key are fine: the losers skip "already exists".
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: rust-test
       - name: install nextest
         uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
         with:
@@ -258,30 +270,19 @@ jobs:
       # doesn't run) live in the clippy job, off this job's critical path.
       - name: test
         run: |
+          start=$(date +%s)
           status=0
+          cargo nextest run --workspace --profile "$NEXTEST_PROFILE" \
+            --partition "count:${{ matrix.shard }}/4" \
+            --status-level slow --final-status-level slow || status=$?
+          elapsed=$(($(date +%s) - start))
           {
-            echo "### Rust test timings"
+            echo "### Rust test timings (shard ${{ matrix.shard }}/4)"
             echo
             echo "| Command | Duration | Exit |"
             echo "| --- | ---: | ---: |"
+            echo "| cargo nextest (build + run) | ${elapsed}s | ${status} |"
           } >> "$GITHUB_STEP_SUMMARY"
-
-          run_timed() {
-            label="$1"
-            shift
-            start=$(date +%s)
-            "$@"
-            code=$?
-            elapsed=$(($(date +%s) - start))
-            echo "| ${label} | ${elapsed}s | ${code} |" >> "$GITHUB_STEP_SUMMARY"
-            if [ "$code" -ne 0 ]; then
-              status="$code"
-            fi
-          }
-
-          run_timed "cargo nextest" \
-            cargo nextest run --workspace --profile "$NEXTEST_PROFILE" \
-              --status-level slow --final-status-level slow
           exit "$status"
         env:
           # renovate/* PRs auto-merge on green, so they get the no-retry
@@ -291,6 +292,16 @@ jobs:
           COMIC_TEST_PG_URL: postgres://comic:comic@localhost:5432/comic_reader_test
           COMIC_DATABASE_URL: postgres://comic:comic@localhost:5432/comic_reader_test
           COMIC_REDIS_URL: redis://localhost:6379
+      # Per-test timings for tuning shard balance / chasing slow tests
+      # (.config/nextest.toml `[profile.*.junit]`).
+      - name: Upload nextest junit
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nextest-junit-shard-${{ matrix.shard }}
+          path: target/nextest/*/junit.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
   # Migration down-path gate (WP-3.8, audit AR-9): every migration ships a
   # `down`, but nothing ran them. Against a fresh Postgres 18 service DB this
@@ -346,7 +357,7 @@ jobs:
             echo "| --- | --- |"
             echo "| fmt | ${{ needs.rust-fmt.result }} |"
             echo "| clippy | ${{ needs.rust-clippy.result }} |"
-            echo "| test | ${{ needs.rust-test.result }} |"
+            echo "| test (all 4 shards) | ${{ needs.rust-test.result }} |"
             echo "| migration round-trip | ${{ needs.migration-roundtrip.result }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
