@@ -761,8 +761,9 @@ series (GCD ends Fantastic Four (1961) at #416). The local series stays
 whole and the exceptions live in `series_provider_range` (see CLAUDE.md,
 "Provider series-boundary divergence"). Detection writes those rows.
 
-**Entry points.** The Details-tab button
-(`POST /api/series/{slug}/provider-ranges/detect`, admin, audited as
+**Entry points.** The detect endpoint
+(`POST /api/series/{slug}/provider-ranges/detect`; the Details tab now
+uses [coverage analysis](#provider-independent-coverage-analyze-coverage), admin, audited as
 `admin.series.provider_range_detect`) runs
 [`metadata/series_link.rs`](../../crates/server/src/metadata/series_link.rs)
 for every provider. The post-apply hook (`jobs/metadata_apply.rs`,
@@ -847,6 +848,112 @@ overlay (`apply_series_via_sidecar`), the coverage card
 (`api/issues.rs`), the folder-name health check
 (`scanner/folder_checks.rs`), and the relationship engine (the `split`
 continuation qualifier and the `provider_range` → `see_also` source).
+
+## Provider-independent coverage ("Analyze coverage")
+
+Detection above is anchored on one matched main series per provider and
+only searches for the gaps it leaves. That fails when a folder-pinned
+local series spans several provider series in similar proportions, or
+when numbers alone mislead (#1–12 of a 1998 volume vs #1–12 of a 2018
+one). Coverage analysis
+([`metadata/coverage.rs`](../../crates/server/src/metadata/coverage.rs))
+has no anchor and covers ComicVine too. The Details-tab card uses it;
+the detect endpoint stays for the API and the post-apply hook.
+
+**Issue lists.** `MetadataProvider::list_series_issues(id, IssueListOpts)`
+returns `ProviderSeriesIssues` — per distinct canonical number the
+provider **issue id** and **cover date**, plus the series name / year when
+the listing carries them. `lists_series_issues()` gates it (true for all
+three; `enumerates_series_issues()` stays the split detector's gate and
+is still false for ComicVine).
+
+| provider | call | cost |
+|---|---|---|
+| ComicVine | `GET /issues/?filter=volume:<id>&field_list=id,issue_number,cover_date,store_date,volume&limit=100&offset=N` | ⌈n/100⌉ (page cap 20) |
+| Metron | `GET /api/issue/?series_id=<id>&page_size=100&page=N` | ⌈n/100⌉ |
+| GCD | series index (free after a search) + summary, then `/api/series/<id>/overview/` pages holding the local numbers (`date_hint`, ≤ `LIST_DATE_PAGE_CAP` = 4) | 0–2 + ≤ 4 |
+
+`coverage::provider_issues(state, source, series_id)` is the public
+cache-then-fetch entry point: Redis `metadata:issue_list:v1:<source>:<id>`,
+24 h (`ISSUE_LIST_TTL_SECS`). Only complete listings are cached; a GCD
+entry missing dates for newly hinted numbers is refreshed (GCD's own
+overview cache makes that cheap). `coverage::provider_issue_for(list,
+number, year, month)` picks the provider issue for a local issue (date
+breaks a duplicate number). The coverage card also reads series names
+from this cache (`cached_series_label`), so a GCD series found only via a
+link shows its name instead of `#5555`.
+
+**Candidates** (≤ `MAX_CANDIDATES` = 8 per provider), in order: series
+`external_ids` (a `user` row first), the latest applied candidate,
+existing `series_provider_range` targets, the free metadata-cache bridge,
+Metron's `?cv_id=` / `?gcd_id=` cross-reference (run once before the
+providers fan out; its row seeds the CV and GCD ids), then series searches
+on the local name + up to 2 aliases with **no year filter**, through
+`pre_filter_series` (`PreFilter::from_library` blacklist; hard year gate
+against the *latest* local issue year) and `matcher::score_series`,
+keeping sanitized-name similarity ≥ 0.85. A candidate is **strict** when
+the name is equal, its start year equals the local series year, the
+publisher doesn't conflict and there's no format mismatch; a user link
+counts as strict. After a first cover, up to `MAX_GAP_SEARCHES` = 2
+issue searches (first issue of each uncovered run) can add candidates.
+
+**Assignment + cover** (`compute_cover`, pure): a local issue is eligible
+for a candidate listing its canonical number with a non-conflicting date
+(`date_match`: ±6 months with months on both sides, else year ±1; no date
+⇒ number-only). Only the candidates at the issue's best date level stay
+eligible. Greedy set cover then takes the candidate eligible for most
+unassigned issues (ties: date-confirmed count, strict, name similarity,
+origin, id). The largest coverer is the main (a user link, or the admin's
+"Choose series", is forced first). Every other used series becomes ranges
+via `auto_split::split_runs`, cut at every number the main lists and
+every local issue assigned elsewhere or uncovered. Non-numeric issues
+assigned to a non-main series are reported (`unranged_specials`), never
+ranged.
+
+**Confidence**: High = strict main and every assignment date-confirmed
+(and no partial listing); Medium = one of them; Low = neither.
+`auto_acceptable` = High + changes something + no conflict with
+user-set data (a user link to another series, a user range overlapping a
+proposed range or disagreeing with the proposal).
+
+**Job + API** (`jobs/provider_coverage.rs`, `api/provider_coverage.rs`):
+
+- `POST /api/series/{slug}/provider-coverage/analyze` `{auto_accept}` →
+  `202 {job_id, state, queued}`; audited
+  `admin.series.provider_coverage_analyze`. A series with a queued /
+  running job (< 15 min old) gets that job back. Queue `provider_coverage`,
+  concurrency 1.
+- `GET /api/series/{slug}/provider-coverage/analysis` → state + the grid
+  (`local_issues` × `providers[].cells`, candidates, proposed ranges with
+  `new` / `already_mapped` / `conflict`, uncovered, stale ranges,
+  conflicts, requests vs budget). The record (Redis `coverage:job:<id>`,
+  `coverage:series:<series_id>`, 24 h) stores the candidates with their
+  listings; the view is rebuilt from it + current rows on every read.
+- `POST /api/series/{slug}/provider-coverage/accept`
+  `{source, main_series_id?}` → `AcceptOutcome`; audited
+  `admin.series.provider_coverage_accept` (`auto: true` when the job did
+  it). Main id via `writers::set_external_id_promoting` — `SetBy::User`
+  for an admin accept, `SetBy::Provider(source)` for auto-accept — and
+  never over a `user` row (a chosen main contradicting the user's link
+  refuses the whole accept). Ranges via `auto_split::insert_detected_range`
+  (`cross_reference`); overlaps are skipped, nothing is deleted. A created
+  range enqueues relationship suggestions for the library.
+
+Every `fold_targets` consumer (issue search narrowing, the sidecar series
+overlay, the coverage card, the issue page's alternate series, the
+relationship engine) reads the written rows directly.
+
+**Budgets** (`request_budget`): ComicVine 40, Metron 30 (one short
+`QuotaExceeded` is waited out), GCD 30 (searches counted at 2 pages); an
+analysis wall clock of 240 s. Typical cost for a two-volume folder, cold:
+ComicVine 1 search + ⌈n/100⌉ per listed volume (Daredevil 1998 + 1964:
+7); Metron 1 search + ⌈n/100⌉ per series (8); GCD 1–2 search pages + ≤ 4
+overview pages per series (9). Warm (24 h): one search per provider.
+
+**Reusing coverage for per-issue lookups.** After an accept, a local
+issue's provider series is `range_map::fold_targets(...)`, and its
+provider issue is `provider_issue_for(provider_issues(...), number,
+year, month)` — no search needed, one detail fetch.
 
 ## Adding a new provider
 

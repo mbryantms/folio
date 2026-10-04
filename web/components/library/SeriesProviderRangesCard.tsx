@@ -11,12 +11,13 @@
  * picture at a glance instead of reconstructing the split from a bare
  * list of exceptions. Source-agnostic.
  *
- * "Detect from providers" checks every provider that can list a series'
- * issues (Metron, GCD) — resolving this series' id there even when it was
- * only matched through ComicVine — and shows the per-provider outcome
- * (`<ProviderDetectResults>`), including matches to confirm.
+ * "Analyze coverage" runs a background analysis across ComicVine, Metron
+ * and GCD with no prior match required: it lists every candidate provider
+ * series, assigns each local issue by number + cover date, and proposes
+ * a main series + ranges per provider (`<ProviderCoverageAnalysis>`),
+ * which the admin accepts per provider.
  *
- * Visible to anyone who can see the library; add / remove / detect are
+ * Visible to anyone who can see the library; add / remove / analyze / accept are
  * admin-only (the API enforces it too). Renders nothing when there's no
  * coverage and the viewer can't edit.
  */
@@ -36,6 +37,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -46,22 +48,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  ProviderDetectResults,
-  formatGap,
-} from "@/components/library/ProviderDetectResults";
+  ProviderCoverageAnalysis,
+  SERIES_COLORS,
+} from "@/components/library/ProviderCoverageAnalysis";
 import {
-  useAddExternalIdSeries,
+  useAcceptProviderCoverage,
   useAddProviderRangeSeries,
+  useAnalyzeProviderCoverage,
   useDeleteProviderRangeSeries,
-  useDetectProviderRangesSeries,
 } from "@/lib/api/mutations";
-import { useMe, useProviderCoverageSeries } from "@/lib/api/queries";
-import type {
-  CoverageSegment,
-  DetectResp,
-  LinkCandidate,
-  ProviderRangeRow,
-} from "@/lib/api/types";
+import {
+  useMe,
+  useProviderCoverageAnalysis,
+  useProviderCoverageSeries,
+} from "@/lib/api/queries";
+import type { CoverageRangeRef, CoverageSegment } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
 const SOURCES: Array<{ value: string; label: string }> = [
@@ -70,23 +71,6 @@ const SOURCES: Array<{ value: string; label: string }> = [
   { value: "gcd", label: "Grand Comics Database" },
   { value: "marvel", label: "Marvel" },
   { value: "locg", label: "League of Comic Geeks" },
-];
-
-/**
- * Categorical hues (HSL triplets) for the coverage bar — one per distinct
- * provider series within a provider, so every segment is coloured and the
- * split reads at a glance. First slot is the theme amber; the rest are
- * evenly-spread distinct hues that hold up on the dark + light themes.
- */
-const SERIES_COLORS = [
-  "38 92% 55%", // amber (theme primary)
-  "199 89% 48%", // sky
-  "262 83% 58%", // violet
-  "160 84% 39%", // emerald
-  "350 89% 60%", // rose
-  "173 80% 40%", // teal
-  "25 95% 53%", // orange
-  "292 84% 61%", // fuchsia
 ];
 
 /** "#600–611", "#600+", "up to #50", or "all issues". */
@@ -126,37 +110,36 @@ export function SeriesProviderRangesCard({
   const coverage = useProviderCoverageSeries(seriesSlug);
   const add = useAddProviderRangeSeries(seriesSlug);
   const remove = useDeleteProviderRangeSeries(seriesSlug);
-  const detect = useDetectProviderRangesSeries(seriesSlug);
-  const addExternalId = useAddExternalIdSeries(seriesSlug);
-  const [detectResult, setDetectResult] = React.useState<DetectResp | null>(
+  const analyze = useAnalyzeProviderCoverage(seriesSlug);
+  const acceptCoverage = useAcceptProviderCoverage(seriesSlug);
+  const analysis = useProviderCoverageAnalysis(seriesSlug, {
+    enabled: isAdmin,
+  });
+  const [autoAccept, setAutoAccept] = React.useState(false);
+  const [acceptingSource, setAcceptingSource] = React.useState<string | null>(
     null,
   );
-  /** `source:external_id` of the candidate being confirmed. */
-  const [confirmingId, setConfirmingId] = React.useState<string | null>(null);
+  const analysisState = analysis.data?.state;
+  const analysing =
+    analyze.isPending ||
+    analysisState === "queued" ||
+    analysisState === "running";
 
-  const runDetect = () =>
-    detect.mutate(undefined, {
-      onSuccess: (data) => setDetectResult(data),
-    });
+  const runAnalyze = () => analyze.mutate({ auto_accept: autoAccept });
 
-  // Confirming a candidate records it as a user-set external id, then
-  // re-runs detection against it.
-  const onConfirmCandidate = (source: string, c: LinkCandidate) => {
-    setConfirmingId(`${source}:${c.external_id}`);
-    addExternalId.mutate(
-      { source, external_id: c.external_id, external_url: c.url ?? null },
-      {
-        onSuccess: () => runDetect(),
-        onSettled: () => setConfirmingId(null),
-      },
+  const onAccept = (source: string, mainSeriesId: string | null) => {
+    setAcceptingSource(source);
+    acceptCoverage.mutate(
+      { source, main_series_id: mainSeriesId },
+      { onSettled: () => setAcceptingSource(null) },
     );
   };
 
-  const onRemoveStale = (sourceLabel: string, row: ProviderRangeRow) =>
+  const onRemoveStale = (sourceLabel: string, row: CoverageRangeRef) =>
     setConfirmRemove({
       id: row.id,
       sourceLabel,
-      range: formatGap(row.range_low ?? "", row.range_high ?? ""),
+      range: formatRange(row.range_low, row.range_high),
       seriesName:
         row.provider_series_name ?? `series ${row.provider_series_id}`,
     });
@@ -202,10 +185,7 @@ export function SeriesProviderRangesCard({
           yearNum !== null && Number.isFinite(yearNum) ? yearNum : null,
       },
       {
-        onSuccess: () => {
-          resetForm();
-          setDetectResult(null); // stale once the mapping set changed
-        },
+        onSuccess: () => resetForm(),
       },
     );
   };
@@ -215,10 +195,7 @@ export function SeriesProviderRangesCard({
     remove.mutate(
       { id: confirmRemove.id },
       {
-        onSuccess: () => {
-          setConfirmRemove(null);
-          setDetectResult(null);
-        },
+        onSuccess: () => setConfirmRemove(null),
       },
     );
   };
@@ -235,10 +212,9 @@ export function SeriesProviderRangesCard({
       ) : providers.length === 0 && !adding ? (
         <p className="text-muted-foreground text-sm">
           No provider series mapped yet. Use{" "}
-          <span className="font-medium">Detect from providers</span> to find
-          this series on Metron and GCD (even if it was only matched through
-          ComicVine). If a provider files part of the run (e.g. a legacy
-          renumbering) as a separate series, it&rsquo;ll show here.
+          <span className="font-medium">Analyze coverage</span> to find which
+          ComicVine, Metron and GCD series hold these issues, even when the
+          folder mixes several volumes (e.g. a run plus its legacy renumbering).
         </p>
       ) : (
         <div className="space-y-4">
@@ -369,29 +345,64 @@ export function SeriesProviderRangesCard({
         </div>
       )}
 
-      {isAdmin && detectResult && (
-        <ProviderDetectResults
-          result={detectResult}
-          confirmingId={confirmingId}
-          onConfirm={onConfirmCandidate}
-          onRemoveStale={onRemoveStale}
-        />
+      {isAdmin && analysis.data && (
+        <div className="space-y-2 border-t pt-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="font-medium">Coverage analysis</span>
+            <span className="text-muted-foreground text-xs">
+              {analysing
+                ? "Running in the background…"
+                : analysis.data.finished_at
+                  ? `Finished ${new Date(analysis.data.finished_at).toLocaleString()}`
+                  : null}
+            </span>
+          </div>
+          {analysing ? (
+            <div className="text-muted-foreground flex items-center gap-2 text-xs">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Listing candidate series on ComicVine, Metron and GCD. This can
+              take a minute (provider rate limits).
+            </div>
+          ) : analysis.data.state === "failed" ? (
+            <p className="text-destructive text-xs">
+              Analysis failed: {analysis.data.error ?? "unknown error"}
+            </p>
+          ) : (
+            <ProviderCoverageAnalysis
+              data={analysis.data}
+              acceptingSource={acceptingSource}
+              onAccept={onAccept}
+              onRemoveStale={onRemoveStale}
+            />
+          )}
+        </div>
       )}
 
       {isAdmin && !adding && (
-        <div className="flex justify-end gap-1">
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="cov-auto"
+              checked={autoAccept}
+              onCheckedChange={(v) => setAutoAccept(v === true)}
+              disabled={analysing}
+            />
+            <Label htmlFor="cov-auto" className="text-xs font-normal">
+              Accept high-confidence results
+            </Label>
+          </div>
           <Button
             variant="ghost"
             size="sm"
-            disabled={detect.isPending || confirmingId !== null}
-            onClick={runDetect}
+            disabled={analysing || acceptingSource !== null}
+            onClick={runAnalyze}
           >
-            {detect.isPending ? (
+            {analysing ? (
               <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
             ) : (
               <Sparkles className="mr-1 h-3.5 w-3.5" />
             )}
-            Detect from providers
+            Analyze coverage
           </Button>
           <Button variant="ghost" size="sm" onClick={() => setAdding(true)}>
             <Plus className="mr-1 h-3.5 w-3.5" /> Add mapping

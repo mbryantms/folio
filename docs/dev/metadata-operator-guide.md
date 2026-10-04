@@ -209,10 +209,10 @@ responses on 2026-10-01:
   suddenly come back sparse, check the Providers card's last error and
   file an issue with the response.
 - **Series splits.** GCD splits long runs differently from ComicVine
-  (e.g. Fantastic Four (1961) ends at #416 on GCD). **Detect from
-  providers** (series page → Details) maps the uncovered issue range onto
-  the right GCD series. The series doesn't need a GCD match first: see
-  [Detect from providers](#detect-from-providers) below.
+  (e.g. Fantastic Four (1961) ends at #416 on GCD). **Analyze coverage**
+  (series page → Details) finds which GCD series hold which of your
+  issues and maps each run onto the right one. The series doesn't need a
+  GCD match first: see [Analyze coverage](#analyze-coverage) below.
 - **Covers aren't downloadable.** GCD serves every cover from
   `files1.comics.org`, which sits behind a Cloudflare bot challenge.
   The challenge refuses server-side downloads and browser hotlinks
@@ -569,44 +569,64 @@ drop the legacy DB-direct apply branch — flag a maintainer.
   finishes. Subsequent applies for the same issue skip with
   `archive busy (mutex)` in `ApplyOutcome.sidecar_skip_reasons`.
 
-## Detect from providers
+## Analyze coverage
 
-The **Detect from providers** button on a series' Details tab (admins
-only) checks every provider that can list a series' issues, which today
-means Metron and GCD. ComicVine can't list issues, so it shows "Can't
-list issues".
+The **Analyze coverage** button on a series' Details tab (admins only)
+works out which ComicVine, Metron and GCD series hold which of this
+series' issues. It needs no prior match: a folder that mixes a 1998
+volume with its legacy-numbered #500+ run, or two relaunches in equal
+parts, is handled the same way.
 
-- **No match needed.** If the series was only ever matched through
-  ComicVine, detection finds the Metron and GCD series itself: first from
-  ids Folio already has, then from Metron's own cross-reference (a
-  ComicVine id leads to the Metron series and its GCD id in one Metron
-  request), and last from a series search.
-- **Search matches are strict.** A searched series is used automatically
-  only when its name and start year match exactly, its publisher doesn't
-  conflict, no other result matches as well, and its issue list contains
-  at least half of your numbered issues. Anything weaker shows under
-  **Needs confirmation** with the reason ("start year differs", "lists
-  only 30% of the local issues"). **Use this series** saves it as your
-  choice and runs detection again. Nothing is written until you confirm.
-- **What gets written.** A series id found automatically is saved to the
-  series' external IDs (you'll see it in the External IDs card). Each
-  issue run the provider files under a different series becomes a range
-  mapping, shown as an **override** in the coverage bars.
-- **Annuals and specials** (`Annual 1`, `14AU`) are never put in a
-  range; the result counts them.
-- **Stale mappings.** If the matched series now lists the issues of an
-  automatic mapping (for example after you re-matched the series), the
-  result flags it with a remove button. Folio never removes a mapping
-  on its own.
-- **Disagreement.** Metron and GCD often split a run differently. The
-  result says so; both mappings coexist because each provider uses only
-  its own.
-- **Budget.** One click uses at most a few requests per provider: about
-  1 Metron cross-reference, the issue list pages, and up to 3 uncovered
-  runs (a search plus one issue list each). GCD's 100/hour bucket and
-  Metron's 20/minute burst limit apply. A provider that hits its limit
-  shows **Rate limited**, and the others still run. Run it again later
-  to finish.
+- **How it decides.** For each provider Folio collects up to 8 candidate
+  series (ids it already has, Metron's own ComicVine/GCD
+  cross-reference, and a series search on the name and aliases with no
+  year filter; your library's publisher blacklist applies), lists every
+  candidate's issues *with cover dates*, and assigns each of your issues
+  to the series that has that number **and** a cover date within six
+  months of yours (or the same year ±1 when a month is missing). That is
+  what tells Daredevil (1998) #1 from Daredevil (1964) #1. The series
+  holding the most of your issues becomes the provider's main series;
+  every other series becomes a range mapping for the issues it holds.
+- **Runs in the background.** Three providers and ComicVine's one
+  request per second don't fit a normal request, so the button queues a
+  job and the card updates when it finishes (usually 10–60 s). The result
+  is kept for 24 hours.
+- **Reading the result.** On a wide screen a grid shows your issues
+  (collapsed into runs like "#1–5") against each provider; on a phone the
+  grid becomes a list per provider. Each provider shows its confidence
+  and why, the request count, issues **no series of that provider has**,
+  specials that sit in another series but can't be ranged, conflicts with
+  your own settings, and stale automatic mappings (with a remove button —
+  Folio never removes a mapping on its own).
+- **Confidence.** *High* means the main series matches your series'
+  name and start year exactly (or is the series you linked yourself)
+  **and** every issue's cover date agrees. *Medium* means one of the two;
+  *Low* neither. A local start year that differs from the provider's
+  (a 1999-labelled folder for a 1998 volume) is the usual reason for
+  Medium.
+- **Accept / Choose series.** **Accept** saves the main series as your
+  confirmed choice and writes the range mappings. **Choose series** picks
+  another candidate as the main first. Ranges that overlap one of your
+  own mappings are skipped and listed; existing mappings are never
+  overwritten or deleted.
+- **Accept high-confidence results** (checkbox next to the button)
+  accepts every High-confidence provider that changes something and
+  conflicts with nothing you set, as soon as the analysis finishes. Those
+  ids are recorded as provider-set, not as your choice.
+- **Your links win.** If you linked a provider series yourself, the
+  analysis is built around it and Accept never replaces it; to change it,
+  edit the External IDs card first.
+- **Budget.** Per analysis Folio spends at most 40 ComicVine requests (of
+  200/hour), 30 Metron (it waits out the 20/minute burst once) and 30 GCD
+  (of 100/hour). Issue lists are cached for 24 hours, so a second
+  analysis usually costs one search per provider. A provider that hits
+  its limit shows **Rate limited**; the others still finish.
+- **Annuals and specials** (`Annual 1`, `14AU`, `½`) are never range
+  bounds; they're listed instead.
+
+The older per-provider split detector
+(`POST …/provider-ranges/detect`) is still available through the API
+and still runs after a manual series apply.
 
 ## Files referenced
 

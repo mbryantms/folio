@@ -275,8 +275,10 @@ legacy-renumbered relaunch into one volume where Metron splits it (the
 classic case: *Fantastic Four* #600–611). Folio keeps **your** series
 whole, exactly as your folders have it, and records the disagreement as a
 per-provider issue-number range mapping: issues #600–611 resolve to the
-other provider series automatically during search and apply. There's even
-a "Detect from providers" button that finds these splits for you.
+other provider series automatically during search and apply. An "Analyze
+coverage" button works out, for ComicVine, Metron and GCD at once, which
+provider series holds each of your issues (matching issue numbers *and*
+cover dates) and proposes the mappings for you to accept.
 
 ---
 

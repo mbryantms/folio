@@ -54,6 +54,7 @@ pub mod page_overrides;
 pub mod pages;
 pub mod people;
 pub mod progress;
+pub mod provider_coverage;
 pub mod provider_ranges;
 pub mod publishers;
 pub mod rails;

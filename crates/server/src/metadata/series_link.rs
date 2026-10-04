@@ -567,7 +567,7 @@ async fn resolve_link(
 ///   lists the target's id (Metron series carry `cv_id` / `gcd_id`);
 /// - **reverse** — a cached target-provider series whose identifiers list
 ///   one of our known ids. Used only when exactly one series matches.
-async fn cache_bridge<C: ConnectionTrait>(
+pub(crate) async fn cache_bridge<C: ConnectionTrait>(
     db: &C,
     target: Source,
     known: &[(Source, String)],

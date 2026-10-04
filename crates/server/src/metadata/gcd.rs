@@ -89,9 +89,9 @@ use crate::metadata::http;
 use crate::metadata::identifier::{Identifier, Source, canonical_url};
 use crate::metadata::matcher::canonical_issue_number;
 use crate::metadata::provider::{
-    CreditCandidate, EntityCandidate, GenericMetadata, IssueCandidate, IssueQuery,
-    MetadataProvider, ProviderError, ProviderResult, QuotaSnapshot, SeriesCandidate, SeriesQuery,
-    VariantCoverCandidate,
+    CreditCandidate, EntityCandidate, GenericMetadata, IssueCandidate, IssueListOpts, IssueQuery,
+    MetadataProvider, ProviderError, ProviderIssue, ProviderResult, ProviderSeriesIssues,
+    QuotaSnapshot, SeriesCandidate, SeriesQuery, VariantCoverCandidate,
 };
 use crate::metadata::rate_limit::{self, BucketDef, Reservation};
 use async_trait::async_trait;
@@ -140,6 +140,12 @@ pub const SEARCH_PAGE_CAP: u32 = 2;
 /// Overview pages probed per narrowed issue search: the estimated page,
 /// then its neighbours.
 const OVERVIEW_PROBE_CAP: usize = 3;
+
+/// Overview pages read per series listing to date the numbers a coverage
+/// analysis asks about ([`IssueListOpts::date_hint`]). Numbers on pages
+/// past the cap keep `cover_date = None` and fall back to number-only
+/// matching.
+pub const LIST_DATE_PAGE_CAP: u32 = 4;
 
 /// Issue details hydrated when the overview can't place an issue
 /// (overview route missing/renamed) — the pre-overview behaviour.
@@ -205,6 +211,9 @@ struct Inner {
     /// Last request start — enforces [`VELOCITY_FLOOR`]. Held only to
     /// compute the sleep, never across the HTTP call.
     last_request: Mutex<Option<Instant>>,
+    /// Network requests sent by this client instance (provider coverage
+    /// reports what a listing actually cost).
+    sent: std::sync::atomic::AtomicU32,
 }
 
 /// The slice of a GCD series every issue mapping needs, cached in Redis
@@ -281,6 +290,7 @@ impl GcdClient {
                 hour_bucket: rate_limit::GCD_HOUR,
                 day_bucket: rate_limit::GCD_DAY,
                 last_request: Mutex::new(None),
+                sent: std::sync::atomic::AtomicU32::new(0),
             }),
         }
     }
@@ -342,6 +352,9 @@ impl GcdClient {
     /// adds DRF's `page` query parameter.
     async fn get_json_page(&self, segments: &[&str], page: u32) -> ProviderResult<Value> {
         self.reserve_slot().await?;
+        self.inner
+            .sent
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let url = self.api_url(segments)?;
         let opts = http::RequestOpts {
             deadline: Some(Instant::now() + REQUEST_DEADLINE),
@@ -555,6 +568,149 @@ impl GcdClient {
         let v = self.get_json(&["series", series_id]).await?;
         let _ = self.store_series_detail(series_id, &v).await;
         Ok(series_index_entries(&v))
+    }
+
+    /// [`MetadataProvider::list_series_issues`] for GCD: the issue index
+    /// (ids + numbers; cached, free after a search), the series summary
+    /// for the display name, and the overview pages that hold the
+    /// `date_hint` numbers (one request per 50 issues, cached 24 h) for
+    /// cover dates.
+    async fn list_issues_with_dates(
+        &self,
+        series_id: &str,
+        opts: &IssueListOpts,
+    ) -> ProviderResult<ProviderSeriesIssues> {
+        let sent_before = self.inner.sent.load(std::sync::atomic::Ordering::Relaxed);
+        let index = self.series_index(series_id).await?;
+        let summary = self.series_summary(series_id).await.unwrap_or_default();
+
+        // One entry per distinct number; the base issue (descriptor with
+        // no `[variant]` bracket) wins over a variant listed first.
+        let mut issues: Vec<ProviderIssue> = Vec::new();
+        let mut is_base: Vec<bool> = Vec::new();
+        for e in &index {
+            if e.number.is_empty() {
+                continue;
+            }
+            let number = canonical_issue_number(&e.number);
+            let base = !e.descriptor.contains('[');
+            match issues.iter().position(|i| i.number == number) {
+                Some(pos) => {
+                    if base && !is_base[pos] {
+                        issues[pos].external_id = Some(e.id.clone());
+                        is_base[pos] = true;
+                    }
+                }
+                None => {
+                    issues.push(ProviderIssue {
+                        external_id: Some(e.id.clone()),
+                        number,
+                        cover_date: None,
+                    });
+                    is_base.push(base);
+                }
+            }
+        }
+
+        // Date the hinted numbers from the overview pages holding them.
+        let cap = if opts.max_pages == 0 {
+            LIST_DATE_PAGE_CAP
+        } else {
+            opts.max_pages
+        };
+        let wanted: HashSet<String> = opts
+            .date_hint
+            .iter()
+            .map(|n| issue_number_key(n))
+            .filter(|k| issues.iter().any(|i| issue_number_key(&i.number) == *k))
+            .collect();
+        let mut pages: Vec<u32> = wanted
+            .iter()
+            .filter_map(|k| distinct_number_position(&index, k))
+            .map(|pos| (pos / PAGE_SIZE + 1) as u32)
+            .collect();
+        pages.sort_unstable();
+        pages.dedup();
+        let mut read_pages: HashSet<u32> = HashSet::new();
+        let mut dated: HashSet<String> = HashSet::new();
+        let mut queue: Vec<u32> = pages;
+        let mut neighbours_added = false;
+        let mut i = 0usize;
+        while i < queue.len() {
+            let page = queue[i];
+            i += 1;
+            if !read_pages.insert(page) {
+                continue;
+            }
+            if read_pages.len() as u32 > cap {
+                break;
+            }
+            let body = match self.overview_page(series_id, page).await {
+                Ok(b) => b,
+                Err(e @ ProviderError::QuotaExceeded { .. }) => return Err(e),
+                Err(e) => {
+                    tracing::debug!(series_id, page, error = %e, "gcd: overview page unavailable for dating");
+                    continue;
+                }
+            };
+            for row in result_items(&body) {
+                let key = overview_row_number_key(row);
+                if key.is_empty() {
+                    continue;
+                }
+                let Some(issue) = issues
+                    .iter_mut()
+                    .find(|i| issue_number_key(&i.number) == key)
+                else {
+                    continue;
+                };
+                if issue.cover_date.is_none() {
+                    issue.cover_date = cover_date_of(row, false);
+                }
+                if let Some(id) = pick(row, &["issue_id", "id"]).and_then(|v| match v {
+                    Value::Number(n) => Some(n.to_string()),
+                    Value::String(s) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) => {
+                        Some(s.clone())
+                    }
+                    _ => None,
+                }) {
+                    issue.external_id = Some(id);
+                }
+                dated.insert(key);
+            }
+            // Index positions drift from overview rows (variants): probe
+            // the neighbours once for whatever the estimate missed.
+            if i == queue.len() && !neighbours_added {
+                neighbours_added = true;
+                let missing: Vec<u32> = wanted
+                    .iter()
+                    .filter(|k| !dated.contains(*k))
+                    .filter_map(|k| distinct_number_position(&index, k))
+                    .map(|pos| (pos / PAGE_SIZE + 1) as u32)
+                    .collect();
+                for p in missing {
+                    for n in [p + 1, p.saturating_sub(1)] {
+                        if n >= 1 && !read_pages.contains(&n) && !queue.contains(&n) {
+                            queue.push(n);
+                        }
+                    }
+                }
+            }
+        }
+        let dates_complete = !issues.is_empty() && issues.iter().all(|i| i.cover_date.is_some());
+        Ok(ProviderSeriesIssues {
+            series_name: summary.name,
+            year_began: summary.year_began,
+            publisher: summary.publisher,
+            issues,
+            complete: true,
+            dates_complete,
+            requests: self
+                .inner
+                .sent
+                .load(std::sync::atomic::Ordering::Relaxed)
+                .saturating_sub(sent_before),
+        })
     }
 
     /// One overview page (raw JSON), Redis-cached for [`INDEX_TTL_SECS`].
@@ -2484,6 +2640,14 @@ impl MetadataProvider for GcdClient {
 
     fn enumerates_series_issues(&self) -> bool {
         true
+    }
+
+    async fn list_series_issues(
+        &self,
+        series_external_id: &str,
+        opts: &IssueListOpts,
+    ) -> ProviderResult<ProviderSeriesIssues> {
+        self.list_issues_with_dates(series_external_id, opts).await
     }
 
     async fn list_series_issue_numbers(

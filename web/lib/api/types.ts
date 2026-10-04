@@ -819,6 +819,24 @@ export type GapStatus = Schemas["GapStatus"];
 export type ProviderCoverageResp = Schemas["ProviderCoverageResp"];
 export type ProviderCoverage = Schemas["ProviderCoverage"];
 export type CoverageSegment = Schemas["CoverageSegment"];
+// Provider-independent series coverage (analysis job + accept)
+export type AnalyzeCoverageReq = Schemas["AnalyzeCoverageReq"];
+export type AcceptCoverageReq = Schemas["AcceptCoverageReq"];
+export type CoverageJobResp = Schemas["CoverageJobResp"];
+export type CoverageJobState = Schemas["CoverageJobState"];
+export type CoverageAnalysisResp = Schemas["CoverageAnalysisResp"];
+export type CoverageLocalIssue = Schemas["CoverageLocalIssue"];
+export type ProviderCoverageView = Schemas["ProviderCoverageView"];
+export type CoverageCandidateView = Schemas["CoverageCandidateView"];
+export type CoverageCell = Schemas["CoverageCell"];
+export type CoverageConfidence = Schemas["CoverageConfidence"];
+export type CoverageStatus = Schemas["CoverageStatus"];
+export type CandidateOrigin = Schemas["CandidateOrigin"];
+export type DateMatch = Schemas["DateMatch"];
+export type ProposedRange = Schemas["ProposedRange"];
+export type ProposedRangeStatus = Schemas["ProposedRangeStatus"];
+export type CoverageRangeRef = Schemas["CoverageRangeRef"];
+export type AcceptOutcome = Schemas["AcceptOutcome"];
 // WP-7.1 series relationships
 export type RelationshipKind = Schemas["RelationshipKind"];
 export type RelationshipSource = Schemas["RelationshipSource"];

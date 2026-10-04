@@ -437,6 +437,58 @@ pub struct CrossRefSeries {
     pub identifiers: Vec<crate::metadata::identifier::Identifier>,
 }
 
+/// One issue of a provider series, as listed by
+/// [`MetadataProvider::list_series_issues`]. Provider-independent series
+/// coverage ([`crate::metadata::coverage`]) assigns local issues by
+/// number + cover date; the provider issue id lets a later lookup go
+/// straight to the issue detail instead of searching.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ProviderIssue {
+    /// The provider's issue id. `None` only when the listing didn't
+    /// carry one (never for ComicVine / Metron; GCD index rows always
+    /// do).
+    pub external_id: Option<String>,
+    /// Canonical issue number ([`crate::metadata::matcher::canonical_issue_number`]).
+    pub number: String,
+    /// Cover date (day precision is not meaningful: GCD/Metron store the
+    /// first of the month).
+    pub cover_date: Option<NaiveDate>,
+}
+
+/// A provider series' issue list plus the series' display identity when
+/// the listing carried it for free.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderSeriesIssues {
+    pub series_name: Option<String>,
+    pub year_began: Option<i32>,
+    pub publisher: Option<String>,
+    /// One entry per distinct canonical number (variants folded onto
+    /// their base issue), in provider order.
+    pub issues: Vec<ProviderIssue>,
+    /// `false` when the listing stopped early (page cap / budget), so a
+    /// number missing from `issues` may still exist upstream.
+    pub complete: bool,
+    /// `true` when every listed issue had its cover date looked up (the
+    /// listing carries dates). GCD only dates the overview pages it was
+    /// asked for (`IssueListOpts::date_hint`).
+    pub dates_complete: bool,
+    /// Network requests this call spent (0 when served from cache).
+    #[serde(skip)]
+    pub requests: u32,
+}
+
+/// Options for [`MetadataProvider::list_series_issues`].
+#[derive(Clone, Debug, Default)]
+pub struct IssueListOpts {
+    /// Canonical numbers whose cover dates the caller needs. Providers
+    /// whose listing carries dates ignore it; GCD reads only the overview
+    /// pages holding these numbers.
+    pub date_hint: Vec<String>,
+    /// Upper bound on listing pages (0 ⇒ the provider default). A listing
+    /// that hits it comes back with `complete = false`.
+    pub max_pages: u32,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReprintCandidate {
     pub label: String,
@@ -560,6 +612,43 @@ pub trait MetadataProvider: Send + Sync + 'static {
     /// without spending a request.
     fn enumerates_series_issues(&self) -> bool {
         false
+    }
+
+    /// List a provider series' issues with their ids and cover dates
+    /// (provider-independent coverage, [`crate::metadata::coverage`]).
+    ///
+    /// The default derives the list from [`Self::list_series_issue_numbers`]
+    /// (numbers only, no ids or dates). ComicVine, Metron and GCD override
+    /// it. Callers go through [`crate::metadata::coverage::provider_issues`],
+    /// which caches the result for 24 h.
+    async fn list_series_issues(
+        &self,
+        series_external_id: &str,
+        _opts: &IssueListOpts,
+    ) -> ProviderResult<ProviderSeriesIssues> {
+        let numbers = self.list_series_issue_numbers(series_external_id).await?;
+        let mut seen = std::collections::HashSet::new();
+        Ok(ProviderSeriesIssues {
+            issues: numbers
+                .into_iter()
+                .filter(|n| seen.insert(n.clone()))
+                .map(|number| ProviderIssue {
+                    external_id: None,
+                    number,
+                    cover_date: None,
+                })
+                .collect(),
+            complete: true,
+            ..Default::default()
+        })
+    }
+
+    /// `true` when [`Self::list_series_issues`] returns real data. Unlike
+    /// [`Self::enumerates_series_issues`] (the split detector's gate,
+    /// which stays `false` for ComicVine), this includes ComicVine, whose
+    /// volume issue list is paginated `/issues/?filter=volume:`.
+    fn lists_series_issues(&self) -> bool {
+        self.enumerates_series_issues()
     }
 
     /// Find this provider's series by **another** provider's series id,

@@ -54,6 +54,7 @@ pub mod metadata_search;
 pub mod metrics_layer;
 pub mod orphan_sweep;
 pub mod post_scan;
+pub mod provider_coverage;
 pub mod prune_auth_sessions;
 pub mod relationship_suggest;
 pub mod rewrite_sidecars;
@@ -81,6 +82,7 @@ pub struct JobRuntime {
     pub backfill_storage: RedisStorage<backfill::BackfillJob>,
     pub hash_backfill_storage: RedisStorage<hash_backfill::HashBackfillJob>,
     pub relationship_suggest_storage: RedisStorage<relationship_suggest::RelationshipSuggestJob>,
+    pub provider_coverage_storage: RedisStorage<provider_coverage::ProviderCoverageJob>,
     pub redis: ConnectionManager,
 }
 
@@ -107,6 +109,8 @@ impl JobRuntime {
         let hash_backfill_storage = storage::<hash_backfill::HashBackfillJob>(conn.clone());
         let relationship_suggest_storage =
             storage::<relationship_suggest::RelationshipSuggestJob>(conn.clone());
+        let provider_coverage_storage =
+            storage::<provider_coverage::ProviderCoverageJob>(conn.clone());
         Ok(Self {
             db,
             scan_storage,
@@ -123,6 +127,7 @@ impl JobRuntime {
             backfill_storage,
             hash_backfill_storage,
             relationship_suggest_storage,
+            provider_coverage_storage,
             redis: conn,
         })
     }
@@ -496,6 +501,15 @@ impl JobRuntime {
             .layer(metrics_layer::JobMetricsLayer::new("relationship_suggest"))
             .backend(self.relationship_suggest_storage.clone())
             .build_fn(relationship_suggest::handle);
+        // Provider coverage analyses — concurrency=1. Each run spends the
+        // provider budgets (ComicVine's 200/h, GCD's 100/h); serializing
+        // keeps two analyses from racing for the same buckets.
+        let provider_coverage_worker = WorkerBuilder::new("provider_coverage")
+            .concurrency(1)
+            .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new("provider_coverage"))
+            .backend(self.provider_coverage_storage.clone())
+            .build_fn(provider_coverage::handle);
 
         let shutdown_fut = {
             let token = shutdown.clone();
@@ -519,6 +533,7 @@ impl JobRuntime {
             .register(backfill_worker)
             .register(hash_backfill_worker)
             .register(relationship_suggest_worker)
+            .register(provider_coverage_worker)
             // Bound the graceful drain (OPS-3, JOBS-3): without this the monitor
             // waits indefinitely for an in-flight job, so a SIGTERM during a
             // 30-minute scan wouldn't return until the scan finished — past the
@@ -828,7 +843,7 @@ impl JobRuntime {
     /// `{type_name}:dead` and the ZSET shape are unchanged from 0.7 through the
     /// 1.0 release candidates). Returns `(queue_label, count)` for every queue.
     pub async fn dead_letter_counts(&self) -> redis::RedisResult<Vec<(&'static str, i64)>> {
-        let keys: [(&'static str, String); 14] = [
+        let keys: [(&'static str, String); 15] = [
             ("scan", self.scan_storage.get_config().dead_jobs_set()),
             (
                 "scan_series",
@@ -895,6 +910,10 @@ impl JobRuntime {
                 self.relationship_suggest_storage
                     .get_config()
                     .dead_jobs_set(),
+            ),
+            (
+                "provider_coverage",
+                self.provider_coverage_storage.get_config().dead_jobs_set(),
             ),
         ];
         let mut conn = self.redis.clone();

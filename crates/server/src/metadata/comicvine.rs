@@ -36,9 +36,9 @@ use crate::metadata::http;
 use crate::metadata::identifier::{Identifier, Source};
 use crate::metadata::matcher::canonical_issue_number;
 use crate::metadata::provider::{
-    CreditCandidate, EntityCandidate, GenericMetadata, IssueCandidate, IssueQuery,
-    MetadataProvider, ProviderError, ProviderResult, QuotaSnapshot, SeriesCandidate, SeriesQuery,
-    VariantCoverCandidate,
+    CreditCandidate, EntityCandidate, GenericMetadata, IssueCandidate, IssueListOpts, IssueQuery,
+    MetadataProvider, ProviderError, ProviderIssue, ProviderResult, ProviderSeriesIssues,
+    QuotaSnapshot, SeriesCandidate, SeriesQuery, VariantCoverCandidate,
 };
 use crate::metadata::rate_limit::{self, BucketDef, Reservation};
 use async_trait::async_trait;
@@ -66,6 +66,17 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const REQUEST_DEADLINE: Duration = Duration::from_secs(75);
 
 const SERIES_FIELDS: &str = "id,name,start_year,publisher,deck,description,image,count_of_issues,site_detail_url,date_last_updated,aliases";
+/// Field list for a volume's issue listing (provider coverage): the id,
+/// number and dates, plus the volume ref for its display name.
+const ISSUE_LIST_FIELDS: &str = "id,issue_number,cover_date,store_date,volume";
+
+/// CV's maximum page size for list endpoints.
+pub const ISSUE_LIST_PAGE_SIZE: usize = 100;
+
+/// Default page cap for one volume listing (2,000 issues). Past it the
+/// listing is returned with `complete = false`.
+pub const ISSUE_LIST_MAX_PAGES: u32 = 20;
+
 const ISSUE_FIELDS: &str = "id,name,issue_number,cover_date,store_date,deck,description,image,associated_images,person_credits,character_credits,team_credits,location_credits,concept_credits,object_credits,story_arc_credits,first_appearance_characters,first_appearance_teams,first_appearance_locations,first_appearance_concepts,first_appearance_objects,first_appearance_storyarcs,characters_died_in,teams_disbanded_in,volume,site_detail_url,date_last_updated,aliases";
 
 /// Cloneable handle to the ComicVine client. The reqwest::Client +
@@ -276,6 +287,9 @@ struct CvEnvelope<T> {
     status_code: Option<i32>,
     error: Option<String>,
     results: Option<T>,
+    /// Total matches across every page of a list endpoint.
+    #[serde(default)]
+    number_of_total_results: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -952,6 +966,87 @@ impl MetadataProvider for ComicVineClient {
             .results
             .ok_or_else(|| ProviderError::NotFound(format!("issue/{external_id}")))?;
         Ok(cv_issue_to_metadata(i))
+    }
+
+    fn lists_series_issues(&self) -> bool {
+        true
+    }
+
+    /// `GET /issues/?filter=volume:<id>&field_list=id,issue_number,cover_date,store_date,volume`,
+    /// 100 per page (`offset` paging, CV's maximum page size). Each page
+    /// is one request against the hourly bucket and the 1 req/s floor.
+    async fn list_series_issues(
+        &self,
+        series_external_id: &str,
+        opts: &IssueListOpts,
+    ) -> ProviderResult<ProviderSeriesIssues> {
+        let id = series_external_id.trim();
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()) {
+            return Err(ProviderError::NotFound(format!("volume/{id}")));
+        }
+        let max_pages = if opts.max_pages == 0 {
+            ISSUE_LIST_MAX_PAGES
+        } else {
+            opts.max_pages
+        };
+        let mut out = ProviderSeriesIssues {
+            complete: true,
+            dates_complete: true,
+            ..Default::default()
+        };
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut offset = 0usize;
+        loop {
+            if out.requests >= max_pages {
+                out.complete = false;
+                tracing::warn!(
+                    volume = id,
+                    pages = out.requests,
+                    "comicvine: volume issue listing hit its page cap; coverage may be incomplete"
+                );
+                break;
+            }
+            let envelope: CvEnvelope<Vec<CvIssue>> = self
+                .request(
+                    "/issues/",
+                    &[
+                        ("filter", format!("volume:{id}")),
+                        ("field_list", ISSUE_LIST_FIELDS.to_owned()),
+                        ("limit", ISSUE_LIST_PAGE_SIZE.to_string()),
+                        ("offset", offset.to_string()),
+                        ("sort", "id:asc".to_owned()),
+                    ],
+                )
+                .await?;
+            out.requests += 1;
+            let total = envelope.number_of_total_results.unwrap_or(0).max(0) as usize;
+            let page = envelope.results.unwrap_or_default();
+            let n = page.len();
+            for it in page {
+                if out.series_name.is_none()
+                    && let Some(v) = it.volume.as_ref()
+                {
+                    out.series_name = v.name.clone().filter(|s| !s.trim().is_empty());
+                }
+                let Some(raw) = it.issue_number.as_deref().filter(|s| !s.trim().is_empty()) else {
+                    continue;
+                };
+                let number = canonical_issue_number(raw);
+                if !seen.insert(number.clone()) {
+                    continue;
+                }
+                out.issues.push(ProviderIssue {
+                    external_id: it.id.map(|i| i.to_string()),
+                    number,
+                    cover_date: parse_date(&it.cover_date).or_else(|| parse_date(&it.store_date)),
+                });
+            }
+            offset += n;
+            if n == 0 || offset >= total {
+                break;
+            }
+        }
+        Ok(out)
     }
 
     async fn fetch_cover(&self, url: &str) -> ProviderResult<Vec<u8>> {
