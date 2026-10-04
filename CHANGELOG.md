@@ -13,6 +13,20 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.35.2](https://github.com/mbryantms/folio/compare/v0.35.1...v0.35.2) (2026-10-04)
+
+
+### Fixed
+
+* **pwa:** keep top bars clear of the iOS/iPadOS 26 edge-blur ramp in the installed app ([#999](https://github.com/mbryantms/folio/issues/999)) ([9d5de7f](https://github.com/mbryantms/folio/commit/9d5de7f9c49366e8939ff019d2869d8f16287624))
+
+
+### Build & CI
+
+* Docker layer cache to GHCR, images handed to the smoke test as artifacts (CI speed M3) ([#1002](https://github.com/mbryantms/folio/issues/1002)) ([8a5c690](https://github.com/mbryantms/folio/commit/8a5c690aaa5d7ed7c6bd8f7b0a05b82643e8e86f))
+* run the image build alongside the tests and stop compiling deps twice (CI speed M1) ([#997](https://github.com/mbryantms/folio/issues/997)) ([85ae2e0](https://github.com/mbryantms/folio/commit/85ae2e0c71dc3ce46d06a53ec02849563ca59908))
+* shard the Rust test suite four ways (CI speed M5) ([#1001](https://github.com/mbryantms/folio/issues/1001)) ([3777f03](https://github.com/mbryantms/folio/commit/3777f037cb6eb81cff948b9368455bc86b83c824))
+
 ## [0.35.1](https://github.com/mbryantms/folio/compare/v0.35.0...v0.35.1) (2026-10-04)
 
 
