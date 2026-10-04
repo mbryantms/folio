@@ -57,7 +57,18 @@ describe("iOS 26 scroll edge effect", () => {
 
   it("the reader's status-bar backing is solid, not a fade", () => {
     const src = read("app/[locale]/read/[seriesSlug]/[issueSlug]/Reader.tsx");
-    expect(src).toContain("h-(--safe-top) bg-black");
-    expect(src).not.toMatch(/h-\(--safe-top\) bg-gradient/);
+    expect(src).toContain("h-(--reader-top) bg-black");
+    expect(src).not.toMatch(/h-\(--(safe|reader)-top\) bg-gradient/);
+  });
+
+  it("the installed reader's top bar is thick enough for WebKit to extend", () => {
+    // WebKit skips fixed edge bars 10px or thinner (`thinBorderWidth`), so
+    // a 0-height backing (--safe-top pinned to 0) let the blur through.
+    const css = read("styles/globals.css");
+    expect(css).toMatch(
+      /@media \(display-mode: standalone\)\s*\{\s*:root\s*\{\s*--reader-top: max\(var\(--safe-top\), 12px\);/,
+    );
+    const src = read("app/[locale]/read/[seriesSlug]/[issueSlug]/Reader.tsx");
+    expect(src).not.toMatch(/pt-\(--safe-top\) pb-\(--safe-bottom\)/);
   });
 });

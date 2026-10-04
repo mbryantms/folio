@@ -236,6 +236,25 @@
   /* Mobile bottom tab bar (md:hidden). Content padding clears this plus
    * the home-indicator safe area so the last row isn't hidden behind it. */
   --bottom-tab-h: 3.5rem;
+  /* Reader top inset: the status-bar backing's height and the gap pages
+   * leave above themselves. Equal to `--safe-top` in a browser tab; see
+   * the standalone override below. */
+  --reader-top: var(--safe-top);
+}
+
+/*
+ * Installed app: the reader always keeps a solid black bar at the top
+ * edge, at least 12px tall. iOS / iPadOS 26 extend a fixed edge bar's
+ * colour only when the bar is more than 10px tall
+ * (`LocalFrameView::fixedContainerEdges`, `thinBorderWidth`). Where
+ * `SafeAreaProbe` pins `--safe-top` to 0 (26.1+), the reader with its
+ * chrome hidden had no such bar, so the system blurred the artwork up
+ * into the status bar.
+ */
+@media (display-mode: standalone) {
+  :root {
+    --reader-top: max(var(--safe-top), 12px);
+  }
 }
 
 [data-density="compact"] {
