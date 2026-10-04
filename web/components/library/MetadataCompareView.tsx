@@ -139,6 +139,15 @@ export function MetadataCompareView({
               <p className="text-muted-foreground truncate text-xs">
                 {p.title ?? p.external_id}
               </p>
+              {p.via_coverage && (
+                <p
+                  className="text-muted-foreground text-[10px]"
+                  data-testid="compare-via-coverage"
+                  title="This provider's series for the issue (from series coverage) lists it by number and cover date. Doesn't change the score."
+                >
+                  From series coverage
+                </p>
+              )}
             </div>
             <button
               type="button"

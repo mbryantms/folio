@@ -395,6 +395,22 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Bool,
         is_secret: false,
     },
+    // ───────── Issue-level refresh (coverage tie-ins PR 4) ─────────
+    SettingDef {
+        // Library refresh + weekly refresh also re-fetch stale issues
+        // whose provider series coverage knows, by direct lookup only (no
+        // searches), into a Review batch. Default false. Live.
+        key: "metadata.issue_refresh_enabled",
+        kind: SettingKind::Bool,
+        is_secret: false,
+    },
+    SettingDef {
+        // Issues per provider per issue-level refresh run (one cached
+        // detail request each). Default 200, range 1–1000. Live.
+        key: "metadata.issue_refresh_per_provider_cap",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
 ];
 
 pub fn registry() -> &'static [SettingDef] {

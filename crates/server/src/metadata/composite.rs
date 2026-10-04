@@ -54,6 +54,11 @@ pub struct CompositeProviderColumn {
     pub cover_image_url: Option<String>,
     /// Series name / "name #number" for the column subtitle.
     pub title: Option<String>,
+    /// Series coverage supplied this candidate: the provider series the
+    /// issue is assigned to lists it by number + cover date. The compare
+    /// view defaults to it per provider; score and bucket are the
+    /// matcher's.
+    pub via_coverage: bool,
 }
 
 /// One candidate's proposed value for a field. Keyed by `ordinal`
@@ -105,21 +110,34 @@ struct PickedCandidate {
     row: metadata_run_candidate::Model,
 }
 
-/// Default candidate set: the lowest-ordinal (best-ranked) candidate per
-/// provider. Used when the caller doesn't specify an explicit set of
-/// ordinals (the initial compare-view open).
+/// Default candidate set, one per provider: the candidate series coverage
+/// assigned the issue (`score_breakdown.coverage` — the provider series'
+/// issue list gave this issue by number + cover date) when the run has
+/// one, else the lowest-ordinal (best-ranked) candidate. Used when the
+/// caller doesn't specify an explicit set of ordinals (the initial
+/// compare-view open). Scores and buckets are the matcher's either way.
 pub fn default_best_per_provider(candidates: &[metadata_run_candidate::Model]) -> Vec<i32> {
-    let mut seen: HashSet<Source> = HashSet::new();
-    let mut out = Vec::new();
+    let mut best: Vec<(Source, i32, bool)> = Vec::new();
     // `candidates` arrives ordered by ordinal asc (fetch_candidates).
     for c in candidates {
-        if let Some(src) = parse_source(&c.source)
-            && seen.insert(src)
-        {
-            out.push(c.ordinal);
+        let Some(src) = parse_source(&c.source) else {
+            continue;
+        };
+        let covered = is_coverage_candidate(c);
+        match best.iter_mut().find(|(s, _, _)| *s == src) {
+            None => best.push((src, c.ordinal, covered)),
+            Some(slot) if covered && !slot.2 => *slot = (src, c.ordinal, true),
+            Some(_) => {}
         }
     }
-    out
+    best.into_iter().map(|(_, ordinal, _)| ordinal).collect()
+}
+
+/// Did series coverage supply this candidate (a direct lookup)?
+pub fn is_coverage_candidate(c: &metadata_run_candidate::Model) -> bool {
+    c.score_breakdown
+        .get("coverage")
+        .is_some_and(|v| v.is_object())
 }
 
 /// Resolve the requested candidate ordinals into [`PickedCandidate`]s,
@@ -213,6 +231,7 @@ fn column_for(scope: MergeScope, picked: &PickedCandidate) -> CompositeProviderC
         score: picked.row.score,
         cover_image_url: cover,
         title,
+        via_coverage: is_coverage_candidate(&picked.row),
     }
 }
 
@@ -959,7 +978,45 @@ async fn writeback_library(
 
 #[cfg(test)]
 mod tests {
-    use super::field_sources_from_choices;
+    use super::{default_best_per_provider, field_sources_from_choices};
+    use entity::metadata_run_candidate;
+
+    fn cand(ordinal: i32, source: &str, coverage: bool) -> metadata_run_candidate::Model {
+        let breakdown = if coverage {
+            serde_json::json!({"total": 60.0, "coverage": {"provider_series_id": "1713"}})
+        } else {
+            serde_json::json!({"total": 90.0})
+        };
+        metadata_run_candidate::Model {
+            run_id: uuid::Uuid::nil(),
+            ordinal,
+            source: source.into(),
+            external_id: format!("{source}-{ordinal}"),
+            bucket: "medium".into(),
+            score: 0.0,
+            score_breakdown: breakdown,
+            candidate: serde_json::json!({}),
+            applied_at: None,
+        }
+    }
+
+    /// Compare mode: each provider's column defaults to the candidate
+    /// series coverage assigned the issue, even when a search candidate of
+    /// that provider ranks higher; a provider without one keeps its
+    /// best-ranked (searched) candidate.
+    #[test]
+    fn compare_default_prefers_the_coverage_candidate_per_provider() {
+        let rows = vec![
+            cand(0, "metron", false),
+            cand(1, "comicvine", true),
+            cand(2, "metron", true),
+            cand(3, "gcd", false),
+            cand(4, "gcd", false),
+        ];
+        assert_eq!(default_best_per_provider(&rows), vec![2, 1, 3]);
+        let none = vec![cand(0, "metron", false), cand(1, "metron", false)];
+        assert_eq!(default_best_per_provider(&none), vec![0]);
+    }
     use crate::metadata::field::MetadataField;
     use crate::metadata::merge::FieldChoice;
 

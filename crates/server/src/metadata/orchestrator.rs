@@ -23,7 +23,7 @@
 use crate::config::Config;
 use crate::metadata::comicvine::ComicVineClient;
 use crate::metadata::direct_lookup::{
-    CoverageMatch, DirectLookupCtx, FallbackReason, SourceLookup,
+    CoverageMatch, DirectLookupCtx, DirectMode, FallbackReason, SourceLookup,
 };
 use crate::metadata::gcd::GcdClient;
 use crate::metadata::identifier::Source;
@@ -283,10 +283,11 @@ pub struct SearchOpts {
     pub relax_year_gate: bool,
     /// `None` ⇒ fetch + hash candidate covers over the network.
     pub cover_hasher: Option<CoverHasher>,
-    /// Batch children only: answer a provider from its series' cached
-    /// issue list + one cached detail fetch instead of a search when the
-    /// issue's provider series is known (see
-    /// [`crate::metadata::direct_lookup`]). `None` ⇒ always search.
+    /// Answer a provider from its series' cached issue list + one cached
+    /// detail fetch when the issue's provider series is known (see
+    /// [`crate::metadata::direct_lookup`]); `DirectLookupCtx::mode` says
+    /// whether the search is skipped (batches), still run (the match
+    /// dialog) or never run (issue-level refresh). `None` ⇒ always search.
     pub direct: Option<DirectLookupCtx>,
 }
 
@@ -1182,11 +1183,14 @@ pub async fn run_issue_search_with(
             YearGate::PhashAware(gate_year)
         };
 
-        // ── batch direct lookup via series coverage ──
+        // ── direct lookup via series coverage ──
         // The provider series is known and lists this number with an
         // agreeing cover date: fetch that issue's detail (cached, and the
-        // same row the apply reads) and score it instead of searching.
-        // Any miss falls through to the search below, unchanged.
+        // same row the apply reads) and score it. `Replace` (batches)
+        // skips the search on a hit; `Additive` (the match dialog) keeps
+        // searching for alternatives; `Only` (issue-level refresh) never
+        // searches. A miss falls through to the search below, unchanged,
+        // except under `Only`.
         if let Some(ctx) = opts.direct.as_ref() {
             match direct_issue_candidate(
                 db,
@@ -1213,9 +1217,16 @@ pub async fn run_issue_search_with(
                             ranked.push(rc);
                         }
                     }
-                    continue;
+                    if ctx.mode != DirectMode::Additive {
+                        continue;
+                    }
                 }
-                Err(rec) => lookups.push(rec),
+                Err(rec) => {
+                    lookups.push(rec);
+                    if ctx.mode == DirectMode::Only {
+                        continue;
+                    }
+                }
             }
         }
 

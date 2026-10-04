@@ -887,6 +887,7 @@ async fn cover_hash_confirms_or_rejects_a_direct_lookup() {
                 direct: Some(DirectLookupCtx {
                     redis,
                     cover_month: Some(1),
+                    mode: Default::default(),
                 }),
                 ..SearchOpts::default()
             };

@@ -569,6 +569,8 @@ function scopeLabel(scope: string): string {
       return "Saved view";
     case "library_refresh":
       return "Library refresh";
+    case "issue_refresh":
+      return "Issue refresh";
     default:
       return scope;
   }

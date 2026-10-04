@@ -10,6 +10,7 @@ import {
   defaultFieldSources,
 } from "@/components/library/MetadataCompareView";
 import type { CompositeDiffResp } from "@/lib/api/types";
+import { defaultCompareOrdinals } from "@/lib/metadata/coverage-hint";
 
 const diff: CompositeDiffResp = {
   run_id: "r1",
@@ -23,6 +24,7 @@ const diff: CompositeDiffResp = {
       score: 92,
       cover_image_url: "https://cdn/metron.jpg",
       title: "Saga #1",
+      via_coverage: true,
     },
     {
       source: "comicvine",
@@ -32,6 +34,7 @@ const diff: CompositeDiffResp = {
       score: 90,
       cover_image_url: "https://cdn/cv.jpg",
       title: "Saga #1",
+      via_coverage: false,
     },
   ],
   rows: [
@@ -121,6 +124,9 @@ describe("<MetadataCompareView>", () => {
     expect(html).toContain("Apply merged (2 fields)");
     // Both providers' external IDs flagged as additive.
     expect(html).toContain("will be added");
+    // The coverage-assigned column is labelled (Metron only).
+    expect(html.match(/data-testid="compare-via-coverage"/g)?.length).toBe(1);
+    expect(html).toContain("From series coverage");
   });
 
   it("calls onApply when the merged-apply button is clicked", () => {
@@ -157,5 +163,29 @@ describe("<MetadataCompareView>", () => {
       }),
     );
     expect(html).toContain("Comparing candidates");
+  });
+});
+
+describe("defaultCompareOrdinals (compare mode uses series coverage)", () => {
+  const cov = { coverage: { reason: "matched by series coverage" } };
+  it("picks each provider's coverage candidate over its best-ranked one", () => {
+    expect(
+      defaultCompareOrdinals([
+        { source: "comicvine", score_breakdown: {} },
+        { source: "metron", score_breakdown: {} },
+        { source: "comicvine", score_breakdown: cov },
+        { source: "metron", score_breakdown: null },
+      ]),
+    ).toEqual([1, 2]);
+  });
+
+  it("falls back to the best-ranked candidate without coverage", () => {
+    expect(
+      defaultCompareOrdinals([
+        { source: "metron", score_breakdown: {} },
+        { source: "metron", score_breakdown: {} },
+        { source: "gcd" },
+      ]),
+    ).toEqual([0, 2]);
   });
 });

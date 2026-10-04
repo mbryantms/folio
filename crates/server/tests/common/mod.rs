@@ -1001,6 +1001,8 @@ impl TestApp {
             metadata_merge_provider_preference: String::new(),
             metadata_coverage_after_series_apply: Default::default(),
             metadata_coverage_auto_accept: false,
+            metadata_issue_refresh_enabled: false,
+            metadata_issue_refresh_per_provider_cap: 200,
             library_hard_purge_multiplier: 2,
         };
 

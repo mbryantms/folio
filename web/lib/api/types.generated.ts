@@ -5126,6 +5126,11 @@ export interface components {
         };
         /** @description What an accept wrote. */
         AcceptOutcome: {
+            /**
+             * @description "Not in your library" links written or refreshed: ranges whose
+             *     provider series has issues this folder lacks (Related tab).
+             */
+            external_links?: number;
             /** @description Why the main id wasn't written, if it wasn't. */
             main_note?: string | null;
             main_series_id?: string | null;
@@ -5644,7 +5649,7 @@ export interface components {
             status: string;
         };
         /**
-         * @description Response for the batch-create endpoints. Mirrors [`RefreshOutcome`] plus the
+         * @description Response for the batch-create endpoints. Mirrors [`refresh::RefreshOutcome`] plus the
          *     new `batch_id` the caller deep-links the Review queue to.
          */
         BatchCreatedResp: {
@@ -6415,10 +6420,14 @@ export interface components {
          *     The denominator (`total_expected`) comes from `series.total_issues`, which
          *     the scanner resolves from a `series.json` sidecar or the max ComicInfo
          *     `<Count>`. series.json carries only the *count*, never a per-issue
-         *     manifest — so interior `missing` numbers are *inferred* by interpolating
-         *     the integer run between the lowest and highest owned issue. `expected_source`
-         *     records this provenance; a future provider-backed exact manifest will flip
-         *     it to `"provider_manifest"` and make `missing` exact.
+         *     manifest — so without provider data interior `missing` numbers are
+         *     *inferred* by interpolating the integer run between the lowest and highest
+         *     owned issue (`expected_source = "series_total"`). When the series has
+         *     accepted provider coverage and those providers' issue lists are cached,
+         *     the expected set comes from them instead
+         *     ([`crate::metadata::issue_manifest`], `expected_source =
+         *     "provider_manifest"`): `missing` is what every such provider lists and
+         *     no local issue carries, `possibly_missing` what only some list.
          */
         CollectionReportView: {
             /**
@@ -6433,8 +6442,9 @@ export interface components {
              */
             completeness_state: string;
             /**
-             * @description `"series_total"` today (count-only). `"provider_manifest"` once an
-             *     exact provider issue list backs the report.
+             * @description `"series_total"` (count-only; `missing` interpolated) or
+             *     `"provider_manifest"` (`missing` from the providers' issue lists —
+             *     see [`Self::manifest`]).
              */
             expected_source: string;
             /**
@@ -6446,6 +6456,7 @@ export interface components {
              */
             issues: components["schemas"]["CollectionIssueEntry"][];
             main_run: components["schemas"]["MainRunReport"];
+            manifest?: components["schemas"]["ProviderManifestView"] | null;
             /**
              * @description Annuals, one-shots, TPBs, point issues (`#2.5`), and unnumbered files —
              *     listed but excluded from the integer gap math.
@@ -6589,6 +6600,13 @@ export interface components {
             source: string;
             /** @description Series name / "name #number" for the column subtitle. */
             title?: string | null;
+            /**
+             * @description Series coverage supplied this candidate: the provider series the
+             *     issue is assigned to lists it by number + cover date. The compare
+             *     view defaults to it per provider; score and bucket are the
+             *     matcher's.
+             */
+            via_coverage: boolean;
         };
         /**
          * @description One condition row in a filter DSL. `group_id` always 0 in v1; reserved
@@ -8698,6 +8716,34 @@ export interface components {
             /** Format: int32 */
             series_year?: number | null;
         };
+        /** @description What an issue-level refresh did. */
+        IssueRefreshOutcome: {
+            /**
+             * Format: uuid
+             * @description The Review batch the runs belong to; `None` when nothing was
+             *     selected.
+             */
+            batch_id?: string | null;
+            /** @description `false` when `metadata.issue_refresh_enabled` is off (nothing ran). */
+            enabled: boolean;
+            /** @description Issues selected (each asks only the providers listed for it). */
+            issues_selected: number;
+            jobs_coalesced: number;
+            jobs_enqueued: number;
+            jobs_failed: number;
+            /** @description Issues per provider (≤ cap each). */
+            per_provider: components["schemas"]["IssueRefreshProviderCount"][];
+        };
+        /** @description Issues one provider was given in an issue-level refresh run. */
+        IssueRefreshProviderCount: {
+            /**
+             * Format: int32
+             * @description The per-provider cap of this run.
+             */
+            cap: number;
+            issues: number;
+            source: string;
+        };
         IssueSearchHit: components["schemas"]["IssueSummaryView"] & {
             series_name: string;
             /**
@@ -9065,10 +9111,17 @@ export interface components {
              */
             min?: number | null;
             /**
-             * @description Integers in `min..=max` not owned (e.g. `[3]`). **Inferred** — see
+             * @description Main-run integers not owned (e.g. `[3]`). Interpolated over
+             *     `min..=max` for `series_total`; exact (every provider with accepted
+             *     coverage lists them) for `provider_manifest` — see
              *     [`CollectionReportView::expected_source`].
              */
             missing: number[];
+            /**
+             * @description `provider_manifest` only: main-run integers some providers list and
+             *     others don't (or can't confirm). Empty otherwise.
+             */
+            possibly_missing: number[];
             /** @description Owned main-run `sort_number`s, ascending (e.g. `[0.0, 1.0, 2.0, 4.0]`). */
             present: number[];
             /** @description `number_raw` labels aligned 1:1 with [`Self::present`] for display. */
@@ -9076,9 +9129,44 @@ export interface components {
             /**
              * Format: int64
              * @description Count expected beyond `max` when `total_expected > max` (e.g. own up to
-             *     #4 with `total_expected = 6` → `2`).
+             *     #4 with `total_expected = 6` → `2`). Always 0 for `provider_manifest`
+             *     (numbers past `max` are in `missing`).
              */
             trailing_missing: number;
+        };
+        /**
+         * @description How one provider sees a number.
+         * @enum {string}
+         */
+        ManifestListing: "listed" | "not_listed" | "not_loaded";
+        /** @description One provider with accepted coverage. */
+        ManifestProvider: {
+            /** @description Distinct numbers its segments list (0 when not loaded). */
+            listed_count: number;
+            /** @description Every segment's list is cached (only then does it vote). */
+            loaded: boolean;
+            series: components["schemas"]["ManifestSeriesRef"][];
+            source: string;
+        };
+        /** @description One provider's view of a possibly-missing number. */
+        ManifestProviderView: {
+            listing: components["schemas"]["ManifestListing"];
+            source: string;
+        };
+        /** @description One provider series a provider's expected set is read from. */
+        ManifestSeriesRef: {
+            /** @description The issue list is in the 24 h cache. */
+            loaded: boolean;
+            /** @description From the cached list (or the range row). */
+            name?: string | null;
+            provider_series_id: string;
+            range_high?: string | null;
+            /** @description The range bounds (canonical numbers) for a range segment. */
+            range_low?: string | null;
+            /** @description `true` for a `series_provider_range` segment. */
+            via_range: boolean;
+            /** Format: int32 */
+            year?: number | null;
         };
         ManualMatchReq: {
             issue_id: string;
@@ -9882,6 +9970,15 @@ export interface components {
             view_id: string;
         };
         /**
+         * @description A number some (not all) providers with accepted coverage list, not
+         *     owned.
+         */
+        PossiblyMissingIssue: {
+            /** @description As the provider writes it ("½", "605.1"). */
+            number: string;
+            providers: components["schemas"]["ManifestProviderView"][];
+        };
+        /**
          * @description `PATCH /me/preferences` request body. Every field is optional; when a key
          *     is absent the prior value is preserved. To clear a stored value, send
          *     `null` (where the type allows).
@@ -10071,6 +10168,27 @@ export interface components {
             /** Format: date-time */
             at: string;
             message: string;
+        };
+        /** @description The provider manifest behind a collection report. */
+        ProviderManifestView: {
+            /**
+             * @description Numbers every provider with accepted coverage lists and no local
+             *     issue carries, in number order.
+             */
+            missing: string[];
+            /** @description e.g. "Metron provider list not loaded — run Analyze coverage". */
+            note?: string | null;
+            /**
+             * @description Numbers only some of them list (or a not-loaded provider can't
+             *     confirm), with each provider's view.
+             */
+            possibly_missing: components["schemas"]["PossiblyMissingIssue"][];
+            providers: components["schemas"]["ManifestProvider"][];
+            /**
+             * @description `true` when at least one provider's lists are loaded, i.e. the
+             *     report's `expected_source` is `provider_manifest`.
+             */
+            used: boolean;
         };
         /**
          * @description Per-provider remaining-quota view for the match dialog (audit B13).
@@ -10483,6 +10601,12 @@ export interface components {
             trigger: components["schemas"]["CoverageTrigger"];
         };
         RefreshLibraryResp: {
+            /**
+             * @description The opt-in issue-level refresh (`metadata.issue_refresh_enabled`):
+             *     stale covered issues re-fetched by direct lookup into a Review
+             *     batch. `enabled: false` when the setting is off.
+             */
+            issue_refresh: components["schemas"]["IssueRefreshOutcome"];
             jobs_coalesced: number;
             jobs_enqueued: number;
             jobs_failed: number;
@@ -11345,6 +11469,12 @@ export interface components {
             local_series?: components["schemas"]["ExternalLocalSeries"] | null;
             /** @description The provider's series name (falls back to the id). */
             name: string;
+            /**
+             * @description Short context for the row, e.g. "Has #612–645" for a link from
+             *     series coverage (a range of this series maps to that provider
+             *     series, which has issues this series lacks).
+             */
+            note?: string | null;
             provider_series_id: string;
             qualifier?: components["schemas"]["RelationshipQualifier"] | null;
             qualifier_label?: string | null;

@@ -656,6 +656,7 @@ async fn run_metadata_weekly_refresh(state: &AppState) {
     };
     let mut recent_total = 0usize;
     let mut stale_total = 0usize;
+    let mut issue_total = 0usize;
     for lib in libraries {
         // Recent window first — these are the higher-value
         // refreshes (likely provider-side change). Stale runs
@@ -711,10 +712,25 @@ async fn run_metadata_weekly_refresh(state: &AppState) {
                 tracing::warn!(library_id = %lib.id, error = %e, "weekly refresh stale fan-out failed")
             }
         }
+        // Issue level, behind `metadata.issue_refresh_enabled` (off ⇒
+        // no-op): stale covered issues by direct lookup, ≤ cap per
+        // provider, into an `issue_refresh` Review batch.
+        match refresh::fan_out_issue_refresh(state, lib.id, trigger_kind::WEEKLY_REFRESH, None)
+            .await
+        {
+            Ok(out) if out.enabled => {
+                issue_total += out.jobs_enqueued;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(library_id = %lib.id, error = %e, "weekly refresh issue fan-out failed")
+            }
+        }
     }
     tracing::info!(
         recent_enqueued = recent_total,
         stale_enqueued = stale_total,
+        issue_enqueued = issue_total,
         "metadata weekly refresh: sweep complete",
     );
 }

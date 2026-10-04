@@ -44,7 +44,7 @@ use crate::metadata::diff::{self, DiffResp};
 use crate::metadata::lookup::{self, LookupEntity};
 use crate::metadata::matcher::{IssueQueryFacts, SeriesQueryFacts};
 use crate::metadata::orchestrator;
-use crate::metadata::refresh::{self, RefreshOutcome, RefreshScope};
+use crate::metadata::refresh::{self, RefreshScope};
 use crate::middleware::RequestContext;
 use crate::state::AppState;
 use server_macros::handler;
@@ -1100,6 +1100,7 @@ pub async fn search_issue(
     };
     overrides.apply_to_issue(&mut facts);
     let year_asserted = overrides.year.is_some();
+    let overrides_empty = overrides.is_empty();
 
     let providers = orchestrator::build_providers(&app.cfg(), app.jobs.redis.clone());
     if providers.is_empty() {
@@ -1183,8 +1184,13 @@ pub async fn search_issue(
             series_targets,
             year_asserted,
             // The dialog search shows alternatives; only batch children
-            // answer covered issues by direct lookup.
+            // answer covered issues by direct lookup. The coverage-assigned
+            // issue is *added* per provider (compare mode defaults to it)
+            // unless the user overrode the query — then they're searching
+            // for something else.
             direct_lookup: false,
+            coverage_candidates: overrides_empty,
+            direct_only: None,
         })
         .await
     {
@@ -2306,6 +2312,10 @@ pub struct RefreshLibraryResp {
     pub jobs_enqueued: usize,
     pub jobs_coalesced: usize,
     pub jobs_failed: usize,
+    /// The opt-in issue-level refresh (`metadata.issue_refresh_enabled`):
+    /// stale covered issues re-fetched by direct lookup into a Review
+    /// batch. `enabled: false` when the setting is off.
+    pub issue_refresh: refresh::IssueRefreshOutcome,
 }
 
 #[utoipa::path(
@@ -2345,29 +2355,40 @@ pub async fn refresh_library_metadata(
             "scope must be one of: unmatched, stale, all, recent",
         );
     };
-    match refresh::fan_out_scope(
+    let series = refresh::fan_out_scope(
         &app,
         lib.id,
         scope,
         orchestrator::trigger_kind::BULK_ACTION,
         None,
     )
-    .await
-    {
-        Ok(RefreshOutcome {
-            series_eligible,
-            jobs_enqueued,
-            jobs_coalesced,
-            jobs_failed,
-        }) => (
+    .await;
+    let series = match series {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::error!(error = %e, library_id = %lib.id, "metadata refresh fan-out failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    // Issue level, behind `metadata.issue_refresh_enabled` (off ⇒ no-op).
+    let issue_refresh = refresh::fan_out_issue_refresh(
+        &app,
+        lib.id,
+        orchestrator::trigger_kind::BULK_ACTION,
+        Some(user.id),
+    )
+    .await;
+    match issue_refresh {
+        Ok(issue_refresh) => (
             StatusCode::ACCEPTED,
             Json(RefreshLibraryResp {
                 library_id: lib.id,
                 scope: scope.as_str().to_owned(),
-                series_eligible,
-                jobs_enqueued,
-                jobs_coalesced,
-                jobs_failed,
+                series_eligible: series.series_eligible,
+                jobs_enqueued: series.jobs_enqueued,
+                jobs_coalesced: series.jobs_coalesced,
+                jobs_failed: series.jobs_failed,
+                issue_refresh,
             }),
         )
             .into_response(),
@@ -2656,7 +2677,7 @@ pub async fn composite_apply_issue(
 
 // ───────── bulk-fetch batches (refine-bulk-metadata M1) ─────────
 
-/// Response for the batch-create endpoints. Mirrors [`RefreshOutcome`] plus the
+/// Response for the batch-create endpoints. Mirrors [`refresh::RefreshOutcome`] plus the
 /// new `batch_id` the caller deep-links the Review queue to.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct BatchCreatedResp {
@@ -2678,15 +2699,36 @@ async fn insert_metadata_batch(
     library_id: Option<Uuid>,
     created_by: Option<Uuid>,
 ) -> Result<Uuid, sea_orm::DbErr> {
+    // Bulk fetch always holds for review — children run as `manual` so
+    // nothing auto-applies (the queue is the accept surface).
+    insert_metadata_batch_with(
+        db,
+        scope,
+        library_id,
+        created_by,
+        orchestrator::trigger_kind::MANUAL,
+    )
+    .await
+}
+
+/// [`insert_metadata_batch`] with the children's trigger kind. The
+/// issue-level refresh (`metadata::refresh::fan_out_issue_refresh`) uses
+/// its own (`weekly_refresh` / `bulk_action`), so the library's existing
+/// auto-apply rule still applies to its runs.
+pub(crate) async fn insert_metadata_batch_with(
+    db: &sea_orm::DatabaseConnection,
+    scope: &str,
+    library_id: Option<Uuid>,
+    created_by: Option<Uuid>,
+    trigger_kind: &str,
+) -> Result<Uuid, sea_orm::DbErr> {
     use sea_orm::Set;
     let id = Uuid::now_v7();
     let am = entity::metadata_batch::ActiveModel {
         id: Set(id),
         library_id: Set(library_id),
         scope: Set(scope.to_owned()),
-        // Bulk fetch always holds for review — children run as `manual` so
-        // nothing auto-applies (the queue is the accept surface).
-        trigger_kind: Set(orchestrator::trigger_kind::MANUAL.to_owned()),
+        trigger_kind: Set(trigger_kind.to_owned()),
         status: Set("running".to_owned()),
         items_total: Set(0),
         created_by: Set(created_by),
@@ -2698,7 +2740,11 @@ async fn insert_metadata_batch(
 }
 
 /// Stamp the final child count on a batch once fan-out completes.
-async fn set_batch_items_total(db: &sea_orm::DatabaseConnection, batch_id: Uuid, items_total: i32) {
+pub(crate) async fn set_batch_items_total(
+    db: &sea_orm::DatabaseConnection,
+    batch_id: Uuid,
+    items_total: i32,
+) {
     use sea_orm::Set;
     if let Ok(Some(row)) = entity::metadata_batch::Entity::find_by_id(batch_id)
         .one(db)

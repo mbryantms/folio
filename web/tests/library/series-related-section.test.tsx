@@ -379,3 +379,30 @@ describe("helpers", () => {
     expect(chainCaption(3)).toBe("Read after");
   });
 });
+
+describe("<SeriesRelatedSection> coverage links (coverage tie-ins)", () => {
+  it("shows a coverage link's note next to the not-in-library row", () => {
+    role = "user";
+    catalogue = CATALOGUE;
+    data = {
+      ...full,
+      external: [
+        {
+          ...EXTERNAL[0],
+          id: "x3",
+          provider_series_id: "1713",
+          name: "Fantastic Four",
+          year: 2012,
+          url: "https://metron.cloud/series/1713/",
+          confidence: 0.7,
+          note: "Has #612–645",
+        },
+      ] as unknown as SeriesRelationshipsResp["external"],
+    };
+    const html = render(100);
+    expect(html).toContain("Fantastic Four (2012)");
+    expect(html).toContain("— not in your library");
+    expect(html).toContain('data-testid="external-relationship-note"');
+    expect(html).toContain("Has #612–645");
+  });
+});
