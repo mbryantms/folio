@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.37.0](https://github.com/mbryantms/folio/compare/v0.36.0...v0.37.0) (2026-10-04)
+
+
+### Added
+
+* **web:** temporary PWA lab link on /admin/server (the installed app has no address bar) ([#1006](https://github.com/mbryantms/folio/issues/1006)) ([734a9ab](https://github.com/mbryantms/folio/commit/734a9ab8dd7478b7c41c875a103a9df0a9cc7f4a))
+
 ## [0.36.0](https://github.com/mbryantms/folio/compare/v0.35.2...v0.36.0) (2026-10-04)
 
 
