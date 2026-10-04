@@ -92,12 +92,7 @@ pub fn build_providers(cfg: &Config, redis: ConnectionManager) -> Vec<Arc<dyn Me
         out.push(Arc::new(client));
     }
 
-    let cv_key_set = cfg
-        .comicvine_api_key
-        .as_deref()
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false);
-    if cfg.comicvine_enabled && cv_key_set {
+    if comicvine_configured(cfg) {
         let key = cfg.comicvine_api_key.clone().unwrap_or_default();
         out.push(Arc::new(match cfg.comicvine_base_url.clone() {
             Some(base) => ComicVineClient::with_base_url(key, base, redis.clone()),
@@ -111,6 +106,34 @@ pub fn build_providers(cfg: &Config, redis: ConnectionManager) -> Vec<Arc<dyn Me
         out.push(Arc::new(client));
     }
 
+    out
+}
+
+fn comicvine_configured(cfg: &Config) -> bool {
+    cfg.comicvine_enabled
+        && cfg
+            .comicvine_api_key
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+}
+
+/// The ids [`build_providers`] would return, in the same order, without
+/// building anything. Each provider owns a `reqwest` client (a rustls
+/// config per build), so a caller that only needs to know *which*
+/// providers are on — the per-issue enqueue, called once per issue in a
+/// batch fan-out — must not construct them: three clients × a 200-issue
+/// batch kept the request past the 60 s JSON timeout on a loaded host.
+pub fn configured_provider_ids(cfg: &Config) -> Vec<Source> {
+    let mut out = Vec::new();
+    if cfg.metron_enabled && crate::metadata::metron::MetronAuth::from_config(cfg).is_some() {
+        out.push(Source::Metron);
+    }
+    if comicvine_configured(cfg) {
+        out.push(Source::ComicVine);
+    }
+    if cfg.gcd_enabled && crate::metadata::gcd::GcdCredentials::from_config(cfg).is_some() {
+        out.push(Source::Gcd);
+    }
     out
 }
 

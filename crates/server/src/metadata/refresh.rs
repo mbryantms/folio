@@ -519,21 +519,32 @@ pub async fn fan_out_issue_refresh(
     )
     .await?;
     out.batch_id = Some(batch_id);
-    for pick in picks {
-        match crate::jobs::metadata_search::enqueue_issue_search_with(
-            state,
-            &pick.issue_id,
-            created_by,
-            trigger_kind,
-            Some(batch_id),
-            Some(pick.sources),
-        )
-        .await
-        {
+    use futures::StreamExt;
+    let mut results = futures::stream::iter(picks)
+        .map(|pick| {
+            // Owned state: a borrowing closure is not general enough for
+            // the `Send` bound on the handler future.
+            let state = state.clone();
+            async move {
+                let r = crate::jobs::metadata_search::enqueue_issue_search_with(
+                    &state,
+                    &pick.issue_id,
+                    created_by,
+                    trigger_kind,
+                    Some(batch_id),
+                    Some(pick.sources),
+                )
+                .await;
+                (pick.issue_id, r)
+            }
+        })
+        .buffered(crate::api::metadata_search::FAN_OUT_CONCURRENCY);
+    while let Some((issue_id, r)) = results.next().await {
+        match r {
             Ok(o) if o.coalesced => out.jobs_coalesced += 1,
             Ok(_) => out.jobs_enqueued += 1,
             Err(e) => {
-                tracing::warn!(issue_id = %pick.issue_id, error = %e, "issue refresh: enqueue failed");
+                tracing::warn!(issue_id = %issue_id, error = %e, "issue refresh: enqueue failed");
                 out.jobs_failed += 1;
             }
         }

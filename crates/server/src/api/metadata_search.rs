@@ -3059,6 +3059,13 @@ struct FanOutTally {
     jobs_failed: usize,
 }
 
+/// How many per-issue enqueues a batch fan-out runs at once. Each is a
+/// handful of DB round-trips plus a Redis push; serially, a 200-issue
+/// batch could outlast the 60 s JSON timeout on a loaded host (which
+/// drops the handler mid-fan-out). `buffered` keeps results — and
+/// roughly the push order — in issue order.
+pub(crate) const FAN_OUT_CONCURRENCY: usize = 8;
+
 /// Enqueue a per-issue search for each id under `batch_id`, honoring the
 /// per-entity coalesce gate. Children run as `manual`.
 async fn fan_out_issue_batch(
@@ -3067,19 +3074,30 @@ async fn fan_out_issue_batch(
     triggered_by: Option<Uuid>,
     batch_id: Uuid,
 ) -> FanOutTally {
+    use futures::StreamExt;
     let mut jobs_enqueued = 0usize;
     let mut jobs_coalesced = 0usize;
     let mut jobs_failed = 0usize;
-    for id in issue_ids {
-        match metadata_search::enqueue_issue_search(
-            app,
-            id,
-            triggered_by,
-            orchestrator::trigger_kind::MANUAL,
-            Some(batch_id),
-        )
-        .await
-        {
+    // Owned values: a closure borrowing `app` / the ids is not general
+    // enough for the `Send` bound on handler futures.
+    let mut results = futures::stream::iter(issue_ids.to_vec())
+        .map(|id| {
+            let app = app.clone();
+            async move {
+                let r = metadata_search::enqueue_issue_search(
+                    &app,
+                    &id,
+                    triggered_by,
+                    orchestrator::trigger_kind::MANUAL,
+                    Some(batch_id),
+                )
+                .await;
+                (id, r)
+            }
+        })
+        .buffered(FAN_OUT_CONCURRENCY);
+    while let Some((id, r)) = results.next().await {
+        match r {
             Ok(o) if o.coalesced => jobs_coalesced += 1,
             Ok(_) => jobs_enqueued += 1,
             Err(e) => {

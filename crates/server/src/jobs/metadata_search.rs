@@ -597,10 +597,10 @@ pub async fn enqueue_issue_search_with(
         ),
     };
 
-    let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
-    let providers_listed: Vec<_> = providers
-        .iter()
-        .map(|p| p.id())
+    // Ids only — building the clients here would cost three TLS client
+    // builds per issue of a batch fan-out (see `configured_provider_ids`).
+    let providers_listed: Vec<_> = orchestrator::configured_provider_ids(&state.cfg())
+        .into_iter()
         .filter(|s| direct_only.as_ref().is_none_or(|only| only.contains(s)))
         .collect();
     if providers_listed.is_empty() {
