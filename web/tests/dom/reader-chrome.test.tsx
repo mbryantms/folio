@@ -180,6 +180,60 @@ describe("ReaderChrome (jsdom)", () => {
     });
   });
 
+  it("below 640px collapses marker tools, page text and the markers list into one More menu", async () => {
+    // Seven 36px buttons plus the page counter overflowed a 390pt iPhone
+    // (the counter wrapped onto three lines). jsdom's matchMedia stub
+    // always answers false, so force the phone query here.
+    const original = window.matchMedia;
+    window.matchMedia = (query: string) =>
+      ({
+        matches: query === "(max-width: 639px)",
+        media: query,
+        onchange: null,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList;
+    try {
+      resetStore({ currentPage: 4 });
+      renderChrome({ incognito: true });
+      const more = await screen.findByRole("button", {
+        name: "More reader tools",
+      });
+      expect(screen.queryByRole("button", { name: "Marker tools" })).toBeNull();
+      expect(screen.queryByRole("button", { name: /page text/ })).toBeNull();
+      expect(screen.queryByRole("button", { name: /markers/i })).toBeNull();
+      // Still in the bar: exit, page counter, bookmark, favourite, settings.
+      for (const name of [
+        "Exit reader",
+        "Bookmark this page",
+        "Favorite this page",
+        "Reader settings",
+      ]) {
+        expect(screen.getByRole("button", { name })).toBeTruthy();
+      }
+      // The incognito word is still announced, just not painted.
+      expect(screen.getByText("Incognito").className).toContain("sr-only");
+      // The More menu carries the marker tools: Add note still seeds a note.
+      await act(async () => {
+        more.focus();
+        fireEvent.keyDown(more, { key: "Enter" });
+      });
+      const note = await screen.findByRole("menuitem", { name: /add note/i });
+      expect(
+        await screen.findByRole("menuitem", { name: /show page text/i }),
+      ).toBeTruthy();
+      await act(async () => {
+        fireEvent.click(note);
+      });
+      expect(useReaderStore.getState().pendingMarker?.page_index).toBe(4);
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
   it("renders the incognito chip only when asked", async () => {
     const { unmount } = renderChrome({ incognito: true });
     expect(await screen.findByText("Incognito")).toBeTruthy();
