@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import type { LabVariant } from "@/lib/pwa-lab";
@@ -177,6 +178,38 @@ const TRIGGERS: { label: string; run: () => void }[] = [
       }),
   },
   {
+    // What Next still does on every client navigation after #1016: the
+    // charset, viewport, description and robots metas are removed and
+    // re-inserted with identical values, in one commit.
+    label: "churn: remove + re-add the viewport meta (identical)",
+    run: () =>
+      forMs(() => {
+        const m = document.querySelector<HTMLMetaElement>(
+          'meta[name="viewport"]',
+        );
+        if (!m) return () => undefined;
+        const clone = m.cloneNode(true) as HTMLMetaElement;
+        const next = m.nextSibling;
+        m.remove();
+        document.head.insertBefore(clone, next);
+        return () => undefined;
+      }),
+  },
+  {
+    label: "churn, slow: remove the viewport meta, re-add after 300ms",
+    run: () =>
+      forMs(() => {
+        const m = document.querySelector<HTMLMetaElement>(
+          'meta[name="viewport"]',
+        );
+        if (!m) return () => undefined;
+        const clone = m.cloneNode(true) as HTMLMetaElement;
+        m.remove();
+        window.setTimeout(() => document.head.appendChild(clone), 300);
+        return () => undefined;
+      }),
+  },
+  {
     label: "color-scheme → dark → back",
     run: () =>
       forMs(() => {
@@ -272,6 +305,14 @@ export function LatchProbe({ variant }: { variant: LabVariant }) {
     addNote(what);
     setText(snapshot());
   };
+  const router = useRouter();
+  // A real Next client navigation that lands on THIS page again (new query
+  // string): the head churn and route transition happen while the sticky
+  // header never leaves the screen — head churn isolated from "no top bar".
+  const softNavigate = () => {
+    note("trigger: soft navigation to this page");
+    router.push(`/pwa-lab/p-latch-probe?n=${Date.now()}`);
+  };
 
   return (
     <>
@@ -318,6 +359,18 @@ export function LatchProbe({ variant }: { variant: LabVariant }) {
             {t.label}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={softNavigate}
+          style={{
+            padding: "10px 14px",
+            borderRadius: 8,
+            background: "#4c1d95",
+            color: "#fff",
+          }}
+        >
+          soft-navigate to this page (Next router)
+        </button>
         <button
           type="button"
           onClick={() => window.location.reload()}
