@@ -45,6 +45,30 @@ export const LAB_VARIANTS: readonly LabVariant[] = [
     question:
       "Check at rest (strip should be black), then scroll — does colour appear live?",
   },
+  {
+    id: "f-inner-scroll-12px",
+    letter: "F",
+    title: "Inner scroller below a 12px black band",
+    question: "Smallest band WebKit should treat as a solid edge (> 10px).",
+  },
+  {
+    id: "g-inner-scroll-4px",
+    letter: "G",
+    title: "Inner scroller below a 4px black band",
+    question: "Below WebKit's 10px floor — expected to fade like C.",
+  },
+  {
+    id: "h-app-header",
+    letter: "H",
+    title: "Inner scroller below a 56px header in the app colour",
+    question: "Preview of the library: strip should match the header, no fade.",
+  },
+  {
+    id: "i-reader-mock",
+    letter: "I",
+    title: "Reader mock: 12px band + tap to toggle 56px chrome",
+    question: "Both reader states: chrome hidden (thin band) and shown.",
+  },
 ] as const;
 
 export function labVariant(id: string): LabVariant | undefined {

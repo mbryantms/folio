@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import type { LabVariant } from "@/lib/pwa-lab";
 
@@ -104,8 +104,103 @@ function useBlackBody() {
   }, []);
 }
 
+/** Fixed full-width solid band at the top edge. */
+function Band({ height, color }: { height: number; color: string }) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        height,
+        background: color,
+        zIndex: 30,
+      }}
+    />
+  );
+}
+
+/** The scrolling region: everything below `top`, document stays still. */
+function InnerScroller({
+  top,
+  scrollerRef,
+  children,
+  onClick,
+}: {
+  top: number;
+  scrollerRef: React.RefObject<HTMLDivElement | null>;
+  children: React.ReactNode;
+  onClick?: () => void;
+}) {
+  return (
+    <div
+      ref={scrollerRef}
+      onClick={onClick}
+      style={{
+        position: "fixed",
+        top,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        overflowY: "auto",
+        overscrollBehavior: "contain",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Reader mock: a thin band always; tapping toggles a chrome bar that
+ *  overlays the top of the scroller (like ReaderChrome). */
+function ReaderMock({
+  variant,
+  scrollerRef,
+}: {
+  variant: LabVariant;
+  scrollerRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const [chrome, setChrome] = useState(true);
+  return (
+    <>
+      <Band height={12} color="#000" />
+      {chrome ? (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 56,
+            background: "#0a0a0a",
+            borderBottom: "1px solid #262626",
+            color: "#e5e5e5",
+            zIndex: 40,
+            display: "flex",
+            alignItems: "center",
+            padding: "0 16px",
+            fontSize: 15,
+          }}
+        >
+          ← Pages 6–7 / 31 · tap content to hide chrome
+        </div>
+      ) : null}
+      <InnerScroller
+        top={12}
+        scrollerRef={scrollerRef}
+        onClick={() => setChrome((c) => !c)}
+      >
+        <Rows letter="I" />
+      </InnerScroller>
+      <Footer variant={variant} />
+    </>
+  );
+}
+
 export function LabVariantView({ variant }: { variant: LabVariant }) {
-  const inner = variant.id.startsWith("c-") || variant.id.startsWith("d-");
+  // Every variant from C on keeps the document still and scrolls inside.
+  const inner = !["A", "B", "E"].includes(variant.letter);
   const scroller = useRef<HTMLDivElement>(null);
   useBlackBody();
   useLockedDocument(inner);
@@ -181,6 +276,59 @@ export function LabVariantView({ variant }: { variant: LabVariant }) {
           <Footer variant={variant} />
         </>
       );
+    case "F":
+    case "G": {
+      const h = variant.letter === "F" ? 12 : 4;
+      return (
+        <>
+          <Band height={h} color="#000" />
+          <InnerScroller top={h} scrollerRef={scroller}>
+            <Rows letter={variant.letter} />
+          </InnerScroller>
+          <Footer variant={variant} />
+        </>
+      );
+    }
+    case "H":
+      return (
+        <>
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              height: BAR,
+              zIndex: 30,
+              background: "hsl(var(--background))",
+              borderBottom: "1px solid hsl(var(--border))",
+              color: "hsl(var(--foreground))",
+              display: "flex",
+              alignItems: "center",
+              gap: 16,
+              padding: "0 24px",
+              fontSize: 17,
+              fontWeight: 600,
+            }}
+          >
+            ☰ Folio
+            <span
+              style={{
+                flex: "0 1 420px",
+                height: 34,
+                borderRadius: 8,
+                border: "1px solid hsl(var(--border))",
+              }}
+            />
+          </div>
+          <InnerScroller top={BAR} scrollerRef={scroller}>
+            <Rows letter="H" />
+          </InnerScroller>
+          <Footer variant={variant} />
+        </>
+      );
+    case "I":
+      return <ReaderMock variant={variant} scrollerRef={scroller} />;
     case "E":
       return (
         <>
