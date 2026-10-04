@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -11,6 +11,7 @@ import {
   ListOrdered,
   Maximize2,
   Minimize2,
+  MoreHorizontal,
   ScanText,
   Settings,
   Square,
@@ -129,6 +130,8 @@ export function ReaderChrome({
     router.push(exitUrl);
   }, [exitUrl, router]);
 
+  const narrow = useNarrowChrome();
+
   return (
     <TooltipProvider delayDuration={250}>
       <header
@@ -180,22 +183,35 @@ export function ReaderChrome({
 
         {incognito && (
           <span
-            className={`ml-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium tracking-wider uppercase ${statusTone("warning")}`}
+            className={`ml-1 inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium tracking-wider uppercase sm:ml-2 ${statusTone("warning")}`}
             aria-label="Reading in incognito mode — progress and activity will not be saved"
           >
             <EyeOff className="h-3 w-3" />
-            Incognito
+            {/* Icon-only on phones: the word doesn't fit next to the page
+                counter and seven controls at 390pt. */}
+            <span className={narrow ? "sr-only" : undefined}>Incognito</span>
           </span>
         )}
 
-        <span className="ml-auto flex items-center gap-1">
+        {/* Phones (< 640px): bookmark, favourite and settings stay in the
+            bar; marker tools, page text, the markers list and fullscreen
+            collapse into one "More" menu. Seven 36px buttons plus the page
+            counter overflowed a 390pt iPhone and wrapped the counter onto
+            three lines. */}
+        <span className="ml-auto flex shrink-0 items-center gap-1">
           <BookmarkToggleButton issueId={issueId} pageIndex={currentPage} />
           <FavoriteToggleButton issueId={issueId} pageIndex={currentPage} />
-          <MarkerMenuButton issueId={issueId} pageIndex={currentPage} />
-          <PageTextButton />
-          <MarkerDrawerButton />
+          {narrow ? (
+            <MoreMenuButton pageIndex={currentPage} />
+          ) : (
+            <>
+              <MarkerMenuButton issueId={issueId} pageIndex={currentPage} />
+              <PageTextButton />
+              <MarkerDrawerButton />
+            </>
+          )}
           <SettingsButton seriesId={seriesId} onPinChange={setChromePinned} />
-          <FullscreenButton />
+          {narrow ? null : <FullscreenButton />}
         </span>
         <ReadingProgress current={progressCurrent} total={progressTotal} />
       </header>
@@ -252,7 +268,7 @@ function PageJumpDisplay({
 
   if (editing) {
     return (
-      <span className="ml-1 flex items-center gap-1 text-neutral-400">
+      <span className="ml-1 flex shrink-0 items-center gap-1 whitespace-nowrap text-neutral-400">
         Page
         <input
           type="number"
@@ -289,7 +305,7 @@ function PageJumpDisplay({
     <button
       type="button"
       onClick={beginEdit}
-      className="focus-visible:ring-ring ml-1 cursor-text rounded px-1 text-neutral-200 transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none"
+      className="focus-visible:ring-ring ml-1 shrink-0 cursor-text rounded px-1 whitespace-nowrap text-neutral-200 tabular-nums transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none"
       aria-label={
         pairLabel ?? `Page ${currentPage + 1} of ${totalPages}; click to jump`
       }
@@ -388,9 +404,36 @@ function MarkerMenuButton({
   pageIndex: number;
 }) {
   void issueId; // future: per-issue analytics
+  const setChromePinned = useReaderStore((s) => s.setChromePinned);
+
+  return (
+    <DropdownMenu onOpenChange={setChromePinned}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="Marker tools"
+              className="focus-visible:ring-ring data-[state=open]:bg-accent/25 data-[state=open]:text-accent inline-flex h-9 w-9 items-center justify-center rounded-md text-neutral-100 transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-4"
+            >
+              <StickyNote />
+            </button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Markers</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" sideOffset={8} className="min-w-[18rem]">
+        <MarkerMenuItems pageIndex={pageIndex} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** The marker-creation entries, shared by the wide bar's Markers menu and
+ *  the phone "More" menu. */
+function MarkerMenuItems({ pageIndex }: { pageIndex: number }) {
   const beginMarkerEdit = useReaderStore((s) => s.beginMarkerEdit);
   const setMarkerMode = useReaderStore((s) => s.setMarkerMode);
-  const setChromePinned = useReaderStore((s) => s.setChromePinned);
 
   function openNote() {
     beginMarkerEdit({
@@ -410,69 +453,120 @@ function MarkerMenuButton({
   }
 
   return (
+    <>
+      <DropdownMenuItem onSelect={openNote} className="flex-col items-start">
+        <span className="flex items-center font-medium">
+          <StickyNote className="mr-2 h-4 w-4" /> Add note
+        </span>
+        <span className="text-muted-foreground ml-6 text-xs">
+          Page-level markdown note. Optional panel selection.
+        </span>
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem
+        onSelect={() => startHighlight("select-rect")}
+        className="flex-col items-start"
+      >
+        <span className="flex items-center font-medium">
+          <Square className="mr-2 h-4 w-4" /> Highlight a region
+        </span>
+        <span className="text-muted-foreground ml-6 text-xs">
+          Drag a rectangle. Saves just the box — fastest.
+        </span>
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        onSelect={() => startHighlight("select-text")}
+        className="flex-col items-start"
+      >
+        <span className="flex items-center font-medium">
+          <Type className="mr-2 h-4 w-4" /> Highlight + capture text
+        </span>
+        <span className="text-muted-foreground ml-6 text-xs">
+          Tap a speech bubble, or drag a box. Runs OCR so the text shows up in
+          search.
+        </span>
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        onSelect={() => startHighlight("select-image")}
+        className="flex-col items-start"
+      >
+        <span className="flex items-center font-medium">
+          <ImageIcon className="mr-2 h-4 w-4" /> Highlight + image hash
+        </span>
+        <span className="text-muted-foreground ml-6 text-xs">
+          Same as &ldquo;Highlight a region&rdquo; plus a fingerprint of the
+          cropped pixels — reserved for a future &ldquo;find this panel&rdquo;
+          lookup.
+        </span>
+      </DropdownMenuItem>
+    </>
+  );
+}
+
+/** Phone-width overflow menu: everything that doesn't fit beside the page
+ *  counter at 390pt. Pins the chrome while open, like the other menus. */
+function MoreMenuButton({ pageIndex }: { pageIndex: number }) {
+  const setChromePinned = useReaderStore((s) => s.setChromePinned);
+  const pageTextOpen = usePageTextPanel((s) => s.open);
+  const togglePageText = usePageTextPanel((s) => s.toggle);
+  const drawerOpen = useMarkerDrawer((s) => s.open);
+  const toggleDrawer = useMarkerDrawer((s) => s.toggle);
+  const fullscreen = useFullscreen();
+  return (
     <DropdownMenu onOpenChange={setChromePinned}>
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              aria-label="Marker tools"
+              aria-label="More reader tools"
               className="focus-visible:ring-ring data-[state=open]:bg-accent/25 data-[state=open]:text-accent inline-flex h-9 w-9 items-center justify-center rounded-md text-neutral-100 transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-4"
             >
-              <StickyNote />
+              <MoreHorizontal />
             </button>
           </DropdownMenuTrigger>
         </TooltipTrigger>
-        <TooltipContent side="bottom">Markers</TooltipContent>
+        <TooltipContent side="bottom">More</TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="end" sideOffset={8} className="min-w-[18rem]">
-        <DropdownMenuItem onSelect={openNote} className="flex-col items-start">
-          <span className="flex items-center font-medium">
-            <StickyNote className="mr-2 h-4 w-4" /> Add note
-          </span>
-          <span className="text-muted-foreground ml-6 text-xs">
-            Page-level markdown note. Optional panel selection.
-          </span>
-        </DropdownMenuItem>
+        <MarkerMenuItems pageIndex={pageIndex} />
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onSelect={() => startHighlight("select-rect")}
-          className="flex-col items-start"
-        >
-          <span className="flex items-center font-medium">
-            <Square className="mr-2 h-4 w-4" /> Highlight a region
-          </span>
-          <span className="text-muted-foreground ml-6 text-xs">
-            Drag a rectangle. Saves just the box — fastest.
-          </span>
+        <DropdownMenuItem onSelect={togglePageText}>
+          <ScanText className="mr-2 h-4 w-4" />
+          {pageTextOpen ? "Hide page text" : "Show page text"}
         </DropdownMenuItem>
-        <DropdownMenuItem
-          onSelect={() => startHighlight("select-text")}
-          className="flex-col items-start"
-        >
-          <span className="flex items-center font-medium">
-            <Type className="mr-2 h-4 w-4" /> Highlight + capture text
-          </span>
-          <span className="text-muted-foreground ml-6 text-xs">
-            Tap a speech bubble, or drag a box. Runs OCR so the text shows up in
-            search.
-          </span>
+        <DropdownMenuItem onSelect={toggleDrawer}>
+          <ListOrdered className="mr-2 h-4 w-4" />
+          {drawerOpen ? "Hide markers list" : "Show markers in this issue"}
         </DropdownMenuItem>
-        <DropdownMenuItem
-          onSelect={() => startHighlight("select-image")}
-          className="flex-col items-start"
-        >
-          <span className="flex items-center font-medium">
-            <ImageIcon className="mr-2 h-4 w-4" /> Highlight + image hash
-          </span>
-          <span className="text-muted-foreground ml-6 text-xs">
-            Same as &ldquo;Highlight a region&rdquo; plus a fingerprint of the
-            cropped pixels — reserved for a future &ldquo;find this panel&rdquo;
-            lookup.
-          </span>
-        </DropdownMenuItem>
+        {fullscreen.supported ? (
+          <DropdownMenuItem onSelect={fullscreen.toggle}>
+            {fullscreen.isFullscreen ? (
+              <Minimize2 className="mr-2 h-4 w-4" />
+            ) : (
+              <Maximize2 className="mr-2 h-4 w-4" />
+            )}
+            {fullscreen.isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+          </DropdownMenuItem>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+const NARROW_QUERY = "(max-width: 639px)";
+function subscribeNarrow(cb: () => void): () => void {
+  const mq = window.matchMedia(NARROW_QUERY);
+  mq.addEventListener?.("change", cb);
+  return () => mq.removeEventListener?.("change", cb);
+}
+/** True below Tailwind's `sm` breakpoint (phones). SSR renders the wide
+ *  bar; the swap happens on hydration. */
+function useNarrowChrome(): boolean {
+  return useSyncExternalStore(
+    subscribeNarrow,
+    () => window.matchMedia(NARROW_QUERY).matches,
+    () => false,
   );
 }
 
