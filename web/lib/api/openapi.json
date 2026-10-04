@@ -10565,6 +10565,38 @@
         }
       }
     },
+    "/api/series/{slug}/metadata/refresh-status": {
+      "get": {
+        "operationId": "metadata_series_refresh_status",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesRefreshStatusResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/metadata/resume": {
       "post": {
         "operationId": "metadata_resume_series",
@@ -19922,6 +19954,31 @@
           "rejected_by_matcher"
         ]
       },
+      "FetchScopeEstimate": {
+        "type": "object",
+        "required": [
+          "scope",
+          "issues",
+          "providers"
+        ],
+        "properties": {
+          "issues": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues the batch would search."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderFetchEstimate"
+            },
+            "description": "Per enabled provider (ComicVine, Metron, GCD order)."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SeriesBatchScope"
+          }
+        }
+      },
       "Field": {
         "type": "string",
         "description": "All filterable fields. Per-field metadata (kind, allowed ops, SQL\ncolumn) lives in [`super::registry`]. Adding a field is a two-step:\nadd a variant here + a registry entry. The OpenAPI schema mirrors this\nenum so the M5 field-picker can iterate variants without a separate\nJSON constant.",
@@ -24000,6 +24057,29 @@
           }
         }
       },
+      "ProviderFetchEstimate": {
+        "type": "object",
+        "required": [
+          "source",
+          "direct",
+          "search"
+        ],
+        "properties": {
+          "direct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues with a provider series (a covering range or the series id):\nlooked up directly — one detail request, no search — unless the\nlisting doesn't hold them (then they fall back to a search)."
+          },
+          "search": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues without one: a provider search each (1–2 requests)."
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
       "ProviderLastError": {
         "type": "object",
         "description": "The most recent provider error, for the admin card.",
@@ -24907,6 +24987,73 @@
           }
         }
       },
+      "RefreshBatch": {
+        "type": "object",
+        "required": [
+          "batch_id",
+          "created_at",
+          "items_total",
+          "unfinished"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "items_total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "unfinished": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Children still queued / searching / parked on quota."
+          }
+        }
+      },
+      "RefreshCoverageJob": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "state",
+          "trigger",
+          "requested_at",
+          "sources"
+        ],
+        "properties": {
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Providers the job analyses (a seeded job: only the matched ones)."
+          },
+          "state": {
+            "$ref": "#/components/schemas/CoverageJobState"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/CoverageTrigger"
+          }
+        }
+      },
       "RefreshLibraryResp": {
         "type": "object",
         "required": [
@@ -25012,6 +25159,37 @@
             }
           }
         }
+      },
+      "RefreshRun": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "status",
+          "started_at"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "RefreshStep": {
+        "type": "string",
+        "description": "The guided flow's steps, in order.",
+        "enum": [
+          "match",
+          "coverage",
+          "fetch",
+          "review"
+        ]
       },
       "RegenerateResp": {
         "type": "object",
@@ -26949,6 +27127,14 @@
           }
         }
       },
+      "SeriesBatchScope": {
+        "type": "string",
+        "description": "`POST /series/{slug}/metadata/batch` — fan out a per-issue metadata search\nover every active issue in the series, grouped under one `metadata_batch`\nso progress + review happen in one place. Children run as `manual` (held\nfor review, never auto-applied).\nWhich issues a series metadata batch fans out over.",
+        "enum": [
+          "all",
+          "incomplete"
+        ]
+      },
       "SeriesChainEntry": {
         "type": "object",
         "description": "One step of the reading-order chain.",
@@ -27189,6 +27375,40 @@
           }
         }
       },
+      "SeriesMatchState": {
+        "type": "object",
+        "required": [
+          "links"
+        ],
+        "properties": {
+          "applied_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When a series candidate was last applied, if inside the window."
+          },
+          "latest_run": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RefreshRun",
+                "description": "Latest series search run (any age), for the match step's status."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesProviderLink"
+            },
+            "description": "The series' provider ids (`external_ids`) — a non-empty list is a\nconfirmed match the user may keep."
+          }
+        }
+      },
       "SeriesProgressSummary": {
         "type": "object",
         "description": "Per-user, server-computed read progress for the whole series. Sidesteps\nthe client-side cap on the issues page (which fetches 100 at a time).",
@@ -27221,6 +27441,26 @@
           }
         }
       },
+      "SeriesProviderLink": {
+        "type": "object",
+        "required": [
+          "source",
+          "external_id",
+          "set_by"
+        ],
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "set_by": {
+            "type": "string",
+            "description": "`user` | `provider:<source>` | … (`external_ids.set_by`)."
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
       "SeriesRef": {
         "type": "object",
         "description": "Portable identity for a series.",
@@ -27250,6 +27490,61 @@
               "null"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "SeriesRefreshStatusResp": {
+        "type": "object",
+        "required": [
+          "series_id",
+          "resume_step",
+          "series_match",
+          "coverage_after_series_apply",
+          "fetch_estimate"
+        ],
+        "properties": {
+          "batch": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RefreshBatch",
+                "description": "The series' latest metadata batch inside the resume window."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "coverage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RefreshCoverageJob",
+                "description": "The latest coverage job, when its record is still kept (24 h)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "coverage_after_series_apply": {
+            "type": "string",
+            "description": "`metadata.coverage_after_series_apply` (`off` | `manual_only` |\n`all`): whether a match applied in step 1 queues the analysis\nitself, or step 2 has to run it."
+          },
+          "fetch_estimate": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FetchScopeEstimate"
+            },
+            "description": "Provider-call estimate for the per-issue step, one entry per batch\nscope (`all`, then `incomplete`)."
+          },
+          "resume_step": {
+            "$ref": "#/components/schemas/RefreshStep",
+            "description": "Where a reopened dialog resumes (see the module docs for the rule)."
+          },
+          "series_id": {
+            "type": "string"
+          },
+          "series_match": {
+            "$ref": "#/components/schemas/SeriesMatchState"
           }
         }
       },

@@ -702,6 +702,33 @@ nothing left to accept". Nothing is written until you accept, unless
 with no conflict with what you set. Your own links and mappings are never
 replaced. Set `metadata.coverage_after_series_apply` to `off` to stop it.
 
+### Refresh this series (guided)
+
+**Fetch metadata → Refresh this series…** in a series' ⋯ menu (admins)
+does the whole refresh in one dialog, step by step:
+
+1. **Series match.** If the series is already matched you see its
+   provider ids — **Keep current match** skips straight on without
+   searching. Otherwise (or with **Search for a match**) the usual match
+   list appears, coverage hints included.
+2. **Coverage.** After a match you applied here, the dialog waits for the
+   coverage check that match queued (usually 1–3 requests). Without one it
+   offers **Analyze coverage** (at most 40 ComicVine, 30 Metron and 30
+   GCD requests). Accept or skip each provider; nothing is saved until
+   you accept.
+3. **Per-issue fetch.** Choose *Only missing or partial* or *All issues*.
+   The dialog shows, per provider, how many issues will be looked up
+   directly through the series' coverage (one request each, no search)
+   and how many will be searched (one or two requests each).
+4. **Review.** When the fetch finishes: the strong / need-review /
+   no-match counts, how many issues each provider answered directly,
+   **Accept all strong** and **Fill missing**, and **Open in Review** for
+   issue-by-issue work (and *Replace all*).
+
+You can close the dialog at any time: reopening it within 24 hours picks
+up where it got to (a fetch still running, or its results). Every step is
+also still available on its own in the same menu and on the Details tab.
+
 ## Files referenced
 
 - [`docs/dev/metadata-providers.md`](metadata-providers.md) — developer architecture

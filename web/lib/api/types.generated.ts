@@ -4592,6 +4592,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/metadata/refresh-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["metadata_series_refresh_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/metadata/resume": {
         parameters: {
             query?: never;
@@ -8225,6 +8241,16 @@ export interface components {
          * @enum {string}
          */
         FallbackReason: "no_target" | "list_unavailable" | "not_listed" | "date_conflict" | "detail_unavailable" | "rejected_by_matcher";
+        FetchScopeEstimate: {
+            /**
+             * Format: int64
+             * @description Issues the batch would search.
+             */
+            issues: number;
+            /** @description Per enabled provider (ComicVine, Metron, GCD order). */
+            providers: components["schemas"]["ProviderFetchEstimate"][];
+            scope: components["schemas"]["SeriesBatchScope"];
+        };
         /**
          * @description All filterable fields. Per-field metadata (kind, allowed ops, SQL
          *     column) lives in [`super::registry`]. Adding a field is a two-step:
@@ -10025,6 +10051,21 @@ export interface components {
             /** @description Specials assigned to a non-main series (can't be ranged). */
             unranged_specials: string[];
         };
+        ProviderFetchEstimate: {
+            /**
+             * Format: int64
+             * @description Issues with a provider series (a covering range or the series id):
+             *     looked up directly — one detail request, no search — unless the
+             *     listing doesn't hold them (then they fall back to a search).
+             */
+            direct: number;
+            /**
+             * Format: int64
+             * @description Issues without one: a provider search each (1–2 requests).
+             */
+            search: number;
+            source: string;
+        };
         /** @description The most recent provider error, for the admin card. */
         ProviderLastError: {
             /** Format: date-time */
@@ -10417,6 +10458,30 @@ export interface components {
         RecentIssuesView: {
             items: components["schemas"]["IssueSummaryView"][];
         };
+        RefreshBatch: {
+            /** Format: uuid */
+            batch_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int32 */
+            items_total: number;
+            /**
+             * Format: int64
+             * @description Children still queued / searching / parked on quota.
+             */
+            unfinished: number;
+        };
+        RefreshCoverageJob: {
+            /** Format: date-time */
+            finished_at?: string | null;
+            job_id: string;
+            /** Format: date-time */
+            requested_at: string;
+            /** @description Providers the job analyses (a seeded job: only the matched ones). */
+            sources: string[];
+            state: components["schemas"]["CoverageJobState"];
+            trigger: components["schemas"]["CoverageTrigger"];
+        };
         RefreshLibraryResp: {
             jobs_coalesced: number;
             jobs_enqueued: number;
@@ -10446,6 +10511,18 @@ export interface components {
         RefreshLogListView: {
             items: components["schemas"]["RefreshLogEntryView"][];
         };
+        RefreshRun: {
+            /** Format: uuid */
+            run_id: string;
+            /** Format: date-time */
+            started_at: string;
+            status: string;
+        };
+        /**
+         * @description The guided flow's steps, in order.
+         * @enum {string}
+         */
+        RefreshStep: "match" | "coverage" | "fetch" | "review";
         RegenerateResp: {
             enqueued: number;
         };
@@ -11177,6 +11254,15 @@ export interface components {
             source: components["schemas"]["RelationshipSource"];
             to_range?: string | null;
         };
+        /**
+         * @description `POST /series/{slug}/metadata/batch` — fan out a per-issue metadata search
+         *     over every active issue in the series, grouped under one `metadata_batch`
+         *     so progress + review happen in one place. Children run as `manual` (held
+         *     for review, never auto-applied).
+         *     Which issues a series metadata batch fans out over.
+         * @enum {string}
+         */
+        SeriesBatchScope: "all" | "incomplete";
         /** @description One step of the reading-order chain. */
         SeriesChainEntry: {
             /**
@@ -11284,6 +11370,19 @@ export interface components {
              */
             total?: number | null;
         };
+        SeriesMatchState: {
+            /**
+             * Format: date-time
+             * @description When a series candidate was last applied, if inside the window.
+             */
+            applied_at?: string | null;
+            latest_run?: components["schemas"]["RefreshRun"] | null;
+            /**
+             * @description The series' provider ids (`external_ids`) — a non-empty list is a
+             *     confirmed match the user may keep.
+             */
+            links: components["schemas"]["SeriesProviderLink"][];
+        };
         /**
          * @description Per-user, server-computed read progress for the whole series. Sidesteps
          *     the client-side cap on the issues page (which fetches 100 at a time).
@@ -11313,6 +11412,12 @@ export interface components {
              */
             total: number;
         };
+        SeriesProviderLink: {
+            external_id: string;
+            /** @description `user` | `provider:<source>` | … (`external_ids.set_by`). */
+            set_by: string;
+            source: string;
+        };
         /** @description Portable identity for a series. */
         SeriesRef: {
             library_slug?: string | null;
@@ -11321,6 +11426,25 @@ export interface components {
             series_name?: string | null;
             /** Format: int32 */
             series_year?: number | null;
+        };
+        SeriesRefreshStatusResp: {
+            batch?: components["schemas"]["RefreshBatch"] | null;
+            coverage?: components["schemas"]["RefreshCoverageJob"] | null;
+            /**
+             * @description `metadata.coverage_after_series_apply` (`off` | `manual_only` |
+             *     `all`): whether a match applied in step 1 queues the analysis
+             *     itself, or step 2 has to run it.
+             */
+            coverage_after_series_apply: string;
+            /**
+             * @description Provider-call estimate for the per-issue step, one entry per batch
+             *     scope (`all`, then `incomplete`).
+             */
+            fetch_estimate: components["schemas"]["FetchScopeEstimate"][];
+            /** @description Where a reopened dialog resumes (see the module docs for the rule). */
+            resume_step: components["schemas"]["RefreshStep"];
+            series_id: string;
+            series_match: components["schemas"]["SeriesMatchState"];
         };
         /**
          * @description One direct relationship, from the requested series' point of view:
@@ -22428,6 +22552,41 @@ export interface operations {
             };
             /** @description provider error */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_series_refresh_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesRefreshStatusResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

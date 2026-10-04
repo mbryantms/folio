@@ -2715,7 +2715,7 @@ async fn set_batch_items_total(db: &sea_orm::DatabaseConnection, batch_id: Uuid,
 /// so progress + review happen in one place. Children run as `manual` (held
 /// for review, never auto-applied).
 /// Which issues a series metadata batch fans out over.
-#[derive(Copy, Clone, Debug, Default, Deserialize, utoipa::ToSchema)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SeriesBatchScope {
     /// Every active issue (the default — bare POST stays this).
@@ -2763,49 +2763,11 @@ pub async fn create_series_batch(
         );
     }
 
-    // Target issues, capped like the library refresh fan-out. `incomplete`
-    // scores each active issue and keeps only the non-complete ones; the
-    // scorer is shared with the series Collection grid so the two can't drift.
-    let issue_ids: Vec<String> = match q.scope {
-        SeriesBatchScope::All => match issue::Entity::find()
-            .filter(issue::Column::SeriesId.eq(s.id))
-            .filter(issue::Column::State.eq("active"))
-            .filter(issue::Column::RemovedAt.is_null())
-            .order_by_asc(issue::Column::SortNumber)
-            .limit(refresh::REFRESH_BATCH_CAP as u64)
-            .all(&app.db)
-            .await
-        {
-            Ok(rows) => rows.into_iter().map(|r| r.id).collect(),
-            Err(e) => {
-                tracing::error!(error = %e, "create_series_batch: issue query failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        },
-        SeriesBatchScope::Incomplete => {
-            use crate::metadata::completeness::CompletenessTier;
-            // Issues whose description is the series description (a series
-            // apply leaked it before #974): "complete" by presence, wrong by
-            // content. They're re-fetched whatever their tier.
-            let leaked = match series_description_leaks(&app.db, s.id).await {
-                Ok(ids) => ids,
-                Err(e) => {
-                    tracing::warn!(error = %e, series_id = %s.id, "create_series_batch: description-leak query failed; tier only");
-                    std::collections::HashSet::new()
-                }
-            };
-            crate::api::series::assess_series_issue_tiers(&app, s.id)
-                .await
-                .into_iter()
-                // Skip Complete AND Accepted (operator marked it done, B4) — the
-                // "only missing or partial" scope shouldn't re-fetch either.
-                .filter(|(id, tier)| {
-                    leaked.contains(id)
-                        || !matches!(tier, CompletenessTier::Complete | CompletenessTier::Accepted)
-                })
-                .map(|(id, _)| id)
-                .take(refresh::REFRESH_BATCH_CAP)
-                .collect()
+    let issue_ids = match series_batch_issue_ids(&app, s.id, q.scope).await {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::error!(error = %e, "create_series_batch: issue query failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
 
@@ -2834,6 +2796,60 @@ pub async fn create_series_batch(
         }),
     )
         .into_response()
+}
+
+/// The issues a series metadata batch of `scope` fans out over (capped
+/// like the library refresh fan-out), in issue order for `all`. Shared by
+/// [`create_series_batch`] and the guided refresh's fetch estimate
+/// (`api::series_refresh`) so the two can't drift.
+pub(crate) async fn series_batch_issue_ids(
+    app: &AppState,
+    series_id: Uuid,
+    scope: SeriesBatchScope,
+) -> Result<Vec<String>, sea_orm::DbErr> {
+    match scope {
+        SeriesBatchScope::All => Ok(issue::Entity::find()
+            .select_only()
+            .column(issue::Column::Id)
+            .filter(issue::Column::SeriesId.eq(series_id))
+            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::RemovedAt.is_null())
+            .order_by_asc(issue::Column::SortNumber)
+            .limit(refresh::REFRESH_BATCH_CAP as u64)
+            .into_tuple::<String>()
+            .all(&app.db)
+            .await?),
+        SeriesBatchScope::Incomplete => {
+            use crate::metadata::completeness::CompletenessTier;
+            // `incomplete` scores each active issue and keeps only the
+            // non-complete ones; the scorer is shared with the series
+            // Collection grid so the two can't drift. Issues whose
+            // description is the series description (a series apply leaked
+            // it before #974) are "complete" by presence, wrong by content:
+            // they're re-fetched whatever their tier.
+            let leaked = match series_description_leaks(&app.db, series_id).await {
+                Ok(ids) => ids,
+                Err(e) => {
+                    tracing::warn!(error = %e, series_id = %series_id, "series batch: description-leak query failed; tier only");
+                    std::collections::HashSet::new()
+                }
+            };
+            Ok(
+                crate::api::series::assess_series_issue_tiers(app, series_id)
+                .await
+                .into_iter()
+                // Skip Complete AND Accepted (operator marked it done, B4) — the
+                // "only missing or partial" scope shouldn't re-fetch either.
+                .filter(|(id, tier)| {
+                    leaked.contains(id)
+                        || !matches!(tier, CompletenessTier::Complete | CompletenessTier::Accepted)
+                })
+                .map(|(id, _)| id)
+                .take(refresh::REFRESH_BATCH_CAP)
+                .collect(),
+            )
+        }
+    }
 }
 
 /// Active issues of a series whose description duplicates the series
