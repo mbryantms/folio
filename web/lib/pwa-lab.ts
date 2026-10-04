@@ -45,6 +45,13 @@ export const LAB_VARIANTS: readonly LabVariant[] = [
     question:
       "Check at rest (strip should be black), then scroll — does colour appear live?",
   },
+  {
+    id: "p-latch-probe",
+    letter: "P",
+    title: "Latch probe",
+    question:
+      "Force-quit first. One trigger per launch; note clean/faded. Logs head changes + top-edge element across routes.",
+  },
 ] as const;
 
 export function labVariant(id: string): LabVariant | undefined {
