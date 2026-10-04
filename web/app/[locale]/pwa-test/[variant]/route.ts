@@ -1,5 +1,5 @@
 /**
- * `/pwa-test/{1,2,3}` — status-bar experiment for the installed iPad app.
+ * `/pwa-test/{1..7}` — status-bar experiment for the installed iPad app.
  *
  * A route handler, not a page: it returns raw HTML so each variant carries
  * ONLY its own head tags, without the root layout's manifest, apple-* tags
@@ -37,6 +37,50 @@ const VARIANTS: Record<
       '<meta name="apple-mobile-web-app-capable" content="yes" />',
       '<meta name="apple-mobile-web-app-status-bar-style" content="black" />',
       '<meta name="theme-color" content="#0c0e13" />',
+    ].join("\n  "),
+  },
+  "4": {
+    n: "4",
+    label: "Test 4",
+    desc: "Test 3 + manifest, display: standalone (Folio's)",
+    head: [
+      '<meta name="apple-mobile-web-app-capable" content="yes" />',
+      '<meta name="apple-mobile-web-app-status-bar-style" content="black" />',
+      '<meta name="theme-color" content="#0c0e13" />',
+      '<link rel="manifest" href="/pwa-test/manifest/4" />',
+    ].join("\n  "),
+  },
+  "5": {
+    n: "5",
+    label: "Test 5",
+    desc: "Test 3 + color-scheme: dark",
+    head: [
+      '<meta name="apple-mobile-web-app-capable" content="yes" />',
+      '<meta name="apple-mobile-web-app-status-bar-style" content="black" />',
+      '<meta name="theme-color" content="#0c0e13" />',
+      '<meta name="color-scheme" content="dark" />',
+    ].join("\n  "),
+  },
+  "6": {
+    n: "6",
+    label: "Test 6",
+    desc: "Test 3 + manifest, display: minimal-ui",
+    head: [
+      '<meta name="apple-mobile-web-app-capable" content="yes" />',
+      '<meta name="apple-mobile-web-app-status-bar-style" content="black" />',
+      '<meta name="theme-color" content="#0c0e13" />',
+      '<link rel="manifest" href="/pwa-test/manifest/6" />',
+    ].join("\n  "),
+  },
+  "7": {
+    n: "7",
+    label: "Test 7",
+    desc: "Test 3 + manifest, display: fullscreen",
+    head: [
+      '<meta name="apple-mobile-web-app-capable" content="yes" />',
+      '<meta name="apple-mobile-web-app-status-bar-style" content="black" />',
+      '<meta name="theme-color" content="#0c0e13" />',
+      '<link rel="manifest" href="/pwa-test/manifest/7" />',
     ].join("\n  "),
   },
 };
