@@ -152,3 +152,6 @@ list_for_series     # GET /series/{slug}/relationship-suggestions — read-only 
 
 # ── provider_coverage.rs (provider-independent coverage) ────
 coverage_analysis   # GET /series/{slug}/provider-coverage/analysis — read-only job status + coverage grid
+
+# ── series_refresh.rs (guided "Refresh this series…") ───────
+refresh_status      # GET /series/{slug}/metadata/refresh-status — read-only resume state + fetch estimate

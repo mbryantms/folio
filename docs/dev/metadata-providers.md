@@ -1139,6 +1139,78 @@ query from `metadata-sidecar-writeback.md` § "Repairing issues a series
 apply overwrote". They are selected whatever their completeness tier
 (including *Accepted*).
 
+## Guided "Refresh this series…"
+
+Series page ⋯ → **Fetch metadata → Refresh this series…** (admins; the
+coverage and Review surfaces are admin-only) walks the three actions in
+order plus the review, in one stepper dialog
+([`SeriesRefreshDialog.tsx`](../../web/components/library/SeriesRefreshDialog.tsx)).
+It only drives existing endpoints; the individual menu actions stay.
+
+1. **Series match** — the embedded `MetadataMatchForm` (`embedded`:
+   no title / Close, the host's step panel is the single scroll region),
+   coverage hints included. When the series already has series-level
+   `external_ids` the step first lists them with **Keep current match**
+   (no search is made) or **Search for a match**.
+2. **Coverage** — after a match applied *in the flow*, waits (polling the
+   status every 2 s) for the seeded job `enqueue_after_series_apply`
+   queues, unless `metadata.coverage_after_series_apply` is `off`; it
+   never starts a second, unseeded job while waiting ("Run it now" is
+   there if the job never shows). Otherwise it reuses the latest job or
+   offers **Analyze coverage** (`auto_accept: false`). Per provider:
+   `promptHeadline`, new ranges, `requests of request_budget`,
+   **Accept** (`POST …/provider-coverage/accept`, `main_series_id: null`)
+   or **Skip** (client-side; nothing is written).
+3. **Per-issue fetch** — *Only missing or partial* (default) or *All
+   issues* → `POST …/metadata/batch[?scope=incomplete]`, with the
+   estimate below; progress polls `GET /metadata/batch/{id}` (2 s).
+4. **Review** — the batch's counts, `aggregate.lookups`
+   (`BatchLookupSummary`), **Accept all strong** (`filter: all_strong`)
+   and **Fill missing** (`all_needs_review` + `fill_missing`) via
+   `POST /metadata/batch/{id}/apply`, and **Open in Review**
+   (`/admin/metadata?tab=review&batch=`). *Replace all* stays on the
+   Review page behind its confirm.
+
+Nothing writes without a click; auto-accept stays the job's setting-gated
+High-confidence rule, and writeback semantics are the endpoints' own.
+
+**Resume** — `GET /api/series/{slug}/metadata/refresh-status`
+([`api/series_refresh.rs`](../../crates/server/src/api/series_refresh.rs),
+`RequireAdmin`, read-only, no provider call) aggregates server state, no
+new table, inside a 24 h window (`RESUME_WINDOW_SECS` = the coverage
+record TTL):
+
+- `series_match`: `links` (series `external_ids` with `set_by`),
+  `latest_run`, `applied_at` (newest `metadata_run_candidate.applied_at`
+  of the series' runs);
+- `coverage`: the latest `coverage:series:<id>` job (`state`, `trigger`,
+  `requested_at`, analysed `sources`);
+- `batch`: the latest `series_issues` batch whose children are this
+  series' issues, with `unfinished` (children not `completed` / `failed`);
+- `coverage_after_series_apply`, and `fetch_estimate` (below).
+
+`resume_step`: a batch newer than the apply and the coverage job →
+`fetch` while children are unfinished, else `review`; else an apply or a
+coverage job → `coverage`; else `match`. The dialog pins that step on
+open (later refetches don't move the user), marks earlier steps done, and
+moves fetch → review by itself when the batch finishes. Closing and
+reopening the dialog re-reads it.
+
+**Fetch estimate** — per batch scope (`all`, `incomplete`, selected by
+the shared `series_batch_issue_ids`, the same function
+`create_series_batch` uses) and enabled coverage provider: `direct` =
+issues with a `fold_targets` target (annuals only via a range) on a
+provider that lists series issues, `search` = the rest. Shown as
+"ComicVine: 170 direct · 3 searched (≈ 173–176 requests)": a direct
+lookup is one detail request, a search 1–2, plus each provider series'
+issue list once per 24 h. It is an upper bound on direct lookups — an
+unlisted number or a date conflict still falls back to a search.
+
+`tests/series_refresh_status.rs` pins the status (FF fixtures, no
+provider request), `web/tests/library/series-refresh-dialog.test.tsx`
+the stepper (happy path, keep current match, coverage accept / skip,
+batch scope, Review handoff, resume after reopen).
+
 ## Adding a new provider
 
 1. Implement `MetadataProvider` in `metadata/<name>.rs`. Look at
@@ -1219,6 +1291,7 @@ apply overwrote". They are selected whatever their completeness tier
 - [`crates/server/src/jobs/metadata_search.rs`](../../crates/server/src/jobs/metadata_search.rs) + [`metadata_apply.rs`](../../crates/server/src/jobs/metadata_apply.rs) — apalis workers
 - [`web/components/library/MetadataMatchDialog.tsx`](../../web/components/library/MetadataMatchDialog.tsx) — the dialog
 - [`web/components/library/MetadataPreviewPane.tsx`](../../web/components/library/MetadataPreviewPane.tsx) — M5 diff view
+- [`crates/server/src/api/series_refresh.rs`](../../crates/server/src/api/series_refresh.rs) + [`web/components/library/SeriesRefreshDialog.tsx`](../../web/components/library/SeriesRefreshDialog.tsx) — guided "Refresh this series…"
 - [`web/components/admin/metadata/`](../../web/components/admin/metadata/) — admin tabs
 
 [provider]: ../../crates/server/src/metadata/provider.rs

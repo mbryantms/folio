@@ -129,6 +129,7 @@ export function MetadataMatchForm({
   onApplied,
   open,
   onCompareModeChange,
+  embedded = false,
 }: {
   scope: MetadataMatchScope;
   onClose: () => void;
@@ -141,6 +142,11 @@ export function MetadataMatchForm({
   /** Lets the wrapping dialog widen itself while the compare table is
    *  shown. */
   onCompareModeChange?: (compare: boolean) => void;
+  /** Rendered as one step of another dialog (the guided "Refresh this
+   *  series…" flow): no dialog title / Close button of its own, and the
+   *  candidate list doesn't scroll by itself — the host's step panel
+   *  does, so there's a single scrollbar. */
+  embedded?: boolean;
 }) {
   const me = useMe();
   const isAdmin = me.data?.role === "admin";
@@ -524,34 +530,36 @@ export function MetadataMatchForm({
   // WP-2.8 provenance of the current run (what was actually searched).
   const runQuery = candidates.data?.query;
 
+  const description = waitingForRescan
+    ? scope.kind === "series"
+      ? seriesProgress
+        ? `Writing sidecars + scanning ${seriesProgress.done}/${seriesProgress.total}…`
+        : "Writing sidecars + scanning series…"
+      : "Writing sidecar + refreshing…"
+    : isPolling
+      ? "Searching providers…"
+      : runStatus === "awaiting_quota"
+        ? retryEta
+          ? `Providers are out of quota — retries in ${retryEta}.`
+          : "Providers are out of quota — try again shortly."
+        : runStatus === "failed"
+          ? "Search failed — see Error below."
+          : `${candidates.data?.candidates.length ?? 0} match${
+              (candidates.data?.candidates.length ?? 0) === 1 ? "" : "es"
+            } from ${candidates.data?.providers.join(", ") ?? "providers"}.`;
+
   return (
     <>
-      <DialogHeader>
-        <DialogTitle>Fetch metadata</DialogTitle>
-        <DialogDescription>
-          {waitingForRescan
-            ? scope.kind === "series"
-              ? seriesProgress
-                ? `Writing sidecars + scanning ${seriesProgress.done}/${seriesProgress.total}…`
-                : "Writing sidecars + scanning series…"
-              : "Writing sidecar + refreshing…"
-            : isPolling
-              ? "Searching providers…"
-              : runStatus === "awaiting_quota"
-                ? retryEta
-                  ? `Providers are out of quota — retries in ${retryEta}.`
-                  : "Providers are out of quota — try again shortly."
-                : runStatus === "failed"
-                  ? "Search failed — see Error below."
-                  : `${candidates.data?.candidates.length ?? 0} match${
-                      (candidates.data?.candidates.length ?? 0) === 1
-                        ? ""
-                        : "es"
-                    } from ${
-                      candidates.data?.providers.join(", ") ?? "providers"
-                    }.`}
-        </DialogDescription>
-      </DialogHeader>
+      {embedded ? (
+        <p className="text-muted-foreground text-sm" aria-live="polite">
+          {description}
+        </p>
+      ) : (
+        <DialogHeader>
+          <DialogTitle>Fetch metadata</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+      )}
 
       {waitingForRescan && (
         <div className="text-muted-foreground flex items-center gap-2 py-2 text-sm">
@@ -679,7 +687,7 @@ export function MetadataMatchForm({
           isApplying={compositeApply.isPending}
         />
       ) : (
-        <div className="max-h-[50vh] overflow-y-auto pr-1">
+        <div className={embedded ? "" : "max-h-[50vh] overflow-y-auto pr-1"}>
           {noProvidersConfigured ? (
             // Pre-flight: nothing to search against. Retrying won't help —
             // point an admin at the provider setup instead.
@@ -850,9 +858,11 @@ export function MetadataMatchForm({
         >
           <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Re-search
         </Button>
-        <Button variant="outline" onClick={onClose}>
-          Close
-        </Button>
+        {!embedded && (
+          <Button variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        )}
       </DialogFooter>
     </>
   );

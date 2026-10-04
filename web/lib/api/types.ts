@@ -847,6 +847,12 @@ export type HintStatus = Schemas["HintStatus"];
 export type HintSkipReason = Schemas["HintSkipReason"];
 export type CoverageRangeRef = Schemas["CoverageRangeRef"];
 export type AcceptOutcome = Schemas["AcceptOutcome"];
+// Guided "Refresh this series…" (resume state + per-issue fetch estimate)
+export type SeriesRefreshStatusResp = Schemas["SeriesRefreshStatusResp"];
+export type RefreshStep = Schemas["RefreshStep"];
+export type FetchScopeEstimate = Schemas["FetchScopeEstimate"];
+export type ProviderFetchEstimate = Schemas["ProviderFetchEstimate"];
+export type SeriesBatchScope = Schemas["SeriesBatchScope"];
 // WP-7.1 series relationships
 export type RelationshipKind = Schemas["RelationshipKind"];
 export type RelationshipSource = Schemas["RelationshipSource"];
