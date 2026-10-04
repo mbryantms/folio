@@ -866,6 +866,9 @@ export type RelationshipKind = Schemas["RelationshipKind"];
 export type RelationshipSource = Schemas["RelationshipSource"];
 export type SeriesRelationshipView = Schemas["SeriesRelationshipView"];
 export type SeriesChainEntry = Schemas["SeriesChainEntry"];
+export type ChainSplitView = Schemas["ChainSplitView"];
+export type ChainSplitProviderView = Schemas["ChainSplitProviderView"];
+export type ChainSplitPosition = Schemas["ChainSplitPosition"];
 export type SeriesRelationshipsResp = Schemas["SeriesRelationshipsResp"];
 export type CreateSeriesRelationshipReq =
   Schemas["CreateSeriesRelationshipReq"];

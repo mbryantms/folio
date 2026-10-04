@@ -1357,10 +1357,286 @@ pub async fn chain<C: ConnectionTrait>(conn: &C, start: Uuid) -> Result<Vec<Chai
     );
     Ok(out)
 }
+// ───── provider ranges in the reading order ─────
+
+/// Where a provider range sits within its local series' issue numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChainSplitPosition {
+    /// The range holds the series' last numbers: they **continue as** the
+    /// provider series (FF #600–611 → Fantastic Four (2012)).
+    End,
+    /// The range holds the first numbers: they **begin as** it.
+    Start,
+    /// In between, or the whole run: they **are filed as** it.
+    Middle,
+}
+
+/// One provider that files a chain node's range under its own series.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainSplitProvider {
+    pub source: String,
+    pub provider_series_id: String,
+    pub url: Option<String>,
+}
+
+/// A reading-order sub-step: issues of a local series (one chain node)
+/// that one or more providers file under a different provider series
+/// (`series_provider_range`). Folder-pinned membership is untouched — the
+/// local series stays one node; this only labels the boundary inside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainSplit {
+    pub series_id: Uuid,
+    pub low: Option<String>,
+    pub high: Option<String>,
+    pub position: ChainSplitPosition,
+    /// "#600–611".
+    pub numbers: String,
+    /// "continue as" / "begin as" / "are filed as" (singular for one issue).
+    pub verb: &'static str,
+    /// "Fantastic Four (2012)".
+    pub target: String,
+    /// Ranges of several providers onto the same-named series merge here.
+    pub providers: Vec<ChainSplitProvider>,
+    /// Local series (other than this one) matched to one of those provider
+    /// series — the step then links to it instead of only the provider.
+    pub local_series_ids: Vec<Uuid>,
+}
+
+impl ChainSplit {
+    /// "#600–611 continue as Fantastic Four (2012)".
+    pub fn label(&self) -> String {
+        format!("{} {} {}", self.numbers, self.verb, self.target)
+    }
+}
+
+#[derive(Debug, FromQueryResult)]
+struct SplitRangeRow {
+    series_id: Uuid,
+    source: String,
+    provider_series_id: String,
+    provider_series_url: Option<String>,
+    provider_series_name: Option<String>,
+    declared_year: Option<i32>,
+    range_low: Option<String>,
+    range_high: Option<String>,
+    lo: Option<f64>,
+    hi: Option<f64>,
+    /// Comma-separated series ids.
+    holders: String,
+}
+
+/// Provider-range sub-steps for the given chain nodes (WP: range hygiene),
+/// keyed by series. One query: each node's ranges with its local number
+/// span and the local series matched (series-level `external_ids`) to each
+/// range's provider series. ACL filtering of `local_series_ids` is the
+/// caller's job.
+pub async fn chain_splits<C: ConnectionTrait>(
+    conn: &C,
+    series_ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, Vec<ChainSplit>>, DbErr> {
+    let mut out: std::collections::HashMap<Uuid, Vec<ChainSplit>> =
+        std::collections::HashMap::new();
+    if series_ids.is_empty() {
+        return Ok(out);
+    }
+    let sql = r#"
+        SELECT r.series_id, r.source, r.provider_series_id, r.provider_series_url,
+               r.provider_series_name, r.declared_year, r.range_low, r.range_high,
+               n.lo, n.hi,
+               array_to_string(array(
+                   SELECT s.id::text FROM external_ids e
+                     JOIN series s ON s.id::text = e.entity_id AND s.removed_at IS NULL
+                    WHERE e.entity_type = 'series' AND e.source = r.source
+                      AND e.external_id = r.provider_series_id AND s.id <> r.series_id
+                    ORDER BY s.id LIMIT 3
+               ), ',') AS holders
+          FROM series_provider_range r
+          CROSS JOIN LATERAL (
+              SELECT min(i.sort_number) AS lo, max(i.sort_number) AS hi
+                FROM issues i
+               WHERE i.series_id = r.series_id AND i.removed_at IS NULL
+          ) n
+         WHERE r.series_id = ANY($1::uuid[])
+         ORDER BY r.series_id, r.range_low, r.source
+    "#;
+    let stmt = Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        sql,
+        [Value::from(series_ids.to_vec())],
+    );
+    let rows = SplitRangeRow::find_by_statement(stmt).all(conn).await?;
+    for r in rows {
+        let holders: Vec<Uuid> = r
+            .holders
+            .split(',')
+            .filter_map(|h| Uuid::parse_str(h).ok())
+            .collect();
+        let target = split_target(
+            &r.source,
+            &r.provider_series_id,
+            r.provider_series_name.as_deref(),
+            r.declared_year,
+        );
+        let low = r.range_low.as_deref().and_then(|v| v.parse::<f64>().ok());
+        let high = r.range_high.as_deref().and_then(|v| v.parse::<f64>().ok());
+        let position = split_position(low, high, r.lo, r.hi);
+        let single = r.range_low.is_some() && r.range_low == r.range_high;
+        let provider = ChainSplitProvider {
+            source: r.source.clone(),
+            provider_series_id: r.provider_series_id.clone(),
+            url: r.provider_series_url.clone(),
+        };
+        let steps = out.entry(r.series_id).or_default();
+        if let Some(step) = steps.iter_mut().find(|s| {
+            s.low == r.range_low
+                && s.high == r.range_high
+                && s.target.to_lowercase() == target.to_lowercase()
+        }) {
+            step.providers.push(provider);
+            for h in holders {
+                if !step.local_series_ids.contains(&h) {
+                    step.local_series_ids.push(h);
+                }
+            }
+            continue;
+        }
+        steps.push(ChainSplit {
+            series_id: r.series_id,
+            numbers: split_numbers(r.range_low.as_deref(), r.range_high.as_deref()),
+            verb: split_verb(position, single),
+            low: r.range_low,
+            high: r.range_high,
+            position,
+            target,
+            providers: vec![provider],
+            local_series_ids: holders,
+        });
+    }
+    for steps in out.values_mut() {
+        steps.sort_by(|a, b| {
+            let key = |s: &ChainSplit| s.low.as_deref().and_then(|v| v.parse::<f64>().ok());
+            key(a)
+                .partial_cmp(&key(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+    Ok(out)
+}
+
+/// Where `[low, high]` sits within the local span `[lo, hi]`. An open
+/// bound reaches that end.
+pub fn split_position(
+    low: Option<f64>,
+    high: Option<f64>,
+    lo: Option<f64>,
+    hi: Option<f64>,
+) -> ChainSplitPosition {
+    let from_start = match (low, lo) {
+        (None, _) => true,
+        (Some(l), Some(first)) => l <= first,
+        (Some(_), None) => false,
+    };
+    let to_end = match (high, hi) {
+        (None, _) => true,
+        (Some(h), Some(last)) => h >= last,
+        (Some(_), None) => false,
+    };
+    match (from_start, to_end) {
+        (false, true) => ChainSplitPosition::End,
+        (true, false) => ChainSplitPosition::Start,
+        _ => ChainSplitPosition::Middle,
+    }
+}
+
+fn split_verb(position: ChainSplitPosition, single: bool) -> &'static str {
+    match (position, single) {
+        (ChainSplitPosition::End, false) => "continue as",
+        (ChainSplitPosition::End, true) => "continues as",
+        (ChainSplitPosition::Start, false) => "begin as",
+        (ChainSplitPosition::Start, true) => "begins as",
+        (ChainSplitPosition::Middle, false) => "are filed as",
+        (ChainSplitPosition::Middle, true) => "is filed as",
+    }
+}
+
+/// "#600–611", "#600", "#600+", "up to #12".
+pub fn split_numbers(low: Option<&str>, high: Option<&str>) -> String {
+    match (low, high) {
+        (Some(l), Some(h)) if l == h => format!("#{l}"),
+        (Some(l), Some(h)) => format!("#{l}–{h}"),
+        (Some(l), None) => format!("#{l}+"),
+        (None, Some(h)) => format!("Up to #{h}"),
+        (None, None) => "All issues".to_owned(),
+    }
+}
+
+/// "Fantastic Four (2012)": the provider's name plus its start year unless
+/// the name already ends in one; "Metron series #1713" without a name.
+pub fn split_target(
+    source: &str,
+    provider_series_id: &str,
+    name: Option<&str>,
+    year: Option<i32>,
+) -> String {
+    let Some(name) = name.map(str::trim).filter(|n| !n.is_empty()) else {
+        let label =
+            crate::metadata::identifier::Source::from_str(source).map_or(source, |s| s.label());
+        return format!("{label} series #{provider_series_id}");
+    };
+    let has_year = name.ends_with(')')
+        && name
+            .rsplit_once('(')
+            .is_some_and(|(_, y)| y.trim_end_matches(')').chars().all(|c| c.is_ascii_digit()));
+    match year {
+        Some(y) if !has_year => format!("{name} ({y})"),
+        _ => name.to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use RelationshipKind as K;
+
+    #[test]
+    fn chain_split_wording() {
+        use ChainSplitPosition as P;
+        // FF (2001): #1–611 locally, #600–611 on Fantastic Four (2012).
+        assert_eq!(
+            split_position(Some(600.0), Some(611.0), Some(1.0), Some(611.0)),
+            P::End
+        );
+        assert_eq!(
+            split_position(Some(1.0), Some(5.0), Some(1.0), Some(611.0)),
+            P::Start
+        );
+        assert_eq!(
+            split_position(Some(42.0), Some(70.0), Some(1.0), Some(611.0)),
+            P::Middle
+        );
+        assert_eq!(
+            split_position(Some(600.0), None, Some(1.0), Some(611.0)),
+            P::End,
+            "an open upper bound reaches the end"
+        );
+        assert_eq!(split_verb(P::End, false), "continue as");
+        assert_eq!(split_verb(P::End, true), "continues as");
+        assert_eq!(split_numbers(Some("600"), Some("611")), "#600–611");
+        assert_eq!(split_numbers(Some("600"), Some("600")), "#600");
+        assert_eq!(
+            split_target("metron", "1713", Some("Fantastic Four"), Some(2012)),
+            "Fantastic Four (2012)"
+        );
+        assert_eq!(
+            split_target("gcd", "1482", Some("Fantastic Four (1961)"), Some(1961)),
+            "Fantastic Four (1961)"
+        );
+        assert_eq!(
+            split_target("metron", "1713", None, None),
+            "Metron series #1713"
+        );
+    }
 
     #[test]
     fn inverse_is_an_involution() {

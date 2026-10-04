@@ -5143,9 +5143,13 @@ export interface components {
             source: string;
             /**
              * @description Existing automated ranges the accepted proposal no longer supports
-             *     (reported, never deleted).
+             *     that were **kept** — the accept didn't put the proposal's main in
+             *     place (e.g. your own link differs), so removing them would leave
+             *     those issues unmapped.
              */
             stale_ranges: components["schemas"]["CoverageRangeRef"][];
+            /** @description Stale automated ranges this accept deleted (never a `user` row). */
+            stale_ranges_removed?: components["schemas"]["CoverageRangeRef"][];
         };
         AcceptRelationshipSuggestionReq: {
             kind?: components["schemas"]["RelationshipKind"] | null;
@@ -6368,6 +6372,34 @@ export interface components {
              */
             total_matched: number;
         };
+        /**
+         * @description Where a provider range sits within its local series' issue numbers.
+         * @enum {string}
+         */
+        ChainSplitPosition: "end" | "start" | "middle";
+        ChainSplitProviderView: {
+            provider_series_id: string;
+            source: string;
+            source_label: string;
+            url?: string | null;
+        };
+        /** @description A reading-order sub-step from `series_provider_range` (range hygiene). */
+        ChainSplitView: {
+            high?: string | null;
+            /** @description `numbers verb target`. */
+            label: string;
+            local_series?: components["schemas"]["ExternalLocalSeries"] | null;
+            low?: string | null;
+            /** @description "#600–611". */
+            numbers: string;
+            position: components["schemas"]["ChainSplitPosition"];
+            /** @description Every provider filing these numbers under that series. */
+            providers: components["schemas"]["ChainSplitProviderView"][];
+            /** @description The provider series, "Fantastic Four (2012)". */
+            target: string;
+            /** @description "continue as" / "begin as" / "are filed as" (singular for one issue). */
+            verb: string;
+        };
         ClearHistoryResp: {
             /** Format: int64 */
             deleted: number;
@@ -6738,6 +6770,11 @@ export interface components {
         };
         /** @description An existing range row the proposal disagrees with. */
         CoverageRangeRef: {
+            /**
+             * Format: int32
+             * @description The mapped provider series' start year, when known.
+             */
+            declared_year?: number | null;
             id: string;
             provider_series_id: string;
             provider_series_name?: string | null;
@@ -7572,8 +7609,8 @@ export interface components {
             source_label: string;
             /**
              * @description Automated range mappings the provider series now covers itself —
-             *     likely stale (e.g. after a re-match). Reported only; never removed
-             *     automatically.
+             *     likely stale (e.g. after a re-match). The detector only reports
+             *     them; accepting this provider's series coverage deletes them.
              */
             stale_ranges: components["schemas"]["ProviderRangeRow"][];
             status: components["schemas"]["SourceStatus"];
@@ -10118,7 +10155,10 @@ export interface components {
             current_series_id?: string | null;
             current_series_set_by?: string | null;
             error?: string | null;
-            /** @description Accepting would change something (main id or new ranges). */
+            /**
+             * @description Accepting would change something (main id, new ranges, or stale
+             *     automated ranges to remove).
+             */
             has_changes: boolean;
             main_series_id?: string | null;
             proposed_ranges: components["schemas"]["ProposedRange"][];
@@ -11396,6 +11436,13 @@ export interface components {
              *     position are alternative branches.
              */
             position: number;
+            /**
+             * @description Provider ranges inside this series: issues a provider files under a
+             *     different provider series ("#600–611 continue as Fantastic Four
+             *     (2012)"). The local series stays one step — membership is
+             *     folder-pinned; these only label the boundary. Ordered by number.
+             */
+            provider_splits: components["schemas"]["ChainSplitView"][];
             series: components["schemas"]["SeriesView"];
         };
         /** @description How well one series candidate covers the local issues. */

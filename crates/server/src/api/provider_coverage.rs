@@ -332,7 +332,7 @@ pub async fn accept(
                 );
             }
         };
-    if !outcome.ranges_created.is_empty() {
+    if !outcome.ranges_created.is_empty() || !outcome.stale_ranges_removed.is_empty() {
         crate::jobs::relationship_suggest::enqueue(&app, s.library_id).await;
     }
     crate::record_admin_action!(
@@ -356,6 +356,7 @@ pub async fn accept(
                 }))
                 .collect::<Vec<_>>(),
             "ranges_skipped": outcome.ranges_skipped.len(),
+            "stale_ranges_removed": coverage::removed_ranges_audit(&outcome),
         }),
     );
     Json(outcome).into_response()

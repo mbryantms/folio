@@ -145,8 +145,11 @@ pub fn compact_numbers(numbers: &[f64]) -> Option<(String, bool)> {
 /// `None` when the evidence doesn't say:
 ///
 /// - `retitle`: the two share provider continuity under different names;
-/// - `split`: either series has a `series_provider_range` row (a provider
-///   splits that run across provider series);
+/// - `split`: a `series_provider_range` row links the two series
+///   ([`range_link_sql`]) — a provider files part of one under a provider
+///   series the other is matched to, or both map ranges into the same
+///   provider series. A range of either series pointing somewhere unrelated
+///   doesn't count;
 /// - `numbering`: the later series' first number continues upward past the
 ///   earlier one's last (legacy numbering, not a restart);
 /// - `relaunch`: the later series restarts at #1 (or #0) after the earlier
@@ -174,6 +177,44 @@ pub(super) fn continuation_qualifier(
         _ => true,
     };
     (lo <= 1.0 && ended).then_some(RelationshipQualifier::Relaunch)
+}
+
+/// SQL predicate: a `series_provider_range` row **links** series `a` and
+/// `b` (both SQL expressions yielding a series `uuid`) — the evidence the
+/// `split` continuation qualifier needs:
+///
+/// - a range of one points at a provider series the other is matched to
+///   (its series-level `external_ids` row, or — ComicVine / Metron — the
+///   provider series id in one of its issues' ComicInfo), or
+/// - both map ranges into the same provider series.
+///
+/// A range that points at some third provider series says nothing about
+/// this pair. Only evaluated for adjacent pairs, so the per-pair index
+/// probes stay cheap.
+pub(super) fn range_link_sql(a: &str, b: &str) -> String {
+    let matched = |owner: &str, p: &str| {
+        format!(
+            "(EXISTS (SELECT 1 FROM external_ids e \
+                       WHERE e.entity_type = 'series' AND e.entity_id = ({owner})::text \
+                         AND e.source = {p}.source AND e.external_id = {p}.provider_series_id) \
+              OR EXISTS (SELECT 1 FROM issues i \
+                          WHERE i.series_id = {owner} AND i.removed_at IS NULL \
+                            AND (({p}.source = 'comicvine' AND i.comic_info_raw->>'comicvine_series_id' = {p}.provider_series_id) \
+                              OR ({p}.source = 'metron' AND i.comic_info_raw->>'metron_series_id' = {p}.provider_series_id))))"
+        )
+    };
+    let a_to_b = matched(b, "pa");
+    let b_to_a = matched(a, "pb");
+    format!(
+        "(EXISTS (SELECT 1 FROM series_provider_range pa \
+                   WHERE pa.series_id = {a} \
+                     AND ({a_to_b} \
+                          OR EXISTS (SELECT 1 FROM series_provider_range pq \
+                                      WHERE pq.series_id = {b} AND pq.source = pa.source \
+                                        AND pq.provider_series_id = pa.provider_series_id))) \
+          OR EXISTS (SELECT 1 FROM series_provider_range pb \
+                      WHERE pb.series_id = {b} AND {b_to_a}))"
+    )
 }
 
 /// SQL: a language code folded to ISO 639-1 where we know the mapping
@@ -678,10 +719,10 @@ struct NameRow {
     vol_folder: bool,
     lo: Option<f64>,
     iy_min: Option<i32>,
+    /// A provider range links the pair ([`range_link_sql`]).
     split: bool,
     prev_hi: Option<f64>,
     prev_iy_max: Option<i32>,
-    prev_split: bool,
 }
 
 /// Same title, later year or volume ("X (2011)" → "X (2016)", or a
@@ -701,14 +742,14 @@ pub async fn name_continuation<C: ConnectionTrait>(
     let name_base = base_sql("normalized_name");
     let vol_leaf = r"lower(coalesce(leaf, '')) ~ '^(vol(ume)?\.?|v) ?[0-9]{1,3}$'";
     let lang = lang_sql("s.language_code");
+    let split = range_link_sql("o.id", "o.prev_id");
     let sql = format!(
         r#"
         WITH s AS (
             SELECT s.id, s.name, s.year, s.volume, s.normalized_name,
                    lower(coalesce(s.publisher, '')) AS pub, {lang} AS lang,
                    {leaf} AS leaf, {parent} AS parent,
-                   r.lo, r.hi, r.iy_min, r.iy_max,
-                   EXISTS (SELECT 1 FROM series_provider_range p WHERE p.series_id = s.id) AS split
+                   r.lo, r.hi, r.iy_min, r.iy_max
               FROM series s
               -- Per-series index lookup (robust to missing statistics).
               CROSS JOIN LATERAL (
@@ -719,7 +760,7 @@ pub async fn name_continuation<C: ConnectionTrait>(
               ) r
              WHERE s.library_id = $1 AND s.removed_at IS NULL
         ), k AS (
-            SELECT id, name, year, pub, lang, lo, hi, iy_min, iy_max, split,
+            SELECT id, name, year, pub, lang, lo, hi, iy_min, iy_max,
                    ({vol_leaf} AND parent IS NOT NULL) AS vol_folder,
                    CASE WHEN {vol_leaf} AND parent IS NOT NULL THEN {parent_base}
                         ELSE {name_base} END AS base,
@@ -734,8 +775,7 @@ pub async fn name_continuation<C: ConnectionTrait>(
                    lag(year) OVER w AS prev_year,
                    lag(ord)  OVER w AS prev_ord,
                    lag(hi)   OVER w AS prev_hi,
-                   lag(iy_max) OVER w AS prev_iy_max,
-                   lag(split) OVER w AS prev_split
+                   lag(iy_max) OVER w AS prev_iy_max
               FROM k
              WHERE base <> '' AND (year IS NOT NULL OR ord IS NOT NULL)
             -- Language too (WP-7.6): the same title in another language is
@@ -743,7 +783,7 @@ pub async fn name_continuation<C: ConnectionTrait>(
             WINDOW w AS (PARTITION BY base, pub, lang ORDER BY year NULLS LAST, ord NULLS LAST, id)
         )
         SELECT id, name, year, ord, prev_id, prev_name, prev_year, prev_ord, vol_folder,
-               lo, iy_min, split, prev_hi, prev_iy_max, coalesce(prev_split, false) AS prev_split
+               lo, iy_min, {split} AS split, prev_hi, prev_iy_max
           FROM o
          WHERE prev_id IS NOT NULL
          LIMIT {SOURCE_ROW_LIMIT}
@@ -800,7 +840,7 @@ pub async fn name_continuation<C: ConnectionTrait>(
             .then(|| {
                 continuation_qualifier(
                     false,
-                    r.split || r.prev_split,
+                    r.split,
                     r.lo,
                     r.iy_min.or(r.year),
                     r.prev_hi,
@@ -1373,7 +1413,7 @@ struct ProviderRow {
     prev_iy_max: Option<i32>,
     /// The two claimants' base names differ (a retitle).
     retitled: bool,
-    /// Either has a `series_provider_range` row.
+    /// A provider range links the pair ([`range_link_sql`]).
     split: bool,
 }
 
@@ -1396,6 +1436,7 @@ pub async fn provider_volumes<C: ConnectionTrait>(
     let claims = provider_claims_cte();
     let lang = lang_sql("s.language_code");
     let base = base_sql("s.normalized_name");
+    let split = range_link_sql("o.id", "o.prev_id");
     let sql = format!(
         r#"
         {claims}
@@ -1415,16 +1456,13 @@ pub async fn provider_volumes<C: ConnectionTrait>(
             -- one run continuing.
             SELECT c.source, c.pid, sh.members, s.id, s.name, s.year, r.lo, r.hi, r.iy_min,
                    {base} AS base,
-                   EXISTS (SELECT 1 FROM series_provider_range p WHERE p.series_id = s.id) AS split,
                    lag(s.id)   OVER w AS prev_id,
                    lag(s.name) OVER w AS prev_name,
                    lag(s.year) OVER w AS prev_year,
                    lag(r.lo)   OVER w AS prev_lo,
                    lag(r.hi)   OVER w AS prev_hi,
                    lag(r.iy_max) OVER w AS prev_iy_max,
-                   lag({base}) OVER w AS prev_base,
-                   lag(EXISTS (SELECT 1 FROM series_provider_range p WHERE p.series_id = s.id))
-                       OVER w AS prev_split
+                   lag({base}) OVER w AS prev_base
               FROM claims c
               JOIN shared sh USING (source, pid)
               JOIN series s ON s.id = c.series_id
@@ -1434,7 +1472,7 @@ pub async fn provider_volumes<C: ConnectionTrait>(
         )
         SELECT source, pid, id, name, year, lo, hi, prev_id, prev_name, prev_year, prev_lo, prev_hi,
                members, iy_min, prev_iy_max, (base IS DISTINCT FROM prev_base) AS retitled,
-               split OR coalesce(prev_split, false) AS split
+               {split} AS split
           FROM o WHERE prev_id IS NOT NULL
          LIMIT {SOURCE_ROW_LIMIT}
         "#

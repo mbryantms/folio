@@ -2591,7 +2591,8 @@ async fn continuation_qualifiers() {
     // numbering: the later volume's numbers continue the old ones.
     let thor_a = mk_run(&db, lib, s("Thor", 2007), 1..=12, 2007).await;
     let thor_b = mk_run(&db, lib, s("Thor", 2008), 600..=614, 2008).await;
-    // split: a provider records the run as split (series_provider_range).
+    // split: a provider range links the pair — FF (1998)'s #500–611 are
+    // filed under Metron 1713, the series FF (2013) is matched to.
     let ff_a = mk_run(&db, lib, s("Fantastic Four", 1998), 1..=70, 1998).await;
     let ff_b = mk_run(&db, lib, s("Fantastic Four", 2013), 1..=16, 2013).await;
     exec(
@@ -2599,6 +2600,36 @@ async fn continuation_qualifiers() {
         "INSERT INTO series_provider_range (series_id, source, provider_series_id, range_low, range_high, set_by) \
          VALUES ($1, 'metron', '1713', '500', '611', 'cross_reference')",
         vec![ff_a.into()],
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO external_ids (entity_type, entity_id, source, external_id, set_by, first_set_at, last_synced_at) \
+         VALUES ('series', $1, 'metron', '1713', 'metron', now(), now())",
+        vec![ff_b.to_string().into()],
+    )
+    .await;
+    // split, the other way: both map a range into the same provider series.
+    let xf_a = mk_run(&db, lib, s("X-Factor", 2005), 1..=50, 2005).await;
+    let xf_b = mk_run(&db, lib, s("X-Factor", 2010), 1..=12, 2010).await;
+    for (sid, lo, hi) in [(xf_a, "200", "262"), (xf_b, "1", "12")] {
+        exec(
+            &db,
+            "INSERT INTO series_provider_range (series_id, source, provider_series_id, range_low, range_high, set_by) \
+             VALUES ($1, 'gcd', '4242', $2, $3, 'cross_reference')",
+            vec![sid.into(), lo.into(), hi.into()],
+        )
+        .await;
+    }
+    // Not split: Iron Man (2005) has a range, but onto a provider series
+    // unrelated to Iron Man (2008) — the plain relaunch qualifier stays.
+    let im_a = mk_run(&db, lib, s("Iron Man", 2005), 1..=30, 2005).await;
+    let im_b = mk_run(&db, lib, s("Iron Man", 2008), 1..=10, 2008).await;
+    exec(
+        &db,
+        "INSERT INTO series_provider_range (series_id, source, provider_series_id, range_low, range_high, set_by) \
+         VALUES ($1, 'metron', '9999', '29', '30', 'cross_reference')",
+        vec![im_a.into()],
     )
     .await;
     // unsure: no issue numbers → no qualifier.
@@ -2635,6 +2666,12 @@ async fn continuation_qualifiers() {
     assert_eq!(q(hk_b, hk_a).as_deref(), Some("relaunch"), "{d}");
     assert_eq!(q(thor_b, thor_a).as_deref(), Some("numbering"), "{d}");
     assert_eq!(q(ff_b, ff_a).as_deref(), Some("split"), "{d}");
+    assert_eq!(q(xf_b, xf_a).as_deref(), Some("split"), "{d}");
+    assert_eq!(
+        q(im_b, im_a).as_deref(),
+        Some("relaunch"),
+        "an unrelated range doesn't make a split: {d}"
+    );
     assert_eq!(q(nova_b, nova_a), None, "{d}");
     assert_eq!(q(ucsm, usm).as_deref(), Some("retitle"), "{d}");
 }

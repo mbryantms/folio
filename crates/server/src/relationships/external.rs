@@ -457,6 +457,9 @@ pub struct CoverageLinkReport {
     pub skipped_existing: usize,
     /// Live coverage rows of this source no longer backed by a link.
     pub removed: usize,
+    /// Local relationship pairs the promotion pass created (the caller
+    /// invalidates the similarity cache when non-zero).
+    pub pairs_created: usize,
 }
 
 /// Store series `series_id`'s coverage links for `source` as
@@ -603,7 +606,7 @@ pub async fn record_coverage_links<C: ConnectionTrait>(
         )
         .unwrap_or(0);
     }
-    promote_series_rows(conn, series_id).await?;
+    report.pairs_created = promote_series_rows(conn, series_id).await?.pairs_created;
     Ok(report)
 }
 

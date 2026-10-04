@@ -56,6 +56,14 @@ export function promptHeadline(
   if (p.has_changes && newRanges.length > 0) {
     return `This folder spans ${spans} ${p.source_label} series — accept the range${newRanges.length === 1 ? "" : "s"}?`;
   }
+  if (
+    p.has_changes &&
+    p.stale_ranges.length > 0 &&
+    p.main_series_id === p.current_series_id
+  ) {
+    const n = p.stale_ranges.length;
+    return `${p.source_label}: ${n} stale range${n === 1 ? "" : "s"} no longer fit${n === 1 ? "s" : ""} — accept to remove ${n === 1 ? "it" : "them"}?`;
+  }
   if (p.has_changes) {
     return `${p.source_label} proposes a different main series — accept it?`;
   }

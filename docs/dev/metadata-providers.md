@@ -832,7 +832,8 @@ already owns that provider id, nothing is written and the source reports
 - Existing ranges are never overwritten. An overlapping run is
   `already_mapped`. An automated range whose issues the matched series
   now lists itself (or that points at the matched series) is reported in
-  `stale_ranges`, not deleted.
+  `stale_ranges`; the detector never deletes it — accepting that
+  provider's coverage does (below).
 - A rate-limit or credentials failure stops that provider (`rate_limited`
   / `error`); rows written before it stay written and are listed. Other
   providers carry on.
@@ -852,8 +853,11 @@ timeout.
 overlay (`apply_series_via_sidecar`), the coverage card
 (`/provider-coverage`), the issue page's alternate-series list
 (`api/issues.rs`), the folder-name health check
-(`scanner/folder_checks.rs`), and the relationship engine (the `split`
-continuation qualifier and the `provider_range` → `see_also` source).
+(`scanner/folder_checks.rs`), the relationship engine (the `split`
+continuation qualifier — only when a range links the pair — and the
+`provider_range` → `see_also` source), and the Related tab's reading
+order (a range shows as a sub-step of its series' node; see
+`series-relationships.md`).
 
 ## Provider-independent coverage ("Analyze coverage")
 
@@ -963,8 +967,31 @@ proposed range or disagreeing with the proposal).
   for an admin accept, `SetBy::Provider(source)` for auto-accept — and
   never over a `user` row (a chosen main contradicting the user's link
   refuses the whole accept). Ranges via `auto_split::insert_detected_range`
-  (`cross_reference`); overlaps are skipped, nothing is deleted. A created
-  range enqueues relationship suggestions for the library.
+  (`cross_reference`); overlaps are skipped. A created or removed range
+  enqueues relationship suggestions for the library.
+- **Stale range cleanup (range hygiene).** Once the accepted proposal's
+  main is the series' id for that provider (written now, already linked,
+  or the user's own link), the accept **deletes** the provider's stale
+  ranges — rows that point at the main series, or whose issues the
+  proposal files in another series — but only rows whose `set_by` is an
+  automatic source (`auto_split::is_automatic_range`: `cross_reference`,
+  `auto`, `provider` or a provider name such as `metron` / `gcd`). A
+  `user` row is never deleted (it shows as a conflict instead), and the
+  delete repeats the `set_by <> 'user'` guard in SQL. The proposal is then
+  rebuilt against the remaining rows, so a range that only conflicted
+  with a deleted row is written by the same accept. The outcome lists
+  them in `stale_ranges_removed` (`stale_ranges` keeps only the ones left
+  because the main wasn't put in place); the accept's audit row carries
+  each removal (`stale_ranges_removed`: id, provider series, bounds,
+  former `set_by`, reason), for admin and automatic accepts alike. The
+  coverage links resync after the delete — a deleted range's "not in your
+  library" row goes with it — and the similarity cache is invalidated
+  when that removes a row or promotes a pair. The card and the accept
+  toast say what went: "Removed 1 stale range: GCD #42–70 → Fantastic
+  Four (1961)" (the owner's FF (2001) case, pinned in
+  `tests/provider_coverage_fantastic_four.rs`). Stale ranges alone count
+  as a change (`has_changes`), so Accept stays enabled for them and a
+  High-confidence automatic accept cleans them up too.
 
 Every `fold_targets` consumer (issue search narrowing, the sidecar series
 overlay, the coverage card, the issue page's alternate series, the

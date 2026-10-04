@@ -130,9 +130,9 @@ const full: SeriesRelationshipsResp = {
     },
   ],
   chain: [
-    { position: -1, series: vol1 },
-    { position: 0, series: vol2 },
-    { position: 1, series: vol3 },
+    { position: -1, series: vol1, provider_splits: [] },
+    { position: 0, series: vol2, provider_splits: [] },
+    { position: 1, series: vol3, provider_splits: [] },
   ],
   external: [],
 };
@@ -371,6 +371,67 @@ describe("helpers", () => {
     const annual = publication.kinds.find((k) => k.label === "Has annual")!;
     expect(annual.items).toEqual([]);
     expect(annual.external.map((r) => r.id)).toEqual(["x2"]);
+  });
+
+  it("lists a step's provider range boundaries under its card", () => {
+    role = "user";
+    catalogue = CATALOGUE;
+    data = {
+      ...full,
+      chain: [
+        { position: -1, series: vol1, provider_splits: [] },
+        {
+          position: 0,
+          series: vol2,
+          provider_splits: [
+            {
+              low: "600",
+              high: "611",
+              position: "end",
+              numbers: "#600–611",
+              verb: "continue as",
+              target: "Fantastic Four (2012)",
+              label: "#600–611 continue as Fantastic Four (2012)",
+              providers: [
+                {
+                  source: "gcd",
+                  source_label: "GCD",
+                  provider_series_id: "62349",
+                  url: "https://www.comics.org/series/62349/",
+                },
+                {
+                  source: "metron",
+                  source_label: "Metron",
+                  provider_series_id: "1713",
+                  url: null,
+                },
+              ],
+              local_series: {
+                id: "s9",
+                slug: "fantastic-four-2012",
+                name: "Fantastic Four",
+                year: 2012,
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const html = render(200);
+    expect(html).toContain('data-testid="chain-splits"');
+    expect(html).toContain("#600–611 continue as");
+    // The target links to the local series; GCD to its series page,
+    // Metron (no url) is plain text.
+    expect(html).toMatch(
+      /href="\/series\/fantastic-four-2012"[^>]*>Fantastic Four \(2012\)</,
+    );
+    expect(html).toContain('href="https://www.comics.org/series/62349/"');
+    expect(html).toContain('aria-label="Fantastic Four (2012) on GCD"');
+    expect(html).toContain(", Metron");
+    // Listed after the step's card, before the next step.
+    expect(html.indexOf("#600–611")).toBeGreaterThan(
+      html.indexOf("Saga Vol 2"),
+    );
   });
 
   it("captions chain positions", () => {
