@@ -674,6 +674,7 @@ async fn maybe_auto_apply_series(
             override_external_id_sources: Default::default(),
             is_auto: true,
             composite: None,
+            bulk: false,
         })
         .await;
     match push_result {

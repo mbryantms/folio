@@ -120,6 +120,7 @@ function analysis(providers: ProviderCoverageView[]): CoverageAnalysisResp {
     local_issues: local,
     providers,
     auto_accepted: [],
+    trigger: "analyze",
   };
 }
 

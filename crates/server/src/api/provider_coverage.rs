@@ -29,7 +29,7 @@ use utoipa_axum::routes;
 
 use super::error;
 use crate::auth::RequireAdmin;
-use crate::jobs::provider_coverage::{self, CoverageJobState};
+use crate::jobs::provider_coverage::{self, CoverageJobState, CoverageTrigger};
 use crate::metadata::coverage::{
     self, AcceptOutcome, CoverageLocalIssue, ProviderCoverageView, SeriesFacts,
 };
@@ -78,6 +78,9 @@ pub struct CoverageAnalysisResp {
     pub providers: Vec<ProviderCoverageView>,
     /// Proposals accepted automatically by this job.
     pub auto_accepted: Vec<AcceptOutcome>,
+    /// What queued it: the Details tab's "Analyze coverage", or a series
+    /// match (the user's, or a bulk / automatic one).
+    pub trigger: CoverageTrigger,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -187,6 +190,7 @@ pub async fn coverage_analysis(
         local_issues: Vec::new(),
         providers: Vec::new(),
         auto_accepted: rec.auto_accepted.clone(),
+        trigger: rec.trigger,
     };
     if rec.state == CoverageJobState::Done {
         let facts = match SeriesFacts::load(&app, &s).await {
@@ -204,7 +208,16 @@ pub async fn coverage_analysis(
         resp.providers = rec
             .providers
             .iter()
-            .map(|p| coverage::build_view(p, &facts.local, &facts.ext_ids, &facts.ranges, None))
+            .map(|p| {
+                coverage::build_view(
+                    p,
+                    &facts.local,
+                    &facts.ext_ids,
+                    &facts.ranges,
+                    None,
+                    rec.seed_main(p.source),
+                )
+            })
             .collect();
         // GCD series found only through a link carry no name in the
         // analysis; the issue-list cache usually has it.
@@ -305,17 +318,20 @@ pub async fn accept(
         );
     }
 
-    let outcome = match coverage::accept_provider(&app, s.id, analysis, main, true).await {
-        Ok(o) => o,
-        Err(e) => {
-            tracing::warn!(error = %e, "provider coverage accept failed");
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "couldn't write the coverage",
-            );
-        }
-    };
+    let outcome =
+        match coverage::accept_provider(&app, s.id, analysis, main, rec.seed_main(source), true)
+            .await
+        {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::warn!(error = %e, "provider coverage accept failed");
+                return error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    "couldn't write the coverage",
+                );
+            }
+        };
     if !outcome.ranges_created.is_empty() {
         crate::jobs::relationship_suggest::enqueue(&app, s.library_id).await;
     }

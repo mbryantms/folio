@@ -47,6 +47,7 @@ import {
   useMetadataCandidatesIssue,
   useMetadataCandidatesSeries,
   useMetadataCompositeDiffIssue,
+  useMetadataCoverageHints,
   useMetadataCompositeDiffSeries,
   useMetadataProposedDiffIssue,
   useMetadataProposedDiffSeries,
@@ -68,6 +69,7 @@ import {
 import { MetadataQueryTools } from "@/components/library/MetadataQueryTools";
 import { useMetadataApplyWait } from "@/components/library/useMetadataApplyWait";
 import { useMetadataCandidateSearch } from "@/components/library/useMetadataCandidateSearch";
+import { AUTO_HINT_COUNT, HINT_SOURCES } from "@/lib/metadata/coverage-hint";
 import {
   budgetNote,
   formatRetryEta,
@@ -342,6 +344,45 @@ export function MetadataMatchForm({
     runStatus === "failed" ||
     runStatus === "awaiting_quota";
 
+  // Coverage hints (series scope, display only): how many local issues
+  // each candidate's provider series lists. The top three are checked
+  // when the run completes; the rest on "Check coverage". Each batch is
+  // one bounded request; the server caps provider spend per series.
+  const [extraHintOrdinals, setExtraHintOrdinals] = React.useState<number[]>(
+    [],
+  );
+  const hintable =
+    scope.kind === "series" && runStatus === "completed"
+      ? (candidates.data?.candidates ?? [])
+      : [];
+  const autoHintOrdinals = hintable
+    .slice(0, AUTO_HINT_COUNT)
+    .map((c, i) => (HINT_SOURCES.has(c.source) ? i : -1))
+    .filter((i) => i >= 0);
+  const hintBatches = [
+    autoHintOrdinals,
+    ...extraHintOrdinals.map((o) => [o]),
+  ].filter((b) => b.length > 0);
+  const coverageHints = useMetadataCoverageHints(
+    scope.kind === "series" ? scope.seriesSlug : "",
+    scope.kind === "series" ? runId : null,
+    hintBatches,
+  );
+  const coverageFor = (source: string, ordinal: number) => {
+    if (scope.kind !== "series" || runStatus !== "completed") return undefined;
+    if (!HINT_SOURCES.has(source)) return undefined;
+    const state = coverageHints.get(ordinal);
+    return {
+      state,
+      onCheck: state
+        ? undefined
+        : () =>
+            setExtraHintOrdinals((prev) =>
+              prev.includes(ordinal) ? prev : [...prev, ordinal],
+            ),
+    };
+  };
+
   // Provider quota state (audit B13): the candidates response carries each
   // provider's remaining budget once the run finalizes + a retry ETA while
   // parked on quota. `noProvidersConfigured` is the pre-flight unconfigured
@@ -460,6 +501,7 @@ export function MetadataMatchForm({
   });
 
   const resetPicks = () => {
+    setExtraHintOrdinals([]);
     setPickedOrdinal(null);
     setPreviewOrdinal(null);
     setCompareMode(false);
@@ -755,6 +797,7 @@ export function MetadataMatchForm({
                     selectable={(candidates.data?.candidates.length ?? 0) >= 2}
                     selected={selectedOrdinals.has(i)}
                     onToggleSelect={() => onToggleCompareSelect(i)}
+                    coverage={coverageFor(c.source, i)}
                   />
                 ))}
                 {isFinalized &&

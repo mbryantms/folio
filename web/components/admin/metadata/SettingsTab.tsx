@@ -8,6 +8,9 @@
  * Surfaces the operationally-toggleable `metadata.*` keys:
  *   - Weekly refresh enable + cron + recently-published window
  *   - Stale-after-days threshold (drives /libraries/{slug}/metadata/refresh?scope=stale)
+ *   - Match thresholds
+ *   - Coverage after series matches (`metadata.coverage_after_series_apply`
+ *     + `metadata.coverage_auto_accept`), both live
  *
  * Writes go through the same `PATCH /admin/settings` endpoint the
  * generic settings surface uses; the cron-string flip needs a server
@@ -23,11 +26,28 @@ import { CronInput } from "@/components/admin/library/CronInput";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useUpdateSettings } from "@/lib/api/mutations";
 import { useAdminSettings } from "@/lib/api/queries";
 import { statusTone } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
+
+/** `metadata.coverage_after_series_apply` values. */
+export const COVERAGE_AFTER_APPLY = ["off", "manual_only", "all"] as const;
+export type CoverageAfterApply = (typeof COVERAGE_AFTER_APPLY)[number];
+
+const COVERAGE_AFTER_APPLY_LABEL: Record<CoverageAfterApply, string> = {
+  off: "Off",
+  manual_only: "After matches you apply (default)",
+  all: "After every series match, including bulk and automatic",
+};
 
 type RefreshSettings = {
   enabled: boolean;
@@ -36,6 +56,8 @@ type RefreshSettings = {
   staleAfterDays: number;
   autoApplyThreshold: number;
   matchMediumThreshold: number;
+  coverageAfterApply: CoverageAfterApply;
+  coverageAutoAccept: boolean;
 };
 
 function readInitial(values: Record<string, unknown>): RefreshSettings {
@@ -61,6 +83,13 @@ function readInitial(values: Record<string, unknown>): RefreshSettings {
     staleAfterDays: num("metadata.stale_after_days", 180),
     autoApplyThreshold: num("metadata.auto_apply_threshold", 80),
     matchMediumThreshold: num("metadata.match_medium_threshold", 60),
+    coverageAfterApply: (() => {
+      const v = values["metadata.coverage_after_series_apply"];
+      return (COVERAGE_AFTER_APPLY as readonly unknown[]).includes(v)
+        ? (v as CoverageAfterApply)
+        : "manual_only";
+    })(),
+    coverageAutoAccept: bool("metadata.coverage_auto_accept", false),
   };
 }
 
@@ -81,7 +110,7 @@ export function SettingsTab() {
     byKey[row.key] = row.value;
   }
   const initial = readInitial(byKey);
-  const formKey = `${initial.enabled ? "1" : "0"}-${initial.cron}-${initial.windowDays}-${initial.staleAfterDays}-${initial.autoApplyThreshold}-${initial.matchMediumThreshold}`;
+  const formKey = `${initial.enabled ? "1" : "0"}-${initial.cron}-${initial.windowDays}-${initial.staleAfterDays}-${initial.autoApplyThreshold}-${initial.matchMediumThreshold}-${initial.coverageAfterApply}-${initial.coverageAutoAccept ? "1" : "0"}`;
 
   return (
     <SettingsForm
@@ -100,7 +129,7 @@ export function SettingsTab() {
   );
 }
 
-function SettingsForm({
+export function SettingsForm({
   initial,
   isPending,
   onSubmit,
@@ -123,6 +152,11 @@ function SettingsForm({
   const [matchMedium, setMatchMedium] = React.useState(
     String(initial.matchMediumThreshold),
   );
+  const [coverageAfterApply, setCoverageAfterApply] =
+    React.useState<CoverageAfterApply>(initial.coverageAfterApply);
+  const [coverageAutoAccept, setCoverageAutoAccept] = React.useState(
+    initial.coverageAutoAccept,
+  );
 
   const dirty =
     enabled !== initial.enabled ||
@@ -130,7 +164,9 @@ function SettingsForm({
     Number(windowDays) !== initial.windowDays ||
     Number(staleAfterDays) !== initial.staleAfterDays ||
     Number(autoApply) !== initial.autoApplyThreshold ||
-    Number(matchMedium) !== initial.matchMediumThreshold;
+    Number(matchMedium) !== initial.matchMediumThreshold ||
+    coverageAfterApply !== initial.coverageAfterApply ||
+    coverageAutoAccept !== initial.coverageAutoAccept;
 
   const handle = (e: React.FormEvent) => {
     e.preventDefault();
@@ -167,6 +203,12 @@ function SettingsForm({
       m !== initial.matchMediumThreshold
     ) {
       patch["metadata.match_medium_threshold"] = m;
+    }
+    if (coverageAfterApply !== initial.coverageAfterApply) {
+      patch["metadata.coverage_after_series_apply"] = coverageAfterApply;
+    }
+    if (coverageAutoAccept !== initial.coverageAutoAccept) {
+      patch["metadata.coverage_auto_accept"] = coverageAutoAccept;
     }
     void onSubmit(patch);
   };
@@ -321,6 +363,75 @@ function SettingsForm({
             bucket (visible in the review queue). Below this is LOW (hidden by
             default). Default 60.
           </p>
+        </div>
+      </section>
+
+      <section className="border-border/40 space-y-3 border-t pt-5">
+        <header className="space-y-1">
+          <h3 className="text-base font-semibold">
+            Coverage after series matches
+          </h3>
+          <p className="text-muted-foreground text-xs">
+            After a series match is applied, check which of the folder&rsquo;s
+            issues the matched provider series holds and find the provider
+            series for the rest (e.g. a legacy-renumbered relaunch). The result
+            appears on the series&rsquo; Details tab with an Accept button.
+            Costs about 1&ndash;3 provider requests per match (the issue list is
+            often already cached from the match dialog&rsquo;s coverage hints).
+          </p>
+        </header>
+        <div className="grid gap-1.5">
+          <Label htmlFor="coverage-after-apply">Run coverage</Label>
+          <Select
+            value={coverageAfterApply}
+            onValueChange={(v) =>
+              setCoverageAfterApply(v as CoverageAfterApply)
+            }
+          >
+            <SelectTrigger
+              id="coverage-after-apply"
+              className="w-full sm:w-96"
+              aria-label="Run coverage"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {COVERAGE_AFTER_APPLY.map((v) => (
+                <SelectItem key={v} value={v}>
+                  {COVERAGE_AFTER_APPLY_LABEL[v]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-muted-foreground text-[11px]">
+            &ldquo;Every series match&rdquo; adds bulk applies from a batch
+            review and automatic applies (one analysis per series, however many
+            matches a batch applies; skipped while 50 analyses are already
+            waiting).
+          </p>
+        </div>
+        <div className="flex items-start gap-3 pt-1">
+          <Switch
+            id="coverage-auto-accept"
+            checked={coverageAutoAccept}
+            onCheckedChange={setCoverageAutoAccept}
+            disabled={coverageAfterApply === "off"}
+          />
+          <div className="space-y-0.5">
+            <Label
+              htmlFor="coverage-auto-accept"
+              className="cursor-pointer text-sm"
+            >
+              Accept high-confidence results automatically
+            </Label>
+            <p className="text-muted-foreground text-[11px]">
+              Off by default: results wait for your Accept. When on, a result
+              whose main series matches the name and start year, whose every
+              issue&rsquo;s cover date agrees and that conflicts with nothing
+              you set is written as automated ranges. Your own links and ranges
+              are never overwritten.
+            </p>
+          </div>
         </div>
       </section>
 
