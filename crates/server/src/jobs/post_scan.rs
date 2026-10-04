@@ -189,8 +189,8 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
     // A stale stamp means the on-disk cover pre-dates the current
     // pipeline. The encoder no-ops on an existing file, so a v5 rollout
     // over a pre-v5 uncropped wraparound would keep serving the old art
-    // forever — wipe first, but only when the crop actually applies
-    // (portrait covers keep their bytes + ETags across the bump).
+    // forever — wipe first, but only for wide cover pages (portrait
+    // covers keep their bytes + ETags across the bump).
     let stale_stamp = row.thumbnail_version < THUMBNAIL_VERSION;
 
     let outcome = match app.archive_work_semaphore.clone().acquire_owned().await {
@@ -217,15 +217,17 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                                 // same framing. The encoder would crop
                                 // again, but on a portrait image that's a
                                 // no-op, so hash and thumbnail always agree.
-                                let img = match thumbnails::front_cover_crop(&img, front_side) {
-                                    Some(front) => {
-                                        if stale_stamp {
-                                            thumbnails::wipe_issue_cover(&data_dir, &issue_id);
-                                        }
-                                        front
-                                    }
-                                    None => img,
-                                };
+                                // The wipe keys on the page being wide,
+                                // not on the crop applying: a landscape
+                                // book's v5 half-crop must be replaced by
+                                // the whole cover (v6).
+                                if stale_stamp
+                                    && thumbnails::is_spread_dimensions(img.width(), img.height())
+                                {
+                                    thumbnails::wipe_issue_cover(&data_dir, &issue_id);
+                                }
+                                let img =
+                                    thumbnails::front_cover_crop(&img, front_side).unwrap_or(img);
                                 let (p, d, a) = crate::metadata::phash::all_hashes(&img);
                                 cover_hashes = Some(crate::metadata::phash::ArchiveCoverHashes {
                                     hashes: (p, d, a),

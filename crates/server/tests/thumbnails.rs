@@ -527,7 +527,7 @@ async fn inline_cover_thumb_crops_wraparound_but_strip_keeps_spread() {
     let dir = tempfile::tempdir().unwrap();
     let cbz = dir.path().join("wrap.cbz");
     {
-        let wide: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_fn(128, 64, |x, _| {
+        let wide: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_fn(128, 96, |x, _| {
             if x < 64 {
                 Rgba([255, 0, 0, 255])
             } else {
@@ -555,7 +555,7 @@ async fn inline_cover_thumb_crops_wraparound_but_strip_keeps_spread() {
         .await
         .unwrap();
     let cover = image::load_from_memory(&body).unwrap().to_rgba8();
-    assert_eq!(cover.dimensions(), (64, 64), "cover = front (right) half");
+    assert_eq!(cover.dimensions(), (64, 96), "cover = front (right) half");
     let px = cover.get_pixel(32, 32).0;
     assert!(
         px[2] > 200 && px[0] < 60,
@@ -570,7 +570,7 @@ async fn inline_cover_thumb_crops_wraparound_but_strip_keeps_spread() {
     let strip = image::load_from_memory(&body).unwrap().to_rgba8();
     assert_eq!(
         strip.dimensions(),
-        (128, 64),
+        (128, 96),
         "strip keeps the whole spread"
     );
 }
