@@ -133,6 +133,7 @@ async fn resolve_app_password(app: &AppState, token: &str) -> Result<CurrentUser
         &app.app_password_cache,
         token,
         app.secrets.peppers(),
+        app.cfg().password_hash_cost,
     )
     .await
     .ok_or(AuthRejection::Invalid)?;

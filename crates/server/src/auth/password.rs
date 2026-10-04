@@ -8,6 +8,14 @@
 //!
 //! The PHC string written to the DB looks like:
 //!   $argon2id$v=19$m=65536,t=3,p=1$<salt-base64>$<hash-base64>
+//!
+//! The cost of NEW hashes is a [`HashCost`] carried on `Config`
+//! (`password_hash_cost`): always [`HashCost::PRODUCTION`] in a real
+//! server, never read from the environment. Only the integration-test
+//! harness lowers it to [`HashCost::TEST`] — the suite registers and logs
+//! in hundreds of users, and at 64 MiB × 3 passes those hashes dominated
+//! CI. Verification needs no cost: argon2 reads m/t/p from the stored PHC
+//! string, so hashes of either cost verify under either setting.
 
 use argon2::{
     Algorithm, Argon2, Params, Version,
@@ -22,20 +30,48 @@ pub enum PasswordError {
     InvalidHash,
 }
 
-fn argon2_with_pepper(pepper: &[u8]) -> argon2::Argon2<'_> {
-    let params = Params::new(
-        64 * 1024, // m_cost in KiB → 64 MiB
-        3,         // t_cost
-        1,         // p_cost
-        None,      // output length (default 32)
-    )
-    .expect("valid argon2 params");
+/// argon2id cost parameters for newly written hashes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HashCost {
+    /// Memory in KiB.
+    pub m_kib: u32,
+    /// Passes.
+    pub t: u32,
+    /// Lanes.
+    pub p: u32,
+}
+
+impl HashCost {
+    /// The spec's parameters (§17.1): m=64 MiB, t=3, p=1.
+    pub const PRODUCTION: Self = Self {
+        m_kib: 64 * 1024,
+        t: 3,
+        p: 1,
+    };
+    /// Integration tests only (set by the `TestApp` harness). Same
+    /// algorithm and code path at ~1/24th the work; never a production
+    /// setting — `Config::load()` cannot produce it.
+    pub const TEST: Self = Self {
+        m_kib: 8 * 1024,
+        t: 1,
+        p: 1,
+    };
+}
+
+impl Default for HashCost {
+    fn default() -> Self {
+        Self::PRODUCTION
+    }
+}
+
+fn argon2_with_pepper(pepper: &[u8], cost: HashCost) -> argon2::Argon2<'_> {
+    let params = Params::new(cost.m_kib, cost.t, cost.p, None).expect("valid argon2 params");
     Argon2::new_with_secret(pepper, Algorithm::Argon2id, Version::V0x13, params)
         .expect("valid argon2 secret")
 }
 
-pub fn hash(plain: &str, pepper: &[u8]) -> Result<String, PasswordError> {
-    let argon = argon2_with_pepper(pepper);
+pub fn hash(plain: &str, pepper: &[u8], cost: HashCost) -> Result<String, PasswordError> {
+    let argon = argon2_with_pepper(pepper, cost);
     // password-hash 0.6: `hash_password` generates the 16-byte random salt
     // itself (getrandom); the explicit SaltString/OsRng dance is gone.
     Ok(argon
@@ -46,7 +82,9 @@ pub fn hash(plain: &str, pepper: &[u8]) -> Result<String, PasswordError> {
 
 pub fn verify(stored_hash: &str, plain: &str, pepper: &[u8]) -> Result<bool, PasswordError> {
     let parsed = PasswordHash::new(stored_hash).map_err(|_| PasswordError::InvalidHash)?;
-    let argon = argon2_with_pepper(pepper);
+    // The instance cost is irrelevant here: `verify_password` uses the
+    // m/t/p encoded in `parsed`.
+    let argon = argon2_with_pepper(pepper, HashCost::PRODUCTION);
     Ok(argon.verify_password(plain.as_bytes(), &parsed).is_ok())
 }
 
@@ -123,14 +161,16 @@ pub fn verify_rotating(
 ///
 /// We hash a fixed throwaway plaintext under a fresh random salt; the
 /// resulting PHC string is itself meaningless — what matters is that
-/// `verify` runs the full m=64MiB / t=3 / p=1 argon2id work on it.
-pub fn dummy_hash(pepper: &[u8]) -> &'static str {
+/// `verify` runs the same argon2id work on it as on a real user's hash.
+/// `cost` must therefore be the cost real hashes are written at; the first
+/// call fixes it for the process (it is process-wide config anyway).
+pub fn dummy_hash(pepper: &[u8], cost: HashCost) -> &'static str {
     use std::sync::OnceLock;
     static DUMMY: OnceLock<String> = OnceLock::new();
     DUMMY.get_or_init(|| {
         // The exact plaintext doesn't matter; this hash is never compared
         // against anything that could verify true.
-        hash("dummy-for-constant-time-login", pepper)
+        hash("dummy-for-constant-time-login", pepper, cost)
             .expect("argon2 hash succeeds with valid params")
     })
 }
@@ -153,7 +193,7 @@ mod tests {
     #[test]
     fn round_trip() {
         let pepper = b"test-pepper-32-bytes-long-XXXXXX";
-        let h = hash("hunter2", pepper).unwrap();
+        let h = hash("hunter2", pepper, HashCost::TEST).unwrap();
         assert!(verify(&h, "hunter2", pepper).unwrap());
         assert!(!verify(&h, "wrong", pepper).unwrap());
     }
@@ -162,8 +202,8 @@ mod tests {
     fn rotating_verify_prefers_current_then_previous() {
         let old = b"pepper-A-32bytes-XXXXXXXXXXXXXXX";
         let new = b"pepper-B-32bytes-XXXXXXXXXXXXXXX";
-        let under_old = hash("hunter2", old).unwrap();
-        let under_new = hash("hunter2", new).unwrap();
+        let under_old = hash("hunter2", old, HashCost::TEST).unwrap();
+        let under_new = hash("hunter2", new, HashCost::TEST).unwrap();
         let rotating = Peppers {
             current: new,
             previous: Some(old),
@@ -186,16 +226,42 @@ mod tests {
             Verified::No
         );
         // The rehash a caller writes on `Previous` verifies under current.
-        let rehashed = hash("hunter2", rotating.current).unwrap();
+        let rehashed = hash("hunter2", rotating.current, HashCost::TEST).unwrap();
         assert_eq!(
             verify_rotating(&rehashed, "hunter2", Peppers::single(new)).unwrap(),
             Verified::Current
         );
     }
 
+    /// Production cost must never drift: stored hashes and the login
+    /// timing equalizer both assume the spec's parameters.
+    #[test]
+    fn production_cost_is_the_spec() {
+        let pepper = b"test-pepper-32-bytes-long-XXXXXX";
+        let h = hash("hunter2", pepper, HashCost::PRODUCTION).unwrap();
+        assert!(h.contains("$m=65536,t=3,p=1$"), "{h}");
+        assert_eq!(HashCost::default(), HashCost::PRODUCTION);
+    }
+
+    /// Verification reads the cost from the stored hash, so a test-cost
+    /// hash and a production-cost hash both verify through `verify`.
+    #[test]
+    fn verify_uses_the_stored_cost() {
+        let pepper = b"test-pepper-32-bytes-long-XXXXXX";
+        let cheap = hash("hunter2", pepper, HashCost::TEST).unwrap();
+        assert!(cheap.contains("$m=8192,t=1,p=1$"), "{cheap}");
+        assert!(verify(&cheap, "hunter2", pepper).unwrap());
+        assert!(!verify(&cheap, "wrong", pepper).unwrap());
+    }
+
     #[test]
     fn pepper_changes_invalidate() {
-        let h = hash("hunter2", b"pepper-A-32bytes-XXXXXXXXXXXXXXX").unwrap();
+        let h = hash(
+            "hunter2",
+            b"pepper-A-32bytes-XXXXXXXXXXXXXXX",
+            HashCost::TEST,
+        )
+        .unwrap();
         // Same password, different pepper → must not verify (peppered hash).
         assert!(!verify(&h, "hunter2", b"pepper-B-32bytes-XXXXXXXXXXXXXXX").unwrap());
     }

@@ -68,7 +68,9 @@ async fn backdate_user_hash(db: &sea_orm::DatabaseConnection) -> user::Model {
         .unwrap()
         .unwrap();
     let mut am: user::ActiveModel = row.into();
-    am.password_hash = Set(Some(password::hash(PASSWORD, &PREVIOUS).unwrap()));
+    am.password_hash = Set(Some(
+        password::hash(PASSWORD, &PREVIOUS, password::HashCost::TEST).unwrap(),
+    ));
     am.update(db).await.unwrap()
 }
 
@@ -131,9 +133,16 @@ async fn app_password_under_previous_pepper_verifies_and_rehashes() {
         .unwrap()
         .unwrap();
     // Issued before the rotation → stored under the previous pepper.
-    let (id, token) = server::auth::app_password::issue(&db, owner.id, "reader", "read", &PREVIOUS)
-        .await
-        .unwrap();
+    let (id, token) = server::auth::app_password::issue(
+        &db,
+        owner.id,
+        "reader",
+        "read",
+        &PREVIOUS,
+        password::HashCost::TEST,
+    )
+    .await
+    .unwrap();
 
     let resp = app
         .router

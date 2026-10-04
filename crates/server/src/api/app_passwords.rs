@@ -201,14 +201,22 @@ pub async fn create(
     // Garde's `valid_scope_or_default` already gates this; we keep
     // the lookup here purely for the default-fallback semantics.
 
-    let (id, plaintext) =
-        match ap::issue(&app.db, user.id, &label, scope, app.secrets.pepper.as_ref()).await {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::error!(error = %e, "issue app password failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        };
+    let (id, plaintext) = match ap::issue(
+        &app.db,
+        user.id,
+        &label,
+        scope,
+        app.secrets.pepper.as_ref(),
+        app.cfg().password_hash_cost,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "issue app password failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
 
     // Load the inserted row for the response timestamps.
     let row = match AppPasswordEntity::find_by_id(id).one(&app.db).await {

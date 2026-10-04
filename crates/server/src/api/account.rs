@@ -234,7 +234,11 @@ pub async fn update(
         }
     }
     if let Some(new_pw) = req.new_password {
-        let hashed = match password::hash(&new_pw, app.secrets.pepper.as_ref()) {
+        let hashed = match password::hash(
+            &new_pw,
+            app.secrets.pepper.as_ref(),
+            app.cfg().password_hash_cost,
+        ) {
             Ok(h) => h,
             Err(e) => {
                 tracing::error!(error = %e, "argon2 rehash failed");

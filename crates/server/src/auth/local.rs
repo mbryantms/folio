@@ -358,7 +358,11 @@ pub async fn register(
         return fail(StatusCode::CONFLICT, "conflict", "email already in use");
     }
 
-    let hash = match password::hash(&req.password, app.secrets.pepper.as_ref()) {
+    let hash = match password::hash(
+        &req.password,
+        app.secrets.pepper.as_ref(),
+        app.cfg().password_hash_cost,
+    ) {
         Ok(h) => h,
         Err(e) => {
             tracing::error!(error = %e, "argon2 hash failed");
@@ -570,7 +574,7 @@ pub async fn login(
         // the same wall time as the wrong-password path. The literal we
         // used here pre-M3 failed PHC parse before any argon2 work
         // (audit S-4), which let a timing channel distinguish the two.
-        let dummy = password::dummy_hash(app.secrets.pepper.as_ref());
+        let dummy = password::dummy_hash(app.secrets.pepper.as_ref(), app.cfg().password_hash_cost);
         // `verify_rotating` so this path pays the same one-or-two argon2
         // verifies a wrong password does while a pepper rotation is active.
         let _ = password::verify_rotating(dummy, &req.password, app.secrets.peppers());
@@ -638,7 +642,11 @@ pub async fn login(
     // — rehash it under the current pepper now that we hold the plaintext,
     // so the user survives the eventual removal of the previous pepper.
     let rehashed = if verified == password::Verified::Previous {
-        match password::hash(&req.password, app.secrets.pepper.as_ref()) {
+        match password::hash(
+            &req.password,
+            app.secrets.pepper.as_ref(),
+            app.cfg().password_hash_cost,
+        ) {
             Ok(h) => Some(h),
             Err(e) => {
                 tracing::warn!(error = %e, user_id = %row.id, "pepper rehash failed");
@@ -1302,7 +1310,11 @@ pub async fn reset_password(
         );
     };
 
-    let hash = match password::hash(&req.new_password, app.secrets.pepper.as_ref()) {
+    let hash = match password::hash(
+        &req.new_password,
+        app.secrets.pepper.as_ref(),
+        app.cfg().password_hash_cost,
+    ) {
         Ok(h) => h,
         Err(e) => {
             tracing::error!(error = %e, "argon2 hash failed during reset");
