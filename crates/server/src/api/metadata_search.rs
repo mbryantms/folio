@@ -1004,6 +1004,9 @@ pub async fn search_issue(
             facts,
             series_targets,
             year_asserted,
+            // The dialog search shows alternatives; only batch children
+            // answer covered issues by direct lookup.
+            direct_lookup: false,
         })
         .await
     {
@@ -1289,6 +1292,7 @@ async fn run_lookup(
         },
         bucket: crate::metadata::matcher::Confidence::High,
         payload,
+        coverage: None,
     };
 
     let providers_listed = [provider_ref.source];
@@ -2592,13 +2596,24 @@ pub async fn create_series_batch(
         },
         SeriesBatchScope::Incomplete => {
             use crate::metadata::completeness::CompletenessTier;
+            // Issues whose description is the series description (a series
+            // apply leaked it before #974): "complete" by presence, wrong by
+            // content. They're re-fetched whatever their tier.
+            let leaked = match series_description_leaks(&app.db, s.id).await {
+                Ok(ids) => ids,
+                Err(e) => {
+                    tracing::warn!(error = %e, series_id = %s.id, "create_series_batch: description-leak query failed; tier only");
+                    std::collections::HashSet::new()
+                }
+            };
             crate::api::series::assess_series_issue_tiers(&app, s.id)
                 .await
                 .into_iter()
                 // Skip Complete AND Accepted (operator marked it done, B4) — the
                 // "only missing or partial" scope shouldn't re-fetch either.
-                .filter(|(_, tier)| {
-                    !matches!(tier, CompletenessTier::Complete | CompletenessTier::Accepted)
+                .filter(|(id, tier)| {
+                    leaked.contains(id)
+                        || !matches!(tier, CompletenessTier::Complete | CompletenessTier::Accepted)
                 })
                 .map(|(id, _)| id)
                 .take(refresh::REFRESH_BATCH_CAP)
@@ -2631,6 +2646,65 @@ pub async fn create_series_batch(
         }),
     )
         .into_response()
+}
+
+/// Active issues of a series whose description duplicates the series
+/// description — the leak a series apply caused before #974 (see
+/// `docs/dev/metadata-sidecar-writeback.md` § "Repairing issues a series
+/// apply overwrote"; this is its strict detection query, scoped to one
+/// series). Texts compare HTML-stripped, whitespace-collapsed and
+/// case-folded against the `series` row's summary or any cached provider
+/// series record matched to it. The text must also be shared by at least
+/// two issues (a one-shot's issue and series blurbs can legitimately
+/// match), and an issue whose description a user pinned is never
+/// selected.
+async fn series_description_leaks(
+    db: &sea_orm::DatabaseConnection,
+    series_id: Uuid,
+) -> Result<std::collections::HashSet<String>, sea_orm::DbErr> {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    const SQL: &str = r#"
+WITH norm_issue AS (
+  SELECT i.id AS issue_id,
+         lower(btrim(regexp_replace(regexp_replace(i.summary, '<[^>]*>', ' ', 'g'), '\s+', ' ', 'g'))) AS txt
+  FROM issues i
+  WHERE i.series_id = $1 AND i.removed_at IS NULL AND i.state = 'active'
+    AND i.summary IS NOT NULL
+),
+series_texts AS (
+  SELECT lower(btrim(regexp_replace(regexp_replace(s.summary, '<[^>]*>', ' ', 'g'), '\s+', ' ', 'g'))) AS txt
+  FROM series s WHERE s.id = $1 AND s.summary IS NOT NULL
+  UNION
+  SELECT lower(btrim(regexp_replace(regexp_replace(c.payload->>'description', '<[^>]*>', ' ', 'g'), '\s+', ' ', 'g')))
+  FROM external_ids x
+  JOIN metadata_cache c
+    ON c.entity = 'series' AND c.provider = x.source AND c.external_id = x.external_id
+  WHERE x.entity_type = 'series' AND x.entity_id = $1::text
+    AND c.payload->>'description' IS NOT NULL
+),
+dup AS (
+  SELECT txt FROM norm_issue WHERE txt <> '' GROUP BY txt HAVING count(*) >= 2
+)
+SELECT n.issue_id
+FROM norm_issue n
+JOIN dup d ON d.txt = n.txt
+WHERE EXISTS (SELECT 1 FROM series_texts st WHERE st.txt = n.txt)
+  AND NOT EXISTS (
+    SELECT 1 FROM field_provenance fp
+    WHERE fp.entity_type = 'issue' AND fp.entity_id = n.issue_id
+      AND fp.field IN ('description', 'summary') AND fp.set_by = 'user')
+"#;
+    let rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            SQL,
+            [series_id.into()],
+        ))
+        .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| r.try_get::<String>("", "issue_id").ok())
+        .collect())
 }
 
 /// `POST /series/{slug}/metadata/batch/selection` request — the hand-picked
@@ -2889,6 +2963,93 @@ pub struct BatchAggregate {
     pub failed: i64,
     /// Still queued / searching.
     pub in_flight: i64,
+    /// Per provider: how many searched children were answered by a direct
+    /// lookup through series coverage vs a provider search (with why it
+    /// fell back). Empty until a child that may use direct lookups has
+    /// finished searching.
+    pub lookups: Vec<BatchLookupCount>,
+}
+
+/// One provider's direct-lookup vs search tally across a batch.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BatchLookupCount {
+    /// `"comicvine"` | `"metron"` | `"gcd"`.
+    pub source: String,
+    /// Issues answered from the provider series' issue list — no search.
+    pub direct: i64,
+    /// Issues that ran a provider search.
+    pub search: i64,
+    /// Why those issues searched, most frequent first.
+    pub fallbacks: Vec<BatchFallbackCount>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BatchFallbackCount {
+    pub reason: crate::metadata::direct_lookup::FallbackReason,
+    pub count: i64,
+}
+
+/// Tally the per-source [`SourceLookup`] records children stored under
+/// `coverage_lookups` (see [`crate::metadata::direct_lookup`]).
+///
+/// [`SourceLookup`]: crate::metadata::direct_lookup::SourceLookup
+fn tally_lookups(runs: &[metadata_run::Model]) -> Vec<BatchLookupCount> {
+    use crate::metadata::direct_lookup::{LookupPath, QUERY_KEY, SourceLookup};
+    use crate::metadata::identifier::Source;
+    let mut per: Vec<(Source, BatchLookupCount)> = Vec::new();
+    for r in runs {
+        let Some(list) = r.query.as_ref().and_then(|q| q.get(QUERY_KEY)) else {
+            continue;
+        };
+        let Ok(recs) = serde_json::from_value::<Vec<SourceLookup>>(list.clone()) else {
+            continue;
+        };
+        for rec in recs {
+            let idx = match per.iter().position(|(s, _)| *s == rec.source) {
+                Some(i) => i,
+                None => {
+                    per.push((
+                        rec.source,
+                        BatchLookupCount {
+                            source: rec.source.as_str().to_owned(),
+                            direct: 0,
+                            search: 0,
+                            fallbacks: Vec::new(),
+                        },
+                    ));
+                    per.len() - 1
+                }
+            };
+            let count = &mut per[idx].1;
+            match rec.path {
+                LookupPath::Direct => count.direct += 1,
+                LookupPath::Search => {
+                    count.search += 1;
+                    if let Some(reason) = rec.fallback {
+                        match count.fallbacks.iter_mut().find(|f| f.reason == reason) {
+                            Some(f) => f.count += 1,
+                            None => count
+                                .fallbacks
+                                .push(BatchFallbackCount { reason, count: 1 }),
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Display order follows the coverage card (ComicVine, Metron, GCD).
+    per.sort_by_key(|(s, _)| {
+        crate::metadata::coverage::COVERAGE_SOURCES
+            .iter()
+            .position(|c| c == s)
+            .unwrap_or(usize::MAX)
+    });
+    per.into_iter()
+        .map(|(_, mut count)| {
+            count.fallbacks.sort_by_key(|f| std::cmp::Reverse(f.count));
+            count
+        })
+        .collect()
 }
 
 /// One child run in a batch, for the Review queue list.
@@ -3191,6 +3352,8 @@ pub async fn batch_status(
             library_id,
         });
     }
+
+    agg.lookups = tally_lookups(&runs);
 
     let status = if agg.awaiting_quota > 0 {
         "awaiting_quota"

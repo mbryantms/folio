@@ -217,9 +217,30 @@ export function CandidateRow({
             ? ` · ${parsed.issue_count} issue${parsed.issue_count === 1 ? "" : "s"}`
             : ""}
         </div>
+        {coverageReason(c) && (
+          <div className="text-muted-foreground mt-0.5 text-xs">
+            {coverageReason(c)}
+          </div>
+        )}
       </div>
     </li>
   );
+}
+
+/**
+ * Why a batch found this candidate without searching — set when the
+ * provider series' issue list (series coverage) supplied it, e.g.
+ * "matched by series coverage (number + cover date)". The bucket is still
+ * the matcher's.
+ */
+export function coverageReason(c: CandidateView): string | null {
+  const b = c.score_breakdown;
+  if (!b || typeof b !== "object") return null;
+  const cov = (b as { coverage?: unknown }).coverage;
+  if (!cov || typeof cov !== "object") return null;
+  const reason = (cov as { reason?: unknown }).reason;
+  if (typeof reason !== "string" || !reason) return null;
+  return reason.charAt(0).toUpperCase() + reason.slice(1);
 }
 
 function ConfidenceBadge({ bucket, score }: { bucket: string; score: number }) {

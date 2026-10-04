@@ -2153,11 +2153,23 @@ pub(crate) async fn fetch_issue_detail(
     provider: &dyn MetadataProvider,
     external_id: &str,
 ) -> ProviderResult<GenericMetadata> {
+    fetch_issue_detail_cached(&state.db, provider, external_id).await
+}
+
+/// [`fetch_issue_detail`] on a bare connection: the `metadata_cache`
+/// issue row (24 h, conditional revalidation) shared by apply, URL lookup
+/// and the batch direct lookup — a detail the batch fetched is the one
+/// the apply then reads, free.
+pub(crate) async fn fetch_issue_detail_cached(
+    db: &DatabaseConnection,
+    provider: &dyn MetadataProvider,
+    external_id: &str,
+) -> ProviderResult<GenericMetadata> {
     let source = provider.id();
     let ttl = chrono::Duration::from_std(cache::CacheEntity::Issue.default_ttl().to_std().unwrap())
         .unwrap_or(chrono::Duration::hours(24));
     cache::get_or_revalidate(
-        &state.db,
+        db,
         source,
         cache::CacheEntity::Issue,
         external_id,
