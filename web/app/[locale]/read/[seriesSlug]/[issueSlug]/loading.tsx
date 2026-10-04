@@ -27,7 +27,7 @@ export default function ReaderLoading() {
       <LoadingWatchdog />
       {/* Faux chrome bar — same height/padding contract as ReaderChrome
           so the real bar slides in over the same footprint. */}
-      <div className="bg-reader-chrome/85 standalone:bg-reader-chrome standalone:backdrop-blur-none fixed inset-x-0 top-0 z-30 flex items-center gap-3 border-b border-neutral-800/80 px-[max(0.75rem,var(--safe-left))] pt-[max(0.5rem,var(--safe-top))] pb-2 backdrop-blur">
+      <div className="bg-reader-chrome/85 standalone:bg-reader-chrome standalone:backdrop-blur-none fixed inset-x-0 top-0 z-30 flex items-center gap-3 border-b border-neutral-800/80 px-[max(0.75rem,var(--safe-left))] pt-[max(0.5rem,var(--top-inset))] pb-2 backdrop-blur">
         <div className="h-6 w-6 animate-pulse rounded bg-neutral-800" />
         <div className="h-4 w-40 animate-pulse rounded bg-neutral-800" />
         <div className="ml-auto h-6 w-6 animate-pulse rounded bg-neutral-800" />

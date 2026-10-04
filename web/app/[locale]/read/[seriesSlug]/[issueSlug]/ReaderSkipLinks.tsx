@@ -5,7 +5,7 @@ import { formatKey } from "@/lib/reader/keybinds";
 import { usePageTextPanel } from "@/lib/reader/page-text";
 
 const LINK_CLASS =
-  "sr-only focus-visible:not-sr-only focus-visible:bg-background focus-visible:text-foreground focus-visible:ring-ring focus-visible:fixed focus-visible:top-[max(0.75rem,var(--safe-top))] focus-visible:left-[max(0.75rem,var(--safe-left))] focus-visible:z-50 focus-visible:rounded-md focus-visible:px-4 focus-visible:py-2 focus-visible:text-sm focus-visible:font-medium focus-visible:shadow-lg focus-visible:ring-2 focus-visible:outline-none";
+  "sr-only focus-visible:not-sr-only focus-visible:bg-background focus-visible:text-foreground focus-visible:ring-ring focus-visible:fixed focus-visible:top-[max(0.75rem,var(--top-inset))] focus-visible:left-[max(0.75rem,var(--safe-left))] focus-visible:z-50 focus-visible:rounded-md focus-visible:px-4 focus-visible:py-2 focus-visible:text-sm focus-visible:font-medium focus-visible:shadow-lg focus-visible:ring-2 focus-visible:outline-none";
 
 /**
  * Skip-link style entry points for keyboard and screen-reader users
