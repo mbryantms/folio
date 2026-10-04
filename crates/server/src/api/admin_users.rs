@@ -290,7 +290,11 @@ pub async fn create(
     }
 
     let temp_password = gen_temp_password();
-    let hash = match password::hash(&temp_password, app.secrets.pepper.as_ref()) {
+    let hash = match password::hash(
+        &temp_password,
+        app.secrets.pepper.as_ref(),
+        app.cfg().password_hash_cost,
+    ) {
         Ok(h) => h,
         Err(e) => {
             tracing::error!(error = %e, "admin create-user: hash failed");

@@ -73,12 +73,13 @@ pub async fn issue(
     label: &str,
     scope: &str,
     pepper: &[u8],
+    cost: password::HashCost,
 ) -> anyhow::Result<(Uuid, String)> {
     if !is_valid_scope(scope) {
         anyhow::bail!("invalid scope {scope:?}");
     }
     let plaintext = random_plaintext();
-    let hash = password::hash(&plaintext, pepper)?;
+    let hash = password::hash(&plaintext, pepper, cost)?;
     let id = Uuid::now_v7();
     let now = Utc::now().fixed_offset();
     let am = AppPasswordAM {
@@ -176,6 +177,7 @@ pub async fn verify(
     cache: &AppPasswordCache,
     plaintext: &str,
     peppers: password::Peppers<'_>,
+    cost: password::HashCost,
 ) -> Option<ResolvedAppPassword> {
     if !looks_like_app_password(plaintext) {
         return None;
@@ -234,7 +236,7 @@ pub async fn verify(
         // L-1 (WP-6.3): matched under the previous pepper → rehash under the
         // current one while we still hold the plaintext.
         let rehash = if verified == password::Verified::Previous {
-            password::hash(&plaintext_owned, peppers.current).ok()
+            password::hash(&plaintext_owned, peppers.current, cost).ok()
         } else {
             None
         };

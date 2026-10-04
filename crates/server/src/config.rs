@@ -284,6 +284,14 @@ pub struct Config {
     #[serde(default)]
     pub metrics_open: bool,
 
+    /// argon2id cost for newly written password / app-password hashes.
+    /// `#[serde(skip)]`: NOT an operator knob and never read from the
+    /// environment — every real server gets [`HashCost::PRODUCTION`]
+    /// (the `Default`). Only the integration-test harness sets
+    /// [`HashCost::TEST`]. See `auth::password`.
+    #[serde(skip)]
+    pub password_hash_cost: crate::auth::password::HashCost,
+
     // Metadata providers (metadata-providers-1.0 M1)
     /// ComicVine API key. Per-site key, account-bound. Always loaded
     /// from `app_setting` (`metadata.comicvine.api_key`) — the env var
@@ -548,6 +556,7 @@ impl std::fmt::Debug for Config {
             .field("gcd_password", &redact_opt(&self.gcd_password))
             .field("gcd_enabled", &self.gcd_enabled)
             .field("gcd_base_url", &self.gcd_base_url)
+            .field("password_hash_cost", &self.password_hash_cost)
             .finish()
     }
 }
@@ -1501,6 +1510,7 @@ mod tests {
             smtp_username: Some("leak-this-smtp-user".into()),
             smtp_password: Some("leak-this-smtp-pass".into()),
             metrics_token: Some("leak-this-metrics-token".into()),
+            password_hash_cost: crate::auth::password::HashCost::PRODUCTION,
             ..test_config_skeleton()
         };
         let rendered = format!("{cfg:?}");
@@ -1609,6 +1619,7 @@ mod tests {
             smtp_tls: "starttls".into(),
             smtp_from: None,
             metrics_token: None,
+            password_hash_cost: crate::auth::password::HashCost::PRODUCTION,
             metrics_open: false,
             opds_panels_mode: "off".into(),
             comicvine_api_key: None,

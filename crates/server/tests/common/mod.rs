@@ -950,6 +950,11 @@ impl TestApp {
                 None
             },
             metrics_token: opts.metrics_token.clone(),
+            // Cheap argon2 for the suite: tests register / log in hundreds
+            // of users, and at production cost (64 MiB × 3 passes, 8
+            // concurrent test processes) hashing dominated CI wall-clock.
+            // Production cost is pinned by `auth::password` unit tests.
+            password_hash_cost: server::auth::password::HashCost::TEST,
             metrics_open: false,
             // progress-writeback-2.0 M4: OPDS client compat mode.
             // Default off — TestApp::spawn() preserves Folio identity;
