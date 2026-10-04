@@ -66,40 +66,16 @@ export function themedViewport(theme: Theme): Viewport {
   };
 }
 
-/**
- * Viewport for the reader route.
- *
- * The reader surface is theme-independent black, so on a light/amber
- * theme its declared appearance is pinned to black/dark — otherwise the
- * status-bar region dresses white over the artwork (#541).
- *
- * For a dark theme the reader returns EXACTLY the root
- * viewport instead of `#000000`. Since iOS/iPadOS 26.1 the OS paints its
- * own opaque status bar (plus a short fade below it) from `theme-color`,
- * and it latches the first runtime change: entering the reader turned the
- * fade black, and leaving it — although the DOM reverts to the theme
- * colour — kept the black fade on every page until the app was force-
- * quit. Keeping the meta byte-identical across the navigation removes
- * the trigger for the common case; light/amber users still get the black
- * reader dressing (the alternative is a white fade over artwork).
- */
-export function readerViewport(theme: Theme): Viewport {
-  if (theme === "system") {
-    return {
-      ...themedViewport(theme),
-      themeColor: [
-        { media: "(prefers-color-scheme: dark)", color: THEME_COLORS.dark },
-        { media: "(prefers-color-scheme: light)", color: "#000000" },
-      ],
-      colorScheme: "dark",
-    };
-  }
-  if (resolvedDataTheme(theme) === "dark") {
-    return themedViewport(theme);
-  }
-  return {
-    ...baseViewport,
-    themeColor: "#000000",
-    colorScheme: "dark",
-  };
-}
+// There is deliberately no reader-specific viewport. The reader used to
+// pin `theme-color: #000000` + `color-scheme: dark` for light / amber /
+// system themes (#541: a white status-bar tint over artwork), returning
+// the root viewport only for an explicit dark theme. Every navigation
+// into the reader then rewrote those <meta> tags at runtime, and an
+// installed iPadOS app LATCHES the first such change: the status-bar
+// strip switches from the header's solid colour to a blur of the page
+// content and stays that way on every route until the app is force-quit
+// (observed on iPadOS 26.1, reproduced on 27.0.1 with theme = system
+// while the OS was in light mode). Since iPadOS 26 the strip's colour
+// comes from the top-edge sticky/fixed container, not theme-color, so the
+// reader loses nothing there; Android reader chrome follows the theme
+// colour instead of black, which is the lesser evil.
