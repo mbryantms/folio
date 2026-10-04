@@ -569,6 +569,13 @@ drop the legacy DB-direct apply branch — flag a maintainer.
   finishes. Subsequent applies for the same issue skip with
   `archive busy (mutex)` in `ApplyOutcome.sidecar_skip_reasons`.
 
+### Coverage after series matches (`/admin/metadata` → Settings)
+
+| Setting | Type | Default | Notes |
+|---|---|---|---|
+| `metadata.coverage_after_series_apply` | string | `manual_only` | `off` \| `manual_only` \| `all`. Which successful series matches queue a coverage check of the matched series (see [Coverage after a series match](#coverage-after-a-series-match)). `manual_only` = matches you apply in "Match this series…"; `all` adds bulk applies from a batch review and automatic matches. About 1–3 provider requests per match; one check per series however many matches a batch applies, and none queued while 50 are already waiting. Unknown values fall back to `manual_only`. Live. |
+| `metadata.coverage_auto_accept` | bool | **false** | Let that check accept a High-confidence, conflict-free result itself (ids recorded as provider-set, ranges as automated). Off: results wait for your Accept. Live. |
+
 ## Analyze coverage
 
 The **Analyze coverage** button on a series' Details tab (admins only)
@@ -652,8 +659,48 @@ descriptions you set by hand are left alone. Run it on such a series,
 then **Fill missing** in the Review tab.
 
 The older per-provider split detector
-(`POST …/provider-ranges/detect`) is still available through the API
-and still runs after a manual series apply.
+(`POST …/provider-ranges/detect`) is still available through the API.
+It no longer runs after a series match; the coverage check below does.
+
+### Coverage hints in "Match this series…"
+
+Each series candidate in the match dialog shows how well it covers your
+issues, by issue number and cover date — for example "Covers 160 of
+your 173 issues · #600–611 aren't in this series". The hint is for your
+information only: it never changes a candidate's score, confidence or
+position in the list.
+
+- **What it costs.** The top three candidates are checked when the
+  search finishes; any other candidate only when you click **Check
+  coverage**. Each check reads that provider series' issue list
+  (ComicVine / Metron: one request per 100 issues; GCD: its index plus up
+  to four overview pages), which is then cached for 24 hours — the same
+  cache the coverage check after a match and batch lookups use, so the
+  series you pick costs nothing extra later. Per series and provider the
+  hints spend at most the coverage budget per hour (ComicVine 40, Metron
+  30, GCD 30 requests).
+- **"Coverage not computed".** Shown with the reason when a check was
+  skipped: the hour's budget for that series is spent, the provider is
+  rate limited, slow (a check stops after 30 seconds), not configured, or
+  can't list a series' issues.
+
+### Coverage after a series match
+
+When you apply a series match (setting `manual_only`, the default; `all`
+also covers bulk and automatic matches), Folio checks the matched
+provider series against your issues in the background — only for the
+providers you matched, using the matched series as that provider's main
+series. If some issues belong to another series of that provider (a
+legacy-renumbered relaunch, say), it finds that series with one issue
+search and proposes a range mapping. Usually 1–3 requests per match.
+
+The result appears at the top of the **Coverage analysis** section on
+the series' Details tab: "This folder spans 2 Metron series — accept
+the range?" with **Accept**, or "your match covers all 173 issues —
+nothing left to accept". Nothing is written until you accept, unless
+`metadata.coverage_auto_accept` is on and the result is High confidence
+with no conflict with what you set. Your own links and mappings are never
+replaced. Set `metadata.coverage_after_series_apply` to `off` to stop it.
 
 ## Files referenced
 

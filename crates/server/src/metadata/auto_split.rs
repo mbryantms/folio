@@ -120,6 +120,12 @@ pub const MAX_GAPS_RESOLVED: usize = 3;
 /// Best-effort: returns the ranges it created. Existing ranges for the
 /// same `(series, source)` are never clobbered — a gap overlapping one is
 /// reported `already_mapped` (so a user-declared mapping wins).
+///
+/// No longer run after a manual series apply: that hook now queues a
+/// seeded provider-coverage analysis
+/// ([`crate::jobs::provider_coverage::enqueue_after_series_apply`]), whose
+/// result waits for the admin's Accept. "Detect from providers" still
+/// uses [`detect_with_coverage`].
 pub async fn detect_and_map<C: ConnectionTrait>(
     db: &C,
     series_row: &series::Model,

@@ -376,6 +376,25 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::String,
         is_secret: false,
     },
+    // ───────── Coverage after series applies (coverage tie-ins PR 2) ────
+    SettingDef {
+        // `off` | `manual_only` | `all`. Which successful series applies
+        // queue a provider-coverage analysis seeded with the applied
+        // provider series. Default `manual_only` (a match the user picked
+        // in "Match this series…"); `all` adds bulk + automatic applies
+        // (≈ 1–3 provider calls each, deduped per series). Live.
+        key: "metadata.coverage_after_series_apply",
+        kind: SettingKind::String,
+        is_secret: false,
+    },
+    SettingDef {
+        // Let a post-apply coverage analysis accept its own
+        // high-confidence, conflict-free proposals. Default false — the
+        // result waits for the admin's Accept on the series' Details tab.
+        key: "metadata.coverage_auto_accept",
+        kind: SettingKind::Bool,
+        is_secret: false,
+    },
 ];
 
 pub fn registry() -> &'static [SettingDef] {

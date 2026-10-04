@@ -6,7 +6,13 @@ import { ProviderCoverImage } from "@/components/library/ProviderCoverImage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import type { CoverageHintState } from "@/lib/api/queries";
 import type { CandidateView, MatchOutcomeView } from "@/lib/api/types";
+import {
+  coverageHintTone,
+  formatCoverageHint,
+} from "@/lib/metadata/coverage-hint";
+import { cn } from "@/lib/utils";
 
 /**
  * Match-outcome banner (matching-accuracy-1.0 M8).
@@ -158,6 +164,7 @@ export function CandidateRow({
   selectable,
   selected,
   onToggleSelect,
+  coverage,
 }: {
   c: CandidateView;
   ordinal: number;
@@ -167,6 +174,13 @@ export function CandidateRow({
   selectable: boolean;
   selected: boolean;
   onToggleSelect: () => void;
+  /** Series scope only: how well this candidate covers the local issues
+   *  (display only — never affects score, bucket or order). `state`
+   *  undefined + `onCheck` = not computed yet ("Check coverage"). */
+  coverage?: {
+    state: CoverageHintState | undefined;
+    onCheck?: () => void;
+  };
 }) {
   const parsed = parseCandidatePayload(c.candidate);
   const _ = ordinal;
@@ -222,8 +236,72 @@ export function CandidateRow({
             {coverageReason(c)}
           </div>
         )}
+        {coverage && <CoverageHintLine {...coverage} />}
       </div>
     </li>
+  );
+}
+
+/** The candidate's coverage hint line (or the on-demand check). */
+function CoverageHintLine({
+  state,
+  onCheck,
+}: {
+  state: CoverageHintState | undefined;
+  onCheck?: () => void;
+}) {
+  if (!state) {
+    if (!onCheck) return null;
+    return (
+      <div className="mt-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground hover:text-foreground h-6 px-1.5 text-xs"
+          onClick={onCheck}
+        >
+          Check coverage
+        </Button>
+      </div>
+    );
+  }
+  if (state.kind === "loading") {
+    return (
+      <div
+        className="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs"
+        data-testid="coverage-hint"
+      >
+        <Loader2 className="h-3 w-3 animate-spin" /> Checking coverage…
+      </div>
+    );
+  }
+  if (state.kind === "error") {
+    return (
+      <div
+        className="text-muted-foreground mt-1 text-xs"
+        data-testid="coverage-hint"
+      >
+        Coverage couldn&rsquo;t be checked.
+      </div>
+    );
+  }
+  const tone = coverageHintTone(state.hint);
+  return (
+    <div
+      className={cn(
+        "mt-1 text-xs break-words",
+        tone === "full"
+          ? "text-success"
+          : tone === "low"
+            ? "text-warning"
+            : "text-muted-foreground",
+      )}
+      data-testid="coverage-hint"
+      title="Matched by issue number and cover date against this provider series' issue list. Doesn't change the match score."
+    >
+      {formatCoverageHint(state.hint)}
+    </div>
   );
 }
 

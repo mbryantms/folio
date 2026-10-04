@@ -39,6 +39,7 @@ use crate::api::saved_views::BatchTargets;
 use crate::auth::CurrentUser;
 use crate::jobs::{metadata_apply, metadata_search};
 use crate::metadata::apply::{self, ApplyArgs, ApplyMode};
+use crate::metadata::coverage;
 use crate::metadata::diff::{self, DiffResp};
 use crate::metadata::lookup::{self, LookupEntity};
 use crate::metadata::matcher::{IssueQueryFacts, SeriesQueryFacts};
@@ -53,6 +54,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(search_series))
         .routes(routes!(lookup_series))
         .routes(routes!(candidates_series))
+        .routes(routes!(coverage_hints_series))
         .routes(routes!(proposed_diff_series))
         .routes(routes!(composite_diff_series))
         .routes(routes!(composite_diff_issue))
@@ -691,6 +693,182 @@ pub async fn candidates_series(
         );
     }
     Json(build_candidates_resp(&app, run).await).into_response()
+}
+
+// ───────── /series/{slug}/metadata/coverage-hints ─────────
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct CoverageHintsQuery {
+    /// The series search run whose candidates to check.
+    pub run_id: Uuid,
+    /// Comma-separated candidate ordinals, at most
+    /// [`coverage::HINT_MAX_PER_REQUEST`] (the dialog asks for the top
+    /// three, others when the user expands one).
+    pub ordinals: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CoverageHintsResp {
+    /// One per requested ordinal, in request order.
+    pub hints: Vec<CoverageHintView>,
+    /// Ordinals one request may ask for.
+    pub max_per_request: u32,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CoverageHintView {
+    pub ordinal: i32,
+    #[serde(flatten)]
+    pub hint: coverage::SeriesCoverageHint,
+}
+
+/// How well each series candidate covers the local issues (number +
+/// cover date), e.g. "covers 119 of 134 · #500–512 not in this series".
+/// **Display only** — scores, buckets and ranking are untouched. Each hint
+/// needs the candidate's issue list (cached 24 h); uncached lists are
+/// bounded per series and provider by the coverage request budget per
+/// hour and by a 30 s wall clock, and come back `not_computed` with a
+/// reason when skipped.
+#[utoipa::path(
+    operation_id = "metadata_coverage_hints_series", get,
+    path = "/series/{slug}/metadata/coverage-hints",
+    params(("slug" = String, Path), CoverageHintsQuery),
+    responses(
+        (status = 200, body = CoverageHintsResp),
+        (status = 403, description = "library access denied"),
+        (status = 404, description = "series / run / candidate not found"),
+        (status = 422, description = "no ordinals, malformed, or more than the per-request cap"),
+    )
+)]
+#[handler]
+pub async fn coverage_hints_series(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Path(slug): Path<String>,
+    Query(q): Query<CoverageHintsQuery>,
+) -> Response {
+    let s = match crate::api::series::find_by_slug(&app.db, &slug).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    if !crate::library::access::series_visible(&app, &user, &s).await {
+        return error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        );
+    }
+    let mut ordinals: Vec<i32> = Vec::new();
+    for part in q
+        .ordinals
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
+        let Ok(n) = part.parse::<i32>() else {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation",
+                "ordinals must be comma-separated integers",
+            );
+        };
+        if !ordinals.contains(&n) {
+            ordinals.push(n);
+        }
+    }
+    if ordinals.is_empty() || ordinals.len() > coverage::HINT_MAX_PER_REQUEST {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            &format!(
+                "ask for 1–{} candidates per request",
+                coverage::HINT_MAX_PER_REQUEST
+            ),
+        );
+    }
+    let run = match orchestrator::fetch_run(&app.db, q.run_id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return error(
+                StatusCode::NOT_FOUND,
+                "metadata.run_not_found",
+                "no such run",
+            );
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "coverage hints: fetch_run failed");
+            return error(StatusCode::BAD_GATEWAY, "internal", "internal");
+        }
+    };
+    if run.scope != orchestrator::scope::SERIES
+        || run.scope_entity_id.as_deref() != Some(s.id.to_string().as_str())
+    {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.run_not_found",
+            "no such run",
+        );
+    }
+    let mut rows = Vec::with_capacity(ordinals.len());
+    for o in &ordinals {
+        match entity::metadata_run_candidate::Entity::find_by_id((run.id, *o))
+            .one(&app.db)
+            .await
+        {
+            Ok(Some(r)) => rows.push(r),
+            Ok(None) => {
+                return error(
+                    StatusCode::NOT_FOUND,
+                    "metadata.candidate_not_found",
+                    "no candidate with that ordinal",
+                );
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "coverage hints: candidate lookup failed");
+                return error(StatusCode::BAD_GATEWAY, "internal", "internal");
+            }
+        }
+    }
+    let local = match coverage::load_local(&app.db, s.id).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(error = %e, "coverage hints: load local issues failed");
+            return error(StatusCode::BAD_GATEWAY, "internal", "internal");
+        }
+    };
+    let deadline = std::time::Instant::now() + coverage::HINT_TIME_BUDGET;
+    let mut hints = Vec::with_capacity(rows.len());
+    for row in rows {
+        let hint = match crate::metadata::apply::parse_source(&row.source)
+            .and_then(|src| crate::metadata::apply::build_provider(&app, src))
+        {
+            Some(provider) => {
+                coverage::series_hint(
+                    &app.jobs.redis,
+                    &*provider,
+                    s.id,
+                    &local,
+                    &row.external_id,
+                    deadline,
+                )
+                .await
+            }
+            None => coverage::SeriesCoverageHint::not_computed(
+                &row.source,
+                &row.external_id,
+                coverage::HintSkipReason::NotConfigured,
+            ),
+        };
+        hints.push(CoverageHintView {
+            ordinal: row.ordinal,
+            hint,
+        });
+    }
+    Json(CoverageHintsResp {
+        hints,
+        max_per_request: coverage::HINT_MAX_PER_REQUEST as u32,
+    })
+    .into_response()
 }
 
 // ───────── /series/{slug}/metadata/pause + resume + status ─────────
@@ -1746,6 +1924,7 @@ pub async fn apply_series(
                 .collect(),
             is_auto: false,
             composite: None,
+            bulk: false,
         })
         .await
     {
@@ -2383,6 +2562,15 @@ pub async fn composite_apply_series(
     {
         Ok(outcome) => {
             audit_composite(&app, &ctx, user.id, "series", s.id.to_string(), &req).await;
+            // The compare view's apply is a manual series match too.
+            crate::jobs::provider_coverage::enqueue_after_series_apply(
+                &app,
+                s.id,
+                req.run_id,
+                Some(user.id),
+                true,
+            )
+            .await;
             Json(CompositeApplyResp {
                 run_id: req.run_id,
                 status: "applied".into(),
@@ -3722,6 +3910,7 @@ pub async fn batch_apply(
                     override_external_id_sources: std::collections::HashSet::new(),
                     is_auto: false,
                     composite: composite.clone(),
+                    bulk: true,
                 })
                 .await
                 .is_ok()

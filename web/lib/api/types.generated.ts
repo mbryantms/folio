@@ -4519,6 +4519,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/metadata/coverage-hints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How well each series candidate covers the local issues (number +
+         *     cover date), e.g. "covers 119 of 134 · #500–512 not in this series".
+         *     **Display only** — scores, buckets and ranking are untouched. Each hint
+         *     needs the candidate's issue list (cached 24 h); uncached lists are
+         *     bounded per series and provider by the coverage request budget per
+         *     hour and by a 30 s wall clock, and come back `not_computed` with a
+         *     reason when skipped.
+         */
+        get: operations["metadata_coverage_hints_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/metadata/lookup": {
         parameters: {
             query?: never;
@@ -6596,6 +6621,11 @@ export interface components {
             /** Format: date-time */
             started_at?: string | null;
             state: components["schemas"]["CoverageJobState"];
+            /**
+             * @description What queued it: the Details tab's "Analyze coverage", or a series
+             *     match (the user's, or a bulk / automatic one).
+             */
+            trigger: components["schemas"]["CoverageTrigger"];
         };
         /** @description A candidate as shown to the admin. */
         CoverageCandidateView: {
@@ -6637,6 +6667,19 @@ export interface components {
          * @enum {string}
          */
         CoverageConfidence: "high" | "medium" | "low" | "none";
+        CoverageHintView: components["schemas"]["SeriesCoverageHint"] & {
+            /** Format: int32 */
+            ordinal: number;
+        };
+        CoverageHintsResp: {
+            /** @description One per requested ordinal, in request order. */
+            hints: components["schemas"]["CoverageHintView"][];
+            /**
+             * Format: int32
+             * @description Ordinals one request may ask for.
+             */
+            max_per_request: number;
+        };
         CoverageJobResp: {
             job_id: string;
             /**
@@ -6695,6 +6738,11 @@ export interface components {
          * @enum {string}
          */
         CoverageStatus: "analyzed" | "not_configured" | "not_listable" | "no_candidates" | "partial" | "rate_limited" | "error";
+        /**
+         * @description What queued an analysis.
+         * @enum {string}
+         */
+        CoverageTrigger: "analyze" | "series_match" | "bulk_series_match";
         CreateAppPasswordReq: {
             /**
              * @description Free-form label so the user can tell their tokens apart.
@@ -8362,6 +8410,16 @@ export interface components {
              */
             source_id: string;
         };
+        /**
+         * @description Why a hint wasn't computed.
+         * @enum {string}
+         */
+        HintSkipReason: "not_configured" | "not_listable" | "budget" | "rate_limited" | "time_budget" | "error" | "no_local_issues";
+        /**
+         * @description Whether a hint was computed.
+         * @enum {string}
+         */
+        HintStatus: "computed" | "not_computed";
         IssueCoverRow: {
             fetched_at: string;
             /** Format: int32 */
@@ -9951,6 +10009,12 @@ export interface components {
              * @description Network requests this provider spent on the analysis.
              */
             requests: number;
+            /**
+             * @description The provider series a series match just applied, when this
+             *     analysis ran after that apply (the proposal is built around it
+             *     unless the user linked another series).
+             */
+            seeded_series_id?: string | null;
             source: string;
             source_label: string;
             /** @description Existing automated ranges the proposal no longer supports. */
@@ -11123,6 +11187,57 @@ export interface components {
              */
             position: number;
             series: components["schemas"]["SeriesView"];
+        };
+        /** @description How well one series candidate covers the local issues. */
+        SeriesCoverageHint: {
+            /**
+             * Format: int32
+             * @description Local issues this provider series lists with a non-conflicting
+             *     cover date.
+             */
+            covered: number;
+            /**
+             * Format: int32
+             * @description Of `covered`, how many had a cover date to confirm.
+             */
+            date_confirmed: number;
+            /**
+             * Format: int32
+             * @description Local issues whose number it lists but whose cover date conflicts
+             *     (a same-numbered issue of another run).
+             */
+            date_conflicts: number;
+            external_id: string;
+            /**
+             * Format: int32
+             * @description Distinct numbers the provider series lists.
+             */
+            listed_count: number;
+            /**
+             * Format: int32
+             * @description Numbered local issues compared (distinct numbers).
+             */
+            local_total: number;
+            /**
+             * Format: int32
+             * @description Local issues it doesn't cover (missing or conflicting).
+             */
+            missing_count: number;
+            /**
+             * @description Runs of consecutive local issues it doesn't cover, e.g. "#500–512"
+             *     (first [`HINT_MAX_MISSING_RUNS`]).
+             */
+            missing_runs: string[];
+            /** @description The listing stopped early (page cap); missing numbers may exist. */
+            partial: boolean;
+            reason?: components["schemas"]["HintSkipReason"] | null;
+            /**
+             * Format: int32
+             * @description Network requests this hint spent (0 = served from cache).
+             */
+            requests: number;
+            source: string;
+            status: components["schemas"]["HintStatus"];
         };
         /**
          * @description One relationship to a provider series that isn't in the library, from
@@ -22113,6 +22228,57 @@ export interface operations {
             };
             /** @description series / run not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_coverage_hints_series: {
+        parameters: {
+            query: {
+                /** @description The series search run whose candidates to check. */
+                run_id: string;
+                /**
+                 * @description Comma-separated candidate ordinals, at most
+                 *     [`coverage::HINT_MAX_PER_REQUEST`] (the dialog asks for the top
+                 *     three, others when the user expands one).
+                 */
+                ordinals: string;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverageHintsResp"];
+                };
+            };
+            /** @description library access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series / run / candidate not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no ordinals, malformed, or more than the per-request cap */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

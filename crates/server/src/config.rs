@@ -18,6 +18,52 @@ pub enum AuthMode {
     Both,
 }
 
+/// When a successful series metadata apply queues a provider-coverage
+/// analysis seeded with the applied provider series (DB key
+/// `metadata.coverage_after_series_apply`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoverageAfterSeriesApply {
+    /// Never.
+    Off,
+    /// After a series match the user applied from "Match this series…"
+    /// (single candidate or the compare view). The default.
+    #[default]
+    ManualOnly,
+    /// Also after bulk ("Apply" from a batch review) and automatic
+    /// (scanner / weekly refresh `SingleGoodMatch`) series applies.
+    All,
+}
+
+impl CoverageAfterSeriesApply {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::ManualOnly => "manual_only",
+            Self::All => "all",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "off" => Some(Self::Off),
+            "manual_only" => Some(Self::ManualOnly),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    /// Does an apply of this kind queue coverage? `manual` is a user's
+    /// apply from the match dialog; everything else is bulk / automatic.
+    pub fn runs_after(self, manual: bool) -> bool {
+        match self {
+            Self::Off => false,
+            Self::ManualOnly => manual,
+            Self::All => true,
+        }
+    }
+}
+
 impl std::fmt::Display for AuthMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -341,6 +387,20 @@ pub struct Config {
     /// `build_providers` order. Parsed via [`Config::merge_provider_preference`].
     #[serde(default)]
     pub metadata_merge_provider_preference: String,
+
+    /// Which successful series applies queue a provider-coverage analysis
+    /// seeded with the applied provider series (`off` | `manual_only` |
+    /// `all`). Default `manual_only`. DB key
+    /// `metadata.coverage_after_series_apply`; live.
+    #[serde(default)]
+    pub metadata_coverage_after_series_apply: CoverageAfterSeriesApply,
+
+    /// Let a post-apply coverage analysis accept its high-confidence,
+    /// conflict-free proposals itself (the coverage job's auto-accept
+    /// rule). Default `false`: results wait for the admin's Accept. DB key
+    /// `metadata.coverage_auto_accept`; live.
+    #[serde(default)]
+    pub metadata_coverage_auto_accept: bool,
 
     /// Hard-purge window multiplier (roadmap WP-3.5). The daily purge
     /// sweep ([`crate::jobs::hard_purge`]) deletes issue / empty-series
@@ -1325,6 +1385,27 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(s) => cfg.metadata_merge_provider_preference = s.trim().to_owned(),
             None => bad_type(&row.key, "string", &row.value),
         },
+        // DB-only (no env analog), so no `warn_if_diverges`. Unknown
+        // strings fall back to the default with a warning, like
+        // `compat.opds_panels_mode`.
+        "metadata.coverage_after_series_apply" => match row.value.as_str() {
+            Some(s) => match CoverageAfterSeriesApply::parse(s) {
+                Some(v) => cfg.metadata_coverage_after_series_apply = v,
+                None => {
+                    tracing::warn!(
+                        key = %row.key,
+                        value = %s,
+                        "metadata.coverage_after_series_apply: unknown value, falling back to `manual_only`",
+                    );
+                    cfg.metadata_coverage_after_series_apply = CoverageAfterSeriesApply::ManualOnly;
+                }
+            },
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "metadata.coverage_auto_accept" => match row.value.as_bool() {
+            Some(b) => cfg.metadata_coverage_auto_accept = b,
+            None => bad_type(&row.key, "bool", &row.value),
+        },
         // ───── File watcher (WP-3.1) ─────
         // Live: the watcher supervisor diffs each library's effective
         // debounce / poll interval on its next sync and restarts watchers
@@ -1512,6 +1593,8 @@ mod tests {
             metadata_match_medium_threshold: default_metadata_match_medium_threshold(),
             metadata_alternate_cover_fetch_cap: default_metadata_alternate_cover_fetch_cap(),
             metadata_merge_provider_preference: String::new(),
+            metadata_coverage_after_series_apply: CoverageAfterSeriesApply::ManualOnly,
+            metadata_coverage_auto_accept: false,
             library_hard_purge_multiplier: default_hard_purge_multiplier(),
         }
     }

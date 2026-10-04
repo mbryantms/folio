@@ -320,6 +320,287 @@ pub async fn cached_series_label(
         .then_some((list.series_name, list.year_began))
 }
 
+// ───────── series-match hints (display only) ─────────
+//
+// "Match this series…" shows, per series candidate, how many local issues
+// that provider series lists (number + cover date, the same eligibility
+// rule as [`compute_cover`]). Hints never touch a candidate's score, bucket
+// or rank. Each needs the candidate's issue list, so they are bounded:
+// at most [`HINT_MAX_PER_REQUEST`] candidates per request (the dialog asks
+// for the top three, others on demand), a per-series per-provider request
+// budget of [`request_budget`] per [`HINT_BUDGET_WINDOW_SECS`] (the same
+// bound as one coverage analysis), and [`HINT_TIME_BUDGET`] per request.
+// Lists come through the shared 24 h issue-list cache, so a later coverage
+// analysis / batch direct lookup of the applied series is free.
+
+/// Candidates one hint request may compute.
+pub const HINT_MAX_PER_REQUEST: usize = 3;
+
+/// Window over which a series' hint requests share one request budget per
+/// provider ([`request_budget`]).
+pub const HINT_BUDGET_WINDOW_SECS: u64 = 3600;
+
+/// Wall clock for one hint request (the JSON route timeout is 60 s).
+pub const HINT_TIME_BUDGET: Duration = Duration::from_secs(30);
+
+/// Missing-number runs a hint spells out ("#500–512"); the rest are counted.
+pub const HINT_MAX_MISSING_RUNS: usize = 6;
+
+/// Whether a hint was computed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HintStatus {
+    Computed,
+    NotComputed,
+}
+
+/// Why a hint wasn't computed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HintSkipReason {
+    /// The provider isn't configured / enabled.
+    NotConfigured,
+    /// The provider can't list a series' issues.
+    NotListable,
+    /// This series' hint budget for the provider is spent for the hour.
+    Budget,
+    /// The provider's rate limit refused the listing.
+    RateLimited,
+    /// The request's time budget ran out first.
+    TimeBudget,
+    /// The listing failed (not found, transport, bad response).
+    Error,
+    /// The local series has no numbered issues to compare.
+    NoLocalIssues,
+}
+
+/// How well one series candidate covers the local issues.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct SeriesCoverageHint {
+    pub source: String,
+    pub external_id: String,
+    pub status: HintStatus,
+    pub reason: Option<HintSkipReason>,
+    /// Numbered local issues compared (distinct numbers).
+    pub local_total: u32,
+    /// Local issues this provider series lists with a non-conflicting
+    /// cover date.
+    pub covered: u32,
+    /// Of `covered`, how many had a cover date to confirm.
+    pub date_confirmed: u32,
+    /// Local issues whose number it lists but whose cover date conflicts
+    /// (a same-numbered issue of another run).
+    pub date_conflicts: u32,
+    /// Local issues it doesn't cover (missing or conflicting).
+    pub missing_count: u32,
+    /// Runs of consecutive local issues it doesn't cover, e.g. "#500–512"
+    /// (first [`HINT_MAX_MISSING_RUNS`]).
+    pub missing_runs: Vec<String>,
+    /// Distinct numbers the provider series lists.
+    pub listed_count: u32,
+    /// The listing stopped early (page cap); missing numbers may exist.
+    pub partial: bool,
+    /// Network requests this hint spent (0 = served from cache).
+    pub requests: u32,
+}
+
+impl SeriesCoverageHint {
+    pub fn not_computed(source: &str, external_id: &str, reason: HintSkipReason) -> Self {
+        Self {
+            source: source.to_owned(),
+            external_id: external_id.to_owned(),
+            status: HintStatus::NotComputed,
+            reason: Some(reason),
+            local_total: 0,
+            covered: 0,
+            date_confirmed: 0,
+            date_conflicts: 0,
+            missing_count: 0,
+            missing_runs: Vec::new(),
+            listed_count: 0,
+            partial: false,
+            requests: 0,
+        }
+    }
+}
+
+/// Pure: a hint from a provider series' issue list. Assignment is
+/// [`compute_cover`] over this one candidate.
+pub fn hint_from_list(
+    source: Source,
+    external_id: &str,
+    local: &[LocalCovIssue],
+    list: &ProviderSeriesIssues,
+) -> SeriesCoverageHint {
+    let cand = Candidate {
+        provider_series_id: external_id.to_owned(),
+        name: list.series_name.clone(),
+        year: list.year_began,
+        publisher: list.publisher.clone(),
+        url: None,
+        origin: CandidateOrigin::Search,
+        strict: false,
+        name_score: 0.0,
+        listed_count: list.issues.len() as u32,
+        listed: list
+            .issues
+            .iter()
+            .cloned()
+            .map(|mut i| {
+                i.number = issue_number_compare_key(&i.number);
+                i
+            })
+            .collect(),
+        partial: !list.complete,
+    };
+    let listed_keys: HashSet<&str> = cand.listed.iter().map(|i| i.number.as_str()).collect();
+    let cover = compute_cover(local, std::slice::from_ref(&cand), Some(0));
+    let covered = cover.assignment.iter().flatten().count() as u32;
+    let date_confirmed = cover
+        .assignment
+        .iter()
+        .flatten()
+        .filter(|(_, d)| d.is_dated())
+        .count() as u32;
+    let date_conflicts = cover
+        .uncovered
+        .iter()
+        .filter(|i| listed_keys.contains(local[**i].key.as_str()))
+        .count() as u32;
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for &i in &cover.uncovered {
+        match runs.last_mut() {
+            Some((_, last)) if *last + 1 == i => *last = i,
+            _ => runs.push((i, i)),
+        }
+    }
+    let missing_runs = runs
+        .iter()
+        .take(HINT_MAX_MISSING_RUNS)
+        .map(|(a, b)| {
+            if a == b {
+                format!("#{}", local[*a].canonical)
+            } else {
+                format!("#{}–{}", local[*a].canonical, local[*b].canonical)
+            }
+        })
+        .collect();
+    SeriesCoverageHint {
+        source: source.as_str().to_owned(),
+        external_id: external_id.to_owned(),
+        status: HintStatus::Computed,
+        reason: None,
+        local_total: local.len() as u32,
+        covered,
+        date_confirmed,
+        date_conflicts,
+        missing_count: cover.uncovered.len() as u32,
+        missing_runs,
+        listed_count: list.issues.len() as u32,
+        partial: !list.complete,
+        requests: list.requests,
+    }
+}
+
+fn hint_budget_key(series_id: Uuid, source: Source) -> String {
+    format!(
+        "metadata:coverage_hint:spent:v1:{series_id}:{}",
+        source.as_str()
+    )
+}
+
+/// Requests a series' hints may still spend on `source` this window.
+pub async fn hint_budget_left(redis: &ConnectionManager, series_id: Uuid, source: Source) -> u32 {
+    let mut conn = redis.clone();
+    let spent: Option<u32> = conn
+        .get(hint_budget_key(series_id, source))
+        .await
+        .ok()
+        .flatten();
+    request_budget(source).saturating_sub(spent.unwrap_or(0))
+}
+
+async fn hint_budget_spend(redis: &ConnectionManager, series_id: Uuid, source: Source, n: u32) {
+    if n == 0 {
+        return;
+    }
+    let key = hint_budget_key(series_id, source);
+    let mut conn = redis.clone();
+    let total: Result<u32, _> = conn.incr(&key, n).await;
+    if matches!(total, Ok(t) if t == n) {
+        let _: Result<(), _> = conn.expire(&key, HINT_BUDGET_WINDOW_SECS as i64).await;
+    }
+}
+
+/// One candidate's hint: the cached issue list when it serves, else a
+/// listing bounded by the series' remaining hint budget and `deadline`.
+pub async fn series_hint(
+    redis: &ConnectionManager,
+    provider: &dyn MetadataProvider,
+    series_id: Uuid,
+    local: &[LocalCovIssue],
+    external_id: &str,
+    deadline: Instant,
+) -> SeriesCoverageHint {
+    let source = provider.id();
+    let skip = |r| SeriesCoverageHint::not_computed(source.as_str(), external_id, r);
+    if local.is_empty() {
+        return skip(HintSkipReason::NoLocalIssues);
+    }
+    if !provider.lists_series_issues() {
+        return skip(HintSkipReason::NotListable);
+    }
+    let hint: Vec<String> = local.iter().map(|l| l.canonical.clone()).collect();
+    let mut opts = IssueListOpts {
+        date_hint: hint,
+        max_pages: 0,
+    };
+    // A cached list is free, whatever the budget.
+    if let Some(list) = cache_get_list(redis, source, external_id).await
+        && cached_list_serves(&list, &opts)
+    {
+        let mut list = list;
+        list.requests = 0;
+        return hint_from_list(source, external_id, local, &list);
+    }
+    let left = hint_budget_left(redis, series_id, source).await;
+    if left == 0 {
+        return skip(HintSkipReason::Budget);
+    }
+    let now = Instant::now();
+    if now >= deadline {
+        return skip(HintSkipReason::TimeBudget);
+    }
+    opts.max_pages = left;
+    let res = tokio::time::timeout(
+        deadline - now,
+        provider_issues_with(redis, provider, external_id, &opts),
+    )
+    .await;
+    match res {
+        Err(_) => {
+            // The provider may have answered pages before the cut-off.
+            hint_budget_spend(redis, series_id, source, 1).await;
+            skip(HintSkipReason::TimeBudget)
+        }
+        Ok(Err(ProviderError::QuotaExceeded { .. })) => skip(HintSkipReason::RateLimited),
+        Ok(Err(e)) => {
+            tracing::debug!(
+                source = source.as_str(),
+                series = external_id,
+                error = %e,
+                "coverage hint: listing failed"
+            );
+            hint_budget_spend(redis, series_id, source, 1).await;
+            skip(HintSkipReason::Error)
+        }
+        Ok(Ok(list)) => {
+            hint_budget_spend(redis, series_id, source, list.requests).await;
+            hint_from_list(source, external_id, local, &list)
+        }
+    }
+}
+
 // ───────── local issues ─────────
 
 /// One local active issue with a number.
@@ -925,6 +1206,29 @@ pub struct SeriesFacts {
     pub ranges: Vec<series_provider_range::Model>,
     pub applied: Vec<(Source, String)>,
     pub pre_filter: PreFilter,
+    /// Provider series a series match just applied ("Match this
+    /// series…"), one per provider at most. A seeded provider lists its
+    /// known ids first and skips the name searches when they already
+    /// cover every local issue; the seed is the forced main of the view.
+    pub seeds: Vec<CoverageSeed>,
+}
+
+/// A provider series a series apply chose, carried by a post-apply
+/// coverage job ([`crate::jobs::provider_coverage`]).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoverageSeed {
+    pub source: Source,
+    pub provider_series_id: String,
+    /// The applied candidate's identity (name / start year / publisher /
+    /// format) — what the strict-identity check reads when the seeded
+    /// provider skips its name search.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate: Option<SeriesCandidate>,
+}
+
+/// The seed for `source`, if any.
+pub fn seed_for(seeds: &[CoverageSeed], source: Source) -> Option<&CoverageSeed> {
+    seeds.iter().find(|s| s.source == source)
 }
 
 impl SeriesFacts {
@@ -971,7 +1275,32 @@ impl SeriesFacts {
             ranges,
             applied,
             pre_filter,
+            seeds: Vec::new(),
         })
+    }
+
+    fn query_facts(&self) -> SeriesQueryFacts {
+        SeriesQueryFacts {
+            name: self.series.name.clone(),
+            year: self.start_year(),
+            publisher: self.series.publisher.clone(),
+            volume: None,
+            format: self.series.series_type.clone(),
+        }
+    }
+
+    /// Name similarity + strict identity of a provider series against the
+    /// local series: sanitized name equal to the name or an alias, start
+    /// year one of [`Self::strict_years`], publisher not conflicting, no
+    /// format mismatch.
+    fn identity(&self, c: &SeriesCandidate) -> (f32, bool) {
+        let ns = self.best_name_score(&c.name);
+        let score = matcher::score_series(&self.query_facts(), c);
+        let strict = ns >= 0.999
+            && c.year.is_some_and(|y| self.strict_years().contains(&y))
+            && score.publisher > 0.0
+            && !score.format_mismatch;
+        (ns, strict)
     }
 
     fn numeric_span(&self) -> Option<(f64, f64)> {
@@ -1019,6 +1348,16 @@ impl SeriesFacts {
 /// concurrently (separate rate buckets); Metron's curated cross-reference
 /// runs first so its `cv_id` / `gcd_id` seed the other two.
 pub async fn analyze(state: &AppState, facts: &SeriesFacts) -> Vec<ProviderAnalysis> {
+    analyze_sources(state, facts, &COVERAGE_SOURCES).await
+}
+
+/// [`analyze`] restricted to `sources` (a post-apply job analyses only the
+/// providers the apply matched). Output keeps [`COVERAGE_SOURCES`] order.
+pub async fn analyze_sources(
+    state: &AppState,
+    facts: &SeriesFacts,
+    sources: &[Source],
+) -> Vec<ProviderAnalysis> {
     let started = Instant::now();
     let mut bridged: HashMap<Source, String> = HashMap::new();
     // Free cache bridge for every target.
@@ -1028,7 +1367,20 @@ pub async fn analyze(state: &AppState, facts: &SeriesFacts) -> Vec<ProviderAnaly
         .filter_map(|e| Some((Source::from_str(&e.source).ok()?, e.external_id.clone())))
         .chain(facts.applied.iter().cloned())
         .collect();
-    for target in COVERAGE_SOURCES {
+    let wanted: Vec<Source> = COVERAGE_SOURCES
+        .into_iter()
+        .filter(|s| sources.contains(s))
+        .collect();
+    let known_pairs: Vec<(Source, String)> = known_pairs
+        .into_iter()
+        .chain(
+            facts
+                .seeds
+                .iter()
+                .map(|s| (s.source, s.provider_series_id.clone())),
+        )
+        .collect();
+    for target in wanted.iter().copied() {
         if known_pairs.iter().any(|(s, _)| *s == target) {
             continue;
         }
@@ -1041,7 +1393,8 @@ pub async fn analyze(state: &AppState, facts: &SeriesFacts) -> Vec<ProviderAnaly
     // Metron cross-reference (≤ 2 requests): the row carries the CV and
     // GCD ids Metron's editors curated.
     let mut metron_prespent = 0u32;
-    if let Some(metron) = crate::metadata::apply::build_provider(state, Source::Metron)
+    if wanted.contains(&Source::Metron)
+        && let Some(metron) = crate::metadata::apply::build_provider(state, Source::Metron)
         && !known_pairs.iter().any(|(s, _)| *s == Source::Metron)
         && !bridged.contains_key(&Source::Metron)
     {
@@ -1071,7 +1424,7 @@ pub async fn analyze(state: &AppState, facts: &SeriesFacts) -> Vec<ProviderAnaly
         }
     }
 
-    let futs = COVERAGE_SOURCES.iter().map(|source| {
+    let futs = wanted.iter().map(|source| {
         let bridged = &bridged;
         let prespent = if *source == Source::Metron {
             metron_prespent
@@ -1170,24 +1523,71 @@ pub async fn analyze_provider<C: ConnectionTrait>(
     if let Some(id) = bridged_id {
         push(&mut pending, blank(&id, CandidateOrigin::Bridge));
     }
+    // The series match just applied: its identity facts make it strict
+    // (or not) without a name search.
+    if let Some(seed) = seed_for(&facts.seeds, source) {
+        let pos = match pending
+            .iter()
+            .position(|p| p.provider_series_id == seed.provider_series_id)
+        {
+            Some(i) => i,
+            None => {
+                pending.insert(0, blank(&seed.provider_series_id, CandidateOrigin::Applied));
+                0
+            }
+        };
+        if let Some(sc) = &seed.candidate {
+            let (ns, strict) = facts.identity(sc);
+            let p = &mut pending[pos];
+            p.name = p.name.clone().or(Some(sc.name.clone()));
+            p.year = p.year.or(sc.year);
+            p.publisher = p.publisher.clone().or(sc.publisher.clone());
+            p.name_score = p.name_score.max(ns);
+            p.strict |= strict;
+        }
+    }
+
+    // Seeded (after a series apply): list the known ids first and skip
+    // the name searches — the gap issue searches below look up exactly
+    // the provider series holding what the seed doesn't list (Fantastic
+    // Four #600–611 → Metron 1713), at ~1–3 requests instead of a search
+    // plus up to eight listings. Nothing uncovered ⇒ no search at all.
+    let seeded = seed_for(&facts.seeds, source).is_some();
+    let mut listed: Vec<Candidate> = Vec::new();
+    let mut covered_by_known = false;
+    if seeded && out.status == CoverageStatus::Analyzed {
+        let known = std::mem::take(&mut pending);
+        list_candidates(
+            redis,
+            db,
+            facts,
+            provider,
+            known,
+            &mut listed,
+            &mut budget,
+            &mut out,
+        )
+        .await;
+        covered_by_known = !listed.is_empty()
+            && compute_cover(&facts.local, &listed, None)
+                .uncovered
+                .is_empty();
+    }
 
     // 2. Series searches (name + aliases, no year filter).
     let (_, max_year) = facts.year_bounds();
-    let query_facts = SeriesQueryFacts {
-        name: facts.series.name.clone(),
-        year: facts.start_year(),
-        publisher: facts.series.publisher.clone(),
-        volume: None,
-        format: facts.series.series_type.clone(),
-    };
+    let query_facts = facts.query_facts();
     let gate_facts = SeriesQueryFacts {
         year: max_year.or(facts.series.year),
         ..query_facts.clone()
     };
-    let strict_years = facts.strict_years();
     let mut hits: Vec<(SeriesCandidate, f32, f32, bool)> = Vec::new();
     for name in &facts.names {
-        if pending.len() >= MAX_CANDIDATES || !budget.can_spend(search_cost(source)) {
+        if seeded
+            || out.status != CoverageStatus::Analyzed
+            || pending.len() + listed.len() >= MAX_CANDIDATES
+            || !budget.can_spend(search_cost(source))
+        {
             break;
         }
         let q = SeriesQuery {
@@ -1212,15 +1612,11 @@ pub async fn analyze_provider<C: ConnectionTrait>(
             }
         };
         for c in pre_filter_series(raw, &gate_facts, &facts.pre_filter) {
-            let ns = facts.best_name_score(&c.name);
+            let (ns, strict) = facts.identity(&c);
             if ns < NAME_FLOOR {
                 continue;
             }
             let score = matcher::score_series(&query_facts, &c);
-            let strict = ns >= 0.999
-                && c.year.is_some_and(|y| strict_years.contains(&y))
-                && score.publisher > 0.0
-                && !score.format_mismatch;
             if !hits.iter().any(|(h, ..)| h.external_id == c.external_id) {
                 hits.push((c, ns, score.total, strict));
             }
@@ -1235,6 +1631,7 @@ pub async fn analyze_provider<C: ConnectionTrait>(
         // Known ids pick up the search's identity facts.
         if let Some(p) = pending
             .iter_mut()
+            .chain(listed.iter_mut())
             .find(|p| p.provider_series_id == c.external_id)
         {
             p.name = p.name.clone().or(Some(c.name.clone()));
@@ -1244,7 +1641,7 @@ pub async fn analyze_provider<C: ConnectionTrait>(
             p.strict |= strict;
             continue;
         }
-        if pending.len() >= MAX_CANDIDATES {
+        if pending.len() + listed.len() >= MAX_CANDIDATES {
             continue;
         }
         pending.push(Candidate {
@@ -1263,11 +1660,10 @@ pub async fn analyze_provider<C: ConnectionTrait>(
             partial: false,
         });
     }
-    pending.truncate(MAX_CANDIDATES);
+    pending.truncate(MAX_CANDIDATES.saturating_sub(listed.len()));
 
     // 3. List every candidate.
-    let mut listed: Vec<Candidate> = Vec::new();
-    if out.status == CoverageStatus::Analyzed {
+    if out.status == CoverageStatus::Analyzed && !pending.is_empty() {
         list_candidates(
             redis,
             db,
@@ -1282,7 +1678,7 @@ pub async fn analyze_provider<C: ConnectionTrait>(
     }
 
     // 4. Gap issue searches for local issues nothing covers.
-    if out.status == CoverageStatus::Analyzed {
+    if out.status == CoverageStatus::Analyzed && !covered_by_known {
         let cover = compute_cover(&facts.local, &listed, None);
         let gaps = gap_representatives(&facts.local, &cover.uncovered);
         let mut found: Vec<Candidate> = Vec::new();
@@ -1596,6 +1992,10 @@ pub struct ProviderCoverageView {
     pub request_budget: u32,
     pub error: Option<String>,
     pub main_series_id: Option<String>,
+    /// The provider series a series match just applied, when this
+    /// analysis ran after that apply (the proposal is built around it
+    /// unless the user linked another series).
+    pub seeded_series_id: Option<String>,
     /// The series' current series-level id for this provider.
     pub current_series_id: Option<String>,
     pub current_series_set_by: Option<String>,
@@ -1625,18 +2025,22 @@ pub fn build_view(
     ext_ids: &[external_id::Model],
     ranges: &[series_provider_range::Model],
     forced_main: Option<&str>,
+    seed_main: Option<&str>,
 ) -> ProviderCoverageView {
     let source = analysis.source;
     let cands = &analysis.candidates;
     // A user-set series id is the main unless the admin explicitly chose
     // another candidate: the proposal is built around the user's link
-    // instead of contradicting it.
+    // instead of contradicting it. Without either, a post-apply job's
+    // seed (the series match just applied) is the main.
     let user_link = ext_ids
         .iter()
         .find(|e| Source::from_str(&e.source).ok() == Some(source) && e.set_by == "user")
         .map(|e| e.external_id.as_str());
+    let seed_main = seed_main.filter(|id| cands.iter().any(|c| c.provider_series_id == *id));
     let forced = forced_main
         .or(user_link)
+        .or(seed_main)
         .and_then(|id| cands.iter().position(|c| c.provider_series_id == id));
     let cover = compute_cover(local, cands, forced);
     let (conf, reasons) = confidence(cands, &cover);
@@ -1845,6 +2249,7 @@ pub fn build_view(
         request_budget: analysis.budget,
         error: analysis.error.clone(),
         main_series_id: main_id,
+        seeded_series_id: seed_main.map(str::to_owned),
         current_series_id: current.map(|c| c.external_id.clone()),
         current_series_set_by: current.map(|c| c.set_by.clone()),
         candidates,
@@ -1918,6 +2323,7 @@ pub async fn accept_provider(
     series_id: Uuid,
     analysis: &ProviderAnalysis,
     forced_main: Option<&str>,
+    seed_main: Option<&str>,
     by_user: bool,
 ) -> anyhow::Result<AcceptOutcome> {
     let db = &state.db;
@@ -1931,7 +2337,7 @@ pub async fn accept_provider(
         .filter(series_provider_range::Column::SeriesId.eq(series_id))
         .all(db)
         .await?;
-    let view = build_view(analysis, &local, &ext_ids, &ranges, forced_main);
+    let view = build_view(analysis, &local, &ext_ids, &ranges, forced_main, seed_main);
     let source = analysis.source;
     let mut out = AcceptOutcome {
         source: source.as_str().to_owned(),
@@ -2298,5 +2704,51 @@ mod tests {
             lookup_provider_issue(&list, "2", Some(1998), Some(2)),
             IssueListLookup::NotListed
         );
+    }
+
+    #[test]
+    fn hint_counts_covered_conflicts_and_missing_runs() {
+        let local = vec![
+            li("½", 1998, 1),
+            li("1", 1998, 1),
+            li("2", 1998, 2),
+            li("3", 2010, 1), // a same-numbered issue of another run
+            li("500", 2003, 7),
+            li("501", 2003, 8),
+            li("600", 2012, 1),
+        ];
+        let list = ProviderSeriesIssues {
+            series_name: Some("Fantastic Four".into()),
+            year_began: Some(1998),
+            publisher: None,
+            issues: [
+                ("½", d(1998, 1)),
+                ("1", d(1998, 1)),
+                ("2", None),
+                ("3", d(1998, 3)),
+            ]
+            .into_iter()
+            .map(|(n, dt)| ProviderIssue {
+                external_id: Some(format!("i-{n}")),
+                number: n.into(),
+                cover_date: dt,
+            })
+            .collect(),
+            complete: true,
+            dates_complete: false,
+            requests: 2,
+        };
+        let h = hint_from_list(Source::Metron, "1711", &local, &list);
+        assert_eq!(h.status, HintStatus::Computed);
+        assert_eq!(h.local_total, 7);
+        assert_eq!(h.covered, 3, "½, 1 (dated) and 2 (no date to compare)");
+        assert_eq!(h.date_confirmed, 2);
+        assert_eq!(h.date_conflicts, 1, "#3 is listed but from 1998");
+        assert_eq!(h.missing_count, 4);
+        // Runs are consecutive *local* issues.
+        assert_eq!(h.missing_runs, vec!["#3–600".to_owned()]);
+        assert_eq!(h.listed_count, 4);
+        assert!(!h.partial);
+        assert_eq!(h.requests, 2);
     }
 }
