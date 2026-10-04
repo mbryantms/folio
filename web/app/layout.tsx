@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { themedViewport } from "@/lib/viewport";
+import { baseViewport, themeHeadMeta } from "@/lib/viewport";
 import { appleStartupImages } from "@/lib/pwa/apple-splash";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
@@ -31,27 +31,12 @@ import "@/styles/globals.css";
 export const metadata: Metadata = {
   title: "Folio",
   description: "Self-hostable comic reader",
-  // Apple-specific PWA tags. Next 16's `capable: true` emits only the
-  // standardised `<meta name="mobile-web-app-capable">`; the legacy
-  // `apple-mobile-web-app-capable` meta (the pre-16.4 iOS opt-in to
-  // standalone launch, and what makes `navigator.standalone` true for
-  // `usePullToRefresh` there) is added explicitly via `other` below.
-  // iOS 16.4+ also honours the manifest's `display: standalone`.
-  // Status bar style: `black` (opaque) rather than `black-translucent`.
-  // Since iOS / iPadOS 26.1 the OS reserves an opaque status bar for
-  // home-screen apps regardless, so translucency no longer buys the
-  // edge-to-edge layout it used to; declaring the opaque bar makes the
-  // layout identical on every OS version instead of depending on which
-  // one the icon was installed from. `SafeAreaProbe` handles the runtime
-  // side (collapsing `--safe-top` when the OS already holds the space).
-  // iOS snapshots this meta at Add-to-Home-Screen time: remove and re-add
-  // the icon after deploying a change here.
-  appleWebApp: {
-    capable: true,
-    title: "Folio",
-    statusBarStyle: "black",
-  },
-  other: { "apple-mobile-web-app-capable": "yes" },
+  // The Apple PWA tags (apple-mobile-web-app-*), theme-color and
+  // color-scheme are NOT declared here on purpose: Next re-renders every
+  // metadata-API tag on each client navigation (remove + re-insert), and
+  // an installed iPadOS app latches that into a permanently blurred
+  // status-bar strip. They are static <head> children of RootLayout
+  // below, which persists across navigations. See lib/viewport.ts.
   // Every file below is generated from `public/brand/icon-master.svg` by
   // `pnpm --filter web run build-icons` (see `public/icons/README.md`).
   //
@@ -74,21 +59,11 @@ export const metadata: Metadata = {
 };
 
 /**
- * Viewport shape + rationale live in `web/lib/viewport.ts` (shared
- * with the reader route's per-page override). This is a function
- * rather than a static export because `themeColor` / `colorScheme`
- * must follow the user's cookie-driven theme, not the device's
- * `prefers-color-scheme` — otherwise a dark-themed app on a
- * light-mode iPad declares itself white and iPadOS paints a white
- * status-bar backing over dark content in standalone mode. The
- * route is already dynamic (RootLayout reads the same cookie jar),
- * so this adds no rendering cost.
+ * Viewport only (width / scale / viewport-fit). `themeColor` and
+ * `colorScheme` deliberately live in the static <head> below, not here —
+ * see `themeHeadMeta` in lib/viewport.ts.
  */
-export async function generateViewport(): Promise<Viewport> {
-  const jar = await cookies();
-  const themeCookie = jar.get(THEME_COOKIE)?.value;
-  return themedViewport(isTheme(themeCookie) ? themeCookie : "dark");
-}
+export const viewport: Viewport = baseViewport;
 
 // Post-Human-URLs M3: locale is no longer a route param. Read it via
 // `getLocale()` from next-intl/server, which resolves cookie/header per
@@ -133,6 +108,8 @@ export default async function RootLayout({
   // layout redirects).
   const me = jar.get(SESSION_COOKIE) ? await getMe().catch(() => null) : null;
 
+  const head = themeHeadMeta(theme);
+
   return (
     <html
       lang={locale}
@@ -142,6 +119,29 @@ export default async function RootLayout({
       data-density={density}
       suppressHydrationWarning
     >
+      {/* Static, navigation-stable tags — see the note on `metadata`
+          above. iOS snapshots the apple-* ones at Add-to-Home-Screen time:
+          remove and re-add the icon after changing them.
+          `black` (opaque status bar): since iOS/iPadOS 26.1 the OS reserves
+          an opaque bar for home-screen apps regardless, so this keeps the
+          layout identical on every OS version. `apple-mobile-web-app-capable`
+          is the legacy (pre-16.4) standalone opt-in and what makes
+          `navigator.standalone` true. */}
+      <head>
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-title" content="Folio" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+        <meta name="color-scheme" content={head.colorScheme} />
+        {head.themeColor.map((t) => (
+          <meta
+            key={t.media ?? "all"}
+            name="theme-color"
+            media={t.media}
+            content={t.color}
+          />
+        ))}
+      </head>
       <body className="bg-background text-foreground min-h-full antialiased">
         <ThemeProvider defaultTheme={theme} nonce={nonce}>
           <NextIntlClientProvider messages={messages}>

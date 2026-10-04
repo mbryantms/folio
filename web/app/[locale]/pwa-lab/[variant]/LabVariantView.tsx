@@ -5,6 +5,8 @@ import { useEffect, useRef, type CSSProperties } from "react";
 
 import type { LabVariant } from "@/lib/pwa-lab";
 
+import { LatchProbe } from "./LatchProbe";
+
 import { LabDiagnostics } from "../LabDiagnostics";
 
 const ROWS = 40;
@@ -112,7 +114,7 @@ export function LabVariantView({ variant }: { variant: LabVariant }) {
 
   useEffect(() => {
     // E starts at rest (its whole point is the at-rest vs scrolled compare).
-    if (variant.id.startsWith("e-")) return;
+    if (variant.id.startsWith("e-") || variant.id.startsWith("p-")) return;
     const t = window.setTimeout(() => {
       if (inner) scroller.current?.scrollTo(0, PRESCROLL);
       else window.scrollTo(0, PRESCROLL);
@@ -181,6 +183,8 @@ export function LabVariantView({ variant }: { variant: LabVariant }) {
           <Footer variant={variant} />
         </>
       );
+    case "P":
+      return <LatchProbe variant={variant} />;
     case "E":
       return (
         <>

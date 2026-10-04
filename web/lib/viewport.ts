@@ -31,51 +31,53 @@ export const baseViewport: Viewport = {
 
 import { THEME_COLORS } from "./pwa/theme-colors";
 
+/** One `<meta name="theme-color">` (optionally media-scoped). */
+export interface ThemeColorMeta {
+  media?: string;
+  color: string;
+}
+
 /**
- * Viewport for the user's actual (cookie-resolved) theme.
+ * The `theme-color` + `color-scheme` metas for the user's cookie-resolved
+ * theme. Rendered as STATIC tags in the root layout's <head> (see
+ * `app/layout.tsx`), NOT through Next's metadata/viewport API.
  *
- * `themeColor` drives the iOS/iPadOS status-bar dressing in standalone
- * mode and the Android browser chrome color. It must track the app's
- * cookie-driven theme, not `prefers-color-scheme` — a dark-themed app
- * on a light-mode device otherwise declares itself white, and iPadOS
- * paints a white status-bar backing over dark content (the reader was
- * the flagrant case). Only an explicit `theme=system` choice falls
- * back to the OS-preference media-query pair, because the server
- * can't observe the client's preference.
+ * Why: Next re-renders its whole metadata tree on every client-side
+ * navigation — every meta it manages (theme-color, color-scheme, the
+ * apple-mobile-web-app-* tags, viewport…) is removed from <head> and
+ * re-inserted, even when nothing changed. An installed iPadOS app treats
+ * that as a runtime change and latches it: the status-bar strip flips
+ * from the top bar's solid colour to a blur of the scrolled content and
+ * stays that way, on every route, until the app is force-quit (seen on
+ * 26.1, reproduced on 27.0.1). Tags rendered by the root layout itself
+ * persist across navigations, so iOS never sees them change.
  *
- * `colorScheme` emits `<meta name="color-scheme">`, which is what
- * WebKit consults to classify the page as dark or light content when
- * dressing system chrome around the web view.
+ * `themeColor` follows the cookie theme, not `prefers-color-scheme`: a
+ * dark-themed app on a light-mode device would otherwise declare itself
+ * white. Only an explicit `system` choice uses the media-query pair.
  */
-export function themedViewport(theme: Theme): Viewport {
+export function themeHeadMeta(theme: Theme): {
+  colorScheme: string;
+  themeColor: ThemeColorMeta[];
+} {
   if (theme === "system") {
     return {
-      ...baseViewport,
+      colorScheme: "dark light",
       themeColor: [
         { media: "(prefers-color-scheme: dark)", color: THEME_COLORS.dark },
         { media: "(prefers-color-scheme: light)", color: THEME_COLORS.light },
       ],
-      colorScheme: "dark light",
     };
   }
   const resolved = resolvedDataTheme(theme);
   return {
-    ...baseViewport,
-    themeColor: THEME_COLORS[resolved],
     colorScheme: resolved === "dark" ? "dark" : "light",
+    themeColor: [{ color: THEME_COLORS[resolved] }],
   };
 }
 
-// There is deliberately no reader-specific viewport. The reader used to
-// pin `theme-color: #000000` + `color-scheme: dark` for light / amber /
-// system themes (#541: a white status-bar tint over artwork), returning
-// the root viewport only for an explicit dark theme. Every navigation
-// into the reader then rewrote those <meta> tags at runtime, and an
-// installed iPadOS app LATCHES the first such change: the status-bar
-// strip switches from the header's solid colour to a blur of the page
-// content and stays that way on every route until the app is force-quit
-// (observed on iPadOS 26.1, reproduced on 27.0.1 with theme = system
-// while the OS was in light mode). Since iPadOS 26 the strip's colour
-// comes from the top-edge sticky/fixed container, not theme-color, so the
-// reader loses nothing there; Android reader chrome follows the theme
-// colour instead of black, which is the lesser evil.
+// There is deliberately no reader-specific viewport or theme-color: the
+// reader used to pin black for light / amber / system themes (#541),
+// which changed these tags on every navigation into it — the latch
+// described above. On iPadOS the strip's colour comes from the top-edge
+// sticky/fixed container, not theme-color, so the reader loses nothing.
