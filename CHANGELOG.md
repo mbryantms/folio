@@ -13,6 +13,14 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.39.2](https://github.com/mbryantms/folio/compare/v0.39.1...v0.39.2) (2026-10-04)
+
+
+### Fixed
+
+* **pwa:** render the Apple PWA + theme-color metas statically so navigation never rewrites them ([#1016](https://github.com/mbryantms/folio/issues/1016)) ([8074f0d](https://github.com/mbryantms/folio/commit/8074f0df9224b971fcd1223e005d379bdf6d22bc))
+* **reader:** phone-width chrome — no wrapping page counter, actions collapse into a More menu ([#1017](https://github.com/mbryantms/folio/issues/1017)) ([e37d961](https://github.com/mbryantms/folio/commit/e37d961972dae17b7ecf7c1ce815bb0f74e87a07))
+
 ## [0.39.1](https://github.com/mbryantms/folio/compare/v0.39.0...v0.39.1) (2026-10-04)
 
 
