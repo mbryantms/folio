@@ -7,7 +7,10 @@
  *
  *  - **Reading order** — the chain through this series (`sequel_of` and
  *    `continues`, server-side recursive CTE, depth ≤ 6 each way), a
- *    horizontal strip with this series highlighted.
+ *    horizontal strip with this series highlighted. A step whose issues a
+ *    provider files under another provider series lists that boundary
+ *    under its card ("#600–611 continue as Fantastic Four (2012)"),
+ *    linked to the local series when the library has it.
  *  - **Related series** — direct relationships grouped by UI group
  *    (Story · Publication history · Editions & contents · Advanced) and
  *    display label ("Sequel to", "Collected in", …), with ranges /
@@ -26,7 +29,15 @@
  * WP-7.3 "Suggested" chips.
  */
 
-import { ChevronRight, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  ChevronRight,
+  CornerDownRight,
+  ExternalLink,
+  Loader2,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import Link from "next/link";
 import * as React from "react";
 
@@ -60,6 +71,7 @@ import {
   useSeriesRelationships,
 } from "@/lib/api/queries";
 import type {
+  ChainSplitView,
   RelationshipCatalogue,
   RelationshipGroup,
   RelationshipKind,
@@ -538,6 +550,11 @@ function ExternalRows({
           {e.qualifier_label && (
             <span className="text-xs">· {e.qualifier_label}</span>
           )}
+          {e.note && (
+            <span className="text-xs" data-testid="external-relationship-note">
+              · {e.note}
+            </span>
+          )}
           {e.url ? (
             <a
               href={e.url}
@@ -717,17 +734,93 @@ function ReadingOrder({
                   style={{ marginTop: coverWidth * 0.75 - 8 }}
                 />
               )}
-              <RelatedCard
-                series={entry.series}
-                width={coverWidth}
-                highlight={current}
-                caption={chainCaption(entry.position)}
-              />
+              <div className="flex flex-col gap-1.5">
+                <RelatedCard
+                  series={entry.series}
+                  width={coverWidth}
+                  highlight={current}
+                  caption={chainCaption(entry.position)}
+                />
+                {entry.provider_splits.length > 0 && (
+                  <ChainSplits
+                    splits={entry.provider_splits}
+                    width={coverWidth}
+                  />
+                )}
+              </div>
             </li>
           );
         })}
       </HorizontalScrollRail>
     </div>
+  );
+}
+
+/**
+ * Provider-range sub-steps of one reading-order step: the issues a
+ * provider files under a different provider series. Outside the card's
+ * link (no nested anchors); the target links to the local series when
+ * the library has it, each provider to its series page.
+ */
+export function ChainSplits({
+  splits,
+  width,
+}: {
+  splits: ChainSplitView[];
+  width: number;
+}) {
+  return (
+    <ul
+      className="space-y-1 px-0.5 text-xs"
+      style={{ width: `${width}px` }}
+      data-testid="chain-splits"
+    >
+      {splits.map((s) => (
+        <li
+          key={`${s.numbers}-${s.target}`}
+          className="text-muted-foreground flex gap-1"
+        >
+          <CornerDownRight aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+          <span className="min-w-0">
+            {s.numbers} {s.verb}{" "}
+            {s.local_series ? (
+              <Link
+                href={seriesUrl(s.local_series)}
+                className="text-foreground hover:underline"
+              >
+                {s.target}
+              </Link>
+            ) : (
+              <span className="text-foreground">{s.target}</span>
+            )}
+            {s.providers.length > 0 && (
+              <>
+                {" · "}
+                {s.providers.map((p, i) => (
+                  <React.Fragment key={`${p.source}-${p.provider_series_id}`}>
+                    {i > 0 && ", "}
+                    {p.url ? (
+                      <a
+                        href={p.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-0.5 hover:underline"
+                        aria-label={`${s.target} on ${p.source_label}`}
+                      >
+                        {p.source_label}
+                        <ExternalLink aria-hidden className="h-2.5 w-2.5" />
+                      </a>
+                    ) : (
+                      p.source_label
+                    )}
+                  </React.Fragment>
+                ))}
+              </>
+            )}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 

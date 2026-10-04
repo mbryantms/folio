@@ -402,6 +402,21 @@ pub struct Config {
     #[serde(default)]
     pub metadata_coverage_auto_accept: bool,
 
+    /// Opt-in issue-level refresh: the library refresh and the weekly
+    /// refresh also re-fetch stale issues whose provider series coverage
+    /// knows (direct lookups only, no searches), into a Review batch.
+    /// Default `false`. DB key `metadata.issue_refresh_enabled`; live.
+    #[serde(default)]
+    pub metadata_issue_refresh_enabled: bool,
+
+    /// Most issues one issue-level refresh run sends to each provider
+    /// (each is one cached issue-detail request; issue lists are cached
+    /// 24 h). Default [`crate::metadata::refresh::ISSUE_REFRESH_DEFAULT_CAP`]
+    /// (200), range 1–1000. DB key `metadata.issue_refresh_per_provider_cap`;
+    /// live.
+    #[serde(default = "default_issue_refresh_cap")]
+    pub metadata_issue_refresh_per_provider_cap: u32,
+
     /// Hard-purge window multiplier (roadmap WP-3.5). The daily purge
     /// sweep ([`crate::jobs::hard_purge`]) deletes issue / empty-series
     /// rows whose `removal_confirmed_at` is older than
@@ -414,6 +429,10 @@ pub struct Config {
 
 fn default_hard_purge_multiplier() -> u32 {
     2
+}
+
+fn default_issue_refresh_cap() -> u32 {
+    crate::metadata::refresh::ISSUE_REFRESH_DEFAULT_CAP
 }
 
 fn default_weekly_refresh_cron() -> String {
@@ -844,6 +863,12 @@ impl Config {
             self.library_hard_purge_multiplier,
             0,
             100,
+        )?;
+        check_range(
+            "metadata_issue_refresh_per_provider_cap",
+            self.metadata_issue_refresh_per_provider_cap,
+            1,
+            crate::metadata::refresh::ISSUE_REFRESH_MAX_CAP,
         )?;
         check_range("watch_debounce_secs", self.watch_debounce_secs, 1, 3600)?;
         check_range(
@@ -1406,6 +1431,19 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(b) => cfg.metadata_coverage_auto_accept = b,
             None => bad_type(&row.key, "bool", &row.value),
         },
+        // ───── Issue-level refresh (coverage tie-ins PR 4) ─────
+        // DB-only, live (read on every library / weekly refresh).
+        "metadata.issue_refresh_enabled" => match row.value.as_bool() {
+            Some(b) => cfg.metadata_issue_refresh_enabled = b,
+            None => bad_type(&row.key, "bool", &row.value),
+        },
+        "metadata.issue_refresh_per_provider_cap" => match row.value.as_u64() {
+            // Unclamped so `Config::validate` rejects an out-of-range PATCH.
+            Some(n) => {
+                cfg.metadata_issue_refresh_per_provider_cap = u32::try_from(n).unwrap_or(u32::MAX);
+            }
+            None => bad_type(&row.key, "uint", &row.value),
+        },
         // ───── File watcher (WP-3.1) ─────
         // Live: the watcher supervisor diffs each library's effective
         // debounce / poll interval on its next sync and restarts watchers
@@ -1595,6 +1633,8 @@ mod tests {
             metadata_merge_provider_preference: String::new(),
             metadata_coverage_after_series_apply: CoverageAfterSeriesApply::ManualOnly,
             metadata_coverage_auto_accept: false,
+            metadata_issue_refresh_enabled: false,
+            metadata_issue_refresh_per_provider_cap: default_issue_refresh_cap(),
             library_hard_purge_multiplier: default_hard_purge_multiplier(),
         }
     }

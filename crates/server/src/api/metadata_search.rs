@@ -44,7 +44,7 @@ use crate::metadata::diff::{self, DiffResp};
 use crate::metadata::lookup::{self, LookupEntity};
 use crate::metadata::matcher::{IssueQueryFacts, SeriesQueryFacts};
 use crate::metadata::orchestrator;
-use crate::metadata::refresh::{self, RefreshOutcome, RefreshScope};
+use crate::metadata::refresh::{self, RefreshScope};
 use crate::middleware::RequestContext;
 use crate::state::AppState;
 use server_macros::handler;
@@ -1100,6 +1100,7 @@ pub async fn search_issue(
     };
     overrides.apply_to_issue(&mut facts);
     let year_asserted = overrides.year.is_some();
+    let overrides_empty = overrides.is_empty();
 
     let providers = orchestrator::build_providers(&app.cfg(), app.jobs.redis.clone());
     if providers.is_empty() {
@@ -1183,8 +1184,13 @@ pub async fn search_issue(
             series_targets,
             year_asserted,
             // The dialog search shows alternatives; only batch children
-            // answer covered issues by direct lookup.
+            // answer covered issues by direct lookup. The coverage-assigned
+            // issue is *added* per provider (compare mode defaults to it)
+            // unless the user overrode the query — then they're searching
+            // for something else.
             direct_lookup: false,
+            coverage_candidates: overrides_empty,
+            direct_only: None,
         })
         .await
     {
@@ -2306,6 +2312,10 @@ pub struct RefreshLibraryResp {
     pub jobs_enqueued: usize,
     pub jobs_coalesced: usize,
     pub jobs_failed: usize,
+    /// The opt-in issue-level refresh (`metadata.issue_refresh_enabled`):
+    /// stale covered issues re-fetched by direct lookup into a Review
+    /// batch. `enabled: false` when the setting is off.
+    pub issue_refresh: refresh::IssueRefreshOutcome,
 }
 
 #[utoipa::path(
@@ -2345,29 +2355,40 @@ pub async fn refresh_library_metadata(
             "scope must be one of: unmatched, stale, all, recent",
         );
     };
-    match refresh::fan_out_scope(
+    let series = refresh::fan_out_scope(
         &app,
         lib.id,
         scope,
         orchestrator::trigger_kind::BULK_ACTION,
         None,
     )
-    .await
-    {
-        Ok(RefreshOutcome {
-            series_eligible,
-            jobs_enqueued,
-            jobs_coalesced,
-            jobs_failed,
-        }) => (
+    .await;
+    let series = match series {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::error!(error = %e, library_id = %lib.id, "metadata refresh fan-out failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    // Issue level, behind `metadata.issue_refresh_enabled` (off ⇒ no-op).
+    let issue_refresh = refresh::fan_out_issue_refresh(
+        &app,
+        lib.id,
+        orchestrator::trigger_kind::BULK_ACTION,
+        Some(user.id),
+    )
+    .await;
+    match issue_refresh {
+        Ok(issue_refresh) => (
             StatusCode::ACCEPTED,
             Json(RefreshLibraryResp {
                 library_id: lib.id,
                 scope: scope.as_str().to_owned(),
-                series_eligible,
-                jobs_enqueued,
-                jobs_coalesced,
-                jobs_failed,
+                series_eligible: series.series_eligible,
+                jobs_enqueued: series.jobs_enqueued,
+                jobs_coalesced: series.jobs_coalesced,
+                jobs_failed: series.jobs_failed,
+                issue_refresh,
             }),
         )
             .into_response(),
@@ -2656,7 +2677,7 @@ pub async fn composite_apply_issue(
 
 // ───────── bulk-fetch batches (refine-bulk-metadata M1) ─────────
 
-/// Response for the batch-create endpoints. Mirrors [`RefreshOutcome`] plus the
+/// Response for the batch-create endpoints. Mirrors [`refresh::RefreshOutcome`] plus the
 /// new `batch_id` the caller deep-links the Review queue to.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct BatchCreatedResp {
@@ -2678,15 +2699,36 @@ async fn insert_metadata_batch(
     library_id: Option<Uuid>,
     created_by: Option<Uuid>,
 ) -> Result<Uuid, sea_orm::DbErr> {
+    // Bulk fetch always holds for review — children run as `manual` so
+    // nothing auto-applies (the queue is the accept surface).
+    insert_metadata_batch_with(
+        db,
+        scope,
+        library_id,
+        created_by,
+        orchestrator::trigger_kind::MANUAL,
+    )
+    .await
+}
+
+/// [`insert_metadata_batch`] with the children's trigger kind. The
+/// issue-level refresh (`metadata::refresh::fan_out_issue_refresh`) uses
+/// its own (`weekly_refresh` / `bulk_action`), so the library's existing
+/// auto-apply rule still applies to its runs.
+pub(crate) async fn insert_metadata_batch_with(
+    db: &sea_orm::DatabaseConnection,
+    scope: &str,
+    library_id: Option<Uuid>,
+    created_by: Option<Uuid>,
+    trigger_kind: &str,
+) -> Result<Uuid, sea_orm::DbErr> {
     use sea_orm::Set;
     let id = Uuid::now_v7();
     let am = entity::metadata_batch::ActiveModel {
         id: Set(id),
         library_id: Set(library_id),
         scope: Set(scope.to_owned()),
-        // Bulk fetch always holds for review — children run as `manual` so
-        // nothing auto-applies (the queue is the accept surface).
-        trigger_kind: Set(orchestrator::trigger_kind::MANUAL.to_owned()),
+        trigger_kind: Set(trigger_kind.to_owned()),
         status: Set("running".to_owned()),
         items_total: Set(0),
         created_by: Set(created_by),
@@ -2698,7 +2740,11 @@ async fn insert_metadata_batch(
 }
 
 /// Stamp the final child count on a batch once fan-out completes.
-async fn set_batch_items_total(db: &sea_orm::DatabaseConnection, batch_id: Uuid, items_total: i32) {
+pub(crate) async fn set_batch_items_total(
+    db: &sea_orm::DatabaseConnection,
+    batch_id: Uuid,
+    items_total: i32,
+) {
     use sea_orm::Set;
     if let Ok(Some(row)) = entity::metadata_batch::Entity::find_by_id(batch_id)
         .one(db)
@@ -2715,7 +2761,7 @@ async fn set_batch_items_total(db: &sea_orm::DatabaseConnection, batch_id: Uuid,
 /// so progress + review happen in one place. Children run as `manual` (held
 /// for review, never auto-applied).
 /// Which issues a series metadata batch fans out over.
-#[derive(Copy, Clone, Debug, Default, Deserialize, utoipa::ToSchema)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SeriesBatchScope {
     /// Every active issue (the default — bare POST stays this).
@@ -2763,49 +2809,11 @@ pub async fn create_series_batch(
         );
     }
 
-    // Target issues, capped like the library refresh fan-out. `incomplete`
-    // scores each active issue and keeps only the non-complete ones; the
-    // scorer is shared with the series Collection grid so the two can't drift.
-    let issue_ids: Vec<String> = match q.scope {
-        SeriesBatchScope::All => match issue::Entity::find()
-            .filter(issue::Column::SeriesId.eq(s.id))
-            .filter(issue::Column::State.eq("active"))
-            .filter(issue::Column::RemovedAt.is_null())
-            .order_by_asc(issue::Column::SortNumber)
-            .limit(refresh::REFRESH_BATCH_CAP as u64)
-            .all(&app.db)
-            .await
-        {
-            Ok(rows) => rows.into_iter().map(|r| r.id).collect(),
-            Err(e) => {
-                tracing::error!(error = %e, "create_series_batch: issue query failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        },
-        SeriesBatchScope::Incomplete => {
-            use crate::metadata::completeness::CompletenessTier;
-            // Issues whose description is the series description (a series
-            // apply leaked it before #974): "complete" by presence, wrong by
-            // content. They're re-fetched whatever their tier.
-            let leaked = match series_description_leaks(&app.db, s.id).await {
-                Ok(ids) => ids,
-                Err(e) => {
-                    tracing::warn!(error = %e, series_id = %s.id, "create_series_batch: description-leak query failed; tier only");
-                    std::collections::HashSet::new()
-                }
-            };
-            crate::api::series::assess_series_issue_tiers(&app, s.id)
-                .await
-                .into_iter()
-                // Skip Complete AND Accepted (operator marked it done, B4) — the
-                // "only missing or partial" scope shouldn't re-fetch either.
-                .filter(|(id, tier)| {
-                    leaked.contains(id)
-                        || !matches!(tier, CompletenessTier::Complete | CompletenessTier::Accepted)
-                })
-                .map(|(id, _)| id)
-                .take(refresh::REFRESH_BATCH_CAP)
-                .collect()
+    let issue_ids = match series_batch_issue_ids(&app, s.id, q.scope).await {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::error!(error = %e, "create_series_batch: issue query failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
 
@@ -2834,6 +2842,60 @@ pub async fn create_series_batch(
         }),
     )
         .into_response()
+}
+
+/// The issues a series metadata batch of `scope` fans out over (capped
+/// like the library refresh fan-out), in issue order for `all`. Shared by
+/// [`create_series_batch`] and the guided refresh's fetch estimate
+/// (`api::series_refresh`) so the two can't drift.
+pub(crate) async fn series_batch_issue_ids(
+    app: &AppState,
+    series_id: Uuid,
+    scope: SeriesBatchScope,
+) -> Result<Vec<String>, sea_orm::DbErr> {
+    match scope {
+        SeriesBatchScope::All => Ok(issue::Entity::find()
+            .select_only()
+            .column(issue::Column::Id)
+            .filter(issue::Column::SeriesId.eq(series_id))
+            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::RemovedAt.is_null())
+            .order_by_asc(issue::Column::SortNumber)
+            .limit(refresh::REFRESH_BATCH_CAP as u64)
+            .into_tuple::<String>()
+            .all(&app.db)
+            .await?),
+        SeriesBatchScope::Incomplete => {
+            use crate::metadata::completeness::CompletenessTier;
+            // `incomplete` scores each active issue and keeps only the
+            // non-complete ones; the scorer is shared with the series
+            // Collection grid so the two can't drift. Issues whose
+            // description is the series description (a series apply leaked
+            // it before #974) are "complete" by presence, wrong by content:
+            // they're re-fetched whatever their tier.
+            let leaked = match series_description_leaks(&app.db, series_id).await {
+                Ok(ids) => ids,
+                Err(e) => {
+                    tracing::warn!(error = %e, series_id = %series_id, "series batch: description-leak query failed; tier only");
+                    std::collections::HashSet::new()
+                }
+            };
+            Ok(
+                crate::api::series::assess_series_issue_tiers(app, series_id)
+                .await
+                .into_iter()
+                // Skip Complete AND Accepted (operator marked it done, B4) — the
+                // "only missing or partial" scope shouldn't re-fetch either.
+                .filter(|(id, tier)| {
+                    leaked.contains(id)
+                        || !matches!(tier, CompletenessTier::Complete | CompletenessTier::Accepted)
+                })
+                .map(|(id, _)| id)
+                .take(refresh::REFRESH_BATCH_CAP)
+                .collect(),
+            )
+        }
+    }
 }
 
 /// Active issues of a series whose description duplicates the series
@@ -2997,6 +3059,13 @@ struct FanOutTally {
     jobs_failed: usize,
 }
 
+/// How many per-issue enqueues a batch fan-out runs at once. Each is a
+/// handful of DB round-trips plus a Redis push; serially, a 200-issue
+/// batch could outlast the 60 s JSON timeout on a loaded host (which
+/// drops the handler mid-fan-out). `buffered` keeps results — and
+/// roughly the push order — in issue order.
+pub(crate) const FAN_OUT_CONCURRENCY: usize = 8;
+
 /// Enqueue a per-issue search for each id under `batch_id`, honoring the
 /// per-entity coalesce gate. Children run as `manual`.
 async fn fan_out_issue_batch(
@@ -3005,19 +3074,30 @@ async fn fan_out_issue_batch(
     triggered_by: Option<Uuid>,
     batch_id: Uuid,
 ) -> FanOutTally {
+    use futures::StreamExt;
     let mut jobs_enqueued = 0usize;
     let mut jobs_coalesced = 0usize;
     let mut jobs_failed = 0usize;
-    for id in issue_ids {
-        match metadata_search::enqueue_issue_search(
-            app,
-            id,
-            triggered_by,
-            orchestrator::trigger_kind::MANUAL,
-            Some(batch_id),
-        )
-        .await
-        {
+    // Owned values: a closure borrowing `app` / the ids is not general
+    // enough for the `Send` bound on handler futures.
+    let mut results = futures::stream::iter(issue_ids.to_vec())
+        .map(|id| {
+            let app = app.clone();
+            async move {
+                let r = metadata_search::enqueue_issue_search(
+                    &app,
+                    &id,
+                    triggered_by,
+                    orchestrator::trigger_kind::MANUAL,
+                    Some(batch_id),
+                )
+                .await;
+                (id, r)
+            }
+        })
+        .buffered(FAN_OUT_CONCURRENCY);
+    while let Some((id, r)) = results.next().await {
+        match r {
             Ok(o) if o.coalesced => jobs_coalesced += 1,
             Ok(_) => jobs_enqueued += 1,
             Err(e) => {

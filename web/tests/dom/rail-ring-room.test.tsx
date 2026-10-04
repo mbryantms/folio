@@ -100,9 +100,9 @@ beforeEach(() => {
     arcs: [],
     external: [],
     chain: [
-      { position: -1, series: vol1 },
-      { position: 0, series: vol2 },
-      { position: 1, series: vol3 },
+      { position: -1, series: vol1, provider_splits: [] },
+      { position: 0, series: vol2, provider_splits: [] },
+      { position: 1, series: vol3, provider_splits: [] },
     ],
   } as SeriesRelationshipsResp;
 });

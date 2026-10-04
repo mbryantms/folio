@@ -595,8 +595,8 @@ pub struct DetectSourceResult {
     /// Range mappings created this run.
     pub created: Vec<ProviderRangeRow>,
     /// Automated range mappings the provider series now covers itself —
-    /// likely stale (e.g. after a re-match). Reported only; never removed
-    /// automatically.
+    /// likely stale (e.g. after a re-match). The detector only reports
+    /// them; accepting this provider's series coverage deletes them.
     pub stale_ranges: Vec<ProviderRangeRow>,
     /// Uncovered issues with a non-numeric number (annuals, `14AU`) —
     /// excluded from range detection.

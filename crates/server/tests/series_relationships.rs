@@ -1667,3 +1667,125 @@ async fn chain_walks_mixed_continues_and_sequels_but_not_prequels() {
         })
     ));
 }
+
+/// Range hygiene: a chain node whose issues a provider files under another
+/// provider series carries that boundary as a sub-step — "#600–611
+/// continue as Fantastic Four (2012)" — merged across providers, linked to
+/// the local series matched to that provider series only when the caller
+/// can see it. The local series stays one node.
+#[tokio::test]
+async fn chain_nodes_carry_provider_range_boundaries() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let user = register(&app, "user@example.com").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    demote_to_user(&db, user.user_id).await;
+    let lib = mk_library(&app, &db, "ff").await;
+    let other = mk_library(&app, &db, "relaunches").await;
+    grant(&db, user.user_id, lib).await;
+    let ff98 = mk_series(&db, lib, "Fantastic Four", "ff-1998").await;
+    let ff01 = mk_series(&db, lib, "Fantastic Four 2001", "ff-2001").await;
+    let ff12 = mk_series(&db, other, "Fantastic Four 2012", "ff-2012").await;
+    relationships::create_pair(
+        &db,
+        ff01,
+        ff98,
+        RelationshipKind::Continues,
+        RelationshipSource::Manual,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let dir = app._data_dir.path().join("ff");
+    for n in [1.0, 2.0, 600.0, 611.0] {
+        let p = dir.join(format!("ff-{n}.cbz"));
+        common::seed::IssueSeed::new(lib, ff01, &p, format!("ff {n}").as_bytes(), n)
+            .insert(&db)
+            .await;
+    }
+    for (src, pid) in [("metron", "1713"), ("gcd", "9000")] {
+        exec_raw(
+            &db,
+            "INSERT INTO series_provider_range (series_id, source, provider_series_id, provider_series_url, provider_series_name, declared_year, range_low, range_high, set_by) \
+             VALUES ($1, $2, $3, $4, 'Fantastic Four', 2012, '600', '611', 'cross_reference')",
+            vec![
+                ff01.into(),
+                src.into(),
+                pid.into(),
+                format!("https://example.test/{src}/{pid}").into(),
+            ],
+        )
+        .await
+        .unwrap();
+    }
+    exec_raw(
+        &db,
+        "INSERT INTO external_ids (entity_type, entity_id, source, external_id, set_by, first_set_at, last_synced_at) \
+         VALUES ('series', $1, 'metron', '1713', 'metron', now(), now())",
+        vec![ff12.to_string().into()],
+    )
+    .await
+    .unwrap();
+
+    let get = |who: &'static str| {
+        let app = &app;
+        let auth = if who == "admin" { &admin } else { &user };
+        async move {
+            let (status, body) = call_json(
+                app,
+                Method::GET,
+                "/api/series/ff-1998/relationships",
+                auth,
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body
+        }
+    };
+    let body = get("admin").await;
+    assert_eq!(
+        chain_slugs(&body),
+        vec![(0, "ff-1998".to_owned()), (1, "ff-2001".to_owned())],
+        "still one node per local series"
+    );
+    let node = |body: &serde_json::Value, slug: &str| {
+        body["chain"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["series"]["slug"] == slug)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(
+        node(&body, "ff-1998")["provider_splits"],
+        serde_json::json!([])
+    );
+    let splits = node(&body, "ff-2001")["provider_splits"].clone();
+    assert_eq!(
+        splits.as_array().unwrap().len(),
+        1,
+        "merged across providers: {splits}"
+    );
+    let s = &splits[0];
+    assert_eq!(s["label"], "#600–611 continue as Fantastic Four (2012)");
+    assert_eq!(s["position"], "end");
+    let sources: Vec<&str> = s["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["source"].as_str().unwrap())
+        .collect();
+    assert_eq!(sources, vec!["gcd", "metron"]);
+    assert_eq!(s["providers"][1]["source_label"], "Metron");
+    assert_eq!(s["providers"][1]["url"], "https://example.test/metron/1713");
+    assert_eq!(s["local_series"]["slug"], "ff-2012");
+
+    // The relaunch lives in a library the user can't see: no link.
+    let body = get("user").await;
+    let s = node(&body, "ff-2001")["provider_splits"][0].clone();
+    assert_eq!(s["label"], "#600–611 continue as Fantastic Four (2012)");
+    assert!(s["local_series"].is_null(), "{s}");
+}

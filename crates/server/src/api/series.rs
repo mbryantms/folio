@@ -2744,10 +2744,14 @@ where
 /// The denominator (`total_expected`) comes from `series.total_issues`, which
 /// the scanner resolves from a `series.json` sidecar or the max ComicInfo
 /// `<Count>`. series.json carries only the *count*, never a per-issue
-/// manifest — so interior `missing` numbers are *inferred* by interpolating
-/// the integer run between the lowest and highest owned issue. `expected_source`
-/// records this provenance; a future provider-backed exact manifest will flip
-/// it to `"provider_manifest"` and make `missing` exact.
+/// manifest — so without provider data interior `missing` numbers are
+/// *inferred* by interpolating the integer run between the lowest and highest
+/// owned issue (`expected_source = "series_total"`). When the series has
+/// accepted provider coverage and those providers' issue lists are cached,
+/// the expected set comes from them instead
+/// ([`crate::metadata::issue_manifest`], `expected_source =
+/// "provider_manifest"`): `missing` is what every such provider lists and
+/// no local issue carries, `possibly_missing` what only some list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CollectionReportView {
     /// Active (non-removed) issues owned. Matches the saved-view
@@ -2767,9 +2771,15 @@ pub struct CollectionReportView {
     /// Annuals, one-shots, TPBs, point issues (`#2.5`), and unnumbered files —
     /// listed but excluded from the integer gap math.
     pub specials: Vec<SpecialEntry>,
-    /// `"series_total"` today (count-only). `"provider_manifest"` once an
-    /// exact provider issue list backs the report.
+    /// `"series_total"` (count-only; `missing` interpolated) or
+    /// `"provider_manifest"` (`missing` from the providers' issue lists —
+    /// see [`Self::manifest`]).
     pub expected_source: String,
+    /// The provider manifest when the series has accepted coverage for
+    /// ComicVine / Metron / GCD — also when no list is cached yet (then
+    /// `used` is false and `note` says to run Analyze coverage). Read from
+    /// the 24 h issue-list cache only; the report never calls a provider.
+    pub manifest: Option<crate::metadata::issue_manifest::ProviderManifestView>,
     /// Every owned active issue with its metadata-completeness status, ordered
     /// by `sort_number`. Lets the UI color each issue chip by status
     /// (complete / partial / needs-metadata) and reveal the missing fields on
@@ -2803,15 +2813,21 @@ pub struct MainRunReport {
     pub present: Vec<f64>,
     /// `number_raw` labels aligned 1:1 with [`Self::present`] for display.
     pub present_labels: Vec<String>,
-    /// Integers in `min..=max` not owned (e.g. `[3]`). **Inferred** — see
+    /// Main-run integers not owned (e.g. `[3]`). Interpolated over
+    /// `min..=max` for `series_total`; exact (every provider with accepted
+    /// coverage lists them) for `provider_manifest` — see
     /// [`CollectionReportView::expected_source`].
     pub missing: Vec<i64>,
+    /// `provider_manifest` only: main-run integers some providers list and
+    /// others don't (or can't confirm). Empty otherwise.
+    pub possibly_missing: Vec<i64>,
     /// Lowest / highest owned main-run number (as f64), `None` when the run is
     /// empty.
     pub min: Option<f64>,
     pub max: Option<f64>,
     /// Count expected beyond `max` when `total_expected > max` (e.g. own up to
-    /// #4 with `total_expected = 6` → `2`).
+    /// #4 with `total_expected = 6` → `2`). Always 0 for `provider_manifest`
+    /// (numbers past `max` are in `missing`).
     pub trailing_missing: i64,
 }
 
@@ -2925,12 +2941,14 @@ fn build_collection_report(
             present,
             present_labels,
             missing,
+            possibly_missing: Vec::new(),
             min: min.map(|n| n as f64),
             max: max.map(|n| n as f64),
             trailing_missing,
         },
         specials,
         expected_source: "series_total".to_owned(),
+        manifest: None,
         // Populated by the handler (needs DB access for per-issue scoring).
         issues: Vec::new(),
     }
@@ -3144,9 +3162,41 @@ pub async fn collection_report(
         }
     };
 
+    // Compare keys of every owned issue ("000.5" ≡ "½"), for the provider
+    // manifest.
+    let owned: std::collections::HashSet<String> = rows
+        .iter()
+        .filter_map(|r| r.number_raw.as_deref())
+        .map(crate::metadata::matcher::issue_number_compare_key)
+        .collect();
     let mut report = build_collection_report(rows, row.total_issues);
+    match crate::metadata::issue_manifest::for_series(&app.db, &app.jobs.redis, row.id, &owned)
+        .await
+    {
+        Ok(Some(manifest)) => apply_manifest(&mut report, manifest),
+        Ok(None) => {}
+        Err(e) => {
+            // Soft: the interpolated report still stands.
+            tracing::warn!(series_id = %row.id, error = %e, "collection report: provider manifest failed");
+        }
+    }
     report.issues = collect_issue_completeness(&app, row.id).await;
     Json(report).into_response()
+}
+
+/// Swap the interpolated gaps for the provider manifest's when any of its
+/// lists is loaded; always attach it (its `note` explains a fallback).
+fn apply_manifest(
+    report: &mut CollectionReportView,
+    manifest: crate::metadata::issue_manifest::ProviderManifestView,
+) {
+    if manifest.used {
+        report.expected_source = "provider_manifest".to_owned();
+        report.main_run.missing = manifest.missing_ints();
+        report.main_run.possibly_missing = manifest.possibly_missing_ints();
+        report.main_run.trailing_missing = 0;
+    }
+    report.manifest = Some(manifest);
 }
 
 #[utoipa::path(

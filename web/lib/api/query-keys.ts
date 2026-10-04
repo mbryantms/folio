@@ -357,6 +357,10 @@ export const queryKeys = {
    *  under `providerCoverageSeries` so a mapping change invalidates it. */
   providerCoverageAnalysis: (slug: string) =>
     ["series", slug, "provider-coverage", "analysis"] as const,
+  /** Guided "Refresh this series…": where the flow got to (latest series
+   *  run / apply, coverage job, batch) + the per-issue fetch estimate. */
+  seriesRefreshStatus: (slug: string) =>
+    ["series", slug, "metadata", "refresh-status"] as const,
   /** WP-7.1: direct relationships + sequel/prequel chain for a series. */
   seriesRelationships: (slug: string) =>
     ["series", slug, "relationships"] as const,

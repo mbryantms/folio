@@ -36,15 +36,37 @@ pub const QUERY_KEY: &str = "coverage_lookups";
 /// the listing before falling back to its search.
 pub const LIST_MISS_TTL_SECS: u64 = 3600;
 
-/// Per-run context that turns direct lookups on. Only batch children get
-/// one; a single-issue search from the match dialog keeps searching so
-/// the operator sees alternatives.
+/// Per-run context that turns direct lookups on. Batch children get
+/// [`DirectMode::Replace`]; the single-issue search from the match dialog
+/// gets [`DirectMode::Additive`] (the coverage candidate *and* the search,
+/// so the operator still sees alternatives and compare mode can default
+/// to the coverage-assigned issue); the opt-in issue-level refresh gets
+/// [`DirectMode::Only`].
 #[derive(Clone)]
 pub struct DirectLookupCtx {
     /// Redis for the issue-list cache ([`coverage::provider_issues_with`]).
     pub redis: ConnectionManager,
     /// Local cover month; the year is `IssueQueryFacts::issue_year`.
     pub cover_month: Option<i32>,
+    /// What a direct hit / miss does to the provider's search.
+    pub mode: DirectMode,
+}
+
+/// How a run combines a provider's direct lookup with its search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DirectMode {
+    /// A direct hit replaces the search; a miss falls back to it (metadata
+    /// batches).
+    #[default]
+    Replace,
+    /// A direct hit is added and the search still runs (the match dialog:
+    /// alternatives stay visible; the compare view picks the coverage
+    /// candidate per provider).
+    Additive,
+    /// A miss is recorded and nothing is searched (issue-level library /
+    /// weekly refresh: covered issues only, bounded per provider).
+    Only,
 }
 
 /// Whether a provider answered a batch issue from coverage or a search.

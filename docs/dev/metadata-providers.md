@@ -473,6 +473,10 @@ fire; operators re-trigger via `POST /libraries/{slug}/metadata/refresh?scope=st
 to drain larger backlogs. The per-entity coalesce gate dedupes
 overlap between the two scopes automatically.
 
+Both also run the opt-in **issue-level refresh** after the series
+scopes (`metadata.issue_refresh_enabled`, off by default) — see
+[Coverage tie-ins](#coverage-tie-ins) below.
+
 ## Cover-image perceptual hashing
 
 [`metadata/phash`](../../crates/server/src/metadata/phash.rs)
@@ -828,7 +832,8 @@ already owns that provider id, nothing is written and the source reports
 - Existing ranges are never overwritten. An overlapping run is
   `already_mapped`. An automated range whose issues the matched series
   now lists itself (or that points at the matched series) is reported in
-  `stale_ranges`, not deleted.
+  `stale_ranges`; the detector never deletes it — accepting that
+  provider's coverage does (below).
 - A rate-limit or credentials failure stops that provider (`rate_limited`
   / `error`); rows written before it stay written and are listed. Other
   providers carry on.
@@ -848,8 +853,11 @@ timeout.
 overlay (`apply_series_via_sidecar`), the coverage card
 (`/provider-coverage`), the issue page's alternate-series list
 (`api/issues.rs`), the folder-name health check
-(`scanner/folder_checks.rs`), and the relationship engine (the `split`
-continuation qualifier and the `provider_range` → `see_also` source).
+(`scanner/folder_checks.rs`), the relationship engine (the `split`
+continuation qualifier — only when a range links the pair — and the
+`provider_range` → `see_also` source), and the Related tab's reading
+order (a range shows as a sub-step of its series' node; see
+`series-relationships.md`).
 
 ## Provider-independent coverage ("Analyze coverage")
 
@@ -959,8 +967,31 @@ proposed range or disagreeing with the proposal).
   for an admin accept, `SetBy::Provider(source)` for auto-accept — and
   never over a `user` row (a chosen main contradicting the user's link
   refuses the whole accept). Ranges via `auto_split::insert_detected_range`
-  (`cross_reference`); overlaps are skipped, nothing is deleted. A created
-  range enqueues relationship suggestions for the library.
+  (`cross_reference`); overlaps are skipped. A created or removed range
+  enqueues relationship suggestions for the library.
+- **Stale range cleanup (range hygiene).** Once the accepted proposal's
+  main is the series' id for that provider (written now, already linked,
+  or the user's own link), the accept **deletes** the provider's stale
+  ranges — rows that point at the main series, or whose issues the
+  proposal files in another series — but only rows whose `set_by` is an
+  automatic source (`auto_split::is_automatic_range`: `cross_reference`,
+  `auto`, `provider` or a provider name such as `metron` / `gcd`). A
+  `user` row is never deleted (it shows as a conflict instead), and the
+  delete repeats the `set_by <> 'user'` guard in SQL. The proposal is then
+  rebuilt against the remaining rows, so a range that only conflicted
+  with a deleted row is written by the same accept. The outcome lists
+  them in `stale_ranges_removed` (`stale_ranges` keeps only the ones left
+  because the main wasn't put in place); the accept's audit row carries
+  each removal (`stale_ranges_removed`: id, provider series, bounds,
+  former `set_by`, reason), for admin and automatic accepts alike. The
+  coverage links resync after the delete — a deleted range's "not in your
+  library" row goes with it — and the similarity cache is invalidated
+  when that removes a row or promotes a pair. The card and the accept
+  toast say what went: "Removed 1 stale range: GCD #42–70 → Fantastic
+  Four (1961)" (the owner's FF (2001) case, pinned in
+  `tests/provider_coverage_fantastic_four.rs`). Stale ranges alone count
+  as a change (`has_changes`), so Accept stays enabled for them and a
+  High-confidence automatic accept cleans them up too.
 
 Every `fold_targets` consumer (issue search narrowing, the sidecar series
 overlay, the coverage card, the issue page's alternate series, the
@@ -1070,7 +1101,8 @@ Only missing or partial", a grid selection, a saved view, and their
 quota resumes — is a `SearchIssueJob` with `direct_lookup = true`
 (`enqueue_issue_search` sets it whenever a `batch_id` is present; the
 single-issue dialog search keeps `false` so the operator still sees
-alternatives). For each enabled provider,
+alternatives — it adds the coverage candidate next to the search instead,
+`DirectMode::Additive`; see [Coverage tie-ins](#coverage-tie-ins)). For each enabled provider,
 `orchestrator::run_issue_search_with` → `direct_issue_candidate`:
 
 1. **Target**: the provider's `EffectiveTarget` from the job's
@@ -1138,6 +1170,199 @@ user-pinned (`field_provenance` `description`/`summary` `set_by =
 query from `metadata-sidecar-writeback.md` § "Repairing issues a series
 apply overwrote". They are selected whatever their completeness tier
 (including *Accepted*).
+
+## Guided "Refresh this series…"
+
+Series page ⋯ → **Fetch metadata → Refresh this series…** (admins; the
+coverage and Review surfaces are admin-only) walks the three actions in
+order plus the review, in one stepper dialog
+([`SeriesRefreshDialog.tsx`](../../web/components/library/SeriesRefreshDialog.tsx)).
+It only drives existing endpoints; the individual menu actions stay.
+
+1. **Series match** — the embedded `MetadataMatchForm` (`embedded`:
+   no title / Close, the host's step panel is the single scroll region),
+   coverage hints included. When the series already has series-level
+   `external_ids` the step first lists them with **Keep current match**
+   (no search is made) or **Search for a match**.
+2. **Coverage** — after a match applied *in the flow*, waits (polling the
+   status every 2 s) for the seeded job `enqueue_after_series_apply`
+   queues, unless `metadata.coverage_after_series_apply` is `off`; it
+   never starts a second, unseeded job while waiting ("Run it now" is
+   there if the job never shows). Otherwise it reuses the latest job or
+   offers **Analyze coverage** (`auto_accept: false`). Per provider:
+   `promptHeadline`, new ranges, `requests of request_budget`,
+   **Accept** (`POST …/provider-coverage/accept`, `main_series_id: null`)
+   or **Skip** (client-side; nothing is written).
+3. **Per-issue fetch** — *Only missing or partial* (default) or *All
+   issues* → `POST …/metadata/batch[?scope=incomplete]`, with the
+   estimate below; progress polls `GET /metadata/batch/{id}` (2 s).
+4. **Review** — the batch's counts, `aggregate.lookups`
+   (`BatchLookupSummary`), **Accept all strong** (`filter: all_strong`)
+   and **Fill missing** (`all_needs_review` + `fill_missing`) via
+   `POST /metadata/batch/{id}/apply`, and **Open in Review**
+   (`/admin/metadata?tab=review&batch=`). *Replace all* stays on the
+   Review page behind its confirm.
+
+Nothing writes without a click; auto-accept stays the job's setting-gated
+High-confidence rule, and writeback semantics are the endpoints' own.
+
+**Resume** — `GET /api/series/{slug}/metadata/refresh-status`
+([`api/series_refresh.rs`](../../crates/server/src/api/series_refresh.rs),
+`RequireAdmin`, read-only, no provider call) aggregates server state, no
+new table, inside a 24 h window (`RESUME_WINDOW_SECS` = the coverage
+record TTL):
+
+- `series_match`: `links` (series `external_ids` with `set_by`),
+  `latest_run`, `applied_at` (newest `metadata_run_candidate.applied_at`
+  of the series' runs);
+- `coverage`: the latest `coverage:series:<id>` job (`state`, `trigger`,
+  `requested_at`, analysed `sources`);
+- `batch`: the latest `series_issues` batch whose children are this
+  series' issues, with `unfinished` (children not `completed` / `failed`);
+- `coverage_after_series_apply`, and `fetch_estimate` (below).
+
+`resume_step`: a batch newer than the apply and the coverage job →
+`fetch` while children are unfinished, else `review`; else an apply or a
+coverage job → `coverage`; else `match`. The dialog pins that step on
+open (later refetches don't move the user), marks earlier steps done, and
+moves fetch → review by itself when the batch finishes. Closing and
+reopening the dialog re-reads it.
+
+**Fetch estimate** — per batch scope (`all`, `incomplete`, selected by
+the shared `series_batch_issue_ids`, the same function
+`create_series_batch` uses) and enabled coverage provider: `direct` =
+issues with a `fold_targets` target (annuals only via a range) on a
+provider that lists series issues, `search` = the rest. Shown as
+"ComicVine: 170 direct · 3 searched (≈ 173–176 requests)": a direct
+lookup is one detail request, a search 1–2, plus each provider series'
+issue list once per 24 h. It is an upper bound on direct lookups — an
+unlisted number or a date conflict still falls back to a search.
+
+`tests/series_refresh_status.rs` pins the status (FF fixtures, no
+provider request), `web/tests/library/series-refresh-dialog.test.tsx`
+the stepper (happy path, keep current match, coverage accept / skip,
+batch scope, Review handoff, resume after reopen).
+
+## Coverage tie-ins
+
+Four consumers of accepted coverage (series-level `external_ids` +
+`series_provider_range`, folded by `range_map::fold_targets`) and the
+24 h issue-list cache (`coverage::provider_issues*`).
+
+### Compare mode uses coverage
+
+`DirectLookupCtx.mode` (`direct_lookup::DirectMode`) says what a
+provider's direct lookup does to its search: `Replace` (batches — a hit
+skips the search, a miss searches), `Additive` (the match dialog — the
+hit is added **and** the search runs) and `Only` (the issue-level
+refresh — a miss is recorded, never searched). The dialog's issue search
+(`api::metadata_search::search_issue`) pushes `SearchIssueJob {
+coverage_candidates: true }` unless the user sent query overrides, so
+each covered provider's run carries its coverage-assigned candidate
+(`score_breakdown.coverage`, scored by the ordinary matcher; nothing is
+forced and the golden suite is unchanged). The compare view's default
+columns (`composite::default_best_per_provider`, and the dialog's
+`defaultCompareOrdinals` in `web/lib/metadata/coverage-hint.ts`) take,
+per provider, the coverage candidate when the run has one, else the
+best-ranked candidate (today's search). `CompositeProviderColumn.via_coverage`
+labels the column "From series coverage". Cost: one cached detail fetch
+per covered provider per dialog search (the row the apply reads).
+
+### Issue-level library / weekly refresh
+
+`metadata::refresh::fan_out_issue_refresh` — called by
+`POST /libraries/{slug}/metadata/refresh` (any scope; response
+`issue_refresh: IssueRefreshOutcome`) and by the weekly cron after the
+series scopes. Settings (registry + `Config` + `apply_overlay_row` +
+admin Settings tab, `Config::validate` range 1–1000):
+
+| key | default |
+|---|---|
+| `metadata.issue_refresh_enabled` | `false` — off ⇒ returns `enabled: false` without a query or a provider call |
+| `metadata.issue_refresh_per_provider_cap` | `200` (`ISSUE_REFRESH_DEFAULT_CAP`) |
+
+`select_issue_refresh` (pure DB reads): active issues with a number in
+non-paused, non-removed series of the library whose series has a
+series-level id or a range for a provider that lists series issues;
+**stale only** (`last_metadata_sync_at` null or older than
+`metadata.stale_after_days`), ordered **never-synced first, then oldest
+sync**, then `created_at`; issues with an issue-scope run started in the
+last `ISSUE_REFRESH_RECENT_RUN_DAYS` (7) are skipped. Each issue gets the
+providers `fold_targets` gives it (an annual only via a range, as the
+search) whose per-provider quota isn't spent; an issue with none left is
+skipped. Pages of 500, at most 20,000 rows read.
+
+The picks become one `metadata_batch` (`scope = 'issue_refresh'`,
+`trigger_kind` = the refresh's — `bulk_action` / `weekly_refresh`) and
+one `SearchIssueJob { direct_only: Some(sources) }` each
+(`enqueue_issue_search_with`): the run lists only those providers and
+uses `DirectMode::Only`. Results land in Review; because the children
+are non-manual, `maybe_auto_apply_issue` (library
+`metadata_auto_apply_strong_matches` + `SingleGoodMatch`) still applies
+— the only path that writes without review. Pacing is the queue + the
+providers' rate limiters. Per run ≤ cap detail requests per provider +
+each provider series' list once per 24 h.
+
+### Exact missing issues (provider manifest)
+
+`metadata::issue_manifest` backs `GET /series/{slug}/collection`
+(`CollectionReportView.manifest`, `expected_source`):
+
+- **Segments** per coverage source (CV, Metron, GCD): the series-level id
+  minus every number the source's ranges route elsewhere, plus each
+  range's provider series **restricted to `[range_low, range_high]`**.
+- **Lists**: `coverage::cached_provider_issues` — cache only (complete
+  lists only are ever cached). A provider with an uncached segment is
+  `loaded: false` and the manifest `note` says "<Provider> provider list
+  not loaded — run Analyze coverage". The report request never calls a
+  provider.
+- **Agreement** (owner decision pending; recommended default): a
+  number no local issue carries (`issue_number_compare_key`, so `½` ≡
+  `0.5`) is **missing** when every provider with accepted coverage lists
+  it; otherwise (some `not_listed`, or a provider `not_loaded`) it is
+  **possibly missing** with each provider's `listing`.
+- `used` (≥ 1 provider loaded) ⇒ `expected_source = "provider_manifest"`,
+  `main_run.missing` / `possibly_missing` = the integral numbers,
+  `trailing_missing = 0`. No coverage ⇒ `manifest: null`; nothing loaded
+  ⇒ the interpolated `series_total` report plus the manifest (note).
+  `total_expected` / `completeness_state` are unchanged (they mirror the
+  saved-view predicate).
+
+FF (folder 2001: #½, 1–70, 500–611, 605.1) with CV 6211 + Metron 1711 +
+#600–611 → 1713 cached: nothing missing (was #71–499).
+
+### "Not in your library" links from coverage ranges
+
+`coverage::accept_provider` ends with `sync_coverage_links`: for each
+provider series this source's ranges map to, the numbers its list
+(cache first, else the analysis' listing — then only `listed_count`
+minus owned is known) carries that no local issue does. If any, a
+`relationships::external::record_coverage_links` row:
+`set_by = 'provider'`, `evidence = {field: "coverage", ranges,
+not_owned, note}`, confidence 0.7, kind `continued_by` when every extra
+number is past the highest range bound, `continues` when all before the
+lowest, else `see_also` (a cache-less listing is always `see_also`).
+`SeriesExternalRelationshipView.note` ("Has #612–645") shows next to the
+row. Rules:
+
+- a target with **any** row of this series and source — Metron
+  `associated`, user, or dismissed (any kind) — is skipped (no
+  duplicate; dismissal memory; user > provider);
+- `record_provider_links` (Metron `associated`) prunes only its own
+  rows, and deletes a live coverage row whose target it now links;
+- a live coverage row no longer backed (range gone, all owned) is
+  deleted; a kind change replaces it;
+- promotion (`promote_series_rows`) runs after, as for `associated`.
+
+`AcceptOutcome.external_links` counts the rows written.
+
+`tests/coverage_tie_ins.rs` pins all four (FF fixtures): coverage
+candidates in the dialog run and the composite default, today's search
+without coverage; the refresh off (no call) / on (200 per provider,
+stale first, direct only, batch + trigger) / per-provider cap / settings
+chain; the manifest (FF nothing missing, agreement vs possibly missing,
+uncached ⇒ note and no fetch); the links (created, deduplicated against
+`associated`, dismissal kept, none for a fully owned range series).
 
 ## Adding a new provider
 
@@ -1219,6 +1444,7 @@ apply overwrote". They are selected whatever their completeness tier
 - [`crates/server/src/jobs/metadata_search.rs`](../../crates/server/src/jobs/metadata_search.rs) + [`metadata_apply.rs`](../../crates/server/src/jobs/metadata_apply.rs) — apalis workers
 - [`web/components/library/MetadataMatchDialog.tsx`](../../web/components/library/MetadataMatchDialog.tsx) — the dialog
 - [`web/components/library/MetadataPreviewPane.tsx`](../../web/components/library/MetadataPreviewPane.tsx) — M5 diff view
+- [`crates/server/src/api/series_refresh.rs`](../../crates/server/src/api/series_refresh.rs) + [`web/components/library/SeriesRefreshDialog.tsx`](../../web/components/library/SeriesRefreshDialog.tsx) — guided "Refresh this series…"
 - [`web/components/admin/metadata/`](../../web/components/admin/metadata/) — admin tabs
 
 [provider]: ../../crates/server/src/metadata/provider.rs

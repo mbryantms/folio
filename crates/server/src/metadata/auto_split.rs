@@ -26,6 +26,7 @@ use sea_orm::{
 };
 use serde::Serialize;
 use std::collections::HashSet;
+use std::str::FromStr;
 use uuid::Uuid;
 
 /// A range mapping created by the detector.
@@ -523,6 +524,15 @@ pub(crate) async fn insert_detected_range<C: ConnectionTrait>(
     Ok(id)
 }
 
+/// Was a `series_provider_range` row written by an automatic source — the
+/// split detector / provider coverage (`cross_reference`), a legacy `auto`
+/// or `provider` stamp, or a provider name (`metron`, `gcd`, …)? Only
+/// these may be deleted automatically (a stale range on coverage accept);
+/// `user` rows, and any value this list doesn't know, are kept.
+pub fn is_automatic_range(set_by: &str) -> bool {
+    matches!(set_by, "cross_reference" | "auto" | "provider") || Source::from_str(set_by).is_ok()
+}
+
 /// Automated ranges whose local issues the matched series now lists
 /// itself (or that point at the matched series) — candidates for removal.
 fn stale_ranges(
@@ -533,7 +543,7 @@ fn stale_ranges(
 ) -> Vec<Uuid> {
     existing
         .iter()
-        .filter(|r| r.set_by != "user")
+        .filter(|r| is_automatic_range(&r.set_by))
         .filter(|r| {
             if r.provider_series_id == main_series_external_id {
                 return true;
@@ -741,6 +751,23 @@ mod tests {
             set_by: set_by.into(),
             first_set_at: Utc::now().into(),
             last_synced_at: Utc::now().into(),
+        }
+    }
+
+    #[test]
+    fn only_automatic_ranges_may_be_removed_automatically() {
+        for by in [
+            "cross_reference",
+            "auto",
+            "provider",
+            "metron",
+            "gcd",
+            "comicvine",
+        ] {
+            assert!(is_automatic_range(by), "{by}");
+        }
+        for by in ["user", "", "someone"] {
+            assert!(!is_automatic_range(by), "{by}");
         }
     }
 

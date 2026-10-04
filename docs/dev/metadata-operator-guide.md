@@ -72,7 +72,40 @@ wins once saved).
 | `metadata.weekly_refresh_enabled` | bool | **false** | Off by design — auto-fetching burns provider quota. Live flip (no restart). |
 | `metadata.weekly_refresh_cron` | string | `0 0 4 * * 0` | 6-field cron expression. Default = Sunday 04:00 UTC. **Cron-string changes need a server restart.** The enabled bool is live. |
 | `metadata.weekly_refresh_window_days` | uint | 14 | Mylar pattern — series with a published issue inside this window get re-fetched every weekly run. Older series only re-fetch when stale. |
-| `metadata.stale_after_days` | uint | 180 | A series is "stale" when `last_metadata_sync_at IS NULL` or older than this. Drives both the weekly cron's stale branch and `/libraries/{slug}/metadata/refresh?scope=stale`. |
+| `metadata.stale_after_days` | uint | 180 | A series is "stale" when `last_metadata_sync_at IS NULL` or older than this. Drives both the weekly cron's stale branch and `/libraries/{slug}/metadata/refresh?scope=stale`. Also the issue-level refresh's staleness rule (below). |
+
+### Issue-level refresh (`/admin/metadata` → Settings → Issue-level refresh)
+
+| Setting | Type | Default | Notes |
+|---|---|---|---|
+| `metadata.issue_refresh_enabled` | bool | **false** | When on, the library refresh (`POST /libraries/{slug}/metadata/refresh`, any scope) and the weekly refresh also re-fetch **issues**: stale ones (never synced, or `last_metadata_sync_at` older than `metadata.stale_after_days`) whose provider series is known from coverage (the series' provider id or a range mapping). Live. |
+| `metadata.issue_refresh_per_provider_cap` | uint | **200** | Most issues **per provider per run** (1–1000). Live. |
+
+**Quota.** Each selected issue asks only the providers that cover it,
+by **direct lookup only**: one issue-detail request per provider
+(cached 24 h — an apply of that issue then costs nothing), plus each
+provider series' issue list once a day (ComicVine / Metron: one request
+per 100 issues; GCD: index + one overview page per 50 numbers). An
+issue the list doesn't have, or whose cover date disagrees, is recorded
+as a miss — it is **never searched**. So one run costs at most
+`cap` detail requests per provider (200 ComicVine of its 200/hour,
+200 Metron of its 5,000/day) plus the lists; the jobs go through the
+normal queue and provider rate limiters (ComicVine ≈ 1 request/second,
+Metron 20/minute), so a full run takes a few minutes (ComicVine) to
+about ten (Metron). Weekly: the same, once per library per fire.
+
+**Which issues.** Never-synced issues first, then the oldest sync;
+paused and removed series are skipped, and so is any issue searched in
+the last 7 days (a second click doesn't re-propose the same issues).
+An issue is counted against each provider it asks; once a provider's
+cap is reached, issues only that provider covers wait for the next
+run.
+
+**Where results go.** One **Issue refresh** batch per library in the
+Review tab. Nothing is written without your review, **unless** the
+library's existing *auto-apply strong matches* rule applies (a single
+strong match, from a non-manual run — the refresh runs as
+`bulk_action` / `weekly_refresh`).
 
 ## Operations
 
@@ -107,6 +140,12 @@ Response shape:
 Bounded to 200 series per call (`REFRESH_BATCH_CAP`). Re-trigger to
 drain larger backlogs — the per-entity coalesce gate makes
 repeated requests safe.
+
+The response also carries `issue_refresh` — `{"enabled": false, …}`
+unless `metadata.issue_refresh_enabled` is on, else the Review
+`batch_id`, `issues_selected`, `per_provider` (`[{source, issues,
+cap}]`) and the job counts (see [Issue-level
+refresh](#issue-level-refresh-admin-metadata--settings--issue-level-refresh)).
 
 ### Pause a series's auto-sync
 
@@ -662,6 +701,51 @@ The older per-provider split detector
 (`POST …/provider-ranges/detect`) is still available through the API.
 It no longer runs after a series match; the coverage check below does.
 
+### Compare mode uses coverage
+
+In an issue's match dialog, each provider's coverage-assigned issue (its
+series from coverage lists this number with an agreeing cover date) is
+added to the results next to the search — the search still runs, so
+alternatives stay visible. **Compare** then starts with that issue as
+each provider's column ("From series coverage"); a provider without
+coverage keeps its best search result. Scores and confidence are the
+matcher's as always. It costs one issue-detail request per covered
+provider (cached 24 h, and the one an apply would read anyway). A search
+with your own query overrides doesn't add coverage issues.
+
+### Missing issues on the Collection tab
+
+With accepted coverage (a provider series id and/or range mappings) and
+those series' issue lists in the 24-hour cache, the Collection tab uses
+the providers' own issue lists instead of guessing:
+
+- an issue is **missing** when **every** provider with accepted coverage
+  lists it and you don't have it;
+- one only some providers list is **possibly missing** — click it to see
+  each provider's view (lists it / doesn't / list not loaded).
+
+A range mapping counts only for its numbers (a 1713 mapped to #600–611
+doesn't make #612+ part of this folder). So a Fantastic Four folder
+holding #1–70 and #500–611 no longer shows #71–499 as missing. The tab
+never fetches a list itself: if a provider's list isn't cached it says
+"Metron provider list not loaded — run Analyze coverage" (Analyze
+coverage, a batch or the match dialog's hints load it). With no list
+loaded at all it falls back to the old interpolation, labelled
+*inferred*.
+
+### "Not in your library" links from coverage
+
+When you accept coverage and a range maps part of this folder to a
+provider series that has more issues than you own (say #600–611 →
+Fantastic Four (2012), which runs to #645), the series' **Related** tab
+shows it: "Continued by: Fantastic Four (2012) — not in your library ·
+Has #612–645" (*Continued by* when the extra issues all come after the
+range, *Continues* when all before, else *See also*). These are provider
+links: removing one is remembered and it isn't re-created; a Metron
+"associated" link to the same series is kept instead of a duplicate; and
+once that series is in your library the usual relationship suggestion
+takes over.
+
 ### Coverage hints in "Match this series…"
 
 Each series candidate in the match dialog shows how well it covers your
@@ -701,6 +785,33 @@ nothing left to accept". Nothing is written until you accept, unless
 `metadata.coverage_auto_accept` is on and the result is High confidence
 with no conflict with what you set. Your own links and mappings are never
 replaced. Set `metadata.coverage_after_series_apply` to `off` to stop it.
+
+### Refresh this series (guided)
+
+**Fetch metadata → Refresh this series…** in a series' ⋯ menu (admins)
+does the whole refresh in one dialog, step by step:
+
+1. **Series match.** If the series is already matched you see its
+   provider ids — **Keep current match** skips straight on without
+   searching. Otherwise (or with **Search for a match**) the usual match
+   list appears, coverage hints included.
+2. **Coverage.** After a match you applied here, the dialog waits for the
+   coverage check that match queued (usually 1–3 requests). Without one it
+   offers **Analyze coverage** (at most 40 ComicVine, 30 Metron and 30
+   GCD requests). Accept or skip each provider; nothing is saved until
+   you accept.
+3. **Per-issue fetch.** Choose *Only missing or partial* or *All issues*.
+   The dialog shows, per provider, how many issues will be looked up
+   directly through the series' coverage (one request each, no search)
+   and how many will be searched (one or two requests each).
+4. **Review.** When the fetch finishes: the strong / need-review /
+   no-match counts, how many issues each provider answered directly,
+   **Accept all strong** and **Fill missing**, and **Open in Review** for
+   issue-by-issue work (and *Replace all*).
+
+You can close the dialog at any time: reopening it within 24 hours picks
+up where it got to (a fetch still running, or its results). Every step is
+also still available on its own in the same menu and on the Details tab.
 
 ## Files referenced
 

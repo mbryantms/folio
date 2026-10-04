@@ -785,6 +785,14 @@ export type CollectionReportView = Schemas["CollectionReportView"];
 export type MainRunReport = Schemas["MainRunReport"];
 export type SpecialEntry = Schemas["SpecialEntry"];
 export type CollectionIssueEntry = Schemas["CollectionIssueEntry"];
+export type ProviderManifestView = Schemas["ProviderManifestView"];
+export type ManifestProvider = Schemas["ManifestProvider"];
+export type ManifestSeriesRef = Schemas["ManifestSeriesRef"];
+export type ManifestProviderView = Schemas["ManifestProviderView"];
+export type ManifestListing = Schemas["ManifestListing"];
+export type PossiblyMissingIssue = Schemas["PossiblyMissingIssue"];
+export type IssueRefreshOutcome = Schemas["IssueRefreshOutcome"];
+export type IssueRefreshProviderCount = Schemas["IssueRefreshProviderCount"];
 export type BatchCreatedResp = Schemas["BatchCreatedResp"];
 export type BatchStatusResp = Schemas["BatchStatusResp"];
 export type BatchChildRow = Schemas["BatchChildRow"];
@@ -847,11 +855,20 @@ export type HintStatus = Schemas["HintStatus"];
 export type HintSkipReason = Schemas["HintSkipReason"];
 export type CoverageRangeRef = Schemas["CoverageRangeRef"];
 export type AcceptOutcome = Schemas["AcceptOutcome"];
+// Guided "Refresh this series…" (resume state + per-issue fetch estimate)
+export type SeriesRefreshStatusResp = Schemas["SeriesRefreshStatusResp"];
+export type RefreshStep = Schemas["RefreshStep"];
+export type FetchScopeEstimate = Schemas["FetchScopeEstimate"];
+export type ProviderFetchEstimate = Schemas["ProviderFetchEstimate"];
+export type SeriesBatchScope = Schemas["SeriesBatchScope"];
 // WP-7.1 series relationships
 export type RelationshipKind = Schemas["RelationshipKind"];
 export type RelationshipSource = Schemas["RelationshipSource"];
 export type SeriesRelationshipView = Schemas["SeriesRelationshipView"];
 export type SeriesChainEntry = Schemas["SeriesChainEntry"];
+export type ChainSplitView = Schemas["ChainSplitView"];
+export type ChainSplitProviderView = Schemas["ChainSplitProviderView"];
+export type ChainSplitPosition = Schemas["ChainSplitPosition"];
 export type SeriesRelationshipsResp = Schemas["SeriesRelationshipsResp"];
 export type CreateSeriesRelationshipReq =
   Schemas["CreateSeriesRelationshipReq"];

@@ -12,6 +12,7 @@ import {
   Link2,
   Loader2,
   Pencil,
+  ListChecks,
   RefreshCw,
   RotateCcw,
   Settings,
@@ -19,7 +20,7 @@ import {
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -59,6 +60,16 @@ const MetadataMatchDialog = dynamic(
   () =>
     import("@/components/library/MetadataMatchDialog").then(
       (m) => m.MetadataMatchDialog,
+    ),
+  { ssr: false },
+);
+
+// Guided "Refresh this series…" stepper (match → coverage → per-issue
+// fetch → review) — lazy, like the match dialog; it embeds the match form.
+const SeriesRefreshDialog = dynamic(
+  () =>
+    import("@/components/library/SeriesRefreshDialog").then(
+      (m) => m.SeriesRefreshDialog,
     ),
   { ssr: false },
 );
@@ -171,6 +182,21 @@ export function SeriesSettingsMenu({
   // open/close animation still runs on later toggles (G6).
   const [metadataMounted, setMetadataMounted] = useState(false);
   if (metadataDialogOpen && !metadataMounted) setMetadataMounted(true);
+  // Guided refresh (admin only — coverage and the Review page are admin
+  // surfaces). Mounted on first open, kept mounted for the close animation.
+  const [refreshOpen, setRefreshOpen] = useState(false);
+  const [refreshMounted, setRefreshMounted] = useState(false);
+  if (refreshOpen && !refreshMounted) setRefreshMounted(true);
+  // The dialog has no trigger of its own (the menu item unmounts with the
+  // menu), so closing it returns focus to the menu's gear button.
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const returnFocusToTrigger = (e: Event) => {
+    const el = triggerRef.current;
+    if (el?.isConnected) {
+      e.preventDefault();
+      el.focus();
+    }
+  };
   const [offlineOpen, setOfflineOpen] = useState(false);
   const [offlineMounted, setOfflineMounted] = useState(false);
   if (offlineOpen && !offlineMounted) setOfflineMounted(true);
@@ -268,6 +294,7 @@ export function SeriesSettingsMenu({
               small icon (mirrors `IssueSettingsMenu`). Square, matching the
               Read button's height at each breakpoint. */}
           <Button
+            ref={triggerRef}
             variant="outline"
             disabled={busy}
             aria-label="Series actions"
@@ -350,6 +377,12 @@ export function SeriesSettingsMenu({
               icon={<Sparkles className="mr-2 h-4 w-4" />}
               label="Fetch metadata"
             >
+              {isAdmin && (
+                <DropdownMenuItem onSelect={() => setRefreshOpen(true)}>
+                  <ListChecks className="mr-2 h-4 w-4" />
+                  Refresh this series…
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onSelect={() => setMetadataDialogOpen(true)}>
                 <Sparkles className="mr-2 h-4 w-4" />
                 Match this series…
@@ -444,6 +477,16 @@ export function SeriesSettingsMenu({
             series: { id: seriesId, slug: seriesSlug, name: seriesName },
             issueCount,
           }}
+        />
+      )}
+      {refreshMounted && (
+        <SeriesRefreshDialog
+          open={refreshOpen}
+          onOpenChange={setRefreshOpen}
+          seriesSlug={seriesSlug}
+          seriesName={seriesName}
+          libraryId={libraryId}
+          onCloseAutoFocus={returnFocusToTrigger}
         />
       )}
       {metadataMounted && (

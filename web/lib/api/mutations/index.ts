@@ -2032,6 +2032,7 @@ import type {
   UpdatePageReq,
 } from "../types";
 import { TOAST } from "../toast-strings";
+import { staleRemovedSummary } from "@/lib/coverage-ranges";
 
 /** Probe an OIDC issuer's discovery doc before committing it. Returns the
  *  parsed endpoints + scopes_supported. Used by the "Test discovery"
@@ -3049,9 +3050,11 @@ export function acceptSummary(data: AcceptOutcome | null): string {
   if (data.main_written) parts.push("series linked");
   const n = data.ranges_created.length;
   if (n > 0) parts.push(`${n} range${n === 1 ? "" : "s"} added`);
+  const removed = staleRemovedSummary(data);
   if (parts.length === 0)
-    return data.main_note ?? "Nothing to change — already mapped";
-  return `Coverage accepted: ${parts.join(", ")}`;
+    return removed ?? data.main_note ?? "Nothing to change — already mapped";
+  const head = `Coverage accepted: ${parts.join(", ")}`;
+  return removed ? `${head}. ${removed}` : head;
 }
 
 export function useAddExternalIdIssue(seriesSlug: string, issueSlug: string) {

@@ -92,6 +92,10 @@ pub struct SeriesExternalRelationshipView {
     /// Set when the provider series is already matched to a local series
     /// the caller can see (a user link not yet promoted).
     pub local_series: Option<ExternalLocalSeries>,
+    /// Short context for the row, e.g. "Has #612–645" for a link from
+    /// series coverage (a range of this series maps to that provider
+    /// series, which has issues this series lacks).
+    pub note: Option<String>,
 }
 
 /// `POST /series/{slug}/external-relationships` body: "this series `kind`
@@ -232,6 +236,12 @@ fn view_of(
         confidence: r.confidence,
         created_at: r.first_set_at.to_rfc3339(),
         local_series,
+        note: r
+            .evidence
+            .get("note")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned)
+            .filter(|n| !n.trim().is_empty()),
     })
 }
 

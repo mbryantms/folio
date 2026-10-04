@@ -16,7 +16,11 @@ import {
   runsLabel,
   seriesGroups,
 } from "@/components/library/ProviderCoverageAnalysis";
+import { promptHeadline } from "@/components/library/CoverageAfterMatchPrompt";
+import { acceptSummary } from "@/lib/api/mutations";
+import { staleRemovedSummary } from "@/lib/coverage-ranges";
 import type {
+  AcceptOutcome,
   CoverageAnalysisResp,
   CoverageLocalIssue,
   ProviderCoverageView,
@@ -277,5 +281,86 @@ describe("<ProviderCoverageAnalysis>", () => {
     )!;
     expect(upToDate.hasAttribute("disabled")).toBe(true);
     expect(metron.textContent).toContain("Medium confidence");
+  });
+});
+
+/** The owner's FF (2001) case: GCD #42–70 → Fantastic Four (1961). */
+function gcdCleanup(): AcceptOutcome {
+  return {
+    source: "gcd",
+    main_series_id: "11218",
+    main_written: false,
+    main_note: null,
+    ranges_created: [],
+    ranges_skipped: [],
+    stale_ranges: [],
+    stale_ranges_removed: [
+      {
+        id: "r1",
+        provider_series_id: "1482",
+        provider_series_name: "Fantastic Four",
+        declared_year: 1961,
+        range_low: "42",
+        range_high: "70",
+        set_by: "cross_reference",
+        reason: "the proposal puts these issues in another series",
+      },
+    ],
+  };
+}
+
+describe("stale ranges an accept removed", () => {
+  it("summarises them with provider, numbers and target", () => {
+    expect(staleRemovedSummary(gcdCleanup())).toBe(
+      "Removed 1 stale range: GCD #42–70 → Fantastic Four (1961)",
+    );
+    expect(
+      staleRemovedSummary({ ...gcdCleanup(), stale_ranges_removed: [] }),
+    ).toBeNull();
+    // The accept toast leads with it when nothing else changed …
+    expect(acceptSummary(gcdCleanup())).toBe(
+      "Removed 1 stale range: GCD #42–70 → Fantastic Four (1961)",
+    );
+    // … and appends it otherwise.
+    expect(acceptSummary({ ...gcdCleanup(), main_written: true })).toBe(
+      "Coverage accepted: series linked. Removed 1 stale range: GCD #42–70 → Fantastic Four (1961)",
+    );
+  });
+
+  it("asks to accept when only stale ranges would change", () => {
+    const p = provider("gcd", "GCD", "11218", "62349", {
+      current_series_id: "11218",
+      proposed_ranges: [],
+      stale_ranges: gcdCleanup().stale_ranges_removed!,
+      has_changes: true,
+    });
+    expect(promptHeadline(p, 173, false)).toBe(
+      "GCD: 1 stale range no longer fits — accept to remove it?",
+    );
+  });
+
+  it("lists removals from accepts and automatic accepts above the providers", async () => {
+    setViewport(false);
+    const data = {
+      ...analysis([provider("gcd", "GCD", "11218", "62349")]),
+      auto_accepted: [gcdCleanup()],
+    };
+    render(
+      <ProviderCoverageAnalysis
+        data={data}
+        acceptingSource={null}
+        onAccept={() => {}}
+        onRemoveStale={() => {}}
+        removedNotes={["Removed 1 stale range: Metron #1–5 → Daredevil (1998)"]}
+      />,
+    );
+    const list = await screen.findByTestId("coverage-stale-removed");
+    await waitFor(() =>
+      expect(list.textContent).toContain(
+        "Removed 1 stale range: GCD #42–70 → Fantastic Four (1961)",
+      ),
+    );
+    expect(list.textContent).toContain("Metron #1–5 → Daredevil (1998)");
+    expect(list.getAttribute("role")).toBe("status");
   });
 });

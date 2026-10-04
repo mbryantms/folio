@@ -11,6 +11,8 @@
  *   - Match thresholds
  *   - Coverage after series matches (`metadata.coverage_after_series_apply`
  *     + `metadata.coverage_auto_accept`), both live
+ *   - Issue-level refresh (`metadata.issue_refresh_enabled` +
+ *     `metadata.issue_refresh_per_provider_cap`), both live
  *
  * Writes go through the same `PATCH /admin/settings` endpoint the
  * generic settings surface uses; the cron-string flip needs a server
@@ -58,7 +60,13 @@ type RefreshSettings = {
   matchMediumThreshold: number;
   coverageAfterApply: CoverageAfterApply;
   coverageAutoAccept: boolean;
+  issueRefreshEnabled: boolean;
+  issueRefreshCap: number;
 };
+
+/** Default / bounds of `metadata.issue_refresh_per_provider_cap`. */
+export const ISSUE_REFRESH_DEFAULT_CAP = 200;
+export const ISSUE_REFRESH_MAX_CAP = 1000;
 
 function readInitial(values: Record<string, unknown>): RefreshSettings {
   const bool = (k: string, dflt: boolean) =>
@@ -90,6 +98,11 @@ function readInitial(values: Record<string, unknown>): RefreshSettings {
         : "manual_only";
     })(),
     coverageAutoAccept: bool("metadata.coverage_auto_accept", false),
+    issueRefreshEnabled: bool("metadata.issue_refresh_enabled", false),
+    issueRefreshCap: num(
+      "metadata.issue_refresh_per_provider_cap",
+      ISSUE_REFRESH_DEFAULT_CAP,
+    ),
   };
 }
 
@@ -110,7 +123,7 @@ export function SettingsTab() {
     byKey[row.key] = row.value;
   }
   const initial = readInitial(byKey);
-  const formKey = `${initial.enabled ? "1" : "0"}-${initial.cron}-${initial.windowDays}-${initial.staleAfterDays}-${initial.autoApplyThreshold}-${initial.matchMediumThreshold}-${initial.coverageAfterApply}-${initial.coverageAutoAccept ? "1" : "0"}`;
+  const formKey = `${initial.enabled ? "1" : "0"}-${initial.cron}-${initial.windowDays}-${initial.staleAfterDays}-${initial.autoApplyThreshold}-${initial.matchMediumThreshold}-${initial.coverageAfterApply}-${initial.coverageAutoAccept ? "1" : "0"}-${initial.issueRefreshEnabled ? "1" : "0"}-${initial.issueRefreshCap}`;
 
   return (
     <SettingsForm
@@ -157,6 +170,12 @@ export function SettingsForm({
   const [coverageAutoAccept, setCoverageAutoAccept] = React.useState(
     initial.coverageAutoAccept,
   );
+  const [issueRefreshEnabled, setIssueRefreshEnabled] = React.useState(
+    initial.issueRefreshEnabled,
+  );
+  const [issueRefreshCap, setIssueRefreshCap] = React.useState(
+    String(initial.issueRefreshCap),
+  );
 
   const dirty =
     enabled !== initial.enabled ||
@@ -166,7 +185,9 @@ export function SettingsForm({
     Number(autoApply) !== initial.autoApplyThreshold ||
     Number(matchMedium) !== initial.matchMediumThreshold ||
     coverageAfterApply !== initial.coverageAfterApply ||
-    coverageAutoAccept !== initial.coverageAutoAccept;
+    coverageAutoAccept !== initial.coverageAutoAccept ||
+    issueRefreshEnabled !== initial.issueRefreshEnabled ||
+    Number(issueRefreshCap) !== initial.issueRefreshCap;
 
   const handle = (e: React.FormEvent) => {
     e.preventDefault();
@@ -209,6 +230,18 @@ export function SettingsForm({
     }
     if (coverageAutoAccept !== initial.coverageAutoAccept) {
       patch["metadata.coverage_auto_accept"] = coverageAutoAccept;
+    }
+    if (issueRefreshEnabled !== initial.issueRefreshEnabled) {
+      patch["metadata.issue_refresh_enabled"] = issueRefreshEnabled;
+    }
+    const cap = Number(issueRefreshCap);
+    if (
+      Number.isInteger(cap) &&
+      cap >= 1 &&
+      cap <= ISSUE_REFRESH_MAX_CAP &&
+      cap !== initial.issueRefreshCap
+    ) {
+      patch["metadata.issue_refresh_per_provider_cap"] = cap;
     }
     void onSubmit(patch);
   };
@@ -432,6 +465,52 @@ export function SettingsForm({
               are never overwritten.
             </p>
           </div>
+        </div>
+      </section>
+
+      <section className="border-border/40 space-y-3 border-t pt-5">
+        <header className="space-y-1">
+          <h3 className="text-base font-semibold">Issue-level refresh</h3>
+          <p className="text-muted-foreground text-xs">
+            The library refresh and the weekly refresh normally re-check series
+            only. When this is on they also re-fetch stale issues (never synced,
+            or older than &ldquo;Stale after&rdquo;) whose provider series is
+            known from coverage — by direct lookup, no searches. Results land as
+            one batch in Review; nothing is written unless the library&rsquo;s
+            auto-apply rule for strong matches is on.
+          </p>
+        </header>
+        <div className="flex items-center gap-3 pt-1">
+          <Switch
+            id="issue-refresh-enabled"
+            checked={issueRefreshEnabled}
+            onCheckedChange={setIssueRefreshEnabled}
+          />
+          <Label
+            htmlFor="issue-refresh-enabled"
+            className="cursor-pointer text-sm"
+          >
+            Refresh issues too
+          </Label>
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="issue-refresh-cap">Issues per provider per run</Label>
+          <Input
+            id="issue-refresh-cap"
+            type="number"
+            min={1}
+            max={ISSUE_REFRESH_MAX_CAP}
+            value={issueRefreshCap}
+            onChange={(e) => setIssueRefreshCap(e.target.value)}
+            disabled={!issueRefreshEnabled}
+            className="w-32"
+          />
+          <p className="text-muted-foreground text-[11px]">
+            Each issue costs one issue-detail request per provider (cached for
+            24 hours), plus each provider series&rsquo; issue list once a day.
+            Default {ISSUE_REFRESH_DEFAULT_CAP}, at most {ISSUE_REFRESH_MAX_CAP}
+            . Requests are paced by the provider rate limits.
+          </p>
         </div>
       </section>
 

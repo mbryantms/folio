@@ -2401,6 +2401,7 @@ import type {
   RelationshipCatalogue,
   RelationshipSuggestionListView,
   SameUniverseListView,
+  SeriesRefreshStatusResp,
   SeriesRelationshipsResp,
   SuggestionBucket,
   SuggestionStatusFilter,
@@ -2765,6 +2766,29 @@ export function useProviderCoverageAnalysis(
       const state = query.state.data?.state;
       return state === "queued" || state === "running" ? 2_000 : false;
     },
+  });
+}
+
+/**
+ * Guided "Refresh this series…" state (admin only): the step a reopened
+ * dialog resumes at, plus what each step left behind (series run / apply,
+ * coverage job, batch) and the per-issue fetch estimate. `poll` refetches
+ * every 2 s — the stepper turns it on only while it waits for something
+ * the server queues on its own (the coverage check a series apply queues).
+ */
+export function useSeriesRefreshStatus(
+  seriesSlug: string,
+  { enabled = true, poll = false }: { enabled?: boolean; poll?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: queryKeys.seriesRefreshStatus(seriesSlug),
+    queryFn: () =>
+      jsonFetch<SeriesRefreshStatusResp>(
+        `/series/${encodeURIComponent(seriesSlug)}/metadata/refresh-status`,
+      ),
+    enabled: enabled && !!seriesSlug,
+    staleTime: 0,
+    refetchInterval: poll ? 2_000 : false,
   });
 }
 

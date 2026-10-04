@@ -40,6 +40,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use shared::error::{ApiErrorCode, FieldError};
 use shared::pagination::{CursorPage, decode_cursor, encode_cursor};
 use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
@@ -153,6 +154,40 @@ pub struct SeriesChainEntry {
     /// position are alternative branches.
     pub position: i32,
     pub series: SeriesView,
+    /// Provider ranges inside this series: issues a provider files under a
+    /// different provider series ("#600–611 continue as Fantastic Four
+    /// (2012)"). The local series stays one step — membership is
+    /// folder-pinned; these only label the boundary. Ordered by number.
+    pub provider_splits: Vec<ChainSplitView>,
+}
+
+/// A reading-order sub-step from `series_provider_range` (range hygiene).
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct ChainSplitView {
+    pub low: Option<String>,
+    pub high: Option<String>,
+    pub position: relationships::ChainSplitPosition,
+    /// "#600–611".
+    pub numbers: String,
+    /// "continue as" / "begin as" / "are filed as" (singular for one issue).
+    pub verb: String,
+    /// The provider series, "Fantastic Four (2012)".
+    pub target: String,
+    /// `numbers verb target`.
+    pub label: String,
+    /// Every provider filing these numbers under that series.
+    pub providers: Vec<ChainSplitProviderView>,
+    /// A local series (visible to the caller) matched to that provider
+    /// series, when the library has it.
+    pub local_series: Option<super::series_external_relationships::ExternalLocalSeries>,
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct ChainSplitProviderView {
+    pub source: String,
+    pub source_label: String,
+    pub provider_series_id: String,
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -429,6 +464,10 @@ pub async fn list(
     let chain_view: Vec<SeriesChainEntry> = if kept.len() <= 1 {
         Vec::new()
     } else {
+        let mut splits = match chain_split_views(&app, &user, &kept).await {
+            Ok(x) => x,
+            Err(e) => return internal(&e),
+        };
         chain
             .into_iter()
             .filter(|n| kept.contains(&n.series_id))
@@ -436,6 +475,7 @@ pub async fn list(
                 Some(SeriesChainEntry {
                     position: n.position,
                     series: views.get(&n.series_id.to_string())?.clone(),
+                    provider_splits: splits.remove(&n.series_id).unwrap_or_default(),
                 })
             })
             .collect()
@@ -1081,6 +1121,70 @@ pub(crate) async fn arc_tie_ins_handler(
 /// Load `ids` and keep only the series `user` may see: library grant +
 /// age-rating cap, and (for non-admins) not removed. One query for the
 /// rows plus at most one for the grants.
+/// Provider-range sub-steps for the kept chain nodes, with each step's
+/// local holder series resolved through the caller's ACL (a hidden series
+/// is simply not linked).
+async fn chain_split_views(
+    app: &AppState,
+    user: &CurrentUser,
+    kept: &HashSet<Uuid>,
+) -> Result<HashMap<Uuid, Vec<ChainSplitView>>, sea_orm::DbErr> {
+    let ids: Vec<Uuid> = kept.iter().copied().collect();
+    let splits = relationships::chain_splits(&app.db, &ids).await?;
+    let holders: HashSet<Uuid> = splits
+        .values()
+        .flatten()
+        .flat_map(|s| s.local_series_ids.iter().copied())
+        .collect();
+    let visible = visible_series(app, user, holders).await?;
+    Ok(splits
+        .into_iter()
+        .map(|(sid, steps)| {
+            let views = steps
+                .into_iter()
+                .map(|s| {
+                    let local_series = s
+                        .local_series_ids
+                        .iter()
+                        .find_map(|id| visible.get(id))
+                        .map(
+                            |m| super::series_external_relationships::ExternalLocalSeries {
+                                id: m.id.to_string(),
+                                slug: m.slug.clone(),
+                                name: m.name.clone(),
+                                year: m.year,
+                            },
+                        );
+                    ChainSplitView {
+                        label: s.label(),
+                        low: s.low,
+                        high: s.high,
+                        position: s.position,
+                        numbers: s.numbers,
+                        verb: s.verb.to_owned(),
+                        target: s.target,
+                        providers: s
+                            .providers
+                            .into_iter()
+                            .map(|p| ChainSplitProviderView {
+                                source_label: crate::metadata::identifier::Source::from_str(
+                                    &p.source,
+                                )
+                                .map_or_else(|_| p.source.clone(), |x| x.label().to_owned()),
+                                source: p.source,
+                                provider_series_id: p.provider_series_id,
+                                url: p.url,
+                            })
+                            .collect(),
+                        local_series,
+                    }
+                })
+                .collect();
+            (sid, views)
+        })
+        .collect())
+}
+
 async fn visible_series(
     app: &AppState,
     user: &CurrentUser,

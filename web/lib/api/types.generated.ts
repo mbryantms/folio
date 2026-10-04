@@ -4592,6 +4592,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/metadata/refresh-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["metadata_series_refresh_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/metadata/resume": {
         parameters: {
             query?: never;
@@ -5110,6 +5126,11 @@ export interface components {
         };
         /** @description What an accept wrote. */
         AcceptOutcome: {
+            /**
+             * @description "Not in your library" links written or refreshed: ranges whose
+             *     provider series has issues this folder lacks (Related tab).
+             */
+            external_links?: number;
             /** @description Why the main id wasn't written, if it wasn't. */
             main_note?: string | null;
             main_series_id?: string | null;
@@ -5122,9 +5143,13 @@ export interface components {
             source: string;
             /**
              * @description Existing automated ranges the accepted proposal no longer supports
-             *     (reported, never deleted).
+             *     that were **kept** — the accept didn't put the proposal's main in
+             *     place (e.g. your own link differs), so removing them would leave
+             *     those issues unmapped.
              */
             stale_ranges: components["schemas"]["CoverageRangeRef"][];
+            /** @description Stale automated ranges this accept deleted (never a `user` row). */
+            stale_ranges_removed?: components["schemas"]["CoverageRangeRef"][];
         };
         AcceptRelationshipSuggestionReq: {
             kind?: components["schemas"]["RelationshipKind"] | null;
@@ -5628,7 +5653,7 @@ export interface components {
             status: string;
         };
         /**
-         * @description Response for the batch-create endpoints. Mirrors [`RefreshOutcome`] plus the
+         * @description Response for the batch-create endpoints. Mirrors [`refresh::RefreshOutcome`] plus the
          *     new `batch_id` the caller deep-links the Review queue to.
          */
         BatchCreatedResp: {
@@ -6347,6 +6372,34 @@ export interface components {
              */
             total_matched: number;
         };
+        /**
+         * @description Where a provider range sits within its local series' issue numbers.
+         * @enum {string}
+         */
+        ChainSplitPosition: "end" | "start" | "middle";
+        ChainSplitProviderView: {
+            provider_series_id: string;
+            source: string;
+            source_label: string;
+            url?: string | null;
+        };
+        /** @description A reading-order sub-step from `series_provider_range` (range hygiene). */
+        ChainSplitView: {
+            high?: string | null;
+            /** @description `numbers verb target`. */
+            label: string;
+            local_series?: components["schemas"]["ExternalLocalSeries"] | null;
+            low?: string | null;
+            /** @description "#600–611". */
+            numbers: string;
+            position: components["schemas"]["ChainSplitPosition"];
+            /** @description Every provider filing these numbers under that series. */
+            providers: components["schemas"]["ChainSplitProviderView"][];
+            /** @description The provider series, "Fantastic Four (2012)". */
+            target: string;
+            /** @description "continue as" / "begin as" / "are filed as" (singular for one issue). */
+            verb: string;
+        };
         ClearHistoryResp: {
             /** Format: int64 */
             deleted: number;
@@ -6399,10 +6452,14 @@ export interface components {
          *     The denominator (`total_expected`) comes from `series.total_issues`, which
          *     the scanner resolves from a `series.json` sidecar or the max ComicInfo
          *     `<Count>`. series.json carries only the *count*, never a per-issue
-         *     manifest — so interior `missing` numbers are *inferred* by interpolating
-         *     the integer run between the lowest and highest owned issue. `expected_source`
-         *     records this provenance; a future provider-backed exact manifest will flip
-         *     it to `"provider_manifest"` and make `missing` exact.
+         *     manifest — so without provider data interior `missing` numbers are
+         *     *inferred* by interpolating the integer run between the lowest and highest
+         *     owned issue (`expected_source = "series_total"`). When the series has
+         *     accepted provider coverage and those providers' issue lists are cached,
+         *     the expected set comes from them instead
+         *     ([`crate::metadata::issue_manifest`], `expected_source =
+         *     "provider_manifest"`): `missing` is what every such provider lists and
+         *     no local issue carries, `possibly_missing` what only some list.
          */
         CollectionReportView: {
             /**
@@ -6417,8 +6474,9 @@ export interface components {
              */
             completeness_state: string;
             /**
-             * @description `"series_total"` today (count-only). `"provider_manifest"` once an
-             *     exact provider issue list backs the report.
+             * @description `"series_total"` (count-only; `missing` interpolated) or
+             *     `"provider_manifest"` (`missing` from the providers' issue lists —
+             *     see [`Self::manifest`]).
              */
             expected_source: string;
             /**
@@ -6430,6 +6488,7 @@ export interface components {
              */
             issues: components["schemas"]["CollectionIssueEntry"][];
             main_run: components["schemas"]["MainRunReport"];
+            manifest?: components["schemas"]["ProviderManifestView"] | null;
             /**
              * @description Annuals, one-shots, TPBs, point issues (`#2.5`), and unnumbered files —
              *     listed but excluded from the integer gap math.
@@ -6573,6 +6632,13 @@ export interface components {
             source: string;
             /** @description Series name / "name #number" for the column subtitle. */
             title?: string | null;
+            /**
+             * @description Series coverage supplied this candidate: the provider series the
+             *     issue is assigned to lists it by number + cover date. The compare
+             *     view defaults to it per provider; score and bucket are the
+             *     matcher's.
+             */
+            via_coverage: boolean;
         };
         /**
          * @description One condition row in a filter DSL. `group_id` always 0 in v1; reserved
@@ -6704,6 +6770,11 @@ export interface components {
         };
         /** @description An existing range row the proposal disagrees with. */
         CoverageRangeRef: {
+            /**
+             * Format: int32
+             * @description The mapped provider series' start year, when known.
+             */
+            declared_year?: number | null;
             id: string;
             provider_series_id: string;
             provider_series_name?: string | null;
@@ -7538,8 +7609,8 @@ export interface components {
             source_label: string;
             /**
              * @description Automated range mappings the provider series now covers itself —
-             *     likely stale (e.g. after a re-match). Reported only; never removed
-             *     automatically.
+             *     likely stale (e.g. after a re-match). The detector only reports
+             *     them; accepting this provider's series coverage deletes them.
              */
             stale_ranges: components["schemas"]["ProviderRangeRow"][];
             status: components["schemas"]["SourceStatus"];
@@ -8225,6 +8296,16 @@ export interface components {
          * @enum {string}
          */
         FallbackReason: "no_target" | "list_unavailable" | "not_listed" | "date_conflict" | "detail_unavailable" | "rejected_by_matcher";
+        FetchScopeEstimate: {
+            /**
+             * Format: int64
+             * @description Issues the batch would search.
+             */
+            issues: number;
+            /** @description Per enabled provider (ComicVine, Metron, GCD order). */
+            providers: components["schemas"]["ProviderFetchEstimate"][];
+            scope: components["schemas"]["SeriesBatchScope"];
+        };
         /**
          * @description All filterable fields. Per-field metadata (kind, allowed ops, SQL
          *     column) lives in [`super::registry`]. Adding a field is a two-step:
@@ -8672,6 +8753,34 @@ export interface components {
             /** Format: int32 */
             series_year?: number | null;
         };
+        /** @description What an issue-level refresh did. */
+        IssueRefreshOutcome: {
+            /**
+             * Format: uuid
+             * @description The Review batch the runs belong to; `None` when nothing was
+             *     selected.
+             */
+            batch_id?: string | null;
+            /** @description `false` when `metadata.issue_refresh_enabled` is off (nothing ran). */
+            enabled: boolean;
+            /** @description Issues selected (each asks only the providers listed for it). */
+            issues_selected: number;
+            jobs_coalesced: number;
+            jobs_enqueued: number;
+            jobs_failed: number;
+            /** @description Issues per provider (≤ cap each). */
+            per_provider: components["schemas"]["IssueRefreshProviderCount"][];
+        };
+        /** @description Issues one provider was given in an issue-level refresh run. */
+        IssueRefreshProviderCount: {
+            /**
+             * Format: int32
+             * @description The per-provider cap of this run.
+             */
+            cap: number;
+            issues: number;
+            source: string;
+        };
         IssueSearchHit: components["schemas"]["IssueSummaryView"] & {
             series_name: string;
             /**
@@ -9039,10 +9148,17 @@ export interface components {
              */
             min?: number | null;
             /**
-             * @description Integers in `min..=max` not owned (e.g. `[3]`). **Inferred** — see
+             * @description Main-run integers not owned (e.g. `[3]`). Interpolated over
+             *     `min..=max` for `series_total`; exact (every provider with accepted
+             *     coverage lists them) for `provider_manifest` — see
              *     [`CollectionReportView::expected_source`].
              */
             missing: number[];
+            /**
+             * @description `provider_manifest` only: main-run integers some providers list and
+             *     others don't (or can't confirm). Empty otherwise.
+             */
+            possibly_missing: number[];
             /** @description Owned main-run `sort_number`s, ascending (e.g. `[0.0, 1.0, 2.0, 4.0]`). */
             present: number[];
             /** @description `number_raw` labels aligned 1:1 with [`Self::present`] for display. */
@@ -9050,9 +9166,44 @@ export interface components {
             /**
              * Format: int64
              * @description Count expected beyond `max` when `total_expected > max` (e.g. own up to
-             *     #4 with `total_expected = 6` → `2`).
+             *     #4 with `total_expected = 6` → `2`). Always 0 for `provider_manifest`
+             *     (numbers past `max` are in `missing`).
              */
             trailing_missing: number;
+        };
+        /**
+         * @description How one provider sees a number.
+         * @enum {string}
+         */
+        ManifestListing: "listed" | "not_listed" | "not_loaded";
+        /** @description One provider with accepted coverage. */
+        ManifestProvider: {
+            /** @description Distinct numbers its segments list (0 when not loaded). */
+            listed_count: number;
+            /** @description Every segment's list is cached (only then does it vote). */
+            loaded: boolean;
+            series: components["schemas"]["ManifestSeriesRef"][];
+            source: string;
+        };
+        /** @description One provider's view of a possibly-missing number. */
+        ManifestProviderView: {
+            listing: components["schemas"]["ManifestListing"];
+            source: string;
+        };
+        /** @description One provider series a provider's expected set is read from. */
+        ManifestSeriesRef: {
+            /** @description The issue list is in the 24 h cache. */
+            loaded: boolean;
+            /** @description From the cached list (or the range row). */
+            name?: string | null;
+            provider_series_id: string;
+            range_high?: string | null;
+            /** @description The range bounds (canonical numbers) for a range segment. */
+            range_low?: string | null;
+            /** @description `true` for a `series_provider_range` segment. */
+            via_range: boolean;
+            /** Format: int32 */
+            year?: number | null;
         };
         ManualMatchReq: {
             issue_id: string;
@@ -9856,6 +10007,15 @@ export interface components {
             view_id: string;
         };
         /**
+         * @description A number some (not all) providers with accepted coverage list, not
+         *     owned.
+         */
+        PossiblyMissingIssue: {
+            /** @description As the provider writes it ("½", "605.1"). */
+            number: string;
+            providers: components["schemas"]["ManifestProviderView"][];
+        };
+        /**
          * @description `PATCH /me/preferences` request body. Every field is optional; when a key
          *     is absent the prior value is preserved. To clear a stored value, send
          *     `null` (where the type allows).
@@ -9995,7 +10155,10 @@ export interface components {
             current_series_id?: string | null;
             current_series_set_by?: string | null;
             error?: string | null;
-            /** @description Accepting would change something (main id or new ranges). */
+            /**
+             * @description Accepting would change something (main id, new ranges, or stale
+             *     automated ranges to remove).
+             */
             has_changes: boolean;
             main_series_id?: string | null;
             proposed_ranges: components["schemas"]["ProposedRange"][];
@@ -10025,11 +10188,47 @@ export interface components {
             /** @description Specials assigned to a non-main series (can't be ranged). */
             unranged_specials: string[];
         };
+        ProviderFetchEstimate: {
+            /**
+             * Format: int64
+             * @description Issues with a provider series (a covering range or the series id):
+             *     looked up directly — one detail request, no search — unless the
+             *     listing doesn't hold them (then they fall back to a search).
+             */
+            direct: number;
+            /**
+             * Format: int64
+             * @description Issues without one: a provider search each (1–2 requests).
+             */
+            search: number;
+            source: string;
+        };
         /** @description The most recent provider error, for the admin card. */
         ProviderLastError: {
             /** Format: date-time */
             at: string;
             message: string;
+        };
+        /** @description The provider manifest behind a collection report. */
+        ProviderManifestView: {
+            /**
+             * @description Numbers every provider with accepted coverage lists and no local
+             *     issue carries, in number order.
+             */
+            missing: string[];
+            /** @description e.g. "Metron provider list not loaded — run Analyze coverage". */
+            note?: string | null;
+            /**
+             * @description Numbers only some of them list (or a not-loaded provider can't
+             *     confirm), with each provider's view.
+             */
+            possibly_missing: components["schemas"]["PossiblyMissingIssue"][];
+            providers: components["schemas"]["ManifestProvider"][];
+            /**
+             * @description `true` when at least one provider's lists are loaded, i.e. the
+             *     report's `expected_source` is `provider_manifest`.
+             */
+            used: boolean;
         };
         /**
          * @description Per-provider remaining-quota view for the match dialog (audit B13).
@@ -10417,7 +10616,37 @@ export interface components {
         RecentIssuesView: {
             items: components["schemas"]["IssueSummaryView"][];
         };
+        RefreshBatch: {
+            /** Format: uuid */
+            batch_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int32 */
+            items_total: number;
+            /**
+             * Format: int64
+             * @description Children still queued / searching / parked on quota.
+             */
+            unfinished: number;
+        };
+        RefreshCoverageJob: {
+            /** Format: date-time */
+            finished_at?: string | null;
+            job_id: string;
+            /** Format: date-time */
+            requested_at: string;
+            /** @description Providers the job analyses (a seeded job: only the matched ones). */
+            sources: string[];
+            state: components["schemas"]["CoverageJobState"];
+            trigger: components["schemas"]["CoverageTrigger"];
+        };
         RefreshLibraryResp: {
+            /**
+             * @description The opt-in issue-level refresh (`metadata.issue_refresh_enabled`):
+             *     stale covered issues re-fetched by direct lookup into a Review
+             *     batch. `enabled: false` when the setting is off.
+             */
+            issue_refresh: components["schemas"]["IssueRefreshOutcome"];
             jobs_coalesced: number;
             jobs_enqueued: number;
             jobs_failed: number;
@@ -10446,6 +10675,18 @@ export interface components {
         RefreshLogListView: {
             items: components["schemas"]["RefreshLogEntryView"][];
         };
+        RefreshRun: {
+            /** Format: uuid */
+            run_id: string;
+            /** Format: date-time */
+            started_at: string;
+            status: string;
+        };
+        /**
+         * @description The guided flow's steps, in order.
+         * @enum {string}
+         */
+        RefreshStep: "match" | "coverage" | "fetch" | "review";
         RegenerateResp: {
             enqueued: number;
         };
@@ -11177,6 +11418,15 @@ export interface components {
             source: components["schemas"]["RelationshipSource"];
             to_range?: string | null;
         };
+        /**
+         * @description `POST /series/{slug}/metadata/batch` — fan out a per-issue metadata search
+         *     over every active issue in the series, grouped under one `metadata_batch`
+         *     so progress + review happen in one place. Children run as `manual` (held
+         *     for review, never auto-applied).
+         *     Which issues a series metadata batch fans out over.
+         * @enum {string}
+         */
+        SeriesBatchScope: "all" | "incomplete";
         /** @description One step of the reading-order chain. */
         SeriesChainEntry: {
             /**
@@ -11186,6 +11436,13 @@ export interface components {
              *     position are alternative branches.
              */
             position: number;
+            /**
+             * @description Provider ranges inside this series: issues a provider files under a
+             *     different provider series ("#600–611 continue as Fantastic Four
+             *     (2012)"). The local series stays one step — membership is
+             *     folder-pinned; these only label the boundary. Ordered by number.
+             */
+            provider_splits: components["schemas"]["ChainSplitView"][];
             series: components["schemas"]["SeriesView"];
         };
         /** @description How well one series candidate covers the local issues. */
@@ -11259,6 +11516,12 @@ export interface components {
             local_series?: components["schemas"]["ExternalLocalSeries"] | null;
             /** @description The provider's series name (falls back to the id). */
             name: string;
+            /**
+             * @description Short context for the row, e.g. "Has #612–645" for a link from
+             *     series coverage (a range of this series maps to that provider
+             *     series, which has issues this series lacks).
+             */
+            note?: string | null;
             provider_series_id: string;
             qualifier?: components["schemas"]["RelationshipQualifier"] | null;
             qualifier_label?: string | null;
@@ -11283,6 +11546,19 @@ export interface components {
              *     the `COUNT(*)` cost on every page fetch.
              */
             total?: number | null;
+        };
+        SeriesMatchState: {
+            /**
+             * Format: date-time
+             * @description When a series candidate was last applied, if inside the window.
+             */
+            applied_at?: string | null;
+            latest_run?: components["schemas"]["RefreshRun"] | null;
+            /**
+             * @description The series' provider ids (`external_ids`) — a non-empty list is a
+             *     confirmed match the user may keep.
+             */
+            links: components["schemas"]["SeriesProviderLink"][];
         };
         /**
          * @description Per-user, server-computed read progress for the whole series. Sidesteps
@@ -11313,6 +11589,12 @@ export interface components {
              */
             total: number;
         };
+        SeriesProviderLink: {
+            external_id: string;
+            /** @description `user` | `provider:<source>` | … (`external_ids.set_by`). */
+            set_by: string;
+            source: string;
+        };
         /** @description Portable identity for a series. */
         SeriesRef: {
             library_slug?: string | null;
@@ -11321,6 +11603,25 @@ export interface components {
             series_name?: string | null;
             /** Format: int32 */
             series_year?: number | null;
+        };
+        SeriesRefreshStatusResp: {
+            batch?: components["schemas"]["RefreshBatch"] | null;
+            coverage?: components["schemas"]["RefreshCoverageJob"] | null;
+            /**
+             * @description `metadata.coverage_after_series_apply` (`off` | `manual_only` |
+             *     `all`): whether a match applied in step 1 queues the analysis
+             *     itself, or step 2 has to run it.
+             */
+            coverage_after_series_apply: string;
+            /**
+             * @description Provider-call estimate for the per-issue step, one entry per batch
+             *     scope (`all`, then `incomplete`).
+             */
+            fetch_estimate: components["schemas"]["FetchScopeEstimate"][];
+            /** @description Where a reopened dialog resumes (see the module docs for the rule). */
+            resume_step: components["schemas"]["RefreshStep"];
+            series_id: string;
+            series_match: components["schemas"]["SeriesMatchState"];
         };
         /**
          * @description One direct relationship, from the requested series' point of view:
@@ -22428,6 +22729,41 @@ export interface operations {
             };
             /** @description provider error */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_series_refresh_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesRefreshStatusResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

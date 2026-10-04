@@ -10565,6 +10565,38 @@
         }
       }
     },
+    "/api/series/{slug}/metadata/refresh-status": {
+      "get": {
+        "operationId": "metadata_series_refresh_status",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesRefreshStatusResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/metadata/resume": {
       "post": {
         "operationId": "metadata_resume_series",
@@ -11884,6 +11916,11 @@
           "stale_ranges"
         ],
         "properties": {
+          "external_links": {
+            "type": "integer",
+            "description": "\"Not in your library\" links written or refreshed: ranges whose\nprovider series has issues this folder lacks (Related tab).",
+            "minimum": 0
+          },
           "main_note": {
             "type": [
               "string",
@@ -11923,7 +11960,14 @@
             "items": {
               "$ref": "#/components/schemas/CoverageRangeRef"
             },
-            "description": "Existing automated ranges the accepted proposal no longer supports\n(reported, never deleted)."
+            "description": "Existing automated ranges the accepted proposal no longer supports\nthat were **kept** — the accept didn't put the proposal's main in\nplace (e.g. your own link differs), so removing them would leave\nthose issues unmapped."
+          },
+          "stale_ranges_removed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageRangeRef"
+            },
+            "description": "Stale automated ranges this accept deleted (never a `user` row)."
           }
         }
       },
@@ -13174,7 +13218,7 @@
       },
       "BatchCreatedResp": {
         "type": "object",
-        "description": "Response for the batch-create endpoints. Mirrors [`RefreshOutcome`] plus the\nnew `batch_id` the caller deep-links the Review queue to.",
+        "description": "Response for the batch-create endpoints. Mirrors [`refresh::RefreshOutcome`] plus the\nnew `batch_id` the caller deep-links the Review queue to.",
         "required": [
           "batch_id",
           "items_total",
@@ -14789,6 +14833,103 @@
           }
         }
       },
+      "ChainSplitPosition": {
+        "type": "string",
+        "description": "Where a provider range sits within its local series' issue numbers.",
+        "enum": [
+          "end",
+          "start",
+          "middle"
+        ]
+      },
+      "ChainSplitProviderView": {
+        "type": "object",
+        "required": [
+          "source",
+          "source_label",
+          "provider_series_id"
+        ],
+        "properties": {
+          "provider_series_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ChainSplitView": {
+        "type": "object",
+        "description": "A reading-order sub-step from `series_provider_range` (range hygiene).",
+        "required": [
+          "position",
+          "numbers",
+          "verb",
+          "target",
+          "label",
+          "providers"
+        ],
+        "properties": {
+          "high": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "description": "`numbers verb target`."
+          },
+          "local_series": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExternalLocalSeries",
+                "description": "A local series (visible to the caller) matched to that provider\nseries, when the library has it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "low": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "numbers": {
+            "type": "string",
+            "description": "\"#600–611\"."
+          },
+          "position": {
+            "$ref": "#/components/schemas/ChainSplitPosition"
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChainSplitProviderView"
+            },
+            "description": "Every provider filing these numbers under that series."
+          },
+          "target": {
+            "type": "string",
+            "description": "The provider series, \"Fantastic Four (2012)\"."
+          },
+          "verb": {
+            "type": "string",
+            "description": "\"continue as\" / \"begin as\" / \"are filed as\" (singular for one issue)."
+          }
+        }
+      },
       "ClearHistoryResp": {
         "type": "object",
         "required": [
@@ -14928,7 +15069,7 @@
       },
       "CollectionReportView": {
         "type": "object",
-        "description": "Collection-completeness report for a series: how many issues are owned\nversus expected, and **which** main-run issue numbers are missing.\n\nThe denominator (`total_expected`) comes from `series.total_issues`, which\nthe scanner resolves from a `series.json` sidecar or the max ComicInfo\n`<Count>`. series.json carries only the *count*, never a per-issue\nmanifest — so interior `missing` numbers are *inferred* by interpolating\nthe integer run between the lowest and highest owned issue. `expected_source`\nrecords this provenance; a future provider-backed exact manifest will flip\nit to `\"provider_manifest\"` and make `missing` exact.",
+        "description": "Collection-completeness report for a series: how many issues are owned\nversus expected, and **which** main-run issue numbers are missing.\n\nThe denominator (`total_expected`) comes from `series.total_issues`, which\nthe scanner resolves from a `series.json` sidecar or the max ComicInfo\n`<Count>`. series.json carries only the *count*, never a per-issue\nmanifest — so without provider data interior `missing` numbers are\n*inferred* by interpolating the integer run between the lowest and highest\nowned issue (`expected_source = \"series_total\"`). When the series has\naccepted provider coverage and those providers' issue lists are cached,\nthe expected set comes from them instead\n([`crate::metadata::issue_manifest`], `expected_source =\n\"provider_manifest\"`): `missing` is what every such provider lists and\nno local issue carries, `possibly_missing` what only some list.",
         "required": [
           "total_owned",
           "completeness_state",
@@ -14952,7 +15093,7 @@
           },
           "expected_source": {
             "type": "string",
-            "description": "`\"series_total\"` today (count-only). `\"provider_manifest\"` once an\nexact provider issue list backs the report."
+            "description": "`\"series_total\"` (count-only; `missing` interpolated) or\n`\"provider_manifest\"` (`missing` from the providers' issue lists —\nsee [`Self::manifest`])."
           },
           "issues": {
             "type": "array",
@@ -14963,6 +15104,17 @@
           },
           "main_run": {
             "$ref": "#/components/schemas/MainRunReport"
+          },
+          "manifest": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProviderManifestView",
+                "description": "The provider manifest when the series has accepted coverage for\nComicVine / Metron / GCD — also when no list is cached yet (then\n`used` is false and `note` says to run Analyze coverage). Read from\nthe 24 h issue-list cache only; the report never calls a provider."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "specials": {
             "type": "array",
@@ -15281,7 +15433,8 @@
           "ordinal",
           "external_id",
           "bucket",
-          "score"
+          "score",
+          "via_coverage"
         ],
         "properties": {
           "bucket": {
@@ -15314,6 +15467,10 @@
               "null"
             ],
             "description": "Series name / \"name #number\" for the column subtitle."
+          },
+          "via_coverage": {
+            "type": "boolean",
+            "description": "Series coverage supplied this candidate: the provider series the\nissue is assigned to lists it by number + cover date. The compare\nview defaults to it per provider; score and bucket are the\nmatcher's."
           }
         }
       },
@@ -15706,6 +15863,14 @@
           "reason"
         ],
         "properties": {
+          "declared_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The mapped provider series' start year, when known."
+          },
           "id": {
             "type": "string"
           },
@@ -17972,7 +18137,7 @@
             "items": {
               "$ref": "#/components/schemas/ProviderRangeRow"
             },
-            "description": "Automated range mappings the provider series now covers itself —\nlikely stale (e.g. after a re-match). Reported only; never removed\nautomatically."
+            "description": "Automated range mappings the provider series now covers itself —\nlikely stale (e.g. after a re-match). The detector only reports\nthem; accepting this provider's series coverage deletes them."
           },
           "status": {
             "$ref": "#/components/schemas/SourceStatus"
@@ -19922,6 +20087,31 @@
           "rejected_by_matcher"
         ]
       },
+      "FetchScopeEstimate": {
+        "type": "object",
+        "required": [
+          "scope",
+          "issues",
+          "providers"
+        ],
+        "properties": {
+          "issues": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues the batch would search."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderFetchEstimate"
+            },
+            "description": "Per enabled provider (ComicVine, Metron, GCD order)."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SeriesBatchScope"
+          }
+        }
+      },
       "Field": {
         "type": "string",
         "description": "All filterable fields. Per-field metadata (kind, allowed ops, SQL\ncolumn) lives in [`super::registry`]. Adding a field is a two-step:\nadd a variant here + a registry entry. The OpenAPI schema mirrors this\nenum so the M5 field-picker can iterate variants without a separate\nJSON constant.",
@@ -20993,6 +21183,80 @@
           }
         }
       },
+      "IssueRefreshOutcome": {
+        "type": "object",
+        "description": "What an issue-level refresh did.",
+        "required": [
+          "enabled",
+          "issues_selected",
+          "per_provider",
+          "jobs_enqueued",
+          "jobs_coalesced",
+          "jobs_failed"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The Review batch the runs belong to; `None` when nothing was\nselected."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "`false` when `metadata.issue_refresh_enabled` is off (nothing ran)."
+          },
+          "issues_selected": {
+            "type": "integer",
+            "description": "Issues selected (each asks only the providers listed for it).",
+            "minimum": 0
+          },
+          "jobs_coalesced": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "jobs_enqueued": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "jobs_failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "per_provider": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueRefreshProviderCount"
+            },
+            "description": "Issues per provider (≤ cap each)."
+          }
+        }
+      },
+      "IssueRefreshProviderCount": {
+        "type": "object",
+        "description": "Issues one provider was given in an issue-level refresh run.",
+        "required": [
+          "source",
+          "issues",
+          "cap"
+        ],
+        "properties": {
+          "cap": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The per-provider cap of this run.",
+            "minimum": 0
+          },
+          "issues": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
       "IssueSearchHit": {
         "allOf": [
           {
@@ -21741,6 +22005,7 @@
           "present",
           "present_labels",
           "missing",
+          "possibly_missing",
           "trailing_missing"
         ],
         "properties": {
@@ -21765,7 +22030,15 @@
               "type": "integer",
               "format": "int64"
             },
-            "description": "Integers in `min..=max` not owned (e.g. `[3]`). **Inferred** — see\n[`CollectionReportView::expected_source`]."
+            "description": "Main-run integers not owned (e.g. `[3]`). Interpolated over\n`min..=max` for `series_total`; exact (every provider with accepted\ncoverage lists them) for `provider_manifest` — see\n[`CollectionReportView::expected_source`]."
+          },
+          "possibly_missing": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "`provider_manifest` only: main-run integers some providers list and\nothers don't (or can't confirm). Empty otherwise."
           },
           "present": {
             "type": "array",
@@ -21785,7 +22058,111 @@
           "trailing_missing": {
             "type": "integer",
             "format": "int64",
-            "description": "Count expected beyond `max` when `total_expected > max` (e.g. own up to\n#4 with `total_expected = 6` → `2`)."
+            "description": "Count expected beyond `max` when `total_expected > max` (e.g. own up to\n#4 with `total_expected = 6` → `2`). Always 0 for `provider_manifest`\n(numbers past `max` are in `missing`)."
+          }
+        }
+      },
+      "ManifestListing": {
+        "type": "string",
+        "description": "How one provider sees a number.",
+        "enum": [
+          "listed",
+          "not_listed",
+          "not_loaded"
+        ]
+      },
+      "ManifestProvider": {
+        "type": "object",
+        "description": "One provider with accepted coverage.",
+        "required": [
+          "source",
+          "loaded",
+          "series",
+          "listed_count"
+        ],
+        "properties": {
+          "listed_count": {
+            "type": "integer",
+            "description": "Distinct numbers its segments list (0 when not loaded).",
+            "minimum": 0
+          },
+          "loaded": {
+            "type": "boolean",
+            "description": "Every segment's list is cached (only then does it vote)."
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestSeriesRef"
+            }
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
+      "ManifestProviderView": {
+        "type": "object",
+        "description": "One provider's view of a possibly-missing number.",
+        "required": [
+          "source",
+          "listing"
+        ],
+        "properties": {
+          "listing": {
+            "$ref": "#/components/schemas/ManifestListing"
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
+      "ManifestSeriesRef": {
+        "type": "object",
+        "description": "One provider series a provider's expected set is read from.",
+        "required": [
+          "provider_series_id",
+          "via_range",
+          "loaded"
+        ],
+        "properties": {
+          "loaded": {
+            "type": "boolean",
+            "description": "The issue list is in the 24 h cache."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "From the cached list (or the range row)."
+          },
+          "provider_series_id": {
+            "type": "string"
+          },
+          "range_high": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "range_low": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The range bounds (canonical numbers) for a range segment."
+          },
+          "via_range": {
+            "type": "boolean",
+            "description": "`true` for a `series_provider_range` segment."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
           }
         }
       },
@@ -23512,6 +23889,26 @@
           }
         }
       },
+      "PossiblyMissingIssue": {
+        "type": "object",
+        "description": "A number some (not all) providers with accepted coverage list, not\nowned.",
+        "required": [
+          "number",
+          "providers"
+        ],
+        "properties": {
+          "number": {
+            "type": "string",
+            "description": "As the provider writes it (\"½\", \"605.1\")."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestProviderView"
+            }
+          }
+        }
+      },
       "PreferencesReq": {
         "type": "object",
         "description": "`PATCH /me/preferences` request body. Every field is optional; when a key\nis absent the prior value is preserved. To clear a stored value, send\n`null` (where the type allows).",
@@ -23935,7 +24332,7 @@
           },
           "has_changes": {
             "type": "boolean",
-            "description": "Accepting would change something (main id or new ranges)."
+            "description": "Accepting would change something (main id, new ranges, or stale\nautomated ranges to remove)."
           },
           "main_series_id": {
             "type": [
@@ -24000,6 +24397,29 @@
           }
         }
       },
+      "ProviderFetchEstimate": {
+        "type": "object",
+        "required": [
+          "source",
+          "direct",
+          "search"
+        ],
+        "properties": {
+          "direct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues with a provider series (a covering range or the series id):\nlooked up directly — one detail request, no search — unless the\nlisting doesn't hold them (then they fall back to a search)."
+          },
+          "search": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues without one: a provider search each (1–2 requests)."
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
       "ProviderLastError": {
         "type": "object",
         "description": "The most recent provider error, for the admin card.",
@@ -24014,6 +24434,49 @@
           },
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "ProviderManifestView": {
+        "type": "object",
+        "description": "The provider manifest behind a collection report.",
+        "required": [
+          "used",
+          "providers",
+          "missing",
+          "possibly_missing"
+        ],
+        "properties": {
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Numbers every provider with accepted coverage lists and no local\nissue carries, in number order."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "e.g. \"Metron provider list not loaded — run Analyze coverage\"."
+          },
+          "possibly_missing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PossiblyMissingIssue"
+            },
+            "description": "Numbers only some of them list (or a not-loaded provider can't\nconfirm), with each provider's view."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestProvider"
+            }
+          },
+          "used": {
+            "type": "boolean",
+            "description": "`true` when at least one provider's lists are loaded, i.e. the\nreport's `expected_source` is `provider_manifest`."
           }
         }
       },
@@ -24907,6 +25370,73 @@
           }
         }
       },
+      "RefreshBatch": {
+        "type": "object",
+        "required": [
+          "batch_id",
+          "created_at",
+          "items_total",
+          "unfinished"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "items_total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "unfinished": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Children still queued / searching / parked on quota."
+          }
+        }
+      },
+      "RefreshCoverageJob": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "state",
+          "trigger",
+          "requested_at",
+          "sources"
+        ],
+        "properties": {
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Providers the job analyses (a seeded job: only the matched ones)."
+          },
+          "state": {
+            "$ref": "#/components/schemas/CoverageJobState"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/CoverageTrigger"
+          }
+        }
+      },
       "RefreshLibraryResp": {
         "type": "object",
         "required": [
@@ -24915,9 +25445,14 @@
           "series_eligible",
           "jobs_enqueued",
           "jobs_coalesced",
-          "jobs_failed"
+          "jobs_failed",
+          "issue_refresh"
         ],
         "properties": {
+          "issue_refresh": {
+            "$ref": "#/components/schemas/IssueRefreshOutcome",
+            "description": "The opt-in issue-level refresh (`metadata.issue_refresh_enabled`):\nstale covered issues re-fetched by direct lookup into a Review\nbatch. `enabled: false` when the setting is off."
+          },
           "jobs_coalesced": {
             "type": "integer",
             "minimum": 0
@@ -25012,6 +25547,37 @@
             }
           }
         }
+      },
+      "RefreshRun": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "status",
+          "started_at"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "RefreshStep": {
+        "type": "string",
+        "description": "The guided flow's steps, in order.",
+        "enum": [
+          "match",
+          "coverage",
+          "fetch",
+          "review"
+        ]
       },
       "RegenerateResp": {
         "type": "object",
@@ -26949,18 +27515,34 @@
           }
         }
       },
+      "SeriesBatchScope": {
+        "type": "string",
+        "description": "`POST /series/{slug}/metadata/batch` — fan out a per-issue metadata search\nover every active issue in the series, grouped under one `metadata_batch`\nso progress + review happen in one place. Children run as `manual` (held\nfor review, never auto-applied).\nWhich issues a series metadata batch fans out over.",
+        "enum": [
+          "all",
+          "incomplete"
+        ]
+      },
       "SeriesChainEntry": {
         "type": "object",
         "description": "One step of the reading-order chain.",
         "required": [
           "position",
-          "series"
+          "series",
+          "provider_splits"
         ],
         "properties": {
           "position": {
             "type": "integer",
             "format": "int32",
             "description": "Signed reading-order offset: negative = read before this series,\n`0` = this series, positive = read after. Entries sharing a\nposition are alternative branches."
+          },
+          "provider_splits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChainSplitView"
+            },
+            "description": "Provider ranges inside this series: issues a provider files under a\ndifferent provider series (\"#600–611 continue as Fantastic Four\n(2012)\"). The local series stays one step — membership is\nfolder-pinned; these only label the boundary. Ordered by number."
           },
           "series": {
             "$ref": "#/components/schemas/SeriesView"
@@ -27115,6 +27697,13 @@
             "type": "string",
             "description": "The provider's series name (falls back to the id)."
           },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Short context for the row, e.g. \"Has #612–645\" for a link from\nseries coverage (a range of this series maps to that provider\nseries, which has issues this series lacks)."
+          },
           "provider_series_id": {
             "type": "string"
           },
@@ -27189,6 +27778,40 @@
           }
         }
       },
+      "SeriesMatchState": {
+        "type": "object",
+        "required": [
+          "links"
+        ],
+        "properties": {
+          "applied_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When a series candidate was last applied, if inside the window."
+          },
+          "latest_run": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RefreshRun",
+                "description": "Latest series search run (any age), for the match step's status."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesProviderLink"
+            },
+            "description": "The series' provider ids (`external_ids`) — a non-empty list is a\nconfirmed match the user may keep."
+          }
+        }
+      },
       "SeriesProgressSummary": {
         "type": "object",
         "description": "Per-user, server-computed read progress for the whole series. Sidesteps\nthe client-side cap on the issues page (which fetches 100 at a time).",
@@ -27221,6 +27844,26 @@
           }
         }
       },
+      "SeriesProviderLink": {
+        "type": "object",
+        "required": [
+          "source",
+          "external_id",
+          "set_by"
+        ],
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "set_by": {
+            "type": "string",
+            "description": "`user` | `provider:<source>` | … (`external_ids.set_by`)."
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
       "SeriesRef": {
         "type": "object",
         "description": "Portable identity for a series.",
@@ -27250,6 +27893,61 @@
               "null"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "SeriesRefreshStatusResp": {
+        "type": "object",
+        "required": [
+          "series_id",
+          "resume_step",
+          "series_match",
+          "coverage_after_series_apply",
+          "fetch_estimate"
+        ],
+        "properties": {
+          "batch": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RefreshBatch",
+                "description": "The series' latest metadata batch inside the resume window."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "coverage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RefreshCoverageJob",
+                "description": "The latest coverage job, when its record is still kept (24 h)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "coverage_after_series_apply": {
+            "type": "string",
+            "description": "`metadata.coverage_after_series_apply` (`off` | `manual_only` |\n`all`): whether a match applied in step 1 queues the analysis\nitself, or step 2 has to run it."
+          },
+          "fetch_estimate": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FetchScopeEstimate"
+            },
+            "description": "Provider-call estimate for the per-issue step, one entry per batch\nscope (`all`, then `incomplete`)."
+          },
+          "resume_step": {
+            "$ref": "#/components/schemas/RefreshStep",
+            "description": "Where a reopened dialog resumes (see the module docs for the rule)."
+          },
+          "series_id": {
+            "type": "string"
+          },
+          "series_match": {
+            "$ref": "#/components/schemas/SeriesMatchState"
           }
         }
       },

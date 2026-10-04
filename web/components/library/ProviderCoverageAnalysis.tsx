@@ -14,9 +14,11 @@
  *    carry the whole picture, so nothing scrolls sideways.
  *
  * Below it, one block per provider: confidence and why, uncovered issues,
- * conflicts with user-set data, stale automated ranges (remove via the
- * card's AlertDialog), and "Accept" / "Choose series". The card owns the
- * mutations; this component renders and calls back.
+ * conflicts with user-set data, stale automated ranges (accepting the
+ * provider deletes them; remove one sooner via the card's AlertDialog),
+ * and "Accept" / "Choose series". Stale ranges an accept removed are
+ * listed above the providers ("Removed 1 stale range: GCD #42–70 → …").
+ * The card owns the mutations; this component renders and calls back.
  */
 
 import {
@@ -47,6 +49,7 @@ import type {
   CoverageStatus,
   ProviderCoverageView,
 } from "@/lib/api/types";
+import { staleRemovedSummary } from "@/lib/coverage-ranges";
 import { cn } from "@/lib/utils";
 
 /**
@@ -238,16 +241,23 @@ export function ProviderCoverageAnalysis({
   acceptingSource,
   onAccept,
   onRemoveStale,
+  removedNotes = [],
 }: {
   data: CoverageAnalysisResp;
   /** Source whose accept is in flight. */
   acceptingSource: string | null;
   onAccept: (source: string, mainSeriesId: string | null) => void;
   onRemoveStale: (sourceLabel: string, row: CoverageRangeRef) => void;
+  /** "Removed 1 stale range: …" from accepts made in this view. */
+  removedNotes?: string[];
 }) {
   const wide = useWideLayout();
   const local = data.local_issues;
   const shown = gridProviders(data);
+  const removed = [
+    ...data.auto_accepted.flatMap((o) => staleRemovedSummary(o) ?? []),
+    ...removedNotes,
+  ];
 
   return (
     <div className="space-y-4" data-testid="coverage-analysis">
@@ -264,6 +274,20 @@ export function ProviderCoverageAnalysis({
             .join(", ")}
           .
         </p>
+      )}
+      {removed.length > 0 && (
+        <ul
+          className="space-y-0.5 text-xs"
+          role="status"
+          data-testid="coverage-stale-removed"
+        >
+          {removed.map((note) => (
+            <li key={note} className="flex gap-1.5">
+              <Check className="text-primary mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>{note}</span>
+            </li>
+          ))}
+        </ul>
       )}
       {data.providers.map((p) => (
         <ProviderBlock

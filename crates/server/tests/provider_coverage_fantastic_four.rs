@@ -538,6 +538,50 @@ async fn fantastic_four_owner_state_covers_every_provider() {
     for (src, old) in [("comicvine", "2045"), ("metron", "26"), ("gcd", "1482")] {
         assert!(assigned_to(provider(&body, src), old).is_empty(), "{src}");
     }
+
+    // Range hygiene: accepting GCD removes the stale automated #42–70 →
+    // 1482 row (the owner's dev DB) and writes #600–611 → 62349; Metron's
+    // range is untouched.
+    let (st, out) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &format!("/api/series/{slug}/provider-coverage/accept"),
+        Some(json!({"source": "gcd"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{out}");
+    let removed = out["stale_ranges_removed"].as_array().unwrap();
+    assert_eq!(removed.len(), 1, "{out}");
+    assert_eq!(removed[0]["provider_series_id"], "1482");
+    assert_eq!(removed[0]["declared_year"], 1961);
+    assert_eq!(
+        (
+            removed[0]["range_low"].as_str(),
+            removed[0]["range_high"].as_str()
+        ),
+        (Some("42"), Some("70"))
+    );
+    assert_eq!(
+        out["ranges_created"][0]["provider_series_id"], "62349",
+        "{out}"
+    );
+    let mut left: Vec<(String, String)> = entity::series_provider_range::Entity::find()
+        .filter(entity::series_provider_range::Column::SeriesId.eq(series_id))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.source, r.provider_series_id))
+        .collect();
+    left.sort();
+    assert_eq!(
+        left,
+        vec![
+            ("gcd".to_owned(), "62349".to_owned()),
+            ("metron".to_owned(), "1713".to_owned())
+        ]
+    );
 }
 
 /// No links, no ranges: every provider finds its series by search alone

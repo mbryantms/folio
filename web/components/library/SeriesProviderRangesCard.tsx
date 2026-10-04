@@ -64,6 +64,7 @@ import {
   useProviderCoverageSeries,
 } from "@/lib/api/queries";
 import type { CoverageRangeRef, CoverageSegment } from "@/lib/api/types";
+import { staleRemovedSummary } from "@/lib/coverage-ranges";
 import { cn } from "@/lib/utils";
 
 const SOURCES: Array<{ value: string; label: string }> = [
@@ -128,11 +129,19 @@ export function SeriesProviderRangesCard({
 
   const runAnalyze = () => analyze.mutate({ auto_accept: autoAccept });
 
+  // Stale ranges accepts removed, kept on screen (the toast fades).
+  const [removedNotes, setRemovedNotes] = React.useState<string[]>([]);
   const onAccept = (source: string, mainSeriesId: string | null) => {
     setAcceptingSource(source);
     acceptCoverage.mutate(
       { source, main_series_id: mainSeriesId },
-      { onSettled: () => setAcceptingSource(null) },
+      {
+        onSuccess: (data) => {
+          const note = staleRemovedSummary(data);
+          if (note) setRemovedNotes((prev) => [...prev, note]);
+        },
+        onSettled: () => setAcceptingSource(null),
+      },
     );
   };
 
@@ -381,6 +390,7 @@ export function SeriesProviderRangesCard({
                 acceptingSource={acceptingSource}
                 onAccept={onAccept}
                 onRemoveStale={onRemoveStale}
+                removedNotes={removedNotes}
               />
             </>
           )}

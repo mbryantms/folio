@@ -5,9 +5,13 @@
  *
  * Two things at a glance:
  *   1. **Ownership** — which main-run issues you have vs. which are missing.
- *      Interior gaps are *inferred* by interpolating the integer run between
- *      the lowest and highest owned issue (`series.json` carries only a count,
- *      never a per-issue manifest), so they're labelled as such.
+ *      With accepted provider coverage and cached provider issue lists the
+ *      expected set is exact (`expected_source = "provider_manifest"`): an
+ *      issue every such provider lists is missing, one only some list is
+ *      "possibly missing" (each provider's view on click). Otherwise interior
+ *      gaps are *inferred* by interpolating the integer run between the
+ *      lowest and highest owned issue (`series.json` carries only a count),
+ *      and labelled as such.
  *   2. **Metadata** — each owned issue is colored by completeness
  *      (complete / partial / needs-metadata). Click any chip to see exactly
  *      what's missing and jump to the issue.
@@ -21,14 +25,23 @@ import Link from "next/link";
 import * as React from "react";
 
 import { useSeriesCollection } from "@/lib/api/queries";
-import type { CollectionIssueEntry } from "@/lib/api/types";
+import type {
+  CollectionIssueEntry,
+  CollectionReportView,
+} from "@/lib/api/types";
+import {
+  collectionRunChips,
+  isIntegral,
+  manifestProviderLabel,
+} from "@/lib/collection-manifest";
 import { ISSUE_GRID_CELL_RADIUS, ISSUE_GRID_COLS } from "@/lib/issue-grid";
 import { metadataFieldLabels } from "@/lib/metadata-fields";
 import { cn } from "@/lib/utils";
 import { statusTone, statusToneDot } from "@/lib/ui/status-tone";
 import { issueUrl } from "@/lib/urls";
 
-type ChipStatus = "missing" | "needs_metadata" | "partial" | "complete";
+type ChipStatus =
+  "missing" | "possibly_missing" | "needs_metadata" | "partial" | "complete";
 
 /** Status → cell classes. The success/warning/error triad uses the
  *  conventional emerald → amber → red so the four states stay clearly
@@ -38,6 +51,8 @@ type ChipStatus = "missing" | "needs_metadata" | "partial" | "complete";
  *  those two still track the theme. */
 const STATUS_CLASSES: Record<ChipStatus, string> = {
   missing: "border border-dashed border-border text-muted-foreground/70",
+  possibly_missing:
+    "border border-dotted border-warning/60 text-muted-foreground/70",
   needs_metadata:
     "bg-destructive/15 text-destructive ring-1 ring-destructive/30",
   partial: "bg-warning/15 text-warning ring-1 ring-warning/30",
@@ -45,7 +60,8 @@ const STATUS_CLASSES: Record<ChipStatus, string> = {
 };
 
 const STATUS_LABELS: Record<ChipStatus, string> = {
-  missing: "Missing (inferred)",
+  missing: "Missing",
+  possibly_missing: "Possibly missing",
   needs_metadata: "Needs metadata",
   partial: "Partial metadata",
   complete: "Complete",
@@ -62,7 +78,7 @@ function isMainRun(e: CollectionIssueEntry): boolean {
 
 type Selection =
   | { kind: "issue"; entry: CollectionIssueEntry }
-  | { kind: "missing"; n: number }
+  | { kind: "missing"; n: number; possibly: boolean }
   | null;
 
 export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
@@ -86,7 +102,10 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
   }
 
   const { total_owned, total_expected, completeness_state } = data;
-  const { missing, min, max, trailing_missing } = data.main_run;
+  const { missing, max, trailing_missing } = data.main_run;
+  const fromManifest = data.expected_source === "provider_manifest";
+  const possiblyMissing = new Set(data.main_run.possibly_missing ?? []);
+  const manifest = data.manifest ?? null;
 
   // Index owned main-run issues by their integer number for chip coloring.
   const mainByInt = new Map<number, CollectionIssueEntry>();
@@ -96,10 +115,13 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
   // Owned issues that aren't on the main run (annuals, one-shots, point issues).
   const specialEntries = data.issues.filter((e) => !isMainRun(e));
 
-  const lo = min != null ? Math.round(min) : 0;
   const hi = max != null ? Math.round(max) : -1;
-  const runChips: number[] = [];
-  for (let n = lo; n <= hi; n++) runChips.push(n);
+  const runChips = collectionRunChips(data, mainByInt.keys());
+  // Provider-listed numbers outside the integer run (#605.1, #½) that you
+  // don't own — only a provider manifest knows about them.
+  const otherMissing = fromManifest
+    ? (manifest?.missing ?? []).filter((n) => !isIntegral(n))
+    : [];
 
   const completeCount = data.issues.filter(
     (e) => e.metadata_tier === "complete",
@@ -111,7 +133,7 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
 
   function statusOf(n: number): ChipStatus {
     const entry = mainByInt.get(n);
-    if (!entry) return "missing";
+    if (!entry) return possiblyMissing.has(n) ? "possibly_missing" : "missing";
     return entry.metadata_tier as ChipStatus;
   }
 
@@ -169,13 +191,28 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-foreground text-sm font-semibold">Issues</h3>
-            {missing.length > 0 && (
+            {(missing.length > 0 || possiblyMissing.size > 0) && (
               <span className="text-muted-foreground text-xs">
                 {missing.length} missing
-                <span className="opacity-70"> (inferred)</span>
+                {fromManifest && possiblyMissing.size > 0 && (
+                  <> · {possiblyMissing.size} possibly missing</>
+                )}
+                <span className="opacity-70">
+                  {fromManifest
+                    ? " (from provider issue lists)"
+                    : " (inferred)"}
+                </span>
               </span>
             )}
           </div>
+          {manifest?.note && (
+            <p
+              className="text-muted-foreground text-xs"
+              data-testid="collection-manifest-note"
+            >
+              {manifest.note}
+            </p>
+          )}
           <div className={ISSUE_GRID_COLS}>
             {runChips.map((n) => {
               const status = statusOf(n);
@@ -191,7 +228,13 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
                   type="button"
                   onClick={() =>
                     setSelected(
-                      entry ? { kind: "issue", entry } : { kind: "missing", n },
+                      entry
+                        ? { kind: "issue", entry }
+                        : {
+                            kind: "missing",
+                            n,
+                            possibly: possiblyMissing.has(n),
+                          },
                     )
                   }
                   title={`Issue #${n} — ${STATUS_LABELS[status]}`}
@@ -218,11 +261,18 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
               </span>
             )}
           </div>
-          <Legend />
+          {otherMissing.length > 0 && (
+            <p className="text-muted-foreground text-xs">
+              Also missing: {otherMissing.map((n) => `#${n}`).join(", ")}
+            </p>
+          )}
+          <Legend showPossibly={fromManifest && possiblyMissing.size > 0} />
           {selected && (
             <SelectionDetail
               selection={selected}
               seriesSlug={seriesSlug}
+              fromManifest={fromManifest}
+              manifest={manifest}
               onClear={() => setSelected(null)}
             />
           )}
@@ -330,12 +380,15 @@ function SubBar({
   );
 }
 
-function Legend() {
+function Legend({ showPossibly = false }: { showPossibly?: boolean }) {
   const items: { status: ChipStatus; label: string }[] = [
     { status: "complete", label: "Complete" },
     { status: "partial", label: "Partial" },
     { status: "needs_metadata", label: "Needs metadata" },
     { status: "missing", label: "Missing" },
+    ...(showPossibly
+      ? [{ status: "possibly_missing" as const, label: "Possibly missing" }]
+      : []),
   ];
   return (
     <div className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-xs">
@@ -359,13 +412,22 @@ function Legend() {
 function SelectionDetail({
   selection,
   seriesSlug,
+  fromManifest,
+  manifest,
   onClear,
 }: {
   selection: Exclude<Selection, null>;
   seriesSlug: string;
+  fromManifest: boolean;
+  manifest: CollectionReportView["manifest"] | null;
   onClear: () => void;
 }) {
   if (selection.kind === "missing") {
+    const views = selection.possibly
+      ? (manifest?.possibly_missing ?? []).find(
+          (p) => isIntegral(p.number) && Number(p.number) === selection.n,
+        )?.providers
+      : undefined;
     return (
       <div className="border-border/60 text-muted-foreground rounded-md border border-dashed p-3 text-sm">
         <div className="flex items-center justify-between">
@@ -373,8 +435,30 @@ function SelectionDetail({
           <ClearButton onClear={onClear} />
         </div>
         <p className="mt-1 text-xs">
-          Not in your library — inferred missing from the surrounding run.
+          {!fromManifest
+            ? "Not in your library — inferred missing from the surrounding run."
+            : selection.possibly
+              ? "Not in your library — only some providers list it."
+              : "Not in your library — every provider matched to this series lists it."}
         </p>
+        {views && views.length > 0 && (
+          <ul
+            className="mt-1 space-y-0.5 text-xs"
+            aria-label="Provider views"
+            data-testid="possibly-missing-providers"
+          >
+            {views.map((v) => (
+              <li key={v.source}>
+                {manifestProviderLabel(v.source)}:{" "}
+                {v.listing === "listed"
+                  ? "lists it"
+                  : v.listing === "not_listed"
+                    ? "doesn’t list it"
+                    : "list not loaded"}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     );
   }

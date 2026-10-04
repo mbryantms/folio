@@ -23,7 +23,7 @@
 use crate::config::Config;
 use crate::metadata::comicvine::ComicVineClient;
 use crate::metadata::direct_lookup::{
-    CoverageMatch, DirectLookupCtx, FallbackReason, SourceLookup,
+    CoverageMatch, DirectLookupCtx, DirectMode, FallbackReason, SourceLookup,
 };
 use crate::metadata::gcd::GcdClient;
 use crate::metadata::identifier::Source;
@@ -92,12 +92,7 @@ pub fn build_providers(cfg: &Config, redis: ConnectionManager) -> Vec<Arc<dyn Me
         out.push(Arc::new(client));
     }
 
-    let cv_key_set = cfg
-        .comicvine_api_key
-        .as_deref()
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false);
-    if cfg.comicvine_enabled && cv_key_set {
+    if comicvine_configured(cfg) {
         let key = cfg.comicvine_api_key.clone().unwrap_or_default();
         out.push(Arc::new(match cfg.comicvine_base_url.clone() {
             Some(base) => ComicVineClient::with_base_url(key, base, redis.clone()),
@@ -111,6 +106,34 @@ pub fn build_providers(cfg: &Config, redis: ConnectionManager) -> Vec<Arc<dyn Me
         out.push(Arc::new(client));
     }
 
+    out
+}
+
+fn comicvine_configured(cfg: &Config) -> bool {
+    cfg.comicvine_enabled
+        && cfg
+            .comicvine_api_key
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+}
+
+/// The ids [`build_providers`] would return, in the same order, without
+/// building anything. Each provider owns a `reqwest` client (a rustls
+/// config per build), so a caller that only needs to know *which*
+/// providers are on — the per-issue enqueue, called once per issue in a
+/// batch fan-out — must not construct them: three clients × a 200-issue
+/// batch kept the request past the 60 s JSON timeout on a loaded host.
+pub fn configured_provider_ids(cfg: &Config) -> Vec<Source> {
+    let mut out = Vec::new();
+    if cfg.metron_enabled && crate::metadata::metron::MetronAuth::from_config(cfg).is_some() {
+        out.push(Source::Metron);
+    }
+    if comicvine_configured(cfg) {
+        out.push(Source::ComicVine);
+    }
+    if cfg.gcd_enabled && crate::metadata::gcd::GcdCredentials::from_config(cfg).is_some() {
+        out.push(Source::Gcd);
+    }
     out
 }
 
@@ -283,10 +306,11 @@ pub struct SearchOpts {
     pub relax_year_gate: bool,
     /// `None` ⇒ fetch + hash candidate covers over the network.
     pub cover_hasher: Option<CoverHasher>,
-    /// Batch children only: answer a provider from its series' cached
-    /// issue list + one cached detail fetch instead of a search when the
-    /// issue's provider series is known (see
-    /// [`crate::metadata::direct_lookup`]). `None` ⇒ always search.
+    /// Answer a provider from its series' cached issue list + one cached
+    /// detail fetch when the issue's provider series is known (see
+    /// [`crate::metadata::direct_lookup`]); `DirectLookupCtx::mode` says
+    /// whether the search is skipped (batches), still run (the match
+    /// dialog) or never run (issue-level refresh). `None` ⇒ always search.
     pub direct: Option<DirectLookupCtx>,
 }
 
@@ -1182,11 +1206,14 @@ pub async fn run_issue_search_with(
             YearGate::PhashAware(gate_year)
         };
 
-        // ── batch direct lookup via series coverage ──
+        // ── direct lookup via series coverage ──
         // The provider series is known and lists this number with an
         // agreeing cover date: fetch that issue's detail (cached, and the
-        // same row the apply reads) and score it instead of searching.
-        // Any miss falls through to the search below, unchanged.
+        // same row the apply reads) and score it. `Replace` (batches)
+        // skips the search on a hit; `Additive` (the match dialog) keeps
+        // searching for alternatives; `Only` (issue-level refresh) never
+        // searches. A miss falls through to the search below, unchanged,
+        // except under `Only`.
         if let Some(ctx) = opts.direct.as_ref() {
             match direct_issue_candidate(
                 db,
@@ -1213,9 +1240,16 @@ pub async fn run_issue_search_with(
                             ranked.push(rc);
                         }
                     }
-                    continue;
+                    if ctx.mode != DirectMode::Additive {
+                        continue;
+                    }
                 }
-                Err(rec) => lookups.push(rec),
+                Err(rec) => {
+                    lookups.push(rec);
+                    if ctx.mode == DirectMode::Only {
+                        continue;
+                    }
+                }
             }
         }
 

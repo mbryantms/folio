@@ -15,6 +15,8 @@
 //! gains nothing on the happy path and risks burst-deny on bucket
 //! exhaustion.
 
+use crate::metadata::direct_lookup::DirectMode;
+use crate::metadata::identifier::Source;
 use crate::metadata::matcher::{IssueQueryFacts, SeriesQueryFacts};
 use crate::metadata::orchestrator::{self, SearchOpts, StoredQuery};
 use crate::metadata::range_map::EffectiveTarget;
@@ -207,10 +209,36 @@ pub struct SearchIssueJob {
     /// alternatives.
     #[serde(default)]
     pub direct_lookup: bool,
+    /// The match dialog's search: add each provider's coverage-assigned
+    /// issue (when its series is known) next to the search results, so
+    /// compare mode can default to it ([`DirectMode::Additive`]).
+    /// Ignored when `direct_lookup` is set.
+    #[serde(default)]
+    pub coverage_candidates: bool,
+    /// Issue-level refresh: only these providers, direct lookups only — a
+    /// miss is recorded, never searched ([`DirectMode::Only`]).
+    #[serde(default)]
+    pub direct_only: Option<Vec<Source>>,
+}
+
+impl SearchIssueJob {
+    /// The direct-lookup mode this job runs with (`None` ⇒ search only).
+    pub fn direct_mode(&self) -> Option<DirectMode> {
+        if self.direct_only.is_some() {
+            Some(DirectMode::Only)
+        } else if self.direct_lookup {
+            Some(DirectMode::Replace)
+        } else if self.coverage_candidates {
+            Some(DirectMode::Additive)
+        } else {
+            None
+        }
+    }
 }
 
 pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<(), Error> {
     let state: AppState = (*state).clone();
+    let mode = job.direct_mode();
     let SearchIssueJob {
         run_id,
         issue_id,
@@ -218,7 +246,8 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
         facts,
         series_targets,
         year_asserted,
-        direct_lookup,
+        direct_only,
+        ..
     } = job;
     tracing::info!(
         run_id = %run_id,
@@ -227,7 +256,10 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
         number = %facts.issue_number,
         "metadata search: issue job start"
     );
-    let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
+    let mut providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
+    if let Some(only) = &direct_only {
+        providers.retain(|p| only.contains(&p.id()));
+    }
     if providers.is_empty() {
         if let Err(e) = orchestrator::fail_run(&state.db, run_id, "no providers configured").await {
             tracing::error!(error = %e, "metadata search: fail_run write failed");
@@ -237,13 +269,13 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
     }
     let thresholds = thresholds(&state);
     let alt_cap = state.cfg().metadata_alternate_cover_fetch_cap;
-    let direct = if direct_lookup {
-        Some(crate::metadata::direct_lookup::DirectLookupCtx {
+    let direct = match mode {
+        Some(mode) => Some(crate::metadata::direct_lookup::DirectLookupCtx {
             redis: state.jobs.redis.clone(),
             cover_month: issue_cover_month(&state, &issue_id).await,
-        })
-    } else {
-        None
+            mode,
+        }),
+        None => None,
     };
     match orchestrator::run_issue_search_with(
         &state.db,
@@ -513,6 +545,20 @@ pub async fn enqueue_issue_search(
     trigger_kind: &'static str,
     batch_id: Option<Uuid>,
 ) -> Result<EnqueueOutcome, anyhow::Error> {
+    enqueue_issue_search_with(state, issue_id, triggered_by, trigger_kind, batch_id, None).await
+}
+
+/// [`enqueue_issue_search`] with `direct_only`: the issue-level refresh
+/// asks only these providers, by direct lookup only
+/// ([`SearchIssueJob::direct_only`]).
+pub async fn enqueue_issue_search_with(
+    state: &AppState,
+    issue_id: &str,
+    triggered_by: Option<Uuid>,
+    trigger_kind: &'static str,
+    batch_id: Option<Uuid>,
+    direct_only: Option<Vec<Source>>,
+) -> Result<EnqueueOutcome, anyhow::Error> {
     use entity::{issue, series};
     use sea_orm::EntityTrait;
 
@@ -551,11 +597,15 @@ pub async fn enqueue_issue_search(
         ),
     };
 
-    let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
-    if providers.is_empty() {
+    // Ids only — building the clients here would cost three TLS client
+    // builds per issue of a batch fan-out (see `configured_provider_ids`).
+    let providers_listed: Vec<_> = orchestrator::configured_provider_ids(&state.cfg())
+        .into_iter()
+        .filter(|s| direct_only.as_ref().is_none_or(|only| only.contains(s)))
+        .collect();
+    if providers_listed.is_empty() {
         return Err(anyhow::anyhow!("no metadata providers configured"));
     }
-    let providers_listed: Vec<_> = providers.iter().map(|p| p.id()).collect();
 
     // Effective per-provider series target for this issue: a covering
     // `series_provider_range` row folded over the parent series'
@@ -606,6 +656,8 @@ pub async fn enqueue_issue_search(
             // Batch children (and their quota resumes) answer covered
             // issues by direct lookup; see `SearchIssueJob::direct_lookup`.
             direct_lookup: batch_id.is_some(),
+            coverage_candidates: false,
+            direct_only,
         })
         .await
     {
