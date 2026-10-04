@@ -111,8 +111,9 @@ export function LabVariantView({ variant }: { variant: LabVariant }) {
   useLockedDocument(inner);
 
   useEffect(() => {
-    // E starts at rest (its whole point is the at-rest vs scrolled compare).
-    if (variant.id.startsWith("e-")) return;
+    // E starts at rest (its whole point is the at-rest vs scrolled compare);
+    // J is scrolled by hand, exactly like /pwa-test/4.
+    if (variant.letter === "E" || variant.letter === "J") return;
     const t = window.setTimeout(() => {
       if (inner) scroller.current?.scrollTo(0, PRESCROLL);
       else window.scrollTo(0, PRESCROLL);
@@ -178,6 +179,54 @@ export function LabVariantView({ variant }: { variant: LabVariant }) {
           >
             <Rows letter="D" />
           </div>
+          <Footer variant={variant} />
+        </>
+      );
+    case "J":
+      // Same body as /pwa-test/4 (sticky #374151 header over a black page,
+      // document scroll), but inside Folio's app shell and reached by
+      // in-app navigation. Reload re-opens it as a fresh document.
+      return (
+        <>
+          <header
+            style={{
+              position: "sticky",
+              top: 0,
+              zIndex: 10,
+              height: 56,
+              background: "#374151",
+              color: "#fff",
+              display: "flex",
+              alignItems: "center",
+              gap: 16,
+              padding: "0 20px",
+              font: "600 17px/1.3 -apple-system, system-ui, sans-serif",
+            }}
+          >
+            ☰ Folio · Lab J
+            <span
+              style={{
+                flex: "0 1 380px",
+                height: 32,
+                borderRadius: 8,
+                border: "1px solid #6b7280",
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              style={{
+                marginLeft: "auto",
+                padding: "6px 14px",
+                borderRadius: 8,
+                background: "#fff",
+                color: "#000",
+              }}
+            >
+              Reload
+            </button>
+          </header>
+          <Rows letter="J" />
           <Footer variant={variant} />
         </>
       );

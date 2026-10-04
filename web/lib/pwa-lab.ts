@@ -45,6 +45,13 @@ export const LAB_VARIANTS: readonly LabVariant[] = [
     question:
       "Check at rest (strip should be black), then scroll — does colour appear live?",
   },
+  {
+    id: "j-test4-clone",
+    letter: "J",
+    title: "Exact copy of /pwa-test/4, inside Folio",
+    question:
+      "Open via in-app navigation, then tap Reload: does either fade where Test 4 didn't?",
+  },
 ] as const;
 
 export function labVariant(id: string): LabVariant | undefined {
