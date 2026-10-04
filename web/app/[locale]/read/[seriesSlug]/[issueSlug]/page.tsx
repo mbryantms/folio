@@ -12,22 +12,16 @@ import type {
 import { detectInitialViewMode } from "@/lib/reader/detect";
 import type { Direction, SeriesDirection, ViewMode } from "@/lib/reader/detect";
 import type { FitMode } from "@/lib/reader/store";
-import { readerViewport } from "@/lib/viewport";
-import { cookies } from "next/headers";
 import { preload } from "react-dom";
 import { pageBytesSrcSet, withContentVersion } from "@/lib/urls";
-import { THEME_COOKIE, isTheme } from "@/lib/theme";
 
-// The reader is always black regardless of the user's theme. On a
-// light/amber theme its declared appearance (status-bar tint +
-// color-scheme) is pinned to dark; on a dark/system theme it is kept
-// byte-identical to the root layout's so iPadOS never sees a runtime
-// theme-color change (which it latches — see `readerViewport`).
-export async function generateViewport() {
-  const jar = await cookies();
-  const themeCookie = jar.get(THEME_COOKIE)?.value;
-  return readerViewport(isTheme(themeCookie) ? themeCookie : "dark");
-}
+// No `generateViewport` here on purpose: the reader inherits the root
+// layout's viewport (theme-color / color-scheme) unchanged. It used to pin
+// black/dark for light, amber and system themes, which rewrote those
+// <meta> tags on every navigation into the reader — and an installed
+// iPadOS app latches the first runtime change into a blurred status-bar
+// strip over every page until the app is force-quit (seen on 26.1 and
+// 27.0.1). See `lib/viewport.ts`.
 
 type ProgressDelta = {
   records: Array<{
