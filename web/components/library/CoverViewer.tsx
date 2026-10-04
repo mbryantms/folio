@@ -110,13 +110,13 @@ export function CoverViewer({
             key={current.src}
             src={current.src}
             alt={current.label}
-            className="relative max-h-[calc(100dvh_-_var(--safe-top)_-_var(--safe-bottom)_-_4rem)] max-w-[92vw] object-contain select-none"
+            className="relative max-h-[calc(100dvh_-_var(--top-inset)_-_var(--safe-bottom)_-_4rem)] max-w-[92vw] object-contain select-none"
             placeholderClassName="bg-muted relative aspect-2/3 h-[60dvh] max-w-[92vw] rounded"
           />
 
           {/* Close button, top-right, clear of the status bar. */}
           <DialogPrimitive.Close
-            className="focus-visible:ring-ring absolute top-[max(0.75rem,var(--safe-top))] right-[max(0.75rem,var(--safe-right))] inline-flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur transition-colors hover:bg-black/70 focus-visible:ring-2 focus-visible:outline-none"
+            className="focus-visible:ring-ring absolute top-[max(0.75rem,var(--top-inset))] right-[max(0.75rem,var(--safe-right))] inline-flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur transition-colors hover:bg-black/70 focus-visible:ring-2 focus-visible:outline-none"
             aria-label="Close"
           >
             <X className="h-5 w-5" />

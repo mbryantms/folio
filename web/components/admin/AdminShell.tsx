@@ -66,7 +66,7 @@ export function AdminShell({
     <div className="bg-background text-foreground min-h-screen">
       <SkipToContent />
       <PullToRefresh />
-      <header className="border-border bg-background/80 standalone:bg-background standalone:backdrop-blur-none sticky top-0 z-30 flex h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pr-[max(1rem,var(--safe-right))] pl-[max(1rem,var(--safe-left))] backdrop-blur md:pr-[max(1.5rem,var(--safe-right))] md:pl-[max(1.5rem,var(--safe-left))]">
+      <header className="border-border bg-background/80 standalone:bg-background standalone:backdrop-blur-none sticky top-0 z-30 flex h-(--topbar-h) items-center gap-3 border-b pt-(--top-inset) pr-[max(1rem,var(--safe-right))] pl-[max(1rem,var(--safe-left))] backdrop-blur md:pr-[max(1.5rem,var(--safe-right))] md:pl-[max(1.5rem,var(--safe-left))]">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>
             <Button
@@ -83,7 +83,7 @@ export function AdminShell({
             // Safe-area insets — mirrors `MainShell`. Without these
             // the iPhone clock / Dynamic Island sits on top of the
             // drawer's first nav row in PWA standalone mode.
-            className="w-72 p-0 pt-(--safe-top) pb-(--safe-bottom) pl-(--safe-left)"
+            className="w-72 p-0 pt-(--top-inset) pb-(--safe-bottom) pl-(--safe-left)"
             onClick={(e) => {
               // Mobile UX: clicking a link inside the drawer should close
               // it along with navigating. Buttons stay click-through.

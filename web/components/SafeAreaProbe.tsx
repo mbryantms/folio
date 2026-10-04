@@ -24,6 +24,9 @@ import { isStandaloneDisplay } from "@/lib/use-pull-to-refresh";
 export function SafeAreaProbe() {
   useEffect(() => {
     const root = document.documentElement;
+    // Lets globals.css apply the iOS edge-ramp clearance even when the
+    // `display-mode: standalone` query doesn't match a home-screen launch.
+    if (isStandaloneDisplay()) root.dataset.standalone = "";
     let pinned = false;
     let confirmation: ReturnType<typeof setTimeout> | undefined;
     let previous = "";
@@ -77,6 +80,7 @@ export function SafeAreaProbe() {
       window.removeEventListener("pageshow", apply);
       document.removeEventListener("visibilitychange", apply);
       root.style.removeProperty("--safe-top");
+      delete root.dataset.standalone;
     };
   }, []);
   return null;

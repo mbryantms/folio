@@ -71,7 +71,7 @@ export function StatusScreen(props: React.ComponentProps<typeof StatusCard>) {
       {/* Minimal brand header — wordmark matches `MainShell`. A hard
           `<a href>` (not next/link) so it works even from `global-error`
           where the router may be unavailable. */}
-      <header className="border-border flex h-14 shrink-0 items-center border-b px-[max(1rem,var(--safe-left))] pt-(--safe-top) md:px-6">
+      <header className="border-border flex h-(--topbar-h) shrink-0 items-center border-b px-[max(1rem,var(--safe-left))] pt-(--top-inset) md:px-6">
         <a
           href="/"
           className="hover:text-foreground/80 font-semibold tracking-tight transition-colors"

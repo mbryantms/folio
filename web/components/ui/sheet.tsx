@@ -62,7 +62,7 @@ const SheetContent = React.forwardRef<
   const closeTopClass =
     side === "bottom"
       ? "top-4"
-      : "top-[max(1rem,calc(var(--safe-top)+0.5rem))]";
+      : "top-[max(1rem,calc(var(--top-inset)+0.5rem))]";
   // Sides whose close button sits at the right edge of the screen
   // (top / right) need the same treatment for the landscape notch.
   // For left-side sheets the close sits at the sheet's right edge

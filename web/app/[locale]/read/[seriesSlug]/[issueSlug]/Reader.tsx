@@ -1033,7 +1033,7 @@ export function Reader({
         // banner so clicks reach the button even when the outer
         // wrapper sets pointer-events for the chrome.
         <div
-          className="pointer-events-none fixed inset-x-0 top-0 z-30 flex justify-center px-3 pt-(--safe-top)"
+          className="pointer-events-none fixed inset-x-0 top-0 z-30 flex justify-center px-3 pt-(--top-inset)"
           aria-live="polite"
         >
           <div className="border-border bg-background/95 text-foreground pointer-events-auto mt-3 flex w-full max-w-md items-center gap-3 rounded-lg border px-3 py-2 shadow-lg backdrop-blur">
