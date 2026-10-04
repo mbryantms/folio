@@ -80,9 +80,16 @@ Default admin (first registered user becomes admin):
     `cargo-nextest` against throwaway external Postgres + Redis
     (`COMIC_TEST_PG_URL` / `COMIC_REDIS_URL`), scheduling every binary's tests
     in one global pool. CI uses the same (nextest + the Postgres & Redis service
-    containers); see
+    containers), split into 4 shards (`--partition count:N/4`, job
+    `Rust — test (N/4)`, per-shard junit artifact `nextest-junit-shard-N`);
+    see
     [`crates/server/tests/common/mod.rs`](crates/server/tests/common/mod.rs)
     and [`.config/nextest.toml`](.config/nextest.toml).
+  - **Password hashing in tests:** `TestApp` sets
+    `Config::password_hash_cost = HashCost::TEST` (argon2 8 MiB / t=1)
+    because the suite registers hundreds of users. Production cost is
+    `#[serde(skip)]` (never env-settable) and pinned by unit tests in
+    `auth::password`; never lower it outside the harness.
   - **Redis logical-DB isolation (CI-speed Phase 3):** under nextest
     (process-per-test on a shared external Redis) each test's DB index is
     `NEXTEST_TEST_GLOBAL_SLOT`, so `[profile.ci] test-threads` must stay `≤` the
