@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.38.0](https://github.com/mbryantms/folio/compare/v0.37.0...v0.38.0) (2026-10-04)
+
+
+### Added
+
+* **web:** /pwa-test/{1,2,3} — which head tags give an opaque status bar ([#1009](https://github.com/mbryantms/folio/issues/1009)) ([1cd2613](https://github.com/mbryantms/folio/commit/1cd2613716253217dabd0982b0d79aad313e7946))
+
 ## [0.37.0](https://github.com/mbryantms/folio/compare/v0.36.0...v0.37.0) (2026-10-04)
 
 
