@@ -29,7 +29,7 @@ export function BottomTabBar({ onMore }: { onMore: () => void }) {
   return (
     <nav
       aria-label="Primary"
-      className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 flex h-[calc(var(--bottom-tab-h)+var(--safe-bottom))] items-stretch border-t pr-(--safe-right) pb-(--safe-bottom) pl-(--safe-left) backdrop-blur md:hidden"
+      className="border-border bg-background/95 standalone:bg-background standalone:backdrop-blur-none fixed inset-x-0 bottom-0 z-30 flex h-[calc(var(--bottom-tab-h)+var(--safe-bottom))] items-stretch border-t pr-(--safe-right) pb-(--safe-bottom) pl-(--safe-left) backdrop-blur md:hidden"
     >
       <TabLink
         href="/"
