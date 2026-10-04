@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.36.0](https://github.com/mbryantms/folio/compare/v0.35.2...v0.36.0) (2026-10-04)
+
+
+### Added
+
+* **web:** /pwa-lab — test pages for the iOS/iPadOS status-bar fade ([#1004](https://github.com/mbryantms/folio/issues/1004)) ([80e8cef](https://github.com/mbryantms/folio/commit/80e8cef9764b7e28538de5f5b5d81faf331fbcde))
+
 ## [0.35.2](https://github.com/mbryantms/folio/compare/v0.35.1...v0.35.2) (2026-10-04)
 
 
