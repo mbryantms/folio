@@ -67,3 +67,33 @@ export function coverageHintTone(
   if (h.covered === h.local_total) return "full";
   return h.covered * 2 >= h.local_total ? "partial" : "low";
 }
+
+/** Did series coverage supply this candidate (its provider series' issue
+ *  list gave the issue by number + cover date)? Mirrors the server's
+ *  `composite::is_coverage_candidate`. */
+export function isCoverageCandidate(c: { score_breakdown?: unknown }): boolean {
+  const b = c.score_breakdown;
+  if (!b || typeof b !== "object") return false;
+  const cov = (b as { coverage?: unknown }).coverage;
+  return !!cov && typeof cov === "object";
+}
+
+/**
+ * The compare view's default columns (candidate ordinals = list indexes),
+ * one per provider: the candidate series coverage assigned the issue when
+ * the run has one, else the provider's best-ranked candidate (today's
+ * search). Mirrors the server's `composite::default_best_per_provider`.
+ */
+export function defaultCompareOrdinals(
+  list: readonly { source: string; score_breakdown?: unknown }[],
+): number[] {
+  const best = new Map<string, { ordinal: number; covered: boolean }>();
+  list.forEach((c, i) => {
+    const covered = isCoverageCandidate(c);
+    const cur = best.get(c.source);
+    if (!cur || (covered && !cur.covered)) {
+      best.set(c.source, { ordinal: i, covered });
+    }
+  });
+  return Array.from(best.values(), (b) => b.ordinal).sort((a, b) => a - b);
+}

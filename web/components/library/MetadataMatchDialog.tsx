@@ -69,7 +69,11 @@ import {
 import { MetadataQueryTools } from "@/components/library/MetadataQueryTools";
 import { useMetadataApplyWait } from "@/components/library/useMetadataApplyWait";
 import { useMetadataCandidateSearch } from "@/components/library/useMetadataCandidateSearch";
-import { AUTO_HINT_COUNT, HINT_SOURCES } from "@/lib/metadata/coverage-hint";
+import {
+  AUTO_HINT_COUNT,
+  defaultCompareOrdinals,
+  HINT_SOURCES,
+} from "@/lib/metadata/coverage-hint";
 import {
   budgetNote,
   formatRetryEta,
@@ -316,23 +320,16 @@ export function MetadataMatchForm({
     lastSeededComposite.current = key;
   }, [compareMode, compositeDiff.data, mode, overrideUserEdits, includeList]);
 
-  // Seed the compare-column selection from the best (first-ranked)
-  // candidate per provider the first time a finalized candidate list
-  // arrives. Tracked by run id so a fresh search re-seeds.
+  // Seed the compare-column selection with one candidate per provider —
+  // the one series coverage assigned the issue, else the best-ranked —
+  // the first time a finalized candidate list arrives. Tracked by run id
+  // so a fresh search re-seeds.
   const lastSeededSelection = React.useRef<string | null>(null);
   React.useEffect(() => {
     const list = candidates.data?.candidates;
     if (!runId || !list || list.length === 0) return;
     if (lastSeededSelection.current === runId) return;
-    const seen = new Set<string>();
-    const picks = new Set<number>();
-    list.forEach((c, i) => {
-      if (!seen.has(c.source)) {
-        seen.add(c.source);
-        picks.add(i);
-      }
-    });
-    setSelectedOrdinals(picks);
+    setSelectedOrdinals(new Set(defaultCompareOrdinals(list)));
     lastSeededSelection.current = runId;
   }, [runId, candidates.data]);
 

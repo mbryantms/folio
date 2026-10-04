@@ -11916,6 +11916,11 @@
           "stale_ranges"
         ],
         "properties": {
+          "external_links": {
+            "type": "integer",
+            "description": "\"Not in your library\" links written or refreshed: ranges whose\nprovider series has issues this folder lacks (Related tab).",
+            "minimum": 0
+          },
           "main_note": {
             "type": [
               "string",
@@ -13206,7 +13211,7 @@
       },
       "BatchCreatedResp": {
         "type": "object",
-        "description": "Response for the batch-create endpoints. Mirrors [`RefreshOutcome`] plus the\nnew `batch_id` the caller deep-links the Review queue to.",
+        "description": "Response for the batch-create endpoints. Mirrors [`refresh::RefreshOutcome`] plus the\nnew `batch_id` the caller deep-links the Review queue to.",
         "required": [
           "batch_id",
           "items_total",
@@ -14960,7 +14965,7 @@
       },
       "CollectionReportView": {
         "type": "object",
-        "description": "Collection-completeness report for a series: how many issues are owned\nversus expected, and **which** main-run issue numbers are missing.\n\nThe denominator (`total_expected`) comes from `series.total_issues`, which\nthe scanner resolves from a `series.json` sidecar or the max ComicInfo\n`<Count>`. series.json carries only the *count*, never a per-issue\nmanifest — so interior `missing` numbers are *inferred* by interpolating\nthe integer run between the lowest and highest owned issue. `expected_source`\nrecords this provenance; a future provider-backed exact manifest will flip\nit to `\"provider_manifest\"` and make `missing` exact.",
+        "description": "Collection-completeness report for a series: how many issues are owned\nversus expected, and **which** main-run issue numbers are missing.\n\nThe denominator (`total_expected`) comes from `series.total_issues`, which\nthe scanner resolves from a `series.json` sidecar or the max ComicInfo\n`<Count>`. series.json carries only the *count*, never a per-issue\nmanifest — so without provider data interior `missing` numbers are\n*inferred* by interpolating the integer run between the lowest and highest\nowned issue (`expected_source = \"series_total\"`). When the series has\naccepted provider coverage and those providers' issue lists are cached,\nthe expected set comes from them instead\n([`crate::metadata::issue_manifest`], `expected_source =\n\"provider_manifest\"`): `missing` is what every such provider lists and\nno local issue carries, `possibly_missing` what only some list.",
         "required": [
           "total_owned",
           "completeness_state",
@@ -14984,7 +14989,7 @@
           },
           "expected_source": {
             "type": "string",
-            "description": "`\"series_total\"` today (count-only). `\"provider_manifest\"` once an\nexact provider issue list backs the report."
+            "description": "`\"series_total\"` (count-only; `missing` interpolated) or\n`\"provider_manifest\"` (`missing` from the providers' issue lists —\nsee [`Self::manifest`])."
           },
           "issues": {
             "type": "array",
@@ -14995,6 +15000,17 @@
           },
           "main_run": {
             "$ref": "#/components/schemas/MainRunReport"
+          },
+          "manifest": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProviderManifestView",
+                "description": "The provider manifest when the series has accepted coverage for\nComicVine / Metron / GCD — also when no list is cached yet (then\n`used` is false and `note` says to run Analyze coverage). Read from\nthe 24 h issue-list cache only; the report never calls a provider."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "specials": {
             "type": "array",
@@ -15313,7 +15329,8 @@
           "ordinal",
           "external_id",
           "bucket",
-          "score"
+          "score",
+          "via_coverage"
         ],
         "properties": {
           "bucket": {
@@ -15346,6 +15363,10 @@
               "null"
             ],
             "description": "Series name / \"name #number\" for the column subtitle."
+          },
+          "via_coverage": {
+            "type": "boolean",
+            "description": "Series coverage supplied this candidate: the provider series the\nissue is assigned to lists it by number + cover date. The compare\nview defaults to it per provider; score and bucket are the\nmatcher's."
           }
         }
       },
@@ -21050,6 +21071,80 @@
           }
         }
       },
+      "IssueRefreshOutcome": {
+        "type": "object",
+        "description": "What an issue-level refresh did.",
+        "required": [
+          "enabled",
+          "issues_selected",
+          "per_provider",
+          "jobs_enqueued",
+          "jobs_coalesced",
+          "jobs_failed"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The Review batch the runs belong to; `None` when nothing was\nselected."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "`false` when `metadata.issue_refresh_enabled` is off (nothing ran)."
+          },
+          "issues_selected": {
+            "type": "integer",
+            "description": "Issues selected (each asks only the providers listed for it).",
+            "minimum": 0
+          },
+          "jobs_coalesced": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "jobs_enqueued": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "jobs_failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "per_provider": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueRefreshProviderCount"
+            },
+            "description": "Issues per provider (≤ cap each)."
+          }
+        }
+      },
+      "IssueRefreshProviderCount": {
+        "type": "object",
+        "description": "Issues one provider was given in an issue-level refresh run.",
+        "required": [
+          "source",
+          "issues",
+          "cap"
+        ],
+        "properties": {
+          "cap": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The per-provider cap of this run.",
+            "minimum": 0
+          },
+          "issues": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
       "IssueSearchHit": {
         "allOf": [
           {
@@ -21798,6 +21893,7 @@
           "present",
           "present_labels",
           "missing",
+          "possibly_missing",
           "trailing_missing"
         ],
         "properties": {
@@ -21822,7 +21918,15 @@
               "type": "integer",
               "format": "int64"
             },
-            "description": "Integers in `min..=max` not owned (e.g. `[3]`). **Inferred** — see\n[`CollectionReportView::expected_source`]."
+            "description": "Main-run integers not owned (e.g. `[3]`). Interpolated over\n`min..=max` for `series_total`; exact (every provider with accepted\ncoverage lists them) for `provider_manifest` — see\n[`CollectionReportView::expected_source`]."
+          },
+          "possibly_missing": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "`provider_manifest` only: main-run integers some providers list and\nothers don't (or can't confirm). Empty otherwise."
           },
           "present": {
             "type": "array",
@@ -21842,7 +21946,111 @@
           "trailing_missing": {
             "type": "integer",
             "format": "int64",
-            "description": "Count expected beyond `max` when `total_expected > max` (e.g. own up to\n#4 with `total_expected = 6` → `2`)."
+            "description": "Count expected beyond `max` when `total_expected > max` (e.g. own up to\n#4 with `total_expected = 6` → `2`). Always 0 for `provider_manifest`\n(numbers past `max` are in `missing`)."
+          }
+        }
+      },
+      "ManifestListing": {
+        "type": "string",
+        "description": "How one provider sees a number.",
+        "enum": [
+          "listed",
+          "not_listed",
+          "not_loaded"
+        ]
+      },
+      "ManifestProvider": {
+        "type": "object",
+        "description": "One provider with accepted coverage.",
+        "required": [
+          "source",
+          "loaded",
+          "series",
+          "listed_count"
+        ],
+        "properties": {
+          "listed_count": {
+            "type": "integer",
+            "description": "Distinct numbers its segments list (0 when not loaded).",
+            "minimum": 0
+          },
+          "loaded": {
+            "type": "boolean",
+            "description": "Every segment's list is cached (only then does it vote)."
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestSeriesRef"
+            }
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
+      "ManifestProviderView": {
+        "type": "object",
+        "description": "One provider's view of a possibly-missing number.",
+        "required": [
+          "source",
+          "listing"
+        ],
+        "properties": {
+          "listing": {
+            "$ref": "#/components/schemas/ManifestListing"
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
+      "ManifestSeriesRef": {
+        "type": "object",
+        "description": "One provider series a provider's expected set is read from.",
+        "required": [
+          "provider_series_id",
+          "via_range",
+          "loaded"
+        ],
+        "properties": {
+          "loaded": {
+            "type": "boolean",
+            "description": "The issue list is in the 24 h cache."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "From the cached list (or the range row)."
+          },
+          "provider_series_id": {
+            "type": "string"
+          },
+          "range_high": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "range_low": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The range bounds (canonical numbers) for a range segment."
+          },
+          "via_range": {
+            "type": "boolean",
+            "description": "`true` for a `series_provider_range` segment."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
           }
         }
       },
@@ -23569,6 +23777,26 @@
           }
         }
       },
+      "PossiblyMissingIssue": {
+        "type": "object",
+        "description": "A number some (not all) providers with accepted coverage list, not\nowned.",
+        "required": [
+          "number",
+          "providers"
+        ],
+        "properties": {
+          "number": {
+            "type": "string",
+            "description": "As the provider writes it (\"½\", \"605.1\")."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestProviderView"
+            }
+          }
+        }
+      },
       "PreferencesReq": {
         "type": "object",
         "description": "`PATCH /me/preferences` request body. Every field is optional; when a key\nis absent the prior value is preserved. To clear a stored value, send\n`null` (where the type allows).",
@@ -24094,6 +24322,49 @@
           },
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "ProviderManifestView": {
+        "type": "object",
+        "description": "The provider manifest behind a collection report.",
+        "required": [
+          "used",
+          "providers",
+          "missing",
+          "possibly_missing"
+        ],
+        "properties": {
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Numbers every provider with accepted coverage lists and no local\nissue carries, in number order."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "e.g. \"Metron provider list not loaded — run Analyze coverage\"."
+          },
+          "possibly_missing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PossiblyMissingIssue"
+            },
+            "description": "Numbers only some of them list (or a not-loaded provider can't\nconfirm), with each provider's view."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestProvider"
+            }
+          },
+          "used": {
+            "type": "boolean",
+            "description": "`true` when at least one provider's lists are loaded, i.e. the\nreport's `expected_source` is `provider_manifest`."
           }
         }
       },
@@ -25062,9 +25333,14 @@
           "series_eligible",
           "jobs_enqueued",
           "jobs_coalesced",
-          "jobs_failed"
+          "jobs_failed",
+          "issue_refresh"
         ],
         "properties": {
+          "issue_refresh": {
+            "$ref": "#/components/schemas/IssueRefreshOutcome",
+            "description": "The opt-in issue-level refresh (`metadata.issue_refresh_enabled`):\nstale covered issues re-fetched by direct lookup into a Review\nbatch. `enabled: false` when the setting is off."
+          },
           "jobs_coalesced": {
             "type": "integer",
             "minimum": 0
@@ -27300,6 +27576,13 @@
           "name": {
             "type": "string",
             "description": "The provider's series name (falls back to the id)."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Short context for the row, e.g. \"Has #612–645\" for a link from\nseries coverage (a range of this series maps to that provider\nseries, which has issues this series lacks)."
           },
           "provider_series_id": {
             "type": "string"

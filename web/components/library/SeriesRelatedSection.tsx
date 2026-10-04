@@ -538,6 +538,11 @@ function ExternalRows({
           {e.qualifier_label && (
             <span className="text-xs">· {e.qualifier_label}</span>
           )}
+          {e.note && (
+            <span className="text-xs" data-testid="external-relationship-note">
+              · {e.note}
+            </span>
+          )}
           {e.url ? (
             <a
               href={e.url}

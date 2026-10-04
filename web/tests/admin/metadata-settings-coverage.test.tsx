@@ -28,6 +28,8 @@ const INITIAL = {
   matchMediumThreshold: 60,
   coverageAfterApply: "manual_only" as const,
   coverageAutoAccept: false,
+  issueRefreshEnabled: false,
+  issueRefreshCap: 200,
 };
 
 describe("Coverage after series matches settings", () => {

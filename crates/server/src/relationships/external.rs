@@ -375,7 +375,11 @@ pub async fn record_provider_links<C: ConnectionTrait>(
             .await?;
         report.upserted += usize::try_from(res).unwrap_or(0);
     }
-    // Drop provider rows of this source the provider stopped listing.
+    // Drop provider rows of this source the provider stopped listing — the
+    // `associated` ones only; coverage rows ([`record_coverage_links`])
+    // have their own lifecycle. A live coverage row for a series the
+    // provider now links itself is superseded (no duplicate target).
+    let linked: HashSet<&str> = keep.iter().map(|(_, pid)| pid.as_str()).collect();
     let stale: Vec<Uuid> = ext::Entity::find()
         .filter(ext::Column::FromSeriesId.eq(series.id))
         .filter(ext::Column::Source.eq(src.as_str()))
@@ -384,7 +388,13 @@ pub async fn record_provider_links<C: ConnectionTrait>(
         .all(conn)
         .await?
         .into_iter()
-        .filter(|r| !keep.contains(&(r.kind.clone(), r.provider_series_id.clone())))
+        .filter(|r| {
+            if is_coverage_row(r) {
+                linked.contains(r.provider_series_id.as_str())
+            } else {
+                !keep.contains(&(r.kind.clone(), r.provider_series_id.clone()))
+            }
+        })
         .map(|r| r.id)
         .collect();
     if !stale.is_empty() {
@@ -400,6 +410,200 @@ pub async fn record_provider_links<C: ConnectionTrait>(
     let p = promote_series_rows(conn, series.id).await?;
     report.promoted = p.total();
     report.pairs_created = p.pairs_created;
+    Ok(report)
+}
+
+// ───── coverage links (coverage tie-ins PR 4) ─────
+
+/// `evidence.field` of rows written by [`record_coverage_links`].
+pub const COVERAGE_FIELD: &str = "coverage";
+
+/// Confidence of a coverage link: the local series really holds part of
+/// that provider series (an accepted range), so it's firmer than an
+/// untyped `associated` link.
+pub const COVERAGE_LINK_CONFIDENCE: f32 = 0.7;
+
+/// Was this row written from series coverage (not Metron `associated`)?
+pub fn is_coverage_row(r: &ext::Model) -> bool {
+    r.evidence.get("field").and_then(|v| v.as_str()) == Some(COVERAGE_FIELD)
+}
+
+/// One "not in your library" link from series coverage: a range of the
+/// local series maps to a provider series that also has issues the local
+/// series lacks.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CoverageLink {
+    pub provider_series_id: String,
+    pub name: Option<String>,
+    pub year: Option<i32>,
+    pub url: Option<String>,
+    /// `continued_by` (its extra issues all come after the range),
+    /// `continues` (all before), else `see_also`.
+    pub kind: RelationshipKind,
+    /// "Has #612–645" — shown next to the row.
+    pub note: String,
+    /// How many of its issues the local series lacks.
+    pub not_owned: usize,
+    /// The local range(s) mapped to it, `"600–611"`.
+    pub ranges: Vec<String>,
+}
+
+/// What [`record_coverage_links`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct CoverageLinkReport {
+    pub upserted: usize,
+    /// Targets skipped because a row already points there: a Metron
+    /// `associated` row, a user row, or a dismissed row (rejection memory).
+    pub skipped_existing: usize,
+    /// Live coverage rows of this source no longer backed by a link.
+    pub removed: usize,
+}
+
+/// Store series `series_id`'s coverage links for `source` as
+/// `set_by = 'provider'` external rows (`evidence.field = "coverage"`).
+///
+/// - A target that already has **any** row of this series and source — a
+///   Metron `associated` row, a user row, or a dismissed row of any kind —
+///   is skipped: no duplicate target, user > provider, and a dismissal is
+///   rejection memory.
+/// - A live coverage row whose kind changed is replaced; one this call no
+///   longer lists (range removed, all issues now owned) is deleted.
+/// - Then the rows are resolved against the library (promotion when the
+///   provider series is in the library already).
+pub async fn record_coverage_links<C: ConnectionTrait>(
+    conn: &C,
+    series_id: Uuid,
+    source: Source,
+    links: &[CoverageLink],
+) -> Result<CoverageLinkReport, DbErr> {
+    let mut report = CoverageLinkReport::default();
+    let Some(src) = ExternalSource::from_source(source) else {
+        return Ok(report);
+    };
+    let existing = ext::Entity::find()
+        .filter(ext::Column::FromSeriesId.eq(series_id))
+        .filter(ext::Column::Source.eq(src.as_str()))
+        .all(conn)
+        .await?;
+    let now = Utc::now().fixed_offset();
+    let mut keep: HashSet<String> = HashSet::new();
+    for link in links {
+        let pid = link.provider_series_id.trim();
+        if pid.is_empty() || pid.len() > 64 || !keep.insert(pid.to_owned()) {
+            continue;
+        }
+        let rows: Vec<&ext::Model> = existing
+            .iter()
+            .filter(|r| r.provider_series_id == pid)
+            .collect();
+        let blocked = rows
+            .iter()
+            .any(|r| !is_coverage_row(r) || r.set_by == "user" || r.dismissed_at.is_some());
+        if blocked {
+            report.skipped_existing += 1;
+            continue;
+        }
+        // A live coverage row of another kind: replaced by this one.
+        let other_kind: Vec<Uuid> = rows
+            .iter()
+            .filter(|r| r.kind != link.kind.as_str())
+            .map(|r| r.id)
+            .collect();
+        if !other_kind.is_empty() {
+            ext::Entity::delete_many()
+                .filter(ext::Column::Id.is_in(other_kind))
+                .exec(conn)
+                .await?;
+        }
+        let name: Option<String> = link
+            .name
+            .as_deref()
+            .map(|n| n.chars().take(300).collect::<String>())
+            .filter(|n| !n.trim().is_empty());
+        let url = link
+            .url
+            .clone()
+            .or_else(|| src.series_url(pid))
+            .filter(|u| u.len() <= 500);
+        let evidence = serde_json::json!({
+            "source": src.as_str(),
+            "field": COVERAGE_FIELD,
+            "ids": [pid],
+            "ranges": link.ranges,
+            "not_owned": link.not_owned,
+            "note": link.note,
+        });
+        let am = ext::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            from_series_id: Set(series_id),
+            kind: Set(link.kind.as_str().to_owned()),
+            qualifier: Set(None),
+            source: Set(src.as_str().to_owned()),
+            provider_series_id: Set(pid.to_owned()),
+            provider_series_name: Set(name),
+            provider_series_url: Set(url),
+            provider_year: Set(link.year),
+            set_by: Set(ExternalSetBy::Provider.as_str().to_owned()),
+            confidence: Set(Some(COVERAGE_LINK_CONFIDENCE)),
+            evidence: Set(evidence),
+            created_by: Set(None),
+            promoted_series_id: Set(None),
+            dismissed_at: Set(None),
+            dismissed_by: Set(None),
+            first_set_at: Set(now),
+            last_synced_at: Set(now),
+        };
+        let res = ext::Entity::insert(am)
+            .on_conflict(
+                OnConflict::columns([
+                    ext::Column::FromSeriesId,
+                    ext::Column::Kind,
+                    ext::Column::Source,
+                    ext::Column::ProviderSeriesId,
+                ])
+                .update_columns([
+                    ext::Column::ProviderSeriesName,
+                    ext::Column::ProviderSeriesUrl,
+                    ext::Column::ProviderYear,
+                    ext::Column::Confidence,
+                    ext::Column::Evidence,
+                    ext::Column::LastSyncedAt,
+                ])
+                .action_and_where(
+                    sea_orm::sea_query::Expr::col((ext::Entity, ext::Column::SetBy))
+                        .eq("provider")
+                        .and(
+                            sea_orm::sea_query::Expr::col((ext::Entity, ext::Column::DismissedAt))
+                                .is_null(),
+                        ),
+                )
+                .to_owned(),
+            )
+            .exec_without_returning(conn)
+            .await?;
+        report.upserted += usize::try_from(res).unwrap_or(0);
+    }
+    let gone: Vec<Uuid> = existing
+        .iter()
+        .filter(|r| {
+            is_coverage_row(r)
+                && r.set_by == "provider"
+                && r.dismissed_at.is_none()
+                && !keep.contains(&r.provider_series_id)
+        })
+        .map(|r| r.id)
+        .collect();
+    if !gone.is_empty() {
+        report.removed = usize::try_from(
+            ext::Entity::delete_many()
+                .filter(ext::Column::Id.is_in(gone))
+                .exec(conn)
+                .await?
+                .rows_affected,
+        )
+        .unwrap_or(0);
+    }
+    promote_series_rows(conn, series_id).await?;
     Ok(report)
 }
 

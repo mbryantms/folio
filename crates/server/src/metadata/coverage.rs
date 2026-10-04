@@ -162,6 +162,19 @@ async fn cache_put_list(
         .await;
 }
 
+/// A provider series' cached issue list, **cache only** (never fetches).
+/// Only complete listings are ever cached, so a hit lists every number.
+/// The collection report's provider manifest reads lists this way.
+pub async fn cached_provider_issues(
+    redis: &ConnectionManager,
+    source: Source,
+    provider_series_id: &str,
+) -> Option<ProviderSeriesIssues> {
+    cache_get_list(redis, source, provider_series_id)
+        .await
+        .filter(|l| l.complete)
+}
+
 /// Is a cached list good enough for `opts`? Complete lists always are;
 /// a GCD list (dated per overview page) only when every hinted number it
 /// lists already carries a date.
@@ -2312,6 +2325,10 @@ pub struct AcceptOutcome {
     /// Existing automated ranges the accepted proposal no longer supports
     /// (reported, never deleted).
     pub stale_ranges: Vec<CoverageRangeRef>,
+    /// "Not in your library" links written or refreshed: ranges whose
+    /// provider series has issues this folder lacks (Related tab).
+    #[serde(default)]
+    pub external_links: usize,
 }
 
 /// Accept one provider's proposal: write the main id (unless the user
@@ -2437,7 +2454,199 @@ pub async fn accept_provider(
         }
     }
     out.stale_ranges = view.stale_ranges;
+    // Ranges whose provider series also has issues this folder lacks become
+    // "not in your library" links on the Related tab. Soft-fails: the
+    // accept itself already succeeded.
+    match sync_coverage_links(state, series_id, analysis, &local).await {
+        Ok(n) => out.external_links = n,
+        Err(e) => {
+            tracing::warn!(series_id = %series_id, source = source.as_str(), error = %e, "coverage: external links not synced");
+        }
+    }
     Ok(out)
+}
+
+/// "#612–645, #650" for compare keys (integer runs collapsed), at most
+/// `max` runs, then "and N more".
+fn format_number_runs(keys: &[String], max: usize) -> String {
+    let mut ints: Vec<i64> = Vec::new();
+    let mut other: Vec<&str> = Vec::new();
+    for k in keys {
+        match k.parse::<f64>() {
+            Ok(v) if v.is_finite() && v >= 0.0 && (v - v.round()).abs() < 1e-9 => {
+                ints.push(v.round() as i64);
+            }
+            _ => other.push(k),
+        }
+    }
+    ints.sort_unstable();
+    ints.dedup();
+    let mut runs: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < ints.len() {
+        let start = ints[i];
+        let mut end = start;
+        while i + 1 < ints.len() && ints[i + 1] == end + 1 {
+            i += 1;
+            end = ints[i];
+        }
+        runs.push(if start == end {
+            format!("#{start}")
+        } else {
+            format!("#{start}–{end}")
+        });
+        i += 1;
+    }
+    runs.extend(other.iter().map(|o| format!("#{o}")));
+    let total = runs.len();
+    if total > max {
+        runs.truncate(max);
+        format!("{} and {} more", runs.join(", "), total - max)
+    } else {
+        runs.join(", ")
+    }
+}
+
+/// The kind of a coverage link from where the provider series' extra
+/// (not-owned) issues sit relative to the local ranges mapped to it.
+pub fn coverage_link_kind(
+    extra: &[String],
+    lowest: Option<f64>,
+    highest: Option<f64>,
+) -> crate::relationships::RelationshipKind {
+    use crate::relationships::RelationshipKind;
+    let values: Vec<f64> = extra.iter().filter_map(|k| k.parse::<f64>().ok()).collect();
+    if values.is_empty() || values.len() != extra.len() {
+        return RelationshipKind::SeeAlso;
+    }
+    if let Some(hi) = highest
+        && values.iter().all(|v| *v > hi)
+    {
+        return RelationshipKind::ContinuedBy;
+    }
+    if let Some(lo) = lowest
+        && values.iter().all(|v| *v < lo)
+    {
+        return RelationshipKind::Continues;
+    }
+    RelationshipKind::SeeAlso
+}
+
+/// Turn this provider's ranges into "not in your library" links
+/// ([`crate::relationships::external::record_coverage_links`]): a range's
+/// provider series that lists numbers no local issue carries. Its issue
+/// list comes from the 24 h cache, else the analysis' listing (restricted
+/// to the local span, so the count is `listed_count` minus what's owned);
+/// no provider call. Returns the links upserted.
+async fn sync_coverage_links(
+    state: &AppState,
+    series_id: Uuid,
+    analysis: &ProviderAnalysis,
+    local: &[LocalCovIssue],
+) -> anyhow::Result<usize> {
+    use crate::relationships::external::{CoverageLink, record_coverage_links};
+    let source = analysis.source;
+    let ranges = series_provider_range::Entity::find()
+        .filter(series_provider_range::Column::SeriesId.eq(series_id))
+        .filter(series_provider_range::Column::Source.eq(source.as_str()))
+        .all(&state.db)
+        .await?;
+    let owned: HashSet<&str> = local.iter().map(|l| l.key.as_str()).collect();
+    let mut by_pid: Vec<(String, Vec<&series_provider_range::Model>)> = Vec::new();
+    for r in &ranges {
+        match by_pid.iter_mut().find(|(p, _)| *p == r.provider_series_id) {
+            Some((_, rs)) => rs.push(r),
+            None => by_pid.push((r.provider_series_id.clone(), vec![r])),
+        }
+    }
+    let mut links = Vec::new();
+    for (pid, rs) in by_pid {
+        let cached = cached_provider_issues(&state.jobs.redis, source, &pid).await;
+        let candidate = analysis
+            .candidates
+            .iter()
+            .find(|c| c.provider_series_id == pid);
+        let (keys, not_owned, name, year) = if let Some(list) = &cached {
+            let mut extra: Vec<String> = list
+                .issues
+                .iter()
+                .map(|i| issue_number_compare_key(&i.number))
+                .filter(|k| !owned.contains(k.as_str()))
+                .collect();
+            extra.sort();
+            extra.dedup();
+            let n = extra.len();
+            (extra, n, list.series_name.clone(), list.year_began)
+        } else if let Some(c) = candidate {
+            let listed_keys: HashSet<String> = c
+                .listed
+                .iter()
+                .map(|i| issue_number_compare_key(&i.number))
+                .collect();
+            let owned_listed = listed_keys
+                .iter()
+                .filter(|k| owned.contains(k.as_str()))
+                .count();
+            let mut extra: Vec<String> = listed_keys
+                .into_iter()
+                .filter(|k| !owned.contains(k.as_str()))
+                .collect();
+            extra.sort();
+            let n = (c.listed_count as usize).saturating_sub(owned_listed);
+            (extra, n, c.name.clone(), c.year)
+        } else {
+            continue;
+        };
+        if not_owned == 0 {
+            continue;
+        }
+        let lows: Vec<f64> = rs
+            .iter()
+            .filter_map(|r| r.range_low.as_deref().and_then(|v| v.parse().ok()))
+            .collect();
+        let highs: Vec<f64> = rs
+            .iter()
+            .filter_map(|r| r.range_high.as_deref().and_then(|v| v.parse().ok()))
+            .collect();
+        let lowest = lows.iter().copied().reduce(f64::min);
+        let highest = highs.iter().copied().reduce(f64::max);
+        // Only a full listing can place the extra issues before / after.
+        let kind = if cached.is_some() {
+            coverage_link_kind(&keys, lowest, highest)
+        } else {
+            crate::relationships::RelationshipKind::SeeAlso
+        };
+        let note = if keys.len() == not_owned {
+            format!("Has {}", format_number_runs(&keys, 4))
+        } else {
+            format!(
+                "Has {not_owned} issue{} not in this series",
+                if not_owned == 1 { "" } else { "s" }
+            )
+        };
+        let first = rs[0];
+        links.push(CoverageLink {
+            provider_series_id: pid.clone(),
+            name: name.or_else(|| first.provider_series_name.clone()),
+            year: year.or(first.declared_year),
+            url: first.provider_series_url.clone(),
+            kind,
+            note,
+            not_owned,
+            ranges: rs
+                .iter()
+                .map(|r| {
+                    format!(
+                        "{}–{}",
+                        r.range_low.as_deref().unwrap_or("…"),
+                        r.range_high.as_deref().unwrap_or("…")
+                    )
+                })
+                .collect(),
+        });
+    }
+    let report = record_coverage_links(&state.db, series_id, source, &links).await?;
+    Ok(report.upserted)
 }
 
 #[cfg(test)]

@@ -39,6 +39,7 @@ pub mod field;
 pub mod gcd;
 pub mod http;
 pub mod identifier;
+pub mod issue_manifest;
 pub mod lookup;
 pub mod manual_writeback;
 pub mod match_outcome;
