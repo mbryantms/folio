@@ -895,17 +895,17 @@ export function Reader({
       ? "w-full h-auto max-w-none"
       : fitMode === "contain"
         ? viewMode === "double" && visiblePages.length === 2
-          ? "h-auto max-w-none w-[min(calc(50vw_-_2px),calc((100dvh_-_var(--safe-top)_-_var(--safe-bottom))*var(--page-ar,0.6667)))]"
+          ? "h-auto max-w-none w-[min(calc(50vw_-_2px),calc((100dvh_-_var(--reader-top)_-_var(--safe-bottom))*var(--page-ar,0.6667)))]"
           : viewMode === "double"
-            ? "h-auto max-w-none w-[min(100vw,calc((100dvh_-_var(--safe-top)_-_var(--safe-bottom))*var(--page-ar,0.6667)))]"
-            : "h-auto max-w-none w-[min(100%,calc((100dvh_-_var(--safe-top)_-_var(--safe-bottom))*var(--page-ar,0.6667)))]"
+            ? "h-auto max-w-none w-[min(100vw,calc((100dvh_-_var(--reader-top)_-_var(--safe-bottom))*var(--page-ar,0.6667)))]"
+            : "h-auto max-w-none w-[min(100%,calc((100dvh_-_var(--reader-top)_-_var(--safe-bottom))*var(--page-ar,0.6667)))]"
         : fitMode === "height"
           ? // Fit-height fills the *safe* viewport, not the raw 100vh — on an
             // iOS PWA (status-bar-translucent + viewport-fit=cover) the top/bottom
             // insets are non-zero, so the page sits in the safe band and the
             // status bar / home indicator land on the black letterbox instead of
             // the art. Off-iOS the insets are 0, so this is exactly 100dvh.
-            "h-[calc(100dvh_-_var(--safe-top)_-_var(--safe-bottom))] w-auto max-w-none"
+            "h-[calc(100dvh_-_var(--reader-top)_-_var(--safe-bottom))] w-auto max-w-none"
           : "max-w-none w-auto h-auto";
   // Double-page panes need different wrapper sizing depending on fitMode.
   // In width mode each pane is forced to share the viewport row (flex-1
@@ -1012,14 +1012,17 @@ export function Reader({
        * glyphs legible. Solid, not a fade: iOS 26 extends a single solid
        * colour at the top edge but blurs over anything multi-coloured
        * (see the `standalone` variant in globals.css), so a gradient here
-       * invited the system blur on top of our own fade. Height is the
-       * inset itself, so on desktop / non-notched devices — and on iOS
-       * 26.1+ where `SafeAreaProbe` pins `--safe-top` to 0 — it paints
-       * nothing. z-20 keeps it under the chrome (z-30); mirrors
-       * PageStrip's `--safe-bottom` bar on the home-indicator side. */}
+       * invited the system blur on top of our own fade. Height is
+       * `--reader-top`: the inset itself in a browser tab (0 on desktop),
+       * and never under 12px in the installed app, because WebKit ignores
+       * edge bars 10px or thinner — with `--safe-top` pinned to 0 (iOS
+       * 26.1+) and the chrome hidden, the blur ran over the artwork.
+       * Pages pad by the same var so the bar never covers fitted art.
+       * z-20 keeps it under the chrome (z-30); mirrors PageStrip's
+       * `--safe-bottom` bar on the home-indicator side. */}
       <div
         aria-hidden="true"
-        className="pointer-events-none fixed inset-x-0 top-0 z-20 h-(--safe-top) bg-black"
+        className="pointer-events-none fixed inset-x-0 top-0 z-20 h-(--reader-top) bg-black"
       />
 
       {peekActive && (
@@ -1293,7 +1296,7 @@ function SinglePageView({
   }, [currentPage, fitClass, zoom.scale, onOverflowChange, panMetricsRef]);
   const natural = pageNaturalSize.current?.get(currentPage) ?? null;
   return (
-    <main className="relative grid min-h-screen place-items-center pt-(--safe-top) pb-(--safe-bottom)">
+    <main className="relative grid min-h-screen place-items-center pt-(--reader-top) pb-(--safe-bottom)">
       <div
         className="relative w-full overflow-hidden"
         data-testid="reader-page-wrapper"
@@ -1504,7 +1507,7 @@ function DoublePageView({
   // the retain-old-page version for the more nuanced single-image
   // case.
   return (
-    <main className="relative grid min-h-screen place-items-center pt-(--safe-top) pb-(--safe-bottom)">
+    <main className="relative grid min-h-screen place-items-center pt-(--reader-top) pb-(--safe-bottom)">
       <div className="relative w-full overflow-hidden">
         <div
           ref={rowRef}
@@ -1764,7 +1767,7 @@ function WebtoonView({
   return (
     <main
       ref={containerRef}
-      className="flex min-h-screen flex-col items-center pt-(--safe-top) pb-(--safe-bottom)"
+      className="flex min-h-screen flex-col items-center pt-(--reader-top) pb-(--safe-bottom)"
     >
       {Array.from({ length: totalPages }, (_, i) => {
         const within = i >= mountWindow.start && i <= mountWindow.end;
