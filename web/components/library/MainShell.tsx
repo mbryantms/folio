@@ -59,7 +59,7 @@ export function MainShell({
       <SkipToContent />
       <PullToRefresh />
       <AddToHomeScreenBanner />
-      <header className="border-border bg-background/80 sticky top-0 z-30 flex h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pr-[max(1rem,var(--safe-right))] pl-[max(1rem,var(--safe-left))] backdrop-blur md:pr-[max(1.5rem,var(--safe-right))] md:pl-[max(1.5rem,var(--safe-left))]">
+      <header className="border-border bg-background/80 standalone:bg-background standalone:backdrop-blur-none sticky top-0 z-30 flex h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pr-[max(1rem,var(--safe-right))] pl-[max(1rem,var(--safe-left))] backdrop-blur md:pr-[max(1.5rem,var(--safe-right))] md:pl-[max(1.5rem,var(--safe-left))]">
         {/* The nav sheet is controlled (no inline trigger) — on mobile the
             bottom bar's "More" tab opens it; on md+ the persistent sidebar
             replaces it. */}

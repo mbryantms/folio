@@ -3,6 +3,17 @@
 @variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 /*
+ * Installed (home-screen) app. iOS / iPadOS 26 draw the Liquid Glass
+ * "scroll edge effect" — a blur fading ~40pt down from the top of the web
+ * view, over content — unless a fixed / sticky full-width box at the top
+ * edge paints ONE solid colour, which WebKit then extends instead
+ * (WebKit `FixedContainerEdges`). A translucent `backdrop-blur` bar reads
+ * as many colours, so top bars go opaque under this variant. Browser tabs
+ * keep the frosted look.
+ */
+@custom-variant standalone (@media (display-mode: standalone));
+
+/*
  * Token system (M1):
  * - HSL channels stored as CSS vars so Tailwind utilities (`bg-card` etc.) read
  *   them through `@theme`.
