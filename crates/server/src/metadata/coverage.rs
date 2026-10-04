@@ -38,8 +38,12 @@
 //!    ([`accept_provider`]): the main id goes through
 //!    [`writers::set_external_id_promoting`], ranges through
 //!    [`auto_split::insert_detected_range`]. User-set ids and ranges
-//!    (`set_by = 'user'`) are never overwritten, and existing automated
-//!    ranges are never deleted — stale ones are reported.
+//!    (`set_by = 'user'`) are never overwritten or deleted. Existing
+//!    *automated* ranges the accepted proposal no longer supports (stale:
+//!    they point at the main series, or the proposal files their issues
+//!    elsewhere) are deleted by the accept once the proposal's main is the
+//!    series' id for that provider ([`auto_split::is_automatic_range`]),
+//!    and reported in [`AcceptOutcome::stale_ranges_removed`].
 //!
 //! The analysis runs as a background job
 //! ([`crate::jobs::provider_coverage`]): three providers, up to eight
@@ -1985,6 +1989,9 @@ pub struct CoverageRangeRef {
     pub id: String,
     pub provider_series_id: String,
     pub provider_series_name: Option<String>,
+    /// The mapped provider series' start year, when known.
+    #[serde(default)]
+    pub declared_year: Option<i32>,
     pub range_low: Option<String>,
     pub range_high: Option<String>,
     pub set_by: String,
@@ -2024,7 +2031,8 @@ pub struct ProviderCoverageView {
     pub stale_ranges: Vec<CoverageRangeRef>,
     /// Existing user-set data that disagrees (blocks auto-accept).
     pub conflicts: Vec<String>,
-    /// Accepting would change something (main id or new ranges).
+    /// Accepting would change something (main id, new ranges, or stale
+    /// automated ranges to remove).
     pub has_changes: bool,
     /// Eligible for automatic acceptance: high confidence, changes, no
     /// conflicts.
@@ -2189,7 +2197,7 @@ pub fn build_view(
             None
         };
         let Some(reason) = reason else { continue };
-        if e.set_by == "user" {
+        if !auto_split::is_automatic_range(&e.set_by) {
             conflicts.push(format!(
                 "your mapping {} → #{} disagrees with the proposal ({reason})",
                 fmt_bounds(e.range_low.as_deref(), e.range_high.as_deref()),
@@ -2201,6 +2209,7 @@ pub fn build_view(
             id: e.id.to_string(),
             provider_series_id: e.provider_series_id.clone(),
             provider_series_name: e.provider_series_name.clone(),
+            declared_year: e.declared_year,
             range_low: e.range_low.clone(),
             range_high: e.range_high.clone(),
             set_by: e.set_by.clone(),
@@ -2246,7 +2255,10 @@ pub fn build_view(
         (Some(_), None) => true,
         _ => false,
     };
+    // Removing stale automated ranges is a change too (the accept deletes
+    // them once the main is in place).
     let has_changes = main_changes
+        || !stale_ranges.is_empty()
         || proposed_ranges
             .iter()
             .any(|r| r.status == ProposedRangeStatus::New);
@@ -2323,8 +2335,13 @@ pub struct AcceptOutcome {
     /// Ranges not written (already mapped / conflicting), with the reason.
     pub ranges_skipped: Vec<ProposedRange>,
     /// Existing automated ranges the accepted proposal no longer supports
-    /// (reported, never deleted).
+    /// that were **kept** — the accept didn't put the proposal's main in
+    /// place (e.g. your own link differs), so removing them would leave
+    /// those issues unmapped.
     pub stale_ranges: Vec<CoverageRangeRef>,
+    /// Stale automated ranges this accept deleted (never a `user` row).
+    #[serde(default)]
+    pub stale_ranges_removed: Vec<CoverageRangeRef>,
     /// "Not in your library" links written or refreshed: ranges whose
     /// provider series has issues this folder lacks (Related tab).
     #[serde(default)]
@@ -2332,9 +2349,13 @@ pub struct AcceptOutcome {
 }
 
 /// Accept one provider's proposal: write the main id (unless the user
-/// linked another series) and every `new` range. `by_user` records the
-/// main id as `user` (an admin confirmed it); automatic acceptance uses
-/// `SetBy::Provider`. Existing rows are never overwritten or deleted.
+/// linked another series), delete the stale **automated** ranges once that
+/// main is the series' id for the provider, then write every `new` range
+/// (re-checked after the deletion, so a proposal only blocked by a stale
+/// row goes through). `by_user` records the main id as `user` (an admin
+/// confirmed it); automatic acceptance uses `SetBy::Provider`. User-set
+/// rows are never overwritten or deleted. Callers audit
+/// `stale_ranges_removed` in their accept audit row.
 pub async fn accept_provider(
     state: &AppState,
     series_id: Uuid,
@@ -2425,6 +2446,68 @@ pub async fn accept_provider(
         }
     }
 
+    // Stale automated ranges go once the proposal's main is in place: the
+    // main now files those issues (or the proposal maps them elsewhere).
+    // Without the main written, deleting them would leave the issues
+    // routed to nothing — they stay reported instead.
+    let mut view = view;
+    let main_in_place = match view.main_series_id.as_deref() {
+        Some(main) => external_id::Entity::find()
+            .filter(external_id::Column::EntityType.eq("series"))
+            .filter(external_id::Column::EntityId.eq(series_id.to_string()))
+            .filter(external_id::Column::Source.eq(source.as_str()))
+            .one(db)
+            .await?
+            .is_some_and(|e| e.external_id == main),
+        None => false,
+    };
+    if main_in_place && !view.stale_ranges.is_empty() {
+        let stale_ids: Vec<Uuid> = view
+            .stale_ranges
+            .iter()
+            .filter(|r| auto_split::is_automatic_range(&r.set_by))
+            .filter_map(|r| Uuid::parse_str(&r.id).ok())
+            .collect();
+        // The set_by guard is repeated in SQL: a row a user re-pinned
+        // since the analysis is never deleted.
+        let deleted: Vec<Uuid> = if stale_ids.is_empty() {
+            Vec::new()
+        } else {
+            series_provider_range::Entity::find()
+                .filter(series_provider_range::Column::Id.is_in(stale_ids.clone()))
+                .filter(series_provider_range::Column::SeriesId.eq(series_id))
+                .filter(series_provider_range::Column::SetBy.ne("user"))
+                .select_only()
+                .column(series_provider_range::Column::Id)
+                .into_tuple::<Uuid>()
+                .all(db)
+                .await?
+        };
+        if !deleted.is_empty() {
+            series_provider_range::Entity::delete_many()
+                .filter(series_provider_range::Column::Id.is_in(deleted.clone()))
+                .filter(series_provider_range::Column::SetBy.ne("user"))
+                .exec(db)
+                .await?;
+            let (removed, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut view.stale_ranges)
+                .into_iter()
+                .partition(|r| Uuid::parse_str(&r.id).is_ok_and(|id| deleted.contains(&id)));
+            out.stale_ranges_removed = removed;
+            // Proposals that only conflicted with a deleted row are new now.
+            let ranges = series_provider_range::Entity::find()
+                .filter(series_provider_range::Column::SeriesId.eq(series_id))
+                .all(db)
+                .await?;
+            let ext_ids = external_id::Entity::find()
+                .filter(external_id::Column::EntityType.eq("series"))
+                .filter(external_id::Column::EntityId.eq(series_id.to_string()))
+                .all(db)
+                .await?;
+            view = build_view(analysis, &local, &ext_ids, &ranges, forced_main, seed_main);
+            view.stale_ranges = kept;
+        }
+    }
+
     for r in view.proposed_ranges {
         if r.status != ProposedRangeStatus::New {
             out.ranges_skipped.push(r);
@@ -2455,15 +2538,42 @@ pub async fn accept_provider(
     }
     out.stale_ranges = view.stale_ranges;
     // Ranges whose provider series also has issues this folder lacks become
-    // "not in your library" links on the Related tab. Soft-fails: the
-    // accept itself already succeeded.
+    // "not in your library" links on the Related tab (a deleted range's
+    // link goes with it). Soft-fails: the accept itself already succeeded.
     match sync_coverage_links(state, series_id, analysis, &local).await {
-        Ok(n) => out.external_links = n,
+        Ok(report) => {
+            out.external_links = report.upserted;
+            if report.removed > 0 || report.pairs_created > 0 {
+                state.similarity.invalidate_all();
+            }
+        }
         Err(e) => {
             tracing::warn!(series_id = %series_id, source = source.as_str(), error = %e, "coverage: external links not synced");
         }
     }
     Ok(out)
+}
+
+/// The `stale_ranges_removed` entry of a coverage-accept audit row: every
+/// deleted range with its bounds, target, former `set_by` and why it went.
+pub fn removed_ranges_audit(outcome: &AcceptOutcome) -> serde_json::Value {
+    serde_json::Value::Array(
+        outcome
+            .stale_ranges_removed
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.id,
+                    "provider_series_id": r.provider_series_id,
+                    "provider_series_name": r.provider_series_name,
+                    "low": r.range_low,
+                    "high": r.range_high,
+                    "set_by": r.set_by,
+                    "reason": r.reason,
+                })
+            })
+            .collect(),
+    )
 }
 
 /// "#612–645, #650" for compare keys (integer runs collapsed), at most
@@ -2543,7 +2653,7 @@ async fn sync_coverage_links(
     series_id: Uuid,
     analysis: &ProviderAnalysis,
     local: &[LocalCovIssue],
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<crate::relationships::external::CoverageLinkReport> {
     use crate::relationships::external::{CoverageLink, record_coverage_links};
     let source = analysis.source;
     let ranges = series_provider_range::Entity::find()
@@ -2645,8 +2755,7 @@ async fn sync_coverage_links(
                 .collect(),
         });
     }
-    let report = record_coverage_links(&state.db, series_id, source, &links).await?;
-    Ok(report.upserted)
+    Ok(record_coverage_links(&state.db, series_id, source, &links).await?)
 }
 
 #[cfg(test)]

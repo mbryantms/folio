@@ -206,6 +206,26 @@ is **not** a chain edge (it is shown in its own group). Positions can
 repeat when the chain branches (two sequels of the same book). A node that
 a cycle puts on both sides is kept on the "before" side only.
 
+**Provider ranges in the reading order** (range hygiene). A local series
+is one chain node even when providers split its issues across provider
+series (FF #600–611 is "Fantastic Four (2012)" on Metron and GCD):
+membership is folder-pinned and the chain never invents a local series.
+Instead [`chain_splits`](../../crates/server/src/relationships/mod.rs)
+reads each kept node's `series_provider_range` rows (one query, with the
+node's local number span) and the API attaches them to the node as
+`provider_splits`: `numbers` + `verb` + `target` ("#600–611 continue as
+Fantastic Four (2012)"). The verb follows where the range sits in the
+local numbers — the last numbers **continue as**, the first **begin as**,
+anything else **are filed as** (singular for one issue). Ranges of
+several providers with the same bounds and target merge into one step
+listing each provider (with its series URL). When another local series
+is matched (series-level `external_ids`) to that provider series and the
+caller can see it, the step links to it (`local_series`); otherwise the
+provider links stand in, next to the "Not in your library" rows the
+coverage accept writes for the same series. Ranges never add chain
+edges or nodes, and a series with ranges but no chain edges still has an
+empty chain (its provider series show under "Not in your library").
+
 Dense self-inverse graphs (`same_universe` across a whole publisher) make
 path enumeration expensive at depth 6. The chain only follows
 sequel/continuation edges, so this doesn't affect the series page. A
@@ -256,9 +276,16 @@ it.
     "arc": { "id": "…", "slug": "secret-invasion", "name": "Secret Invasion" }
   }],
   "chain": [                   // empty when there are no sequel/continuation edges
-    { "position": -1, "series": { /* SeriesView */ } },
-    { "position": 0,  "series": { /* this series */ } },
-    { "position": 1,  "series": { /* SeriesView */ } }
+    { "position": -1, "series": { /* SeriesView */ }, "provider_splits": [] },
+    { "position": 0,  "series": { /* this series */ }, "provider_splits": [] },
+    { "position": 1,  "series": { /* SeriesView */ }, "provider_splits": [{
+        "low": "600", "high": "611", "position": "end",   // | "start" | "middle"
+        "numbers": "#600–611", "verb": "continue as", "target": "Fantastic Four (2012)",
+        "label": "#600–611 continue as Fantastic Four (2012)",
+        "providers": [{ "source": "metron", "source_label": "Metron",
+                        "provider_series_id": "1713", "url": "https://metron.cloud/series/1713/" }],
+        "local_series": null    // { id, slug, name, year } when a visible local series holds it
+    }] }
   ],
   "external": [{               // WP-7.8: provider series not in the library
     "id": "…", "kind": "continued_by", "kind_label": "Continued by", "group": "publication",
@@ -534,8 +561,13 @@ main by rule (1): Secret Wars (2015) has no issues tagged with that arc.
 and provider volumes, in this order; null when the evidence doesn't say:
 
 - `retitle`: provider continuity under different base names;
-- `split`: either series has a `series_provider_range` row (a provider
-  splits that run across provider series);
+- `split`: a `series_provider_range` row **links the pair**
+  (`sources::range_link_sql`) — a range of one points at a provider series
+  the other is matched to (its series-level `external_ids` row, or a
+  ComicVine / Metron series id in one of its issues' ComicInfo), or both
+  map ranges into the same provider series. A range onto some unrelated
+  provider series no longer marks every continuation of that series as a
+  split (before range hygiene, *any* range row on either side did);
 - `numbering`: the later series' first number is > 1 and above the earlier
   one's last (legacy numbering continues);
 - `relaunch`: the later series starts at #1 (or #0) and the earlier one's
@@ -848,8 +880,8 @@ heuristic versions; a second run marked none.
   tagged entirely in one language (the dev library: `en` / `eng` / `EN`)
   yields none. Without years, only alias evidence gives a direction.
 - The continuation qualifier `merge` is never inferred, and `split` comes
-  only from `series_provider_range` (the classic "one title split into
-  two" has no evidence source).
+  only from a `series_provider_range` row linking the pair (the classic
+  "one title split into two" has no evidence source).
 - The derived "same universe" query and its section are WP-7.7.
 - Cross-library suggestions are limited to the edition kinds (WP-8.2);
   story and publication kinds stay within one library by design.
@@ -1030,7 +1062,8 @@ tab strip directly; nothing relationship-related renders in the page body.
   the query cache (`useSeriesRelationships(slug, { enabled: false })`, which
   never fetches on its own), so add / remove updates it.
 - **Contents**, top to bottom: `SeriesRelatedSection` (header with the admin
-  **Add relationship** button, the **Reading order** strip, the admin
+  **Add relationship** button, the **Reading order** strip (each step's
+  provider-range sub-steps listed under its card), the admin
   **Suggested** chips, the grouped relationships, **Part of event**), then
   **Same universe** (`SameUniverseSection`), then **Similar series**
   (`SimilarSeriesRail`, see `similar-series.md`).
@@ -1153,7 +1186,11 @@ groups contiguous runs and a later page never reopens an earlier group.
   target / kind / uniqueness constraints, the arc ACL on the series GET and
   on `/arcs/{slug}/tie-ins` incl. pagination and 404, PATCH / DELETE, FK
   cascade); the mixed `continues` + `sequel_of` chain with a `prequel_of`
-  kept out, and the cross-family contradiction.
+  kept out, and the cross-family contradiction. Range hygiene
+  (`chain_nodes_carry_provider_range_boundaries`): a chain node's provider
+  ranges as one merged sub-step ("#600–611 continue as Fantastic Four
+  (2012)", Metron + GCD), linked to the matched local series only for a
+  caller who can see it; still one node per local series.
 - `crates/server/tests/migration_relationship_taxonomy.rs`: the WP-7.5 data
   migration (down → seed old-shape rows → up → assert; then the lossy down
   and up again).
@@ -1164,7 +1201,8 @@ groups contiguous runs and a later page never reopens an earlier group.
 - `web/tests/library/series-related-section.test.tsx`: chain order and
   highlight, grouping by UI group and kind, scope captions, "Part of
   event", covers sized to the grid width, admin edit / remove gating, empty
-  state, and the group-heading skeleton before the catalogue loads.
+  state, the group-heading skeleton before the catalogue loads, and a
+  step's provider-range sub-steps (local-series link, provider links).
 - WP-7.6, same integration file: one fixture-driven test per detector —
   annual (name / series type / format signals, volume containment,
   publisher mismatch, two equally fitting volumes), arc tie-in (main by
@@ -1199,7 +1237,10 @@ groups contiguous runs and a later page never reopens an earlier group.
   `create_pair` (plus a kind override → `modified`, a contradicting edge →
   409, and similarity-cache invalidation), list pagination, filters and
   counts, non-admin 403 on every endpoint, `run` enqueue dedupe, audit rows,
-  and the 1000 cap on a 3,000-series stress library.
+  and the 1000 cap on a 3,000-series stress library. `continuation_qualifiers`
+  covers each qualifier, including `split` for a range pointing at the
+  other series' provider id and for two ranges into the same provider
+  series, and no `split` (relaunch) for a range onto an unrelated one.
 - `relationships::suggestions` unit tests: canonical forms (every kind
   folds onto a canonical one), the `sequel_of` ≡ `continues` dedupe
   equivalence, merge and corroboration, buckets, the citation parser and

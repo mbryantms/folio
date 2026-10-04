@@ -11960,7 +11960,14 @@
             "items": {
               "$ref": "#/components/schemas/CoverageRangeRef"
             },
-            "description": "Existing automated ranges the accepted proposal no longer supports\n(reported, never deleted)."
+            "description": "Existing automated ranges the accepted proposal no longer supports\nthat were **kept** — the accept didn't put the proposal's main in\nplace (e.g. your own link differs), so removing them would leave\nthose issues unmapped."
+          },
+          "stale_ranges_removed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageRangeRef"
+            },
+            "description": "Stale automated ranges this accept deleted (never a `user` row)."
           }
         }
       },
@@ -14826,6 +14833,103 @@
           }
         }
       },
+      "ChainSplitPosition": {
+        "type": "string",
+        "description": "Where a provider range sits within its local series' issue numbers.",
+        "enum": [
+          "end",
+          "start",
+          "middle"
+        ]
+      },
+      "ChainSplitProviderView": {
+        "type": "object",
+        "required": [
+          "source",
+          "source_label",
+          "provider_series_id"
+        ],
+        "properties": {
+          "provider_series_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ChainSplitView": {
+        "type": "object",
+        "description": "A reading-order sub-step from `series_provider_range` (range hygiene).",
+        "required": [
+          "position",
+          "numbers",
+          "verb",
+          "target",
+          "label",
+          "providers"
+        ],
+        "properties": {
+          "high": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "description": "`numbers verb target`."
+          },
+          "local_series": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExternalLocalSeries",
+                "description": "A local series (visible to the caller) matched to that provider\nseries, when the library has it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "low": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "numbers": {
+            "type": "string",
+            "description": "\"#600–611\"."
+          },
+          "position": {
+            "$ref": "#/components/schemas/ChainSplitPosition"
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChainSplitProviderView"
+            },
+            "description": "Every provider filing these numbers under that series."
+          },
+          "target": {
+            "type": "string",
+            "description": "The provider series, \"Fantastic Four (2012)\"."
+          },
+          "verb": {
+            "type": "string",
+            "description": "\"continue as\" / \"begin as\" / \"are filed as\" (singular for one issue)."
+          }
+        }
+      },
       "ClearHistoryResp": {
         "type": "object",
         "required": [
@@ -15759,6 +15863,14 @@
           "reason"
         ],
         "properties": {
+          "declared_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The mapped provider series' start year, when known."
+          },
           "id": {
             "type": "string"
           },
@@ -18025,7 +18137,7 @@
             "items": {
               "$ref": "#/components/schemas/ProviderRangeRow"
             },
-            "description": "Automated range mappings the provider series now covers itself —\nlikely stale (e.g. after a re-match). Reported only; never removed\nautomatically."
+            "description": "Automated range mappings the provider series now covers itself —\nlikely stale (e.g. after a re-match). The detector only reports\nthem; accepting this provider's series coverage deletes them."
           },
           "status": {
             "$ref": "#/components/schemas/SourceStatus"
@@ -24220,7 +24332,7 @@
           },
           "has_changes": {
             "type": "boolean",
-            "description": "Accepting would change something (main id or new ranges)."
+            "description": "Accepting would change something (main id, new ranges, or stale\nautomated ranges to remove)."
           },
           "main_series_id": {
             "type": [
@@ -27416,13 +27528,21 @@
         "description": "One step of the reading-order chain.",
         "required": [
           "position",
-          "series"
+          "series",
+          "provider_splits"
         ],
         "properties": {
           "position": {
             "type": "integer",
             "format": "int32",
             "description": "Signed reading-order offset: negative = read before this series,\n`0` = this series, positive = read after. Entries sharing a\nposition are alternative branches."
+          },
+          "provider_splits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChainSplitView"
+            },
+            "description": "Provider ranges inside this series: issues a provider files under a\ndifferent provider series (\"#600–611 continue as Fantastic Four\n(2012)\"). The local series stays one step — membership is\nfolder-pinned; these only label the boundary. Ordered by number."
           },
           "series": {
             "$ref": "#/components/schemas/SeriesView"

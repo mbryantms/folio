@@ -737,18 +737,25 @@ async fn user_set_ids_and_ranges_are_untouched() {
     assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
-/// Stale automated ranges are reported (never deleted): one pointing at
-/// the main series, one sending #500–502 to a series the proposal doesn't
-/// use. The latter also blocks the proposed range.
+/// Stale automated ranges are deleted when their provider's coverage is
+/// accepted: GCD #500–502 → 7777 (the proposal files those issues in the
+/// 1964 volume) and Metron #1–5 → 200 (points at the main series). The
+/// deleted GCD row no longer blocks the proposed range, so the same accept
+/// writes it. A user range is never deleted, even when it points at the
+/// main series. Each removal lands in the accept's audit row.
 #[tokio::test]
-async fn stale_automated_ranges_are_reported_not_deleted() {
+async fn stale_automated_ranges_are_deleted_on_accept() {
     let (app, _cv, _metron, _gcd) = daredevil_app().await;
     let (series_id, slug, _tmp) = seed_daredevil(&app, &[]).await;
     let db = app.state().db.clone();
-    for (src, sid, lo, hi) in [("gcd", "7777", "500", "502"), ("metron", "200", "1", "5")] {
+    for (src, sid, lo, hi, by) in [
+        ("gcd", "7777", "500", "502", "cross_reference"),
+        ("metron", "200", "1", "5", "cross_reference"),
+        ("comicvine", "6458", "1", "5", "user"),
+    ] {
         db.execute_unprepared(&format!(
-            "INSERT INTO series_provider_range (id, series_id, source, provider_series_id, range_low, range_high, set_by, first_set_at, last_synced_at) \
-             VALUES ('{}', '{series_id}', '{src}', '{sid}', '{lo}', '{hi}', 'cross_reference', now(), now())",
+            "INSERT INTO series_provider_range (id, series_id, source, provider_series_id, provider_series_name, declared_year, range_low, range_high, set_by, first_set_at, last_synced_at) \
+             VALUES ('{}', '{series_id}', '{src}', '{sid}', 'Daredevil', 1964, '{lo}', '{hi}', '{by}', now(), now())",
             Uuid::new_v4()
         ))
         .await
@@ -763,15 +770,79 @@ async fn stale_automated_ranges_are_reported_not_deleted() {
     let m = provider(&body, "metron");
     assert_eq!(m["stale_ranges"][0]["provider_series_id"], "200", "{m}");
     assert_eq!(m["stale_ranges"][0]["reason"], "points at the main series");
+    let c = provider(&body, "comicvine");
+    assert_eq!(
+        c["stale_ranges"],
+        json!([]),
+        "a user row is never stale: {c}"
+    );
+    assert!(
+        c["conflicts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x.as_str().unwrap().contains("your mapping #1–5")),
+        "{c}"
+    );
 
     let out = accept(&app, &cookie, &slug, json!({"source": "gcd"})).await;
-    assert_eq!(out["stale_ranges"][0]["provider_series_id"], "7777");
-    assert_eq!(out["ranges_created"], json!([]));
     assert_eq!(
-        ranges(&app, series_id).await.len(),
-        2,
-        "nothing deleted, nothing added"
+        out["stale_ranges_removed"][0]["provider_series_id"], "7777",
+        "{out}"
     );
+    assert_eq!(out["stale_ranges_removed"][0]["declared_year"], 1964);
+    assert_eq!(out["stale_ranges"], json!([]));
+    assert_eq!(
+        out["ranges_created"][0]["provider_series_id"], "3000",
+        "the range the stale row blocked is written: {out}"
+    );
+
+    let out = accept(&app, &cookie, &slug, json!({"source": "metron"})).await;
+    assert_eq!(
+        out["stale_ranges_removed"][0]["provider_series_id"], "200",
+        "{out}"
+    );
+    assert_eq!(out["ranges_created"][0]["provider_series_id"], "100");
+
+    let out = accept(&app, &cookie, &slug, json!({"source": "comicvine"})).await;
+    assert_eq!(out["main_written"], true, "{out}");
+    assert_eq!(out["stale_ranges_removed"], json!([]), "{out}");
+
+    let rows: Vec<(String, String, String)> = ranges(&app, series_id)
+        .await
+        .into_iter()
+        .map(|r| (r.source, r.provider_series_id, r.set_by))
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("comicvine".into(), "6458".into(), "user".into()),
+            ("comicvine".into(), "2190".into(), "cross_reference".into()),
+            ("gcd".into(), "3000".into(), "cross_reference".into()),
+            ("metron".into(), "100".into(), "cross_reference".into()),
+        ],
+        "user range kept, stale automated rows gone"
+    );
+
+    let audits = entity::audit_log::Entity::find()
+        .filter(entity::audit_log::Column::Action.eq("admin.series.provider_coverage_accept"))
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    let gcd_audit = audits
+        .iter()
+        .find(|a| a.payload["source"] == "gcd")
+        .expect("gcd accept audited");
+    assert_eq!(
+        gcd_audit.payload["stale_ranges_removed"][0]["provider_series_id"], "7777",
+        "{}",
+        gcd_audit.payload
+    );
+    assert_eq!(
+        gcd_audit.payload["stale_ranges_removed"][0]["set_by"],
+        "cross_reference"
+    );
+    assert_eq!(gcd_audit.payload["stale_ranges_removed"][0]["low"], "500");
 }
 
 /// Two series in equal proportions (no "main" by count): the cover still

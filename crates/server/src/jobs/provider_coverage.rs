@@ -402,7 +402,7 @@ async fn run(state: &AppState, rec: &mut JobRecord) -> anyhow::Result<()> {
     );
 
     if rec.auto_accept {
-        let mut ranges_created = 0usize;
+        let mut ranges_changed = 0usize;
         for analysis in &rec.providers {
             let seed = rec.seed_main(analysis.source);
             let view = coverage::build_view(
@@ -419,7 +419,7 @@ async fn run(state: &AppState, rec: &mut JobRecord) -> anyhow::Result<()> {
             let outcome =
                 coverage::accept_provider(state, rec.series_id, analysis, None, seed, false)
                     .await?;
-            ranges_created += outcome.ranges_created.len();
+            ranges_changed += outcome.ranges_created.len() + outcome.stale_ranges_removed.len();
             audit::record(
                 &state.db,
                 AuditEntry {
@@ -441,6 +441,7 @@ async fn run(state: &AppState, rec: &mut JobRecord) -> anyhow::Result<()> {
                                 "high": r.high,
                             }))
                             .collect::<Vec<_>>(),
+                        "stale_ranges_removed": coverage::removed_ranges_audit(&outcome),
                     }),
                     ip: None,
                     user_agent: None,
@@ -449,7 +450,7 @@ async fn run(state: &AppState, rec: &mut JobRecord) -> anyhow::Result<()> {
             .await;
             rec.auto_accepted.push(outcome);
         }
-        if ranges_created > 0 {
+        if ranges_changed > 0 {
             crate::jobs::relationship_suggest::enqueue(state, series_row.library_id).await;
         }
     }
