@@ -66,30 +66,9 @@ describe("iOS 26 scroll edge effect", () => {
     // a 0-height backing (--safe-top pinned to 0) let the blur through.
     const css = read("styles/globals.css");
     expect(css).toMatch(
-      /@media \(display-mode: standalone\)\s*\{\s*:root\s*\{\s*--reader-top: calc\(max\(var\(--safe-top\), 12px\) \+ var\(--edge-ramp\)\);/,
+      /@media \(display-mode: standalone\)\s*\{\s*:root\s*\{\s*--reader-top: max\(var\(--safe-top\), 12px\);/,
     );
     const src = read("app/[locale]/read/[seriesSlug]/[issueSlug]/Reader.tsx");
     expect(src).not.toMatch(/pt-\(--safe-top\) pb-\(--safe-bottom\)/);
-  });
-
-  it("installed iOS app clears the system edge-blur ramp", () => {
-    // The ramp is system chrome drawn over the top ~40pt of the web view;
-    // only keeping content out of it works (see globals.css).
-    const css = read("styles/globals.css");
-    expect(css).toMatch(
-      /--top-inset: calc\(var\(--safe-top\) \+ var\(--edge-ramp\)\);/,
-    );
-    expect(css).toMatch(
-      /--topbar-h: calc\(var\(--topbar-content-h\) \+ var\(--top-inset\)\);/,
-    );
-    expect(css).toMatch(
-      /@supports \(-webkit-touch-callout: none\)\s*\{\s*@media \(display-mode: standalone\)\s*\{\s*:root\s*\{\s*--edge-ramp: 2rem;/,
-    );
-    // Top bars pad by --top-inset, never the raw safe area.
-    for (const file of EDGE_BAR_FILES) {
-      expect(read(file), file).not.toMatch(
-        /pt-\(--safe-top\)|var\(--safe-top\)\)\]/,
-      );
-    }
   });
 });

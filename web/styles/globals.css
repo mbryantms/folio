@@ -231,55 +231,15 @@
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
-  /* Extra clearance under the iOS / iPadOS 26+ "scroll edge effect" in
-   * the installed app — 0 everywhere else (see the block after :root).
-   * `--top-inset` is what every top bar pads by: the safe area plus that
-   * clearance. Use it, not `--safe-top`, for anything interactive. */
-  --edge-ramp: 0px;
-  --top-inset: calc(var(--safe-top) + var(--edge-ramp));
   --topbar-content-h: 3.5rem;
-  --topbar-h: calc(var(--topbar-content-h) + var(--top-inset));
+  --topbar-h: calc(var(--topbar-content-h) + var(--safe-top));
   /* Mobile bottom tab bar (md:hidden). Content padding clears this plus
    * the home-indicator safe area so the last row isn't hidden behind it. */
   --bottom-tab-h: 3.5rem;
   /* Reader top inset: the status-bar backing's height and the gap pages
-   * leave above themselves. Equal to `--top-inset` in a browser tab; see
+   * leave above themselves. Equal to `--safe-top` in a browser tab; see
    * the standalone override below. */
-  --reader-top: var(--top-inset);
-}
-
-/*
- * iOS / iPadOS 26+ home-screen apps: the system draws a Liquid Glass
- * blur ramp ABOVE the web view, fading ~40pt down from the status bar,
- * over whatever the page puts there. It is system chrome: no CSS or meta
- * tag turns it off, opaque edge bars and the opaque (`black`) status-bar
- * style don't remove it (both verified on an iPad, 2026-10), and
- * `env(safe-area-inset-top)` does not account for it. The only fix
- * confirmed on devices is to keep content out of the ramp, so top bars
- * grow a 2rem band at their top edge — painted in the bar's own solid
- * colour, so the ramp over it is invisible — and their controls sit
- * below it.
- *
- * Scoped to WebKit on iOS (`-webkit-touch-callout`) in standalone mode;
- * `[data-standalone]` (set by SafeAreaProbe from `navigator.standalone`)
- * covers launches where the display-mode query doesn't match. Landscape
- * phones hide the status bar, so no clearance there.
- */
-@supports (-webkit-touch-callout: none) {
-  @media (display-mode: standalone) {
-    :root {
-      --edge-ramp: 2rem;
-    }
-  }
-  :root[data-standalone] {
-    --edge-ramp: 2rem;
-  }
-  @media (orientation: landscape) and (max-height: 500px) {
-    :root,
-    :root[data-standalone] {
-      --edge-ramp: 0px;
-    }
-  }
+  --reader-top: var(--safe-top);
 }
 
 /*
@@ -293,7 +253,7 @@
  */
 @media (display-mode: standalone) {
   :root {
-    --reader-top: calc(max(var(--safe-top), 12px) + var(--edge-ramp));
+    --reader-top: max(var(--safe-top), 12px);
   }
 }
 

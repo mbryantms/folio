@@ -143,7 +143,7 @@ export function ReaderChrome({
         // and on iPads with rounded corners. Background still
         // extends to the very top edge so the chrome looks
         // continuous behind the status bar.
-        className="standalone:bg-neutral-950 standalone:backdrop-blur-none fixed inset-x-0 top-0 z-30 flex items-center gap-2 border-b border-neutral-800/80 bg-neutral-950/85 pt-[max(0.5rem,var(--top-inset))] pr-[max(0.75rem,var(--safe-right))] pb-2 pl-[max(0.75rem,var(--safe-left))] text-sm text-neutral-100 backdrop-blur transition-transform duration-300 ease-out data-[state=closed]:pointer-events-none data-[state=closed]:-translate-y-full motion-reduce:transition-none"
+        className="standalone:bg-neutral-950 standalone:backdrop-blur-none fixed inset-x-0 top-0 z-30 flex items-center gap-2 border-b border-neutral-800/80 bg-neutral-950/85 pt-[max(0.5rem,var(--safe-top))] pr-[max(0.75rem,var(--safe-right))] pb-2 pl-[max(0.75rem,var(--safe-left))] text-sm text-neutral-100 backdrop-blur transition-transform duration-300 ease-out data-[state=closed]:pointer-events-none data-[state=closed]:-translate-y-full motion-reduce:transition-none"
         aria-hidden={mounted && chromeVisible ? undefined : true}
         // `inert` removes the hidden chrome's buttons from the tab
         // order — aria-hidden alone left 6+ focusable ghost controls

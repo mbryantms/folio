@@ -168,7 +168,7 @@ export function FilterSheet({
         side="right"
         className="flex w-full flex-col gap-0 overflow-visible p-0 sm:max-w-md"
       >
-        <SheetHeader className="border-border/60 flex-row items-center justify-between border-b pt-[max(1rem,var(--top-inset))] pr-[max(3rem,calc(var(--safe-right)+2rem))] pb-4 pl-6">
+        <SheetHeader className="border-border/60 flex-row items-center justify-between border-b pt-[max(1rem,var(--safe-top))] pr-[max(3rem,calc(var(--safe-right)+2rem))] pb-4 pl-6">
           <div>
             <SheetTitle>Filters</SheetTitle>
             <SheetDescription>

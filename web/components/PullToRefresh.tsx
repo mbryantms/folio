@@ -62,7 +62,7 @@ function PullToRefreshIndicator({
       // without it being a focus stop.
       role="status"
       aria-live="polite"
-      className="pointer-events-none fixed inset-x-0 top-0 z-50 flex justify-center pt-(--top-inset)"
+      className="pointer-events-none fixed inset-x-0 top-0 z-50 flex justify-center pt-(--safe-top)"
       style={{
         transform: `translateY(${offsetPx - 56}px)`,
         transition: state === "pulling" ? "none" : "transform 200ms ease-out",
