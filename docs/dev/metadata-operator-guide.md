@@ -624,6 +624,33 @@ parts, is handled the same way.
 - **Annuals and specials** (`Annual 1`, `14AU`, `½`) are never range
   bounds; they're listed instead.
 
+### Batches use coverage instead of searching
+
+Once a series has its provider series (accepted coverage, an applied
+match, or a range mapping), **Fetch metadata → All issues** (and *Only
+missing or partial*, a grid selection or a saved-view batch) looks each
+issue up directly: Folio reads the provider series' issue list (cached
+24 hours), picks the issue with the same number and a cover date within
+six months of yours, and fetches just that issue — no search. The
+fetched issue is still scored like any search result (cover comparison
+included), and it appears in the match dialog as "Matched by series
+coverage (number + cover date)". An issue the list doesn't have, whose
+cover date disagrees, or whose cover doesn't match falls back to a
+normal search.
+
+The Review tab's batch header shows, per provider, how many issues were
+answered directly and how many searched, with the reasons (for example
+"GCD: 0 direct · 173 searched (173 no provider series)" means GCD has no
+series linked — run **Analyze coverage** and accept it first to save
+those searches). The issue fetched for the lookup is the one the apply
+uses, so applying costs nothing extra for 24 hours.
+
+**Repairing descriptions a series apply overwrote.** *Only missing or
+partial* also picks issues whose description is the series description
+(shared by two or more issues), even when they otherwise look complete;
+descriptions you set by hand are left alone. Run it on such a series,
+then **Fill missing** in the Review tab.
+
 The older per-provider split detector
 (`POST …/provider-ranges/detect`) is still available through the API
 and still runs after a manual series apply.

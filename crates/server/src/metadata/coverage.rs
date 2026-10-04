@@ -258,15 +258,53 @@ pub fn provider_issue_for<'a>(
     year: Option<i32>,
     month: Option<i32>,
 ) -> Option<&'a ProviderIssue> {
+    match lookup_provider_issue(list, canonical_number, year, month) {
+        IssueListLookup::Found { issue, .. } => Some(issue),
+        _ => None,
+    }
+}
+
+/// What [`lookup_provider_issue`] found for a local issue in a provider
+/// series' issue list. The batch direct lookup
+/// ([`crate::metadata::orchestrator`]) records the miss reason per source
+/// when it falls back to a search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IssueListLookup<'a> {
+    /// The same-numbered entry whose cover date agrees best (or is
+    /// unknown on one side).
+    Found {
+        issue: &'a ProviderIssue,
+        date: DateMatch,
+    },
+    /// No entry carries this number.
+    NotListed,
+    /// Every same-numbered entry's cover date conflicts with the local
+    /// one — a same-numbered issue of another run, not this issue.
+    DateConflict,
+}
+
+/// Classifying form of [`provider_issue_for`].
+pub fn lookup_provider_issue<'a>(
+    list: &'a ProviderSeriesIssues,
+    canonical_number: &str,
+    year: Option<i32>,
+    month: Option<i32>,
+) -> IssueListLookup<'a> {
     let wanted = issue_number_compare_key(canonical_number);
     let mut hits = list
         .issues
         .iter()
         .filter(|i| issue_number_compare_key(&i.number) == wanted)
+        .map(|i| (i, date_match(year, month, i.cover_date)))
         .collect::<Vec<_>>();
-    hits.sort_by_key(|i| std::cmp::Reverse(date_match(year, month, i.cover_date).rank()));
-    hits.into_iter()
-        .find(|i| date_match(year, month, i.cover_date) != DateMatch::Conflict)
+    if hits.is_empty() {
+        return IssueListLookup::NotListed;
+    }
+    hits.sort_by_key(|(_, d)| std::cmp::Reverse(d.rank()));
+    match hits.into_iter().find(|(_, d)| *d != DateMatch::Conflict) {
+        Some((issue, date)) => IssueListLookup::Found { issue, date },
+        None => IssueListLookup::DateConflict,
+    }
 }
 
 /// Display name + start year of a provider series from its cached issue
@@ -2226,5 +2264,39 @@ mod tests {
         let hit = provider_issue_for(&list, "1", Some(1998), Some(11)).unwrap();
         assert_eq!(hit.external_id.as_deref(), Some("b"));
         assert!(provider_issue_for(&list, "2", None, None).is_none());
+    }
+
+    #[test]
+    fn lookup_provider_issue_names_the_miss() {
+        let list = ProviderSeriesIssues {
+            issues: vec![ProviderIssue {
+                external_id: Some("a".into()),
+                number: "1".into(),
+                cover_date: d(1998, 1),
+            }],
+            ..Default::default()
+        };
+        assert!(matches!(
+            lookup_provider_issue(&list, "1", Some(1998), Some(2)),
+            IssueListLookup::Found {
+                date: DateMatch::Confirmed,
+                ..
+            }
+        ));
+        assert!(matches!(
+            lookup_provider_issue(&list, "1", None, None),
+            IssueListLookup::Found {
+                date: DateMatch::Unknown,
+                ..
+            }
+        ));
+        assert_eq!(
+            lookup_provider_issue(&list, "1", Some(1964), Some(4)),
+            IssueListLookup::DateConflict
+        );
+        assert_eq!(
+            lookup_provider_issue(&list, "2", Some(1998), Some(2)),
+            IssueListLookup::NotListed
+        );
     }
 }

@@ -140,6 +140,7 @@ mod tests {
             external_id: "x".into(),
             score: Score::default(),
             bucket,
+            coverage: None,
             payload: CandidatePayload::Series(SeriesCandidate {
                 source: Source::ComicVine,
                 external_id: "x".into(),

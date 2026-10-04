@@ -33,6 +33,7 @@ pub mod cover_block;
 pub mod cover_hash_cache;
 pub mod coverage;
 pub mod diff;
+pub mod direct_lookup;
 pub mod drift;
 pub mod field;
 pub mod gcd;

@@ -22,6 +22,9 @@
 
 use crate::config::Config;
 use crate::metadata::comicvine::ComicVineClient;
+use crate::metadata::direct_lookup::{
+    CoverageMatch, DirectLookupCtx, FallbackReason, SourceLookup,
+};
 use crate::metadata::gcd::GcdClient;
 use crate::metadata::identifier::Source;
 use crate::metadata::matcher::{
@@ -280,6 +283,11 @@ pub struct SearchOpts {
     pub relax_year_gate: bool,
     /// `None` ⇒ fetch + hash candidate covers over the network.
     pub cover_hasher: Option<CoverHasher>,
+    /// Batch children only: answer a provider from its series' cached
+    /// issue list + one cached detail fetch instead of a search when the
+    /// issue's provider series is known (see
+    /// [`crate::metadata::direct_lookup`]). `None` ⇒ always search.
+    pub direct: Option<DirectLookupCtx>,
 }
 
 impl Default for SearchOpts {
@@ -287,6 +295,7 @@ impl Default for SearchOpts {
         Self {
             relax_year_gate: true,
             cover_hasher: None,
+            direct: None,
         }
     }
 }
@@ -299,6 +308,7 @@ impl std::fmt::Debug for SearchOpts {
                 "cover_hasher",
                 &self.cover_hasher.as_ref().map(|_| "<injected>"),
             )
+            .field("direct", &self.direct.is_some())
             .finish()
     }
 }
@@ -319,10 +329,26 @@ pub struct RankedCandidate {
     pub score: Score,
     pub bucket: Confidence,
     pub payload: CandidatePayload,
+    /// Set when a batch direct lookup produced this candidate from the
+    /// provider series' issue list instead of a search. Informational —
+    /// the bucket is still the matcher's.
+    pub coverage: Option<CoverageMatch>,
 }
 
 impl RankedCandidate {
     fn score_breakdown_json(&self) -> serde_json::Value {
+        let mut v = self.score_breakdown_base();
+        // Batch direct lookup: which provider series' issue list supplied
+        // this candidate and why (number + cover date). Absent otherwise.
+        if let (Some(c), serde_json::Value::Object(m)) = (&self.coverage, &mut v)
+            && let Ok(note) = serde_json::to_value(c)
+        {
+            m.insert("coverage".into(), note);
+        }
+        v
+    }
+
+    fn score_breakdown_base(&self) -> serde_json::Value {
         serde_json::json!({
             "name": self.score.name,
             "year": self.score.year,
@@ -717,6 +743,7 @@ async fn score_series_candidates(
             external_id: c.external_id.clone(),
             score,
             bucket,
+            coverage: None,
             payload: CandidatePayload::Series(c),
         });
     }
@@ -784,6 +811,7 @@ async fn score_issue_candidates(
             external_id: c.external_id.clone(),
             score,
             bucket,
+            coverage: None,
             payload: CandidatePayload::Issue(c),
         });
     }
@@ -1115,6 +1143,7 @@ pub async fn run_issue_search_with(
     let mut surfaced_quota: Option<u64> = None;
     let mut last_error: Option<ProviderError> = None;
     let mut year_gate_relaxed = false;
+    let mut lookups: Vec<SourceLookup> = Vec::new();
     let http = cover_http_client();
     for p in providers {
         // Effective provider target for this issue: a covering
@@ -1152,6 +1181,43 @@ pub async fn run_issue_search_with(
         } else {
             YearGate::PhashAware(gate_year)
         };
+
+        // ── batch direct lookup via series coverage ──
+        // The provider series is known and lists this number with an
+        // agreeing cover date: fetch that issue's detail (cached, and the
+        // same row the apply reads) and score it instead of searching.
+        // Any miss falls through to the search below, unchanged.
+        if let Some(ctx) = opts.direct.as_ref() {
+            match direct_issue_candidate(
+                db,
+                &http,
+                &opts,
+                ctx,
+                p.as_ref(),
+                target,
+                &query_issue_number,
+                facts,
+                local_phash,
+                alternate_cover_fetch_cap,
+                thresholds,
+                gate_year,
+            )
+            .await
+            {
+                Ok((produced, rec)) => {
+                    lookups.push(rec);
+                    for rc in produced {
+                        if !ranked.iter().any(|x: &RankedCandidate| {
+                            x.source == rc.source && x.external_id == rc.external_id
+                        }) {
+                            ranked.push(rc);
+                        }
+                    }
+                    continue;
+                }
+                Err(rec) => lookups.push(rec),
+            }
+        }
 
         // ── primary search (narrowed to the provider series when known) ──
         let primary = match p.search_issue(&issue_query(narrow_id.clone())).await {
@@ -1281,6 +1347,9 @@ pub async fn run_issue_search_with(
     if year_gate_relaxed {
         note_year_gate_relaxed(db, run_id).await;
     }
+    if opts.direct.is_some() {
+        note_coverage_lookups(db, run_id, &lookups).await;
+    }
 
     if ranked.is_empty() && surfaced_quota.is_some() {
         let resume = Utc::now() + chrono::Duration::seconds(surfaced_quota.unwrap_or(60) as i64);
@@ -1304,6 +1373,99 @@ pub async fn run_issue_search_with(
         return Err(ProviderError::Transport(format!("db: {e}")));
     }
     Ok(ranked)
+}
+
+/// One provider's batch direct lookup for an issue
+/// ([`crate::metadata::direct_lookup`]): resolve the provider issue from
+/// the target series' cached issue list, fetch its detail through the
+/// shared `metadata_cache` row, and score it with the ordinary matcher
+/// under the hard year gate (the mapping is trusted like a narrowed
+/// search). `Err` carries the fallback reason; the caller then searches
+/// exactly as before. A cover comparison that lands LOW is treated as a
+/// wrong mapping and falls back too; a text-only LOW is kept — the
+/// narrowed search would return the same issue with the same score.
+#[allow(clippy::too_many_arguments)]
+async fn direct_issue_candidate(
+    db: &DatabaseConnection,
+    http: &reqwest::Client,
+    opts: &SearchOpts,
+    ctx: &DirectLookupCtx,
+    provider: &dyn MetadataProvider,
+    target: Option<&EffectiveTarget>,
+    query_issue_number: &str,
+    facts: &IssueQueryFacts,
+    local_phash: Option<i64>,
+    alternate_cover_fetch_cap: u32,
+    thresholds: Thresholds,
+    gate_year: Option<i32>,
+) -> Result<(Vec<RankedCandidate>, SourceLookup), SourceLookup> {
+    let source = provider.id();
+    let fallback = |why| SourceLookup::search(source, why);
+    let Some(target) = target else {
+        return Err(fallback(FallbackReason::NoTarget));
+    };
+    let canonical = matcher::canonical_issue_number(query_issue_number);
+    let (issue_id, date) = crate::metadata::direct_lookup::resolve_issue_id(
+        ctx,
+        provider,
+        &target.provider_series_id,
+        &canonical,
+        facts.issue_year,
+    )
+    .await
+    .map_err(fallback)?;
+    let detail = crate::metadata::apply::fetch_issue_detail_cached(db, provider, &issue_id)
+        .await
+        .map_err(|e| {
+            tracing::debug!(
+                provider = source.as_str(),
+                issue_id,
+                error = %e,
+                "direct lookup: issue detail unavailable; searching"
+            );
+            fallback(FallbackReason::DetailUnavailable)
+        })?;
+    let candidate =
+        crate::metadata::lookup::issue_candidate_from_detail(source, &issue_id, &detail);
+    let mut scored = score_issue_candidates(
+        db,
+        http,
+        opts.cover_hasher.as_ref(),
+        facts,
+        vec![candidate],
+        local_phash,
+        alternate_cover_fetch_cap,
+        thresholds,
+        YearGate::Hard(gate_year),
+    )
+    .await;
+    let cover_rejected = scored
+        .iter()
+        .all(|c| c.bucket == Confidence::Low && c.score.cover_hamming.is_some());
+    if scored.is_empty() || cover_rejected {
+        return Err(fallback(FallbackReason::RejectedByMatcher));
+    }
+    for c in &mut scored {
+        c.coverage = Some(CoverageMatch::new(
+            target.provider_series_id.clone(),
+            target.via_range,
+            date,
+        ));
+    }
+    Ok((scored, SourceLookup::direct(source, issue_id)))
+}
+
+/// Record each provider's direct-lookup path on the run (batch header
+/// counts). Soft-fails like the other run annotations.
+async fn note_coverage_lookups(db: &DatabaseConnection, run_id: Uuid, lookups: &[SourceLookup]) {
+    let Ok(v) = serde_json::to_value(lookups) else {
+        return;
+    };
+    let mut patch = serde_json::Map::new();
+    patch.insert(crate::metadata::direct_lookup::QUERY_KEY.to_owned(), v);
+    if let Err(e) = annotate_query(db, run_id, serde_json::Value::Object(patch)).await {
+        tracing::warn!(run_id = %run_id, error = %e, "metadata search: coverage_lookups annotation failed");
+    }
 }
 
 /// Record on the run that the year gate was relaxed (WP-2.8). Soft-fails
@@ -1480,6 +1642,7 @@ mod tests {
             external_id: external_id.into(),
             score,
             bucket,
+            coverage: None,
             payload: CandidatePayload::Series(SeriesCandidate {
                 source: Source::ComicVine,
                 external_id: external_id.into(),

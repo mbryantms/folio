@@ -1179,6 +1179,145 @@ async fn create_series_batch_incomplete_scope_skips_complete_issues() {
     );
 }
 
+/// Seed an issue that scores COMPLETE (title + page count from the seed,
+/// cover date / summary / a credit / a matched external id here).
+async fn seed_complete_issue(
+    app: &TestApp,
+    lib_id: Uuid,
+    series_id: Uuid,
+    dir: &Path,
+    n: f64,
+    summary: &str,
+) -> String {
+    let db = &app.state().db;
+    let p = dir.join(format!("c{n}.cbz"));
+    let id = IssueSeed::new(lib_id, series_id, &p, format!("c{n}").as_bytes(), n)
+        .with_title(format!("Chapter {n}"))
+        .with_page_count(22)
+        .insert(db)
+        .await;
+    let mut am: entity::issue::ActiveModel = entity::issue::Entity::find_by_id(&id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    am.year = Set(Some(2011));
+    am.summary = Set(Some(summary.into()));
+    am.writer = Set(Some("Jonathan Hickman".into()));
+    am.update(db).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    entity::external_id::ActiveModel {
+        entity_type: Set("issue".into()),
+        entity_id: Set(id.clone()),
+        source: Set("comicvine".into()),
+        external_id: Set(format!("cv-{n}")),
+        external_url: Set(None),
+        set_by: Set("comicvine".into()),
+        first_set_at: Set(now),
+        last_synced_at: Set(now),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
+/// "Only missing or partial" also re-fetches complete issues whose
+/// description duplicates the series description (the pre-#974 series
+/// apply leak) — HTML-stripped, case- and whitespace-folded — but never
+/// one whose description a user pinned, and never a lone match (a
+/// one-shot's issue and series blurbs may legitimately agree).
+#[tokio::test]
+async fn incomplete_scope_selects_issues_carrying_the_series_description() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (lib_id, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let db = &app.state().db;
+    let mut s: entity::series::ActiveModel = entity::series::Entity::find_by_id(series_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    s.summary = Set(Some("<p>The <b>Saga</b> of   two lovers.</p>".into()));
+    s.update(db).await.unwrap();
+
+    let leaked_a = seed_complete_issue(
+        &app,
+        lib_id,
+        series_id,
+        dir.path(),
+        1.0,
+        "The Saga of two lovers.",
+    )
+    .await;
+    let leaked_b = seed_complete_issue(
+        &app,
+        lib_id,
+        series_id,
+        dir.path(),
+        2.0,
+        "<div>the saga of two LOVERS.</div>",
+    )
+    .await;
+    let pinned = seed_complete_issue(
+        &app,
+        lib_id,
+        series_id,
+        dir.path(),
+        3.0,
+        "The Saga of two lovers.",
+    )
+    .await;
+    let own = seed_complete_issue(
+        &app,
+        lib_id,
+        series_id,
+        dir.path(),
+        4.0,
+        "Alana and Marko flee.",
+    )
+    .await;
+    entity::field_provenance::ActiveModel {
+        entity_type: Set("issue".into()),
+        entity_id: Set(pinned.clone()),
+        field: Set("summary".into()),
+        set_by: Set("user".into()),
+        set_at: Set(Utc::now().fixed_offset()),
+        source_external_id: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+
+    let resp = post(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/metadata/batch?scope=incomplete"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body = body_json(resp.into_body()).await;
+    let batch_id = Uuid::parse_str(body["batch_id"].as_str().unwrap()).unwrap();
+    let mut picked: Vec<String> = entity::metadata_run::Entity::find()
+        .filter(entity::metadata_run::Column::BatchId.eq(batch_id))
+        .all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter_map(|r| r.scope_entity_id)
+        .collect();
+    picked.sort();
+    let mut want = vec![leaked_a, leaked_b];
+    want.sort();
+    assert_eq!(
+        picked, want,
+        "leaked descriptions only (not pinned {pinned}, not {own})"
+    );
+}
+
 // ───────── WP-2.8: query overrides + lookup-by-URL ─────────
 
 fn cv_ok(results: Value) -> Value {
