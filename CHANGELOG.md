@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.39.1](https://github.com/mbryantms/folio/compare/v0.39.0...v0.39.1) (2026-10-04)
+
+
+### Fixed
+
+* **pwa:** the reader no longer rewrites theme-color / color-scheme on navigation ([#1014](https://github.com/mbryantms/folio/issues/1014)) ([110687a](https://github.com/mbryantms/folio/commit/110687ab43f508787e47e360fdfa3110061b1253))
+
 ## [0.39.0](https://github.com/mbryantms/folio/compare/v0.38.0...v0.39.0) (2026-10-04)
 
 
