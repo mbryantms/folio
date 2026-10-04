@@ -13,6 +13,27 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.35.0](https://github.com/mbryantms/folio/compare/v0.34.0...v0.35.0) (2026-10-04)
+
+
+### Added
+
+* **metadata:** guided refresh, coverage tie-ins and range hygiene ([#991](https://github.com/mbryantms/folio/issues/991)) ([baf11a1](https://github.com/mbryantms/folio/commit/baf11a1d69a256ce0abeff32345052c1f051e2ad))
+* **metadata:** Match this series shows coverage and runs coverage after accept ([#989](https://github.com/mbryantms/folio/issues/989)) ([2d47402](https://github.com/mbryantms/folio/commit/2d47402e405cf77962efd277365d63d1d9b9b00c))
+
+
+### Fixed
+
+* **pwa:** every release ships a new service worker so the update prompt fires again ([#993](https://github.com/mbryantms/folio/issues/993)) ([40d3a39](https://github.com/mbryantms/folio/commit/40d3a39cdb9bb33f92441dd6847d8082233d7f63))
+* **pwa:** opaque edge bars in the installed app so iOS 26 stops blurring over content ([#994](https://github.com/mbryantms/folio/issues/994)) ([a3f736f](https://github.com/mbryantms/folio/commit/a3f736f1a1bd80ea3d783162f535e2c06f580777))
+* **thumbnails:** gatefold covers keep the middle third, landscape books keep the whole cover ([#992](https://github.com/mbryantms/folio/issues/992)) ([c9e3a06](https://github.com/mbryantms/folio/commit/c9e3a06b82f2d5030ad6e65508f74a774979caea))
+
+
+### Dependencies
+
+* update rust crate constant_time_eq to v0.6.1 ([#987](https://github.com/mbryantms/folio/issues/987)) ([abf644c](https://github.com/mbryantms/folio/commit/abf644cf33aef3de5ae85b7d6221ae8c2a5a7d31))
+* update rust to v1.99.0 ([#985](https://github.com/mbryantms/folio/issues/985)) ([486cda2](https://github.com/mbryantms/folio/commit/486cda221da2dfb455206b919ba30f7ff80c7546))
+
 ## [0.34.0](https://github.com/mbryantms/folio/compare/v0.33.2...v0.34.0) (2026-10-04)
 
 
