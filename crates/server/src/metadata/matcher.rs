@@ -691,9 +691,17 @@ pub fn publisher_similarity(a: Option<&str>, b: Option<&str>) -> f32 {
 ///   `"14 AU"` → `"14AU"`); dotted suffixes (`"1.NOW"`) pass through;
 /// - vulgar fractions (`"½"`) pass through unchanged — providers store
 ///   them verbatim; the matcher compares them numerically via
-///   [`crate::metadata::title_norm::issue_number_key`].
+///   [`crate::metadata::title_norm::issue_number_key`];
+/// - a trailing parenthesised legacy number is dropped (`"42 (471)"` →
+///   `"42"`): GCD writes dual-numbered runs that way (Fantastic Four
+///   1998 #42–70 = legacy #471–499, `"500 (71)"`). Only a plain number
+///   followed by a parenthesised plain number is rewritten
+///   ([`split_legacy_number`]); `"1 (of 4)"` and the like pass through.
 pub(crate) fn canonical_issue_number(raw: &str) -> String {
     let t = raw.trim().trim_start_matches('#').trim();
+    if let Some((primary, _)) = split_legacy_number(t) {
+        return canonical_issue_number(primary);
+    }
     if let Some(rest) = strip_annual_prefix(t) {
         // A bare "Annual" has no number to canonicalize (the numeric
         // path would turn "" into "0").
@@ -740,6 +748,53 @@ pub(crate) fn canonical_issue_number(raw: &str) -> String {
         whole.to_owned()
     } else {
         format!("{whole}.{fraction}")
+    }
+}
+
+/// Split a dual-numbered issue number — `"42 (471)"`, `"500 (71)"`,
+/// `"#42(471)"` — into its primary number and the parenthesised legacy
+/// alias. Both parts must be plain numbers (digits with an optional
+/// decimal part; the primary may carry a short letter suffix, `"14AU
+/// (52)"`), so annotations such as `"1 (of 4)"`, `"1 (Direct)"` or
+/// `"(1)"` are not split.
+pub(crate) fn split_legacy_number(raw: &str) -> Option<(&str, &str)> {
+    let t = raw.trim().trim_start_matches('#').trim();
+    let inner = t.strip_suffix(')')?;
+    let open = inner.rfind('(')?;
+    let primary = inner[..open].trim();
+    let alias = inner[open + 1..].trim();
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let plain = |s: &str| match s.split_once('.') {
+        Some((whole, frac)) => digits(whole) && digits(frac),
+        None => digits(s),
+    };
+    let digits_end = primary
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(primary.len());
+    let (num, suffix) = primary.split_at(digits_end);
+    let suffix_ok =
+        suffix.is_empty() || (suffix.len() <= 4 && suffix.chars().all(|c| c.is_ascii_alphabetic()));
+    (plain(num) && suffix_ok && plain(alias)).then_some((primary, alias))
+}
+
+/// Comparison key for matching a local issue number against a provider
+/// listing: [`canonical_issue_number`] with fractions written as decimals
+/// (`"½"`, `"1/2"` → `"0.5"`; `"1½"` → `"1.5"`). ComicVine and Metron list
+/// Fantastic Four (1998) #½ as `"½"` while the local file says `"0.5"`.
+/// Not for provider queries — providers store the glyph verbatim, so the
+/// canonical form is what a search must send.
+pub(crate) fn issue_number_compare_key(raw: &str) -> String {
+    let canonical = canonical_issue_number(raw);
+    if !canonical.contains(['½', '¼', '¾', '/']) {
+        return canonical;
+    }
+    let key = crate::metadata::title_norm::issue_number_key(&canonical);
+    match key.value {
+        Some(v) if !key.annual && key.suffix.is_empty() && v.is_finite() && v >= 0.0 => {
+            let s = format!("{v}");
+            canonical_issue_number(&s)
+        }
+        _ => canonical,
     }
 }
 
@@ -926,6 +981,50 @@ mod tests {
         // Non-numeric variants pass through unchanged (trimmed).
         assert_eq!(canonical_issue_number("Annual 1"), "Annual 1");
         assert_eq!(canonical_issue_number("14AU"), "14AU");
+        assert_eq!(canonical_issue_number("½"), "½");
+    }
+
+    #[test]
+    fn canonical_issue_number_drops_gcd_legacy_alias() {
+        // GCD's dual numbering for Fantastic Four (1998).
+        assert_eq!(canonical_issue_number("42 (471)"), "42");
+        assert_eq!(canonical_issue_number("70 (499)"), "70");
+        assert_eq!(canonical_issue_number("500 (71)"), "500");
+        assert_eq!(canonical_issue_number("#042(471)"), "42");
+        assert_eq!(canonical_issue_number("14AU (52)"), "14AU");
+        assert_eq!(split_legacy_number("42 (471)"), Some(("42", "471")));
+        assert_eq!(split_legacy_number("500 (71)"), Some(("500", "71")));
+        assert_eq!(split_legacy_number("605.1 (12.1)"), Some(("605.1", "12.1")));
+        // Annotations and lone parentheses are left alone.
+        for raw in [
+            "1 (of 4)",
+            "1 (Direct)",
+            "(1)",
+            "Annual 1 (2)",
+            "42 ()",
+            "42 (471",
+            "1.NOW (2)",
+        ] {
+            assert_eq!(split_legacy_number(raw), None, "{raw}");
+        }
+        assert_eq!(canonical_issue_number("1 (of 4)"), "1 (of 4)");
+        // After an Annual marker the remainder is canonicalised like any
+        // number, so a dual-numbered annual keeps its primary number.
+        assert_eq!(canonical_issue_number("Annual 1 (2)"), "Annual 1");
+    }
+
+    #[test]
+    fn compare_key_writes_fractions_as_decimals() {
+        assert_eq!(issue_number_compare_key("½"), "0.5");
+        assert_eq!(issue_number_compare_key("1/2"), "0.5");
+        assert_eq!(issue_number_compare_key("000.5"), "0.5");
+        assert_eq!(issue_number_compare_key("1½"), "1.5");
+        assert_eq!(issue_number_compare_key("¼"), "0.25");
+        assert_eq!(issue_number_compare_key("605.1"), "605.1");
+        assert_eq!(issue_number_compare_key("42 (471)"), "42");
+        assert_eq!(issue_number_compare_key("Annual 1"), "Annual 1");
+        assert_eq!(issue_number_compare_key("14AU"), "14AU");
+        // The query form keeps the glyph.
         assert_eq!(canonical_issue_number("½"), "½");
     }
 

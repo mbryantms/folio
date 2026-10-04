@@ -32,9 +32,7 @@
 
 use crate::metadata::auto_split::{self, DetectOutcome, LocalIssue};
 use crate::metadata::identifier::{Identifier, Source};
-use crate::metadata::matcher::{
-    self, Confidence, Score, SeriesQueryFacts, Thresholds, canonical_issue_number,
-};
+use crate::metadata::matcher::{self, Confidence, Score, SeriesQueryFacts, Thresholds};
 use crate::metadata::orchestrator::{PreFilter, pre_filter_series};
 use crate::metadata::provider::{MetadataProvider, ProviderError, SeriesCandidate, SeriesQuery};
 use crate::metadata::writers::{self, SetBy, SetExternalIdOutcome};
@@ -653,12 +651,15 @@ pub(crate) enum SearchVerdict {
 ///
 /// A candidate is **strict** when the matcher buckets it at least MEDIUM
 /// and its name normalizes to the local name, its start year equals the
-/// local year, its publisher doesn't conflict (an unknown publisher is
+/// local year or `first_cover_year` (the earliest local cover year: a
+/// "Fantastic Four (2001)" folder whose #1 is cover-dated 1998 is the
+/// 1998 volume), its publisher doesn't conflict (an unknown publisher is
 /// fine — Metron's list and a cold GCD cache carry none), and it has no
 /// format mismatch. It's used only when it is the *only* strict
 /// candidate. Every other MEDIUM-or-better candidate is for review.
 pub(crate) fn classify_search(
     facts: &SeriesQueryFacts,
+    first_cover_year: Option<i32>,
     scored: &[(SeriesCandidate, Score)],
     thresholds: Thresholds,
 ) -> SearchVerdict {
@@ -678,8 +679,7 @@ pub(crate) fn classify_search(
         .filter(|&i| {
             let (c, s) = &scored[i];
             matcher::name_similarity(&facts.name, &c.name) >= 0.999
-                && facts.year.is_some()
-                && facts.year == c.year
+                && year_agrees(facts, first_cover_year, c.year)
                 && (s.publisher > 0.0)
                 && !s.format_mismatch
         })
@@ -693,11 +693,14 @@ pub(crate) fn classify_search(
 
 /// Share of the local numbered issues present in `listed`.
 fn overlap(local: &[LocalIssue], listed: &[String]) -> Option<f32> {
-    let listed: HashSet<String> = listed.iter().map(|n| canonical_issue_number(n)).collect();
+    let listed: HashSet<String> = listed
+        .iter()
+        .map(|n| matcher::issue_number_compare_key(n))
+        .collect();
     let numbered: HashSet<&str> = local
         .iter()
         .filter(|li| li.value.is_some())
-        .map(|li| li.canonical.as_str())
+        .map(|li| li.key.as_str())
         .collect();
     if numbered.is_empty() || listed.is_empty() {
         return None;
@@ -730,10 +733,26 @@ async fn search_link(
         })
         .await?;
     let kept = pre_filter_series(raw, &facts, pre_filter);
+    // A candidate starting in the year of the earliest local cover is
+    // scored against that year rather than the folder's.
+    let first_cover_year = local
+        .iter()
+        .filter_map(|l| l.year)
+        .min()
+        .filter(|y| Some(*y) != facts.year);
     let scored: Vec<(SeriesCandidate, Score)> = kept
         .into_iter()
         .map(|c| {
-            let s = matcher::score_series(&facts, &c);
+            let s = match first_cover_year {
+                Some(y) if c.year == Some(y) => matcher::score_series(
+                    &SeriesQueryFacts {
+                        year: Some(y),
+                        ..facts.clone()
+                    },
+                    &c,
+                ),
+                _ => matcher::score_series(&facts, &c),
+            };
             (c, s)
         })
         .collect();
@@ -754,13 +773,13 @@ async fn search_link(
         }
     };
 
-    match classify_search(&facts, &scored, thresholds) {
+    match classify_search(&facts, first_cover_year, &scored, thresholds) {
         SearchVerdict::None => Ok(Resolution::NotFound(None)),
         SearchVerdict::Review(order) => Ok(Resolution::Review(
             order
                 .into_iter()
                 .take(MAX_REVIEW_CANDIDATES)
-                .map(|i| to_candidate(i, None, review_reason(&facts, &scored[i])))
+                .map(|i| to_candidate(i, None, review_reason(&facts, first_cover_year, &scored[i])))
                 .collect(),
         )),
         SearchVerdict::Strict(i) => {
@@ -795,10 +814,20 @@ async fn search_link(
     }
 }
 
-fn review_reason(facts: &SeriesQueryFacts, (c, s): &(SeriesCandidate, Score)) -> &'static str {
+/// The candidate's start year is the local series year or the earliest
+/// local cover year.
+fn year_agrees(facts: &SeriesQueryFacts, first_cover_year: Option<i32>, year: Option<i32>) -> bool {
+    year.is_some() && (year == facts.year || year == first_cover_year)
+}
+
+fn review_reason(
+    facts: &SeriesQueryFacts,
+    first_cover_year: Option<i32>,
+    (c, s): &(SeriesCandidate, Score),
+) -> &'static str {
     if matcher::name_similarity(&facts.name, &c.name) < 0.999 {
         "name differs"
-    } else if facts.year.is_none() || facts.year != c.year {
+    } else if !year_agrees(facts, first_cover_year, c.year) {
         "start year differs"
     } else if s.publisher <= 0.0 {
         "publisher differs"
@@ -884,7 +913,7 @@ mod tests {
             cand("9", "Fantastic Four Annual", Some(1963), None),
         ]);
         assert_eq!(
-            classify_search(&facts(), &s, Thresholds::default()),
+            classify_search(&facts(), None, &s, Thresholds::default()),
             SearchVerdict::Strict(0)
         );
     }
@@ -896,7 +925,7 @@ mod tests {
             cand("2", "Fantastic Four", Some(1961), Some("Marvel")),
         ]);
         assert!(matches!(
-            classify_search(&facts(), &s, Thresholds::default()),
+            classify_search(&facts(), None, &s, Thresholds::default()),
             SearchVerdict::Review(v) if v.len() == 2
         ));
     }
@@ -910,8 +939,32 @@ mod tests {
             Some("Marvel"),
         )]);
         assert_eq!(
-            classify_search(&facts(), &s, Thresholds::default()),
+            classify_search(&facts(), None, &s, Thresholds::default()),
             SearchVerdict::Review(vec![0])
+        );
+    }
+
+    #[test]
+    fn earliest_cover_year_counts_as_the_start_year() {
+        // A "Fantastic Four" folder labelled 1965 whose earliest issue is
+        // cover-dated 1961 (facts() carry the folder year).
+        let mut f = facts();
+        f.year = Some(1965);
+        let s: Vec<(SeriesCandidate, Score)> =
+            vec![cand("1482", "Fantastic Four", Some(1961), Some("Marvel"))]
+                .into_iter()
+                .map(|c| {
+                    let sc = matcher::score_series(&facts(), &c);
+                    (c, sc)
+                })
+                .collect();
+        assert_eq!(
+            classify_search(&f, Some(1961), &s, Thresholds::default()),
+            SearchVerdict::Strict(0)
+        );
+        assert_ne!(
+            classify_search(&f, None, &s, Thresholds::default()),
+            SearchVerdict::Strict(0)
         );
     }
 
@@ -924,7 +977,7 @@ mod tests {
             Some("Dark Horse"),
         )]);
         assert!(!matches!(
-            classify_search(&facts(), &s, Thresholds::default()),
+            classify_search(&facts(), None, &s, Thresholds::default()),
             SearchVerdict::Strict(_)
         ));
     }
@@ -933,7 +986,7 @@ mod tests {
     fn unrelated_names_yield_nothing() {
         let s = scored(vec![cand("1", "Silver Surfer", Some(1987), None)]);
         assert_eq!(
-            classify_search(&facts(), &s, Thresholds::default()),
+            classify_search(&facts(), None, &s, Thresholds::default()),
             SearchVerdict::None
         );
     }

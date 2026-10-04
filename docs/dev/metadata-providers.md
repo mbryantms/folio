@@ -892,10 +892,30 @@ on the local name + up to 2 aliases with **no year filter**, through
 `pre_filter_series` (`PreFilter::from_library` blacklist; hard year gate
 against the *latest* local issue year) and `matcher::score_series`,
 keeping sanitized-name similarity ≥ 0.85. A candidate is **strict** when
-the name is equal, its start year equals the local series year, the
-publisher doesn't conflict and there's no format mismatch; a user link
-counts as strict. After a first cover, up to `MAX_GAP_SEARCHES` = 2
-issue searches (first issue of each uncovered run) can add candidates.
+the name is equal, its start year equals the local series year **or the
+earliest local cover year** (a "Fantastic Four" folder labelled 2001
+whose #½ and #1 are cover-dated 1998 is the 1998 volume), the publisher
+doesn't conflict and there's no format mismatch; a user link counts as
+strict. The detector's strict search (`series_link::classify_search`)
+applies the same year rule. After a first cover, up to
+`MAX_GAP_SEARCHES` = 2 issue searches (first issue of each uncovered
+run, longest run first) can add candidates.
+
+**Issue numbers.** Listings and local issues are matched on
+`matcher::issue_number_compare_key`: the canonical number with fractions
+as decimals (ComicVine / Metron list FF #½ as `"½"`, the file says
+`"0.5"`). Provider queries keep the canonical form, which keeps the
+glyph. `canonical_issue_number` drops a trailing parenthesised legacy
+number (`matcher::split_legacy_number`): GCD writes dual-numbered runs
+as `"42 (471) [Direct Edition]"` / `"500 (71)"` (FF 1998 #42–70 = legacy
+#471–499, #500–508 = vol. 3 #71–79). Before this, GCD 11218 seemed to
+lack #42–70 and the detector mapped them to the 1961 volume, whose own
+#42–70 are from 1965–67. Only `<number> (<number>)` is split; `"1 (of
+4)"` passes through. The legacy alias isn't used for matching yet (a
+local file numbered `471` would also need GCD's narrowed issue search and
+the issue scorer to understand it). `tests/provider_coverage_fantastic_four.rs`
+pins the whole run (173 issues) against recorded ComicVine, Metron and
+GCD responses.
 
 **Assignment + cover** (`compute_cover`, pure): a local issue is eligible
 for a candidate listing its canonical number with a non-conflicting date
