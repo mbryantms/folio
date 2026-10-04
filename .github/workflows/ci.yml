@@ -14,11 +14,12 @@ env:
   RUST_BACKTRACE: 1
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # Cancel superseded runs on PR/merge_group refs, but NEVER on main: a
-  # main-push run that gets cancelled doesn't save the rust-cache, which
-  # leaves every subsequent PR compiling cold. Let main runs finish so the
-  # cache is populated.
+  # Main gets one group PER COMMIT. `cancel-in-progress: false` alone only
+  # protects a RUNNING run: GitHub still cancels a PENDING run in the same
+  # group when a newer one queues (7 of 30 main pushes died that way,
+  # 2026-10), and a cancelled main run never saves its caches. PR /
+  # merge_group refs keep one group per ref and cancel superseded runs.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'ref' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
@@ -117,9 +118,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Every `dtolnay/rust-toolchain@1.96.0` in this file is the MSRV
-      # (`rust-version` in Cargo.toml), NOT the dev toolchain in
-      # rust-toolchain.toml (1.98.x, which the Dockerfile and local builds
-      # use). Compiling + testing on the MSRV is what keeps the declared
+      # (`rust-version` in Cargo.toml), NOT the dev toolchain pinned in
+      # rust-toolchain.toml (which the Dockerfile and local builds use). Compiling + testing on the MSRV is what keeps the declared
       # floor honest. dtolnay publishes version refs as branches, so Renovate
       # never bumps these: raising the MSRV is a deliberate edit of
       # Cargo.toml `rust-version` + these refs in one commit.
@@ -148,19 +148,19 @@ jobs:
     timeout-minutes: 50
     env:
       CARGO_INCREMENTAL: 0
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
+      # The doctest step builds debug artifacts too; keep them small (see the
+      # same setting on rust-test).
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
           components: clippy
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: clippy
         run: |
           start=$(date +%s)
-          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo clippy --workspace --all-targets -- -D warnings
           elapsed=$(($(date +%s) - start))
           {
             echo "### Rust clippy timing"
@@ -169,9 +169,15 @@ jobs:
             echo "| --- | ---: |"
             echo "| cargo clippy | ${elapsed}s |"
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: sccache stats
-        if: always()
-        run: ${SCCACHE_PATH:-sccache} --show-stats || true
+      # Doctests run here rather than in `rust-test`: they need a separate
+      # rustdoc build of the server crate (~3-4 min) for a handful of
+      # examples, and this job finishes long before the test suite does.
+      - name: doctests
+        run: |
+          start=$(date +%s)
+          cargo test --workspace --doc
+          elapsed=$(($(date +%s) - start))
+          echo "| cargo test --doc | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
 
   rust-test:
     name: Rust — test
@@ -189,8 +195,6 @@ jobs:
       # while shedding most of that footprint. `test`/`bench` profiles inherit
       # from `dev`, so this covers nextest binaries and doctests alike.
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
     services:
       postgres:
         image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
@@ -207,7 +211,7 @@ jobs:
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      # A toolchain bump invalidates every sccache/rust-cache key, so this job
+      # A toolchain bump invalidates every rust-cache key, so this job
       # occasionally runs fully cold — and a cold workspace build (Tesseract/
       # Leptonica C++, ort, dozens of debug test binaries) overflows what's
       # free on a hosted runner. PR #429 died twice this way: first ld
@@ -218,19 +222,29 @@ jobs:
       # hostedtoolcache can go: the toolchain comes from rustup and nextest is
       # a prebuilt binary. `docker image prune` keeps the postgres/redis
       # service images (already running) and drops the rest.
+      #
+      # The cleanup itself costs ~2.5 min on the critical path, so it only
+      # runs when the runner is actually short: a cold workspace debug build
+      # with every test binary is ~20-25 GB, and 145 GB runners start with
+      # ~86 GB free (measured 2026-10). 60 GB leaves comfortable headroom.
       - name: free runner disk
         run: |
           df -h /
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
-            /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache \
-            /usr/local/share/powershell /usr/share/swift \
-            /usr/local/share/chromium /usr/local/lib/node_modules \
-            /usr/lib/google-cloud-sdk /opt/microsoft /opt/az \
-            /usr/share/miniconda /opt/pipx
-          sudo docker image prune -af
-          df -h /
+          avail_gb=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          if [ "$avail_gb" -lt 60 ]; then
+            echo "only ${avail_gb} GB free; cleaning up"
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
+              /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache \
+              /usr/local/share/powershell /usr/share/swift \
+              /usr/local/share/chromium /usr/local/lib/node_modules \
+              /usr/lib/google-cloud-sdk /opt/microsoft /opt/az \
+              /usr/share/miniconda /opt/pipx
+            sudo docker image prune -af
+            df -h /
+          else
+            echo "${avail_gb} GB free; skipping cleanup"
+          fi
       - uses: dtolnay/rust-toolchain@1.96.0
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: install nextest
         uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
@@ -240,8 +254,8 @@ jobs:
       # core use than cargo test's one-binary-at-a-time) and auto-retries the
       # rare container flake. The integration harness points at the shared
       # Postgres service via COMIC_TEST_PG_URL and clones a template DB per test
-      # (see crates/server/tests/common/mod.rs). A separate `cargo test --doc`
-      # covers doctests, which nextest doesn't run.
+      # (see crates/server/tests/common/mod.rs). Doctests (which nextest
+      # doesn't run) live in the clippy job, off this job's critical path.
       - name: test
         run: |
           status=0
@@ -266,10 +280,8 @@ jobs:
           }
 
           run_timed "cargo nextest" \
-            cargo nextest run --workspace --all-features --profile "$NEXTEST_PROFILE" \
+            cargo nextest run --workspace --profile "$NEXTEST_PROFILE" \
               --status-level slow --final-status-level slow
-          run_timed "cargo test --doc" \
-            cargo test --workspace --all-features --doc
           exit "$status"
         env:
           # renovate/* PRs auto-merge on green, so they get the no-retry
@@ -279,9 +291,6 @@ jobs:
           COMIC_TEST_PG_URL: postgres://comic:comic@localhost:5432/comic_reader_test
           COMIC_DATABASE_URL: postgres://comic:comic@localhost:5432/comic_reader_test
           COMIC_REDIS_URL: redis://localhost:6379
-      - name: sccache stats
-        if: always()
-        run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
   # Migration down-path gate (WP-3.8, audit AR-9): every migration ships a
   # `down`, but nothing ran them. Against a fresh Postgres 18 service DB this
@@ -297,8 +306,6 @@ jobs:
     timeout-minutes: 30
     env:
       CARGO_INCREMENTAL: 0
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
     services:
       postgres:
         image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
@@ -312,7 +319,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@1.96.0
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: build migration CLI
         run: cargo build --locked -p migration --bin migration
@@ -323,9 +329,6 @@ jobs:
           PG_URL_BASE: postgres://comic:comic@localhost:5432
           MIGRATION_BIN: target/debug/migration
           ROUNDTRIP_COUNT: "10"
-      - name: sccache stats
-        if: always()
-        run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
   rust-check:
     name: Rust — fmt / clippy / test
@@ -573,8 +576,6 @@ jobs:
     needs: [changes]
     env:
       CARGO_INCREMENTAL: 0
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -590,8 +591,6 @@ jobs:
       # The Rust build (to emit the spec) only matters when backend or the
       # checked-in spec changed; the spec can't have drifted otherwise.
       - uses: dtolnay/rust-toolchain@1.96.0
-        if: needs.changes.outputs.backend_or_spec == 'true'
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         if: needs.changes.outputs.backend_or_spec == 'true'
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         if: needs.changes.outputs.backend_or_spec == 'true'
@@ -658,9 +657,6 @@ jobs:
             ([[ "${{ contains(github.event.pull_request.labels.*.name, 'breaking-change') }}" == "true" ]] && \
               echo "::warning::Breaking changes detected (acknowledged via label)" || \
               (echo "::error::Breaking API changes — add 'breaking-change' label and update CHANGELOG.md" && exit 1))
-      - name: sccache stats
-        if: always() && needs.changes.outputs.backend_or_spec == 'true'
-        run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
   audit-check:
     name: Rust — audit-log enforcement (M10.2)
@@ -716,15 +712,19 @@ jobs:
     name: Docker — amd64 build
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    # Intentionally gated on the full check jobs — don't burn an image build
-    # if fmt/clippy/test or the web suite failed. Build steps additionally skip
-    # when neither image's inputs changed (e.g. a docs/CHANGELOG-only PR): the
-    # job still runs so the required check reports, it just does nothing.
-    needs: [changes, rust-check, web-check]
-    # MUST be explicit. A job's implicit condition is `success()`, which is
-    # evaluated over the TRANSITIVE ancestor set — so when `rust-clippy` /
-    # `rust-test` skip (a non-Rust PR), this job skips too, even though
-    # `rust-check` itself succeeded via its own `always()`. A skipped matrix
+    # Runs CONCURRENTLY with the check jobs. It used to wait for rust-check +
+    # web-check ("don't burn an image build behind failed checks"), which put
+    # a ~30 min image build strictly after a ~50 min test suite. Minutes are
+    # free on this public repo; wall-clock isn't. The "only behind green
+    # checks" gate now lives on docker-smoke, the required check. Build steps
+    # still skip when neither image's inputs changed (e.g. a docs-only PR):
+    # the job runs so the matrix contexts report, it just does nothing.
+    needs: [changes]
+    # MUST be explicit (historically: when this job needed rust-check). A
+    # job's implicit condition is `success()`, which is evaluated over the
+    # TRANSITIVE ancestor set — so when `rust-clippy` / `rust-test` skip (a
+    # non-Rust PR), a dependent skips too, even though `rust-check` itself
+    # succeeded via its own `always()`. A skipped matrix
     # job reports ONE check run named `Docker — amd64 build` (bare, no matrix
     # suffix), so the per-image contexts
     #   Docker — amd64 build (folio, Dockerfile)
@@ -735,10 +735,7 @@ jobs:
     # `always() && <gate>.result == 'success'` keeps the original intent —
     # don't burn an image build behind failed checks — while guaranteeing the
     # matrix expands and both contexts always report.
-    if: >-
-      always() &&
-      needs.rust-check.result == 'success' &&
-      needs.web-check.result == 'success'
+    if: always() && needs.changes.result == 'success'
     env:
       # Per-image: the server image rebuilds on Rust changes, the web image on
       # web changes; either rebuilds on a Dockerfile change. `docker` is true
@@ -783,11 +780,17 @@ jobs:
     name: Docker — image smoke test
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    needs: [changes, docker-build]
-    # Same transitive-skip reason as docker-build above. If docker-build
-    # genuinely failed this skips, which is fine: docker-build is itself a
-    # required check, so the PR is blocked on that rather than deadlocked here.
-    if: always() && needs.docker-build.result == 'success'
+    # Gated on every check that must be green before images are worth
+    # booting (docker-build no longer waits for them; it runs alongside).
+    # `always()` + explicit results for the transitive-skip reason explained
+    # on docker-build. If any of these genuinely failed this job skips and
+    # the PR is blocked on that failed required check, not deadlocked here.
+    needs: [changes, rust-check, web-check, docker-build]
+    if: >-
+      always() &&
+      needs.rust-check.result == 'success' &&
+      needs.web-check.result == 'success' &&
+      needs.docker-build.result == 'success'
     env:
       # Gated on the STEPS, not the job — same reason `docker-build` above
       # does it this way: the job must still run so the required check

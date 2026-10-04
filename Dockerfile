@@ -2,7 +2,8 @@
 # Folio app image — Rust workspace (axum server + migration runner).
 #
 # Multi-stage:
-#   1a/1b. cargo-chef plan + cached cook for the Rust workspace
+#   1a/1b. cargo-chef plan + cached cook (`deps`) for the Rust workspace
+#   1c.   `rust-builder` compiles the workspace on top of `deps`
 #   2.    Pulls `tini` + `unrar-free` out of a slim Debian intermediate
 #   3.    Distroless final image — only the two binaries + tini + unrar
 #
@@ -11,21 +12,33 @@
 # auto-merges once CI boots the result; a TAG change (new Debian/Node/Rust
 # line) still waits for review. See docs/dev/dependency-management.md.
 #
+# The Rust builder image rides the floating `rust:1` tag on purpose: the
+# compiler actually used is whatever `rust-toolchain.toml` pins, installed
+# by rustup in the first layer of each Rust stage. The file is copied BEFORE
+# `cargo chef cook` so cook and the final build run the same rustc — when it
+# was copied afterwards, a toolchain bump made cook compile every dependency
+# on the image's rustc and the final build compile them all again on the
+# pinned one (~20 min wasted per image build after #985).
+#
 # The Next.js frontend lives in a separate image — see `web/Dockerfile`.
 # Production runs them as two compose services fronted by an operator-owned
 # reverse proxy. See `docs/install/` for the wiring.
 
 # ───── Stage 1a: cargo-chef recipe ─────
-FROM rust:1.98-slim-bookworm@sha256:ff521445a372125ed4f76e1453a1f8098f2d05332d1601d30db1c1f62757e730 AS planner
+FROM rust:1-slim-bookworm@sha256:452176c0cefca88c0b3184ce85a4eb03e3d4fa05d2afb5366abcba853221019e AS planner
 WORKDIR /work
+COPY rust-toolchain.toml ./
 RUN cargo install cargo-chef --locked
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ───── Stage 1b: cargo-chef cook (cached deps) ─────
-FROM rust:1.98-slim-bookworm@sha256:ff521445a372125ed4f76e1453a1f8098f2d05332d1601d30db1c1f62757e730 AS rust-builder
+# Its own target so CI can build + cache just this layer (`--target deps`)
+# without exporting the per-commit final build.
+FROM rust:1-slim-bookworm@sha256:452176c0cefca88c0b3184ce85a4eb03e3d4fa05d2afb5366abcba853221019e AS deps
 WORKDIR /work
+COPY rust-toolchain.toml ./
 # build-essential / g++ pulled in for cc-rs crates (zstd-sys, image, webp,
 # blake3, etc.) that compile C/C++. pkg-config + libssl-dev cover the
 # native OpenSSL link path used by reqwest's default features.
@@ -45,6 +58,9 @@ RUN cargo install cargo-chef --locked
 COPY --from=planner /work/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json --bin server --bin migration
 
+# ───── Stage 1c: compile the workspace ─────
+FROM deps AS rust-builder
+
 # Build-time fingerprints. The `.git` directory is NOT in the Docker
 # context, so crates/server/build.rs can't shell out to git from inside
 # the container. CI passes these values as --build-arg; the build script
@@ -60,7 +76,7 @@ ENV COMIC_BUILD_TAG=$COMIC_BUILD_TAG \
     COMIC_BUILD_SHA_FULL=$COMIC_BUILD_SHA_FULL \
     COMIC_BUILD_REPO_URL=$COMIC_BUILD_REPO_URL
 
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 RUN cargo build --release --bin server --bin migration \
     && strip /work/target/release/server /work/target/release/migration
