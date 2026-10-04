@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.39.0](https://github.com/mbryantms/folio/compare/v0.38.0...v0.39.0) (2026-10-04)
+
+
+### Added
+
+* **web:** /pwa-test/4–7 — isolate the manifest as the status-bar fade trigger ([#1011](https://github.com/mbryantms/folio/issues/1011)) ([810e03a](https://github.com/mbryantms/folio/commit/810e03aa1960bddb86de6980f052cbed70a15966))
+
 ## [0.38.0](https://github.com/mbryantms/folio/compare/v0.37.0...v0.38.0) (2026-10-04)
 
 
