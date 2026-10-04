@@ -136,6 +136,22 @@ jobs:
           echo "sha_short=${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
           echo "repo_url=https://github.com/${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
 
+      # Registry cache shared with ci.yml (see the docker-build job there):
+      # `folio:buildcache-deps` holds only the cargo-chef `deps` stage —
+      # exported by its own build so the per-commit final layer is never
+      # uploaded — and `folio-web:buildcache` the whole web build.
+      - name: Build + cache dependency layer (folio)
+        if: matrix.image == 'folio'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: Dockerfile
+          target: deps
+          platforms: linux/amd64
+          push: false
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/folio:buildcache-deps
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/folio:buildcache-deps,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
+
       - name: Build & push
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
@@ -154,8 +170,8 @@ jobs:
             COMIC_BUILD_SHA=${{ steps.fingerprint.outputs.sha_short }}
             COMIC_BUILD_SHA_FULL=${{ steps.fingerprint.outputs.sha_full }}
             COMIC_BUILD_REPO_URL=${{ steps.fingerprint.outputs.repo_url }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ matrix.image == 'folio' && 'buildcache-deps' || 'buildcache' }}
+          cache-to: ${{ matrix.image == 'folio-web' && format('type=registry,ref=ghcr.io/{0}/folio-web:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true', github.repository_owner) || '' }}
           provenance: true
           sbom: false   # we attach SPDX via anchore below; build-push's sbom=true would duplicate
 
