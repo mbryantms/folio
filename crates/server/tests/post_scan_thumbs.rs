@@ -907,10 +907,11 @@ async fn strip_enqueue_skips_issues_with_complete_strips() {
 
 // ───────── Wraparound covers (THUMBNAIL_VERSION v5) ─────────
 
-/// 2:1 landscape PNG: left half red, right half blue. Stands in for a
+/// 4:3 landscape PNG (a two-page wraparound, under the 1.7 gatefold
+/// threshold): left half red, right half blue. Stands in for a
 /// wraparound cover (back cover on the left, front on the right).
 fn wraparound_png() -> Vec<u8> {
-    let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_fn(128, 64, |x, _| {
+    let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_fn(128, 96, |x, _| {
         if x < 64 {
             Rgba([255, 0, 0, 255])
         } else {
@@ -984,7 +985,7 @@ async fn cover_worker_crops_wraparound_to_front_half_for_ltr() {
         &id,
         thumbnails::ThumbFormat::Webp,
     ));
-    assert_eq!(cover.dimensions(), (64, 64), "cover is the front half only");
+    assert_eq!(cover.dimensions(), (64, 96), "cover is the front half only");
     // Right half of the source = blue (lossy WebP: check the dominant channel).
     let px = cover.get_pixel(32, 32).0;
     assert!(
@@ -999,7 +1000,7 @@ async fn cover_worker_crops_wraparound_to_front_half_for_ltr() {
     ));
     assert_eq!(
         small.dimensions(),
-        (64, 64),
+        (64, 96),
         "@sm derives from the same crop"
     );
 
@@ -1011,7 +1012,7 @@ async fn cover_worker_crops_wraparound_to_front_half_for_ltr() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!((cover_row.width, cover_row.height), (Some(64), Some(64)));
+    assert_eq!((cover_row.width, cover_row.height), (Some(64), Some(96)));
 }
 
 #[tokio::test]
@@ -1036,7 +1037,7 @@ async fn cover_worker_keeps_left_half_for_rtl_series() {
         &id,
         thumbnails::ThumbFormat::Webp,
     ));
-    assert_eq!(cover.dimensions(), (64, 64));
+    assert_eq!(cover.dimensions(), (64, 96));
     let px = cover.get_pixel(32, 32).0;
     assert!(
         px[0] > 200 && px[2] < 60,
@@ -1100,7 +1101,7 @@ async fn version_bump_recrops_stale_wraparound_but_leaves_portrait_covers() {
     ));
     assert_eq!(
         recropped.dimensions(),
-        (64, 64),
+        (64, 96),
         "stale spread was re-encoded cropped"
     );
 
@@ -1123,6 +1124,59 @@ async fn version_bump_recrops_stale_wraparound_but_leaves_portrait_covers() {
             .unwrap();
         assert_eq!(row.thumbnail_version, thumbnails::THUMBNAIL_VERSION);
     }
+}
+
+/// v6: a natively landscape book (every page as wide as the cover —
+/// Marvel Infinite Comics) keeps its whole cover, and a stale v5
+/// half-crop on disk is wiped and replaced even though the crop no
+/// longer applies.
+#[tokio::test]
+async fn landscape_book_keeps_whole_cover_and_replaces_stale_half_crop() {
+    let app = TestApp::spawn().await;
+    let state = app.state();
+    let data = state.cfg().data_path.clone();
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("landscape.cbz");
+    build_wraparound_cbz(&cbz);
+    let id = seed_issue(&app, &cbz, 3).await;
+
+    // The scanner's page dimensions say every page is 2:1.
+    let pages = serde_json::json!(
+        (0..3)
+            .map(|n| serde_json::json!({"image": n, "image_width": 128, "image_height": 96}))
+            .collect::<Vec<_>>()
+    );
+    let stale = thumbnails::cover_path(&data, &id, thumbnails::ThumbFormat::Webp);
+    std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
+    std::fs::write(&stale, b"v5 half crop").unwrap();
+    let mut am = IssueAM {
+        id: Set(id.clone()),
+        ..Default::default()
+    };
+    am.pages = Set(pages);
+    am.thumbnails_generated_at = Set(Some(Utc::now().fixed_offset()));
+    am.thumbnail_version = Set(thumbnails::THUMBNAIL_VERSION - 1);
+    am.update(&state.db).await.unwrap();
+
+    handle_thumbs(
+        ThumbsJob::cover(id.clone()),
+        apalis::prelude::Data::new(state.clone()),
+    )
+    .await
+    .unwrap();
+
+    let cover = decode(&stale);
+    assert_eq!(cover.dimensions(), (128, 96), "whole landscape cover");
+    let left = cover.get_pixel(16, 48).0;
+    let right = cover.get_pixel(112, 48).0;
+    assert!(
+        left[0] > 200 && left[2] < 60,
+        "left edge kept, got {left:?}"
+    );
+    assert!(
+        right[2] > 200 && right[0] < 60,
+        "right edge kept, got {right:?}"
+    );
 }
 
 // ───────── Soft-removed and vanished files ─────────

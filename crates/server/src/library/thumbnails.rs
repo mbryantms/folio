@@ -78,7 +78,15 @@ use std::path::{Path, PathBuf};
 /// sweep re-enqueues every issue; the worker only wipes + re-encodes the
 /// covers the crop actually applies to (portrait covers keep their bytes
 /// and ETags), so the bump costs one decode per issue, not a re-encode.
-pub const THUMBNAIL_VERSION: i32 = 5;
+///
+/// v6: two cases the v5 half-crop got wrong. A three-panel gatefold
+/// (back | front | fold-out flap, aspect ≥ [`GATEFOLD_ASPECT_RATIO`];
+/// Chew #15, Uncanny X-Men #275) now keeps its middle third, and a
+/// natively landscape book (Marvel Infinite Comics: every page 4:3) keeps
+/// its whole cover ([`FrontCoverSide::Whole`]). The worker wipes every
+/// stale wide cover — not only the ones the crop still applies to — so a
+/// landscape book's half-cropped v5 thumbnail is replaced too.
+pub const THUMBNAIL_VERSION: i32 = 6;
 
 /// Width ÷ height at or above which a page is treated as a two-page
 /// spread. One constant, three consumers: the scanner's `double_page`
@@ -103,6 +111,11 @@ pub enum FrontCoverSide {
     Right,
     /// Right-to-left books: front cover is the left half.
     Left,
+    /// The book itself is landscape (most pages are as wide as the
+    /// cover — e.g. Marvel Infinite Comics at 4:3), so a wide cover page
+    /// is one page, not a spread: keep it whole. See
+    /// [`is_landscape_native`].
+    Whole,
 }
 
 impl FrontCoverSide {
@@ -136,6 +149,7 @@ impl FrontCoverSide {
         match self {
             Self::Right => "right",
             Self::Left => "left",
+            Self::Whole => "whole",
         }
     }
 }
@@ -149,6 +163,9 @@ pub async fn resolve_front_cover_side<C: sea_orm::ConnectionTrait>(
     db: &C,
     issue: &entity::issue::Model,
 ) -> FrontCoverSide {
+    if is_landscape_native(&issue.pages, issue.cover_page_index) {
+        return FrontCoverSide::Whole;
+    }
     let series_dir = entity::series::Entity::find_by_id(issue.series_id)
         .one(db)
         .await
@@ -173,20 +190,73 @@ pub fn is_spread_dimensions(width: u32, height: u32) -> bool {
     height > 0 && (width as f32 / height as f32) >= SPREAD_ASPECT_RATIO
 }
 
-/// Crop a wraparound cover down to its front half. Returns `None` when
-/// the page is portrait (nothing to crop) so callers can keep the
-/// original without a copy. The crop is exactly half the width: every
-/// wraparound we've measured (Ignition Press, Image, DC) is two
-/// identical-width pages side by side; a thin spine sliver, when
-/// present, lands on the inner edge and is invisible at thumbnail size.
+/// Width ÷ height at or above which a wide cover page is a three-panel
+/// gatefold (back | front | fold-out flap) rather than a two-page
+/// wraparound. Three US pages side by side are ≈ 1.95, two ≈ 1.30; the
+/// widest two-panel cover in a 22k-issue library measured 1.61, the
+/// gatefolds (Chew #15, Uncanny X-Men #275) 1.87–1.92.
+pub const GATEFOLD_ASPECT_RATIO: f32 = 1.7;
+
+/// Is this issue a natively landscape book? True when more than half of
+/// the non-cover pages with recorded dimensions in the scanner's `pages`
+/// JSON are spread-shaped (≥ [`SPREAD_ASPECT_RATIO`]), with at least two
+/// measured. A portrait book with many spreads stays well under half;
+/// a book whose every page is 4:3 (Marvel Infinite Comics) is at 100%.
+/// Missing or malformed dimensions read as "not landscape", which keeps
+/// the wraparound crop — the common case.
+pub fn is_landscape_native(pages: &serde_json::Value, cover_page_index: i32) -> bool {
+    let Some(pages) = pages.as_array() else {
+        return false;
+    };
+    let dim = |p: &serde_json::Value, k: &str| p.get(k).and_then(serde_json::Value::as_u64);
+    let (mut measured, mut wide) = (0usize, 0usize);
+    for p in pages {
+        let image = p.get("image").and_then(serde_json::Value::as_i64);
+        if image == Some(i64::from(cover_page_index)) {
+            continue;
+        }
+        let (Some(w), Some(h)) = (dim(p, "image_width"), dim(p, "image_height")) else {
+            continue;
+        };
+        let (Ok(w), Ok(h)) = (u32::try_from(w), u32::try_from(h)) else {
+            continue;
+        };
+        if h == 0 {
+            continue;
+        }
+        measured += 1;
+        if is_spread_dimensions(w, h) {
+            wide += 1;
+        }
+    }
+    measured >= 2 && wide * 2 > measured
+}
+
+/// Crop a wide cover page down to its front cover. Returns `None` when
+/// the page is portrait (nothing to crop) or the book is landscape
+/// ([`FrontCoverSide::Whole`]) so callers can keep the original without
+/// a copy.
+///
+/// - **Wraparound** (two panels): exactly half the width — every
+///   wraparound we've measured (Ignition Press, Image, DC) is two
+///   identical-width pages side by side; a thin spine sliver, when
+///   present, lands on the inner edge and is invisible at thumbnail size.
+///   The half follows `side`.
+/// - **Gatefold** (≥ [`GATEFOLD_ASPECT_RATIO`], three panels): the
+///   middle third, whatever the reading direction — the front sits
+///   between the back cover and the fold-out flap.
 pub fn front_cover_crop(img: &DynamicImage, side: FrontCoverSide) -> Option<DynamicImage> {
     let (w, h) = img.dimensions();
-    if !is_spread_dimensions(w, h) {
+    if side == FrontCoverSide::Whole || !is_spread_dimensions(w, h) {
         return None;
+    }
+    if w as f32 / h as f32 >= GATEFOLD_ASPECT_RATIO {
+        let third = w / 3;
+        return Some(img.crop_imm(third, 0, third, h));
     }
     let half = w / 2;
     let x = match side {
-        FrontCoverSide::Right => w - half,
+        FrontCoverSide::Right | FrontCoverSide::Whole => w - half,
         FrontCoverSide::Left => 0,
     };
     Some(img.crop_imm(x, 0, half, h))
@@ -1572,7 +1642,8 @@ mod tests {
     use super::*;
     use image::{ImageBuffer, Rgba};
 
-    /// 2:1 landscape page: left half red, right half blue.
+    /// 4:3 two-page wraparound (two ≈ 0.65 pages ≈ 1.3, well under the
+    /// gatefold threshold): left half red, right half blue.
     fn wraparound(w: u32, h: u32) -> DynamicImage {
         DynamicImage::ImageRgba8(ImageBuffer::from_fn(w, h, |x, _| {
             if x < w / 2 {
@@ -1589,9 +1660,9 @@ mod tests {
 
     #[test]
     fn ltr_wraparound_keeps_right_half() {
-        let img = wraparound(200, 100);
+        let img = wraparound(200, 150);
         let front = front_cover_crop(&img, FrontCoverSide::Right).expect("landscape crops");
-        assert_eq!(front.dimensions(), (100, 100));
+        assert_eq!(front.dimensions(), (100, 150));
         let rgba = front.to_rgba8();
         assert_eq!(
             rgba.get_pixel(0, 0).0,
@@ -1603,19 +1674,103 @@ mod tests {
 
     #[test]
     fn rtl_wraparound_keeps_left_half() {
-        let img = wraparound(200, 100);
+        let img = wraparound(200, 150);
         let front = front_cover_crop(&img, FrontCoverSide::Left).expect("landscape crops");
-        assert_eq!(front.dimensions(), (100, 100));
+        assert_eq!(front.dimensions(), (100, 150));
         assert_eq!(front.to_rgba8().get_pixel(99, 0).0, [255, 0, 0, 255]);
     }
 
     #[test]
     fn odd_width_crop_rounds_down_and_stays_in_bounds() {
-        let img = wraparound(201, 100);
+        let img = wraparound(201, 150);
         let right = front_cover_crop(&img, FrontCoverSide::Right).unwrap();
         let left = front_cover_crop(&img, FrontCoverSide::Left).unwrap();
-        assert_eq!(right.dimensions(), (100, 100));
-        assert_eq!(left.dimensions(), (100, 100));
+        assert_eq!(right.dimensions(), (100, 150));
+        assert_eq!(left.dimensions(), (100, 150));
+    }
+
+    /// 3:1 page in three bands: red | green | blue.
+    fn gatefold(w: u32, h: u32) -> DynamicImage {
+        DynamicImage::ImageRgba8(ImageBuffer::from_fn(w, h, |x, _| match x * 3 / w {
+            0 => Rgba([255, 0, 0, 255]),
+            1 => Rgba([0, 255, 0, 255]),
+            _ => Rgba([0, 0, 255, 255]),
+        }))
+    }
+
+    #[test]
+    fn gatefold_keeps_middle_third_in_both_directions() {
+        // Chew #15's real dimensions: 3 × 1280-px pages.
+        for side in [FrontCoverSide::Right, FrontCoverSide::Left] {
+            let front = front_cover_crop(&gatefold(3840, 2004), side).expect("gatefold crops");
+            assert_eq!(front.dimensions(), (1280, 2004));
+            let rgba = front.to_rgba8();
+            assert_eq!(rgba.get_pixel(0, 0).0, [0, 255, 0, 255], "{side:?}");
+            assert_eq!(rgba.get_pixel(1279, 2003).0, [0, 255, 0, 255], "{side:?}");
+        }
+    }
+
+    #[test]
+    fn widest_two_panel_wraparound_still_halves() {
+        // Just under the gatefold threshold: still a two-page wraparound.
+        let front = front_cover_crop(&wraparound(169, 100), FrontCoverSide::Right).unwrap();
+        assert_eq!(front.dimensions(), (84, 100));
+    }
+
+    #[test]
+    fn whole_side_never_crops() {
+        assert!(front_cover_crop(&wraparound(200, 150), FrontCoverSide::Whole).is_none());
+        assert!(front_cover_crop(&gatefold(3840, 2004), FrontCoverSide::Whole).is_none());
+    }
+
+    fn page(image: i64, w: u64, h: u64) -> serde_json::Value {
+        serde_json::json!({"image": image, "image_width": w, "image_height": h})
+    }
+
+    #[test]
+    fn landscape_native_needs_most_measured_pages_wide() {
+        // Infinite Comic: 4:3 cover and pages, one portrait ad.
+        let infinite = serde_json::json!([
+            page(0, 2048, 1536),
+            page(1, 1000, 1515),
+            page(2, 2048, 1536),
+            page(3, 2048, 1536),
+        ]);
+        assert!(is_landscape_native(&infinite, 0));
+        // Portrait book with a wraparound cover and a few spreads.
+        let portrait_book = serde_json::json!([
+            page(0, 2600, 2000),
+            page(1, 1300, 2000),
+            page(2, 2600, 2000),
+            page(3, 1300, 2000),
+            page(4, 1300, 2000),
+        ]);
+        assert!(!is_landscape_native(&portrait_book, 0));
+        // Exactly half wide is not "most".
+        let half = serde_json::json!([
+            page(0, 2600, 2000),
+            page(1, 2600, 2000),
+            page(2, 1300, 2000)
+        ]);
+        assert!(!is_landscape_native(&half, 0));
+        // The cover is excluded even when it isn't page 0.
+        let cover_last = serde_json::json!([
+            page(0, 1300, 2000),
+            page(1, 1300, 2000),
+            page(2, 2600, 2000)
+        ]);
+        assert!(!is_landscape_native(&cover_last, 2));
+    }
+
+    #[test]
+    fn landscape_native_is_false_without_enough_dimensions() {
+        assert!(!is_landscape_native(&serde_json::json!([]), 0));
+        assert!(!is_landscape_native(&serde_json::json!({}), 0));
+        // One measured non-cover page is not enough evidence.
+        let one = serde_json::json!([page(0, 2048, 1536), page(1, 2048, 1536), {"image": 2}]);
+        assert!(!is_landscape_native(&one, 0));
+        let zero_h = serde_json::json!([page(0, 2048, 1536), page(1, 2048, 0), page(2, 2048, 0)]);
+        assert!(!is_landscape_native(&zero_h, 0));
     }
 
     #[test]
@@ -1631,7 +1786,7 @@ mod tests {
     #[test]
     fn cover_variants_crop_but_strips_do_not() {
         let dir = tempfile::tempdir().unwrap();
-        let img = wraparound(400, 200);
+        let img = wraparound(400, 300);
         let q = ThumbnailQuality::default();
         let cover = encode_variant_to_disk(
             &dir.path().join("c.png"),
@@ -1661,9 +1816,9 @@ mod tests {
         )
         .unwrap();
         let dims = |p: &Path| image::open(p).unwrap().dimensions();
-        assert_eq!(dims(&cover), (200, 200));
-        assert_eq!(dims(&small), (200, 200));
-        assert_eq!(dims(&strip), (400, 200), "strip keeps the whole spread");
+        assert_eq!(dims(&cover), (200, 300));
+        assert_eq!(dims(&small), (200, 300));
+        assert_eq!(dims(&strip), (400, 300), "strip keeps the whole spread");
         // Explicit `None` never crops, even for the cover variant.
         let raw = encode_variant_to_disk(
             &dir.path().join("raw.png"),
@@ -1674,7 +1829,7 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(dims(&raw), (400, 200));
+        assert_eq!(dims(&raw), (400, 300));
     }
 
     #[test]

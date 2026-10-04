@@ -45,8 +45,9 @@ A search runs in this order:
    The local hash is computed on the archive's cover page **after**
    [`thumbnails::front_cover_crop`](../../crates/server/src/library/thumbnails.rs):
    a wraparound (back + front scanned as one landscape image) is cut
-   to its front half first, mirroring ComicTagger's
-   `IssueIdentifier.crop_cover`. Providers host the front alone, so
+   to its front half first (a three-panel gatefold to its middle
+   third; a natively landscape book is left whole), mirroring
+   ComicTagger's `IssueIdentifier.crop_cover`. Providers host the front alone, so
    hashing the full spread would park a genuine match 20+ bits away.
 
    When the winning cover came from a **variant / alternate** slot

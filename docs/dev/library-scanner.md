@@ -761,8 +761,20 @@ scanner-side handoff.
   `library.default_reading_direction` → LTR — via
   `FrontCoverSide::resolve`: right half for LTR, left half for RTL.
   Flipping a series to RTL (or back) and hitting "Regenerate cover"
-  recrops. On a `THUMBNAIL_VERSION` bump the worker wipes + re-encodes
-  only the covers the crop applies to; portrait covers keep their bytes.
+  recrops. Two exceptions (v6):
+  - **Gatefolds** — a cover at aspect ≥ `GATEFOLD_ASPECT_RATIO` (1.7) is
+    three panels (back | front | fold-out flap; Chew #15, Uncanny X-Men
+    #275) and keeps its **middle third** in either reading direction.
+  - **Landscape books** — when more than half of the issue's other
+    measured pages (`issues.pages` dimensions, at least two) are also
+    spread-shaped, the book is natively landscape (Marvel Infinite
+    Comics, 4:3 throughout) and the cover is kept whole
+    (`FrontCoverSide::Whole`, decided in `resolve_front_cover_side` via
+    `thumbnails::is_landscape_native`).
+
+  On a `THUMBNAIL_VERSION` bump the worker wipes + re-encodes every
+  wide cover page (so a landscape book's old half-crop is replaced);
+  portrait covers keep their bytes.
 
 ### Search index
 
