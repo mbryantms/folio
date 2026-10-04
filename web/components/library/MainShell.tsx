@@ -59,7 +59,7 @@ export function MainShell({
       <SkipToContent />
       <PullToRefresh />
       <AddToHomeScreenBanner />
-      <header className="border-border bg-background/80 standalone:bg-background standalone:backdrop-blur-none sticky top-0 z-30 flex h-(--topbar-h) items-center gap-3 border-b pt-(--top-inset) pr-[max(1rem,var(--safe-right))] pl-[max(1rem,var(--safe-left))] backdrop-blur md:pr-[max(1.5rem,var(--safe-right))] md:pl-[max(1.5rem,var(--safe-left))]">
+      <header className="border-border bg-background/80 standalone:bg-background standalone:backdrop-blur-none sticky top-0 z-30 flex h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pr-[max(1rem,var(--safe-right))] pl-[max(1rem,var(--safe-left))] backdrop-blur md:pr-[max(1.5rem,var(--safe-right))] md:pl-[max(1.5rem,var(--safe-left))]">
         {/* The nav sheet is controlled (no inline trigger) — on mobile the
             bottom bar's "More" tab opens it; on md+ the persistent sidebar
             replaces it. */}
@@ -69,14 +69,14 @@ export function MainShell({
             // Safe-area insets: the sheet covers the full viewport
             // height on mobile, so its content reads UNDER the
             // iPhone clock + notch and the home indicator without
-            // explicit padding. `pt-(--top-inset)` clears the
-            // status bar / Dynamic Island and the iOS edge-blur ramp; `pb-(--safe-bottom)` keeps
+            // explicit padding. `pt-(--safe-top)` clears the
+            // status bar / Dynamic Island; `pb-(--safe-bottom)` keeps
             // the UserFooter above the home indicator; `pl-(--safe-left)`
             // handles landscape where the notch sits on the left edge.
             // `p-0` is preserved on the right because the right edge
             // is always covered by the screen interior in left-side
             // sheets.
-            className="w-72 p-0 pt-(--top-inset) pb-(--safe-bottom) pl-(--safe-left)"
+            className="w-72 p-0 pt-(--safe-top) pb-(--safe-bottom) pl-(--safe-left)"
             onClick={(e) => {
               // Mobile UX: clicking a link inside the drawer should close
               // the drawer along with navigating. Buttons (theme toggle,
