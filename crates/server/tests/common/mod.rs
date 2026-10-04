@@ -999,6 +999,8 @@ impl TestApp {
             // matching-accuracy-1.0 M5 — variant fetch cap, default 3.
             metadata_alternate_cover_fetch_cap: 3,
             metadata_merge_provider_preference: String::new(),
+            metadata_coverage_after_series_apply: Default::default(),
+            metadata_coverage_auto_accept: false,
             library_hard_purge_multiplier: 2,
         };
 

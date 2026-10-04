@@ -10355,6 +10355,61 @@
         }
       }
     },
+    "/api/series/{slug}/metadata/coverage-hints": {
+      "get": {
+        "summary": "How well each series candidate covers the local issues (number +\ncover date), e.g. \"covers 119 of 134 · #500–512 not in this series\".\n**Display only** — scores, buckets and ranking are untouched. Each hint\nneeds the candidate's issue list (cached 24 h); uncached lists are\nbounded per series and provider by the coverage request budget per\nhour and by a 30 s wall clock, and come back `not_computed` with a\nreason when skipped.",
+        "operationId": "metadata_coverage_hints_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "description": "The series search run whose candidates to check.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "ordinals",
+            "in": "query",
+            "description": "Comma-separated candidate ordinals, at most\n[`coverage::HINT_MAX_PER_REQUEST`] (the dialog asks for the top\nthree, others when the user expands one).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverageHintsResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "library access denied"
+          },
+          "404": {
+            "description": "series / run / candidate not found"
+          },
+          "422": {
+            "description": "no ordinals, malformed, or more than the per-request cap"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/metadata/lookup": {
       "post": {
         "operationId": "metadata_lookup_series",
@@ -15357,7 +15412,8 @@
           "requested_at",
           "local_issues",
           "providers",
-          "auto_accepted"
+          "auto_accepted",
+          "trigger"
         ],
         "properties": {
           "auto_accept": {
@@ -15416,6 +15472,10 @@
           },
           "state": {
             "$ref": "#/components/schemas/CoverageJobState"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/CoverageTrigger",
+            "description": "What queued it: the Details tab's \"Analyze coverage\", or a series\nmatch (the user's, or a bulk / automatic one)."
           }
         }
       },
@@ -15533,6 +15593,47 @@
           "low",
           "none"
         ]
+      },
+      "CoverageHintView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SeriesCoverageHint"
+          },
+          {
+            "type": "object",
+            "required": [
+              "ordinal"
+            ],
+            "properties": {
+              "ordinal": {
+                "type": "integer",
+                "format": "int32"
+              }
+            }
+          }
+        ]
+      },
+      "CoverageHintsResp": {
+        "type": "object",
+        "required": [
+          "hints",
+          "max_per_request"
+        ],
+        "properties": {
+          "hints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageHintView"
+            },
+            "description": "One per requested ordinal, in request order."
+          },
+          "max_per_request": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Ordinals one request may ask for.",
+            "minimum": 0
+          }
+        }
       },
       "CoverageJobResp": {
         "type": "object",
@@ -15704,6 +15805,15 @@
           "partial",
           "rate_limited",
           "error"
+        ]
+      },
+      "CoverageTrigger": {
+        "type": "string",
+        "description": "What queued an analysis.",
+        "enum": [
+          "analyze",
+          "series_match",
+          "bulk_series_match"
         ]
       },
       "CreateAppPasswordReq": {
@@ -20239,6 +20349,27 @@
           }
         }
       },
+      "HintSkipReason": {
+        "type": "string",
+        "description": "Why a hint wasn't computed.",
+        "enum": [
+          "not_configured",
+          "not_listable",
+          "budget",
+          "rate_limited",
+          "time_budget",
+          "error",
+          "no_local_issues"
+        ]
+      },
+      "HintStatus": {
+        "type": "string",
+        "description": "Whether a hint was computed.",
+        "enum": [
+          "computed",
+          "not_computed"
+        ]
+      },
       "IssueCoverRow": {
         "type": "object",
         "required": [
@@ -23830,6 +23961,13 @@
             "description": "Network requests this provider spent on the analysis.",
             "minimum": 0
           },
+          "seeded_series_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The provider series a series match just applied, when this\nanalysis ran after that apply (the proposal is built around it\nunless the user linked another series)."
+          },
           "source": {
             "type": "string"
           },
@@ -26826,6 +26964,98 @@
           },
           "series": {
             "$ref": "#/components/schemas/SeriesView"
+          }
+        }
+      },
+      "SeriesCoverageHint": {
+        "type": "object",
+        "description": "How well one series candidate covers the local issues.",
+        "required": [
+          "source",
+          "external_id",
+          "status",
+          "local_total",
+          "covered",
+          "date_confirmed",
+          "date_conflicts",
+          "missing_count",
+          "missing_runs",
+          "listed_count",
+          "partial",
+          "requests"
+        ],
+        "properties": {
+          "covered": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Local issues this provider series lists with a non-conflicting\ncover date.",
+            "minimum": 0
+          },
+          "date_confirmed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Of `covered`, how many had a cover date to confirm.",
+            "minimum": 0
+          },
+          "date_conflicts": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Local issues whose number it lists but whose cover date conflicts\n(a same-numbered issue of another run).",
+            "minimum": 0
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "listed_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Distinct numbers the provider series lists.",
+            "minimum": 0
+          },
+          "local_total": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Numbered local issues compared (distinct numbers).",
+            "minimum": 0
+          },
+          "missing_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Local issues it doesn't cover (missing or conflicting).",
+            "minimum": 0
+          },
+          "missing_runs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Runs of consecutive local issues it doesn't cover, e.g. \"#500–512\"\n(first [`HINT_MAX_MISSING_RUNS`])."
+          },
+          "partial": {
+            "type": "boolean",
+            "description": "The listing stopped early (page cap); missing numbers may exist."
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HintSkipReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "requests": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Network requests this hint spent (0 = served from cache).",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/HintStatus"
           }
         }
       },

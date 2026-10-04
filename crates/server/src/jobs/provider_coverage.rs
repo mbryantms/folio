@@ -22,9 +22,24 @@
 //! is high-confidence, changes something and conflicts with no user-set
 //! data are accepted with `SetBy::Provider` and audited
 //! (`admin.series.provider_coverage_accept`, `auto: true`).
+//!
+//! **After a series apply** ([`enqueue_after_series_apply`]). A successful
+//! series metadata apply queues an analysis *seeded* with the provider
+//! series it applied ([`CoverageSeed`]): only those providers are
+//! analysed, each seed is its provider's main unless the user linked
+//! another series, and a seeded provider skips its name searches when its
+//! known ids already cover every local issue. Which applies do this is
+//! `metadata.coverage_after_series_apply` (`off` | `manual_only` | `all`);
+//! auto-accept additionally needs `metadata.coverage_auto_accept`.
+//! Bulk / automatic applies are deduped per series (an active job absorbs
+//! the seeds) and skipped while [`MAX_QUEUED_AFTER_APPLY`] jobs wait.
+//! This replaced the post-manual-apply auto-split detector.
 
 use crate::audit::{self, AuditEntry};
-use crate::metadata::coverage::{self, AcceptOutcome, ProviderAnalysis, SeriesFacts};
+use crate::metadata::coverage::{
+    self, AcceptOutcome, COVERAGE_SOURCES, CoverageSeed, ProviderAnalysis, SeriesFacts,
+};
+use crate::metadata::identifier::Source;
 use crate::state::AppState;
 use apalis::prelude::*;
 use chrono::{DateTime, Utc};
@@ -45,6 +60,23 @@ pub const RECORD_TTL_SECS: u64 = 24 * 3600;
 /// A queued / running record older than this is treated as abandoned (a
 /// crashed worker) and no longer dedupes new requests.
 pub const STALE_AFTER_SECS: i64 = 15 * 60;
+
+/// Bulk / automatic series applies don't queue another analysis while this
+/// many coverage jobs are already waiting (a manual apply always does).
+pub const MAX_QUEUED_AFTER_APPLY: usize = 50;
+
+/// What queued an analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CoverageTrigger {
+    /// "Analyze coverage" on the series' Details tab.
+    #[default]
+    Analyze,
+    /// A series match the user applied from "Match this series…".
+    SeriesMatch,
+    /// A bulk or automatic series apply (setting `all`).
+    BulkSeriesMatch,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -70,6 +102,30 @@ pub struct JobRecord {
     pub providers: Vec<ProviderAnalysis>,
     #[serde(default)]
     pub auto_accepted: Vec<AcceptOutcome>,
+    #[serde(default)]
+    pub trigger: CoverageTrigger,
+    /// Provider series a series apply chose (post-apply jobs only). Only
+    /// these providers are analysed; each seed is its provider's main.
+    #[serde(default)]
+    pub seeds: Vec<CoverageSeed>,
+    /// Providers to analyse; empty = all of [`COVERAGE_SOURCES`].
+    #[serde(default)]
+    pub sources: Vec<Source>,
+}
+
+impl JobRecord {
+    /// The seeded main for `source`, if this job ran after an apply.
+    pub fn seed_main(&self, source: Source) -> Option<&str> {
+        coverage::seed_for(&self.seeds, source).map(|s| s.provider_series_id.as_str())
+    }
+
+    /// Providers this job analyses, in display order.
+    pub fn analysed_sources(&self) -> Vec<Source> {
+        COVERAGE_SOURCES
+            .into_iter()
+            .filter(|s| self.sources.is_empty() || self.sources.contains(s))
+            .collect()
+    }
 }
 
 impl JobRecord {
@@ -133,24 +189,69 @@ pub async fn enqueue(
     actor_id: Uuid,
     auto_accept: bool,
 ) -> anyhow::Result<(JobRecord, bool)> {
+    enqueue_request(
+        state,
+        EnqueueRequest {
+            series_id,
+            actor_id,
+            auto_accept,
+            trigger: CoverageTrigger::Analyze,
+            seeds: Vec::new(),
+        },
+    )
+    .await
+}
+
+/// What [`enqueue_request`] queues.
+pub struct EnqueueRequest {
+    pub series_id: Uuid,
+    pub actor_id: Uuid,
+    pub auto_accept: bool,
+    pub trigger: CoverageTrigger,
+    pub seeds: Vec<CoverageSeed>,
+}
+
+/// [`enqueue`] with a trigger and seeds. A series with an active job gets
+/// that job back; when it hasn't started yet, the new seeds are merged
+/// into it (a seed replaces an older one for the same provider), so a
+/// batch never queues a series twice.
+pub async fn enqueue_request(
+    state: &AppState,
+    req: EnqueueRequest,
+) -> anyhow::Result<(JobRecord, bool)> {
     let redis = &state.jobs.redis;
-    if let Some(rec) = latest_for_series(redis, series_id).await
+    if let Some(mut rec) = latest_for_series(redis, req.series_id).await
         && rec.is_active()
     {
+        if rec.state == CoverageJobState::Queued && !req.seeds.is_empty() {
+            // An all-provider job stays all-provider; a seeded one widens
+            // to the new seeds' providers.
+            for seed in req.seeds {
+                if !rec.sources.is_empty() && !rec.sources.contains(&seed.source) {
+                    rec.sources.push(seed.source);
+                }
+                rec.seeds.retain(|s| s.source != seed.source);
+                rec.seeds.push(seed);
+            }
+            save(redis, &rec).await?;
+        }
         return Ok((rec, false));
     }
     let rec = JobRecord {
         job_id: Uuid::new_v4(),
-        series_id,
-        actor_id,
+        series_id: req.series_id,
+        actor_id: req.actor_id,
         state: CoverageJobState::Queued,
-        auto_accept,
+        auto_accept: req.auto_accept,
         requested_at: Utc::now(),
         started_at: None,
         finished_at: None,
         error: None,
         providers: Vec::new(),
         auto_accepted: Vec::new(),
+        trigger: req.trigger,
+        sources: req.seeds.iter().map(|s| s.source).collect(),
+        seeds: req.seeds,
     };
     save(redis, &rec).await?;
     let mut storage = state.jobs.provider_coverage_storage.clone();
@@ -159,6 +260,90 @@ pub async fn enqueue(
         .await
         .map_err(|e| anyhow::anyhow!("enqueue provider coverage: {e}"))?;
     Ok((rec, true))
+}
+
+/// The provider series a series metadata run applied (its candidates with
+/// `applied_at`, newest per provider), as coverage seeds. Covers single
+/// and composite applies.
+pub async fn seeds_from_run(state: &AppState, run_id: Uuid) -> Vec<CoverageSeed> {
+    use sea_orm::{ColumnTrait, QueryFilter, QueryOrder};
+    let applied = entity::metadata_run_candidate::Entity::find()
+        .filter(entity::metadata_run_candidate::Column::RunId.eq(run_id))
+        .filter(entity::metadata_run_candidate::Column::AppliedAt.is_not_null())
+        .order_by_desc(entity::metadata_run_candidate::Column::AppliedAt)
+        .all(&state.db)
+        .await
+        .unwrap_or_default();
+    let mut seeds: Vec<CoverageSeed> = Vec::new();
+    for c in applied {
+        let Some(source) = crate::metadata::apply::parse_source(&c.source) else {
+            continue;
+        };
+        if !COVERAGE_SOURCES.contains(&source) || seeds.iter().any(|s| s.source == source) {
+            continue;
+        }
+        seeds.push(CoverageSeed {
+            source,
+            provider_series_id: c.external_id.clone(),
+            candidate: serde_json::from_value(c.candidate.clone()).ok(),
+        });
+    }
+    seeds
+}
+
+/// After a successful series apply: queue a coverage analysis seeded with
+/// the run's applied provider series, when
+/// `metadata.coverage_after_series_apply` covers this kind of apply
+/// (`manual` = the user's apply from "Match this series…"). Best-effort:
+/// never fails the apply. Returns the job when one was queued or reused.
+pub async fn enqueue_after_series_apply(
+    state: &AppState,
+    series_id: Uuid,
+    run_id: Uuid,
+    actor_id: Option<Uuid>,
+    manual: bool,
+) -> Option<(JobRecord, bool)> {
+    let cfg = state.cfg();
+    if !cfg.metadata_coverage_after_series_apply.runs_after(manual) {
+        return None;
+    }
+    let seeds = seeds_from_run(state, run_id).await;
+    if seeds.is_empty() {
+        return None;
+    }
+    if !manual {
+        let mut storage = state.jobs.provider_coverage_storage.clone();
+        let waiting = storage.len().await.unwrap_or(0).max(0) as usize;
+        if waiting >= MAX_QUEUED_AFTER_APPLY {
+            tracing::info!(
+                series_id = %series_id,
+                waiting,
+                "provider coverage: queue full; skipped the post-apply analysis"
+            );
+            return None;
+        }
+    }
+    // Auto-accept is audited under the actor; an actor-less (scheduled)
+    // apply only ever presents its result.
+    let auto_accept = cfg.metadata_coverage_auto_accept && actor_id.is_some();
+    let req = EnqueueRequest {
+        series_id,
+        actor_id: actor_id.unwrap_or(Uuid::nil()),
+        auto_accept,
+        trigger: if manual {
+            CoverageTrigger::SeriesMatch
+        } else {
+            CoverageTrigger::BulkSeriesMatch
+        },
+        seeds,
+    };
+    match enqueue_request(state, req).await {
+        Ok(r) => Some(r),
+        Err(e) => {
+            tracing::warn!(series_id = %series_id, error = %e, "provider coverage: post-apply enqueue failed");
+            None
+        }
+    }
 }
 
 pub async fn handle(job: ProviderCoverageJob, state: Data<AppState>) -> Result<(), Error> {
@@ -205,9 +390,10 @@ async fn run(state: &AppState, rec: &mut JobRecord) -> anyhow::Result<()> {
     else {
         anyhow::bail!("series no longer exists");
     };
-    let facts = SeriesFacts::load(state, &series_row).await?;
+    let mut facts = SeriesFacts::load(state, &series_row).await?;
+    facts.seeds = rec.seeds.clone();
     let started = std::time::Instant::now();
-    rec.providers = coverage::analyze(state, &facts).await;
+    rec.providers = coverage::analyze_sources(state, &facts, &rec.analysed_sources()).await;
     tracing::info!(
         series_id = %rec.series_id,
         elapsed_ms = started.elapsed().as_millis() as u64,
@@ -218,13 +404,21 @@ async fn run(state: &AppState, rec: &mut JobRecord) -> anyhow::Result<()> {
     if rec.auto_accept {
         let mut ranges_created = 0usize;
         for analysis in &rec.providers {
-            let view =
-                coverage::build_view(analysis, &facts.local, &facts.ext_ids, &facts.ranges, None);
+            let seed = rec.seed_main(analysis.source);
+            let view = coverage::build_view(
+                analysis,
+                &facts.local,
+                &facts.ext_ids,
+                &facts.ranges,
+                None,
+                seed,
+            );
             if !view.auto_acceptable {
                 continue;
             }
             let outcome =
-                coverage::accept_provider(state, rec.series_id, analysis, None, false).await?;
+                coverage::accept_provider(state, rec.series_id, analysis, None, seed, false)
+                    .await?;
             ranges_created += outcome.ranges_created.len();
             audit::record(
                 &state.db,
@@ -236,6 +430,7 @@ async fn run(state: &AppState, rec: &mut JobRecord) -> anyhow::Result<()> {
                     payload: serde_json::json!({
                         "auto": true,
                         "job_id": rec.job_id,
+                        "trigger": rec.trigger,
                         "source": outcome.source,
                         "main_series_id": outcome.main_series_id,
                         "main_written": outcome.main_written,

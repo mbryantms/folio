@@ -838,6 +838,13 @@ export type CandidateOrigin = Schemas["CandidateOrigin"];
 export type DateMatch = Schemas["DateMatch"];
 export type ProposedRange = Schemas["ProposedRange"];
 export type ProposedRangeStatus = Schemas["ProposedRangeStatus"];
+export type CoverageTrigger = Schemas["CoverageTrigger"];
+// "Match this series…" coverage hints (display only)
+export type CoverageHintsResp = Schemas["CoverageHintsResp"];
+export type CoverageHintView = Schemas["CoverageHintView"];
+export type SeriesCoverageHint = Schemas["SeriesCoverageHint"];
+export type HintStatus = Schemas["HintStatus"];
+export type HintSkipReason = Schemas["HintSkipReason"];
 export type CoverageRangeRef = Schemas["CoverageRangeRef"];
 export type AcceptOutcome = Schemas["AcceptOutcome"];
 // WP-7.1 series relationships

@@ -223,6 +223,21 @@ export const queryKeys = {
   /** Metadata-providers (M5): candidate-list polling for the dialog. */
   metadataCandidatesSeries: (slug: string, runId: string | null) =>
     ["series", slug, "metadata", "candidates", runId ?? "latest"] as const,
+  /** "Match this series…" coverage hints for one batch of candidate
+   *  ordinals (display only; each batch is one bounded request). */
+  metadataCoverageHints: (
+    slug: string,
+    runId: string | null,
+    ordinals: readonly number[],
+  ) =>
+    [
+      "series",
+      slug,
+      "metadata",
+      "coverage-hints",
+      runId ?? "none",
+      ordinals.join(","),
+    ] as const,
   metadataCandidatesIssue: (
     slug: string,
     issueSlug: string,

@@ -146,6 +146,13 @@ pub struct ApplySeriesJob {
     /// apply on `ordinal`. `#[serde(default)]` for queued-job back-compat.
     #[serde(default)]
     pub composite: Option<CompositeSpec>,
+    /// Queued by a bulk "Apply" from a batch review (not the user's own
+    /// pick in "Match this series…"). With `is_auto`, decides whether the
+    /// post-apply coverage analysis runs under
+    /// `metadata.coverage_after_series_apply = manual_only`.
+    /// `#[serde(default)]` for queued-job back-compat.
+    #[serde(default)]
+    pub bulk: bool,
 }
 
 pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result<(), Error> {
@@ -165,6 +172,7 @@ pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result
         override_external_id_sources,
         is_auto,
         composite,
+        bulk,
     } = job;
 
     let claimed = match try_claim_series_mutex(&state, series_id).await {
@@ -236,13 +244,21 @@ pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result
         // linkage never shows in the External IDs card / header.
         persist_applied_series_external_ids(&state, series_id, run_id).await;
 
-        // M7: after a *manual* series match, auto-detect provider
-        // series-boundary splits and write the alternate-series range
-        // mappings. Skipped on auto-apply (bulk/scanner) to spare
-        // provider budget. Best-effort — never fails the apply.
-        if !is_auto {
-            run_auto_split_after_apply(&state, series_id, run_id).await;
-        }
+        // After a series match, queue a provider-coverage analysis
+        // seeded with the applied provider series (replaces the M7
+        // post-manual-apply auto-split detector). The result waits on the
+        // series' Details tab for the admin's Accept unless
+        // `metadata.coverage_auto_accept` allows the job's high-confidence
+        // rule. `metadata.coverage_after_series_apply` picks which applies
+        // do this. Best-effort — never fails the apply.
+        crate::jobs::provider_coverage::enqueue_after_series_apply(
+            &state,
+            series_id,
+            run_id,
+            actor_id,
+            !is_auto && !bulk,
+        )
+        .await;
     }
     Ok(())
 }
@@ -299,72 +315,6 @@ async fn persist_applied_series_external_ids(
     // cache again when it did.
     if promoted_pairs > 0 {
         state.similarity.invalidate_all();
-    }
-}
-
-/// Run the auto-split detector for each provider series the apply just
-/// matched. Drives off the run's **applied candidates** (their
-/// `applied_at` is stamped synchronously during apply) rather than the
-/// series' `external_ids` — under the writeback path those are only
-/// written later by the enqueued rescan, so they aren't visible yet.
-/// Works for single and composite applies; lumper providers (ComicVine)
-/// return no issue list so they no-op without a network call.
-async fn run_auto_split_after_apply(state: &AppState, series_id: uuid::Uuid, run_id: uuid::Uuid) {
-    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-
-    let Ok(Some(series_row)) = entity::series::Entity::find_by_id(series_id)
-        .one(&state.db)
-        .await
-    else {
-        return;
-    };
-    let applied = entity::metadata_run_candidate::Entity::find()
-        .filter(entity::metadata_run_candidate::Column::RunId.eq(run_id))
-        .filter(entity::metadata_run_candidate::Column::AppliedAt.is_not_null())
-        .all(&state.db)
-        .await
-        .unwrap_or_default();
-    tracing::debug!(
-        series_id = %series_id,
-        run_id = %run_id,
-        applied_candidates = applied.len(),
-        sources = ?applied.iter().map(|c| format!("{}:{}", c.source, c.external_id)).collect::<Vec<_>>(),
-        "auto-split: post-apply hook running"
-    );
-    for c in applied {
-        let Some(source) = crate::metadata::apply::parse_source(&c.source) else {
-            continue;
-        };
-        let Some(provider) = crate::metadata::apply::build_provider(state, source) else {
-            continue;
-        };
-        match crate::metadata::auto_split::detect_and_map(
-            &state.db,
-            &series_row,
-            source,
-            &c.external_id,
-            &*provider,
-        )
-        .await
-        {
-            Ok(outcome) if !outcome.created.is_empty() => {
-                tracing::info!(
-                    series_id = %series_id,
-                    source = source.as_str(),
-                    ranges = outcome.created.len(),
-                    "auto-split: created alternate provider series range mappings"
-                );
-            }
-            Ok(_) => {}
-            Err(e) => {
-                tracing::warn!(
-                    series_id = %series_id,
-                    source = source.as_str(),
-                    error = %e,
-                    "auto-split: detection failed (non-fatal)"
-                );
-            }
-        }
     }
 }
 

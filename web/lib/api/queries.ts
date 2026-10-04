@@ -2390,6 +2390,8 @@ import type {
   CandidatesResp,
   CollectionReportView,
   CompositeDiffResp,
+  CoverageHintsResp,
+  SeriesCoverageHint,
   DiffResp,
   ExternalIdsListResp,
   IssueCoversResp,
@@ -2432,6 +2434,55 @@ export function useMetadataCandidatesSeries(
         : 1500;
     },
   });
+}
+
+/** One candidate's coverage hint as the dialog sees it. */
+export type CoverageHintState =
+  | { kind: "loading" }
+  | { kind: "error" }
+  | { kind: "hint"; hint: SeriesCoverageHint };
+
+/**
+ * "Match this series…" coverage hints (display only — never reorders or
+ * rescores). Each entry of `batches` is one request of at most three
+ * candidate ordinals: the dialog sends the top three once the run
+ * finalizes, then one ordinal per "Check coverage" click. Hints are
+ * cached for the run (issue lists are cached server-side for 24 h, so a
+ * repeat costs no provider request anyway). Returns ordinal → state.
+ */
+export function useMetadataCoverageHints(
+  seriesSlug: string,
+  runId: string | null,
+  batches: number[][],
+): Map<number, CoverageHintState> {
+  const results = useQueries({
+    queries: batches.map((ordinals) => ({
+      queryKey: queryKeys.metadataCoverageHints(seriesSlug, runId, ordinals),
+      queryFn: () =>
+        jsonFetch<CoverageHintsResp>(
+          `/series/${encodeURIComponent(seriesSlug)}/metadata/coverage-hints?run_id=${encodeURIComponent(
+            runId ?? "",
+          )}&ordinals=${ordinals.join(",")}`,
+        ),
+      enabled: !!seriesSlug && !!runId && ordinals.length > 0,
+      staleTime: Infinity,
+      retry: false,
+    })),
+  });
+  const out = new Map<number, CoverageHintState>();
+  results.forEach((r, i) => {
+    const ordinals = batches[i] ?? [];
+    if (r.data) {
+      for (const h of r.data.hints) {
+        out.set(h.ordinal, { kind: "hint", hint: h });
+      }
+    } else {
+      for (const o of ordinals) {
+        out.set(o, r.isError ? { kind: "error" } : { kind: "loading" });
+      }
+    }
+  });
+  return out;
 }
 
 export function useMetadataCandidatesIssue(

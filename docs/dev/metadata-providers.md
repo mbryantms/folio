@@ -572,8 +572,8 @@ responses on 2026-10-01.
 - **Splitter.** `list_series_issue_numbers` reads the series index
   (variants deduped). That costs one request, or none right after a
   search or series apply; the paginated overview would cost
-  `⌈n/50⌉`. GCD splits Fantastic Four (1961) at #416, so auto-split
-  maps the legacy #500+ run onto its own GCD series.
+  `⌈n/50⌉`. GCD splits Fantastic Four (1961) at #416, so range
+  detection / coverage maps the legacy #500+ run onto its own GCD series.
 - **Covers are unreachable.** Every image URL is on
   `files1.comics.org`, which sits behind a Cloudflare managed challenge
   (`403` + `cf-mitigated: challenge`). The challenge applies to
@@ -613,7 +613,7 @@ responses on 2026-10-01.
 | Narrowed issue search, one issue | 2–5 (series detail + up to 4 details; +1 publisher cold) | 1–3 cold (series detail, unless a search cached the index, + 1 overview page; +1 publisher cold), **0 warm** |
 | Match every issue of Invincible (2003), 145 issues | 309 | 4 (1 series + 3 overview pages) |
 | Match every issue of Fantastic Four (1961), 416 issues | 1,335 | 10 (1 series + 9 overview pages) |
-| Series apply + auto-split | 2–3 (series + publisher + series again for the splitter) | 1–2 (the splitter reads the cached index) |
+| Series apply + post-apply coverage (seeded) | 2–3 (series + publisher + the seed's listing) | 1–2 (the listing reads the cached index; + ≤ 4 overview pages for dates) |
 | Issue apply | 1 (+0–2 summary cold) | 1 (+0–2 summary cold) + up to 3 variant siblings while ≥ 50 of the hourly budget remain |
 
 All requests still go through the `gcd:hour` (100) and `gcd:day` (2,000)
@@ -766,9 +766,11 @@ whole and the exceptions live in `series_provider_range` (see CLAUDE.md,
 uses [coverage analysis](#provider-independent-coverage-analyze-coverage), admin, audited as
 `admin.series.provider_range_detect`) runs
 [`metadata/series_link.rs`](../../crates/server/src/metadata/series_link.rs)
-for every provider. The post-apply hook (`jobs/metadata_apply.rs`,
-manual series applies only) runs the detector alone for the providers
-the apply matched.
+for every provider. It no longer runs after a series apply: that hook
+now queues a seeded coverage analysis (see
+[Coverage after a series match](#coverage-after-a-series-match)), whose
+result waits for the admin's Accept instead of writing ranges itself.
+`auto_split::detect_and_map` remains as a library function (tests).
 
 **Resolving the provider series.** Only providers that can list a
 series' issues can show a split (`MetadataProvider::enumerates_series_issues`:
@@ -857,8 +859,9 @@ local series spans several provider series in similar proportions, or
 when numbers alone mislead (#1–12 of a 1998 volume vs #1–12 of a 2018
 one). Coverage analysis
 ([`metadata/coverage.rs`](../../crates/server/src/metadata/coverage.rs))
-has no anchor and covers ComicVine too. The Details-tab card uses it;
-the detect endpoint stays for the API and the post-apply hook.
+has no anchor and covers ComicVine too. The Details-tab card uses it,
+and so does the post-apply hook (seeded with the applied series, below);
+the detect endpoint stays for the API.
 
 **Issue lists.** `MetadataProvider::list_series_issues(id, IssueListOpts)`
 returns `ProviderSeriesIssues` — per distinct canonical number the
@@ -975,6 +978,90 @@ issue's provider series is `range_map::fold_targets(...)`, and its
 provider issue is `provider_issue_for(provider_issues(...), number,
 year, month)` — no search needed, one detail fetch. Metadata batches do
 exactly this (next section).
+
+## "Match this series…" coverage hints
+
+Each series candidate in the match dialog can show how well it covers
+the local issues: "Covers 160 of your 173 issues · #600–611 aren't in
+this series". **Display only** — the hint never feeds `Score`, the bucket,
+`MatchOutcomeKind` or the candidate order, so the golden suite is
+untouched.
+
+- `GET /api/series/{slug}/metadata/coverage-hints?run_id=&ordinals=0,1,2`
+  (series ACL, like the candidates poll) →
+  `{hints: [{ordinal, source, external_id, status, reason?, local_total,
+  covered, date_confirmed, date_conflicts, missing_count, missing_runs[],
+  listed_count, partial, requests}], max_per_request}`.
+- **Assignment** is `coverage::hint_from_list`: the candidate's issue list
+  as a single `compute_cover` candidate (number via
+  `issue_number_compare_key`, cover date via `date_match`). `missing_runs`
+  are runs of consecutive *local* issues it doesn't cover (first 6);
+  `date_conflicts` counts numbers it lists with a conflicting date.
+- **Cost bounds.** At most `HINT_MAX_PER_REQUEST` = 3 ordinals per request
+  (422 otherwise). The dialog asks for the top three once the run is
+  `completed` (only CV / Metron / GCD candidates); any other candidate
+  only on its "Check coverage" click (one request per click). Lists come
+  through the shared 24 h issue-list cache (`provider_issues_with`), so a
+  repeat — and the post-apply analysis or a batch direct lookup of the
+  applied series — is free. Uncached lists draw on a per-series,
+  per-provider hint budget equal to the coverage `request_budget` (CV 40,
+  Metron 30, GCD 30) per `HINT_BUDGET_WINDOW_SECS` (1 h, Redis
+  `metadata:coverage_hint:spent:v1:<series>:<source>`), with `max_pages`
+  = what's left, and a `HINT_TIME_BUDGET` of 30 s per request (inside the
+  60 s JSON timeout). A quota denial is not waited out. Typical cost per
+  candidate, cold: ComicVine / Metron ⌈n/100⌉ pages, GCD index + ≤ 4
+  overview pages.
+- **Not computed** (`status: not_computed`, `reason`): `not_configured`,
+  `not_listable`, `budget`, `rate_limited`, `time_budget`, `error`,
+  `no_local_issues`. The dialog prints the reason.
+
+## Coverage after a series match
+
+A successful series apply queues a `provider_coverage` job **seeded**
+with the provider series it applied
+(`jobs::provider_coverage::enqueue_after_series_apply`, called from
+`jobs/metadata_apply.rs::handle_series` after
+`persist_applied_series_external_ids`, and from the compare view's
+`composite_apply_series`). This replaced the M7 post-manual-apply
+auto-split hook — one mechanism, and its result is presented for
+confirmation instead of written.
+
+- **Seeds** (`seeds_from_run`): the run's candidates with `applied_at`,
+  newest per provider, with the applied `SeriesCandidate` so the seed's
+  strict identity (name / start year / publisher / format) is known
+  without a search. Only the seeded providers are analysed
+  (`JobRecord.sources`).
+- **Seeded analysis** (`analyze_provider`): the seed joins the known ids
+  (forced main in `build_view`, after an explicit "Choose series" and a
+  user-set link — user precedence holds; a different user link shows as
+  a conflict). Known ids are listed first and the name searches are
+  skipped; when they already cover every local issue nothing else runs,
+  otherwise up to 2 gap issue searches find the series holding the rest.
+  Fantastic Four seeded with Metron 1711: list 1711 (2 pages, usually
+  cached by the dialog's hint) + 1 issue search for #600 + list 1713 →
+  range #600–611 → 1713, High confidence. ≈ 1–3 requests per apply.
+- **Accept**: nothing is written by default. The Details tab's
+  `<CoverageAfterMatchPrompt>` ("This folder spans 2 Metron series —
+  accept the ranges?") calls the usual `POST …/provider-coverage/accept`
+  (no `main_series_id` → the seed stays main). The job auto-accepts only
+  when `metadata.coverage_auto_accept` is on **and** the existing rule
+  holds (High, changes something, no user conflict); an actor-less
+  (scheduled) apply never auto-accepts.
+- **Which applies** — `metadata.coverage_after_series_apply`:
+  `off` | `manual_only` (default: the dialog's single-candidate and
+  compare-view applies) | `all` (adds bulk "Apply" from a batch review,
+  `ApplySeriesJob.bulk`, and automatic `SingleGoodMatch` applies,
+  `is_auto`). Bulk / automatic enqueues are deduped per series (an active
+  job is reused; a still-queued one absorbs the new seeds) and skipped
+  while `MAX_QUEUED_AFTER_APPLY` (50) coverage jobs wait.
+- `GET …/provider-coverage/analysis` carries `trigger`
+  (`analyze` | `series_match` | `bulk_series_match`) and each provider's
+  `seeded_series_id`.
+
+`tests/match_series_coverage.rs` pins the hints (bounded, request counts,
+cache, budget, ranking unchanged), the seeded job (request counts, no
+write before Accept, auto-accept setting), the `off` / `manual_only` /
+`all` behaviour with dedupe and the queue cap, and the settings chain.
 
 ## Batch direct lookups (series coverage)
 

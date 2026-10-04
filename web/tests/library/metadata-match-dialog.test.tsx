@@ -135,6 +135,8 @@ vi.mock("@/lib/api/queries", () => ({
   // path is inactive in series-scope tests so just return an empty
   // shell.
   useMetadataCandidatesIssue: () => ({ data: undefined }),
+  // Coverage hints (display only) — no hint data in these smoke tests.
+  useMetadataCoverageHints: () => new Map(),
   // M5 preview pane — the candidate-list rendering tests don't drill
   // into the preview, so a no-op shell is sufficient. Component-level
   // PreviewPane coverage lives in its own test file.

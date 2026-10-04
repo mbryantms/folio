@@ -47,6 +47,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { CoverageAfterMatchPrompt } from "@/components/library/CoverageAfterMatchPrompt";
 import {
   ProviderCoverageAnalysis,
   SERIES_COLORS,
@@ -360,20 +361,28 @@ export function SeriesProviderRangesCard({
           {analysing ? (
             <div className="text-muted-foreground flex items-center gap-2 text-xs">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Listing candidate series on ComicVine, Metron and GCD. This can
-              take a minute (provider rate limits).
+              {analysis.data.trigger === "analyze"
+                ? "Listing candidate series on ComicVine, Metron and GCD. This can take a minute (provider rate limits)."
+                : "Checking which issues the series you matched holds, and where the rest live…"}
             </div>
           ) : analysis.data.state === "failed" ? (
             <p className="text-destructive text-xs">
               Analysis failed: {analysis.data.error ?? "unknown error"}
             </p>
           ) : (
-            <ProviderCoverageAnalysis
-              data={analysis.data}
-              acceptingSource={acceptingSource}
-              onAccept={onAccept}
-              onRemoveStale={onRemoveStale}
-            />
+            <>
+              <CoverageAfterMatchPrompt
+                data={analysis.data}
+                acceptingSource={acceptingSource}
+                onAccept={onAccept}
+              />
+              <ProviderCoverageAnalysis
+                data={analysis.data}
+                acceptingSource={acceptingSource}
+                onAccept={onAccept}
+                onRemoveStale={onRemoveStale}
+              />
+            </>
           )}
         </div>
       )}
