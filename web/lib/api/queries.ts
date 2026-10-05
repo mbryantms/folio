@@ -804,7 +804,13 @@ export function useScanBatch(id: string | null) {
     queryKey: queryKeys.adminScanBatch(id ?? ""),
     enabled: !!id,
     queryFn: () => jsonFetch<ScanBatchDetailView>(`/admin/scan-batches/${id}`),
-    refetchInterval: (q) => (q.state.data?.state === "running" ? 5_000 : false),
+    // Keep polling after the scans finish while the thumbnail jobs they
+    // queued are still draining (`post_scan`).
+    refetchInterval: (q) =>
+      q.state.data?.state === "running" ||
+      (q.state.data?.post_scan.thumb_jobs ?? 0) > 0
+        ? 5_000
+        : false,
   });
 }
 

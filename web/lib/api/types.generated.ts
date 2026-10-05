@@ -5633,6 +5633,22 @@ export interface components {
              *     [`ActiveScanView::stalled`]); not counted in the two above.
              */
             scans_stalled: number;
+            /**
+             * Format: int64
+             * @description `thumbs_outstanding` at the current rate, in seconds.
+             */
+            thumbs_eta_secs?: number | null;
+            /**
+             * Format: int64
+             * @description Unfinished thumbnail jobs (cover + page-strip), server-wide.
+             */
+            thumbs_outstanding: number;
+            /**
+             * Format: double
+             * @description Thumbnail jobs finished per minute over the last two minutes;
+             *     `None` when too few have finished to measure.
+             */
+            thumbs_per_min?: number | null;
         };
         BackgroundWorkView: {
             generated_at: string;
@@ -5822,6 +5838,23 @@ export interface components {
             search: number;
             /** @description `"comicvine"` | `"metron"` | `"gcd"`. */
             source: string;
+        };
+        /**
+         * @description Thumbnail work still in flight for a batch's member libraries. Attributed
+         *     by library (thumbnail jobs carry no scan id), so it also counts jobs an
+         *     admin queued by hand for the same library in the meantime.
+         */
+        BatchPostScanView: {
+            /**
+             * Format: int32
+             * @description Member libraries that still have such jobs.
+             */
+            libraries_pending: number;
+            /**
+             * Format: int64
+             * @description Cover + page-thumbnail jobs queued or running for member libraries.
+             */
+            thumb_jobs: number;
         };
         /**
          * @description Per-state tally of a batch's member runs — drives the dashboard progress
@@ -11506,6 +11539,11 @@ export interface components {
             event_count: number;
             /** @description Every member run, newest first, with library context. */
             member_runs: components["schemas"]["CrossLibScanRunView"][];
+            /**
+             * @description Work the member scans queued that outlives them. A batch closes when
+             *     its last scan finishes, which is when thumbnail generation *starts*.
+             */
+            post_scan: components["schemas"]["BatchPostScanView"];
             /** @description Aggregated counters across the member runs. */
             totals: components["schemas"]["BatchTotals"];
         };

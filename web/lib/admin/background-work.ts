@@ -157,3 +157,30 @@ export function otherWork(view: BackgroundWorkView): OtherWorkRow[] {
     }))
     .filter((r) => r.pending > 0);
 }
+
+/** `95` → "about 2 min"; coarse on purpose — the rate it is built on moves. */
+export function formatEta(secs: number): string {
+  if (secs < 60) return "under a minute";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `about ${mins} min`;
+  const hours = Math.floor(mins / 60);
+  const rem = mins % 60;
+  return rem === 0 ? `about ${hours} h` : `about ${hours} h ${rem} min`;
+}
+
+/** "410/min · about 40 min left" for the thumbnail drain; `null` when the
+ *  server has too few finished jobs to measure a rate. */
+export function thumbPace(
+  totals: Pick<
+    BackgroundWorkView["totals"],
+    "thumbs_outstanding" | "thumbs_per_min" | "thumbs_eta_secs"
+  >,
+): string | null {
+  if (totals.thumbs_outstanding <= 0 || totals.thumbs_per_min == null) {
+    return null;
+  }
+  const rate = `${Math.round(totals.thumbs_per_min).toLocaleString("en-US")}/min`;
+  return totals.thumbs_eta_secs == null
+    ? rate
+    : `${rate} · ${formatEta(totals.thumbs_eta_secs)} left`;
+}

@@ -13042,6 +13042,7 @@
           "jobs_outstanding",
           "jobs_in_flight",
           "jobs_dead",
+          "thumbs_outstanding",
           "busy"
         ],
         "properties": {
@@ -13088,6 +13089,28 @@
             "type": "integer",
             "format": "int64",
             "description": "Unfinished scan runs with no job behind them (see\n[`ActiveScanView::stalled`]); not counted in the two above."
+          },
+          "thumbs_eta_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "`thumbs_outstanding` at the current rate, in seconds.",
+            "minimum": 0
+          },
+          "thumbs_outstanding": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unfinished thumbnail jobs (cover + page-strip), server-wide."
+          },
+          "thumbs_per_min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Thumbnail jobs finished per minute over the last two minutes;\n`None` when too few have finished to measure."
           }
         }
       },
@@ -13546,6 +13569,28 @@
           "source": {
             "type": "string",
             "description": "`\"comicvine\"` | `\"metron\"` | `\"gcd\"`."
+          }
+        }
+      },
+      "BatchPostScanView": {
+        "type": "object",
+        "description": "Thumbnail work still in flight for a batch's member libraries. Attributed\nby library (thumbnail jobs carry no scan id), so it also counts jobs an\nadmin queued by hand for the same library in the meantime.",
+        "required": [
+          "thumb_jobs",
+          "libraries_pending"
+        ],
+        "properties": {
+          "libraries_pending": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Member libraries that still have such jobs.",
+            "minimum": 0
+          },
+          "thumb_jobs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cover + page-thumbnail jobs queued or running for member libraries.",
+            "minimum": 0
           }
         }
       },
@@ -27492,7 +27537,8 @@
             "required": [
               "member_runs",
               "totals",
-              "event_count"
+              "event_count",
+              "post_scan"
             ],
             "properties": {
               "event_count": {
@@ -27507,6 +27553,10 @@
                   "$ref": "#/components/schemas/CrossLibScanRunView"
                 },
                 "description": "Every member run, newest first, with library context."
+              },
+              "post_scan": {
+                "$ref": "#/components/schemas/BatchPostScanView",
+                "description": "Work the member scans queued that outlives them. A batch closes when\nits last scan finishes, which is when thumbnail generation *starts*."
               },
               "totals": {
                 "$ref": "#/components/schemas/BatchTotals",

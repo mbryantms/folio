@@ -249,6 +249,8 @@ pub(crate) struct ThumbJobCounts {
     pub cover_running: u64,
     pub page_map_queued: u64,
     pub page_map_running: u64,
+    /// Distinct jobs (a cover+strip job counts once here, twice above).
+    pub jobs: u64,
 }
 
 async fn thumbnail_job_counts(app: &AppState, lib_id: Uuid) -> ThumbJobCounts {
@@ -314,6 +316,7 @@ pub(crate) async fn thumbnail_job_counts_by_library(
             "CoverAndStrip" => (true, true),
             _ => continue,
         };
+        counts.jobs += 1;
         if cover {
             if is_running {
                 counts.cover_running += 1;

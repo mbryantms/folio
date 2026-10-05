@@ -42,6 +42,9 @@ function view(over: Partial<BackgroundWorkView>): BackgroundWorkView {
       jobs_outstanding: 0,
       jobs_in_flight: 0,
       jobs_dead: 0,
+      thumbs_outstanding: 0,
+      thumbs_per_min: null,
+      thumbs_eta_secs: null,
       busy: false,
     },
     libraries: [],
@@ -65,6 +68,9 @@ describe("BackgroundWorkClient", () => {
         jobs_outstanding: 16_300,
         jobs_in_flight: 8,
         jobs_dead: 2,
+        thumbs_outstanding: 16_204,
+        thumbs_per_min: 405,
+        thumbs_eta_secs: 2_400,
         busy: true,
       },
       libraries: [
@@ -150,6 +156,7 @@ describe("BackgroundWorkClient", () => {
     const html = render();
 
     expect(html).toContain("Work in progress");
+    expect(html).toContain("405/min · about 40 min left");
     // Each library row links to that library's live scan page.
     expect(html).toContain('href="/admin/libraries/marvel/scan"');
     expect(html).toContain('href="/admin/libraries/image/scan"');

@@ -12,6 +12,7 @@ import {
   pct,
   phaseLabel,
   sortLibraries,
+  thumbPace,
 } from "@/lib/admin/background-work";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
@@ -85,9 +86,12 @@ function Summary({ view }: { view: BackgroundWorkView }) {
           label="Covers to generate"
           value={n(t.covers_remaining)}
           detail={
-            t.hash_pending > 0
-              ? `${n(t.hash_pending)} files still to hash`
-              : "across all libraries"
+            thumbPace(t) ??
+            (t.thumbs_outstanding > 0
+              ? `${n(t.thumbs_outstanding)} thumbnail jobs · measuring pace…`
+              : t.hash_pending > 0
+                ? `${n(t.hash_pending)} files still to hash`
+                : "across all libraries")
           }
         />
         <Tile
