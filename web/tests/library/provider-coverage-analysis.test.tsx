@@ -18,7 +18,7 @@ import {
 } from "@/components/library/ProviderCoverageAnalysis";
 import { promptHeadline } from "@/components/library/CoverageAfterMatchPrompt";
 import { acceptSummary } from "@/lib/api/mutations";
-import { staleRemovedSummary } from "@/lib/coverage-ranges";
+import { analysisAttention, staleRemovedSummary } from "@/lib/coverage-ranges";
 import type {
   AcceptOutcome,
   CoverageAnalysisResp,
@@ -362,5 +362,101 @@ describe("stale ranges an accept removed", () => {
     );
     expect(list.textContent).toContain("Metron #1–5 → Daredevil (1998)");
     expect(list.getAttribute("role")).toBe("status");
+  });
+});
+
+describe("analysisAttention (collapsed-by-default rule)", () => {
+  const upToDate = (source: string, label: string) =>
+    provider(source, label, "100", "200", {
+      has_changes: false,
+      proposed_ranges: [],
+      uncovered: [],
+    });
+
+  it("is quiet once every analysed provider is up to date", () => {
+    const a = analysisAttention(
+      analysis([upToDate("metron", "Metron"), upToDate("gcd", "GCD")]),
+    );
+    expect(a.needsAttention).toBe(false);
+    expect(a.summary).toMatch(/^all providers up to date · finished /);
+  });
+
+  it("opens for a pending proposal, and counts the providers", () => {
+    const a = analysisAttention(
+      analysis([
+        provider("metron", "Metron", "100", "200"),
+        upToDate("gcd", "GCD"),
+      ]),
+    );
+    expect(a.needsAttention).toBe(true);
+    expect(a.summary).toMatch(/^1 provider needs review/);
+    const b = analysisAttention(
+      analysis([
+        provider("metron", "Metron", "100", "200"),
+        provider("gcd", "GCD", "100", "200"),
+      ]),
+    );
+    expect(b.summary).toMatch(/^2 providers need review/);
+  });
+
+  it("opens for stale mappings and conflicts even with no proposal", () => {
+    const stale = upToDate("metron", "Metron");
+    stale.stale_ranges = [
+      {
+        id: "r1",
+        provider_series_id: "300",
+        provider_series_name: "Old",
+        range_low: "1",
+        range_high: "5",
+        reason: "no longer listed",
+      } as (typeof stale.stale_ranges)[number],
+    ];
+    expect(analysisAttention(analysis([stale])).needsAttention).toBe(true);
+    const conflict = upToDate("gcd", "GCD");
+    conflict.conflicts = ["#7 is pinned by a user"];
+    expect(analysisAttention(analysis([conflict])).needsAttention).toBe(true);
+  });
+
+  it("treats errored / rate-limited / partial providers as needing a look", () => {
+    for (const status of [
+      "error",
+      "rate_limited",
+      "not_listable",
+      "partial",
+    ] as const) {
+      const p = upToDate("metron", "Metron");
+      p.status = status;
+      expect(analysisAttention(analysis([p])).needsAttention, status).toBe(
+        true,
+      );
+    }
+  });
+
+  it("ignores providers that are merely not configured or had no candidates", () => {
+    const off = upToDate("comicvine", "ComicVine");
+    off.status = "not_configured";
+    const none = upToDate("gcd", "GCD");
+    none.status = "no_candidates";
+    const a = analysisAttention(
+      analysis([upToDate("metron", "Metron"), off, none]),
+    );
+    expect(a.needsAttention).toBe(false);
+    const b = analysisAttention(analysis([off, none]));
+    expect(b.needsAttention).toBe(false);
+    expect(b.summary).toMatch(/^no provider could be analysed/);
+  });
+
+  it("stays open while a run is in progress or after a failure", () => {
+    const running = {
+      ...analysis([]),
+      state: "running" as const,
+      finished_at: null,
+    };
+    expect(analysisAttention(running)).toEqual({
+      needsAttention: true,
+      summary: "Running in the background…",
+    });
+    const failed = { ...analysis([]), state: "failed" as const, error: "boom" };
+    expect(analysisAttention(failed).needsAttention).toBe(true);
   });
 });

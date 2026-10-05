@@ -15,14 +15,18 @@
  * and GCD with no prior match required: it lists every candidate provider
  * series, assigns each local issue by number + cover date, and proposes
  * a main series + ranges per provider (`<ProviderCoverageAnalysis>`),
- * which the admin accepts per provider.
+ * which the admin accepts per provider. Once nothing is left to act on
+ * (every provider up to date) the analysis collapses to a one-line
+ * disclosure under the mapping, so the Details tab shows the result, not
+ * the working; it opens by itself while a decision is pending (see
+ * `analysisAttention`). A manual open/close sticks for this visit.
  *
  * Visible to anyone who can see the library; add / remove / analyze / accept are
  * admin-only (the API enforces it too). Renders nothing when there's no
  * coverage and the viewer can't edit.
  */
 
-import { Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ChevronRight, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import * as React from "react";
 
 import {
@@ -38,6 +42,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -64,7 +73,7 @@ import {
   useProviderCoverageSeries,
 } from "@/lib/api/queries";
 import type { CoverageRangeRef, CoverageSegment } from "@/lib/api/types";
-import { staleRemovedSummary } from "@/lib/coverage-ranges";
+import { analysisAttention, staleRemovedSummary } from "@/lib/coverage-ranges";
 import { cn } from "@/lib/utils";
 
 const SOURCES: Array<{ value: string; label: string }> = [
@@ -126,8 +135,16 @@ export function SeriesProviderRangesCard({
     analyze.isPending ||
     analysisState === "queued" ||
     analysisState === "running";
+  const attention = analysis.data ? analysisAttention(analysis.data) : null;
+  // `null` = follow the automatic rule; a tap sets it for this visit.
+  const [analysisOpen, setAnalysisOpen] = React.useState<boolean | null>(null);
+  const showAnalysis = analysisOpen ?? attention?.needsAttention ?? false;
 
-  const runAnalyze = () => analyze.mutate({ auto_accept: autoAccept });
+  const runAnalyze = () => {
+    // A new run is worth watching even if the last one was folded away.
+    setAnalysisOpen(null);
+    analyze.mutate({ auto_accept: autoAccept });
+  };
 
   // Stale ranges accepts removed, kept on screen (the toast fades).
   const [removedNotes, setRemovedNotes] = React.useState<string[]>([]);
@@ -355,46 +372,62 @@ export function SeriesProviderRangesCard({
         </div>
       )}
 
-      {isAdmin && analysis.data && (
-        <div className="space-y-2 border-t pt-3">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
+      {isAdmin && analysis.data && attention && (
+        <Collapsible
+          open={showAnalysis}
+          onOpenChange={setAnalysisOpen}
+          className="border-t pt-3"
+          data-testid="coverage-analysis-section"
+        >
+          <CollapsibleTrigger
+            className="focus-visible:ring-ring flex w-full items-center gap-2 rounded text-left focus-visible:ring-2 focus-visible:outline-none"
+            aria-label={`Coverage analysis: ${attention.summary}`}
+          >
+            <ChevronRight
+              className={cn(
+                "text-muted-foreground h-4 w-4 shrink-0 transition-transform",
+                showAnalysis && "rotate-90",
+              )}
+              aria-hidden
+            />
             <span className="font-medium">Coverage analysis</span>
-            <span className="text-muted-foreground text-xs">
-              {analysing
-                ? "Running in the background…"
-                : analysis.data.finished_at
-                  ? `Finished ${new Date(analysis.data.finished_at).toLocaleString()}`
-                  : null}
+            <span className="text-muted-foreground min-w-0 truncate text-xs">
+              {analysing && (
+                <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />
+              )}
+              {attention.summary}
             </span>
-          </div>
-          {analysing ? (
-            <div className="text-muted-foreground flex items-center gap-2 text-xs">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {analysis.data.trigger === "analyze"
-                ? "Listing candidate series on ComicVine, Metron and GCD. This can take a minute (provider rate limits)."
-                : "Checking which issues the series you matched holds, and where the rest live…"}
-            </div>
-          ) : analysis.data.state === "failed" ? (
-            <p className="text-destructive text-xs">
-              Analysis failed: {analysis.data.error ?? "unknown error"}
-            </p>
-          ) : (
-            <>
-              <CoverageAfterMatchPrompt
-                data={analysis.data}
-                acceptingSource={acceptingSource}
-                onAccept={onAccept}
-              />
-              <ProviderCoverageAnalysis
-                data={analysis.data}
-                acceptingSource={acceptingSource}
-                onAccept={onAccept}
-                onRemoveStale={onRemoveStale}
-                removedNotes={removedNotes}
-              />
-            </>
-          )}
-        </div>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-2 pt-2">
+            {analysing ? (
+              <div className="text-muted-foreground flex items-center gap-2 text-xs">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {analysis.data.trigger === "analyze"
+                  ? "Listing candidate series on ComicVine, Metron and GCD. This can take a minute (provider rate limits)."
+                  : "Checking which issues the series you matched holds, and where the rest live…"}
+              </div>
+            ) : analysis.data.state === "failed" ? (
+              <p className="text-destructive text-xs">
+                Analysis failed: {analysis.data.error ?? "unknown error"}
+              </p>
+            ) : (
+              <>
+                <CoverageAfterMatchPrompt
+                  data={analysis.data}
+                  acceptingSource={acceptingSource}
+                  onAccept={onAccept}
+                />
+                <ProviderCoverageAnalysis
+                  data={analysis.data}
+                  acceptingSource={acceptingSource}
+                  onAccept={onAccept}
+                  onRemoveStale={onRemoveStale}
+                  removedNotes={removedNotes}
+                />
+              </>
+            )}
+          </CollapsibleContent>
+        </Collapsible>
       )}
 
       {isAdmin && !adding && (
