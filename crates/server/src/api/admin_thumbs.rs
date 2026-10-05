@@ -84,15 +84,20 @@ pub struct ThumbnailsStatusView {
     /// Issues whose cover thumbnail is stamped done at the current
     /// `THUMBNAIL_VERSION`.
     pub generated: u64,
-    /// Issues with `thumbnails_generated_at IS NULL` or
-    /// `thumbnail_version < CURRENT` — cover work that the post-scan worker
-    /// still needs to do.
+    /// Issues the post-scan worker still has cover work for: no thumbnail,
+    /// a stale `thumbnail_version`, or (see `cover_hash_only`) a current
+    /// thumbnail whose perceptual hash is missing.
     pub missing: u64,
     /// Issues whose last gen attempt set `thumbnails_error`.
     pub errored: u64,
     pub cover_generated: u64,
     pub cover_missing: u64,
+    /// Of `cover_missing`, issues whose thumbnail is current and only the
+    /// archive cover's perceptual hash is still to compute.
+    pub cover_hash_only: u64,
+    /// Cover jobs queued and not yet picked up by a worker.
     pub cover_queued: u64,
+    /// Cover jobs a worker is executing right now.
     pub cover_running: u64,
     pub cover_failed: u64,
     /// Total page-strip thumbnails needed for active issues with known page
@@ -108,8 +113,9 @@ pub struct ThumbnailsStatusView {
     pub page_map_queued: u64,
     pub page_map_running: u64,
     pub page_map_failed: u64,
-    /// Server-wide queue depth of `post_scan_thumbs` jobs (not filtered by
-    /// library — apalis-redis doesn't expose per-payload counts).
+    /// Server-wide count of unfinished `post_scan_thumbs` jobs — waiting,
+    /// retry-delayed or held by a worker (not filtered by library —
+    /// apalis-redis doesn't expose per-payload counts).
     pub in_flight: i64,
     /// Code-side current version; clients can detect bumps.
     pub current_version: i32,
@@ -149,11 +155,12 @@ pub struct DeleteAllResp {
     pub deleted: usize,
 }
 
-#[derive(Debug, FromQueryResult)]
+#[derive(Debug, Default, FromQueryResult)]
 struct ThumbStatusCounts {
     total: i64,
     generated: i64,
     errored: i64,
+    hash_only: i64,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -184,17 +191,12 @@ pub async fn library_status(
     };
     let lib_id = lib.id;
 
-    let counts = thumb_status_counts(&app, lib_id)
-        .await
-        .unwrap_or(ThumbStatusCounts {
-            total: 0,
-            generated: 0,
-            errored: 0,
-        });
+    let counts = thumb_status_counts(&app, lib_id).await.unwrap_or_default();
     let total = counts.total.max(0) as u64;
     let generated = counts.generated.max(0) as u64;
     let errored = counts.errored.max(0) as u64;
-    let missing = total.saturating_sub(generated);
+    let cover_hash_only = counts.hash_only.max(0) as u64;
+    let missing = total.saturating_sub(generated) + cover_hash_only;
     let (page_total, page_generated) = match page_thumb_status_counts(&app, lib_id).await {
         Ok(counts) => counts,
         Err(e) => {
@@ -203,7 +205,7 @@ pub async fn library_status(
         }
     };
     let page_missing = page_total.saturating_sub(page_generated);
-    let (cover_queued, page_map_queued) = thumbnail_queued_counts(&app, lib_id).await;
+    let jobs = thumbnail_job_counts(&app, lib_id).await;
 
     // Whole-queue depth via apalis. Same call admin_queue makes; cheap.
     let in_flight = match queue_depth(&app).await {
@@ -221,16 +223,17 @@ pub async fn library_status(
         errored,
         cover_generated: generated,
         cover_missing: missing,
-        cover_queued,
-        cover_running: 0,
+        cover_hash_only,
+        cover_queued: jobs.cover_queued,
+        cover_running: jobs.cover_running,
         cover_failed: errored,
         page_total,
         page_generated,
         page_missing,
         page_map_generated: page_generated,
         page_map_missing: page_missing,
-        page_map_queued,
-        page_map_running: 0,
+        page_map_queued: jobs.page_map_queued,
+        page_map_running: jobs.page_map_running,
         page_map_failed: errored,
         in_flight,
         current_version: THUMBNAIL_VERSION,
@@ -238,7 +241,22 @@ pub async fn library_status(
     .into_response()
 }
 
-async fn thumbnail_queued_counts(app: &AppState, lib_id: Uuid) -> (u64, u64) {
+/// This library's thumbnail jobs by state, from the process-local job marks
+/// (re-seeded from Redis at boot).
+#[derive(Debug, Default, Clone, Copy)]
+struct ThumbJobCounts {
+    cover_queued: u64,
+    cover_running: u64,
+    page_map_queued: u64,
+    page_map_running: u64,
+}
+
+async fn thumbnail_job_counts(app: &AppState, lib_id: Uuid) -> ThumbJobCounts {
+    let mut counts = ThumbJobCounts::default();
+    let keys = app.thumb_job_keys().await;
+    if keys.is_empty() {
+        return counts;
+    }
     let ids: Vec<String> = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(lib_id))
         .filter(issue::Column::State.eq("active"))
@@ -251,21 +269,38 @@ async fn thumbnail_queued_counts(app: &AppState, lib_id: Uuid) -> (u64, u64) {
         Ok(ids) => ids,
         Err(e) => {
             tracing::warn!(library_id = %lib_id, error = %e, "thumbnail queued status query failed");
-            return (0, 0);
+            return counts;
         }
     };
-    let keys = app.thumb_job_keys().await;
-    let mut cover = 0u64;
-    let mut page_map = 0u64;
+    let running = app.thumb_job_running_keys();
     for id in ids {
-        if keys.contains(&format!("{id}:Cover")) || keys.contains(&format!("{id}:CoverAndStrip")) {
-            cover += 1;
-        }
-        if keys.contains(&format!("{id}:Strip")) || keys.contains(&format!("{id}:CoverAndStrip")) {
-            page_map += 1;
+        for (kind, cover, page_map) in [
+            ("Cover", true, false),
+            ("Strip", false, true),
+            ("CoverAndStrip", true, true),
+        ] {
+            let key = format!("{id}:{kind}");
+            if !keys.contains(&key) {
+                continue;
+            }
+            let is_running = running.contains(&key);
+            if cover {
+                if is_running {
+                    counts.cover_running += 1;
+                } else {
+                    counts.cover_queued += 1;
+                }
+            }
+            if page_map {
+                if is_running {
+                    counts.page_map_running += 1;
+                } else {
+                    counts.page_map_queued += 1;
+                }
+            }
         }
     }
-    (cover, page_map)
+    counts
 }
 
 #[utoipa::path(
@@ -1151,7 +1186,21 @@ async fn thumb_status_counts(
                 WHERE thumbnails_generated_at IS NOT NULL
                   AND thumbnail_version >= $2
             )::BIGINT AS generated,
-            COUNT(*) FILTER (WHERE thumbnails_error IS NOT NULL)::BIGINT AS errored
+            COUNT(*) FILTER (WHERE thumbnails_error IS NOT NULL)::BIGINT AS errored,
+            -- Thumbnail current but the archive cover's phash is missing:
+            -- the third trigger of `post_scan::needs_cover_work_filter`.
+            COUNT(*) FILTER (
+                WHERE thumbnails_generated_at IS NOT NULL
+                  AND thumbnail_version >= $2
+                  AND NOT EXISTS (
+                      SELECT 1 FROM issue_cover ic
+                      WHERE ic.issue_id = issues.id
+                        AND ic.kind = 'primary'
+                        AND ic.ordinal = 0
+                        AND ic.source_provider = 'archive_extracted'
+                        AND ic.phash IS NOT NULL
+                  )
+            )::BIGINT AS hash_only
         FROM issues
         WHERE library_id = $1
           AND state = 'active'
@@ -1161,11 +1210,7 @@ async fn thumb_status_counts(
     Ok(ThumbStatusCounts::find_by_statement(stmt)
         .one(&app.db)
         .await?
-        .unwrap_or(ThumbStatusCounts {
-            total: 0,
-            generated: 0,
-            errored: 0,
-        }))
+        .unwrap_or_default())
 }
 
 async fn page_thumb_status_counts(
@@ -1325,7 +1370,9 @@ async fn check_thumbnails_enabled(
 }
 
 async fn queue_depth(app: &AppState) -> Result<i64, anyhow::Error> {
-    use apalis::prelude::Storage;
-    let mut storage = app.jobs.post_scan_thumbs_storage.clone();
-    Ok(storage.len().await?)
+    let counts = app.jobs.queue_counts().await?;
+    Ok(counts
+        .iter()
+        .find(|c| c.queue == "post_scan_thumbs")
+        .map_or(0, crate::jobs::QueueCount::outstanding))
 }

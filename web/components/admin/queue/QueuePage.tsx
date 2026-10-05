@@ -82,6 +82,7 @@ const QUEUE_LABELS: { key: string; label: string }[] = [
   { key: "backfill", label: "Backfills" },
   { key: "hash_backfill", label: "Content hashing" },
   { key: "relationship_suggest", label: "Relationship suggestions" },
+  { key: "provider_coverage", label: "Provider coverage" },
 ];
 
 /** Friendly labels for every apalis queue. */
@@ -100,6 +101,7 @@ const QUEUE_LABEL_MAP: Record<string, string> = {
   backfill: "Backfills",
   hash_backfill: "Content hashing",
   relationship_suggest: "Relationship suggestions",
+  provider_coverage: "Provider coverage",
 };
 
 function queueLabel(key: string): string {
@@ -129,6 +131,7 @@ function QueueOverview() {
     );
   }
   const view = q.data as unknown as Record<string, number>;
+  const running = new Map(q.data.queues.map((e) => [e.queue, e.in_flight]));
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       {QUEUE_LABELS.map(({ key, label }) => (
@@ -142,6 +145,11 @@ function QueueOverview() {
             <span className="text-2xl font-semibold tabular-nums">
               {view[key] ?? 0}
             </span>
+            {(running.get(key) ?? 0) > 0 ? (
+              <p className="text-muted-foreground text-xs tabular-nums">
+                {running.get(key)} with workers
+              </p>
+            ) : null}
           </CardContent>
         </Card>
       ))}
@@ -155,6 +163,11 @@ function QueueOverview() {
           <span className="text-2xl font-semibold tabular-nums">
             {q.data.total}
           </span>
+          {q.data.in_flight > 0 ? (
+            <p className="text-muted-foreground text-xs tabular-nums">
+              {q.data.in_flight} with workers
+            </p>
+          ) : null}
         </CardContent>
       </Card>
     </div>

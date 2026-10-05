@@ -84,7 +84,7 @@ impl ThumbsJob {
         }
     }
 
-    fn dedupe_key(&self) -> String {
+    pub(crate) fn dedupe_key(&self) -> String {
         format!("{}:{:?}", self.issue_id, self.kind)
     }
 }
@@ -163,6 +163,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
     let format = ThumbFormat::parse(&lib.thumbnail_format).unwrap_or_default();
     let quality = ThumbnailQuality::new(lib.thumbnail_cover_quality, lib.thumbnail_page_quality);
 
+    let _running = app.mark_thumb_job_running(dedupe_key.clone());
     app.events.emit(ScanEvent::ThumbsStarted {
         library_id: row.library_id,
         issue_id: row.id.clone(),

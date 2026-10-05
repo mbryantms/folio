@@ -477,6 +477,26 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
         Err(e) => tracing::warn!(error = %e, "scan boot sweep failed"),
     }
 
+    // Re-seed the process-local thumbnail-job marks from the jobs Redis
+    // still holds, before any worker starts. Without it a restart mid-drain
+    // makes every per-library "queued" count read 0 (and lets the same
+    // issue be queued twice) until the leftover jobs finish.
+    match state.jobs.outstanding_thumb_jobs().await {
+        Ok(jobs) => {
+            let n = jobs.len();
+            for job in jobs {
+                state.try_mark_thumb_job_queued(job.dedupe_key()).await;
+            }
+            if n > 0 {
+                tracing::info!(
+                    jobs = n,
+                    "thumbnail queue: re-seeded marks for leftover jobs"
+                );
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "thumbnail queue: leftover-job read failed"),
+    }
+
     // Shared shutdown token: HTTP server and apalis monitor both
     // observe cancellation, so a single SIGTERM drains both cleanly.
     // M4 of code-quality-cleanup-1.0 — before this, the apalis monitor
