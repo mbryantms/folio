@@ -103,6 +103,10 @@ pub struct Inner {
     /// still contain jobs from a previous process, but this prevents one page
     /// strip burst from pushing the same issue dozens of times.
     pub thumb_job_inflight: Arc<Mutex<HashSet<String>>>,
+    /// The subset of [`Self::thumb_job_inflight`] a worker is executing
+    /// right now (same keys), so status surfaces can tell "running" from
+    /// "queued". Held by a [`ThumbRunningGuard`] for the job's duration.
+    pub thumb_job_running: Arc<std::sync::Mutex<HashSet<String>>>,
     /// Process-local cache from a thumbnail request key to the exact file that
     /// satisfied it, avoiding extension probing on hot image requests. Bounded
     /// LRU (PERF-9): the previous unbounded `HashMap` grew one entry per
@@ -175,6 +179,7 @@ impl AppState {
         let archive_work_parallel = cfg.archive_work_parallel.max(1);
         let archive_work_semaphore = Arc::new(Semaphore::new(archive_work_parallel));
         let thumb_job_inflight = Arc::new(Mutex::new(HashSet::new()));
+        let thumb_job_running = Arc::new(std::sync::Mutex::new(HashSet::new()));
         let thumb_path_cache = Arc::new(std::sync::Mutex::new(LruCache::new(
             NonZeroUsize::new(THUMB_PATH_CACHE_CAP).expect("nonzero"),
         )));
@@ -212,6 +217,7 @@ impl AppState {
             web_proxy_client,
             thumb_inline_semaphore,
             thumb_job_inflight,
+            thumb_job_running,
             thumb_path_cache,
             archive_work_semaphore,
             scheduler,
@@ -312,6 +318,25 @@ impl AppState {
         self.thumb_job_inflight.lock().await.clone()
     }
 
+    /// Mark a thumbnail job as executing until the returned guard drops.
+    pub fn mark_thumb_job_running(&self, key: String) -> ThumbRunningGuard {
+        self.thumb_job_running
+            .lock()
+            .expect("thumb_job_running poisoned")
+            .insert(key.clone());
+        ThumbRunningGuard {
+            set: self.thumb_job_running.clone(),
+            key,
+        }
+    }
+
+    pub fn thumb_job_running_keys(&self) -> HashSet<String> {
+        self.thumb_job_running
+            .lock()
+            .expect("thumb_job_running poisoned")
+            .clone()
+    }
+
     pub fn cached_thumb_path(&self, key: &str) -> Option<PathBuf> {
         // `LruCache::get` marks recency, so it needs &mut — the std Mutex gives
         // it. No await is held across the lock.
@@ -345,5 +370,20 @@ impl std::ops::Deref for AppState {
     type Target = Inner;
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+/// Removes a thumbnail job from [`AppState::thumb_job_running`] on drop, so
+/// every exit path of the handler (including a panic) clears it.
+pub struct ThumbRunningGuard {
+    set: Arc<std::sync::Mutex<HashSet<String>>>,
+    key: String,
+}
+
+impl Drop for ThumbRunningGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = self.set.lock() {
+            set.remove(&self.key);
+        }
     }
 }

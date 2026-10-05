@@ -897,7 +897,21 @@ function ThumbnailWorkPanel({
         </div>
 
         <dl className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
-          <SmallStat label="Missing covers" value={d.cover_missing} />
+          <SmallStat
+            label="Running now"
+            value={d.cover_running + d.page_map_running}
+            tone={
+              d.cover_running + d.page_map_running > 0 ? "primary" : "default"
+            }
+          />
+          <SmallStat
+            label={
+              d.cover_hash_only > 0
+                ? `Covers to do (${d.cover_hash_only} hash only)`
+                : "Covers to do"
+            }
+            value={d.cover_missing}
+          />
           <SmallStat label="Queued covers" value={d.cover_queued} />
           <SmallStat label="Missing pages" value={pageMissing} />
           <SmallStat label="Queued pages" value={d.page_map_queued} />
@@ -907,7 +921,7 @@ function ThumbnailWorkPanel({
             tone={d.cover_failed > 0 ? "destructive" : "default"}
           />
           <SmallStat
-            label="Queue depth"
+            label="Server queue (all libraries)"
             value={d.in_flight}
             tone={d.in_flight > 0 ? "primary" : "default"}
           />

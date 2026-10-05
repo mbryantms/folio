@@ -7,7 +7,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
     pub library_id: Uuid,
-    /// `running` | `complete` | `failed` | `cancelled`
+    /// `queued` | `running` | `complete` | `failed` | `cancelled`
     pub state: String,
     pub started_at: DateTimeWithTimeZone,
     #[sea_orm(nullable)]

@@ -9840,6 +9840,12 @@ export interface components {
             scans_in_flight: number;
             /**
              * Format: int64
+             * @description Scan runs accepted but not started yet (state = 'queued'), e.g. the
+             *     libraries of a scan-all still waiting for a worker.
+             */
+            scans_queued: number;
+            /**
+             * Format: int64
              * @description Reading sessions started in the last 24h.
              */
             sessions_today: number;
@@ -10343,6 +10349,30 @@ export interface components {
         };
         /** @enum {string} */
         QueueClearTarget: "all" | "scans" | "thumbnails";
+        /** @description One queue's outstanding jobs, split by where they are held. */
+        QueueDepthEntry: {
+            /**
+             * Format: int64
+             * @description Fetched by a worker: executing, or in its prefetch buffer.
+             */
+            in_flight: number;
+            /** @description Queue label, e.g. `post_scan_thumbs`. */
+            queue: string;
+            /**
+             * Format: int64
+             * @description Waiting out a retry delay.
+             */
+            scheduled: number;
+            /**
+             * Format: int64
+             * @description Not yet fetched by a worker.
+             */
+            waiting: number;
+        };
+        /**
+         * @description Outstanding jobs per queue. Each per-queue number is everything not yet
+         *     finished (`waiting + scheduled + in_flight`); `queues` carries the split.
+         */
         QueueDepthView: {
             /**
              * Format: int64
@@ -10359,6 +10389,11 @@ export interface components {
              * @description Pending first-import content-hash drains (one per library; WP-3.2).
              */
             hash_backfill: number;
+            /**
+             * Format: int64
+             * @description Of `total`, the jobs a worker has fetched (executing or prefetched).
+             */
+            in_flight: number;
             /** Format: int64 */
             metadata_apply_issue: number;
             /**
@@ -10384,6 +10419,8 @@ export interface components {
              * @description Pending provider coverage analyses (one per series request).
              */
             provider_coverage: number;
+            /** @description Per-queue split, one entry per queue in a stable order. */
+            queues: components["schemas"]["QueueDepthEntry"][];
             /**
              * Format: int64
              * @description Pending relationship-suggestion runs (one per library; WP-7.2).
@@ -12228,11 +12265,23 @@ export interface components {
             cover_failed: number;
             /** Format: int64 */
             cover_generated: number;
+            /**
+             * Format: int64
+             * @description Of `cover_missing`, issues whose thumbnail is current and only the
+             *     archive cover's perceptual hash is still to compute.
+             */
+            cover_hash_only: number;
             /** Format: int64 */
             cover_missing: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Cover jobs queued and not yet picked up by a worker.
+             */
             cover_queued: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Cover jobs a worker is executing right now.
+             */
             cover_running: number;
             /**
              * Format: int32
@@ -12252,15 +12301,16 @@ export interface components {
             generated: number;
             /**
              * Format: int64
-             * @description Server-wide queue depth of `post_scan_thumbs` jobs (not filtered by
-             *     library — apalis-redis doesn't expose per-payload counts).
+             * @description Server-wide count of unfinished `post_scan_thumbs` jobs — waiting,
+             *     retry-delayed or held by a worker (not filtered by library —
+             *     apalis-redis doesn't expose per-payload counts).
              */
             in_flight: number;
             /**
              * Format: int64
-             * @description Issues with `thumbnails_generated_at IS NULL` or
-             *     `thumbnail_version < CURRENT` — cover work that the post-scan worker
-             *     still needs to do.
+             * @description Issues the post-scan worker still has cover work for: no thumbnail,
+             *     a stale `thumbnail_version`, or (see `cover_hash_only`) a current
+             *     thumbnail whose perceptual hash is missing.
              */
             missing: number;
             /**

@@ -466,3 +466,69 @@ async fn dead_job_endpoints_require_admin() {
     .await;
     assert_eq!(purge.status(), StatusCode::FORBIDDEN);
 }
+
+// ───── Queue depth counts every unfinished job ─────
+
+#[tokio::test]
+async fn queue_depth_counts_jobs_held_by_a_worker_and_retry_delayed() {
+    // apalis's own `len()` is only the `active` list, so a queue whose last
+    // jobs were all executing read 0 and the header pill vanished mid-drain.
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let st = app.state();
+    let cfg = st.jobs.post_scan_thumbs_storage.get_config().clone();
+    let mut conn = st.jobs.redis.clone();
+
+    // Two waiting, one retry-delayed, three fetched by a worker.
+    let _: i64 = conn
+        .rpush(cfg.active_jobs_list(), &["w1", "w2"])
+        .await
+        .unwrap();
+    let _: i64 = conn
+        .zadd(cfg.scheduled_jobs_set(), "s1", 9_999_999_999i64)
+        .await
+        .unwrap();
+    let inflight = format!("{}:worker-a", cfg.inflight_jobs_set());
+    let _: i64 = conn
+        .zadd(cfg.consumers_set(), &inflight, 1i64)
+        .await
+        .unwrap();
+    let _: i64 = conn.sadd(&inflight, &["r1", "r2", "r3"]).await.unwrap();
+
+    let resp = send_authed(&app, &admin, Method::GET, "/api/admin/queue-depth", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+
+    assert_eq!(body["post_scan_thumbs"], 6);
+    assert_eq!(body["total"], 6);
+    assert_eq!(body["in_flight"], 3);
+    let queues = body["queues"].as_array().expect("queues array");
+    assert_eq!(queues.len(), 15, "one entry per queue");
+    let thumbs = queues
+        .iter()
+        .find(|q| q["queue"] == "post_scan_thumbs")
+        .expect("thumbs entry");
+    assert_eq!(thumbs["waiting"], 2);
+    assert_eq!(thumbs["scheduled"], 1);
+    assert_eq!(thumbs["in_flight"], 3);
+}
+
+#[tokio::test]
+async fn outstanding_thumb_jobs_decodes_what_apalis_stored() {
+    // The boot re-seed of the thumbnail job marks reads real apalis
+    // payloads; push through the storage so an encoding change fails here.
+    use server::jobs::post_scan::{ThumbsJob, ThumbsJobKind};
+    let app = TestApp::spawn().await;
+    let st = app.state();
+    let mut storage = st.jobs.post_scan_thumbs_storage.clone();
+    storage.push(ThumbsJob::cover("issue-a")).await.unwrap();
+    storage.push(ThumbsJob::strip("issue-b")).await.unwrap();
+
+    let mut jobs = st.jobs.outstanding_thumb_jobs().await.unwrap();
+    jobs.sort_by(|a, b| a.issue_id.cmp(&b.issue_id));
+    assert_eq!(jobs.len(), 2);
+    assert_eq!(jobs[0].issue_id, "issue-a");
+    assert_eq!(jobs[0].kind, ThumbsJobKind::Cover);
+    assert_eq!(jobs[1].issue_id, "issue-b");
+    assert_eq!(jobs[1].kind, ThumbsJobKind::Strip);
+}

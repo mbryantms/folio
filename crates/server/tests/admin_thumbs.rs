@@ -327,7 +327,12 @@ async fn status_counts_match_seeded_state() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 4);
     assert_eq!(body["generated"], 2);
-    assert_eq!(body["missing"], 2);
+    // The two generated issues have no archive-cover phash row, so the
+    // post-scan worker still has (hash-only) work for them: "missing" is
+    // everything a cover job would be queued for, not just absent thumbs.
+    assert_eq!(body["cover_hash_only"], 2);
+    assert_eq!(body["missing"], 4);
+    assert_eq!(body["cover_running"], 0);
     assert_eq!(body["errored"], 1);
     assert_eq!(body["page_total"], 4);
     assert_eq!(body["page_generated"], 2);

@@ -2,9 +2,11 @@
 //! queues that drive scans (spec §3 + §8). Polled by the admin topbar so an
 //! operator can see when a backlog is draining.
 //!
-//! "Pending" here means `len()` from `apalis::prelude::Storage`, which is
-//! `HLEN(job_data_hash) - ZCOUNT(done_jobs_set)` — i.e., all jobs minus
-//! finished ones. In-flight jobs are still counted as pending.
+//! "Pending" here means every job that has not finished: waiting for a
+//! worker, waiting out a retry delay, or fetched by a worker (executing or
+//! in its prefetch buffer) — [`crate::jobs::JobRuntime::queue_counts`].
+//! apalis's own `Storage::len()` is only the first of those, so it reads 0
+//! while the last jobs of a drain are still running.
 
 use std::str::FromStr;
 
@@ -54,7 +56,22 @@ const DEAD_QUEUES: &[&str] = &[
     "provider_coverage",
 ];
 
-#[derive(Debug, Clone, Copy, Serialize, utoipa::ToSchema)]
+/// One queue's outstanding jobs, split by where they are held.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct QueueDepthEntry {
+    /// Queue label, e.g. `post_scan_thumbs`.
+    pub queue: String,
+    /// Not yet fetched by a worker.
+    pub waiting: i64,
+    /// Waiting out a retry delay.
+    pub scheduled: i64,
+    /// Fetched by a worker: executing, or in its prefetch buffer.
+    pub in_flight: i64,
+}
+
+/// Outstanding jobs per queue. Each per-queue number is everything not yet
+/// finished (`waiting + scheduled + in_flight`); `queues` carries the split.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct QueueDepthView {
     pub scan: i64,
     pub scan_series: i64,
@@ -81,6 +98,10 @@ pub struct QueueDepthView {
     pub provider_coverage: i64,
     /// Sum across all queues — convenient for the topbar pill.
     pub total: i64,
+    /// Of `total`, the jobs a worker has fetched (executing or prefetched).
+    pub in_flight: i64,
+    /// Per-queue split, one entry per queue in a stable order.
+    pub queues: Vec<QueueDepthEntry>,
 }
 
 /// One queue's dead-letter count (OPS-3 follow-up).
@@ -254,9 +275,9 @@ pub async fn clear_queue(
     Json(QueueClearResp {
         target: req.target,
         deleted_keys,
+        running_jobs_may_finish: before.total > after.total,
         before,
         after,
-        running_jobs_may_finish: before.total > after.total,
     })
     .into_response()
 }
@@ -655,88 +676,43 @@ fn unknown_queue(queue: &str) -> axum::response::Response {
 }
 
 pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDepthView> {
-    let mut scan = app.jobs.scan_storage.clone();
-    let mut scan_series = app.jobs.scan_series_storage.clone();
-    let mut thumbs = app.jobs.post_scan_thumbs_storage.clone();
-    let mut search = app.jobs.post_scan_search_storage.clone();
-    let mut dictionary = app.jobs.post_scan_dictionary_storage.clone();
-    let mut md_search_series = app.jobs.metadata_search_series_storage.clone();
-    let mut md_search_issue = app.jobs.metadata_search_issue_storage.clone();
-    let mut md_apply_series = app.jobs.metadata_apply_series_storage.clone();
-    let mut md_apply_issue = app.jobs.metadata_apply_issue_storage.clone();
-    let mut sidecars = app.jobs.rewrite_issue_sidecars_storage.clone();
-    let mut archive_edit = app.jobs.archive_edit_storage.clone();
-    let mut backfill = app.jobs.backfill_storage.clone();
-    let mut hash_backfill = app.jobs.hash_backfill_storage.clone();
-    let mut relationship_suggest = app.jobs.relationship_suggest_storage.clone();
-    let mut provider_coverage = app.jobs.provider_coverage_storage.clone();
-
-    let (
-        scan_n,
-        scan_series_n,
-        thumbs_n,
-        search_n,
-        dictionary_n,
-        md_search_series_n,
-        md_search_issue_n,
-        md_apply_series_n,
-        md_apply_issue_n,
-        sidecars_n,
-        archive_edit_n,
-        backfill_n,
-        hash_backfill_n,
-        relationship_suggest_n,
-        provider_coverage_n,
-    ) = tokio::try_join!(
-        scan.len(),
-        scan_series.len(),
-        thumbs.len(),
-        search.len(),
-        dictionary.len(),
-        md_search_series.len(),
-        md_search_issue.len(),
-        md_apply_series.len(),
-        md_apply_issue.len(),
-        sidecars.len(),
-        archive_edit.len(),
-        backfill.len(),
-        hash_backfill.len(),
-        relationship_suggest.len(),
-        provider_coverage.len(),
-    )?;
-
-    let total = scan_n
-        + scan_series_n
-        + thumbs_n
-        + search_n
-        + dictionary_n
-        + md_search_series_n
-        + md_search_issue_n
-        + md_apply_series_n
-        + md_apply_issue_n
-        + sidecars_n
-        + archive_edit_n
-        + backfill_n
-        + hash_backfill_n
-        + relationship_suggest_n
-        + provider_coverage_n;
+    let counts = app.jobs.queue_counts().await?;
+    let of = |label: &str| {
+        counts
+            .iter()
+            .find(|c| c.queue == label)
+            .map_or(0, crate::jobs::QueueCount::outstanding)
+    };
     Ok(QueueDepthView {
-        scan: scan_n,
-        scan_series: scan_series_n,
-        post_scan_thumbs: thumbs_n,
-        post_scan_search: search_n,
-        post_scan_dictionary: dictionary_n,
-        metadata_search_series: md_search_series_n,
-        metadata_search_issue: md_search_issue_n,
-        metadata_apply_series: md_apply_series_n,
-        metadata_apply_issue: md_apply_issue_n,
-        rewrite_issue_sidecars: sidecars_n,
-        archive_edit: archive_edit_n,
-        backfill: backfill_n,
-        hash_backfill: hash_backfill_n,
-        relationship_suggest: relationship_suggest_n,
-        provider_coverage: provider_coverage_n,
-        total,
+        scan: of("scan"),
+        scan_series: of("scan_series"),
+        post_scan_thumbs: of("post_scan_thumbs"),
+        post_scan_search: of("post_scan_search"),
+        post_scan_dictionary: of("post_scan_dictionary"),
+        metadata_search_series: of("metadata_search_series"),
+        metadata_search_issue: of("metadata_search_issue"),
+        metadata_apply_series: of("metadata_apply_series"),
+        metadata_apply_issue: of("metadata_apply_issue"),
+        rewrite_issue_sidecars: of("rewrite_issue_sidecars"),
+        archive_edit: of("archive_edit"),
+        backfill: of("backfill"),
+        hash_backfill: of("hash_backfill"),
+        relationship_suggest: of("relationship_suggest"),
+        provider_coverage: of("provider_coverage"),
+        total: counts
+            .iter()
+            .map(crate::jobs::QueueCount::outstanding)
+            .sum(),
+        in_flight: counts.iter().map(|c| c.in_flight).sum(),
+        queues: counts
+            .iter()
+            .map(|c| QueueDepthEntry {
+                queue: c.queue.to_owned(),
+                waiting: c.waiting,
+                scheduled: c.scheduled,
+                in_flight: c.in_flight,
+            })
+            .collect(),
     })
 }
 

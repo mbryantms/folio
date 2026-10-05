@@ -833,6 +833,59 @@ impl JobRuntime {
         Ok(total)
     }
 
+    /// Every apalis queue, by its admin label, with the storage config that
+    /// names its Redis keys. One list so the depth, dead-letter and gauge
+    /// readers can never disagree about which queues exist.
+    fn queue_configs(&self) -> [(&'static str, &RedisConfig); QUEUE_COUNT] {
+        [
+            ("scan", self.scan_storage.get_config()),
+            ("scan_series", self.scan_series_storage.get_config()),
+            (
+                "post_scan_thumbs",
+                self.post_scan_thumbs_storage.get_config(),
+            ),
+            (
+                "post_scan_search",
+                self.post_scan_search_storage.get_config(),
+            ),
+            (
+                "post_scan_dictionary",
+                self.post_scan_dictionary_storage.get_config(),
+            ),
+            (
+                "metadata_search_series",
+                self.metadata_search_series_storage.get_config(),
+            ),
+            (
+                "metadata_search_issue",
+                self.metadata_search_issue_storage.get_config(),
+            ),
+            (
+                "metadata_apply_series",
+                self.metadata_apply_series_storage.get_config(),
+            ),
+            (
+                "metadata_apply_issue",
+                self.metadata_apply_issue_storage.get_config(),
+            ),
+            (
+                "rewrite_issue_sidecars",
+                self.rewrite_issue_sidecars_storage.get_config(),
+            ),
+            ("archive_edit", self.archive_edit_storage.get_config()),
+            ("backfill", self.backfill_storage.get_config()),
+            ("hash_backfill", self.hash_backfill_storage.get_config()),
+            (
+                "relationship_suggest",
+                self.relationship_suggest_storage.get_config(),
+            ),
+            (
+                "provider_coverage",
+                self.provider_coverage_storage.get_config(),
+            ),
+        ]
+    }
+
     /// Count dead-lettered jobs per queue (OPS-3 follow-up). apalis moves a job
     /// to its `{namespace}:dead` set after it exhausts [`JOB_MAX_ATTEMPTS`]; nothing
     /// surfaced these before, so a permanently-failing job vanished silently.
@@ -843,87 +896,135 @@ impl JobRuntime {
     /// `{type_name}:dead` and the ZSET shape are unchanged from 0.7 through the
     /// 1.0 release candidates). Returns `(queue_label, count)` for every queue.
     pub async fn dead_letter_counts(&self) -> redis::RedisResult<Vec<(&'static str, i64)>> {
-        let keys: [(&'static str, String); 15] = [
-            ("scan", self.scan_storage.get_config().dead_jobs_set()),
-            (
-                "scan_series",
-                self.scan_series_storage.get_config().dead_jobs_set(),
-            ),
-            (
-                "post_scan_thumbs",
-                self.post_scan_thumbs_storage.get_config().dead_jobs_set(),
-            ),
-            (
-                "post_scan_search",
-                self.post_scan_search_storage.get_config().dead_jobs_set(),
-            ),
-            (
-                "post_scan_dictionary",
-                self.post_scan_dictionary_storage
-                    .get_config()
-                    .dead_jobs_set(),
-            ),
-            (
-                "metadata_search_series",
-                self.metadata_search_series_storage
-                    .get_config()
-                    .dead_jobs_set(),
-            ),
-            (
-                "metadata_search_issue",
-                self.metadata_search_issue_storage
-                    .get_config()
-                    .dead_jobs_set(),
-            ),
-            (
-                "metadata_apply_series",
-                self.metadata_apply_series_storage
-                    .get_config()
-                    .dead_jobs_set(),
-            ),
-            (
-                "metadata_apply_issue",
-                self.metadata_apply_issue_storage
-                    .get_config()
-                    .dead_jobs_set(),
-            ),
-            (
-                "rewrite_issue_sidecars",
-                self.rewrite_issue_sidecars_storage
-                    .get_config()
-                    .dead_jobs_set(),
-            ),
-            (
-                "archive_edit",
-                self.archive_edit_storage.get_config().dead_jobs_set(),
-            ),
-            (
-                "backfill",
-                self.backfill_storage.get_config().dead_jobs_set(),
-            ),
-            (
-                "hash_backfill",
-                self.hash_backfill_storage.get_config().dead_jobs_set(),
-            ),
-            (
-                "relationship_suggest",
-                self.relationship_suggest_storage
-                    .get_config()
-                    .dead_jobs_set(),
-            ),
-            (
-                "provider_coverage",
-                self.provider_coverage_storage.get_config().dead_jobs_set(),
-            ),
-        ];
         let mut conn = self.redis.clone();
-        let mut out = Vec::with_capacity(keys.len());
-        for (label, key) in keys {
-            let count: i64 = conn.zcard(&key).await?;
+        let mut out = Vec::with_capacity(QUEUE_COUNT);
+        for (label, cfg) in self.queue_configs() {
+            let count: i64 = conn.zcard(cfg.dead_jobs_set()).await?;
             out.push((label, count));
         }
         Ok(out)
     }
+
+    /// Outstanding (not yet finished) jobs per queue, split by where apalis
+    /// holds them. Two pipelined round-trips for all queues.
+    ///
+    /// apalis-redis 0.7 keeps a job in exactly one of three places until it
+    /// finishes: the `{ns}:active` LIST (waiting for a worker), the
+    /// `{ns}:scheduled` ZSET (waiting out a retry delay), or one worker's
+    /// `{ns}:inflight:{worker}` SET (fetched by that worker — executing, or
+    /// in its prefetch buffer). `Storage::len()` is only the first, so a
+    /// queue whose last jobs are all executing reads as empty. The in-flight
+    /// sets are found through the `{ns}:consumers` ZSET, whose members are
+    /// the set keys (`register_consumer.lua`); a dead process's set stays
+    /// counted until the orphan sweep hands its jobs back to `active`.
+    pub async fn queue_counts(&self) -> redis::RedisResult<Vec<QueueCount>> {
+        let queues = self.queue_configs();
+        let mut conn = self.redis.clone();
+
+        let mut pipe = redis::pipe();
+        for (_, cfg) in &queues {
+            pipe.llen(cfg.active_jobs_list())
+                .zcard(cfg.scheduled_jobs_set())
+                .zrange(cfg.consumers_set(), 0, -1);
+        }
+        let firsts: Vec<redis::Value> = pipe.query_async(&mut conn).await?;
+
+        let mut out = Vec::with_capacity(QUEUE_COUNT);
+        let mut consumers: Vec<Vec<String>> = Vec::with_capacity(QUEUE_COUNT);
+        for ((label, _), chunk) in queues.iter().zip(firsts.chunks(3)) {
+            let [waiting, scheduled, members] = chunk else {
+                continue;
+            };
+            out.push(QueueCount {
+                queue: label,
+                waiting: redis::from_redis_value(waiting)?,
+                scheduled: redis::from_redis_value(scheduled)?,
+                in_flight: 0,
+            });
+            consumers.push(redis::from_redis_value(members)?);
+        }
+
+        let mut pipe = redis::pipe();
+        let mut any = false;
+        for set in consumers.iter().flatten() {
+            pipe.scard(set);
+            any = true;
+        }
+        if any {
+            let sizes: Vec<i64> = pipe.query_async(&mut conn).await?;
+            let mut sizes = sizes.into_iter();
+            for (count, sets) in out.iter_mut().zip(&consumers) {
+                count.in_flight = sizes.by_ref().take(sets.len()).sum();
+            }
+        }
+        Ok(out)
+    }
+
+    /// The thumbnail jobs Redis still holds (waiting, retry-delayed or
+    /// fetched by a worker), decoded from the queue's job-data hash. Read
+    /// once at boot to re-seed the process-local dedupe set
+    /// ([`AppState::thumb_job_inflight`](crate::state::AppState)), which
+    /// otherwise forgets every job queued by the previous process: the
+    /// per-library "queued" counts read 0 while thousands of jobs drain.
+    /// Undecodable payloads are skipped.
+    pub async fn outstanding_thumb_jobs(&self) -> redis::RedisResult<Vec<post_scan::ThumbsJob>> {
+        let cfg = self.post_scan_thumbs_storage.get_config();
+        let mut conn = self.redis.clone();
+        let mut ids: Vec<String> = conn.lrange(cfg.active_jobs_list(), 0, -1).await?;
+        let scheduled: Vec<String> = conn.zrange(cfg.scheduled_jobs_set(), 0, -1).await?;
+        ids.extend(scheduled);
+        let workers: Vec<String> = conn.zrange(cfg.consumers_set(), 0, -1).await?;
+        for set in workers {
+            let held: Vec<String> = conn.smembers(set).await?;
+            ids.extend(held);
+        }
+        let data_hash = cfg.job_data_hash();
+        let mut jobs = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(1000) {
+            let payloads: Vec<Option<Vec<u8>>> = redis::cmd("HMGET")
+                .arg(&data_hash)
+                .arg(chunk)
+                .query_async(&mut conn)
+                .await?;
+            jobs.extend(
+                payloads
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|bytes| decode_job_args(&bytes)),
+            );
+        }
+        Ok(jobs)
+    }
+}
+
+/// Number of apalis queues [`JobRuntime`] owns.
+pub const QUEUE_COUNT: usize = 15;
+
+/// One queue's outstanding jobs — see [`JobRuntime::queue_counts`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueCount {
+    pub queue: &'static str,
+    /// In the `active` list: no worker has fetched it yet.
+    pub waiting: i64,
+    /// In the `scheduled` set: waiting out a retry delay.
+    pub scheduled: i64,
+    /// In a worker's in-flight set: executing or prefetched.
+    pub in_flight: i64,
+}
+
+impl QueueCount {
+    /// Everything not finished.
+    pub fn outstanding(&self) -> i64 {
+        self.waiting + self.scheduled + self.in_flight
+    }
+}
+
+/// The job arguments of one stored apalis payload. apalis-redis encodes a
+/// job as JSON `{"args": <job>, "parts": {…}}` (`JsonCodec` over
+/// `Request<T, RedisContext>`).
+fn decode_job_args<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
+    let mut v: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    serde_json::from_value(v.get_mut("args")?.take()).ok()
 }
 
 /// SCAN + DEL every key matching `pattern`. Cursor-based (never `KEYS`) so it

@@ -243,7 +243,7 @@ function ScansCard({
             Scans
           </CardTitle>
           <p className="text-muted-foreground mt-1 text-xs">
-            In flight + queued across libraries.
+            Scans across libraries, and every background job pending.
           </p>
         </div>
         <ListChecks className="text-muted-foreground h-4 w-4" />
@@ -252,13 +252,18 @@ function ScansCard({
         {loading || !data ? (
           <Skeleton className="h-16 w-full" />
         ) : (
-          <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="grid grid-cols-3 gap-3 text-sm">
             <Stat
               label="Running"
               value={data.scans_in_flight}
               live={data.scans_in_flight > 0}
             />
-            <Stat label="Queue" value={queueTotal} live={queueTotal > 0} />
+            <Stat
+              label="Queued"
+              value={data.scans_queued}
+              live={data.scans_queued > 0}
+            />
+            <Stat label="All jobs" value={queueTotal} live={queueTotal > 0} />
           </div>
         )}
         {mostRecent ? (

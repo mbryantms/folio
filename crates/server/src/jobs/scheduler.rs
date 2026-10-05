@@ -798,22 +798,19 @@ pub async fn refresh_writeback_remaining_gauge(state: &AppState) {
 }
 
 /// Publish per-queue job-backlog gauges (`folio_jobs_queue_depth{queue=…}`)
-/// from the same Redis `LLEN` counts the `/admin/queue` page reads. Runs on a
-/// short cadence (every 30s, see [`register_job_queue_depth`]) so the gauges
-/// track backlog without coupling each `/metrics` scrape to Redis round-trips.
+/// for every queue, from the same outstanding-job counts the `/admin/queue`
+/// page reads (waiting + retry-delayed + fetched by a worker), plus
+/// `folio_jobs_in_flight{queue=…}` for the worker-held part. Runs on a short
+/// cadence (every 30s, see [`register_job_queue_depth`]) so the gauges track
+/// backlog without coupling each `/metrics` scrape to Redis round-trips.
 pub async fn refresh_job_queue_depth_gauges(state: &AppState) {
-    match crate::api::admin_queue::queue_depth_counts(state).await {
-        Ok(q) => {
-            let set = |queue: &'static str, n: i64| {
-                metrics::gauge!("folio_jobs_queue_depth", "queue" => queue).set(n as f64);
-            };
-            set("scan", q.scan);
-            set("scan_series", q.scan_series);
-            set("post_scan_thumbs", q.post_scan_thumbs);
-            set("post_scan_search", q.post_scan_search);
-            set("post_scan_dictionary", q.post_scan_dictionary);
-            set("archive_edit", q.archive_edit);
-            set("backfill", q.backfill);
+    match state.jobs.queue_counts().await {
+        Ok(counts) => {
+            for c in counts {
+                metrics::gauge!("folio_jobs_queue_depth", "queue" => c.queue)
+                    .set(c.outstanding() as f64);
+                metrics::gauge!("folio_jobs_in_flight", "queue" => c.queue).set(c.in_flight as f64);
+            }
         }
         Err(e) => tracing::warn!(error = %e, "job-queue depth gauge refresh failed"),
     }

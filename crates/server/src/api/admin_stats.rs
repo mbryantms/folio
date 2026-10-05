@@ -50,6 +50,9 @@ pub struct OverviewView {
     pub totals: TotalsBlock,
     /// Apalis scan jobs currently running (state = 'running').
     pub scans_in_flight: i64,
+    /// Scan runs accepted but not started yet (state = 'queued'), e.g. the
+    /// libraries of a scan-all still waiting for a worker.
+    pub scans_queued: i64,
     pub open_health: HealthBlock,
     /// Reading sessions started in the last 24h.
     pub sessions_today: i64,
@@ -206,6 +209,11 @@ pub async fn overview(State(app): State<AppState>, _admin: RequireAdmin) -> Resp
         .count(&app.db)
         .await
         .unwrap_or(0) as i64;
+    let scans_queued = scan_run::Entity::find()
+        .filter(scan_run::Column::State.eq("queued"))
+        .count(&app.db)
+        .await
+        .unwrap_or(0) as i64;
 
     let open_health = match compute_open_health(&app).await {
         Ok(h) => h,
@@ -236,6 +244,7 @@ pub async fn overview(State(app): State<AppState>, _admin: RequireAdmin) -> Resp
     Json(OverviewView {
         totals,
         scans_in_flight,
+        scans_queued,
         open_health,
         sessions_today,
         active_readers_now,

@@ -277,7 +277,7 @@ pub struct AdminListQuery {
     /// `library` | `series` | `issue`. Unknown values 422.
     #[serde(default)]
     pub kind: Option<String>,
-    /// `running` | `complete` | `failed` | `cancelled`. Unknown values 422.
+    /// `queued` | `running` | `complete` | `failed` | `cancelled`. Unknown values 422.
     #[serde(default)]
     pub state: Option<String>,
     /// Restrict to runs started at-or-after this RFC3339 timestamp.
@@ -329,12 +329,14 @@ pub async fn admin_list(
 
     let state_filter = match q.state.as_deref() {
         None | Some("") | Some("all") => None,
-        Some(s @ ("running" | "complete" | "failed" | "cancelled")) => Some(s.to_owned()),
+        Some(s @ ("queued" | "running" | "complete" | "failed" | "cancelled")) => {
+            Some(s.to_owned())
+        }
         Some(_) => {
             return error(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation.state",
-                "state must be one of: running, complete, failed, cancelled, all",
+                "state must be one of: queued, running, complete, failed, cancelled, all",
             );
         }
     };

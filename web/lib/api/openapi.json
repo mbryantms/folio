@@ -23485,6 +23485,7 @@
         "required": [
           "totals",
           "scans_in_flight",
+          "scans_queued",
           "open_health",
           "sessions_today",
           "active_readers_now",
@@ -23511,6 +23512,11 @@
             "type": "integer",
             "format": "int64",
             "description": "Apalis scan jobs currently running (state = 'running')."
+          },
+          "scans_queued": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Scan runs accepted but not started yet (state = 'queued'), e.g. the\nlibraries of a scan-all still waiting for a worker."
           },
           "sessions_today": {
             "type": "integer",
@@ -24786,8 +24792,40 @@
           "thumbnails"
         ]
       },
+      "QueueDepthEntry": {
+        "type": "object",
+        "description": "One queue's outstanding jobs, split by where they are held.",
+        "required": [
+          "queue",
+          "waiting",
+          "scheduled",
+          "in_flight"
+        ],
+        "properties": {
+          "in_flight": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Fetched by a worker: executing, or in its prefetch buffer."
+          },
+          "queue": {
+            "type": "string",
+            "description": "Queue label, e.g. `post_scan_thumbs`."
+          },
+          "scheduled": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Waiting out a retry delay."
+          },
+          "waiting": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Not yet fetched by a worker."
+          }
+        }
+      },
       "QueueDepthView": {
         "type": "object",
+        "description": "Outstanding jobs per queue. Each per-queue number is everything not yet\nfinished (`waiting + scheduled + in_flight`); `queues` carries the split.",
         "required": [
           "scan",
           "scan_series",
@@ -24804,7 +24842,9 @@
           "hash_backfill",
           "relationship_suggest",
           "provider_coverage",
-          "total"
+          "total",
+          "in_flight",
+          "queues"
         ],
         "properties": {
           "archive_edit": {
@@ -24821,6 +24861,11 @@
             "type": "integer",
             "format": "int64",
             "description": "Pending first-import content-hash drains (one per library; WP-3.2)."
+          },
+          "in_flight": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of `total`, the jobs a worker has fetched (executing or prefetched)."
           },
           "metadata_apply_issue": {
             "type": "integer",
@@ -24856,6 +24901,13 @@
             "type": "integer",
             "format": "int64",
             "description": "Pending provider coverage analyses (one per series request)."
+          },
+          "queues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueueDepthEntry"
+            },
+            "description": "Per-queue split, one entry per queue in a stable order."
           },
           "relationship_suggest": {
             "type": "integer",
@@ -29208,6 +29260,7 @@
           "errored",
           "cover_generated",
           "cover_missing",
+          "cover_hash_only",
           "cover_queued",
           "cover_running",
           "cover_failed",
@@ -29233,6 +29286,12 @@
             "format": "int64",
             "minimum": 0
           },
+          "cover_hash_only": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of `cover_missing`, issues whose thumbnail is current and only the\narchive cover's perceptual hash is still to compute.",
+            "minimum": 0
+          },
           "cover_missing": {
             "type": "integer",
             "format": "int64",
@@ -29241,11 +29300,13 @@
           "cover_queued": {
             "type": "integer",
             "format": "int64",
+            "description": "Cover jobs queued and not yet picked up by a worker.",
             "minimum": 0
           },
           "cover_running": {
             "type": "integer",
             "format": "int64",
+            "description": "Cover jobs a worker is executing right now.",
             "minimum": 0
           },
           "current_version": {
@@ -29268,12 +29329,12 @@
           "in_flight": {
             "type": "integer",
             "format": "int64",
-            "description": "Server-wide queue depth of `post_scan_thumbs` jobs (not filtered by\nlibrary — apalis-redis doesn't expose per-payload counts)."
+            "description": "Server-wide count of unfinished `post_scan_thumbs` jobs — waiting,\nretry-delayed or held by a worker (not filtered by library —\napalis-redis doesn't expose per-payload counts)."
           },
           "missing": {
             "type": "integer",
             "format": "int64",
-            "description": "Issues with `thumbnails_generated_at IS NULL` or\n`thumbnail_version < CURRENT` — cover work that the post-scan worker\nstill needs to do.",
+            "description": "Issues the post-scan worker still has cover work for: no thumbnail,\na stale `thumbnail_version`, or (see `cover_hash_only`) a current\nthumbnail whose perceptual hash is missing.",
             "minimum": 0
           },
           "page_generated": {
