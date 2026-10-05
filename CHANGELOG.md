@@ -13,6 +13,21 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.43.0](https://github.com/mbryantms/folio/compare/v0.42.0...v0.43.0) (2026-10-05)
+
+
+### Added
+
+* **admin:** Background work page — one place for everything in flight ([#1040](https://github.com/mbryantms/folio/issues/1040)) ([de0c6c7](https://github.com/mbryantms/folio/commit/de0c6c743c0024fd96498cc3ce5cd2de8d9d1aa1))
+* **admin:** thumbnail pace + ETA; scan-all batches show unfinished thumbnail work ([#1041](https://github.com/mbryantms/folio/issues/1041)) ([815d3b0](https://github.com/mbryantms/folio/commit/815d3b02fb0c2097d0b1891b0b6aa5cdf4988b16))
+
+
+### Fixed
+
+* **admin:** background-work counts include running jobs, queued scans and hash-only covers ([#1039](https://github.com/mbryantms/folio/issues/1039)) ([3bc0f56](https://github.com/mbryantms/folio/commit/3bc0f56b8b90689a528d9da4de0209ddd7164069))
+* **admin:** close orphaned scan runs, show untracked tasks, group failure toasts ([#1042](https://github.com/mbryantms/folio/issues/1042)) ([9bb10bd](https://github.com/mbryantms/folio/commit/9bb10bd0941521728ef1c23512137d9434d4fb2c))
+* **metadata:** Review tab batch list shows real status, not 'Running' for every batch ([#1044](https://github.com/mbryantms/folio/issues/1044)) ([31a5e7f](https://github.com/mbryantms/folio/commit/31a5e7f21c1148161be4363de30c28fae1412b5d))
+
 ## [0.42.0](https://github.com/mbryantms/folio/compare/v0.41.1...v0.42.0) (2026-10-05)
 
 
