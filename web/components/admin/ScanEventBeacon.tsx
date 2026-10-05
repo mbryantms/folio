@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 
 import { Activity, ListOrdered, Trash2 } from "lucide-react";
 
@@ -18,7 +17,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { useClearQueue } from "@/lib/api/mutations";
 import { useScanEvents } from "@/lib/api/scan-events";
-import { useLibraryList, useQueueDepth } from "@/lib/api/queries";
+import { useQueueDepth } from "@/lib/api/queries";
+import {
+  BACKGROUND_WORK_HREF,
+  compactCount,
+  pillBreakdown,
+} from "@/lib/admin/background-work";
 import { statusTone } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 
@@ -26,17 +30,18 @@ import { cn } from "@/lib/utils";
  * A single subscriber that lives at the admin layout level. It opens *one*
  * WebSocket for the whole admin tree, polls the apalis queue depth on a
  * steady cadence, and renders two small pills in the topbar:
- *   - WS status (connecting / scans live / closed)
+ *   - WS status (connecting / scan active / closed)
  *   - Queue depth (only when total > 0, so the topbar stays quiet at idle)
+ *
+ * Both link to the Background work page — the one surface that shows what
+ * the number is made of, across every library and job type.
  *
  * The queue pill matters operationally: it makes "draining N stale jobs"
  * legible at a glance, instead of an invisible reason for sluggishness.
  */
 export function ScanEventBeacon() {
-  const pathname = usePathname() ?? "";
   const { status, events } = useScanEvents({ toastErrors: true });
   const queue = useQueueDepth();
-  const libraryList = useLibraryList();
   const clearQueue = useClearQueue();
   const [confirmClear, setConfirmClear] = useState(false);
   const tone =
@@ -49,41 +54,25 @@ export function ScanEventBeacon() {
   const total = queue.data?.total ?? 0;
   const hasActiveScan = useMemo(() => activeScanCount(events) > 0, [events]);
   const showStreamPill = status !== "open" || hasActiveScan;
-  // Prefer the live-scan page of whichever library is currently being
-  // scanned (derived from in-flight scan events). Falls back to the
-  // library-context in the URL path, then to the admin library list.
-  // Surfaces the "go straight to the active scan" affordance the user
-  // wants without forcing them to remember which library is scanning.
-  const liveScanHref = useMemo(
-    () => liveScanHrefForEvents(events, libraryList.data, pathname),
-    [events, libraryList.data, pathname],
-  );
   const queueTone =
-    total === 0
-      ? "border-border text-muted-foreground"
-      : total < 25
-        ? statusTone("warning")
-        : statusTone("warning");
+    total === 0 ? "border-border text-muted-foreground" : statusTone("warning");
+  const breakdown = queue.data ? pillBreakdown(queue.data) : "";
 
   return (
     <div className="flex items-center gap-2">
       {total > 0 ? (
         <div className="border-warning/30 inline-flex overflow-hidden rounded-full border">
           <Link
-            href={liveScanHref}
+            href={BACKGROUND_WORK_HREF}
             className={cn(
               "hover:bg-warning/10 hover:text-warning inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase transition-colors",
               queueTone,
             )}
-            aria-label={`Job queue: ${total} pending. Open live scan.`}
-            title={
-              queue.data
-                ? `Open live scan · scan ${queue.data.scan} · scan_series ${queue.data.scan_series} · thumbs ${queue.data.post_scan_thumbs} · search ${queue.data.post_scan_search} · dictionary ${queue.data.post_scan_dictionary}`
-                : `${total} pending jobs`
-            }
+            aria-label={`Background work: ${total} jobs pending${breakdown ? ` (${breakdown})` : ""}. Open background work.`}
+            title={breakdown || `${total} pending jobs`}
           >
             <ListOrdered className="h-3 w-3" />
-            queue: {total}
+            queue: {compactCount(total)}
           </Link>
           <button
             type="button"
@@ -104,12 +93,13 @@ export function ScanEventBeacon() {
         </div>
       ) : null}
       {showStreamPill ? (
-        <span
+        <Link
+          href={BACKGROUND_WORK_HREF}
           className={cn(
             "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase",
             tone,
           )}
-          aria-label={`Scan event stream ${status}`}
+          aria-label={`Scan event stream ${status}. Open background work.`}
         >
           <Activity
             className={cn(
@@ -118,7 +108,7 @@ export function ScanEventBeacon() {
             )}
           />
           {status === "open" ? "scan active" : status}
-        </span>
+        </Link>
       ) : null}
 
       <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
@@ -197,59 +187,4 @@ function activeScanCount(events: ReturnType<typeof useScanEvents>["events"]) {
     }
   }
   return active.size;
-}
-
-function liveScanHrefForPath(pathname: string): string {
-  const match = pathname.match(/\/admin\/libraries\/([^/]+)/);
-  return match?.[1] ? `/admin/libraries/${match[1]}/scan` : "/admin/libraries";
-}
-
-/**
- * Derive the best live-scan URL for the current state. Priority:
- *   1. An active scan in the event stream → that library's scan page
- *      (so the queue pill takes the user straight to the scan that's
- *      generating the queue depth).
- *   2. A library context already in the URL → that library's scan page
- *      (covers the case where the user is already on the relevant
- *      library tree but no events have arrived yet).
- *   3. Fallback to the admin library list.
- */
-function liveScanHrefForEvents(
-  events: ReturnType<typeof useScanEvents>["events"],
-  libraries: { id: string; slug: string }[] | undefined,
-  pathname: string,
-): string {
-  const activeLibraryId = mostRecentActiveLibraryId(events);
-  if (activeLibraryId && libraries) {
-    const lib = libraries.find((l) => l.id === activeLibraryId);
-    if (lib) return `/admin/libraries/${lib.slug}/scan`;
-  }
-  return liveScanHrefForPath(pathname);
-}
-
-/** Walk the events stream newest-first; return the library_id of the
- *  most recent active scan (one we've seen `started` or `progress` for
- *  but no terminal `completed` / `failed`). */
-function mostRecentActiveLibraryId(
-  events: ReturnType<typeof useScanEvents>["events"],
-): string | null {
-  const terminated = new Set<string>();
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i];
-    if (event === undefined) continue;
-    if (event.type === "scan.completed" || event.type === "scan.failed") {
-      terminated.add(event.scan_id);
-      continue;
-    }
-    if (event.type === "scan.started" || event.type === "scan.progress") {
-      if (event.type === "scan.progress" && event.phase === "complete") {
-        terminated.add(event.scan_id);
-        continue;
-      }
-      if (!terminated.has(event.scan_id)) {
-        return event.library_id;
-      }
-    }
-  }
-  return null;
 }

@@ -214,6 +214,25 @@
         }
       }
     },
+    "/api/admin/background-work": {
+      "get": {
+        "operationId": "admin_background_work",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackgroundWorkView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/catalog-sources": {
       "post": {
         "operationId": "cbl_lists_admin_create_catalog_source",
@@ -12059,6 +12078,80 @@
           }
         }
       },
+      "ActiveScanView": {
+        "type": "object",
+        "description": "A library's scan run that has not finished.",
+        "required": [
+          "id",
+          "state",
+          "kind",
+          "started_at",
+          "stalled"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The scan-all batch this run belongs to, if any."
+          },
+          "completed": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "current_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "files_per_sec": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`library` | `series` | `issue`."
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Scanner phase (`planning`, `scanning`, `reconciling`,\n`enqueueing_thumbnails`, …); `None` until the first progress write."
+          },
+          "stalled": {
+            "type": "boolean",
+            "description": "The row says `queued` / `running` but its queue holds no job at all\n(waiting or with a worker), so nothing will advance or close it — a\nleftover from a crash or a queue clear. Excluded from `busy`. (A\nscan whose queue was cleared mid-run also reads stalled until it\nfinishes on its own.)"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "`queued` | `running`."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "ActivityEntryView": {
         "type": "object",
         "required": [
@@ -12934,6 +13027,105 @@
           "kind": {
             "type": "string",
             "description": "`cover_phash` | `variant_cover`."
+          }
+        }
+      },
+      "BackgroundWorkTotals": {
+        "type": "object",
+        "description": "Server-wide roll-up of [`BackgroundWorkView`].",
+        "required": [
+          "scans_running",
+          "scans_queued",
+          "scans_stalled",
+          "covers_remaining",
+          "hash_pending",
+          "jobs_outstanding",
+          "jobs_in_flight",
+          "jobs_dead",
+          "busy"
+        ],
+        "properties": {
+          "busy": {
+            "type": "boolean",
+            "description": "`true` when anything above is in progress. Dead jobs, stalled runs\nand work nobody has queued (`covers_remaining`, `hash_pending`) do\nnot count."
+          },
+          "covers_remaining": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues that still have cover work (thumbnail or perceptual hash)."
+          },
+          "hash_pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues whose content hash is still to compute."
+          },
+          "jobs_dead": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs that exhausted their retries."
+          },
+          "jobs_in_flight": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of `jobs_outstanding`, jobs a worker has fetched."
+          },
+          "jobs_outstanding": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unfinished jobs across every queue."
+          },
+          "scans_queued": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Scan runs accepted but not started."
+          },
+          "scans_running": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Scan runs executing (any kind: library, series, issue)."
+          },
+          "scans_stalled": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unfinished scan runs with no job behind them (see\n[`ActiveScanView::stalled`]); not counted in the two above."
+          }
+        }
+      },
+      "BackgroundWorkView": {
+        "type": "object",
+        "required": [
+          "generated_at",
+          "totals",
+          "libraries",
+          "queues",
+          "metadata_batches"
+        ],
+        "properties": {
+          "generated_at": {
+            "type": "string"
+          },
+          "libraries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryWorkView"
+            },
+            "description": "Every library, in name order (idle ones included, so the page can\nshow the whole estate)."
+          },
+          "metadata_batches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MetadataBatchWorkView"
+            }
+          },
+          "queues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueueWorkView"
+            },
+            "description": "Every queue, in a stable order."
+          },
+          "totals": {
+            "$ref": "#/components/schemas/BackgroundWorkTotals"
           }
         }
       },
@@ -21707,6 +21899,107 @@
           }
         }
       },
+      "LibraryWorkView": {
+        "type": "object",
+        "description": "Everything in flight for one library.",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "scoped_scans",
+          "issues_total",
+          "covers_ready",
+          "covers_remaining",
+          "covers_hash_only",
+          "covers_errored",
+          "cover_jobs_queued",
+          "cover_jobs_running",
+          "page_jobs_queued",
+          "page_jobs_running",
+          "hash_pending",
+          "busy"
+        ],
+        "properties": {
+          "busy": {
+            "type": "boolean",
+            "description": "`true` when a live scan or a thumbnail job is in flight for this\nlibrary. Unqueued backlog (`covers_remaining`, `hash_pending`) and\nstalled runs do not count."
+          },
+          "cover_jobs_queued": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "cover_jobs_running": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "covers_errored": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues whose last thumbnail attempt failed."
+          },
+          "covers_hash_only": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "covers_ready": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues whose cover thumbnail is current."
+          },
+          "covers_remaining": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues that still have cover work: thumbnail missing or stale, or\n(`covers_hash_only`) only the perceptual hash to compute."
+          },
+          "hash_pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues whose content hash is still to compute."
+          },
+          "id": {
+            "type": "string"
+          },
+          "issues_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active issues."
+          },
+          "name": {
+            "type": "string"
+          },
+          "page_jobs_queued": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "page_jobs_running": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "scan": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ActiveScanView",
+                "description": "The library-wide scan run in flight (running preferred over queued)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scoped_scans": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Series- or issue-scoped scan runs in flight for this library\n(stalled ones excluded)."
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
       "LinkCandidate": {
         "type": "object",
         "description": "A provider series the admin may confirm (medium-confidence search hit).",
@@ -22682,6 +22975,54 @@
           "timezone": {
             "type": "string",
             "description": "M6a: IANA timezone string for daily-bucket aggregations."
+          }
+        }
+      },
+      "MetadataBatchWorkView": {
+        "type": "object",
+        "description": "A metadata batch with member runs still to finish.",
+        "required": [
+          "id",
+          "scope",
+          "status",
+          "items_total",
+          "items_finished",
+          "created_at",
+          "stalled"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "items_finished": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Member runs that reached a terminal state."
+          },
+          "items_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "library_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "description": "`series_issues` | `saved_view` | `library_refresh`."
+          },
+          "stalled": {
+            "type": "boolean",
+            "description": "`running` with member runs outstanding, but the metadata queues hold\nno job — nothing will advance it. Excluded from `busy`."
+          },
+          "status": {
+            "type": "string",
+            "description": "`running` | `awaiting_quota`."
           }
         }
       },
@@ -24931,6 +25272,38 @@
             "type": "integer",
             "format": "int64",
             "description": "Sum across all queues — convenient for the topbar pill."
+          }
+        }
+      },
+      "QueueWorkView": {
+        "type": "object",
+        "description": "One queue's jobs by where they are held.",
+        "required": [
+          "queue",
+          "waiting",
+          "scheduled",
+          "in_flight",
+          "dead"
+        ],
+        "properties": {
+          "dead": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "in_flight": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "queue": {
+            "type": "string"
+          },
+          "scheduled": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "waiting": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },

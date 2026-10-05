@@ -275,7 +275,7 @@ function ScansCard({
         ) : null}
         <div className="flex gap-2">
           <Button asChild variant="outline" size="sm" className="flex-1">
-            <Link href={`/admin/libraries`}>Manage libraries</Link>
+            <Link href={`/admin/background-work`}>Background work</Link>
           </Button>
           <Button asChild variant="outline" size="sm" className="flex-1">
             <Link href={`/admin/findings?tab=scans`}>View runs</Link>

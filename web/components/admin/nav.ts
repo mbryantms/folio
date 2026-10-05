@@ -72,6 +72,11 @@ export function adminNav(localePrefix: string): NavSection[] {
       items: [
         { href: p(""), label: "Dashboard", icon: "Gauge", exact: true },
         {
+          href: p("/background-work"),
+          label: "Background work",
+          icon: "ListChecks",
+        },
+        {
           href: p("/libraries"),
           label: "Libraries",
           icon: "Library",

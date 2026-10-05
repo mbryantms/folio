@@ -162,6 +162,8 @@ export const queryKeys = {
   markerSearch: (filters: MarkerSearchFilters) =>
     ["markers", "search", filters] as const,
   queueDepth: ["admin", "queue-depth"] as const,
+  /** Cross-library in-flight snapshot (`/admin/background-work`). */
+  backgroundWork: ["admin", "background-work"] as const,
   /** Per-queue dead-letter counts (`/admin/queue/dead-letters`). */
   deadLetters: ["admin", "queue", "dead-letters"] as const,
   /** Paginated dead-job list for one queue (`/admin/queue/dead-jobs`). */

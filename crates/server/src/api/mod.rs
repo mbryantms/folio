@@ -17,6 +17,7 @@ pub mod archive_edit;
 pub mod arcs;
 pub mod audit;
 pub mod auth_config;
+pub mod background_work;
 pub mod cbl_lists;
 pub mod characters;
 pub mod collections;

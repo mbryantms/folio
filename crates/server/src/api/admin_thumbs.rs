@@ -241,66 +241,95 @@ pub async fn library_status(
     .into_response()
 }
 
-/// This library's thumbnail jobs by state, from the process-local job marks
-/// (re-seeded from Redis at boot).
+/// Thumbnail jobs by state, from the process-local job marks (re-seeded
+/// from Redis at boot).
 #[derive(Debug, Default, Clone, Copy)]
-struct ThumbJobCounts {
-    cover_queued: u64,
-    cover_running: u64,
-    page_map_queued: u64,
-    page_map_running: u64,
+pub(crate) struct ThumbJobCounts {
+    pub cover_queued: u64,
+    pub cover_running: u64,
+    pub page_map_queued: u64,
+    pub page_map_running: u64,
 }
 
 async fn thumbnail_job_counts(app: &AppState, lib_id: Uuid) -> ThumbJobCounts {
-    let mut counts = ThumbJobCounts::default();
+    thumbnail_job_counts_by_library(app)
+        .await
+        .get(&lib_id)
+        .copied()
+        .unwrap_or_default()
+}
+
+/// Every library's thumbnail jobs by state. Resolves the marked issue ids
+/// to their library in chunks, so the cost follows the queue size, not the
+/// library size. Best-effort: a failed lookup logs and yields no counts.
+pub(crate) async fn thumbnail_job_counts_by_library(
+    app: &AppState,
+) -> std::collections::HashMap<Uuid, ThumbJobCounts> {
+    let mut out = std::collections::HashMap::<Uuid, ThumbJobCounts>::new();
     let keys = app.thumb_job_keys().await;
     if keys.is_empty() {
-        return counts;
+        return out;
     }
-    let ids: Vec<String> = match issue::Entity::find()
-        .filter(issue::Column::LibraryId.eq(lib_id))
-        .filter(issue::Column::State.eq("active"))
-        .select_only()
-        .column(issue::Column::Id)
-        .into_tuple()
-        .all(&app.db)
-        .await
-    {
-        Ok(ids) => ids,
-        Err(e) => {
-            tracing::warn!(library_id = %lib_id, error = %e, "thumbnail queued status query failed");
-            return counts;
-        }
-    };
     let running = app.thumb_job_running_keys();
-    for id in ids {
-        for (kind, cover, page_map) in [
-            ("Cover", true, false),
-            ("Strip", false, true),
-            ("CoverAndStrip", true, true),
-        ] {
-            let key = format!("{id}:{kind}");
-            if !keys.contains(&key) {
-                continue;
+    // key = "{issue_id}:{ThumbsJobKind:?}" (`ThumbsJob::dedupe_key`).
+    let marks: Vec<(&str, &str, bool)> = keys
+        .iter()
+        .filter_map(|key| {
+            let (id, kind) = key.rsplit_once(':')?;
+            Some((id, kind, running.contains(key)))
+        })
+        .collect();
+    let mut ids: Vec<&str> = marks.iter().map(|(id, _, _)| *id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+
+    let mut library_of = std::collections::HashMap::<String, Uuid>::with_capacity(ids.len());
+    for chunk in ids.chunks(10_000) {
+        let rows: Vec<(String, Uuid)> = match issue::Entity::find()
+            .filter(issue::Column::Id.is_in(chunk.iter().copied()))
+            .select_only()
+            .column(issue::Column::Id)
+            .column(issue::Column::LibraryId)
+            .into_tuple()
+            .all(&app.db)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::warn!(error = %e, "thumbnail job status: issue lookup failed");
+                return out;
             }
-            let is_running = running.contains(&key);
-            if cover {
-                if is_running {
-                    counts.cover_running += 1;
-                } else {
-                    counts.cover_queued += 1;
-                }
+        };
+        library_of.extend(rows);
+    }
+
+    for (id, kind, is_running) in marks {
+        let Some(lib_id) = library_of.get(id) else {
+            continue;
+        };
+        let counts = out.entry(*lib_id).or_default();
+        let (cover, page_map) = match kind {
+            "Cover" => (true, false),
+            "Strip" => (false, true),
+            "CoverAndStrip" => (true, true),
+            _ => continue,
+        };
+        if cover {
+            if is_running {
+                counts.cover_running += 1;
+            } else {
+                counts.cover_queued += 1;
             }
-            if page_map {
-                if is_running {
-                    counts.page_map_running += 1;
-                } else {
-                    counts.page_map_queued += 1;
-                }
+        }
+        if page_map {
+            if is_running {
+                counts.page_map_running += 1;
+            } else {
+                counts.page_map_queued += 1;
             }
         }
     }
-    counts
+    out
 }
 
 #[utoipa::path(

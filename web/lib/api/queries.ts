@@ -87,6 +87,7 @@ import type {
   LogsResp,
   MeView,
   QueueDepthView,
+  BackgroundWorkView,
   DeadLetterView,
   DeadJobsView,
   LogWidgetListView,
@@ -961,6 +962,22 @@ export function useQueueDepth(opts?: {
     enabled,
     refetchInterval: intervalMs,
     staleTime: intervalMs,
+  });
+}
+
+/**
+ * Everything in flight across libraries and job types — the Background work
+ * page. Polls quickly while anything is running and backs off when idle.
+ */
+export function useBackgroundWork(opts?: { enabled?: boolean }) {
+  const { enabled = true } = opts ?? {};
+  return useQuery({
+    queryKey: queryKeys.backgroundWork,
+    queryFn: () => jsonFetch<BackgroundWorkView>("/admin/background-work"),
+    enabled,
+    refetchInterval: (query) =>
+      query.state.data?.totals.busy ? 3_000 : 15_000,
+    staleTime: 3_000,
   });
 }
 

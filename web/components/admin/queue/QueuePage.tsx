@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useSearchParams } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
@@ -30,6 +31,7 @@ import {
   useDeadLetters,
   useQueueDepth,
 } from "@/lib/api/queries";
+import { QUEUE_LABELS as QUEUE_LABELS_BY_KEY } from "@/lib/admin/background-work";
 import { usePurgeDeadJobs, useRetryDeadJob } from "@/lib/api/mutations";
 import type { AuditEntryView, DeadJob } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
@@ -45,8 +47,12 @@ import { cn } from "@/lib/utils";
  *     trail the worker writes on completion (success or failure).
  */
 export function QueuePage() {
+  // Deep link: `?tab=failed` from the Background work page's failed-jobs tile.
+  const deepTab = useSearchParams().get("tab");
+  const initialTab =
+    deepTab === "failed" || deepTab === "archive" ? deepTab : "overview";
   return (
-    <Tabs defaultValue="overview" className="mt-2">
+    <Tabs defaultValue={initialTab} className="mt-2">
       <TabsList>
         <TabsTrigger value="overview">Overview</TabsTrigger>
         <TabsTrigger value="failed">Failed jobs</TabsTrigger>
@@ -85,27 +91,8 @@ const QUEUE_LABELS: { key: string; label: string }[] = [
   { key: "provider_coverage", label: "Provider coverage" },
 ];
 
-/** Friendly labels for every apalis queue. */
-const QUEUE_LABEL_MAP: Record<string, string> = {
-  scan: "Library scans",
-  scan_series: "Series scans",
-  post_scan_thumbs: "Thumbnails",
-  post_scan_search: "Search index",
-  post_scan_dictionary: "Dictionary",
-  metadata_search_series: "Metadata search (series)",
-  metadata_search_issue: "Metadata search (issue)",
-  metadata_apply_series: "Metadata apply (series)",
-  metadata_apply_issue: "Metadata apply (issue)",
-  rewrite_issue_sidecars: "Sidecar rewrite",
-  archive_edit: "Archive edits",
-  backfill: "Backfills",
-  hash_backfill: "Content hashing",
-  relationship_suggest: "Relationship suggestions",
-  provider_coverage: "Provider coverage",
-};
-
 function queueLabel(key: string): string {
-  return QUEUE_LABEL_MAP[key] ?? key;
+  return QUEUE_LABELS_BY_KEY[key] ?? key;
 }
 
 function LoaderRow({ label }: { label: string }) {

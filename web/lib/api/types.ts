@@ -209,6 +209,12 @@ export type SetDuplicateDecisionReq = Schemas["SetDuplicateDecisionReq"];
  *  server documents the query param as a string (WP-3.3). */
 export type DuplicateKindFilter = "all" | DuplicateKind;
 export type QueueDepthView = Schemas["QueueDepthView"];
+export type BackgroundWorkView = Schemas["BackgroundWorkView"];
+export type BackgroundWorkTotals = Schemas["BackgroundWorkTotals"];
+export type LibraryWorkView = Schemas["LibraryWorkView"];
+export type ActiveScanView = Schemas["ActiveScanView"];
+export type QueueWorkView = Schemas["QueueWorkView"];
+export type MetadataBatchWorkView = Schemas["MetadataBatchWorkView"];
 export type QueueClearTarget = Schemas["QueueClearTarget"];
 export type QueueClearReq = Schemas["QueueClearReq"];
 export type QueueClearResp = Schemas["QueueClearResp"];
