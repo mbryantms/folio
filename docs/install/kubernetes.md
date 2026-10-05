@@ -8,7 +8,7 @@ project. This page sketches the wiring; the rest is the operator's
 call.
 
 If you're deploying for a single user / household, compose is much
-easier; see [`README.md`](../../README.md#quick-start-operators).
+easier; see [`README.md`](../../README.md#getting-started).
 
 ## Topology
 

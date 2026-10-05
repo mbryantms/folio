@@ -1,7 +1,7 @@
 # Upgrading Folio
 
 Folio ships container images via GHCR. The compose stack you got from
-[`README.md`](../../README.md#quick-start-operators) pins both images to
+[`README.md`](../../README.md#getting-started) pins both images to
 the tag you set as `TAG` in `.env`. Upgrade is a two-command operation
 for routine releases.
 
