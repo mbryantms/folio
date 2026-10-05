@@ -989,6 +989,7 @@ export function Reader({
       // Reader surface token (see globals.css `--reader-bg`): the
       // route-level loading skeleton consumes the same token so the
       // fallback never flashes white before the reader paints.
+      data-surface="reader"
       className="bg-reader-bg min-h-screen text-neutral-200"
     >
       <ReaderSkipLinks

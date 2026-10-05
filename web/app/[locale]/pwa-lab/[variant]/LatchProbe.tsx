@@ -67,7 +67,7 @@ function sampleTopEdge(): string {
   }
 }
 
-function startLogger() {
+export function startLogger() {
   if (window.__folioProbeStarted) return;
   window.__folioProbeStarted = true;
   const log = (window.__folioProbeLog ??= []);
@@ -361,6 +361,79 @@ const TRIGGERS: { label: string; run: () => void }[] = [
       }),
   },
   {
+    label: "hide the sticky header, 56px fixed bar behind it",
+    run: () =>
+      forMs(() => {
+        const h = document.getElementById("probe-header");
+        const d = document.createElement("div");
+        d.style.cssText =
+          "position:fixed;top:0;left:0;right:0;height:56px;z-index:1;background:#374151";
+        document.body.append(d);
+        if (h) h.style.display = "none";
+        return () => {
+          if (h) h.style.display = "";
+          d.remove();
+        };
+      }),
+  },
+  {
+    // Every bar that has passed on the iPad was position: sticky (the real
+    // headers, the test pages); every bar that failed was position: fixed.
+    // Same test, but the bar left at the top is the STICKY header shrunk
+    // to 12px (contents hidden), not a fixed one.
+    label: "shrink the sticky header to 12px (sticky, not fixed)",
+    run: () =>
+      forMs(() => {
+        const h = document.getElementById("probe-header");
+        if (!h) return () => undefined;
+        const prev = h.style.cssText;
+        h.style.height = "12px";
+        h.style.overflow = "hidden";
+        h.style.color = "transparent";
+        return () => {
+          h.style.cssText = prev;
+        };
+      }),
+  },
+  {
+    // Every bar that has passed on the iPad was position: sticky (the real
+    // headers, the test pages); every bar that failed was position: fixed.
+    // Same test, but the bar left at the top is the STICKY header shrunk
+    // to 20px (contents hidden), not a fixed one.
+    label: "shrink the sticky header to 20px (sticky, not fixed)",
+    run: () =>
+      forMs(() => {
+        const h = document.getElementById("probe-header");
+        if (!h) return () => undefined;
+        const prev = h.style.cssText;
+        h.style.height = "20px";
+        h.style.overflow = "hidden";
+        h.style.color = "transparent";
+        return () => {
+          h.style.cssText = prev;
+        };
+      }),
+  },
+  {
+    // Every bar that has passed on the iPad was position: sticky (the real
+    // headers, the test pages); every bar that failed was position: fixed.
+    // Same test, but the bar left at the top is the STICKY header shrunk
+    // to 32px (contents hidden), not a fixed one.
+    label: "shrink the sticky header to 32px (sticky, not fixed)",
+    run: () =>
+      forMs(() => {
+        const h = document.getElementById("probe-header");
+        if (!h) return () => undefined;
+        const prev = h.style.cssText;
+        h.style.height = "32px";
+        h.style.overflow = "hidden";
+        h.style.color = "transparent";
+        return () => {
+          h.style.cssText = prev;
+        };
+      }),
+  },
+  {
     label: "lock document scroll (overflow hidden on html)",
     run: () =>
       forMs(() => {
@@ -371,7 +444,7 @@ const TRIGGERS: { label: string; run: () => void }[] = [
   },
 ];
 
-function addNote(what: string) {
+export function addNote(what: string) {
   window.__folioProbeLog?.push({
     t: Date.now(),
     path: location.pathname,
@@ -379,7 +452,7 @@ function addNote(what: string) {
   });
 }
 
-function snapshot(): string {
+export function snapshot(): string {
   return (window.__folioProbeLog ?? [])
     .map(
       (e) => `${new Date(e.t).toISOString().slice(11, 23)} ${e.path} ${e.msg}`,

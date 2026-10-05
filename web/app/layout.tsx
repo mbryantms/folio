@@ -143,19 +143,23 @@ export default async function RootLayout({
         ))}
       </head>
       <body className="bg-background text-foreground min-h-full antialiased">
-        {/* Top-edge backstop for the installed iPadOS app. iOS paints the
-            status-bar strip in the colour of the fixed/sticky bar it finds
-            at the top edge; the moment it finds NONE it switches to blurring
-            the page content into the strip and never switches back for the
-            life of the document (iPadOS 27.0.1, measured with the /pwa-lab
-            probe: hiding the header for 2 s latched it; navigation and
-            head churn alone did not). Route changes have such a moment —
-            the loading skeleton has no header — so this bar exists on every
-            page from first paint, under every real header (z-0 vs their
-            z-20/z-30). WebKit ignores edge bars ≤ 10px. */}
+        {/* Top-edge bar for the installed iPadOS app. iPadOS 27 paints the
+            status-bar strip in the colour of the fixed/sticky element it
+            finds at the top edge — and the first time that ELEMENT changes
+            (a header unmounts on a layout switch, the reader chrome takes
+            over, an overlay opens) it switches to blurring the page content
+            into the strip and never recovers for the life of the document.
+            Measured with /pwa-lab Q: shrinking the same header to 12px kept
+            the strip clean; swapping in any other bar, fixed or sticky, at
+            any height, latched it. So this one element is always what iOS
+            samples: present from first paint, above every header and
+            overlay, 12px (WebKit ignores bars ≤ 10px), in the page colour
+            so it is invisible; the reader turns it black via
+            `--top-edge-color`. Sticky + negative margin: no layout cost. */}
         <div
+          id="top-edge"
           aria-hidden="true"
-          className="bg-background pointer-events-none fixed inset-x-0 top-0 z-0 h-3"
+          className="pointer-events-none sticky top-0 z-[9999] -mb-3 h-3 bg-[var(--top-edge-color,hsl(var(--background)))]"
         />
         <ThemeProvider defaultTheme={theme} nonce={nonce}>
           <NextIntlClientProvider messages={messages}>
