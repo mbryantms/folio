@@ -72,15 +72,27 @@ describe("iOS 26 scroll edge effect", () => {
     expect(src).not.toMatch(/pt-\(--safe-top\) pb-\(--safe-bottom\)/);
   });
 
-  it("the root layout keeps a fixed top-edge bar under every header", () => {
-    // iPadOS 27 latches into content blur the first time it finds no
-    // fixed/sticky bar at the top edge (route-change skeletons have none).
+  it("the root layout keeps ONE persistent top-edge element above every header", () => {
+    // iPadOS 27 latches into content blur the first time the element it
+    // samples at the top edge CHANGES (a header unmounting on a layout
+    // switch, the reader chrome taking over, an overlay opening). Measured
+    // with /pwa-lab Q: shrinking the same header kept the strip clean;
+    // swapping in any other bar, at any height, fixed or sticky, latched
+    // it. So #top-edge is always the sampled element: first in <body>,
+    // sticky, above everything, 12px (WebKit ignores bars ≤ 10px), in the
+    // page colour; the reader turns it black.
     const src = read("app/layout.tsx");
     expect(src).toMatch(
-      /className="bg-background pointer-events-none fixed inset-x-0 top-0 z-0 h-3"/,
+      /id="top-edge"[\s\S]{0,200}className="pointer-events-none sticky top-0 z-\[9999\] -mb-3 h-3 bg-\[var\(--top-edge-color,hsl\(var\(--background\)\)\)\]"/,
     );
-    expect(src.indexOf("fixed inset-x-0 top-0 z-0 h-3")).toBeLessThan(
+    expect(src.indexOf('id="top-edge"')).toBeLessThan(
       src.indexOf("<ThemeProvider"),
     );
+    expect(read("styles/globals.css")).toMatch(
+      /html:has\(\[data-surface="reader"\]\)\s*\{\s*--top-edge-color: #000;/,
+    );
+    expect(
+      read("app/[locale]/read/[seriesSlug]/[issueSlug]/Reader.tsx"),
+    ).toContain('data-surface="reader"');
   });
 });

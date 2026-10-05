@@ -242,6 +242,12 @@
   --reader-top: var(--safe-top);
 }
 
+/* The root layout's #top-edge bar follows the surface it sits on: black in
+ * the reader (`data-surface="reader"` on the reader's root element). */
+html:has([data-surface="reader"]) {
+  --top-edge-color: #000;
+}
+
 /*
  * Installed app: the reader always keeps a solid black bar at the top
  * edge, at least 12px tall. iOS / iPadOS 26 extend a fixed edge bar's

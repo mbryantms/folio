@@ -52,6 +52,13 @@ export const LAB_VARIANTS: readonly LabVariant[] = [
     question:
       "Force-quit first. One trigger per launch; note clean/faded. Logs head changes + top-edge element across routes.",
   },
+  {
+    id: "q-console",
+    letter: "Q",
+    title: "Experiment console",
+    question:
+      "Describe the bar to leave at the top (fixed/sticky, height, scroll lock…), Apply, note clean/faded. Reload between runs.",
+  },
 ] as const;
 
 export function labVariant(id: string): LabVariant | undefined {

@@ -25,13 +25,22 @@ import type { MetadataRoute } from "next";
  * asserts every referenced file exists at its declared size.
  */
 export default function manifest(): MetadataRoute.Manifest {
+  // Dev-only: a LAN dev server has no Rust API behind it, so an installed
+  // app launching at "/" lands on the error boundary. Point the installed
+  // app at a lab page instead (the iPadOS status-bar investigation):
+  //   PWA_LAB_START_URL=/pwa-lab/q-console pnpm dev
+  // Unset in production; iOS reads the manifest at Add-to-Home-Screen time.
+  const labStart =
+    process.env.NODE_ENV !== "production"
+      ? process.env.PWA_LAB_START_URL
+      : undefined;
   return {
-    id: "/",
-    name: "Folio",
-    short_name: "Folio",
+    id: labStart ?? "/",
+    name: labStart ? "Folio lab" : "Folio",
+    short_name: labStart ? "Folio lab" : "Folio",
     description: "Self-hostable comic reader",
-    start_url: "/",
-    scope: "/",
+    start_url: labStart ?? "/",
+    scope: labStart ? "/pwa-lab" : "/",
     display: "standalone",
     // `any` rather than locking portrait — the reader is meaningfully
     // better in landscape on tablets, and the library grid uses the
