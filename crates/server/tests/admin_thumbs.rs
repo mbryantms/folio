@@ -1219,8 +1219,38 @@ async fn scan_batch_detail_reports_thumbnail_work_that_outlives_the_scans() {
         st.try_mark_thumb_job_queued(format!("{}:CoverAndStrip", ids[1]))
             .await
     );
+    // Marks alone (their jobs died, nothing left in Redis) must not keep
+    // the "still generating" banner alive.
+    let (_, body) = get(&app, &auth, &path).await;
+    assert_eq!(body["post_scan"]["thumb_jobs"], 0);
+
+    use redis::AsyncCommands;
+    let cfg = st.jobs.post_scan_thumbs_storage.get_config().clone();
+    let mut conn = st.jobs.redis.clone();
+    let _: i64 = conn
+        .rpush(cfg.active_jobs_list(), &["j1", "j2"])
+        .await
+        .unwrap();
     let (_, body) = get(&app, &auth, &path).await;
     assert_eq!(body["state"], "complete");
     assert_eq!(body["post_scan"]["thumb_jobs"], 2);
     assert_eq!(body["post_scan"]["libraries_pending"], 1);
+
+    // Once a newer batch exists, this one stops claiming the library's
+    // thumbnail work.
+    entity::scan_batch::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        kind: Set("scan_all".into()),
+        actor_id: Set(None),
+        force: Set(false),
+        started_at: Set(now + chrono::Duration::seconds(60)),
+        ended_at: Set(None),
+        library_count: Set(0),
+        state: Set("running".into()),
+    }
+    .insert(&st.db)
+    .await
+    .unwrap();
+    let (_, body) = get(&app, &auth, &path).await;
+    assert_eq!(body["post_scan"]["thumb_jobs"], 0);
 }

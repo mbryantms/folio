@@ -152,6 +152,57 @@ pub struct BatchPostScanView {
     pub libraries_pending: u32,
 }
 
+/// Thumbnail jobs still in flight for a batch's member libraries.
+///
+/// Reported only for the **most recent** batch — attribution is by library,
+/// so an older batch would otherwise claim today's thumbnail work — and
+/// only while the thumbnail queue itself still holds jobs: the per-library
+/// counts come from process-local marks, and a mark whose job died would
+/// keep the dashboard's "still generating" banner (and its poll) alive
+/// forever.
+async fn batch_post_scan(
+    app: &AppState,
+    batch_id: Uuid,
+    batch_started_at: DateTime<FixedOffset>,
+    member_runs: &[CrossLibScanRunView],
+) -> BatchPostScanView {
+    let mut post_scan = BatchPostScanView::default();
+    let newer = scan_batch::Entity::find()
+        .filter(scan_batch::Column::StartedAt.gt(batch_started_at))
+        .filter(scan_batch::Column::Id.ne(batch_id))
+        .count(&app.db)
+        .await
+        .unwrap_or(0);
+    if newer > 0 {
+        return post_scan;
+    }
+    let queue_live = app.jobs.queue_counts().await.is_ok_and(|counts| {
+        counts
+            .iter()
+            .any(|c| c.queue == "post_scan_thumbs" && c.outstanding() > 0)
+    });
+    if !queue_live {
+        return post_scan;
+    }
+    let thumb_jobs = super::admin_thumbs::thumbnail_job_counts_by_library(app).await;
+    let mut seen = std::collections::HashSet::new();
+    for run in member_runs {
+        let Ok(lib_id) = Uuid::parse_str(&run.library_id) else {
+            continue;
+        };
+        if !seen.insert(lib_id) {
+            continue;
+        }
+        if let Some(c) = thumb_jobs.get(&lib_id)
+            && c.jobs > 0
+        {
+            post_scan.thumb_jobs += c.jobs;
+            post_scan.libraries_pending += 1;
+        }
+    }
+    post_scan
+}
+
 /// Build per-batch [`BatchRunTally`]s for a set of batch ids in one query.
 async fn tally_runs(app: &AppState, batch_ids: &[Uuid]) -> HashMap<Uuid, BatchRunTally> {
     let mut out: HashMap<Uuid, BatchRunTally> = HashMap::new();
@@ -329,6 +380,8 @@ pub async fn scan_batch_detail(
         }
     };
 
+    let batch_started_at = batch.started_at;
+
     // Tally + aggregate in one pass over the member runs.
     let mut tally = BatchRunTally::default();
     let mut totals = BatchTotals::default();
@@ -363,23 +416,7 @@ pub async fn scan_batch_detail(
         .await
         .unwrap_or(0);
 
-    let thumb_jobs = super::admin_thumbs::thumbnail_job_counts_by_library(&app).await;
-    let mut post_scan = BatchPostScanView::default();
-    let mut seen = std::collections::HashSet::new();
-    for run in &member_runs {
-        let Ok(lib_id) = Uuid::parse_str(&run.library_id) else {
-            continue;
-        };
-        if !seen.insert(lib_id) {
-            continue;
-        }
-        if let Some(c) = thumb_jobs.get(&lib_id)
-            && c.jobs > 0
-        {
-            post_scan.thumb_jobs += c.jobs;
-            post_scan.libraries_pending += 1;
-        }
-    }
+    let post_scan = batch_post_scan(&app, batch_id, batch_started_at, &member_runs).await;
 
     Json(ScanBatchDetailView {
         batch: ScanBatchView::from_model(batch, tally),
