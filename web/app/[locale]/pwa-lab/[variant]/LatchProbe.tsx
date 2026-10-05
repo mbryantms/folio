@@ -266,14 +266,17 @@ const TRIGGERS: { label: string; run: () => void }[] = [
       }),
   },
   {
-    label: "hide the sticky header, 12px fixed bar behind it",
+    // z-index 1: ABOVE the root layout's 12px backstop (z-0), so this bar —
+    // not the backstop — is what the top-edge sample hits. The first
+    // version of this trigger sat under the backstop and tested 12px twice.
+    label: "hide the sticky header, 16px fixed bar behind it",
     run: () =>
       forMs(() => {
         const h = document.getElementById("probe-header");
         const d = document.createElement("div");
         d.style.cssText =
-          "position:fixed;top:0;left:0;right:0;height:12px;z-index:0;background:#374151";
-        document.body.prepend(d);
+          "position:fixed;top:0;left:0;right:0;height:16px;z-index:1;background:#374151";
+        document.body.append(d);
         if (h) h.style.display = "none";
         return () => {
           if (h) h.style.display = "";
@@ -282,14 +285,74 @@ const TRIGGERS: { label: string; run: () => void }[] = [
       }),
   },
   {
+    // z-index 1: ABOVE the root layout's 12px backstop (z-0), so this bar —
+    // not the backstop — is what the top-edge sample hits. The first
+    // version of this trigger sat under the backstop and tested 12px twice.
+    label: "hide the sticky header, 20px fixed bar behind it",
+    run: () =>
+      forMs(() => {
+        const h = document.getElementById("probe-header");
+        const d = document.createElement("div");
+        d.style.cssText =
+          "position:fixed;top:0;left:0;right:0;height:20px;z-index:1;background:#374151";
+        document.body.append(d);
+        if (h) h.style.display = "none";
+        return () => {
+          if (h) h.style.display = "";
+          d.remove();
+        };
+      }),
+  },
+  {
+    // z-index 1: ABOVE the root layout's 12px backstop (z-0), so this bar —
+    // not the backstop — is what the top-edge sample hits. The first
+    // version of this trigger sat under the backstop and tested 12px twice.
+    label: "hide the sticky header, 24px fixed bar behind it",
+    run: () =>
+      forMs(() => {
+        const h = document.getElementById("probe-header");
+        const d = document.createElement("div");
+        d.style.cssText =
+          "position:fixed;top:0;left:0;right:0;height:24px;z-index:1;background:#374151";
+        document.body.append(d);
+        if (h) h.style.display = "none";
+        return () => {
+          if (h) h.style.display = "";
+          d.remove();
+        };
+      }),
+  },
+  {
+    // z-index 1: ABOVE the root layout's 12px backstop (z-0), so this bar —
+    // not the backstop — is what the top-edge sample hits. The first
+    // version of this trigger sat under the backstop and tested 12px twice.
     label: "hide the sticky header, 32px fixed bar behind it",
     run: () =>
       forMs(() => {
         const h = document.getElementById("probe-header");
         const d = document.createElement("div");
         d.style.cssText =
-          "position:fixed;top:0;left:0;right:0;height:32px;z-index:0;background:#374151";
-        document.body.prepend(d);
+          "position:fixed;top:0;left:0;right:0;height:32px;z-index:1;background:#374151";
+        document.body.append(d);
+        if (h) h.style.display = "none";
+        return () => {
+          if (h) h.style.display = "";
+          d.remove();
+        };
+      }),
+  },
+  {
+    // z-index 1: ABOVE the root layout's 12px backstop (z-0), so this bar —
+    // not the backstop — is what the top-edge sample hits. The first
+    // version of this trigger sat under the backstop and tested 12px twice.
+    label: "hide the sticky header, 44px fixed bar behind it",
+    run: () =>
+      forMs(() => {
+        const h = document.getElementById("probe-header");
+        const d = document.createElement("div");
+        d.style.cssText =
+          "position:fixed;top:0;left:0;right:0;height:44px;z-index:1;background:#374151";
+        document.body.append(d);
         if (h) h.style.display = "none";
         return () => {
           if (h) h.style.display = "";
