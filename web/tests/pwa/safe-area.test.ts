@@ -62,13 +62,13 @@ describe("safeTopOverride", () => {
         },
         true,
       ),
-    ).toBe("0px");
+    ).toBe("12px");
     expect(
       safeTopOverride(
         { ...IPAD, innerWidth: 834, innerHeight: 1194 - 47 },
         true,
       ),
-    ).toBe("0px");
+    ).toBe("12px");
   });
 
   it("keeps env() when the standalone viewport is edge to edge (iPadOS ≤ 26.0, iPhone)", () => {

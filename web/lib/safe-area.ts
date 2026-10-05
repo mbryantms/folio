@@ -15,9 +15,11 @@
  * standalone mode the viewport spans the full screen when it runs under
  * the status bar, and is shorter by the bar's height when the OS has
  * reserved it. `reservedTopInset` measures that and, when the OS is
- * already holding the space, the probe pins `--safe-top` to 0 so every
- * consumer (topbar height, reader chrome padding, status-bar scrim)
- * collapses together. Off standalone, or when the viewport genuinely
+ * already holding the space, the probe pins `--safe-top` down to
+ * `TOP_EDGE_PX` so every consumer (topbar height, reader chrome padding,
+ * status-bar scrim) collapses together — to the height of the root
+ * layout's `#top-edge` bar rather than 0, because that bar covers the top
+ * of the viewport in the installed app and content must clear it. Off standalone, or when the viewport genuinely
  * runs edge to edge (iPhone, iPadOS ≤ 26.0), `env()` stays in charge.
  *
  * Stage Manager / iPadOS windowed mode is out of scope: there the window
@@ -28,6 +30,10 @@
 /** Anything at least this tall between screen edge and viewport top is
  *  the OS reserving a status bar (iPad: ~24pt, iPhone: ≥ 44pt). */
 export const MIN_RESERVED_STATUS_BAR_PX = 20;
+
+/** Height of the root layout's `#top-edge` bar in the installed app; the
+ *  floor for `--safe-top` there (see `globals.css`). */
+export const TOP_EDGE_PX = 12;
 
 export interface ViewportGeometry {
   /** `window.innerWidth` */
@@ -77,5 +83,5 @@ export function safeTopOverride(
       : Math.min(g.screenWidth, g.screenHeight);
   // Windowed mode and keyboards can shorten the viewport for unrelated reasons.
   if (Math.abs(fullWidth - g.innerWidth) > 2 || inset > 100) return null;
-  return inset >= MIN_RESERVED_STATUS_BAR_PX ? "0px" : null;
+  return inset >= MIN_RESERVED_STATUS_BAR_PX ? `${TOP_EDGE_PX}px` : null;
 }

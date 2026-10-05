@@ -48,7 +48,7 @@ describe("SafeAreaProbe (jsdom)", () => {
       vi.advanceTimersByTime(100);
     });
     expect(document.documentElement.style.getPropertyValue("--safe-top")).toBe(
-      "0px",
+      "12px",
     );
   });
 
@@ -63,7 +63,7 @@ describe("SafeAreaProbe (jsdom)", () => {
       window.dispatchEvent(new Event("resize"));
     });
     expect(document.documentElement.style.getPropertyValue("--safe-top")).toBe(
-      "0px",
+      "12px",
     );
   });
 
@@ -82,7 +82,7 @@ describe("SafeAreaProbe (jsdom)", () => {
       vi.advanceTimersByTime(100);
     });
     expect(document.documentElement.style.getPropertyValue("--safe-top")).toBe(
-      "0px",
+      "12px",
     );
   });
 
@@ -105,7 +105,7 @@ describe("SafeAreaProbe (jsdom)", () => {
       vi.advanceTimersByTime(100);
     });
     expect(document.documentElement.style.getPropertyValue("--safe-top")).toBe(
-      "0px",
+      "12px",
     );
     unmount();
     expect(document.documentElement.style.getPropertyValue("--safe-top")).toBe(

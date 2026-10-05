@@ -242,6 +242,16 @@
   --reader-top: var(--safe-top);
 }
 
+/* Installed app: content never sits inside the root layout's 12px
+ * #top-edge bar, which is above every header and overlay there.
+ * `TOP_EDGE_PX` in lib/safe-area.ts is the same floor for the value
+ * `SafeAreaProbe` pins when the OS reserves the status bar. */
+@media (display-mode: standalone) {
+  :root {
+    --safe-top: max(env(safe-area-inset-top, 0px), 12px);
+  }
+}
+
 /* The root layout's #top-edge bar follows the surface it sits on: black in
  * the reader (`data-surface="reader"` on the reader's root element). */
 html:has([data-surface="reader"]) {

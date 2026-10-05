@@ -155,11 +155,16 @@ export default async function RootLayout({
             samples: present from first paint, above every header and
             overlay, 12px (WebKit ignores bars ≤ 10px), in the page colour
             so it is invisible; the reader turns it black via
-            `--top-edge-color`. Sticky + negative margin: no layout cost. */}
+            `--top-edge-color`. Sticky + negative margin: no layout cost.
+            Installed app only — a browser tab has no status bar to sample,
+            and there the bar would sit over the header's top 12px (the
+            search field's border). In the app `--safe-top` is floored at
+            12px so content clears it. Display mode never changes within a
+            document, so this is still one unchanging element. */}
         <div
           id="top-edge"
           aria-hidden="true"
-          className="pointer-events-none sticky top-0 z-[9999] -mb-3 h-3 bg-[var(--top-edge-color,hsl(var(--background)))]"
+          className="standalone:block pointer-events-none sticky top-0 z-[9999] -mb-3 hidden h-3 bg-[var(--top-edge-color,hsl(var(--background)))]"
         />
         <ThemeProvider defaultTheme={theme} nonce={nonce}>
           <NextIntlClientProvider messages={messages}>

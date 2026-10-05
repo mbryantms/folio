@@ -80,16 +80,21 @@ describe("iOS 26 scroll edge effect", () => {
     // swapping in any other bar, at any height, fixed or sticky, latched
     // it. So #top-edge is always the sampled element: first in <body>,
     // sticky, above everything, 12px (WebKit ignores bars ≤ 10px), in the
-    // page colour; the reader turns it black.
+    // page colour; the reader turns it black. Installed app only, with
+    // --safe-top floored at its height so headers never sit under it
+    // (in a browser tab it clipped the header search field).
     const src = read("app/layout.tsx");
     expect(src).toMatch(
-      /id="top-edge"[\s\S]{0,200}className="pointer-events-none sticky top-0 z-\[9999\] -mb-3 h-3 bg-\[var\(--top-edge-color,hsl\(var\(--background\)\)\)\]"/,
+      /id="top-edge"[\s\S]{0,200}className="standalone:block pointer-events-none sticky top-0 z-\[9999\] -mb-3 hidden h-3 bg-\[var\(--top-edge-color,hsl\(var\(--background\)\)\)\]"/,
     );
     expect(src.indexOf('id="top-edge"')).toBeLessThan(
       src.indexOf("<ThemeProvider"),
     );
     expect(read("styles/globals.css")).toMatch(
       /html:has\(\[data-surface="reader"\]\)\s*\{\s*--top-edge-color: #000;/,
+    );
+    expect(read("styles/globals.css")).toContain(
+      "--safe-top: max(env(safe-area-inset-top, 0px), 12px);",
     );
     expect(
       read("app/[locale]/read/[seriesSlug]/[issueSlug]/Reader.tsx"),
