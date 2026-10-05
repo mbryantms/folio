@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.40.0](https://github.com/mbryantms/folio/compare/v0.39.2...v0.40.0) (2026-10-05)
+
+
+### Added
+
+* **web:** /pwa-lab probe — isolate head churn from "no top bar" moments ([#1021](https://github.com/mbryantms/folio/issues/1021)) ([6703b2b](https://github.com/mbryantms/folio/commit/6703b2b31c4ea7affac05d2796a58d7743c75049))
+
+
+### Dependencies
+
+* update dependency @types/node to v24.19.1 ([#1019](https://github.com/mbryantms/folio/issues/1019)) ([7217e60](https://github.com/mbryantms/folio/commit/7217e602c8c416ad7dc68106d36eb0f019ae630d))
+
 ## [0.39.2](https://github.com/mbryantms/folio/compare/v0.39.1...v0.39.2) (2026-10-04)
 
 
