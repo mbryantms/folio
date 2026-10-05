@@ -1024,3 +1024,109 @@ async fn delete_json(app: &TestApp, auth: &Authed, path: &str) -> (StatusCode, s
 // Suppress unused-import warnings for helpers used only by some tests.
 #[allow(dead_code)]
 fn _unused(_: &Path) {}
+
+// ───── Cross-library snapshot (`/admin/background-work`) ─────
+
+#[tokio::test]
+async fn background_work_joins_scans_thumbnails_and_queues() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let (lib_id, ids) = seed_library_with_issues(
+        &app,
+        &[
+            (true, false),  // thumbnail current, phash missing → hash-only
+            (false, false), // missing
+            (false, true),  // missing + errored
+        ],
+    )
+    .await;
+    let st = app.state();
+
+    // A running library scan with persisted progress, plus a queued
+    // series-scoped run.
+    let now = Utc::now().fixed_offset();
+    for (state, kind, stats) in [
+        (
+            "running",
+            "library",
+            serde_json::json!({ "progress": {
+                "phase": "scanning", "completed": 3, "total": 10,
+                "current_label": "Batman", "files_per_sec": 12.5,
+            }}),
+        ),
+        ("queued", "series", serde_json::json!({})),
+    ] {
+        entity::scan_run::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            library_id: Set(lib_id),
+            state: Set(state.into()),
+            started_at: Set(now),
+            ended_at: Set(None),
+            stats: Set(stats),
+            error: Set(None),
+            kind: Set(kind.into()),
+            series_id: Set(None),
+            issue_id: Set(None),
+            batch_id: Set(None),
+        }
+        .insert(&st.db)
+        .await
+        .unwrap();
+    }
+
+    // Two cover jobs marked for this library, one of them executing.
+    assert!(
+        st.try_mark_thumb_job_queued(format!("{}:Cover", ids[1]))
+            .await
+    );
+    assert!(
+        st.try_mark_thumb_job_queued(format!("{}:Cover", ids[2]))
+            .await
+    );
+    let _running = st.mark_thumb_job_running(format!("{}:Cover", ids[2]));
+
+    // One thumbnail job waiting in Redis.
+    use redis::AsyncCommands;
+    let cfg = st.jobs.post_scan_thumbs_storage.get_config().clone();
+    let mut conn = st.jobs.redis.clone();
+    let _: i64 = conn.rpush(cfg.active_jobs_list(), "w1").await.unwrap();
+
+    let (status, body) = get(&app, &auth, "/api/admin/background-work").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let totals = &body["totals"];
+    assert_eq!(totals["scans_running"], 1);
+    assert_eq!(totals["scans_queued"], 1);
+    assert_eq!(totals["covers_remaining"], 3);
+    assert_eq!(totals["jobs_outstanding"], 1);
+    assert_eq!(totals["busy"], true);
+
+    let libs = body["libraries"].as_array().expect("libraries");
+    let lib = libs
+        .iter()
+        .find(|l| l["id"] == lib_id.to_string())
+        .expect("seeded library present");
+    assert_eq!(lib["scan"]["state"], "running");
+    assert_eq!(lib["scan"]["phase"], "scanning");
+    assert_eq!(lib["scan"]["completed"], 3);
+    assert_eq!(lib["scan"]["total"], 10);
+    assert_eq!(lib["scan"]["current_label"], "Batman");
+    assert_eq!(lib["scoped_scans"], 1);
+    assert_eq!(lib["issues_total"], 3);
+    assert_eq!(lib["covers_ready"], 1);
+    assert_eq!(lib["covers_hash_only"], 1);
+    assert_eq!(lib["covers_remaining"], 3);
+    assert_eq!(lib["covers_errored"], 1);
+    assert_eq!(lib["cover_jobs_queued"], 1);
+    assert_eq!(lib["cover_jobs_running"], 1);
+    assert_eq!(lib["busy"], true);
+
+    let thumbs = body["queues"]
+        .as_array()
+        .expect("queues")
+        .iter()
+        .find(|q| q["queue"] == "post_scan_thumbs")
+        .expect("thumbs queue");
+    assert_eq!(thumbs["waiting"], 1);
+    assert_eq!(body["queues"].as_array().unwrap().len(), 15);
+}

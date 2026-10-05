@@ -96,6 +96,29 @@ dashboard reads `GET /admin/scan-batches[/{id}]` for the rollup and overlays
 live `/ws/scan-events` (tagged with `batch_id` on `Started`/`Completed`/
 `Failed`; `Progress` is correlated by `library_id`).
 
+## In-flight work (Background work page)
+
+The two streams above are history. "What is the server doing right now" is
+one snapshot, `GET /admin/background-work`
+([`api/background_work.rs`](../../crates/server/src/api/background_work.rs)),
+rendered at `/admin/background-work`. The header queue pill, the dashboard
+Scans card and the nav entry all link there; each row links on to the
+surface that owns the detail (a library's Live scan page, `/admin/queue`,
+`/admin/metadata`).
+
+- **Per library**: the unfinished library scan run (`scan_runs` in `queued`
+  / `running`, with its persisted `stats.progress`), cover readiness from the
+  issue rows (same predicates as `post_scan::needs_cover_work_filter`), this
+  process's thumbnail jobs by state, content-hash backlog.
+- **Per queue**: `JobRuntime::queue_counts` — waiting (`active` list),
+  retry-delayed (`scheduled`), held by a worker (per-consumer `inflight`
+  sets) — plus dead-letter counts. `Storage::len()` alone is only "waiting";
+  don't use it for a depth number.
+- **Metadata batches** with member runs still to finish.
+
+Page-strip readiness is not in the snapshot (it is a per-file disk walk) and
+stays on the per-library `thumbnails-status` endpoint.
+
 ## Reading endpoints
 
 - `GET /admin/library-events` — cursor list over the manifest, filterable by

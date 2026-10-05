@@ -106,6 +106,9 @@ get_run         # GET /scan-runs/{id} — single scan run detail
 admin_list                  # GET /admin/scan-runs — cross-library read
 admin_latest_per_library    # GET /admin/scan-runs/latest-per-library — dashboard snapshot
 
+# ── background_work.rs ───────────────────────────────────────
+background_work     # GET /admin/background-work — cross-library in-flight snapshot
+
 # ── scan_batches.rs (observability-split M7) ─────────────────
 scan_batches_list   # GET /admin/scan-batches — cross-batch read
 scan_batch_detail   # GET /admin/scan-batches/{id} — batch rollup read

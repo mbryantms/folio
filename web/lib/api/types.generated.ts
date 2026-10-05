@@ -68,6 +68,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/background-work": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_background_work"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/catalog-sources": {
         parameters: {
             query?: never;
@@ -5190,6 +5206,29 @@ export interface components {
             /** @description New password. Must be ≥ 12 chars per the local-auth policy. */
             new_password?: string | null;
         };
+        /** @description A library's scan run that has not finished. */
+        ActiveScanView: {
+            /** @description The scan-all batch this run belongs to, if any. */
+            batch_id?: string | null;
+            /** Format: int64 */
+            completed?: number | null;
+            current_label?: string | null;
+            /** Format: double */
+            files_per_sec?: number | null;
+            id: string;
+            /** @description `library` | `series` | `issue`. */
+            kind: string;
+            /**
+             * @description Scanner phase (`planning`, `scanning`, `reconciling`,
+             *     `enqueueing_thumbnails`, …); `None` until the first progress write.
+             */
+            phase?: string | null;
+            started_at: string;
+            /** @description `queued` | `running`. */
+            state: string;
+            /** Format: int64 */
+            total?: number | null;
+        };
         ActivityEntryView: {
             /** @description `'audit' | 'reading'`. */
             kind: string;
@@ -5536,6 +5575,58 @@ export interface components {
             enqueued: boolean;
             /** @description `cover_phash` | `variant_cover`. */
             kind: string;
+        };
+        /** @description Server-wide roll-up of [`BackgroundWorkView`]. */
+        BackgroundWorkTotals: {
+            /** @description `true` when anything above is in progress (dead jobs excluded). */
+            busy: boolean;
+            /**
+             * Format: int64
+             * @description Issues that still have cover work (thumbnail or perceptual hash).
+             */
+            covers_remaining: number;
+            /**
+             * Format: int64
+             * @description Issues whose content hash is still to compute.
+             */
+            hash_pending: number;
+            /**
+             * Format: int64
+             * @description Jobs that exhausted their retries.
+             */
+            jobs_dead: number;
+            /**
+             * Format: int64
+             * @description Of `jobs_outstanding`, jobs a worker has fetched.
+             */
+            jobs_in_flight: number;
+            /**
+             * Format: int64
+             * @description Unfinished jobs across every queue.
+             */
+            jobs_outstanding: number;
+            /**
+             * Format: int64
+             * @description Scan runs accepted but not started.
+             */
+            scans_queued: number;
+            /**
+             * Format: int64
+             * @description Scan runs executing (any kind: library, series, issue).
+             */
+            scans_running: number;
+        };
+        BackgroundWorkView: {
+            generated_at: string;
+            /**
+             * @description Every library, in name order (idle ones included, so the page can
+             *     show the whole estate).
+             */
+            libraries: components["schemas"]["LibraryWorkView"][];
+            metadata_batches: components["schemas"]["MetadataBatchWorkView"][];
+            /** @description Every queue, in a stable order. */
+            queues: components["schemas"]["QueueWorkView"][];
+            totals: components["schemas"]["BackgroundWorkTotals"];
         };
         /**
          * @description Rolled-up `.bak` backup-file footprint for a library (archive-rewrite M7).
@@ -9004,6 +9095,56 @@ export interface components {
             library_slug: string;
             watcher: components["schemas"]["WatcherStatus"];
         };
+        /** @description Everything in flight for one library. */
+        LibraryWorkView: {
+            /** @description `true` when any of the above is in progress. */
+            busy: boolean;
+            /** Format: int64 */
+            cover_jobs_queued: number;
+            /** Format: int64 */
+            cover_jobs_running: number;
+            /**
+             * Format: int64
+             * @description Issues whose last thumbnail attempt failed.
+             */
+            covers_errored: number;
+            /** Format: int64 */
+            covers_hash_only: number;
+            /**
+             * Format: int64
+             * @description Issues whose cover thumbnail is current.
+             */
+            covers_ready: number;
+            /**
+             * Format: int64
+             * @description Issues that still have cover work: thumbnail missing or stale, or
+             *     (`covers_hash_only`) only the perceptual hash to compute.
+             */
+            covers_remaining: number;
+            /**
+             * Format: int64
+             * @description Issues whose content hash is still to compute.
+             */
+            hash_pending: number;
+            id: string;
+            /**
+             * Format: int64
+             * @description Active issues.
+             */
+            issues_total: number;
+            name: string;
+            /** Format: int64 */
+            page_jobs_queued: number;
+            /** Format: int64 */
+            page_jobs_running: number;
+            scan?: components["schemas"]["ActiveScanView"] | null;
+            /**
+             * Format: int64
+             * @description Series- or issue-scoped scan runs in flight for this library.
+             */
+            scoped_scans: number;
+            slug: string;
+        };
         /** @description A provider series the admin may confirm (medium-confidence search hit). */
         LinkCandidate: {
             external_id: string;
@@ -9440,6 +9581,23 @@ export interface components {
             theme?: components["schemas"]["Theme"] | null;
             /** @description M6a: IANA timezone string for daily-bucket aggregations. */
             timezone: string;
+        };
+        /** @description A metadata batch with member runs still to finish. */
+        MetadataBatchWorkView: {
+            created_at: string;
+            id: string;
+            /**
+             * Format: int64
+             * @description Member runs that reached a terminal state.
+             */
+            items_finished: number;
+            /** Format: int64 */
+            items_total: number;
+            library_id?: string | null;
+            /** @description `series_issues` | `saved_view` | `library_refresh`. */
+            scope: string;
+            /** @description `running` | `awaiting_quota`. */
+            status: string;
         };
         /**
          * @description Issue-level completeness rollup for a series. `complete` counts active
@@ -10440,6 +10598,18 @@ export interface components {
              * @description Sum across all queues — convenient for the topbar pill.
              */
             total: number;
+        };
+        /** @description One queue's jobs by where they are held. */
+        QueueWorkView: {
+            /** Format: int64 */
+            dead: number;
+            /** Format: int64 */
+            in_flight: number;
+            queue: string;
+            /** Format: int64 */
+            scheduled: number;
+            /** Format: int64 */
+            waiting: number;
         };
         /** @description Quota state attached to a finalized run (audit B13). */
         QuotaStateView: {
@@ -13266,6 +13436,32 @@ export interface operations {
             };
             /** @description discovery doc unreachable / malformed */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_background_work: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackgroundWorkView"];
+                };
+            };
+            /** @description admin only */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
