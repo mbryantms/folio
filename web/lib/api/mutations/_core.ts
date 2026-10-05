@@ -175,7 +175,12 @@ export function useApiMutation<TData, TInput>(
      * that only *start* something; the toast alone would otherwise be the
      * last the admin hears of it.
      */
-    successAction?: { label: string; href: string };
+    successAction?:
+      | { label: string; href: string }
+      | ((
+          data: TData | null,
+          input: TInput,
+        ) => { label: string; href: string } | undefined);
   },
 ) {
   const {
@@ -204,13 +209,17 @@ export function useApiMutation<TData, TInput>(
           typeof successMessage === "function"
             ? successMessage(data, input)
             : successMessage;
+        const action =
+          typeof successAction === "function"
+            ? successAction(data, input)
+            : successAction;
         toast.success(msg, {
           ...(toastId ? { id: toastId } : {}),
-          ...(successAction
+          ...(action
             ? {
                 action: {
-                  label: successAction.label,
-                  onClick: () => window.location.assign(successAction.href),
+                  label: action.label,
+                  onClick: () => window.location.assign(action.href),
                 },
               }
             : {}),

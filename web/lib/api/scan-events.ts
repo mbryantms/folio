@@ -108,8 +108,32 @@ export function withSlugAliases(
  *  after a quiet spell. */
 const THUMB_FAIL_TOAST_ID = "thumbs-failed";
 const THUMB_FAIL_QUIET_MS = 30_000;
+/** Long enough to drop the same event arriving on another subscriber's
+ *  socket; short enough that a retry failing again toasts again. */
+const THUMB_FAIL_DEDUPE_MS = 5_000;
 let thumbFailCount = 0;
 let thumbFailLastAt = 0;
+const thumbFailSeen = new Map<string, number>();
+
+/** Count one failed thumbnail job; returns the running count for the
+ *  toast, or `null` when this is a duplicate delivery of the same event.
+ *  Exported for unit testing (`now` is injectable). */
+export function noteThumbFailure(key: string, now: number): number | null {
+  const seenAt = thumbFailSeen.get(key);
+  if (seenAt !== undefined && now - seenAt < THUMB_FAIL_DEDUPE_MS) return null;
+  if (now - thumbFailLastAt > THUMB_FAIL_QUIET_MS) {
+    thumbFailCount = 0;
+    thumbFailSeen.clear();
+  }
+  thumbFailSeen.set(key, now);
+  thumbFailCount += 1;
+  thumbFailLastAt = now;
+  return thumbFailCount;
+}
+
+/** Don't hammer `/libraries` during an event storm if it keeps failing. */
+const SLUG_LOOKUP_RETRY_MS = 30_000;
+let slugLookupFailedAt = 0;
 
 /** Copy for the grouped failure toast. Exported for unit testing. */
 export function thumbFailureMessage(count: number, latest: string): string {
@@ -308,8 +332,12 @@ export function useScanEvents(opts?: {
         // stay immediate — a 1.5s-deferred "scan failed" would feel broken.
         const keys = invalidationsForEvent(evt);
         enqueueInvalidations(keys);
-        if ("library_id" in evt && keys.length > 0) {
-          const libraryId = evt.library_id;
+        if (
+          "library_id" in evt &&
+          keys.length > 0 &&
+          Date.now() - slugLookupFailedAt > SLUG_LOOKUP_RETRY_MS
+        ) {
+          const eventLibraryId = evt.library_id;
           // Resolve the slug from the (cached) library list, then queue the
           // slug-keyed twins. Best-effort: a failed lookup only loses the
           // extra refresh.
@@ -319,12 +347,16 @@ export function useScanEvents(opts?: {
               queryFn: () => jsonFetch<LibraryView[]>("/libraries"),
             })
             .then((libs) => {
-              const slug = libs.find((l) => l.id === libraryId)?.slug;
+              const slug = libs.find((l) => l.id === eventLibraryId)?.slug;
               if (slug) {
-                enqueueInvalidations(withSlugAliases(keys, libraryId, slug));
+                enqueueInvalidations(
+                  withSlugAliases(keys, eventLibraryId, slug),
+                );
               }
             })
-            .catch(() => undefined);
+            .catch(() => {
+              slugLookupFailedAt = Date.now();
+            });
         }
         switch (evt.type) {
           case "scan.completed":
@@ -352,23 +384,20 @@ export function useScanEvents(opts?: {
             }
             break;
           case "thumbs.failed":
-            if (
-              toastErrors &&
-              rememberScanToast(`thumbs:${evt.issue_id}:${evt.kind ?? ""}`)
-            ) {
-              const now = Date.now();
-              thumbFailCount =
-                now - thumbFailLastAt > THUMB_FAIL_QUIET_MS
-                  ? 1
-                  : thumbFailCount + 1;
-              thumbFailLastAt = now;
-              toast.error(thumbFailureMessage(thumbFailCount, evt.error), {
-                id: THUMB_FAIL_TOAST_ID,
-                action: {
-                  label: "View",
-                  onClick: () => window.location.assign(BACKGROUND_WORK_HREF),
-                },
-              });
+            if (toastErrors) {
+              const count = noteThumbFailure(
+                `${evt.issue_id}:${evt.kind ?? ""}`,
+                Date.now(),
+              );
+              if (count !== null) {
+                toast.error(thumbFailureMessage(count, evt.error), {
+                  id: THUMB_FAIL_TOAST_ID,
+                  action: {
+                    label: "View",
+                    onClick: () => window.location.assign(BACKGROUND_WORK_HREF),
+                  },
+                });
+              }
             }
             break;
           case "backfill.completed":

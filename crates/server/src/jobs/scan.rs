@@ -102,6 +102,15 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), Error> {
                 error = %e,
                 "scan job failed (recorded in scan_runs; not retried by apalis)",
             );
+            // …except when it failed before opening the run (library gone,
+            // validation): the pre-inserted `queued` row is still open.
+            crate::library::scanner::fail_unstarted_run(
+                &state,
+                job.library_id,
+                Some(job.scan_run_id),
+                &e.to_string(),
+            )
+            .await;
             Ok(())
         }
     }

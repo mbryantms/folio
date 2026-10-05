@@ -164,7 +164,7 @@ Confirmation is currently owned by the **caller**, not the mutation. Verified 20
 | `useClearReadingHistory` | [PrivacyControls.tsx:73-106](../../web/components/settings/PrivacyControls.tsx#L73-L106) — "Delete all reading history" |
 | `useRevokeAllSessions` | [SessionsCard.tsx:96-122](../../web/components/settings/SessionsCard.tsx#L96-L122) — "Sign out of every session?" |
 | `useRevokeAppPassword` | [AppPasswordsCard.tsx:394-416](../../web/components/settings/AppPasswordsCard.tsx#L394-L416) — per-row AlertDialog |
-| `useDeleteAllThumbnails` | [ThumbnailsAdmin.tsx:463-493](../../web/components/admin/library/ThumbnailsAdmin.tsx#L463-L493) + [LiveScanProgress.tsx:920-948](../../web/components/admin/library/LiveScanProgress.tsx#L920-L948) |
+| `useDeleteAllThumbnails` | [LiveScanProgress.tsx:920-948](../../web/components/admin/library/LiveScanProgress.tsx#L920-L948) |
 | `useDeleteSavedView` | [SavedViewsManager.tsx](../../web/components/saved-views/SavedViewsManager.tsx) (added in nav-customization M4) |
 | `useDeleteCblList` | CBL view detail page |
 | `useForceRecreatePageMap` | [SeriesActions.tsx:130-147](../../web/app/[locale]/(library)/series/[slug]/SeriesActions.tsx#L130-L147) |

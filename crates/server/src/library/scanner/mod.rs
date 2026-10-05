@@ -108,20 +108,14 @@ async fn scan_library_inner(
     requested_scan_id: Option<Uuid>,
     scope: Option<&[PathBuf]>,
 ) -> anyhow::Result<ScanStats> {
-    let Some(lib) = library::Entity::find_by_id(library_id)
+    let lib = library::Entity::find_by_id(library_id)
         .one(&state.db)
         .await?
-    else {
-        fail_unstarted_run(state, library_id, requested_scan_id, "library not found").await;
-        anyhow::bail!("library not found");
-    };
+        .ok_or_else(|| anyhow::anyhow!("library not found"))?;
 
     // ───── Phase 1: validate (§4.2) ─────
     if let Err(e) = validate::validate_library(state, &lib).await {
         tracing::error!(library_id = %library_id, error = %e, "library validation failed");
-        // The run row was pre-inserted `queued` at enqueue time; nothing
-        // past this point would ever close it (or its scan-all batch).
-        fail_unstarted_run(state, library_id, requested_scan_id, &e.to_string()).await;
         return Err(anyhow::Error::new(e));
     }
 
@@ -887,11 +881,13 @@ async fn maybe_finalize_batch(db: &impl ConnectionTrait, batch_id: Uuid) {
     }
 }
 
-/// Close a pre-inserted `queued` run that failed before the scan opened it
-/// (library gone, validation failed), emit the terminal event, and let its
-/// scan-all batch finalize. A no-op when the run was never pre-inserted or
-/// already left `queued`. Best-effort: failures are logged.
-async fn fail_unstarted_run(
+/// Close a pre-inserted `queued` run whose scan failed before it opened the
+/// run (library gone, validation failed, series folder missing, …): emit
+/// the terminal event and let its scan-all batch finalize. The job handlers
+/// call this on every scan error; it is a no-op when the run was never
+/// pre-inserted or already left `queued` (the normal case — `finalize_run`
+/// recorded the failure). Best-effort: failures are logged.
+pub(crate) async fn fail_unstarted_run(
     state: &AppState,
     library_id: Uuid,
     requested_scan_id: Option<Uuid>,
@@ -928,41 +924,61 @@ async fn fail_unstarted_run(
     }
 }
 
-/// Mark every `queued` scan run cancelled and finalize the batches that
-/// leaves with no pending member. Called after the admin clears the scan
-/// queues: the jobs that would have started those runs are gone, so nothing
-/// else would ever close the rows — they (and their scan-all batch) would
-/// read as in progress forever. Returns the number of runs closed.
-pub async fn cancel_queued_runs(state: &AppState, reason: &str) -> Result<u64, sea_orm::DbErr> {
-    let queued = ScanRunEntity::find()
-        .filter(entity::scan_run::Column::State.eq("queued"))
-        .all(&state.db)
-        .await?;
-    let now = Utc::now().fixed_offset();
+#[derive(Debug, sea_orm::FromQueryResult)]
+struct CancelledRun {
+    id: Uuid,
+    library_id: Uuid,
+    batch_id: Option<Uuid>,
+}
+
+/// Mark `queued` scan runs enqueued before `enqueued_before` cancelled and
+/// finalize the batches that leaves with no pending member. Called after
+/// the admin clears the scan queues: the jobs that would have started those
+/// runs are gone, so nothing else would ever close the rows — they (and
+/// their scan-all batch) would read as in progress forever.
+///
+/// One guarded `UPDATE … WHERE state = 'queued'`, so a run a worker has
+/// already flipped to `running` is never touched, and the cutoff (taken
+/// before the Redis delete) spares a scan triggered while the clear was in
+/// flight. Returns the number of runs closed.
+pub async fn cancel_queued_runs(
+    state: &AppState,
+    reason: &str,
+    enqueued_before: chrono::DateTime<chrono::FixedOffset>,
+) -> Result<u64, sea_orm::DbErr> {
+    use sea_orm::FromQueryResult;
+    let closed = CancelledRun::find_by_statement(sea_orm::Statement::from_sql_and_values(
+        state.db.get_database_backend(),
+        r#"
+        UPDATE scan_runs
+           SET state = 'cancelled', ended_at = $1, error = $2
+         WHERE state = 'queued' AND started_at < $3
+        RETURNING id, library_id, batch_id
+        "#,
+        [
+            Utc::now().fixed_offset().into(),
+            reason.into(),
+            enqueued_before.into(),
+        ],
+    ))
+    .all(&state.db)
+    .await?;
     let mut batches = HashSet::new();
-    let mut closed = 0u64;
-    for run in queued {
-        let (library_id, scan_id, batch_id) = (run.library_id, run.id, run.batch_id);
-        let mut am: ScanRunAM = run.into();
-        am.state = Set("cancelled".to_owned());
-        am.ended_at = Set(Some(now));
-        am.error = Set(Some(reason.to_owned()));
-        am.update(&state.db).await?;
-        closed += 1;
+    for run in &closed {
         state.events.emit(ScanEvent::Failed {
-            library_id,
-            scan_id,
+            library_id: run.library_id,
+            scan_id: run.id,
             error: reason.to_owned(),
-            batch_id,
+            batch_id: run.batch_id,
         });
-        if let Some(b) = batch_id {
+        if let Some(b) = run.batch_id {
             batches.insert(b);
         }
     }
     for batch_id in batches {
         maybe_finalize_batch(&state.db, batch_id).await;
     }
-    Ok(closed)
+    Ok(closed.len() as u64)
 }
 
 fn stats_json_with_progress(

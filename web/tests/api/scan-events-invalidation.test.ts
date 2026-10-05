@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatBackfillMessage,
   invalidationsForEvent,
+  noteThumbFailure,
   thumbFailureMessage,
   withSlugAliases,
 } from "@/lib/api/scan-events";
@@ -207,6 +208,17 @@ describe("toast copy", () => {
     expect(thumbFailureMessage(1234, "bad zip")).toBe(
       "1,234 thumbnail jobs failed — latest: bad zip",
     );
+  });
+
+  it("counts thumbnail failures once per event, and again on a later retry", () => {
+    const t0 = 1_000_000;
+    expect(noteThumbFailure("i1:cover", t0)).toBe(1);
+    // Same event delivered on a second subscriber's socket.
+    expect(noteThumbFailure("i1:cover", t0 + 50)).toBeNull();
+    expect(noteThumbFailure("i2:cover", t0 + 100)).toBe(2);
+    // The admin retries a minute later and the same issue fails again:
+    // it must toast again, with a fresh count.
+    expect(noteThumbFailure("i1:cover", t0 + 60_000)).toBe(1);
   });
 
   it("labels every backfill kind the server emits", () => {

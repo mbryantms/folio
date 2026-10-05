@@ -677,7 +677,7 @@ export type ScanEvent =
     }
   | {
       // A background backfill drain finished (audit B17). `kind` is
-      // `cover_phash` | `variant_cover`; counts the rows that landed vs the
+      // `cover_phash` | `variant_cover` | `cover_variant`; counts the rows that landed vs the
       // residual rows that couldn't (undecodable covers / dead URLs).
       type: "backfill.completed";
       kind: string;

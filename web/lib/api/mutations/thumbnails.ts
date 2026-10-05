@@ -77,7 +77,9 @@ export function useGenerateMissingThumbnails(libraryId: string) {
       method: "POST",
     }),
     {
-      successAction: PROGRESS_ACTION,
+      // Only when something was actually queued to watch.
+      successAction: (data) =>
+        data && data.enqueued > 0 ? PROGRESS_ACTION : undefined,
       successMessage: (data) =>
         data && data.enqueued > 0
           ? `Enqueued ${data.enqueued} thumbnail job${
@@ -103,7 +105,9 @@ export function useGeneratePageMapThumbnails(libraryId: string) {
       method: "POST",
     }),
     {
-      successAction: PROGRESS_ACTION,
+      // Only when something was actually queued to watch.
+      successAction: (data) =>
+        data && data.enqueued > 0 ? PROGRESS_ACTION : undefined,
       successMessage: (data) =>
         data && data.enqueued > 0
           ? `Enqueued ${data.enqueued} page-map thumbnail job${
@@ -127,7 +131,9 @@ export function useForceRecreateThumbnails(libraryId: string) {
       method: "POST",
     }),
     {
-      successAction: PROGRESS_ACTION,
+      // Only when something was actually queued to watch.
+      successAction: (data) =>
+        data && data.enqueued > 0 ? PROGRESS_ACTION : undefined,
       successMessage: (data) =>
         `Enqueued ${data?.enqueued ?? 0} thumbnail job${
           data?.enqueued === 1 ? "" : "s"
