@@ -94,8 +94,9 @@ export function pct(done: number, total: number): number {
 
 /** Busy libraries first (scanning before thumbnail-only), then by name. */
 export function sortLibraries(libs: LibraryWorkView[]): LibraryWorkView[] {
+  const live = (l: LibraryWorkView) => l.scan && !l.scan.stalled;
   const rank = (l: LibraryWorkView) =>
-    l.scan?.state === "running" ? 0 : l.scan ? 1 : l.busy ? 2 : 3;
+    live(l) && l.scan?.state === "running" ? 0 : live(l) ? 1 : l.busy ? 2 : 3;
   return [...libs].sort(
     (a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name),
   );

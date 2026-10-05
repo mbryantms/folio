@@ -12085,7 +12085,8 @@
           "id",
           "state",
           "kind",
-          "started_at"
+          "started_at",
+          "stalled"
         ],
         "properties": {
           "batch_id": {
@@ -12129,6 +12130,10 @@
               "null"
             ],
             "description": "Scanner phase (`planning`, `scanning`, `reconciling`,\n`enqueueing_thumbnails`, …); `None` until the first progress write."
+          },
+          "stalled": {
+            "type": "boolean",
+            "description": "The row says `queued` / `running` but its queue holds no job at all\n(waiting or with a worker), so nothing will advance or close it — a\nleftover from a crash or a queue clear. Excluded from `busy`. (A\nscan whose queue was cleared mid-run also reads stalled until it\nfinishes on its own.)"
           },
           "started_at": {
             "type": "string"
@@ -13031,6 +13036,7 @@
         "required": [
           "scans_running",
           "scans_queued",
+          "scans_stalled",
           "covers_remaining",
           "hash_pending",
           "jobs_outstanding",
@@ -13041,7 +13047,7 @@
         "properties": {
           "busy": {
             "type": "boolean",
-            "description": "`true` when anything above is in progress (dead jobs excluded)."
+            "description": "`true` when anything above is in progress. Dead jobs, stalled runs\nand work nobody has queued (`covers_remaining`, `hash_pending`) do\nnot count."
           },
           "covers_remaining": {
             "type": "integer",
@@ -13077,6 +13083,11 @@
             "type": "integer",
             "format": "int64",
             "description": "Scan runs executing (any kind: library, series, issue)."
+          },
+          "scans_stalled": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unfinished scan runs with no job behind them (see\n[`ActiveScanView::stalled`]); not counted in the two above."
           }
         }
       },
@@ -21911,7 +21922,7 @@
         "properties": {
           "busy": {
             "type": "boolean",
-            "description": "`true` when any of the above is in progress."
+            "description": "`true` when a live scan or a thumbnail job is in flight for this\nlibrary. Unqueued backlog (`covers_remaining`, `hash_pending`) and\nstalled runs do not count."
           },
           "cover_jobs_queued": {
             "type": "integer",
@@ -21982,7 +21993,7 @@
           "scoped_scans": {
             "type": "integer",
             "format": "int64",
-            "description": "Series- or issue-scoped scan runs in flight for this library."
+            "description": "Series- or issue-scoped scan runs in flight for this library\n(stalled ones excluded)."
           },
           "slug": {
             "type": "string"
@@ -22976,7 +22987,8 @@
           "status",
           "items_total",
           "items_finished",
-          "created_at"
+          "created_at",
+          "stalled"
         ],
         "properties": {
           "created_at": {
@@ -23003,6 +23015,10 @@
           "scope": {
             "type": "string",
             "description": "`series_issues` | `saved_view` | `library_refresh`."
+          },
+          "stalled": {
+            "type": "boolean",
+            "description": "`running` with member runs outstanding, but the metadata queues hold\nno job — nothing will advance it. Excluded from `busy`."
           },
           "status": {
             "type": "string",

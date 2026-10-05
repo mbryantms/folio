@@ -5223,6 +5223,14 @@ export interface components {
              *     `enqueueing_thumbnails`, …); `None` until the first progress write.
              */
             phase?: string | null;
+            /**
+             * @description The row says `queued` / `running` but its queue holds no job at all
+             *     (waiting or with a worker), so nothing will advance or close it — a
+             *     leftover from a crash or a queue clear. Excluded from `busy`. (A
+             *     scan whose queue was cleared mid-run also reads stalled until it
+             *     finishes on its own.)
+             */
+            stalled: boolean;
             started_at: string;
             /** @description `queued` | `running`. */
             state: string;
@@ -5578,7 +5586,11 @@ export interface components {
         };
         /** @description Server-wide roll-up of [`BackgroundWorkView`]. */
         BackgroundWorkTotals: {
-            /** @description `true` when anything above is in progress (dead jobs excluded). */
+            /**
+             * @description `true` when anything above is in progress. Dead jobs, stalled runs
+             *     and work nobody has queued (`covers_remaining`, `hash_pending`) do
+             *     not count.
+             */
             busy: boolean;
             /**
              * Format: int64
@@ -5615,6 +5627,12 @@ export interface components {
              * @description Scan runs executing (any kind: library, series, issue).
              */
             scans_running: number;
+            /**
+             * Format: int64
+             * @description Unfinished scan runs with no job behind them (see
+             *     [`ActiveScanView::stalled`]); not counted in the two above.
+             */
+            scans_stalled: number;
         };
         BackgroundWorkView: {
             generated_at: string;
@@ -9097,7 +9115,11 @@ export interface components {
         };
         /** @description Everything in flight for one library. */
         LibraryWorkView: {
-            /** @description `true` when any of the above is in progress. */
+            /**
+             * @description `true` when a live scan or a thumbnail job is in flight for this
+             *     library. Unqueued backlog (`covers_remaining`, `hash_pending`) and
+             *     stalled runs do not count.
+             */
             busy: boolean;
             /** Format: int64 */
             cover_jobs_queued: number;
@@ -9140,7 +9162,8 @@ export interface components {
             scan?: components["schemas"]["ActiveScanView"] | null;
             /**
              * Format: int64
-             * @description Series- or issue-scoped scan runs in flight for this library.
+             * @description Series- or issue-scoped scan runs in flight for this library
+             *     (stalled ones excluded).
              */
             scoped_scans: number;
             slug: string;
@@ -9596,6 +9619,11 @@ export interface components {
             library_id?: string | null;
             /** @description `series_issues` | `saved_view` | `library_refresh`. */
             scope: string;
+            /**
+             * @description `running` with member runs outstanding, but the metadata queues hold
+             *     no job — nothing will advance it. Excluded from `busy`.
+             */
+            stalled: boolean;
             /** @description `running` | `awaiting_quota`. */
             status: string;
         };

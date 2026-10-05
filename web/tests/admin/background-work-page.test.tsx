@@ -36,6 +36,7 @@ function view(over: Partial<BackgroundWorkView>): BackgroundWorkView {
     totals: {
       scans_running: 0,
       scans_queued: 0,
+      scans_stalled: 0,
       covers_remaining: 0,
       hash_pending: 0,
       jobs_outstanding: 0,
@@ -58,6 +59,7 @@ describe("BackgroundWorkClient", () => {
       totals: {
         scans_running: 1,
         scans_queued: 1,
+        scans_stalled: 0,
         covers_remaining: 16_204,
         hash_pending: 0,
         jobs_outstanding: 16_300,
@@ -81,6 +83,7 @@ describe("BackgroundWorkClient", () => {
             total: 480,
             current_label: "Fantastic Four",
             files_per_sec: 40,
+            stalled: false,
           },
           scoped_scans: 0,
           issues_total: 19_626,
@@ -110,6 +113,7 @@ describe("BackgroundWorkClient", () => {
             total: null,
             current_label: null,
             files_per_sec: null,
+            stalled: false,
           },
           scoped_scans: 0,
           issues_total: 2_281,
@@ -139,6 +143,7 @@ describe("BackgroundWorkClient", () => {
           items_total: 40,
           items_finished: 10,
           created_at: "2026-10-05T00:00:00Z",
+          stalled: false,
         },
       ],
     });

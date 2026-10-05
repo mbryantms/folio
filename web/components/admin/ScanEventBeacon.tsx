@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
  * A single subscriber that lives at the admin layout level. It opens *one*
  * WebSocket for the whole admin tree, polls the apalis queue depth on a
  * steady cadence, and renders two small pills in the topbar:
- *   - WS status (connecting / scans live / closed)
+ *   - WS status (connecting / scan active / closed)
  *   - Queue depth (only when total > 0, so the topbar stays quiet at idle)
  *
  * Both link to the Background work page — the one surface that shows what

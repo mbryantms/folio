@@ -1091,6 +1091,37 @@ async fn background_work_joins_scans_thumbnails_and_queues() {
     let mut conn = st.jobs.redis.clone();
     let _: i64 = conn.rpush(cfg.active_jobs_list(), "w1").await.unwrap();
 
+    // Before any scan job exists in Redis, the run rows are leftovers:
+    // reported as stalled, not as work in progress.
+    let (_, body) = get(&app, &auth, "/api/admin/background-work").await;
+    assert_eq!(body["totals"]["scans_stalled"], 2);
+    assert_eq!(body["totals"]["scans_running"], 0);
+    assert_eq!(body["totals"]["scans_queued"], 0);
+    let lib = body["libraries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["id"] == lib_id.to_string())
+        .unwrap()
+        .clone();
+    assert_eq!(lib["scan"]["stalled"], true);
+    assert_eq!(lib["scoped_scans"], 0);
+
+    // The jobs behind the runs: the library scan held by a worker, the
+    // series scan waiting.
+    let scan_cfg = st.jobs.scan_storage.get_config().clone();
+    let held = format!("{}:worker-a", scan_cfg.inflight_jobs_set());
+    let _: i64 = conn
+        .zadd(scan_cfg.consumers_set(), &held, 1i64)
+        .await
+        .unwrap();
+    let _: i64 = conn.sadd(&held, "scan-job").await.unwrap();
+    let series_cfg = st.jobs.scan_series_storage.get_config().clone();
+    let _: i64 = conn
+        .rpush(series_cfg.active_jobs_list(), "series-job")
+        .await
+        .unwrap();
+
     let (status, body) = get(&app, &auth, "/api/admin/background-work").await;
     assert_eq!(status, StatusCode::OK);
 
@@ -1098,7 +1129,8 @@ async fn background_work_joins_scans_thumbnails_and_queues() {
     assert_eq!(totals["scans_running"], 1);
     assert_eq!(totals["scans_queued"], 1);
     assert_eq!(totals["covers_remaining"], 3);
-    assert_eq!(totals["jobs_outstanding"], 1);
+    assert_eq!(totals["scans_stalled"], 0);
+    assert_eq!(totals["jobs_outstanding"], 3);
     assert_eq!(totals["busy"], true);
 
     let libs = body["libraries"].as_array().expect("libraries");
@@ -1107,6 +1139,7 @@ async fn background_work_joins_scans_thumbnails_and_queues() {
         .find(|l| l["id"] == lib_id.to_string())
         .expect("seeded library present");
     assert_eq!(lib["scan"]["state"], "running");
+    assert_eq!(lib["scan"]["stalled"], false);
     assert_eq!(lib["scan"]["phase"], "scanning");
     assert_eq!(lib["scan"]["completed"], 3);
     assert_eq!(lib["scan"]["total"], 10);

@@ -51,6 +51,9 @@ pub struct BackgroundWorkTotals {
     pub scans_running: i64,
     /// Scan runs accepted but not started.
     pub scans_queued: i64,
+    /// Unfinished scan runs with no job behind them (see
+    /// [`ActiveScanView::stalled`]); not counted in the two above.
+    pub scans_stalled: i64,
     /// Issues that still have cover work (thumbnail or perceptual hash).
     pub covers_remaining: i64,
     /// Issues whose content hash is still to compute.
@@ -61,7 +64,9 @@ pub struct BackgroundWorkTotals {
     pub jobs_in_flight: i64,
     /// Jobs that exhausted their retries.
     pub jobs_dead: i64,
-    /// `true` when anything above is in progress (dead jobs excluded).
+    /// `true` when anything above is in progress. Dead jobs, stalled runs
+    /// and work nobody has queued (`covers_remaining`, `hash_pending`) do
+    /// not count.
     pub busy: bool,
 }
 
@@ -83,6 +88,12 @@ pub struct ActiveScanView {
     pub total: Option<u64>,
     pub current_label: Option<String>,
     pub files_per_sec: Option<f64>,
+    /// The row says `queued` / `running` but its queue holds no job at all
+    /// (waiting or with a worker), so nothing will advance or close it — a
+    /// leftover from a crash or a queue clear. Excluded from `busy`. (A
+    /// scan whose queue was cleared mid-run also reads stalled until it
+    /// finishes on its own.)
+    pub stalled: bool,
 }
 
 /// Everything in flight for one library.
@@ -93,7 +104,8 @@ pub struct LibraryWorkView {
     pub name: String,
     /// The library-wide scan run in flight (running preferred over queued).
     pub scan: Option<ActiveScanView>,
-    /// Series- or issue-scoped scan runs in flight for this library.
+    /// Series- or issue-scoped scan runs in flight for this library
+    /// (stalled ones excluded).
     pub scoped_scans: i64,
     /// Active issues.
     pub issues_total: i64,
@@ -111,7 +123,9 @@ pub struct LibraryWorkView {
     pub page_jobs_running: u64,
     /// Issues whose content hash is still to compute.
     pub hash_pending: i64,
-    /// `true` when any of the above is in progress.
+    /// `true` when a live scan or a thumbnail job is in flight for this
+    /// library. Unqueued backlog (`covers_remaining`, `hash_pending`) and
+    /// stalled runs do not count.
     pub busy: bool,
 }
 
@@ -138,6 +152,9 @@ pub struct MetadataBatchWorkView {
     /// Member runs that reached a terminal state.
     pub items_finished: i64,
     pub created_at: String,
+    /// `running` with member runs outstanding, but the metadata queues hold
+    /// no job — nothing will advance it. Excluded from `busy`.
+    pub stalled: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -185,9 +202,9 @@ struct IssueCounts {
     hash_pending: i64,
 }
 
-/// Per-library issue roll-up in one pass. The cover predicates mirror
-/// `post_scan::needs_cover_work_filter`; `hash_pending` mirrors
-/// `hash_backfill::progress`.
+/// Per-library issue roll-up in one pass, over active issues. The cover
+/// predicates mirror `post_scan::needs_cover_work_filter`; `hash_pending`
+/// is `hash_backfill::progress`'s pending count narrowed to active issues.
 async fn issue_counts<C: ConnectionTrait>(db: &C) -> Result<Vec<IssueCounts>, DbErr> {
     let stmt = Statement::from_sql_and_values(
         db.get_database_backend(),
@@ -259,7 +276,7 @@ async fn unfinished_metadata_batches<C: ConnectionTrait>(db: &C) -> Result<Vec<B
     BatchRow::find_by_statement(stmt).all(db).await
 }
 
-fn active_scan_view(run: &scan_run::Model) -> ActiveScanView {
+fn active_scan_view(run: &scan_run::Model, stalled: bool) -> ActiveScanView {
     let progress = run.stats.get("progress");
     let str_of = |k: &str| {
         progress
@@ -281,6 +298,7 @@ fn active_scan_view(run: &scan_run::Model) -> ActiveScanView {
         files_per_sec: progress
             .and_then(|p| p.get("files_per_sec"))
             .and_then(|v| v.as_f64()),
+        stalled,
     }
 }
 
@@ -305,11 +323,40 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
         app.jobs.dead_letter_counts().await?.into_iter().collect();
     let batches = unfinished_metadata_batches(&app.db).await?;
 
+    // A run row is only live while its queue still holds a job for it:
+    // library scans ride `scan`, series/issue scans ride `scan_series`.
+    let outstanding = |queue: &str| {
+        queue_counts
+            .iter()
+            .find(|c| c.queue == queue)
+            .map_or(0, crate::jobs::QueueCount::outstanding)
+    };
+    let library_scans_live = outstanding("scan") > 0;
+    let scoped_scans_live = outstanding("scan_series") > 0;
+    let is_stalled = |run: &scan_run::Model| {
+        if run.kind == "library" {
+            !library_scans_live
+        } else {
+            !scoped_scans_live
+        }
+    };
+    let metadata_jobs_live = [
+        "metadata_search_series",
+        "metadata_search_issue",
+        "metadata_apply_series",
+        "metadata_apply_issue",
+    ]
+    .into_iter()
+    .any(|q| outstanding(q) > 0);
+
     let mut totals = BackgroundWorkTotals::default();
     for run in &runs {
-        match run.state.as_str() {
-            "running" => totals.scans_running += 1,
-            _ => totals.scans_queued += 1,
+        if is_stalled(run) {
+            totals.scans_stalled += 1;
+        } else if run.state == "running" {
+            totals.scans_running += 1;
+        } else {
+            totals.scans_queued += 1;
         }
     }
 
@@ -321,8 +368,10 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
             let scan = lib_runs()
                 .filter(|r| r.kind == "library")
                 .min_by_key(|r| r.state != "running")
-                .map(active_scan_view);
-            let scoped_scans = lib_runs().filter(|r| r.kind != "library").count() as i64;
+                .map(|r| active_scan_view(r, is_stalled(r)));
+            let scoped_scans = lib_runs()
+                .filter(|r| r.kind != "library" && !is_stalled(r))
+                .count() as i64;
             let c = issues.get(&lib.id);
             let ready = c.map_or(0, |c| c.ready);
             let total = c.map_or(0, |c| c.total);
@@ -344,7 +393,9 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
                 id: lib.id.to_string(),
                 slug: lib.slug,
                 name: lib.name,
-                busy: scan.is_some() || scoped_scans > 0 || thumbs_active,
+                busy: scan.as_ref().is_some_and(|s| !s.stalled)
+                    || scoped_scans > 0
+                    || thumbs_active,
                 scan,
                 scoped_scans,
                 issues_total: total,
@@ -381,6 +432,7 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
     let metadata_batches: Vec<MetadataBatchWorkView> = batches
         .into_iter()
         .map(|b| MetadataBatchWorkView {
+            stalled: b.status == "running" && !metadata_jobs_live,
             id: b.id.to_string(),
             library_id: b.library_id.map(|l| l.to_string()),
             scope: b.scope,
@@ -392,7 +444,9 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
         .collect();
 
     totals.busy = totals.scans_running + totals.scans_queued + totals.jobs_outstanding > 0
-        || metadata_batches.iter().any(|b| b.status == "running");
+        || metadata_batches
+            .iter()
+            .any(|b| b.status == "running" && !b.stalled);
 
     Ok(BackgroundWorkView {
         generated_at: chrono::Utc::now().to_rfc3339(),

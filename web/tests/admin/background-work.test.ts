@@ -50,6 +50,7 @@ const scan = (state: string): NonNullable<LibraryWorkView["scan"]> => ({
   total: null,
   current_label: null,
   files_per_sec: null,
+  stalled: false,
 });
 
 describe("compactCount", () => {

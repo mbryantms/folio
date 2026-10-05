@@ -30,7 +30,7 @@ const n = (v: number) => v.toLocaleString("en-US");
  * that owns the detail (a library's Live scan page, the queue page, …).
  */
 export function BackgroundWorkClient() {
-  const { data, isLoading, isError } = useBackgroundWork();
+  const { data, isLoading } = useBackgroundWork();
 
   if (isLoading) {
     return (
@@ -39,7 +39,8 @@ export function BackgroundWorkClient() {
       </div>
     );
   }
-  if (isError || !data) {
+  // Keep showing the last good snapshot through a failed poll.
+  if (!data) {
     return (
       <p className="text-destructive text-sm">
         Failed to load background work.
@@ -197,7 +198,6 @@ function LibraryRow({ lib }: { lib: LibraryWorkView }) {
           "hover:bg-muted/40 focus-visible:ring-ring -mx-2 grid gap-x-6 gap-y-3 rounded-md px-2 py-3 transition-colors focus-visible:ring-2 focus-visible:outline-none md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1.4fr)_auto]",
           !lib.busy && "opacity-70",
         )}
-        aria-label={`${lib.name}: open live scan`}
       >
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">{lib.name}</div>
@@ -241,12 +241,15 @@ function coverLine(
   pageJobs: number,
 ): string {
   const parts: string[] = [];
-  if (lib.covers_remaining > 0) {
+  // Thumbnails still to make, apart from covers that only lack a hash (the
+  // bar above counts those as ready).
+  const thumbsToDo = Math.max(0, lib.covers_remaining - lib.covers_hash_only);
+  if (coverJobs > 0) {
     parts.push(
-      coverJobs > 0
-        ? `${n(lib.cover_jobs_running)} running · ${n(lib.cover_jobs_queued)} queued`
-        : `${n(lib.covers_remaining)} to do, none queued`,
+      `${n(lib.cover_jobs_running)} running · ${n(lib.cover_jobs_queued)} queued`,
     );
+  } else if (thumbsToDo > 0) {
+    parts.push(`${n(thumbsToDo)} to do, none queued`);
   } else {
     parts.push("Covers ready");
   }
@@ -267,6 +270,27 @@ function ScanCell({ lib }: { lib: LibraryWorkView }) {
         {lib.scoped_scans > 0
           ? `${n(lib.scoped_scans)} series/issue ${lib.scoped_scans === 1 ? "scan" : "scans"} in flight`
           : "No scan running"}
+      </div>
+    );
+  }
+  if (scan.stalled) {
+    // The row says queued/running but no job exists for it (crash or queue
+    // clear): don't draw it as live progress.
+    return (
+      <div className="min-w-0 space-y-1">
+        <Badge
+          variant="outline"
+          className={cn(
+            "text-[10px] tracking-wider uppercase",
+            statusTone("warning"),
+          )}
+        >
+          Stalled scan
+        </Badge>
+        <p className="text-muted-foreground text-xs">
+          Marked {scan.state} but no job is running it. Open the library to
+          cancel it.
+        </p>
       </div>
     );
   }
@@ -394,6 +418,10 @@ function BatchRow({ batch }: { batch: MetadataBatchWorkView }) {
             {waiting ? (
               <span className={cn("ml-2 text-xs", statusToneText("warning"))}>
                 waiting on provider quota
+              </span>
+            ) : batch.stalled ? (
+              <span className={cn("ml-2 text-xs", statusToneText("warning"))}>
+                stalled — no jobs queued for it
               </span>
             ) : null}
           </span>
