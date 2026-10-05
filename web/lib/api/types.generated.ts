@@ -5790,9 +5790,20 @@ export interface components {
             /** Format: uuid */
             batch_id: string;
             created_at: string;
+            /** @description When the last member run finished; `None` while any is unfinished. */
+            finished_at?: string | null;
+            /**
+             * Format: int64
+             * @description Member runs still queued / searching / applying.
+             */
+            in_flight: number;
             /** Format: int32 */
             items_total: number;
             scope: string;
+            /**
+             * @description `running` | `completed` | `partial_failed` | `awaiting_quota`,
+             *     derived from the member runs (same rule as the batch detail).
+             */
             status: string;
         };
         /** @description One provider's direct-lookup vs search tally across a batch. */
