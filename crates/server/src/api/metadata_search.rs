@@ -3373,9 +3373,44 @@ pub struct BatchStatusResp {
 pub struct BatchListRow {
     pub batch_id: Uuid,
     pub scope: String,
+    /// `running` | `completed` | `partial_failed` | `awaiting_quota`,
+    /// derived from the member runs (same rule as the batch detail).
     pub status: String,
     pub items_total: i32,
     pub created_at: String,
+    /// When the last member run finished; `None` while any is unfinished.
+    pub finished_at: Option<String>,
+    /// Member runs still queued / searching / applying.
+    pub in_flight: i64,
+}
+
+/// A batch's status from its member runs. `metadata_batch.status` is only
+/// stamped `running` at creation and never updated, so every reader derives
+/// it — the list and the detail must agree.
+fn derive_batch_status(
+    any_awaiting_quota: bool,
+    any_unfinished: bool,
+    any_failed: bool,
+) -> &'static str {
+    if any_awaiting_quota {
+        "awaiting_quota"
+    } else if any_unfinished {
+        "running"
+    } else if any_failed {
+        "partial_failed"
+    } else {
+        "completed"
+    }
+}
+
+/// Member-run tallies for a set of batches, one row per batch.
+#[derive(Debug, sea_orm::FromQueryResult)]
+struct BatchRunTallyRow {
+    batch_id: Uuid,
+    awaiting_quota: i64,
+    unfinished: i64,
+    failed: i64,
+    last_finished_at: Option<chrono::DateTime<chrono::FixedOffset>>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -3623,15 +3658,7 @@ pub async fn batch_status(
 
     agg.lookups = tally_lookups(&runs);
 
-    let status = if agg.awaiting_quota > 0 {
-        "awaiting_quota"
-    } else if any_unfinished {
-        "running"
-    } else if any_failed {
-        "partial_failed"
-    } else {
-        "completed"
-    };
+    let status = derive_batch_status(agg.awaiting_quota > 0, any_unfinished, any_failed);
 
     let budget = provider_budgets(&app).await;
     let min_day = budget.iter().filter_map(|b| b.remaining_day).min();
@@ -3672,15 +3699,59 @@ pub async fn list_batches(State(app): State<AppState>, user: CurrentUser) -> Res
         .all(&app.db)
         .await
         .unwrap_or_default();
+    // One grouped pass over the member runs of the listed batches.
+    let ids: Vec<Uuid> = rows.iter().map(|b| b.id).collect();
+    let tallies: std::collections::HashMap<Uuid, BatchRunTallyRow> = if ids.is_empty() {
+        Default::default()
+    } else {
+        use sea_orm::FromQueryResult;
+        BatchRunTallyRow::find_by_statement(sea_orm::Statement::from_sql_and_values(
+            app.db.get_database_backend(),
+            r#"
+            SELECT batch_id,
+                   COUNT(*) FILTER (WHERE status = 'awaiting_quota')::BIGINT AS awaiting_quota,
+                   COUNT(*) FILTER (
+                       WHERE status NOT IN ('completed', 'failed', 'awaiting_quota')
+                   )::BIGINT AS unfinished,
+                   COUNT(*) FILTER (WHERE status = 'failed')::BIGINT AS failed,
+                   MAX(finished_at) AS last_finished_at
+              FROM metadata_run
+             WHERE batch_id = ANY($1)
+             GROUP BY batch_id
+            "#,
+            [ids.into()],
+        ))
+        .all(&app.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|t| (t.batch_id, t))
+        .collect()
+    };
     Json(BatchListResp {
         batches: rows
             .into_iter()
-            .map(|b| BatchListRow {
-                batch_id: b.id,
-                scope: b.scope,
-                status: b.status,
-                items_total: b.items_total,
-                created_at: b.created_at.to_rfc3339(),
+            .map(|b| {
+                let t = tallies.get(&b.id);
+                let unfinished = t.map_or(0, |t| t.unfinished);
+                let awaiting = t.map_or(0, |t| t.awaiting_quota);
+                let status = derive_batch_status(
+                    awaiting > 0,
+                    unfinished > 0,
+                    t.is_some_and(|t| t.failed > 0),
+                );
+                BatchListRow {
+                    batch_id: b.id,
+                    scope: b.scope,
+                    status: status.to_owned(),
+                    items_total: b.items_total,
+                    created_at: b.created_at.to_rfc3339(),
+                    finished_at: (unfinished == 0 && awaiting == 0)
+                        .then(|| t.and_then(|t| t.last_finished_at))
+                        .flatten()
+                        .map(|d| d.to_rfc3339()),
+                    in_flight: unfinished,
+                }
             })
             .collect(),
     })

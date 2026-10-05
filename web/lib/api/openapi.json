@@ -13288,7 +13288,8 @@
           "scope",
           "status",
           "items_total",
-          "created_at"
+          "created_at",
+          "in_flight"
         ],
         "properties": {
           "batch_id": {
@@ -13298,6 +13299,18 @@
           "created_at": {
             "type": "string"
           },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the last member run finished; `None` while any is unfinished."
+          },
+          "in_flight": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Member runs still queued / searching / applying."
+          },
           "items_total": {
             "type": "integer",
             "format": "int32"
@@ -13306,7 +13319,8 @@
             "type": "string"
           },
           "status": {
-            "type": "string"
+            "type": "string",
+            "description": "`running` | `completed` | `partial_failed` | `awaiting_quota`,\nderived from the member runs (same rule as the batch detail)."
           }
         }
       },

@@ -49,7 +49,7 @@ import {
   statusToneText,
   statusToneDot,
 } from "@/lib/ui/status-tone";
-import type { BatchChildRow } from "@/lib/api/types";
+import type { BatchChildRow, BatchListRow } from "@/lib/api/types";
 
 // Heavy match dialog (~1.2k lines + provider-compare UI) — lazy so the admin
 // metadata page's initial bundle stays lean; only loads when a reviewer opens
@@ -110,33 +110,83 @@ function BatchPicker({ onPick }: { onPick: (id: string) => void }) {
       </p>
     );
   }
-  return (
-    <ul className="divide-border/60 border-border/60 divide-y overflow-hidden rounded-md border">
-      {batches.map((b) => (
-        <li key={b.batch_id}>
-          <button
-            type="button"
-            onClick={() => onPick(b.batch_id)}
-            className="hover:bg-muted/50 flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors"
-          >
-            <div>
-              <div className="text-foreground text-sm font-medium">
-                {scopeLabel(b.scope)} · {b.items_total} item
-                {b.items_total === 1 ? "" : "s"}
-              </div>
-              <div className="text-muted-foreground text-xs">
-                {new Date(b.created_at).toLocaleString()}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <StatusBadge status={b.status} />
-              <ChevronRight className="text-muted-foreground h-4 w-4" />
-            </div>
-          </button>
-        </li>
-      ))}
-    </ul>
+  // The stored batch status is derived server-side from the member runs;
+  // only these two mean work is still happening.
+  const active = batches.filter(
+    (b) => b.status === "running" || b.status === "awaiting_quota",
   );
+  const finished = batches.filter((b) => !active.includes(b));
+  return (
+    <div className="space-y-5">
+      {active.length > 0 ? (
+        <BatchSection title="In progress" batches={active} onPick={onPick} />
+      ) : null}
+      {finished.length > 0 ? (
+        <BatchSection
+          title={active.length > 0 ? "Finished" : "Recent batches"}
+          batches={finished}
+          onPick={onPick}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function BatchSection({
+  title,
+  batches,
+  onPick,
+}: {
+  title: string;
+  batches: BatchListRow[];
+  onPick: (id: string) => void;
+}) {
+  return (
+    <section className="space-y-2">
+      <h3 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+        {title}
+      </h3>
+      <ul className="divide-border/60 border-border/60 divide-y overflow-hidden rounded-md border">
+        {batches.map((b) => (
+          <li key={b.batch_id}>
+            <button
+              type="button"
+              onClick={() => onPick(b.batch_id)}
+              className="hover:bg-muted/50 flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors"
+            >
+              <div>
+                <div className="text-foreground text-sm font-medium">
+                  {scopeLabel(b.scope)} · {b.items_total} item
+                  {b.items_total === 1 ? "" : "s"}
+                </div>
+                <div className="text-muted-foreground text-xs">
+                  {batchWhen(b)}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <StatusBadge status={b.status} />
+                <ChevronRight className="text-muted-foreground h-4 w-4" />
+              </div>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** "Finished …" once every member run is done, else "Started … · N still
+ *  searching" — an unlabelled date read as a completion time. */
+export function batchWhen(
+  b: Pick<BatchListRow, "created_at" | "finished_at" | "in_flight">,
+): string {
+  if (b.finished_at) {
+    return `Finished ${new Date(b.finished_at).toLocaleString()}`;
+  }
+  const started = `Started ${new Date(b.created_at).toLocaleString()}`;
+  return b.in_flight > 0
+    ? `${started} · ${b.in_flight.toLocaleString("en-US")} still searching`
+    : started;
 }
 
 function BatchReview({

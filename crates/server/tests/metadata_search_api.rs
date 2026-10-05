@@ -1961,3 +1961,66 @@ async fn lookup_series_404_when_provider_has_no_such_record() {
         .unwrap();
     assert_eq!(n, 0);
 }
+
+#[tokio::test]
+async fn batch_list_derives_status_from_member_runs() {
+    // `metadata_batch.status` is stamped `running` at creation and never
+    // updated, so the list used to show every past batch as Running.
+    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (lib_id, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let cbz = dir.path().join("saga-1.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"x", 1.0)
+        .insert(&app.state().db)
+        .await;
+    let batch_id = seed_needs_review_batch(&app, lib_id, &issue_id, false).await;
+    let db = &app.state().db;
+
+    // What production rows actually hold: the creation-time stamp.
+    let mut am: entity::metadata_batch::ActiveModel =
+        entity::metadata_batch::Entity::find_by_id(batch_id)
+            .one(db)
+            .await
+            .unwrap()
+            .unwrap()
+            .into();
+    am.status = Set("running".into());
+    am.ended_at = Set(None);
+    am.update(db).await.unwrap();
+
+    let row_of = |body: &Value| {
+        body["batches"]
+            .as_array()
+            .expect("batches")
+            .iter()
+            .find(|b| b["batch_id"] == batch_id.to_string())
+            .cloned()
+            .expect("seeded batch listed")
+    };
+
+    let body = body_json(get(&app, &admin, "/api/metadata/batches").await.into_body()).await;
+    let row = row_of(&body);
+    assert_eq!(row["status"], "completed", "every member run finished");
+    assert_eq!(row["in_flight"], 0);
+    assert!(row["finished_at"].is_string());
+
+    // Put the member run back in flight: now it really is running.
+    let run = entity::metadata_run::Entity::find()
+        .filter(entity::metadata_run::Column::BatchId.eq(batch_id))
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::metadata_run::ActiveModel = run.into();
+    am.status = Set("searching".into());
+    am.finished_at = Set(None);
+    am.update(db).await.unwrap();
+
+    let body = body_json(get(&app, &admin, "/api/metadata/batches").await.into_body()).await;
+    let row = row_of(&body);
+    assert_eq!(row["status"], "running");
+    assert_eq!(row["in_flight"], 1);
+    assert!(row["finished_at"].is_null());
+}
