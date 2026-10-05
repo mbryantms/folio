@@ -266,6 +266,38 @@ const TRIGGERS: { label: string; run: () => void }[] = [
       }),
   },
   {
+    label: "hide the sticky header, 12px fixed bar behind it",
+    run: () =>
+      forMs(() => {
+        const h = document.getElementById("probe-header");
+        const d = document.createElement("div");
+        d.style.cssText =
+          "position:fixed;top:0;left:0;right:0;height:12px;z-index:0;background:#374151";
+        document.body.prepend(d);
+        if (h) h.style.display = "none";
+        return () => {
+          if (h) h.style.display = "";
+          d.remove();
+        };
+      }),
+  },
+  {
+    label: "hide the sticky header, 32px fixed bar behind it",
+    run: () =>
+      forMs(() => {
+        const h = document.getElementById("probe-header");
+        const d = document.createElement("div");
+        d.style.cssText =
+          "position:fixed;top:0;left:0;right:0;height:32px;z-index:0;background:#374151";
+        document.body.prepend(d);
+        if (h) h.style.display = "none";
+        return () => {
+          if (h) h.style.display = "";
+          d.remove();
+        };
+      }),
+  },
+  {
     label: "lock document scroll (overflow hidden on html)",
     run: () =>
       forMs(() => {

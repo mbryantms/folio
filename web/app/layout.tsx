@@ -143,6 +143,20 @@ export default async function RootLayout({
         ))}
       </head>
       <body className="bg-background text-foreground min-h-full antialiased">
+        {/* Top-edge backstop for the installed iPadOS app. iOS paints the
+            status-bar strip in the colour of the fixed/sticky bar it finds
+            at the top edge; the moment it finds NONE it switches to blurring
+            the page content into the strip and never switches back for the
+            life of the document (iPadOS 27.0.1, measured with the /pwa-lab
+            probe: hiding the header for 2 s latched it; navigation and
+            head churn alone did not). Route changes have such a moment —
+            the loading skeleton has no header — so this bar exists on every
+            page from first paint, under every real header (z-0 vs their
+            z-20/z-30). WebKit ignores edge bars ≤ 10px. */}
+        <div
+          aria-hidden="true"
+          className="bg-background pointer-events-none fixed inset-x-0 top-0 z-0 h-3"
+        />
         <ThemeProvider defaultTheme={theme} nonce={nonce}>
           <NextIntlClientProvider messages={messages}>
             <QueryProvider key={me?.id ?? "anonymous"} userId={me?.id}>
