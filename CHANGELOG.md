@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.41.1](https://github.com/mbryantms/folio/compare/v0.41.0...v0.41.1) (2026-10-05)
+
+
+### Fixed
+
+* **pwa:** one persistent top-edge element so iPadOS never re-samples a different bar ([#1026](https://github.com/mbryantms/folio/issues/1026)) ([c9c78e9](https://github.com/mbryantms/folio/commit/c9c78e99b138bb58f4ecd515ba04c802ef377b28))
+
 ## [0.41.0](https://github.com/mbryantms/folio/compare/v0.40.1...v0.41.0) (2026-10-05)
 
 
