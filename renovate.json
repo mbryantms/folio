@@ -400,6 +400,19 @@
       ],
       "depNameTemplate": "pnpm",
       "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "description": "ci.yml pins the oasdiff CLI via OASDIFF_VERSION (installer's unpinned path hits the rate-limited GitHub API).",
+      "managerFilePatterns": [
+        "/(^|/)\\.github/workflows/ci\\.yml$/"
+      ],
+      "matchStrings": [
+        "OASDIFF_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "oasdiff/oasdiff",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$"
     }
   ]
 }

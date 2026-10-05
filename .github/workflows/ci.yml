@@ -661,7 +661,11 @@ jobs:
           # handles the expected "no baseline spec on this ref" case.
           git checkout "origin/$BASE_REF" -- web/lib/api/openapi.json || \
             (echo "no baseline spec on $BASE_REF; skipping oasdiff" && exit 0)
-          curl -fsSL https://raw.githubusercontent.com/Tufin/oasdiff/main/install.sh | sh
+          # Pinned: with no `version` the installer resolves "latest" through the
+          # unauthenticated GitHub API, which rate-limits shared runners and fails
+          # the job (#1032). Renovate bumps this via the regex manager in renovate.json.
+          OASDIFF_VERSION=1.33.0
+          curl -fsSL https://raw.githubusercontent.com/oasdiff/oasdiff/main/install.sh | version="$OASDIFF_VERSION" sh
           # The installer drops the binary in /usr/local/bin (on PATH); invoke
           # it by name, not `./oasdiff` (the old install-to-cwd behavior).
           oasdiff breaking web/lib/api/openapi.json /tmp/pr-openapi.json || \
