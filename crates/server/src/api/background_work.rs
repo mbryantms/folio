@@ -64,6 +64,13 @@ pub struct BackgroundWorkTotals {
     pub jobs_in_flight: i64,
     /// Jobs that exhausted their retries.
     pub jobs_dead: i64,
+    /// Unfinished thumbnail jobs (cover + page-strip), server-wide.
+    pub thumbs_outstanding: i64,
+    /// Thumbnail jobs finished per minute over the last two minutes;
+    /// `None` when too few have finished to measure.
+    pub thumbs_per_min: Option<f64>,
+    /// `thumbs_outstanding` at the current rate, in seconds.
+    pub thumbs_eta_secs: Option<u64>,
     /// `true` when anything above is in progress. Dead jobs, stalled runs
     /// and work nobody has queued (`covers_remaining`, `hash_pending`) do
     /// not count.
@@ -384,11 +391,7 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
                 .unwrap_or(ThumbJobCounts::default());
             totals.covers_remaining += covers_remaining;
             totals.hash_pending += hash_pending;
-            let thumbs_active = jobs.cover_queued
-                + jobs.cover_running
-                + jobs.page_map_queued
-                + jobs.page_map_running
-                > 0;
+            let thumbs_active = jobs.jobs > 0;
             LibraryWorkView {
                 id: lib.id.to_string(),
                 slug: lib.slug,
@@ -416,6 +419,9 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
         .iter()
         .map(|c| {
             totals.jobs_outstanding += c.outstanding();
+            if c.queue == "post_scan_thumbs" {
+                totals.thumbs_outstanding = c.outstanding();
+            }
             totals.jobs_in_flight += c.in_flight;
             let dead = dead.get(c.queue).copied().unwrap_or(0);
             totals.jobs_dead += dead;
@@ -442,6 +448,14 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
             created_at: b.created_at.to_rfc3339(),
         })
         .collect();
+
+    if totals.thumbs_outstanding > 0 {
+        totals.thumbs_per_min = app.thumbs_per_min();
+        totals.thumbs_eta_secs = totals
+            .thumbs_per_min
+            .filter(|rate| *rate > 0.0)
+            .map(|rate| (totals.thumbs_outstanding as f64 / rate * 60.0).ceil() as u64);
+    }
 
     totals.busy = totals.scans_running + totals.scans_queued + totals.jobs_outstanding > 0
         || metadata_batches

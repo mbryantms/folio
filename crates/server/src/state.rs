@@ -107,6 +107,9 @@ pub struct Inner {
     /// right now (same keys), so status surfaces can tell "running" from
     /// "queued". Held by a [`ThumbRunningGuard`] for the job's duration.
     pub thumb_job_running: Arc<std::sync::Mutex<HashSet<String>>>,
+    /// When recent thumbnail jobs finished executing — the sliding window
+    /// behind [`AppState::thumbs_per_min`]. Process-local, like the marks.
+    pub thumb_throughput: Arc<std::sync::Mutex<std::collections::VecDeque<std::time::Instant>>>,
     /// Process-local cache from a thumbnail request key to the exact file that
     /// satisfied it, avoiding extension probing on hot image requests. Bounded
     /// LRU (PERF-9): the previous unbounded `HashMap` grew one entry per
@@ -180,6 +183,7 @@ impl AppState {
         let archive_work_semaphore = Arc::new(Semaphore::new(archive_work_parallel));
         let thumb_job_inflight = Arc::new(Mutex::new(HashSet::new()));
         let thumb_job_running = Arc::new(std::sync::Mutex::new(HashSet::new()));
+        let thumb_throughput = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
         let thumb_path_cache = Arc::new(std::sync::Mutex::new(LruCache::new(
             NonZeroUsize::new(THUMB_PATH_CACHE_CAP).expect("nonzero"),
         )));
@@ -218,6 +222,7 @@ impl AppState {
             thumb_inline_semaphore,
             thumb_job_inflight,
             thumb_job_running,
+            thumb_throughput,
             thumb_path_cache,
             archive_work_semaphore,
             scheduler,
@@ -326,8 +331,27 @@ impl AppState {
             .insert(key.clone());
         ThumbRunningGuard {
             set: self.thumb_job_running.clone(),
+            throughput: self.thumb_throughput.clone(),
             key,
         }
+    }
+
+    /// Thumbnail jobs finished per minute over the last
+    /// [`THUMB_RATE_WINDOW`], or `None` with too few samples to say (idle,
+    /// or the drain only just started).
+    pub fn thumbs_per_min(&self) -> Option<f64> {
+        let now = std::time::Instant::now();
+        let mut window = self
+            .thumb_throughput
+            .lock()
+            .expect("thumb_throughput poisoned");
+        while window
+            .front()
+            .is_some_and(|t| now.duration_since(*t) > THUMB_RATE_WINDOW)
+        {
+            window.pop_front();
+        }
+        thumb_rate_per_min(window.len(), window.front().map(|t| now.duration_since(*t)))
     }
 
     pub fn thumb_job_running_keys(&self) -> HashSet<String> {
@@ -377,7 +401,28 @@ impl std::ops::Deref for AppState {
 /// every exit path of the handler (including a panic) clears it.
 pub struct ThumbRunningGuard {
     set: Arc<std::sync::Mutex<HashSet<String>>>,
+    throughput: Arc<std::sync::Mutex<std::collections::VecDeque<std::time::Instant>>>,
     key: String,
+}
+
+/// Sliding window the thumbnail rate is measured over.
+pub const THUMB_RATE_WINDOW: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Finished-job samples kept; bounds the window on a very fast drain.
+const THUMB_RATE_MAX_SAMPLES: usize = 20_000;
+
+/// Rate from `samples` jobs finished since `oldest_age` ago. Needs a few
+/// samples spread over a few seconds, otherwise one burst reads as a huge
+/// rate and the ETA built on it is nonsense.
+pub(crate) fn thumb_rate_per_min(
+    samples: usize,
+    oldest_age: Option<std::time::Duration>,
+) -> Option<f64> {
+    let span = oldest_age?.as_secs_f64();
+    if samples < 5 || span < 5.0 {
+        return None;
+    }
+    Some(samples as f64 / span * 60.0)
 }
 
 impl Drop for ThumbRunningGuard {
@@ -385,5 +430,29 @@ impl Drop for ThumbRunningGuard {
         if let Ok(mut set) = self.set.lock() {
             set.remove(&self.key);
         }
+        if let Ok(mut window) = self.throughput.lock() {
+            if window.len() >= THUMB_RATE_MAX_SAMPLES {
+                window.pop_front();
+            }
+            window.push_back(std::time::Instant::now());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::thumb_rate_per_min;
+    use std::time::Duration;
+
+    #[test]
+    fn thumb_rate_needs_enough_samples_over_enough_time() {
+        assert_eq!(thumb_rate_per_min(0, None), None);
+        // One burst: plenty of samples but no time base.
+        assert_eq!(thumb_rate_per_min(50, Some(Duration::from_secs(1))), None);
+        // A couple of jobs over a long span says nothing either.
+        assert_eq!(thumb_rate_per_min(2, Some(Duration::from_secs(60))), None);
+        // 30 jobs over 60s = 30/min.
+        let rate = thumb_rate_per_min(30, Some(Duration::from_secs(60))).unwrap();
+        assert!((rate - 30.0).abs() < 1e-9);
     }
 }

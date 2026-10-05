@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   compactCount,
+  formatEta,
+  thumbPace,
   otherWork,
   pct,
   pillBreakdown,
@@ -160,5 +162,38 @@ describe("queueHref", () => {
     expect(queueHref("metadata_search_series")).toBe("/admin/metadata");
     expect(queueHref("provider_coverage")).toBe("/admin/metadata");
     expect(queueHref("rewrite_issue_sidecars")).toBe("/admin/queue");
+  });
+});
+
+describe("formatEta / thumbPace", () => {
+  it("rounds coarsely", () => {
+    expect(formatEta(20)).toBe("under a minute");
+    expect(formatEta(95)).toBe("about 2 min");
+    expect(formatEta(3600)).toBe("about 1 h");
+    expect(formatEta(5400)).toBe("about 1 h 30 min");
+  });
+
+  it("gives rate and time left only when the server measured a rate", () => {
+    expect(
+      thumbPace({
+        thumbs_outstanding: 16_000,
+        thumbs_per_min: 409.6,
+        thumbs_eta_secs: 2_344,
+      }),
+    ).toBe("410/min · about 39 min left");
+    expect(
+      thumbPace({
+        thumbs_outstanding: 16_000,
+        thumbs_per_min: null,
+        thumbs_eta_secs: null,
+      }),
+    ).toBeNull();
+    expect(
+      thumbPace({
+        thumbs_outstanding: 0,
+        thumbs_per_min: 400,
+        thumbs_eta_secs: 0,
+      }),
+    ).toBeNull();
   });
 });

@@ -12,6 +12,7 @@ import { LibraryEventsList } from "@/components/admin/library/LibraryEventsList"
 import { WatchersCard } from "@/components/admin/library/WatchersCard";
 import { useScanBatch, useScanBatches } from "@/lib/api/queries";
 import { useScanEvents } from "@/lib/api/scan-events";
+import { BACKGROUND_WORK_HREF } from "@/lib/admin/background-work";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 import type {
@@ -24,6 +25,8 @@ import type {
  *  batch detail's member runs. */
 export type LibRow = {
   libraryId: string;
+  /** Library slug, for the link to its Live scan page ("" if deleted). */
+  slug: string;
   name: string;
   state: string; // queued | running | complete | failed | cancelled
   completed: number;
@@ -51,6 +54,7 @@ export function buildLibRows(
   for (const r of memberRuns) {
     map.set(r.library_id, {
       libraryId: r.library_id,
+      slug: r.library_slug,
       name: r.library_name,
       state: r.state,
       completed: 0,
@@ -206,6 +210,39 @@ function BatchView({ batchId }: { batchId: string }) {
         </CardContent>
       </Card>
 
+      {/* The batch closes when its last scan finishes — which is when the
+          thumbnail jobs those scans queued start. Say so, and point at the
+          page that tracks them. */}
+      {terminal && batch.post_scan.thumb_jobs > 0 && (
+        <Link
+          href={BACKGROUND_WORK_HREF}
+          className={cn(
+            "flex items-center justify-between gap-3 rounded-md border px-4 py-3 text-sm",
+            statusTone("warning"),
+          )}
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <Loader2
+              className="h-4 w-4 shrink-0 animate-spin"
+              aria-hidden="true"
+            />
+            <span>
+              Scans finished — still generating thumbnails:{" "}
+              {batch.post_scan.thumb_jobs.toLocaleString("en-US")}{" "}
+              {batch.post_scan.thumb_jobs === 1 ? "job" : "jobs"} across{" "}
+              {batch.post_scan.libraries_pending}{" "}
+              {batch.post_scan.libraries_pending === 1
+                ? "library"
+                : "libraries"}
+              .
+            </span>
+          </span>
+          <span className="shrink-0 text-xs font-medium">
+            Background work →
+          </span>
+        </Link>
+      )}
+
       {/* Post-run summary (aggregated totals) once the batch is terminal. */}
       {terminal && (
         <Card>
@@ -238,7 +275,16 @@ function BatchView({ batchId }: { batchId: string }) {
             <div className="flex items-center justify-between gap-3">
               <span className="flex min-w-0 items-center gap-2">
                 <RowIcon state={r.state} />
-                <span className="truncate text-sm">{r.name}</span>
+                {r.slug ? (
+                  <Link
+                    href={`/admin/libraries/${r.slug}/scan`}
+                    className="truncate text-sm hover:underline"
+                  >
+                    {r.name}
+                  </Link>
+                ) : (
+                  <span className="truncate text-sm">{r.name}</span>
+                )}
               </span>
               {r.state === "running" && r.total > 0 && (
                 <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
