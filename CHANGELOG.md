@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.41.0](https://github.com/mbryantms/folio/compare/v0.40.1...v0.41.0) (2026-10-05)
+
+
+### Added
+
+* **web:** /pwa-lab probe — height ladder for the top-edge bar, above the backstop ([#1024](https://github.com/mbryantms/folio/issues/1024)) ([32f62e6](https://github.com/mbryantms/folio/commit/32f62e6dcba70e7e036f8438127ab9e31c58c037))
+
 ## [0.40.1](https://github.com/mbryantms/folio/compare/v0.40.0...v0.40.1) (2026-10-05)
 
 
