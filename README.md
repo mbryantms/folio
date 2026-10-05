@@ -15,9 +15,17 @@ Your files stay yours. Folio never needs to move or rename them, and with
 writeback turned on it stores metadata inside the archives themselves, so
 the library stays portable and Folio's database is only a cache.
 
+![The Folio library view: a grid of series covers with search, sort and filter controls](./docs/images/library.png)
+
 > **Status:** pre-1.0 and under active development. It is in daily use,
 > but expect breaking changes between minor versions. Read the
 > [upgrade notes](./docs/install/upgrades.md) before updating.
+
+| Reader | Series page | Home |
+|---|---|---|
+| [![The reader showing a comic page with the page strip open](./docs/images/reader.png)](./docs/images/reader.png) | [![A series page with cover, credits and read progress](./docs/images/series.png)](./docs/images/series.png) | [![The home page with Continue reading and On deck rails](./docs/images/home.png)](./docs/images/home.png) |
+
+<sub>Screenshots use a generated demo library; the series, covers and pages are placeholders drawn for this README.</sub>
 
 ## What Folio does
 
