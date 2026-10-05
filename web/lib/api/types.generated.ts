@@ -5660,6 +5660,11 @@ export interface components {
             metadata_batches: components["schemas"]["MetadataBatchWorkView"][];
             /** @description Every queue, in a stable order. */
             queues: components["schemas"]["QueueWorkView"][];
+            /**
+             * @description Spawned tasks with no queue (process-local): deep validation,
+             *     reading-list rematch.
+             */
+            tasks: components["schemas"]["TaskWorkView"][];
             totals: components["schemas"]["BackgroundWorkTotals"];
         };
         /**
@@ -10569,6 +10574,12 @@ export interface components {
         QueueClearResp: {
             after: components["schemas"]["QueueDepthView"];
             before: components["schemas"]["QueueDepthView"];
+            /**
+             * Format: int64
+             * @description `queued` scan runs closed as `cancelled` because their job was
+             *     cleared (scan targets only).
+             */
+            cancelled_scan_runs: number;
             deleted_keys: number;
             /**
              * @description Redis queue clearing is immediate, but a job already executing in a
@@ -12423,6 +12434,13 @@ export interface components {
             /** Format: int64 */
             count: number;
             tag: string;
+        };
+        /** @description A long-running task spawned outside the job queues. */
+        TaskWorkView: {
+            /** @description `deep_validate` | `cbl_rematch`. */
+            kind: string;
+            library_id?: string | null;
+            started_at: string;
         };
         TestEmailResp: {
             delivered: boolean;

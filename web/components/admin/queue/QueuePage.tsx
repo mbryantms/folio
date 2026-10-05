@@ -75,8 +75,9 @@ const QUEUE_LABELS: { key: string; label: string }[] = [
   { key: "scan", label: "Library scans" },
   { key: "scan_series", label: "Series scans" },
   { key: "post_scan_thumbs", label: "Thumbnails" },
-  { key: "post_scan_search", label: "Search index" },
-  { key: "post_scan_dictionary", label: "Dictionary" },
+  // `post_scan_search` / `post_scan_dictionary` are registered server-side
+  // but nothing enqueues them (their handlers are no-ops), so they get no
+  // card. They still count toward the total if anything ever lands there.
   // Metadata + sidecar queues (audit UX-16): a wedged provider apply was
   // previously invisible on this grid.
   { key: "metadata_search_series", label: "Metadata search (series)" },

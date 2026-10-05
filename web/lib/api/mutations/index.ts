@@ -10,6 +10,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
 
+import { BACKGROUND_WORK_HREF } from "@/lib/admin/background-work";
+
 import { apiFetch } from "../auth-refresh";
 import { queryKeys } from "../queries";
 import { getCsrfToken, useApiMutation } from "./_core";
@@ -211,6 +213,10 @@ export function useTriggerScan(libraryId: string) {
       };
     },
     {
+      successAction: {
+        label: "View progress",
+        href: BACKGROUND_WORK_HREF,
+      },
       successMessage: (data, input) => {
         if (data?.coalesced) {
           return "Scan library already running — joined existing run";

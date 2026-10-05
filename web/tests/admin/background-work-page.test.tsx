@@ -50,6 +50,7 @@ function view(over: Partial<BackgroundWorkView>): BackgroundWorkView {
     libraries: [],
     queues: [],
     metadata_batches: [],
+    tasks: [],
     ...over,
   };
 }
@@ -152,10 +153,20 @@ describe("BackgroundWorkClient", () => {
           stalled: false,
         },
       ],
+      tasks: [
+        {
+          kind: "deep_validate",
+          library_id: "a",
+          started_at: "2026-10-04T23:48:00Z",
+        },
+      ],
     });
     const html = render();
 
     expect(html).toContain("Work in progress");
+    // A spawned task with no queue of its own.
+    expect(html).toContain("Deep validation — Marvel");
+    expect(html).toContain("started 12 min ago");
     expect(html).toContain("405/min · about 40 min left");
     // Each library row links to that library's live scan page.
     expect(html).toContain('href="/admin/libraries/marvel/scan"');

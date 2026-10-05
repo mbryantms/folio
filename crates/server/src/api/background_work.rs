@@ -12,7 +12,9 @@
 //!   persisted progress), cover-thumbnail readiness from the issue rows,
 //!   this process's thumbnail jobs by state, and content-hash backlog;
 //! - **per queue**: waiting / retry-delayed / held-by-a-worker / dead;
-//! - **metadata batches** still running or waiting on provider quota.
+//! - **metadata batches** still running or waiting on provider quota;
+//! - **tasks** spawned outside the queues (deep validation, reading-list
+//!   rematch), from a process-local registry.
 //!
 //! Page-strip readiness is deliberately absent: it is counted from files on
 //! disk (one stat per page), too slow for a polled cross-library snapshot.
@@ -164,6 +166,15 @@ pub struct MetadataBatchWorkView {
     pub stalled: bool,
 }
 
+/// A long-running task spawned outside the job queues.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TaskWorkView {
+    /// `deep_validate` | `cbl_rematch`.
+    pub kind: String,
+    pub library_id: Option<String>,
+    pub started_at: String,
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct BackgroundWorkView {
     pub generated_at: String,
@@ -174,6 +185,9 @@ pub struct BackgroundWorkView {
     /// Every queue, in a stable order.
     pub queues: Vec<QueueWorkView>,
     pub metadata_batches: Vec<MetadataBatchWorkView>,
+    /// Spawned tasks with no queue (process-local): deep validation,
+    /// reading-list rematch.
+    pub tasks: Vec<TaskWorkView>,
 }
 
 #[utoipa::path(
@@ -457,10 +471,21 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
             .map(|rate| (totals.thumbs_outstanding as f64 / rate * 60.0).ceil() as u64);
     }
 
+    let tasks: Vec<TaskWorkView> = app
+        .running_background_tasks()
+        .into_iter()
+        .map(|t| TaskWorkView {
+            kind: t.kind.to_owned(),
+            library_id: t.library_id.map(|l| l.to_string()),
+            started_at: t.started_at.to_rfc3339(),
+        })
+        .collect();
+
     totals.busy = totals.scans_running + totals.scans_queued + totals.jobs_outstanding > 0
         || metadata_batches
             .iter()
-            .any(|b| b.status == "running" && !b.stalled);
+            .any(|b| b.status == "running" && !b.stalled)
+        || !tasks.is_empty();
 
     Ok(BackgroundWorkView {
         generated_at: chrono::Utc::now().to_rfc3339(),
@@ -468,5 +493,6 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
         libraries,
         queues,
         metadata_batches,
+        tasks,
     })
 }

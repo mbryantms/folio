@@ -8,6 +8,8 @@
  */
 import { useQueryClient } from "@tanstack/react-query";
 
+import { BACKGROUND_WORK_HREF } from "@/lib/admin/background-work";
+
 import { queryKeys } from "../queries";
 import type {
   DeleteAllResp,
@@ -16,6 +18,12 @@ import type {
   UpdateThumbnailsSettingsReq,
 } from "../types";
 import { useApiMutation } from "./_core";
+
+/** Link on "enqueued N jobs" toasts to where the jobs can be watched. */
+const PROGRESS_ACTION = {
+  label: "View progress",
+  href: BACKGROUND_WORK_HREF,
+} as const;
 
 /** Common cache-invalidation pair for any thumbnail-touching mutation:
  * the per-library readiness status + the queue-depth poll the admin
@@ -69,6 +77,7 @@ export function useGenerateMissingThumbnails(libraryId: string) {
       method: "POST",
     }),
     {
+      successAction: PROGRESS_ACTION,
       successMessage: (data) =>
         data && data.enqueued > 0
           ? `Enqueued ${data.enqueued} thumbnail job${
@@ -94,6 +103,7 @@ export function useGeneratePageMapThumbnails(libraryId: string) {
       method: "POST",
     }),
     {
+      successAction: PROGRESS_ACTION,
       successMessage: (data) =>
         data && data.enqueued > 0
           ? `Enqueued ${data.enqueued} page-map thumbnail job${
@@ -117,6 +127,7 @@ export function useForceRecreateThumbnails(libraryId: string) {
       method: "POST",
     }),
     {
+      successAction: PROGRESS_ACTION,
       successMessage: (data) =>
         `Enqueued ${data?.enqueued ?? 0} thumbnail job${
           data?.enqueued === 1 ? "" : "s"

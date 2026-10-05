@@ -1186,6 +1186,7 @@ pub async fn validate_deeply(
     let library_id = row.id;
     let state = app.clone();
     tokio::spawn(async move {
+        let _task = state.track_background_task("deep_validate", Some(library_id));
         if let Err(e) = crate::library::deep_validate::run(&state, library_id).await {
             tracing::error!(
                 error = %e,

@@ -215,6 +215,7 @@ export type LibraryWorkView = Schemas["LibraryWorkView"];
 export type ActiveScanView = Schemas["ActiveScanView"];
 export type QueueWorkView = Schemas["QueueWorkView"];
 export type MetadataBatchWorkView = Schemas["MetadataBatchWorkView"];
+export type TaskWorkView = Schemas["TaskWorkView"];
 export type QueueClearTarget = Schemas["QueueClearTarget"];
 export type QueueClearReq = Schemas["QueueClearReq"];
 export type QueueClearResp = Schemas["QueueClearResp"];

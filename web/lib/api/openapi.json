@@ -13121,7 +13121,8 @@
           "totals",
           "libraries",
           "queues",
-          "metadata_batches"
+          "metadata_batches",
+          "tasks"
         ],
         "properties": {
           "generated_at": {
@@ -13146,6 +13147,13 @@
               "$ref": "#/components/schemas/QueueWorkView"
             },
             "description": "Every queue, in a stable order."
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskWorkView"
+            },
+            "description": "Spawned tasks with no queue (process-local): deep validation,\nreading-list rematch."
           },
           "totals": {
             "$ref": "#/components/schemas/BackgroundWorkTotals"
@@ -25160,6 +25168,7 @@
         "required": [
           "target",
           "deleted_keys",
+          "cancelled_scan_runs",
           "before",
           "after",
           "running_jobs_may_finish"
@@ -25170,6 +25179,12 @@
           },
           "before": {
             "$ref": "#/components/schemas/QueueDepthView"
+          },
+          "cancelled_scan_runs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`queued` scan runs closed as `cancelled` because their job was\ncleared (scan targets only).",
+            "minimum": 0
           },
           "deleted_keys": {
             "type": "integer",
@@ -29531,6 +29546,29 @@
             "minimum": 0
           },
           "tag": {
+            "type": "string"
+          }
+        }
+      },
+      "TaskWorkView": {
+        "type": "object",
+        "description": "A long-running task spawned outside the job queues.",
+        "required": [
+          "kind",
+          "started_at"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`deep_validate` | `cbl_rematch`."
+          },
+          "library_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started_at": {
             "type": "string"
           }
         }

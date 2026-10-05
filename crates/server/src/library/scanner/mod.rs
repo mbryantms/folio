@@ -108,14 +108,20 @@ async fn scan_library_inner(
     requested_scan_id: Option<Uuid>,
     scope: Option<&[PathBuf]>,
 ) -> anyhow::Result<ScanStats> {
-    let lib = library::Entity::find_by_id(library_id)
+    let Some(lib) = library::Entity::find_by_id(library_id)
         .one(&state.db)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("library not found"))?;
+    else {
+        fail_unstarted_run(state, library_id, requested_scan_id, "library not found").await;
+        anyhow::bail!("library not found");
+    };
 
     // ───── Phase 1: validate (§4.2) ─────
     if let Err(e) = validate::validate_library(state, &lib).await {
         tracing::error!(library_id = %library_id, error = %e, "library validation failed");
+        // The run row was pre-inserted `queued` at enqueue time; nothing
+        // past this point would ever close it (or its scan-all batch).
+        fail_unstarted_run(state, library_id, requested_scan_id, &e.to_string()).await;
         return Err(anyhow::Error::new(e));
     }
 
@@ -879,6 +885,84 @@ async fn maybe_finalize_batch(db: &impl ConnectionTrait, batch_id: Uuid) {
     if let Err(e) = update.update(db).await {
         tracing::error!(error = %e, %batch_id, "scan batch: finalize update failed");
     }
+}
+
+/// Close a pre-inserted `queued` run that failed before the scan opened it
+/// (library gone, validation failed), emit the terminal event, and let its
+/// scan-all batch finalize. A no-op when the run was never pre-inserted or
+/// already left `queued`. Best-effort: failures are logged.
+async fn fail_unstarted_run(
+    state: &AppState,
+    library_id: Uuid,
+    requested_scan_id: Option<Uuid>,
+    error: &str,
+) {
+    let Some(scan_id) = requested_scan_id else {
+        return;
+    };
+    let run = match ScanRunEntity::find_by_id(scan_id).one(&state.db).await {
+        Ok(Some(r)) if r.state == "queued" => r,
+        Ok(_) => return,
+        Err(e) => {
+            tracing::error!(error = %e, %scan_id, "scan: load unstarted run failed");
+            return;
+        }
+    };
+    let batch_id = run.batch_id;
+    let mut am: ScanRunAM = run.into();
+    am.state = Set("failed".to_owned());
+    am.ended_at = Set(Some(Utc::now().fixed_offset()));
+    am.error = Set(Some(error.to_owned()));
+    if let Err(e) = am.update(&state.db).await {
+        tracing::error!(error = %e, %scan_id, "scan: close unstarted run failed");
+        return;
+    }
+    state.events.emit(ScanEvent::Failed {
+        library_id,
+        scan_id,
+        error: error.to_owned(),
+        batch_id,
+    });
+    if let Some(batch_id) = batch_id {
+        maybe_finalize_batch(&state.db, batch_id).await;
+    }
+}
+
+/// Mark every `queued` scan run cancelled and finalize the batches that
+/// leaves with no pending member. Called after the admin clears the scan
+/// queues: the jobs that would have started those runs are gone, so nothing
+/// else would ever close the rows — they (and their scan-all batch) would
+/// read as in progress forever. Returns the number of runs closed.
+pub async fn cancel_queued_runs(state: &AppState, reason: &str) -> Result<u64, sea_orm::DbErr> {
+    let queued = ScanRunEntity::find()
+        .filter(entity::scan_run::Column::State.eq("queued"))
+        .all(&state.db)
+        .await?;
+    let now = Utc::now().fixed_offset();
+    let mut batches = HashSet::new();
+    let mut closed = 0u64;
+    for run in queued {
+        let (library_id, scan_id, batch_id) = (run.library_id, run.id, run.batch_id);
+        let mut am: ScanRunAM = run.into();
+        am.state = Set("cancelled".to_owned());
+        am.ended_at = Set(Some(now));
+        am.error = Set(Some(reason.to_owned()));
+        am.update(&state.db).await?;
+        closed += 1;
+        state.events.emit(ScanEvent::Failed {
+            library_id,
+            scan_id,
+            error: reason.to_owned(),
+            batch_id,
+        });
+        if let Some(b) = batch_id {
+            batches.insert(b);
+        }
+    }
+    for batch_id in batches {
+        maybe_finalize_batch(&state.db, batch_id).await;
+    }
+    Ok(closed)
 }
 
 fn stats_json_with_progress(
@@ -1931,6 +2015,7 @@ fn scan_changed_library(stats: &ScanStats) -> bool {
 /// scheduled refresh window.
 pub fn spawn_cbl_rematch_all(state: AppState) {
     tokio::spawn(async move {
+        let _task = state.track_background_task("cbl_rematch", None);
         use entity::cbl_list;
         let lists = match cbl_list::Entity::find().all(&state.db).await {
             Ok(rows) => rows,
