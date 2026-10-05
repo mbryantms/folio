@@ -13,6 +13,33 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.42.0](https://github.com/mbryantms/folio/compare/v0.41.1...v0.42.0) (2026-10-05)
+
+
+### Added
+
+* **metadata:** collapse the coverage analysis once nothing is left to accept ([#1034](https://github.com/mbryantms/folio/issues/1034)) ([493580f](https://github.com/mbryantms/folio/commit/493580feeb908d6f81d2c933ed92a60ba739c517))
+
+
+### Fixed
+
+* **pwa:** keep #top-edge off the header search field ([#1036](https://github.com/mbryantms/folio/issues/1036)) ([a5de96b](https://github.com/mbryantms/folio/commit/a5de96bfb198a73bc0f1d9e495fbede6516f2146))
+
+
+### Dependencies
+
+* lock file maintenance ([#1030](https://github.com/mbryantms/folio/issues/1030)) ([838b56f](https://github.com/mbryantms/folio/commit/838b56f4ea4460889afce4333e25b8dbe12c1537))
+* lock file maintenance ([#1032](https://github.com/mbryantms/folio/issues/1032)) ([57ab08c](https://github.com/mbryantms/folio/commit/57ab08cdc1b0dd9d78b65ac27f25fc86d8f1d23e))
+* update dependency @tanstack/react-query to v5.104.1 ([#1033](https://github.com/mbryantms/folio/issues/1033)) ([1830bdd](https://github.com/mbryantms/folio/commit/1830bdd70d7f00e9ddadb4c538b988d135ac02c1))
+* update dependency lucide-react to v1.50.0 ([#1038](https://github.com/mbryantms/folio/issues/1038)) ([a831ed4](https://github.com/mbryantms/folio/commit/a831ed49c315b5409bfc0dfa227c88c2ff5163f3))
+* update dependency next-intl to v4.14.9 ([#1037](https://github.com/mbryantms/folio/issues/1037)) ([682c378](https://github.com/mbryantms/folio/commit/682c37816a7810d2083e6e409d245f4d59c59180))
+* update web-dev-tooling (weekly) ([#1029](https://github.com/mbryantms/folio/issues/1029)) ([76800d2](https://github.com/mbryantms/folio/commit/76800d2b19dc370408f1369f5072bc6ac59e66e5))
+
+
+### Build & CI
+
+* pin the oasdiff CLI so the breaking-change check doesn't hit the GitHub API ([#1035](https://github.com/mbryantms/folio/issues/1035)) ([0fac5c7](https://github.com/mbryantms/folio/commit/0fac5c7c94a1bdafd5ac4ed09d7a098d85b66142))
+
 ## [0.41.1](https://github.com/mbryantms/folio/compare/v0.41.0...v0.41.1) (2026-10-05)
 
 
