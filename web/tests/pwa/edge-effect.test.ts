@@ -71,4 +71,16 @@ describe("iOS 26 scroll edge effect", () => {
     const src = read("app/[locale]/read/[seriesSlug]/[issueSlug]/Reader.tsx");
     expect(src).not.toMatch(/pt-\(--safe-top\) pb-\(--safe-bottom\)/);
   });
+
+  it("the root layout keeps a fixed top-edge bar under every header", () => {
+    // iPadOS 27 latches into content blur the first time it finds no
+    // fixed/sticky bar at the top edge (route-change skeletons have none).
+    const src = read("app/layout.tsx");
+    expect(src).toMatch(
+      /className="bg-background pointer-events-none fixed inset-x-0 top-0 z-0 h-3"/,
+    );
+    expect(src.indexOf("fixed inset-x-0 top-0 z-0 h-3")).toBeLessThan(
+      src.indexOf("<ThemeProvider"),
+    );
+  });
 });
