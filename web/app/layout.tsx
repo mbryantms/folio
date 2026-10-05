@@ -149,7 +149,7 @@ export default async function RootLayout({
             (a header unmounts on a layout switch, the reader chrome takes
             over, an overlay opens) it switches to blurring the page content
             into the strip and never recovers for the life of the document.
-            Measured with /pwa-lab Q: shrinking the same header to 12px kept
+            Measured on iPadOS 27.0.1: shrinking the same header to 12px kept
             the strip clean; swapping in any other bar, fixed or sticky, at
             any height, latched it. So this one element is always what iOS
             samples: present from first paint, above every header and
