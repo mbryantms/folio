@@ -12,6 +12,8 @@ import {
   pct,
   phaseLabel,
   sortLibraries,
+  startedAgo,
+  taskLabel,
   thumbPace,
 } from "@/lib/admin/background-work";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
@@ -351,6 +353,9 @@ function ScanCell({ lib }: { lib: LibraryWorkView }) {
 function OtherWorkCard({ view }: { view: BackgroundWorkView }) {
   const rows = otherWork(view);
   const batches = view.metadata_batches;
+  const tasks = view.tasks;
+  const libraryName = new Map(view.libraries.map((l) => [l.id, l.name]));
+  const now = Date.parse(view.generated_at);
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -361,7 +366,7 @@ function OtherWorkCard({ view }: { view: BackgroundWorkView }) {
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
-        {rows.length === 0 && batches.length === 0 ? (
+        {rows.length === 0 && batches.length === 0 && tasks.length === 0 ? (
           <p className="text-muted-foreground text-sm">Nothing queued.</p>
         ) : null}
         {rows.length > 0 ? (
@@ -381,6 +386,32 @@ function OtherWorkCard({ view }: { view: BackgroundWorkView }) {
                     {r.inFlight > 0 ? ` · ${n(r.inFlight)} with workers` : ""}
                   </span>
                 </Link>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {tasks.length > 0 ? (
+          <ul className="divide-border divide-y">
+            {tasks.map((t) => (
+              <li
+                key={`${t.kind}:${t.library_id ?? ""}:${t.started_at}`}
+                className="flex items-center justify-between gap-4 py-2 text-sm"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <Loader2
+                    className="text-muted-foreground h-3.5 w-3.5 shrink-0 animate-spin"
+                    aria-hidden="true"
+                  />
+                  <span className="truncate">
+                    {taskLabel(t.kind)}
+                    {t.library_id && libraryName.has(t.library_id)
+                      ? ` — ${libraryName.get(t.library_id)}`
+                      : ""}
+                  </span>
+                </span>
+                <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                  {startedAgo(t.started_at, now)}
+                </span>
               </li>
             ))}
           </ul>

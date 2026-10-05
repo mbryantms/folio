@@ -115,6 +115,11 @@ surface that owns the detail (a library's Live scan page, `/admin/queue`,
   sets) — plus dead-letter counts. `Storage::len()` alone is only "waiting";
   don't use it for a depth number.
 - **Metadata batches** with member runs still to finish.
+- **Tasks** spawned outside the queues (deep validation, reading-list
+  rematch): wrap the task body in `AppState::track_background_task` and it
+  appears here for as long as the guard lives. Thumbnail pace
+  (`thumbs_per_min` / `thumbs_eta_secs`) comes from a two-minute window of
+  finished jobs.
 
 Page-strip readiness is not in the snapshot (it is a per-file disk walk) and
 stays on the per-library `thumbnails-status` endpoint.

@@ -9,7 +9,13 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { invalidationsForEvent } from "@/lib/api/scan-events";
+import {
+  formatBackfillMessage,
+  invalidationsForEvent,
+  noteThumbFailure,
+  thumbFailureMessage,
+  withSlugAliases,
+} from "@/lib/api/scan-events";
 import { queryKeys } from "@/lib/api/queries";
 import type { ScanEvent } from "@/lib/api/types";
 
@@ -21,7 +27,7 @@ const SCAN = "scan-1";
 const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
   {
     evt: { type: "scan.started", library_id: LIB, scan_id: SCAN, at: "t" },
-    expected: [queryKeys.scanRunsAll(LIB)],
+    expected: [queryKeys.scanRunsAll(LIB), queryKeys.backgroundWork],
   },
   {
     evt: {
@@ -35,6 +41,7 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
     },
     expected: [
       queryKeys.scanRunsAll(LIB),
+      queryKeys.backgroundWork,
       queryKeys.library(LIB),
       queryKeys.health(LIB),
       queryKeys.removed(LIB),
@@ -43,7 +50,7 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
   },
   {
     evt: { type: "scan.failed", library_id: LIB, scan_id: SCAN, error: "x" },
-    expected: [queryKeys.scanRunsAll(LIB)],
+    expected: [queryKeys.scanRunsAll(LIB), queryKeys.backgroundWork],
   },
   {
     evt: {
@@ -168,5 +175,68 @@ describe("invalidationsForEvent", () => {
       "lagged",
     ];
     for (const t of allTypes) expect(covered.has(t)).toBe(true);
+  });
+});
+
+describe("withSlugAliases", () => {
+  it("re-keys library-scoped invalidations by slug, dropping the rest", () => {
+    // Admin library pages key their queries by the route slug; events
+    // carry the id, so the id-keyed invalidation alone never reaches them.
+    const keys = [
+      queryKeys.scanRunsAll(LIB),
+      queryKeys.thumbnailsStatus(LIB),
+      queryKeys.backgroundWork,
+      ["series"],
+    ];
+    expect(withSlugAliases(keys, LIB, "marvel")).toEqual([
+      queryKeys.scanRunsAll("marvel"),
+      queryKeys.thumbnailsStatus("marvel"),
+    ]);
+  });
+
+  it("adds nothing when the slug is unknown or equals the id", () => {
+    expect(withSlugAliases([queryKeys.library(LIB)], LIB, "")).toEqual([]);
+    expect(withSlugAliases([queryKeys.library(LIB)], LIB, LIB)).toEqual([]);
+  });
+});
+
+describe("toast copy", () => {
+  it("groups repeated thumbnail failures into one counted message", () => {
+    expect(thumbFailureMessage(1, "bad zip")).toBe(
+      "Thumbnail job failed: bad zip",
+    );
+    expect(thumbFailureMessage(1234, "bad zip")).toBe(
+      "1,234 thumbnail jobs failed — latest: bad zip",
+    );
+  });
+
+  it("counts thumbnail failures once per event, and again on a later retry", () => {
+    const t0 = 1_000_000;
+    expect(noteThumbFailure("i1:cover", t0)).toBe(1);
+    // Same event delivered on a second subscriber's socket.
+    expect(noteThumbFailure("i1:cover", t0 + 50)).toBeNull();
+    expect(noteThumbFailure("i2:cover", t0 + 100)).toBe(2);
+    // The admin retries a minute later and the same issue fails again:
+    // it must toast again, with a fresh count.
+    expect(noteThumbFailure("i1:cover", t0 + 60_000)).toBe(1);
+  });
+
+  it("labels every backfill kind the server emits", () => {
+    const done = (kind: string, processed: number, skipped = 0) =>
+      formatBackfillMessage({
+        type: "backfill.completed",
+        kind,
+        processed,
+        skipped,
+      } as Extract<ScanEvent, { type: "backfill.completed" }>);
+    expect(done("cover_phash", 2)).toBe("Backfilled 2 cover hashes");
+    expect(done("variant_cover", 1, 3)).toBe(
+      "Re-downloaded 1 variant cover · 3 could not be fetched",
+    );
+    // Was mislabelled "Re-downloaded N variant covers".
+    expect(done("cover_variant", 5)).toBe("Generated 5 small covers");
+    expect(done("cover_variant", 0)).toBe(
+      "Cover-size backfill complete — nothing to do.",
+    );
   });
 });

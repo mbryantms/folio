@@ -34,11 +34,9 @@ flowchart TD
     IR["UI<br/><b>POST /issues/:id/scan</b>"]:::trig
     FW["File watcher<br/><i>inotify / directory-mtime poll</i><br/>library/watcher.rs"]:::trig
     SCH["Scheduler<br/><i>scan_schedule_cron</i>"]:::trig
-    BOOT["Boot<br/><i>COMIC_SCAN_ON_STARTUP</i>"]:::trig
 
     UI --> COAL["jobs::JobRuntime::coalesce_scan<br/><i>in-flight gate per library</i>"]
     SCH --> COAL
-    BOOT --> COAL
     SR --> SS["jobs/scan_series.rs<br/><b>JobKind::Series</b>"]
     IR --> SS2["jobs/scan_series.rs<br/><b>JobKind::Issue</b>"]
     FW -->|"touched dirs<br/>coalesce_watch_scan"| COAL
@@ -107,7 +105,6 @@ reconcile so unscanned siblings stay untouched.
 | Manual issue scan | `POST /series/{series_slug}/issues/{issue_slug}/scan` | Same job type, `JobKind::Issue` — runs [`scan_issue_file`](../../crates/server/src/library/scanner/mod.rs#L376). |
 | Scheduled scan | `library.scan_schedule_cron` per-library | [`jobs/scheduler.rs:224`](../../crates/server/src/jobs/scheduler.rs#L224) — `coalesce_scan(.., false)`. 5- or 6-field cron via `tokio_cron_scheduler`. |
 | File watcher | `library.file_watch_enabled` per library ([library/watcher.rs](../../crates/server/src/library/watcher.rs)) | inotify on local mounts, directory-mtime poll on NFS/SMB/CIFS/FUSE (picked by `statfs` at watcher start). Touched directories are collapsed over `scanner.watch_debounce_secs` (30 s) and enqueued via [`JobRuntime::coalesce_watch_scan`](../../crates/server/src/jobs/mod.rs) as a **scoped, non-forced** library scan of those directories only ([`scan_library_scoped`](../../crates/server/src/library/scanner/mod.rs)). Shares the full scan's `scan:in_flight` / `scan:queued` keys, so a storm is one scan plus at most one queued follow-up. See [File watcher](#file-watcher). |
-| Startup scan | `COMIC_SCAN_ON_STARTUP=true` | Enqueues a full scan of every library at boot. |
 
 ## Phase walkthrough
 
@@ -716,7 +713,8 @@ durable side of the live channel. Fields:
 |---|---|---|
 | `id` | uuid | The `scan_id` referenced in events. |
 | `library_id` | uuid | |
-| `state` | text | `running` / `complete` / `failed` / `cancelled`. |
+| `state` | text | `queued` / `running` / `complete` / `failed` / `cancelled`. `queued` rows are pre-inserted at enqueue time; a run that fails before it opens (library gone, validation) or whose job is cleared from the queue is closed by `fail_unstarted_run` / `cancel_queued_runs`. |
+| `batch_id` | uuid? | The scan-all batch (`scan_batch`) the run belongs to. |
 | `started_at`, `ended_at` | timestamptz | `ended_at` set by `finalize_run`. |
 | `stats` | jsonb | Last `ScanStats` snapshot + the latest `progress` sub-object. Includes `phase_timings_ms`, `bytes_hashed`, `files_per_sec`, and `bytes_per_sec`. Refreshed every progress emission. |
 | `error` | text? | Set when `state = 'failed'`. |
@@ -833,7 +831,6 @@ waiting for the scheduled refresh window.
 | Var | Default | Notes |
 |---|---|---|
 | `COMIC_REDIS_URL` | (required) | Apalis backend. No longer optional since Library Scanner v1. |
-| `COMIC_SCAN_ON_STARTUP` | `false` | Enqueue a full scan of every library at boot. |
 | `COMIC_SCAN_WORKER_COUNT` | `min(cpu, 8)` | Per-queue concurrency for `scan` + `scan_series`. |
 | `COMIC_POST_SCAN_WORKER_COUNT` | `clamp(cpu/2, 2, 8)` | thumbs / search / dictionary. |
 | `COMIC_SCAN_BATCH_SIZE` | `100` | Issues per DB transaction within a series. |

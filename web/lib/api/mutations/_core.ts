@@ -169,10 +169,28 @@ export function useApiMutation<TData, TInput>(
      * not N. Sonner reuses the same toast element when an id repeats.
      */
     toastId?: string;
+    /**
+     * A link on the success toast to where the queued work can be
+     * watched (e.g. "View progress" → Background work). For mutations
+     * that only *start* something; the toast alone would otherwise be the
+     * last the admin hears of it.
+     */
+    successAction?:
+      | { label: string; href: string }
+      | ((
+          data: TData | null,
+          input: TInput,
+        ) => { label: string; href: string } | undefined);
   },
 ) {
-  const { successMessage, toastId, onSuccess, onError, ...rest } =
-    options ?? {};
+  const {
+    successMessage,
+    successAction,
+    toastId,
+    onSuccess,
+    onError,
+    ...rest
+  } = options ?? {};
   // Ref to the mutation's `mutate` so the error-toast Retry action
   // can re-fire the same request without forcing every call site to
   // wire up its own onError handler. The ref is populated after the
@@ -191,7 +209,21 @@ export function useApiMutation<TData, TInput>(
           typeof successMessage === "function"
             ? successMessage(data, input)
             : successMessage;
-        toast.success(msg, toastId ? { id: toastId } : undefined);
+        const action =
+          typeof successAction === "function"
+            ? successAction(data, input)
+            : successAction;
+        toast.success(msg, {
+          ...(toastId ? { id: toastId } : {}),
+          ...(action
+            ? {
+                action: {
+                  label: action.label,
+                  onClick: () => window.location.assign(action.href),
+                },
+              }
+            : {}),
+        });
       }
       onSuccess?.(data, input, onMutateResult, context);
     },

@@ -881,6 +881,106 @@ async fn maybe_finalize_batch(db: &impl ConnectionTrait, batch_id: Uuid) {
     }
 }
 
+/// Close a pre-inserted `queued` run whose scan failed before it opened the
+/// run (library gone, validation failed, series folder missing, …): emit
+/// the terminal event and let its scan-all batch finalize. The job handlers
+/// call this on every scan error; it is a no-op when the run was never
+/// pre-inserted or already left `queued` (the normal case — `finalize_run`
+/// recorded the failure). Best-effort: failures are logged.
+pub(crate) async fn fail_unstarted_run(
+    state: &AppState,
+    library_id: Uuid,
+    requested_scan_id: Option<Uuid>,
+    error: &str,
+) {
+    let Some(scan_id) = requested_scan_id else {
+        return;
+    };
+    let run = match ScanRunEntity::find_by_id(scan_id).one(&state.db).await {
+        Ok(Some(r)) if r.state == "queued" => r,
+        Ok(_) => return,
+        Err(e) => {
+            tracing::error!(error = %e, %scan_id, "scan: load unstarted run failed");
+            return;
+        }
+    };
+    let batch_id = run.batch_id;
+    let mut am: ScanRunAM = run.into();
+    am.state = Set("failed".to_owned());
+    am.ended_at = Set(Some(Utc::now().fixed_offset()));
+    am.error = Set(Some(error.to_owned()));
+    if let Err(e) = am.update(&state.db).await {
+        tracing::error!(error = %e, %scan_id, "scan: close unstarted run failed");
+        return;
+    }
+    state.events.emit(ScanEvent::Failed {
+        library_id,
+        scan_id,
+        error: error.to_owned(),
+        batch_id,
+    });
+    if let Some(batch_id) = batch_id {
+        maybe_finalize_batch(&state.db, batch_id).await;
+    }
+}
+
+#[derive(Debug, sea_orm::FromQueryResult)]
+struct CancelledRun {
+    id: Uuid,
+    library_id: Uuid,
+    batch_id: Option<Uuid>,
+}
+
+/// Mark `queued` scan runs enqueued before `enqueued_before` cancelled and
+/// finalize the batches that leaves with no pending member. Called after
+/// the admin clears the scan queues: the jobs that would have started those
+/// runs are gone, so nothing else would ever close the rows — they (and
+/// their scan-all batch) would read as in progress forever.
+///
+/// One guarded `UPDATE … WHERE state = 'queued'`, so a run a worker has
+/// already flipped to `running` is never touched, and the cutoff (taken
+/// before the Redis delete) spares a scan triggered while the clear was in
+/// flight. Returns the number of runs closed.
+pub async fn cancel_queued_runs(
+    state: &AppState,
+    reason: &str,
+    enqueued_before: chrono::DateTime<chrono::FixedOffset>,
+) -> Result<u64, sea_orm::DbErr> {
+    use sea_orm::FromQueryResult;
+    let closed = CancelledRun::find_by_statement(sea_orm::Statement::from_sql_and_values(
+        state.db.get_database_backend(),
+        r#"
+        UPDATE scan_runs
+           SET state = 'cancelled', ended_at = $1, error = $2
+         WHERE state = 'queued' AND started_at < $3
+        RETURNING id, library_id, batch_id
+        "#,
+        [
+            Utc::now().fixed_offset().into(),
+            reason.into(),
+            enqueued_before.into(),
+        ],
+    ))
+    .all(&state.db)
+    .await?;
+    let mut batches = HashSet::new();
+    for run in &closed {
+        state.events.emit(ScanEvent::Failed {
+            library_id: run.library_id,
+            scan_id: run.id,
+            error: reason.to_owned(),
+            batch_id: run.batch_id,
+        });
+        if let Some(b) = run.batch_id {
+            batches.insert(b);
+        }
+    }
+    for batch_id in batches {
+        maybe_finalize_batch(&state.db, batch_id).await;
+    }
+    Ok(closed.len() as u64)
+}
+
 fn stats_json_with_progress(
     stats: &ScanStats,
     progress: Option<(&ProgressState, &'static str, &'static str, Option<&str>)>,
@@ -1931,6 +2031,7 @@ fn scan_changed_library(stats: &ScanStats) -> bool {
 /// scheduled refresh window.
 pub fn spawn_cbl_rematch_all(state: AppState) {
     tokio::spawn(async move {
+        let _task = state.track_background_task("cbl_rematch", None);
         use entity::cbl_list;
         let lists = match cbl_list::Entity::find().all(&state.db).await {
             Ok(rows) => rows,

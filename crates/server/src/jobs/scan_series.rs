@@ -109,6 +109,15 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), Error> {
                     error = %e,
                     "scan_issue narrow path failed (recorded in scan_runs; not retried)",
                 );
+                // A bail before the run opened (issue gone, wrong library)
+                // leaves the pre-inserted `queued` row; close it.
+                crate::library::scanner::fail_unstarted_run(
+                    &state,
+                    job.library_id,
+                    job.scan_run_id,
+                    &e.to_string(),
+                )
+                .await;
                 release_scope(&state, &job).await;
                 return Ok(());
             }
@@ -200,6 +209,15 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), Error> {
                     error = %e,
                     "scan_series narrow path failed (recorded in scan_runs; not retried)",
                 );
+                // Same as the issue branch: folder missing / outside the
+                // root bails before the run opens.
+                crate::library::scanner::fail_unstarted_run(
+                    &state,
+                    job.library_id,
+                    job.scan_run_id,
+                    &e.to_string(),
+                )
+                .await;
                 release_scope(&state, &job).await;
                 return Ok(());
             }
@@ -209,6 +227,16 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), Error> {
     // Fallback: payload didn't identify a folder we can scan narrowly. Use
     // the coalesced full-library path so noisy file-watch bursts on
     // unidentifiable folders still collapse into a single in-flight scan.
+    // The scoped run this job was enqueued with will never open: close it
+    // and free its coalescing key before handing over.
+    crate::library::scanner::fail_unstarted_run(
+        &state,
+        job.library_id,
+        job.scan_run_id,
+        "series could not be resolved; a library scan was queued instead",
+    )
+    .await;
+    release_scope(&state, &job).await;
     if let Err(e) = state.jobs.coalesce_scan(job.library_id, job.force).await {
         tracing::error!(
             library_id = %job.library_id,

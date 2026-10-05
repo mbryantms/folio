@@ -4,9 +4,11 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { BACKGROUND_WORK_HREF } from "@/lib/admin/background-work";
+
 import { apiFetch } from "./auth-refresh";
-import { queryKeys } from "./queries";
-import type { ScanEvent } from "./types";
+import { jsonFetch, queryKeys } from "./queries";
+import type { LibraryView, ScanEvent } from "./types";
 
 type Status = "connecting" | "open" | "closed";
 
@@ -37,10 +39,11 @@ export function invalidationsForEvent(
   switch (evt.type) {
     case "scan.started":
     case "scan.failed":
-      return [queryKeys.scanRunsAll(evt.library_id)];
+      return [queryKeys.scanRunsAll(evt.library_id), queryKeys.backgroundWork];
     case "scan.completed":
       return [
         queryKeys.scanRunsAll(evt.library_id),
+        queryKeys.backgroundWork,
         queryKeys.library(evt.library_id),
         queryKeys.health(evt.library_id),
         queryKeys.removed(evt.library_id),
@@ -80,6 +83,63 @@ export function invalidationsForEvent(
     default:
       return assertNever(evt);
   }
+}
+
+/**
+ * The same keys with `libraryId` swapped for the library's slug. Events
+ * carry the library **id**, but the admin library pages key their queries
+ * by the route **slug** (`useScanRuns(slug)`, `useThumbnailsStatus(slug)`,
+ * …), so an id-keyed invalidation alone never reaches the page the admin
+ * is looking at. Keys that don't mention the library are dropped.
+ */
+export function withSlugAliases(
+  keys: readonly (readonly unknown[])[],
+  libraryId: string,
+  slug: string,
+): (readonly unknown[])[] {
+  if (!slug || slug === libraryId) return [];
+  return keys
+    .filter((key) => key.includes(libraryId))
+    .map((key) => key.map((part) => (part === libraryId ? slug : part)));
+}
+
+/** Failed-thumbnail toasts collapse into one that counts up, instead of one
+ *  per job (a bad archive batch used to stack dozens). The count resets
+ *  after a quiet spell. */
+const THUMB_FAIL_TOAST_ID = "thumbs-failed";
+const THUMB_FAIL_QUIET_MS = 30_000;
+/** Long enough to drop the same event arriving on another subscriber's
+ *  socket; short enough that a retry failing again toasts again. */
+const THUMB_FAIL_DEDUPE_MS = 5_000;
+let thumbFailCount = 0;
+let thumbFailLastAt = 0;
+const thumbFailSeen = new Map<string, number>();
+
+/** Count one failed thumbnail job; returns the running count for the
+ *  toast, or `null` when this is a duplicate delivery of the same event.
+ *  Exported for unit testing (`now` is injectable). */
+export function noteThumbFailure(key: string, now: number): number | null {
+  const seenAt = thumbFailSeen.get(key);
+  if (seenAt !== undefined && now - seenAt < THUMB_FAIL_DEDUPE_MS) return null;
+  if (now - thumbFailLastAt > THUMB_FAIL_QUIET_MS) {
+    thumbFailCount = 0;
+    thumbFailSeen.clear();
+  }
+  thumbFailSeen.set(key, now);
+  thumbFailCount += 1;
+  thumbFailLastAt = now;
+  return thumbFailCount;
+}
+
+/** Don't hammer `/libraries` during an event storm if it keeps failing. */
+const SLUG_LOOKUP_RETRY_MS = 30_000;
+let slugLookupFailedAt = 0;
+
+/** Copy for the grouped failure toast. Exported for unit testing. */
+export function thumbFailureMessage(count: number, latest: string): string {
+  return count <= 1
+    ? `Thumbnail job failed: ${latest}`
+    : `${count.toLocaleString("en-US")} thumbnail jobs failed — latest: ${latest}`;
 }
 
 function assertNever(evt: never): readonly (readonly unknown[])[] {
@@ -270,7 +330,34 @@ export function useScanEvents(opts?: {
         });
         // Cache invalidation: coalesced (see enqueueInvalidations). Toasts
         // stay immediate — a 1.5s-deferred "scan failed" would feel broken.
-        enqueueInvalidations(invalidationsForEvent(evt));
+        const keys = invalidationsForEvent(evt);
+        enqueueInvalidations(keys);
+        if (
+          "library_id" in evt &&
+          keys.length > 0 &&
+          Date.now() - slugLookupFailedAt > SLUG_LOOKUP_RETRY_MS
+        ) {
+          const eventLibraryId = evt.library_id;
+          // Resolve the slug from the (cached) library list, then queue the
+          // slug-keyed twins. Best-effort: a failed lookup only loses the
+          // extra refresh.
+          void qc
+            .ensureQueryData({
+              queryKey: queryKeys.libraries,
+              queryFn: () => jsonFetch<LibraryView[]>("/libraries"),
+            })
+            .then((libs) => {
+              const slug = libs.find((l) => l.id === eventLibraryId)?.slug;
+              if (slug) {
+                enqueueInvalidations(
+                  withSlugAliases(keys, eventLibraryId, slug),
+                );
+              }
+            })
+            .catch(() => {
+              slugLookupFailedAt = Date.now();
+            });
+        }
         switch (evt.type) {
           case "scan.completed":
             if (toastCompletions && rememberScanToast(evt.scan_id)) {
@@ -298,7 +385,19 @@ export function useScanEvents(opts?: {
             break;
           case "thumbs.failed":
             if (toastErrors) {
-              toast.error(`Thumbnail job failed: ${evt.error}`);
+              const count = noteThumbFailure(
+                `${evt.issue_id}:${evt.kind ?? ""}`,
+                Date.now(),
+              );
+              if (count !== null) {
+                toast.error(thumbFailureMessage(count, evt.error), {
+                  id: THUMB_FAIL_TOAST_ID,
+                  action: {
+                    label: "View",
+                    onClick: () => window.location.assign(BACKGROUND_WORK_HREF),
+                  },
+                });
+              }
             }
             break;
           case "backfill.completed":
@@ -357,21 +456,40 @@ function formatCompletionMessage(
   return `Scan complete · ${parts.join(", ")}`;
 }
 
-/** Success-toast copy for a finished backfill drain (audit B17). */
-function formatBackfillMessage(
+/** Success-toast copy for a finished backfill drain (audit B17). Exported
+ *  for unit testing. */
+export function formatBackfillMessage(
   evt: Extract<ScanEvent, { type: "backfill.completed" }>,
 ): string {
-  const noun = evt.kind === "cover_phash" ? "cover hash" : "variant cover";
-  const verb = evt.kind === "cover_phash" ? "Backfilled" : "Re-downloaded";
+  // One row per `BackfillKind::as_str` on the server.
+  const copy =
+    evt.kind === "cover_phash"
+      ? {
+          title: "Cover-hash",
+          verb: "Backfilled",
+          noun: "cover hash",
+          plural: "cover hashes",
+          skipped: "could not be decoded",
+        }
+      : evt.kind === "cover_variant"
+        ? {
+            title: "Cover-size",
+            verb: "Generated",
+            noun: "small cover",
+            plural: "small covers",
+            skipped: "could not be generated",
+          }
+        : {
+            title: "Variant-cover",
+            verb: "Re-downloaded",
+            noun: "variant cover",
+            plural: "variant covers",
+            skipped: "could not be fetched",
+          };
   if (evt.processed === 0 && evt.skipped === 0) {
-    return `${noun === "cover hash" ? "Cover-hash" : "Variant-cover"} backfill complete — nothing to do.`;
+    return `${copy.title} backfill complete — nothing to do.`;
   }
-  let msg = `${verb} ${evt.processed.toLocaleString()} ${noun}${evt.processed === 1 ? "" : "s"}`;
-  if (evt.skipped > 0) {
-    msg +=
-      evt.kind === "cover_phash"
-        ? ` · ${evt.skipped} could not be decoded`
-        : ` · ${evt.skipped} could not be fetched`;
-  }
+  let msg = `${copy.verb} ${evt.processed.toLocaleString()} ${evt.processed === 1 ? copy.noun : copy.plural}`;
+  if (evt.skipped > 0) msg += ` · ${evt.skipped} ${copy.skipped}`;
   return msg;
 }

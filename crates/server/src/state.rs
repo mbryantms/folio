@@ -110,6 +110,10 @@ pub struct Inner {
     /// When recent thumbnail jobs finished executing — the sliding window
     /// behind [`AppState::thumbs_per_min`]. Process-local, like the marks.
     pub thumb_throughput: Arc<std::sync::Mutex<std::collections::VecDeque<std::time::Instant>>>,
+    /// Long-running work spawned outside the job queues (deep validation,
+    /// reading-list rematch), so the Background work snapshot can show it.
+    /// Process-local; entries live as long as their [`BackgroundTaskGuard`].
+    pub background_tasks: Arc<std::sync::Mutex<HashMap<u64, BackgroundTask>>>,
     /// Process-local cache from a thumbnail request key to the exact file that
     /// satisfied it, avoiding extension probing on hot image requests. Bounded
     /// LRU (PERF-9): the previous unbounded `HashMap` grew one entry per
@@ -184,6 +188,7 @@ impl AppState {
         let thumb_job_inflight = Arc::new(Mutex::new(HashSet::new()));
         let thumb_job_running = Arc::new(std::sync::Mutex::new(HashSet::new()));
         let thumb_throughput = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        let background_tasks = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let thumb_path_cache = Arc::new(std::sync::Mutex::new(LruCache::new(
             NonZeroUsize::new(THUMB_PATH_CACHE_CAP).expect("nonzero"),
         )));
@@ -223,6 +228,7 @@ impl AppState {
             thumb_job_inflight,
             thumb_job_running,
             thumb_throughput,
+            background_tasks,
             thumb_path_cache,
             archive_work_semaphore,
             scheduler,
@@ -336,6 +342,45 @@ impl AppState {
         }
     }
 
+    /// Register a spawned (non-queue) task until the returned guard drops.
+    /// Hold the guard for the task's whole body.
+    pub fn track_background_task(
+        &self,
+        kind: &'static str,
+        library_id: Option<uuid::Uuid>,
+    ) -> BackgroundTaskGuard {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.background_tasks
+            .lock()
+            .expect("background_tasks poisoned")
+            .insert(
+                id,
+                BackgroundTask {
+                    kind,
+                    library_id,
+                    started_at: chrono::Utc::now(),
+                },
+            );
+        BackgroundTaskGuard {
+            tasks: self.background_tasks.clone(),
+            id,
+        }
+    }
+
+    /// Spawned tasks currently running, oldest first.
+    pub fn running_background_tasks(&self) -> Vec<BackgroundTask> {
+        let mut tasks: Vec<BackgroundTask> = self
+            .background_tasks
+            .lock()
+            .expect("background_tasks poisoned")
+            .values()
+            .cloned()
+            .collect();
+        tasks.sort_by_key(|t| t.started_at);
+        tasks
+    }
+
     /// Thumbnail jobs finished per minute over the last
     /// [`THUMB_RATE_WINDOW`], or `None` with too few samples to say (idle,
     /// or the drain only just started).
@@ -403,6 +448,29 @@ pub struct ThumbRunningGuard {
     set: Arc<std::sync::Mutex<HashSet<String>>>,
     throughput: Arc<std::sync::Mutex<std::collections::VecDeque<std::time::Instant>>>,
     key: String,
+}
+
+/// One spawned (non-queue) task in flight.
+#[derive(Debug, Clone)]
+pub struct BackgroundTask {
+    /// Stable identifier, e.g. `deep_validate`, `cbl_rematch`.
+    pub kind: &'static str,
+    pub library_id: Option<uuid::Uuid>,
+    pub started_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Unregisters its task on drop — every exit path, including a panic.
+pub struct BackgroundTaskGuard {
+    tasks: Arc<std::sync::Mutex<HashMap<u64, BackgroundTask>>>,
+    id: u64,
+}
+
+impl Drop for BackgroundTaskGuard {
+    fn drop(&mut self) {
+        if let Ok(mut tasks) = self.tasks.lock() {
+            tasks.remove(&self.id);
+        }
+    }
 }
 
 /// Sliding window the thumbnail rate is measured over.

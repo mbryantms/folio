@@ -184,3 +184,25 @@ export function thumbPace(
     ? rate
     : `${rate} · ${formatEta(totals.thumbs_eta_secs)} left`;
 }
+
+/** Label for a spawned (non-queue) task kind. */
+export function taskLabel(kind: string): string {
+  switch (kind) {
+    case "deep_validate":
+      return "Deep validation";
+    case "cbl_rematch":
+      return "Reading-list rematch";
+    default:
+      return kind;
+  }
+}
+
+/** "started 12 min ago" from an RFC 3339 timestamp, relative to `now`. */
+export function startedAgo(startedAt: string, now: number): string {
+  const secs = Math.max(0, Math.round((now - Date.parse(startedAt)) / 1000));
+  if (secs < 60) return "started just now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `started ${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  return `started ${hours} h ${mins % 60} min ago`;
+}

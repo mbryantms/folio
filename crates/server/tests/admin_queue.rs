@@ -532,3 +532,133 @@ async fn outstanding_thumb_jobs_decodes_what_apalis_stored() {
     assert_eq!(jobs[1].issue_id, "issue-b");
     assert_eq!(jobs[1].kind, ThumbsJobKind::Strip);
 }
+
+// ───── Clearing the scan queue closes the runs it orphans ─────
+
+#[tokio::test]
+async fn clear_scans_cancels_queued_runs_and_finalizes_their_batch() {
+    // The jobs that would have started `queued` runs are deleted by the
+    // clear; without closing the rows they — and their scan-all batch —
+    // read as in progress forever.
+    use chrono::Utc;
+    use sea_orm::{ActiveModelTrait, Set};
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let st = app.state();
+    let dir = tempfile::tempdir().unwrap();
+    let lib_id = common::seed::LibrarySeed::new(dir.path())
+        .insert(&st.db)
+        .await;
+    let now = Utc::now().fixed_offset();
+    let batch_id = Uuid::now_v7();
+    entity::scan_batch::ActiveModel {
+        id: Set(batch_id),
+        kind: Set("scan_all".into()),
+        actor_id: Set(None),
+        force: Set(false),
+        started_at: Set(now),
+        ended_at: Set(None),
+        library_count: Set(1),
+        state: Set("running".into()),
+    }
+    .insert(&st.db)
+    .await
+    .unwrap();
+    let run_id = Uuid::now_v7();
+    entity::scan_run::ActiveModel {
+        id: Set(run_id),
+        library_id: Set(lib_id),
+        state: Set("queued".into()),
+        started_at: Set(now),
+        ended_at: Set(None),
+        stats: Set(json!({})),
+        error: Set(None),
+        kind: Set("library".into()),
+        series_id: Set(None),
+        issue_id: Set(None),
+        batch_id: Set(Some(batch_id)),
+    }
+    .insert(&st.db)
+    .await
+    .unwrap();
+
+    let resp = send_authed(
+        &app,
+        &admin,
+        Method::POST,
+        "/api/admin/queue/clear",
+        Some(json!({ "target": "scans" })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["cancelled_scan_runs"], 1);
+
+    let run = entity::scan_run::Entity::find_by_id(run_id)
+        .one(&st.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.state, "cancelled");
+    assert!(run.ended_at.is_some());
+    let batch = entity::scan_batch::Entity::find_by_id(batch_id)
+        .one(&st.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(batch.state, "failed", "no member completed");
+    assert!(batch.ended_at.is_some());
+}
+
+#[tokio::test]
+async fn scan_that_fails_before_opening_closes_its_queued_run() {
+    // Runs are pre-inserted `queued` at enqueue time. A scan that fails
+    // validation never opens (or finalizes) the row, so the job handler
+    // must close it — otherwise it reads as queued forever.
+    use chrono::Utc;
+    use sea_orm::{ActiveModelTrait, Set};
+    let app = TestApp::spawn().await;
+    let st = app.state();
+    let missing_root = std::path::Path::new("/nonexistent/folio-test-library-root");
+    let lib_id = common::seed::LibrarySeed::new(missing_root)
+        .insert(&st.db)
+        .await;
+    let run_id = Uuid::now_v7();
+    entity::scan_run::ActiveModel {
+        id: Set(run_id),
+        library_id: Set(lib_id),
+        state: Set("queued".into()),
+        started_at: Set(Utc::now().fixed_offset()),
+        ended_at: Set(None),
+        stats: Set(json!({})),
+        error: Set(None),
+        kind: Set("library".into()),
+        series_id: Set(None),
+        issue_id: Set(None),
+        batch_id: Set(None),
+    }
+    .insert(&st.db)
+    .await
+    .unwrap();
+
+    scan::handle(
+        scan::Job {
+            library_id: lib_id,
+            scan_run_id: run_id,
+            force: false,
+            scope: None,
+        },
+        apalis::prelude::Data::new(st.clone()),
+    )
+    .await
+    .expect("handler swallows scan failures");
+
+    let run = entity::scan_run::Entity::find_by_id(run_id)
+        .one(&st.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.state, "failed");
+    assert!(run.ended_at.is_some());
+    assert!(run.error.is_some());
+}

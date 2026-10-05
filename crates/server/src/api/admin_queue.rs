@@ -137,6 +137,9 @@ pub struct QueueClearReq {
 pub struct QueueClearResp {
     pub target: QueueClearTarget,
     pub deleted_keys: usize,
+    /// `queued` scan runs closed as `cancelled` because their job was
+    /// cleared (scan targets only).
+    pub cancelled_scan_runs: u64,
     pub before: QueueDepthView,
     pub after: QueueDepthView,
     /// Redis queue clearing is immediate, but a job already executing in a
@@ -222,6 +225,8 @@ pub async fn clear_queue(
         }
     };
 
+    // Taken before the delete: only runs enqueued before now lose their job.
+    let clear_started_at = chrono::Utc::now().fixed_offset();
     let mut conn = app.jobs.redis.clone();
     let mut deleted_keys = 0;
     for pattern in clear_patterns(req.target) {
@@ -239,6 +244,23 @@ pub async fn clear_queue(
         QueueClearTarget::All | QueueClearTarget::Thumbnails
     ) {
         app.clear_thumb_job_marks().await;
+    }
+
+    // The jobs that would have started the `queued` scan runs are gone;
+    // close the rows so they (and their scan-all batch) don't read as in
+    // progress forever.
+    let mut cancelled_runs = 0;
+    if matches!(req.target, QueueClearTarget::All | QueueClearTarget::Scans) {
+        match crate::library::scanner::cancel_queued_runs(
+            &app,
+            "queue cleared by admin",
+            clear_started_at,
+        )
+        .await
+        {
+            Ok(n) => cancelled_runs = n,
+            Err(e) => tracing::error!(error = %e, "clear_queue: closing queued scan runs failed"),
+        }
     }
 
     let after = match queue_depth_counts(&app).await {
@@ -263,6 +285,7 @@ pub async fn clear_queue(
             payload: serde_json::json!({
                 "target": req.target,
                 "deleted_keys": deleted_keys,
+                "cancelled_scan_runs": cancelled_runs,
                 "before": before,
                 "after": after,
             }),
@@ -275,6 +298,7 @@ pub async fn clear_queue(
     Json(QueueClearResp {
         target: req.target,
         deleted_keys,
+        cancelled_scan_runs: cancelled_runs,
         running_jobs_may_finish: before.total > after.total,
         before,
         after,
