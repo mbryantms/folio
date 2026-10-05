@@ -76,7 +76,7 @@ describe("iOS 26 scroll edge effect", () => {
     // iPadOS 27 latches into content blur the first time the element it
     // samples at the top edge CHANGES (a header unmounting on a layout
     // switch, the reader chrome taking over, an overlay opening). Measured
-    // with /pwa-lab Q: shrinking the same header kept the strip clean;
+    // on iPadOS 27.0.1: shrinking the same header kept the strip clean;
     // swapping in any other bar, at any height, fixed or sticky, latched
     // it. So #top-edge is always the sampled element: first in <body>,
     // sticky, above everything, 12px (WebKit ignores bars ≤ 10px), in the
