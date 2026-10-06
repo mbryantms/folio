@@ -6832,10 +6832,18 @@ export interface components {
             /** @description Proposals accepted automatically by this job. */
             auto_accepted: components["schemas"]["AcceptOutcome"][];
             error?: string | null;
+            /**
+             * @description Tagged annuals / one-shots / specials / collected editions the
+             *     analysis left out (they are not part of the run).
+             */
+            excluded_specials?: components["schemas"]["ExcludedSpecial"][];
             /** Format: date-time */
             finished_at?: string | null;
             job_id: string;
-            /** @description The grid's rows (empty until the job is done). */
+            /**
+             * @description The grid's rows (empty until the job is done): the series' main
+             *     run only.
+             */
             local_issues: components["schemas"]["CoverageLocalIssue"][];
             /** @description One column per provider (empty until the job is done). */
             providers: components["schemas"]["ProviderCoverageView"][];
@@ -8137,6 +8145,20 @@ export interface components {
             slug: string;
             /** Format: int32 */
             year?: number | null;
+        };
+        /**
+         * @description A local issue the analysis leaves out: an annual / one-shot / special
+         *     / collected edition the scanner tagged (`issue.special_type`, from
+         *     ComicInfo `<Format>` or an `Annuals/` / `Specials/` / `Oneshots/`
+         *     subfolder). Such a file is not part of the series' run — a
+         *     `… Annual 001.cbz` parses to number `1`, and without this exclusion it
+         *     would be analyzed as the run's #1 (reported uncovered, or worse, a
+         *     provider series that does list a #1 proposed as a range for it).
+         */
+        ExcludedSpecial: {
+            number?: string | null;
+            /** @description `"Annual"` | `"OneShot"` | `"Special"` | `"TPB"`. */
+            special_type: string;
         };
         ExportCollection: {
             created_at: string;
