@@ -13,6 +13,30 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.45.0](https://github.com/mbryantms/folio/compare/v0.44.0...v0.45.0) (2026-10-06)
+
+
+### Added
+
+* **series:** Specials & Extras as per-type sections served by the API ([#1055](https://github.com/mbryantms/folio/issues/1055)) ([090a3dd](https://github.com/mbryantms/folio/commit/090a3dd9c12a7215f2d800c739a2f04d428f004b))
+
+
+### Fixed
+
+* **metadata:** coverage analysis works on the main run only — tagged annuals / specials are excluded and reported ([#1054](https://github.com/mbryantms/folio/issues/1054)) ([2719269](https://github.com/mbryantms/folio/commit/2719269c1fcb91d52c2a5ae58f20790200b4b7c9))
+* **scanner:** keep "Name, Jr." as one person in ComicInfo CSV fields, with a backfill for issues already split ([#1057](https://github.com/mbryantms/folio/issues/1057)) ([eff7cce](https://github.com/mbryantms/folio/commit/eff7cce770fa827b7a9287ae73b53dbed6315a97))
+
+
+### Dependencies
+
+* update dependency lucide-react to v1.51.0 ([#1053](https://github.com/mbryantms/folio/issues/1053)) ([28867f7](https://github.com/mbryantms/folio/commit/28867f7930de1570fba66008c7f3e9fd96dfa9a3))
+* update node.js to eae779f ([#1051](https://github.com/mbryantms/folio/issues/1051)) ([23ef36f](https://github.com/mbryantms/folio/commit/23ef36fda05ce8d847ac1219520514cfbb4e0416))
+
+
+### Build & CI
+
+* build Rust test binaries without debuginfo and always free runner disk ([#1056](https://github.com/mbryantms/folio/issues/1056)) ([8575730](https://github.com/mbryantms/folio/commit/8575730fc2fe301083f631bc1d57abbce3e3eda6))
+
 ## [0.44.0](https://github.com/mbryantms/folio/compare/v0.43.0...v0.44.0) (2026-10-06)
 
 
