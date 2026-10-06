@@ -1480,6 +1480,18 @@ pub(crate) fn parse_starts_with(raw: &str) -> Option<StartsWithBucket> {
     }
 }
 
+/// Which part of a series a per-series issue listing returns. The main
+/// run is every issue the scanner did **not** tag with a `special_type`;
+/// specials are the annuals / one-shots / specials / collected editions
+/// it did (spec §6.5), which the series page lists in their own sections
+/// below the run instead of splitting a paginated list client-side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IssueKind {
+    Main,
+    Special,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ListIssuesQuery {
     pub q: Option<String>,
@@ -1491,6 +1503,13 @@ pub struct ListIssuesQuery {
     pub order: Option<SortOrder>,
     #[serde(default)]
     pub cursor: Option<String>,
+    /// `main` | `special`; absent = every issue (the pre-sections shape).
+    #[serde(default)]
+    pub kind: Option<IssueKind>,
+    /// One `special_type` (`Annual` | `OneShot` | `Special` | `TPB`);
+    /// implies `kind=special`.
+    #[serde(default)]
+    pub special_type: Option<String>,
 }
 
 fn default_limit() -> u64 {
@@ -4024,6 +4043,23 @@ pub async fn list_issues(
     // WP-2.7: an issue may carry its own rating above the series' — hide it.
     if let Some(cap) = acl.issue_cap_condition() {
         select = select.filter(cap);
+    }
+    // Main run vs specials (server-side, so a section never depends on
+    // which pages of the other happen to be loaded).
+    let special_type = q
+        .special_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty());
+    match (q.kind, special_type) {
+        (_, Some(t)) => select = select.filter(issue::Column::SpecialType.eq(t)),
+        (Some(IssueKind::Main), None) => {
+            select = select.filter(issue::Column::SpecialType.is_null());
+        }
+        (Some(IssueKind::Special), None) => {
+            select = select.filter(issue::Column::SpecialType.is_not_null());
+        }
+        (None, None) => {}
     }
 
     // Search mode: rank by ts_rank_cd and paginate with opaque offset

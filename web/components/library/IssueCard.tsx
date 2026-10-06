@@ -23,6 +23,28 @@ import type { IssueSummaryView } from "@/lib/api/types";
 import { issueUrl, readerUrl } from "@/lib/urls";
 import { useShareLink } from "@/lib/ui/use-share-link";
 
+/** `#12` for a run issue; `Annual #1` / `One-shot` / `Special #1` /
+ *  `Collected edition` for a scanner-tagged special; `—` when unnumbered. */
+export function issueNumberLabel(issue: {
+  number?: string | null;
+  special_type?: string | null;
+}): string {
+  const number = issue.number ? `#${issue.number}` : "";
+  const kind = issue.special_type
+    ? (SPECIAL_TYPE_LABELS[issue.special_type] ?? issue.special_type)
+    : "";
+  if (kind && number) return `${kind} ${number}`;
+  if (kind) return kind;
+  return number || "—";
+}
+
+const SPECIAL_TYPE_LABELS: Record<string, string> = {
+  Annual: "Annual",
+  OneShot: "One-shot",
+  Special: "Special",
+  TPB: "Collected edition",
+};
+
 function IssueCardImpl({
   issue,
   className,
@@ -58,7 +80,9 @@ function IssueCardImpl({
    *  entry isn't rendered. Plan: M6. */
   onEnterSelectMode?: (id: string) => void;
 }) {
-  const numberLabel = issue.number ? `#${issue.number}` : "—";
+  // A special carries its kind in the label ("Annual #1", "One-shot") so a
+  // card never reads like the run's #1.
+  const numberLabel = issueNumberLabel(issue);
   const heading = formatIssueHeading(issue);
   const router = useRouter();
   const upsertProgress = useUpsertIssueProgress();
