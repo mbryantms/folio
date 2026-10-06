@@ -263,6 +263,8 @@ async fn candidates_series_returns_completed_run_with_rows() {
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(Some(json!({
             "kind": "series",
             "name": "Saga",
@@ -338,6 +340,8 @@ async fn candidates_completed_run_includes_provider_quota() {
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(db)
@@ -403,6 +407,8 @@ async fn candidates_awaiting_quota_reports_retry_eta() {
         error_summary: Set(None),
         resume_after: Set(Some(resume)),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(db)
@@ -460,6 +466,8 @@ async fn candidates_series_404_when_run_id_belongs_to_different_series() {
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(db)
@@ -561,6 +569,8 @@ async fn seed_completed_series_run(
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(db)
@@ -987,6 +997,8 @@ async fn seed_needs_review_batch(
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(Some(batch_id)),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(db)
@@ -2023,4 +2035,68 @@ async fn batch_list_derives_status_from_member_runs() {
     assert_eq!(row["status"], "running");
     assert_eq!(row["in_flight"], 1);
     assert!(row["finished_at"].is_null());
+}
+
+// ───────── provider-complete search: Review payload ─────────
+
+/// The batch status carries each child's per-provider statuses and counts
+/// the children whose search didn't cover every provider, so the Review
+/// queue can flag a match before "Accept" / "Replace all" applies it.
+#[tokio::test]
+async fn batch_status_surfaces_provider_statuses_and_partial_count() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (lib_id, series_id) = seed_series_in_library(&app, dir.path()).await;
+    let cbz = dir.path().join("saga-1.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"x", 1.0)
+        .insert(&app.state().db)
+        .await;
+    let batch_id = seed_needs_review_batch(&app, lib_id, &issue_id, false).await;
+
+    // Stamp the run: ComicVine answered with 1 candidate, Metron failed.
+    let run = entity::metadata_run::Entity::find()
+        .filter(entity::metadata_run::Column::BatchId.eq(batch_id))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::metadata_run::ActiveModel = run.into();
+    am.provider_status = Set(Some(json!([
+        {"source": "comicvine", "state": "answered", "candidates": 1},
+        {"source": "metron", "state": "failed", "candidates": 0, "error": "500"}
+    ])));
+    am.update(&app.state().db).await.unwrap();
+
+    let resp = get(&app, &admin, &format!("/api/metadata/batch/{batch_id}")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["aggregate"]["partial"].as_i64(), Some(1));
+    let providers = body["children"][0]["providers"]
+        .as_array()
+        .expect("providers list");
+    assert_eq!(providers.len(), 2);
+    assert_eq!(providers[0]["source"], "comicvine");
+    assert_eq!(providers[0]["state"], "answered");
+    assert_eq!(providers[0]["candidates"], 1);
+    assert_eq!(providers[1]["source"], "metron");
+    assert_eq!(providers[1]["state"], "failed");
+    assert_eq!(providers[1]["error"], "500");
+
+    // A fully-answered run isn't counted partial.
+    let run = entity::metadata_run::Entity::find()
+        .filter(entity::metadata_run::Column::BatchId.eq(batch_id))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::metadata_run::ActiveModel = run.into();
+    am.provider_status = Set(Some(json!([
+        {"source": "comicvine", "state": "answered", "candidates": 1},
+        {"source": "metron", "state": "answered", "candidates": 0}
+    ])));
+    am.update(&app.state().db).await.unwrap();
+    let resp = get(&app, &admin, &format!("/api/metadata/batch/{batch_id}")).await;
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["aggregate"]["partial"].as_i64(), Some(0));
 }

@@ -57,6 +57,20 @@ pub struct Model {
     /// standalone per-entity runs (the common case). FK SET NULL on delete.
     #[sea_orm(nullable)]
     pub batch_id: Option<Uuid>,
+    /// Per-provider search bookkeeping (provider-complete search): a
+    /// `Vec<metadata::provider_status::ProviderStatus>` — one entry per
+    /// provider in `providers`, saying whether it was asked yet, answered
+    /// (and with how many candidates), was quota-denied (owed a retry on
+    /// resume) or failed hard. NULL on runs that predate the column and on
+    /// lookup runs (no matching ran).
+    #[sea_orm(nullable)]
+    pub provider_status: Option<Json>,
+    /// While parked `awaiting_quota`: the ranked candidates + lookup notes
+    /// the answering providers already produced
+    /// (`metadata::provider_status::PartialSearch`), so the resume only
+    /// re-asks the owed providers. Cleared on finalize.
+    #[sea_orm(nullable)]
+    pub partial_results: Option<Json>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

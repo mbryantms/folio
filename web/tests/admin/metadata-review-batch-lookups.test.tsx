@@ -44,6 +44,7 @@ function status(lookups: BatchLookupCount[]): BatchStatusResp {
       awaiting_quota: 0,
       failed: 0,
       in_flight: 0,
+      partial: 0,
       lookups,
     },
     children: [],

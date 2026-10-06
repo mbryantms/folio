@@ -130,6 +130,8 @@ async fn seed_two_provider_run(app: &TestApp, issue_id: &str) -> Uuid {
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(db)

@@ -281,6 +281,8 @@ async fn runs_list_empty_then_returns_seeded_row() {
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(&app.state().db)
@@ -343,6 +345,8 @@ async fn runs_list_cursor_walk_has_no_gaps_or_duplicates() {
             error_summary: Set(None),
             resume_after: Set(None),
             batch_id: Set(None),
+            provider_status: Set(None),
+            partial_results: Set(None),
             query: Set(None),
         }
         .insert(&app.state().db)
@@ -440,6 +444,8 @@ async fn recent_applies_lists_applied_runs_with_labels() {
             error_summary: Set(None),
             resume_after: Set(None),
             batch_id: Set(None),
+            provider_status: Set(None),
+            partial_results: Set(None),
             query: Set(None),
         }
     };

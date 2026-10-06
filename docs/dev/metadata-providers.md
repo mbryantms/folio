@@ -142,9 +142,10 @@ are always full fetches upstream.
 fetches through one pooled `ssrf::shared_public_client` (DNS answers
 vetted by the client's resolver, redirect hops by its policy) — the
 per-fetch client + re-download per search are gone.
-When *every* enabled provider is quota-exhausted, the orchestrator
-marks the run `awaiting_quota` + sets `resume_after`; the dialog
-UI renders a "providers are out of quota" state instead of "failed".
+When a provider is quota-denied the run parks `awaiting_quota` with
+what the other providers already produced stashed — see
+"Provider-complete search" below; the dialog renders a "waiting for
+<provider> quota" state instead of "failed".
 
 Worker concurrency is intentionally bounded to 1 per job type — the
 per-provider velocity cap already serializes through a
@@ -158,8 +159,69 @@ Every search creates a `metadata_run` row with status `queued`. The
 worker flips it to `searching` on pickup. Each per-provider call's
 ranked results land as `metadata_run_candidate` rows (ordinal 0 =
 best match). When all providers finish, status → `completed` and
-`finished_at` stamps. Errors → `failed` + `error_summary`. Quota
-exhaustion → `awaiting_quota` + `resume_after`.
+`finished_at` stamps. Errors → `failed` + `error_summary`. A
+quota-denied provider → `awaiting_quota` + `resume_after` with the
+partial results stashed (next section).
+
+### Provider-complete search
+
+Every searched entity is guaranteed a query to **each** configured
+provider, while still respecting the local quota buckets. The run row
+carries `provider_status` — one
+[`metadata::provider_status::ProviderStatus`](../../crates/server/src/metadata/provider_status.rs)
+per provider in `metadata_run.providers`:
+
+| state      | meaning                                                                 |
+| ---------- | ----------------------------------------------------------------------- |
+| `pending`  | not asked yet (queued / the job never reached it)                       |
+| `answered` | searched; `candidates` = how many it contributed (`0` = real no-match)  |
+| `quota`    | the local bucket denied the call — the provider is **owed** a query     |
+| `failed`   | hard error (transport / 5xx); not retried, the gap is flagged           |
+
+The search loop (`orchestrator::run_series_search_with` /
+`run_issue_search_with`) only asks providers whose status is still
+owed (`pending` / `quota`) and records each outcome. `settle_search`
+then closes the run one of three ways:
+
+1. **Any provider is `quota`** → `provider_status::park_awaiting_quota`:
+   status `awaiting_quota`, `resume_after = now + min(retry_after)`,
+   and `metadata_run.partial_results` holds a `PartialSearch` — the
+   ranked candidates the answering providers produced, the batch
+   lookup notes, the year-gate flag, and the serialized search job
+   (`SearchOpts::job_payload`). Nothing is finalized: no candidate
+   rows, no `metadata_match_outcome`, so nothing can be classified or
+   auto-applied off a partial provider set.
+2. **No provider answered and one failed hard** → `failed` (the
+   pre-existing rule).
+3. Otherwise → `finalize_run` with the statuses persisted and the
+   stash cleared. A provider that failed while others answered is
+   recorded `failed`, not hidden.
+
+The resume sweep ([`jobs::metadata_resume`](../../crates/server/src/jobs/metadata_resume.rs),
+once a minute) picks parked runs past `resume_after`, requires that
+**every owed provider** has budget (one quota snapshot per provider
+per tick), and re-queues the **stashed job on the same run id**
+(`jobs::metadata_search::resume_parked_run`, after re-taking the
+entity's in-flight slot). The orchestrator loads the stash, asks only
+the owed providers and merges — the providers that already answered
+are never re-spent. A parked row that predates the stash (no job)
+falls back to the old path: a fresh run under the same batch, parked
+row dropped.
+
+Surfaces:
+
+- `GET …/metadata/candidates` → `provider_status`; the match dialog
+  shows "All 3 providers matched" / "1 of 3 providers matched · Metron
+  awaiting quota, GCD failed" and, while parked, which providers it is
+  waiting for.
+- `GET /metadata/batch/{id}` → each child row's `providers` (the Review
+  queue renders `ComicVine ✓1 · Metron ✓1 · GCD —` under the label,
+  warning-toned when partial) and `aggregate.partial` (searched
+  children where some provider never answered).
+- **Auto-apply gate**: `jobs::metadata_search::auto_apply_eligibility`
+  refuses a run unless `provider_status::all_answered` — a strong match
+  with a failed provider stays in Review, flagged, rather than landing
+  one provider's ids as if the match were complete.
 
 The candidate rows survive the run, so the UI can re-render the
 ranked list without re-fetching. Per-entity Redis coalesce keys

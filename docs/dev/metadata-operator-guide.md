@@ -276,13 +276,25 @@ responses on 2026-10-01:
 
 ### Quota exhaustion
 
-When a provider hits its minute, hour or day limit, the orchestrator
-marks the run `awaiting_quota` + records `resume_after` from the
-upstream `Retry-After` when one was sent. The dialog renders
-"Providers are out of quota — try again shortly" instead of
-"failed". The token bucket refills on the provider's own schedule
-(CV: hourly window; Metron: minute + day windows). No operator
-action needed.
+When a provider hits its minute, hour or day limit, the run parks as
+`awaiting_quota` with `resume_after` set from the bucket's wait. The
+providers that *did* answer keep their results (stashed on the run);
+the denied provider is owed a query and the run resumes on its own
+once that provider's bucket refills, asking only the owed provider.
+Every searched issue therefore ends up queried by every enabled
+provider — a batch never silently finishes with "ComicVine only"
+matches because Metron ran dry halfway through. The dialog renders
+"Waiting for Metron quota — resumes in 47m" instead of "failed"; the
+Review queue shows "N awaiting quota · resumes HH:MM". The token
+bucket refills on the provider's own schedule (CV: hourly window;
+Metron: minute + day windows; GCD: daily). No operator action needed.
+
+Each Review row also lists which providers answered
+(`ComicVine ✓1 · Metron ✓1 · GCD —`; `—` is a genuine no-match). A row
+in warning tone covers fewer than all providers — one failed with a
+hard error (those are not retried) or was never asked. Such a run is
+never auto-applied even when its single candidate is strong; open it
+or re-fetch once the provider is healthy.
 
 If you're hitting quota constantly:
 1. **Disable the lower-priority provider.** ComicVine has the

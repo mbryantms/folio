@@ -50,6 +50,10 @@ import {
   statusToneDot,
 } from "@/lib/ui/status-tone";
 import type { BatchChildRow, BatchListRow } from "@/lib/api/types";
+import {
+  providerCoverage,
+  providerStatusLine,
+} from "@/lib/metadata/provider-status";
 
 // Heavy match dialog (~1.2k lines + provider-compare UI) — lazy so the admin
 // metadata page's initial bundle stays lean; only loads when a reviewer opens
@@ -267,6 +271,11 @@ function BatchReview({
             </span>
           )}
           {a.in_flight > 0 && <span>{a.in_flight} searching…</span>}
+          {a.partial > 0 && (
+            <span className={statusToneText("warning")}>
+              {a.partial} partial — not every provider answered
+            </span>
+          )}
         </div>
         <BatchLookupSummary lookups={a.lookups} />
         {data.exceeds_budget && (
@@ -502,6 +511,7 @@ function ChildList({
                 Applied
               </Badge>
             )}
+            <ProviderLine list={c.providers} />
           </div>
         );
         const trailing = (
@@ -569,6 +579,26 @@ function ChildList({
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * Provider-complete search: which providers answered this child's search
+ * (`ComicVine ✓1 · Metron ✓1 · GCD —`). Warning tone when one is still
+ * owed (quota), failed, or was never asked — the match covers fewer than
+ * all providers, so "Accept"/"Replace all" would apply a partial record.
+ */
+function ProviderLine({ list }: { list: BatchChildRow["providers"] }) {
+  if (!list || list.length === 0) return null;
+  const partial = providerCoverage(list) === "partial";
+  return (
+    <div
+      className={`text-[11px] ${
+        partial ? statusToneText("warning") : "text-muted-foreground"
+      }`}
+    >
+      {providerStatusLine(list)}
+    </div>
   );
 }
 

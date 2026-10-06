@@ -832,6 +832,14 @@ function FetchStep({
             </div>
             <Progress value={pct} aria-label="Issues searched" />
             <BatchLookupSummary lookups={batch.aggregate.lookups} />
+            {batch.aggregate.partial > 0 && (
+              <p className={`text-xs ${statusToneText("warning")}`}>
+                {batch.aggregate.partial} issue
+                {batch.aggregate.partial === 1 ? "" : "s"} matched fewer than
+                all providers (a provider failed or was never asked) — flagged
+                in Review.
+              </p>
+            )}
           </>
         )}
         <div className="flex flex-wrap gap-2">

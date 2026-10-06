@@ -121,6 +121,9 @@ pub struct SearchSeriesJob {
 
 pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Result<(), Error> {
     let state: AppState = (*state).clone();
+    // Stashed with the partial results if the run parks on quota, so the
+    // resume re-runs this exact job on the owed providers.
+    let job_payload = serde_json::to_value(&job).ok();
     let SearchSeriesJob {
         run_id,
         series_id,
@@ -156,6 +159,7 @@ pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Resul
         Some(series_id),
         SearchOpts {
             relax_year_gate: !year_asserted,
+            job_payload,
             ..SearchOpts::default()
         },
     )
@@ -239,6 +243,7 @@ impl SearchIssueJob {
 pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<(), Error> {
     let state: AppState = (*state).clone();
     let mode = job.direct_mode();
+    let job_payload = serde_json::to_value(&job).ok();
     let SearchIssueJob {
         run_id,
         issue_id,
@@ -290,6 +295,7 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
             relax_year_gate: !year_asserted,
             cover_hasher: None,
             direct,
+            job_payload,
         },
     )
     .await
@@ -840,9 +846,133 @@ async fn auto_apply_eligibility(
             return None;
         }
     };
+    // Provider-complete search: a strong match only auto-applies when
+    // every provider the run was started with actually answered. A run
+    // with a failed provider stays in Review, flagged, so the operator
+    // decides — otherwise one provider's ids would land as if the match
+    // were complete.
+    let statuses = crate::metadata::provider_status::for_run(&run);
+    let complete = crate::metadata::provider_status::all_answered(&statuses);
+    if !complete && library.metadata_auto_apply_strong_matches {
+        tracing::info!(
+            %run_id,
+            owed = ?crate::metadata::provider_status::owed_sources(&statuses)
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+            "auto-apply: skipped — not every provider answered this run"
+        );
+    }
     Some((
-        library.metadata_auto_apply_strong_matches,
+        library.metadata_auto_apply_strong_matches && complete,
         run.trigger_kind,
         run.triggered_by,
     ))
+}
+
+// ───────── quota resume (provider-complete search) ─────────
+
+/// How [`resume_parked_run`] ended.
+#[derive(Debug)]
+pub enum ResumeOutcome {
+    /// The stashed job was re-queued on the parked run itself.
+    Resumed,
+    /// Already re-queued (no longer parked), or another run holds the
+    /// entity's in-flight slot; try next tick.
+    InFlight,
+    /// Legacy parked row with no stashed job: a fresh run was enqueued
+    /// (the old resume path) and the parked row dropped.
+    Replaced(EnqueueOutcome),
+}
+
+/// Re-queue a run parked `awaiting_quota` on the **same** run id: push the
+/// job stashed with its partial results (the exact original query), after
+/// re-taking the entity's in-flight slot. The orchestrator then loads the
+/// stash and only asks the providers still owed a query.
+pub async fn resume_parked_run(
+    state: &AppState,
+    parked: &entity::metadata_run::Model,
+) -> Result<ResumeOutcome, anyhow::Error> {
+    use apalis::prelude::Storage;
+    use sea_orm::EntityTrait;
+    // Re-read the status: a second sweep tick (or a stale model) must not
+    // queue the job twice — once re-queued the run is `queued`, not parked.
+    let live = entity::metadata_run::Entity::find_by_id(parked.id)
+        .one(&state.db)
+        .await?;
+    if live.as_ref().map(|r| r.status.as_str()) != Some(orchestrator::status::AWAITING_QUOTA) {
+        return Ok(ResumeOutcome::InFlight);
+    }
+
+    let stashed_job =
+        crate::metadata::provider_status::parse_partial(parked.partial_results.as_ref())
+            .and_then(|p| p.job);
+    let Some(job_json) = stashed_job else {
+        // Pre-stash parked row: resume the old way (fresh run, same batch).
+        let kind = match parked.trigger_kind.as_str() {
+            "weekly_refresh" => orchestrator::trigger_kind::WEEKLY_REFRESH,
+            "scanner" => orchestrator::trigger_kind::SCANNER,
+            "bulk_action" => orchestrator::trigger_kind::BULK_ACTION,
+            _ => orchestrator::trigger_kind::MANUAL,
+        };
+        let outcome = match parked.scope.as_str() {
+            orchestrator::scope::SERIES => {
+                let series_id = parked
+                    .scope_entity_id
+                    .as_deref()
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                    .ok_or_else(|| anyhow::anyhow!("parked series run has no series id"))?;
+                enqueue_series_search(state, series_id, parked.triggered_by, kind, parked.batch_id)
+                    .await?
+            }
+            orchestrator::scope::ISSUE => {
+                let issue_id = parked
+                    .scope_entity_id
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("parked issue run has no issue id"))?;
+                enqueue_issue_search(state, &issue_id, parked.triggered_by, kind, parked.batch_id)
+                    .await?
+            }
+            other => return Err(anyhow::anyhow!("parked run has unexpected scope {other}")),
+        };
+        // Drop the parked row so it doesn't double-count in batch
+        // aggregates — the fresh run carries the same batch_id. Guard
+        // against the (rare) coalesce-onto-self case.
+        if outcome.run_id != parked.id {
+            let _ = entity::metadata_run::Entity::delete_by_id(parked.id)
+                .exec(&state.db)
+                .await;
+        }
+        return Ok(ResumeOutcome::Replaced(outcome));
+    };
+
+    match parked.scope.as_str() {
+        orchestrator::scope::SERIES => {
+            let job: SearchSeriesJob = serde_json::from_value(job_json)?;
+            if reserve_series_slot(state, job.series_id, parked.id).await? != parked.id {
+                return Ok(ResumeOutcome::InFlight);
+            }
+            let mut storage = state.jobs.metadata_search_series_storage.clone();
+            let series_id = job.series_id;
+            if let Err(e) = storage.push(job).await {
+                release_series_slot(state, series_id).await;
+                return Err(anyhow::Error::from(e));
+            }
+        }
+        orchestrator::scope::ISSUE => {
+            let job: SearchIssueJob = serde_json::from_value(job_json)?;
+            if reserve_issue_slot(state, &job.issue_id, parked.id).await? != parked.id {
+                return Ok(ResumeOutcome::InFlight);
+            }
+            let issue_id = job.issue_id.clone();
+            let mut storage = state.jobs.metadata_search_issue_storage.clone();
+            if let Err(e) = storage.push(job).await {
+                release_issue_slot(state, &issue_id).await;
+                return Err(anyhow::Error::from(e));
+            }
+        }
+        other => return Err(anyhow::anyhow!("parked run has unexpected scope {other}")),
+    }
+    orchestrator::mark_resumed(&state.db, parked.id).await?;
+    Ok(ResumeOutcome::Resumed)
 }

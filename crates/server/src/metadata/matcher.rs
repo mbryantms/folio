@@ -101,7 +101,7 @@ impl Default for Thresholds {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Score {
     /// 0–100. Text-only sum of weighted component scores. Post-M4
     /// the cover signal lives in [`Self::cover_hamming`] rather than
