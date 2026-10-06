@@ -60,7 +60,6 @@ async fn tagged_specials_are_excluded_from_the_local_run_and_reported() {
         d,
         "AoS Annual 001",
         "1",
-        1.0,
         Some("Annual"),
     )
     .await;
@@ -71,7 +70,6 @@ async fn tagged_specials_are_excluded_from_the_local_run_and_reported() {
         d,
         "AoS Annual 002",
         "2",
-        2.0,
         Some("Annual"),
     )
     .await;
@@ -82,7 +80,6 @@ async fn tagged_specials_are_excluded_from_the_local_run_and_reported() {
         d,
         "AoS Special",
         "1",
-        1.0,
         Some("Special"),
     )
     .await;
