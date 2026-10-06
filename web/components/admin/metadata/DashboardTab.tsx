@@ -14,6 +14,7 @@ import {
   ImageDown,
   Images,
   Loader2,
+  RefreshCw,
   Users,
   XCircle,
 } from "lucide-react";
@@ -98,6 +99,7 @@ export function DashboardTab() {
 
       <CoverVariantBackfillCard />
       <NameSuffixBackfillCard />
+      <CsvCacheBackfillCard />
     </div>
   );
 }
@@ -293,6 +295,18 @@ function NameSuffixBackfillCard() {
       endpoint="/admin/metadata/name-suffix-backfill"
       icon={<Users className="mr-2 h-4 w-4" />}
       label="Repair split names"
+    />
+  );
+}
+
+function CsvCacheBackfillCard() {
+  return (
+    <BackfillCard
+      title="Metadata read-cache"
+      description="Rewrite every issue's flat credit / character / team / location / genre / tag columns from the normalized tables, so lists, search, OPDS and filters show the same names as the creator and character pages. New scans do this automatically; this fills in the back catalogue. One statement per series; no archive access; safe to re-run."
+      endpoint="/admin/metadata/csv-cache-backfill"
+      icon={<RefreshCw className="mr-2 h-4 w-4" />}
+      label="Rebuild read-cache"
     />
   );
 }

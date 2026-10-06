@@ -974,6 +974,26 @@
         }
       }
     },
+    "/api/admin/metadata/csv-cache-backfill": {
+      "post": {
+        "operationId": "metadata_csv_cache_backfill",
+        "responses": {
+          "202": {
+            "description": "backfill job enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackfillEnqueuedResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/metadata/dashboard": {
       "get": {
         "operationId": "admin_metadata_dashboard",
@@ -13046,7 +13066,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`cover_phash` | `variant_cover` | `cover_variant` | `name_suffixes`."
+            "description": "`cover_phash` | `variant_cover` | `cover_variant` | `name_suffixes` |\n`csv_cache`."
           }
         }
       },
@@ -19047,6 +19067,24 @@
           }
         }
       },
+      "EntityRefView": {
+        "type": "object",
+        "description": "A named entity with its landing-page slug when the entity row exists.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "EntitySlugs": {
         "type": "object",
         "description": "Name → slug maps for the cast / arc / publisher chips on the series\nand issue detail pages, so the web can link each chip to its landing\npage without a per-chip round-trip. Keys are the display names as\nthey appear on the page; names without an entity row are absent (the\nchip falls back to the library-grid filter).",
@@ -20885,6 +20923,42 @@
           "not_computed"
         ]
       },
+      "IssueCastView": {
+        "type": "object",
+        "description": "The issue's cast and setting from the junction tables\n(`issue_characters` / `issue_teams` / `issue_locations` / `issue_arcs`).",
+        "required": [
+          "characters",
+          "teams",
+          "locations",
+          "story_arcs"
+        ],
+        "properties": {
+          "characters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityRefView"
+            }
+          },
+          "locations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityRefView"
+            }
+          },
+          "story_arcs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityRefView"
+            }
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityRefView"
+            }
+          }
+        }
+      },
       "IssueCoverRow": {
         "type": "object",
         "required": [
@@ -20995,6 +21069,29 @@
           }
         }
       },
+      "IssueCreditEntry": {
+        "type": "object",
+        "description": "One credit row from `issue_credits` — the source of truth for who\nworked on an issue (the flat `writer` / `inker` / … columns on the\nview are the derived read-cache). `slug` links to `/creators/{slug}`\nonce the series rollup has created the `person` row.",
+        "required": [
+          "role",
+          "person"
+        ],
+        "properties": {
+          "person": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "description": "`writer` | `penciller` | `inker` | `colorist` | `letterer` |\n`cover_artist` | `editor` | `translator`."
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "IssueDetailView": {
         "type": "object",
         "required": [
@@ -21011,7 +21108,11 @@
           "additional_links",
           "user_pinned_columns",
           "pages",
-          "comic_info_raw"
+          "comic_info_raw",
+          "credits",
+          "cast",
+          "genres",
+          "tag_list"
         ],
         "properties": {
           "additional_links": {
@@ -21042,6 +21143,10 @@
               "boolean",
               "null"
             ]
+          },
+          "cast": {
+            "$ref": "#/components/schemas/IssueCastView",
+            "description": "Characters / teams / locations / story arcs from the junction\ntables, with landing-page slugs."
           },
           "characters": {
             "type": [
@@ -21088,6 +21193,13 @@
               "type": "string"
             }
           },
+          "credits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueCreditEntry"
+            },
+            "description": "Credits from the junction tables, in stored order — what the\nCredits tab renders. The flat per-role columns above are the\nderived read-cache of the same rows."
+          },
           "day": {
             "type": [
               "integer",
@@ -21131,6 +21243,13 @@
               "string",
               "null"
             ]
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`issue_genres` / `issue_tags` rows (the `genre` / `tags` columns\nare their read-cache)."
           },
           "gtin": {
             "type": [
@@ -21325,6 +21444,13 @@
               "string",
               "null"
             ]
+          },
+          "tag_list": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`issue_tags` rows (`tags` above is the flat read-cache)."
           },
           "tags": {
             "type": [

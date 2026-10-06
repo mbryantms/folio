@@ -36,6 +36,10 @@ pub enum BackfillKind {
     /// (`"José Marzán, Jr."`), which the pre-suffix-aware `split_csv` had
     /// split into two entries; then prune the orphaned `Jr.` / `Sr.` rows.
     NameSuffixes,
+    /// Rebuild every issue's CSV read-cache columns from the junction
+    /// tables (one set-based UPDATE per series) — the catch-up for issues
+    /// scanned before the scanner derived the columns from the junctions.
+    CsvCache,
 }
 
 impl BackfillKind {
@@ -44,6 +48,7 @@ impl BackfillKind {
         match self {
             BackfillKind::CoverPhash => "cover_phash",
             BackfillKind::NameSuffixes => "name_suffixes",
+            BackfillKind::CsvCache => "csv_cache",
             BackfillKind::VariantCover => "variant_cover",
             BackfillKind::CoverVariant => "cover_variant",
         }
@@ -67,6 +72,7 @@ pub async fn handle(job: BackfillJob, state: Data<AppState>) -> Result<(), Error
         BackfillKind::VariantCover => drain_variant_covers(&state).await,
         BackfillKind::CoverVariant => drain_cover_variants(&state).await,
         BackfillKind::NameSuffixes => drain_name_suffixes(&state).await,
+        BackfillKind::CsvCache => drain_csv_cache(&state).await,
     };
     tracing::info!(
         kind = job.kind.as_str(),
@@ -236,6 +242,46 @@ async fn drain_name_suffixes(state: &AppState) -> (u64, u64) {
         Err(e) => tracing::warn!(error = %e, "name-suffix backfill: prune failed"),
     }
     (rebuilt, skipped)
+}
+
+/// Returns `(issue rows rewritten, series that failed)`.
+async fn drain_csv_cache(state: &AppState) -> (u64, u64) {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
+    let mut rewritten = 0u64;
+    let mut failed = 0u64;
+    let mut after: Option<uuid::Uuid> = None;
+    for _ in 0..MAX_DRAIN_ITERS {
+        let mut q = entity::series::Entity::find()
+            .filter(entity::series::Column::RemovedAt.is_null())
+            .select_only()
+            .column(entity::series::Column::Id)
+            .order_by_asc(entity::series::Column::Id)
+            .limit(500);
+        if let Some(a) = after {
+            q = q.filter(entity::series::Column::Id.gt(a));
+        }
+        let ids: Vec<uuid::Uuid> = match q.into_tuple().all(&state.db).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(error = %e, "csv-cache backfill: series page failed");
+                break;
+            }
+        };
+        let Some(last) = ids.last().copied() else {
+            break;
+        };
+        for id in &ids {
+            match writers::rebuild_series_issue_csv_cache(&state.db, *id).await {
+                Ok(n) => rewritten += n,
+                Err(e) => {
+                    failed += 1;
+                    tracing::warn!(series_id = %id, error = %e, "csv-cache backfill: series failed");
+                }
+            }
+        }
+        after = Some(last);
+    }
+    (rewritten, failed)
 }
 
 /// Enqueue a backfill drain. Returns `false` only if the push itself fails.

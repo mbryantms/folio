@@ -1243,8 +1243,10 @@ pub async fn set_issue_characters<C: ConnectionTrait>(
     if !characters.is_empty() {
         let rows: Vec<issue_character::ActiveModel> = characters
             .into_iter()
+            .enumerate()
             .map(
-                |(character_id, is_first, died)| issue_character::ActiveModel {
+                |(ordinal, (character_id, is_first, died))| issue_character::ActiveModel {
+                    ordinal: Set(ordinal as i32),
                     issue_id: Set(issue_id.into()),
                     // PK is `(issue_id, character)` with `character` as
                     // the legacy TEXT column. Stash the FK UUID here for
@@ -1300,13 +1302,17 @@ pub async fn set_issue_teams<C: ConnectionTrait>(
     if !teams.is_empty() {
         let rows: Vec<issue_team::ActiveModel> = teams
             .into_iter()
-            .map(|(team_id, is_first, disbanded)| issue_team::ActiveModel {
-                issue_id: Set(issue_id.into()),
-                team: Set(team_id.to_string()),
-                team_id: Set(Some(team_id)),
-                is_first_appearance: Set(is_first),
-                disbanded_in_issue: Set(disbanded),
-            })
+            .enumerate()
+            .map(
+                |(ordinal, (team_id, is_first, disbanded))| issue_team::ActiveModel {
+                    ordinal: Set(ordinal as i32),
+                    issue_id: Set(issue_id.into()),
+                    team: Set(team_id.to_string()),
+                    team_id: Set(Some(team_id)),
+                    is_first_appearance: Set(is_first),
+                    disbanded_in_issue: Set(disbanded),
+                },
+            )
             .collect();
         issue_team::Entity::insert_many(rows)
             .on_conflict(
@@ -1348,12 +1354,16 @@ pub async fn set_issue_locations<C: ConnectionTrait>(
     if !locations.is_empty() {
         let rows: Vec<issue_location::ActiveModel> = locations
             .into_iter()
-            .map(|(location_id, is_first)| issue_location::ActiveModel {
-                issue_id: Set(issue_id.into()),
-                location: Set(location_id.to_string()),
-                location_id: Set(Some(location_id)),
-                is_first_appearance: Set(is_first),
-            })
+            .enumerate()
+            .map(
+                |(ordinal, (location_id, is_first))| issue_location::ActiveModel {
+                    ordinal: Set(ordinal as i32),
+                    issue_id: Set(issue_id.into()),
+                    location: Set(location_id.to_string()),
+                    location_id: Set(Some(location_id)),
+                    is_first_appearance: Set(is_first),
+                },
+            )
             .collect();
         issue_location::Entity::insert_many(rows)
             .on_conflict(
@@ -1778,7 +1788,9 @@ pub async fn set_issue_genres<C: ConnectionTrait>(
     if !genres.is_empty() {
         let rows: Vec<issue_genre::ActiveModel> = genres
             .into_iter()
-            .map(|g| issue_genre::ActiveModel {
+            .enumerate()
+            .map(|(ordinal, g)| issue_genre::ActiveModel {
+                ordinal: Set(ordinal as i32),
                 issue_id: Set(issue_id.into()),
                 genre: Set(g),
             })
@@ -1821,7 +1833,9 @@ pub async fn set_issue_tags<C: ConnectionTrait>(
     if !tags.is_empty() {
         let rows: Vec<issue_tag::ActiveModel> = tags
             .into_iter()
-            .map(|t| issue_tag::ActiveModel {
+            .enumerate()
+            .map(|(ordinal, t)| issue_tag::ActiveModel {
+                ordinal: Set(ordinal as i32),
                 issue_id: Set(issue_id.into()),
                 tag: Set(t),
             })
@@ -3006,88 +3020,109 @@ impl Default for CsvRebuildBatch {
 /// `cover_artist` / `editor` / `translator`). Other CSVs join one
 /// row per per-junction entity, comma-separated, alphabetised so
 /// the cache is deterministic.
+/// The `SET …` clause of the CSV read-cache rebuild, correlated on
+/// `issues.id` so one text serves both the per-issue and the per-series
+/// statement. Names are joined with `, ` — or with `; ` when any name in
+/// the list contains a comma (`"Capes, Inc."`), the same rule
+/// `split_csv` / the sidecar composer use, so every consumer that splits
+/// the column recovers the exact set.
+fn csv_cache_set_clause() -> String {
+    // `order` is the ORDER BY key list inside string_agg. Credits keep the
+    // stored order (`issue_credits.ordinal` — the file's / provider's
+    // sequence), everything else sorts by name.
+    fn agg_by(expr: &str, order: &str) -> String {
+        format!(
+            "NULLIF(CASE WHEN bool_or({expr} LIKE '%,%') \
+                 THEN string_agg({expr}, '; ' ORDER BY {order}) \
+                 ELSE string_agg({expr}, ', ' ORDER BY {order}) END, '')"
+        )
+    }
+    // LEFT JOIN + COALESCE: a file-tier row whose entity id hasn't been
+    // linked yet (the per-issue write runs before the series rollup links
+    // ids) still contributes its own stored name instead of vanishing.
+    let credit = |role: &str| {
+        format!(
+            "(SELECT {} FROM issue_credits ic LEFT JOIN person p ON p.id = ic.person_id \
+              WHERE ic.issue_id = issues.id AND ic.role = '{role}')",
+            agg_by(
+                "COALESCE(p.name, ic.person)",
+                "ic.ordinal, COALESCE(p.name, ic.person)"
+            )
+        )
+    };
+    format!(
+        "writer = {w}, penciller = {pe}, inker = {i}, colorist = {c}, letterer = {l}, \
+         cover_artist = {ca}, editor = {e}, translator = {t}, \
+         characters = (SELECT {ch} FROM issue_characters ich \
+                        LEFT JOIN character c ON c.id = ich.character_id \
+                        WHERE ich.issue_id = issues.id), \
+         teams = (SELECT {tm} FROM issue_teams it LEFT JOIN team t ON t.id = it.team_id \
+                   WHERE it.issue_id = issues.id), \
+         locations = (SELECT {lo} FROM issue_locations il \
+                       LEFT JOIN location l ON l.id = il.location_id \
+                       WHERE il.issue_id = issues.id), \
+         story_arc = (SELECT {sa} FROM issue_arcs ia JOIN story_arc sa ON sa.id = ia.arc_id \
+                       WHERE ia.issue_id = issues.id), \
+         genre = (SELECT {g} FROM issue_genres WHERE issue_id = issues.id), \
+         tags = (SELECT {tg} FROM issue_tags WHERE issue_id = issues.id)",
+        w = credit("writer"),
+        pe = credit("penciller"),
+        i = credit("inker"),
+        c = credit("colorist"),
+        l = credit("letterer"),
+        ca = credit("cover_artist"),
+        e = credit("editor"),
+        t = credit("translator"),
+        ch = agg_by(
+            "COALESCE(c.name, ich.\"character\")",
+            "ich.ordinal, COALESCE(c.name, ich.\"character\")"
+        ),
+        tm = agg_by(
+            "COALESCE(t.name, it.team)",
+            "it.ordinal, COALESCE(t.name, it.team)"
+        ),
+        lo = agg_by(
+            "COALESCE(l.name, il.location)",
+            "il.ordinal, COALESCE(l.name, il.location)"
+        ),
+        sa = agg_by("sa.name", "ia.position_in_arc NULLS LAST, sa.name"),
+        g = agg_by("genre", "ordinal, genre"),
+        tg = agg_by("tag", "ordinal, tag"),
+    )
+}
+
 pub async fn rebuild_issue_csv_cache<C: ConnectionTrait>(
     db: &C,
     issue_id: &str,
 ) -> Result<(), DbErr> {
-    // Single UPDATE pulling values from the junctions via subselects.
-    // Sea-orm doesn't model this neatly so we use raw SQL.
     let stmt = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        r#"
-        UPDATE issues SET
-            writer = (
-                SELECT NULLIF(string_agg(p.name, ', ' ORDER BY p.name), '')
-                FROM issue_credits ic JOIN person p ON p.id = ic.person_id
-                WHERE ic.issue_id = $1 AND ic.role = 'writer'
-            ),
-            penciller = (
-                SELECT NULLIF(string_agg(p.name, ', ' ORDER BY p.name), '')
-                FROM issue_credits ic JOIN person p ON p.id = ic.person_id
-                WHERE ic.issue_id = $1 AND ic.role = 'penciller'
-            ),
-            inker = (
-                SELECT NULLIF(string_agg(p.name, ', ' ORDER BY p.name), '')
-                FROM issue_credits ic JOIN person p ON p.id = ic.person_id
-                WHERE ic.issue_id = $1 AND ic.role = 'inker'
-            ),
-            colorist = (
-                SELECT NULLIF(string_agg(p.name, ', ' ORDER BY p.name), '')
-                FROM issue_credits ic JOIN person p ON p.id = ic.person_id
-                WHERE ic.issue_id = $1 AND ic.role = 'colorist'
-            ),
-            letterer = (
-                SELECT NULLIF(string_agg(p.name, ', ' ORDER BY p.name), '')
-                FROM issue_credits ic JOIN person p ON p.id = ic.person_id
-                WHERE ic.issue_id = $1 AND ic.role = 'letterer'
-            ),
-            cover_artist = (
-                SELECT NULLIF(string_agg(p.name, ', ' ORDER BY p.name), '')
-                FROM issue_credits ic JOIN person p ON p.id = ic.person_id
-                WHERE ic.issue_id = $1 AND ic.role = 'cover_artist'
-            ),
-            editor = (
-                SELECT NULLIF(string_agg(p.name, ', ' ORDER BY p.name), '')
-                FROM issue_credits ic JOIN person p ON p.id = ic.person_id
-                WHERE ic.issue_id = $1 AND ic.role = 'editor'
-            ),
-            translator = (
-                SELECT NULLIF(string_agg(p.name, ', ' ORDER BY p.name), '')
-                FROM issue_credits ic JOIN person p ON p.id = ic.person_id
-                WHERE ic.issue_id = $1 AND ic.role = 'translator'
-            ),
-            characters = (
-                SELECT NULLIF(string_agg(c.name, ', ' ORDER BY c.name), '')
-                FROM issue_characters ich JOIN character c ON c.id = ich.character_id
-                WHERE ich.issue_id = $1
-            ),
-            teams = (
-                SELECT NULLIF(string_agg(t.name, ', ' ORDER BY t.name), '')
-                FROM issue_teams it JOIN team t ON t.id = it.team_id
-                WHERE it.issue_id = $1
-            ),
-            locations = (
-                SELECT NULLIF(string_agg(l.name, ', ' ORDER BY l.name), '')
-                FROM issue_locations il JOIN location l ON l.id = il.location_id
-                WHERE il.issue_id = $1
-            ),
-            story_arc = (
-                SELECT NULLIF(string_agg(sa.name, ', ' ORDER BY sa.name), '')
-                FROM issue_arcs ia JOIN story_arc sa ON sa.id = ia.arc_id
-                WHERE ia.issue_id = $1
-            ),
-            genre = (
-                SELECT NULLIF(string_agg(genre, ', ' ORDER BY genre), '')
-                FROM issue_genres WHERE issue_id = $1
-            ),
-            tags = (
-                SELECT NULLIF(string_agg(tag, ', ' ORDER BY tag), '')
-                FROM issue_tags WHERE issue_id = $1
-            )
-        WHERE id = $1
-        "#,
+        format!("UPDATE issues SET {} WHERE id = $1", csv_cache_set_clause()),
         [issue_id.into()],
     );
     db.execute_raw(stmt).await?;
     Ok(())
+}
+
+/// Rebuild the CSV read-cache for every active issue of one series in a
+/// single set-based statement. The scanner's series rollup calls this
+/// after it has created the `person` / entity rows and linked their ids
+/// onto the junctions, so a file-tagged issue's columns end up holding
+/// the normalized names (`"Mike Deodato Jr."`) the junctions hold — the
+/// junction tables are the one source of truth for *every* write path,
+/// and the columns are strictly derived. The file's literal values stay
+/// in `comic_info_raw`. Returns the number of issue rows updated.
+pub async fn rebuild_series_issue_csv_cache<C: ConnectionTrait>(
+    db: &C,
+    series_id: uuid::Uuid,
+) -> Result<u64, DbErr> {
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        format!(
+            "UPDATE issues SET {} WHERE series_id = $1 AND state = 'active' AND removed_at IS NULL",
+            csv_cache_set_clause()
+        ),
+        [series_id.into()],
+    );
+    Ok(db.execute_raw(stmt).await?.rows_affected())
 }

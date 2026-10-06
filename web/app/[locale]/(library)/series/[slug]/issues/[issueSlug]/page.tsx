@@ -404,8 +404,8 @@ export default async function IssuePage({
       </header>
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Writer" value={primaryCredit(issue.writer)} />
-        <Stat label="Penciller" value={primaryCredit(issue.penciller)} />
+        <Stat label="Writer" value={primaryCredit(issue, "writer")} />
+        <Stat label="Penciller" value={primaryCredit(issue, "penciller")} />
         <Stat label="Released" value={publicationDate} />
         <Stat label="Status" value={seriesStatus} />
       </section>
@@ -614,18 +614,18 @@ export default async function IssuePage({
                   orientation="horizontal"
                   className="py-3 first:pt-0 last:pb-0"
                   label="Genres"
-                  items={splitCsv(issue.genre)}
+                  items={issue.genres}
                   filterField="genres"
                 />
                 <ChipList
                   orientation="horizontal"
                   className="py-3 first:pt-0 last:pb-0"
                   label="Tags"
-                  items={splitCsv(issue.tags)}
+                  items={issue.tag_list}
                   filterField="tags"
                 />
               </div>
-              {!issue.genre && !issue.tags && (
+              {issue.genres.length === 0 && issue.tag_list.length === 0 && (
                 <p className="text-muted-foreground pt-1 text-sm">
                   No genres or tags.
                 </p>
@@ -701,49 +701,49 @@ export default async function IssuePage({
                 orientation="horizontal"
                 className="py-3 first:pt-0 last:pb-0"
                 label="Writer"
-                items={splitCsv(issue.writer)}
+                items={creditNames(issue, "writer")}
                 filterField="writer"
-                creatorSlugs={issue.creator_slugs}
+                creatorSlugs={creditSlugs(issue)}
               />
               <ChipList
                 orientation="horizontal"
                 className="py-3 first:pt-0 last:pb-0"
                 label="Penciller"
-                items={splitCsv(issue.penciller)}
+                items={creditNames(issue, "penciller")}
                 filterField="penciller"
-                creatorSlugs={issue.creator_slugs}
+                creatorSlugs={creditSlugs(issue)}
               />
               <ChipList
                 orientation="horizontal"
                 className="py-3 first:pt-0 last:pb-0"
                 label="Inker"
-                items={splitCsv(issue.inker)}
+                items={creditNames(issue, "inker")}
                 filterField="inker"
-                creatorSlugs={issue.creator_slugs}
+                creatorSlugs={creditSlugs(issue)}
               />
               <ChipList
                 orientation="horizontal"
                 className="py-3 first:pt-0 last:pb-0"
                 label="Colorist"
-                items={splitCsv(issue.colorist)}
+                items={creditNames(issue, "colorist")}
                 filterField="colorist"
-                creatorSlugs={issue.creator_slugs}
+                creatorSlugs={creditSlugs(issue)}
               />
               <ChipList
                 orientation="horizontal"
                 className="py-3 first:pt-0 last:pb-0"
                 label="Letterer"
-                items={splitCsv(issue.letterer)}
+                items={creditNames(issue, "letterer")}
                 filterField="letterer"
-                creatorSlugs={issue.creator_slugs}
+                creatorSlugs={creditSlugs(issue)}
               />
               <ChipList
                 orientation="horizontal"
                 className="py-3 first:pt-0 last:pb-0"
                 label="Cover artist"
-                items={splitCsv(issue.cover_artist)}
+                items={creditNames(issue, "cover_artist")}
                 filterField="cover_artist"
-                creatorSlugs={issue.creator_slugs}
+                creatorSlugs={creditSlugs(issue)}
               />
             </div>
             {!hasAnyCredit(issue) && (
@@ -759,7 +759,7 @@ export default async function IssuePage({
                 orientation="horizontal"
                 className="py-3 first:pt-0 last:pb-0"
                 label="Characters"
-                items={splitCsv(issue.characters)}
+                items={issue.cast.characters.map((c) => c.name)}
                 filterField="characters"
                 entitySlugs={issue.entity_slugs ?? undefined}
               />
@@ -767,7 +767,7 @@ export default async function IssuePage({
                 orientation="horizontal"
                 className="py-3 first:pt-0 last:pb-0"
                 label="Teams"
-                items={splitCsv(issue.teams)}
+                items={issue.cast.teams.map((t) => t.name)}
                 filterField="teams"
                 entitySlugs={issue.entity_slugs ?? undefined}
               />
@@ -775,7 +775,7 @@ export default async function IssuePage({
                 orientation="horizontal"
                 className="py-3 first:pt-0 last:pb-0"
                 label="Locations"
-                items={splitCsv(issue.locations)}
+                items={issue.cast.locations.map((l) => l.name)}
                 filterField="locations"
               />
               {/* Story arc has no series-level library filter (it's an
@@ -785,7 +785,7 @@ export default async function IssuePage({
                 orientation="horizontal"
                 className="py-3 first:pt-0 last:pb-0"
                 label="Story arc"
-                items={splitCsv(issue.story_arc)}
+                items={issue.cast.story_arcs.map((a) => a.name)}
                 entityField="story_arc"
                 entitySlugs={issue.entity_slugs ?? undefined}
               />
@@ -940,15 +940,10 @@ function IssueFactRow({
   );
 }
 
-/**
- * First entry of a CSV-style credits field, used by the stats grid where
- * we only have room for the headline name. Falls back to the entire
- * trimmed value if the split yields nothing.
- */
-function primaryCredit(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const first = value.split(/[,;]/)[0]?.trim();
-  return first && first.length > 0 ? first : value.trim() || null;
+/** Headline name for the stats grid: the first person credited in `role`,
+ *  from the junction-backed list. */
+function primaryCredit(issue: IssueDetailView, role: string): string | null {
+  return creditNames(issue, role)[0] ?? null;
 }
 
 /** Pretty-print a byte count as B / KB / MB / GB / TB with one decimal. */
@@ -1089,36 +1084,23 @@ function normalizeExternalId(value: string): string {
   return value.trim().replace(/\/+$/, "").toLowerCase();
 }
 
-function splitCsv(value: string | null | undefined): string[] {
-  if (!value) return [];
-  // Mirrors `server::library::scanner::metadata_rollup::split_csv`. If
-  // `;` is present anywhere in the string we treat it as the sole
-  // separator so names containing commas (e.g. `"Capes, Inc."`) survive
-  // the round-trip; otherwise we split on `,` as before. Dedupe is
-  // case-insensitive, first casing wins.
-  const sep = value.includes(";") ? ";" : ",";
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const piece of value.split(sep)) {
-    const trimmed = piece.trim();
-    if (!trimmed) continue;
-    const key = trimmed.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(trimmed);
-  }
-  return out;
+function hasAnyCredit(issue: IssueDetailView): boolean {
+  return issue.credits.length > 0;
 }
 
-function hasAnyCredit(issue: IssueDetailView): boolean {
-  return Boolean(
-    issue.writer ||
-    issue.penciller ||
-    issue.inker ||
-    issue.colorist ||
-    issue.letterer ||
-    issue.cover_artist,
-  );
+/** Names credited in one role, from the junction-backed `credits` list
+ *  (the source of truth) — never the flat CSV column. */
+function creditNames(issue: IssueDetailView, role: string): string[] {
+  return issue.credits.filter((c) => c.role === role).map((c) => c.person);
+}
+
+/** Name → creator slug for every credit that has a `person` row. */
+function creditSlugs(issue: IssueDetailView): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const c of issue.credits) {
+    if (c.slug && !(c.person in out)) out[c.person] = c.slug;
+  }
+  return out;
 }
 
 /**

@@ -8,6 +8,10 @@ pub struct Model {
     pub issue_id: String,
     #[sea_orm(primary_key, auto_increment = false)]
     pub tag: String,
+    /// Position within the source list (ComicInfo CSV order for scanner
+    /// writes, provider order for applies). `0` for rows written before
+    /// the column existed.
+    pub ordinal: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

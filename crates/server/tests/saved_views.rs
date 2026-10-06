@@ -337,6 +337,7 @@ async fn seed_series_with_genre(
         // directly. Mirrors what `metadata_rollup::replace_issue_metadata`
         // would have written.
         IssueGenreAM {
+            ordinal: Set(0),
             issue_id: Set(issue_id.clone()),
             genre: Set(genre.into()),
         }
@@ -2054,6 +2055,7 @@ async fn seed_series_with_field(
         match field {
             "characters" => {
                 IssueCharacterAM {
+                    ordinal: Set(0),
                     issue_id: Set(issue_id.clone()),
                     character: Set((*v).into()),
                     character_id: Set(None),
@@ -2074,6 +2076,7 @@ async fn seed_series_with_field(
             }
             "teams" => {
                 IssueTeamAM {
+                    ordinal: Set(0),
                     issue_id: Set(issue_id.clone()),
                     team: Set((*v).into()),
                     team_id: Set(None),
@@ -2094,6 +2097,7 @@ async fn seed_series_with_field(
             }
             "locations" => {
                 IssueLocationAM {
+                    ordinal: Set(0),
                     issue_id: Set(issue_id.clone()),
                     location: Set((*v).into()),
                     location_id: Set(None),

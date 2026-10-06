@@ -1177,3 +1177,14 @@ fields match `metadata_rollup::SUFFIX_PIECE_RE`, honours the WP-2.5
 provenance skips (user- / provider-owned junctions stay), re-runs the
 series rollups, then deletes `person` / `character` / `team` / `location`
 rows that are a bare suffix and no longer referenced. No archive access.
+
+Since the same change, the series rollup ends by rebuilding every issue's
+flat CSV columns from the junction tables
+(`writers::rebuild_series_issue_csv_cache`), so the columns a scan leaves
+behind hold the normalized names the junctions hold — see
+`docs/dev/schema-restructure.md` "Write direction". The dashboard's
+**Rebuild read-cache** backfill (`BackfillKind::CsvCache`) does the same
+for the whole catalogue once; it is the catch-up for issues scanned before
+the rule. Run **Repair split names** first (it fixes the junctions), then
+**Rebuild read-cache** is only needed for issues that didn't match the
+repair but were scanned before the rule — in practice run both once.

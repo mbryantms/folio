@@ -16,6 +16,10 @@ pub struct Model {
     pub character_id: Option<Uuid>,
     pub is_first_appearance: bool,
     pub died_in_issue: bool,
+    /// Position within the source list (ComicInfo CSV order for scanner
+    /// writes, provider order for applies). `0` for rows written before
+    /// the column existed.
+    pub ordinal: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

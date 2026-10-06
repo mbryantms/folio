@@ -487,13 +487,21 @@ export function formatBackfillMessage(
               plural: "issues",
               skipped: "kept provider- or user-set credits",
             }
-          : {
-              title: "Variant-cover",
-              verb: "Re-downloaded",
-              noun: "variant cover",
-              plural: "variant covers",
-              skipped: "could not be fetched",
-            };
+          : evt.kind === "csv_cache"
+            ? {
+                title: "Read-cache",
+                verb: "Rewrote",
+                noun: "issue",
+                plural: "issues",
+                skipped: "series failed",
+              }
+            : {
+                title: "Variant-cover",
+                verb: "Re-downloaded",
+                noun: "variant cover",
+                plural: "variant covers",
+                skipped: "could not be fetched",
+              };
   if (evt.processed === 0 && evt.skipped === 0) {
     return `${copy.title} backfill complete — nothing to do.`;
   }

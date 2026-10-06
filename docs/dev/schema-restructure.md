@@ -85,6 +85,40 @@ Two reasons:
    Postgres, so we can't push the cache into the schema itself.
    Application-side rebuild is the next-best thing.
 
+### Write direction: junctions first, always
+
+Provider applies and user edits write the junction tables and rebuild
+the cache (below). Since 2026-10 the **scanner** follows the same
+direction for file-tagged metadata: `process.rs` still copies the
+ComicInfo strings into the columns and derives the junctions from them
+(`metadata_rollup::replace_issue_metadata_*`), but the series rollup
+(`rollup_series_metadata`) ends by rebuilding every active issue's
+cache for the series from the junctions
+(`writers::rebuild_series_issue_csv_cache`, one set-based statement).
+So after a scan the columns hold the normalized names the junctions
+hold — `"Mike Deodato Jr."`, not the file's `"Mike Deodato, Jr."` —
+and every column reader (library grid, OPDS, search, saved-view
+filters) agrees with the creator / character pages without parsing
+rules of its own. The file's literal values remain in
+`comic_info_raw`. The cache joiner uses `; ` when any name in the list
+contains a comma, matching `split_csv` and the sidecar composer, and
+orders every list by the junction's `ordinal` (the position in the
+source list — ComicInfo CSV order for scanner writes, provider order
+for applies; `issue_credits` had it already, `m20270607` added it to
+characters / teams / locations / genres / tags) so a sidecar rewrite
+reproduces the file's order rather than alphabetizing. It LEFT JOINs
+the entity tables and falls back to the junction's own stored name, so
+a file-tier row whose entity id the rollup hasn't linked yet is never
+dropped from the column.
+
+The issue detail endpoint reads the junctions directly:
+`IssueDetailView.credits` (role, person, slug), `cast` (characters /
+teams / locations / story arcs with slugs), `genres`, `tag_list`. The
+web issue page renders those and never splits a column. The admin
+Metadata dashboard's **Rebuild read-cache** backfill
+(`BackfillKind::CsvCache`) rewrites the columns for the whole
+catalogue — the catch-up for issues scanned before this rule.
+
 ### How the cache stays consistent
 
 `writers::CsvRebuildBatch` queues `(issue_id)` keys touched during a

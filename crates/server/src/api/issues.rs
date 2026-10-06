@@ -153,11 +153,12 @@ pub async fn get_one(
     // Creator-slug map for this issue's credits. One JOIN against `person` —
     // the FK populated by the scanner's series rollup. The UI uses this so
     // credit chips link to /creators/<slug> directly.
-    let (rating, series_dir, library_row, creator_slugs) = tokio::join!(
+    let (rating, series_dir, library_row, creator_slugs, junctions) = tokio::join!(
         crate::api::series::lookup_user_rating(&app, user.id, "issue", &row.id),
         series_dir_fut,
         library_fut,
         build_issue_creator_slugs(&app, &row.id),
+        build_issue_junction_lists(&app, &row.id),
     );
     let library_default_dir = library_row
         .as_ref()
@@ -176,6 +177,10 @@ pub async fn get_one(
     view.allow_archive_writeback = allow_archive_writeback;
     view.library_cbr_convert_confirmed = library_cbr_convert_confirmed;
     view.creator_slugs = creator_slugs;
+    view.credits = junctions.credits;
+    view.cast = junctions.cast;
+    view.genres = junctions.genres;
+    view.tag_list = junctions.tags;
     // WP-5.5: chip → landing-page slugs for cast, story arcs, publisher.
     {
         use crate::api::entity_pages::{entity_slugs, split_csv};
@@ -517,6 +522,149 @@ async fn build_issue_creator_slugs(
     .into_iter()
     .map(|r| (r.person, r.slug))
     .collect()
+}
+
+/// The issue's junction-table content for the detail view.
+struct IssueJunctionLists {
+    credits: Vec<crate::api::series::IssueCreditEntry>,
+    cast: crate::api::series::IssueCastView,
+    genres: Vec<String>,
+    tags: Vec<String>,
+}
+
+/// Read the junction tables (the source of truth) for one issue: credits
+/// in stored order with the person's slug, cast / setting entities with
+/// their landing-page slugs, genres and tags. Every query is best-effort:
+/// a failure logs and yields an empty list rather than failing the page.
+async fn build_issue_junction_lists(app: &AppState, issue_id: &str) -> IssueJunctionLists {
+    use crate::api::series::{EntityRefView, IssueCastView, IssueCreditEntry};
+    use sea_orm::{FromQueryResult, Statement};
+    let backend = app.db.get_database_backend();
+
+    #[derive(Debug, FromQueryResult)]
+    struct CreditRow {
+        role: String,
+        person: String,
+        slug: Option<String>,
+    }
+    #[derive(Debug, FromQueryResult)]
+    struct RefRow {
+        name: String,
+        slug: Option<String>,
+    }
+    #[derive(Debug, FromQueryResult)]
+    struct ValueRow {
+        value: String,
+    }
+
+    async fn refs(
+        app: &AppState,
+        backend: sea_orm::DatabaseBackend,
+        sql: &str,
+        issue_id: &str,
+        what: &str,
+    ) -> Vec<EntityRefView> {
+        match RefRow::find_by_statement(Statement::from_sql_and_values(
+            backend,
+            sql,
+            [issue_id.into()],
+        ))
+        .all(&app.db)
+        .await
+        {
+            Ok(rows) => rows
+                .into_iter()
+                .map(|r| EntityRefView {
+                    name: r.name,
+                    slug: r.slug,
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, issue_id, what, "issue detail: junction read failed");
+                Vec::new()
+            }
+        }
+    }
+
+    let credits = match CreditRow::find_by_statement(Statement::from_sql_and_values(
+        backend,
+        "SELECT ic.role AS role, COALESCE(p.name, ic.person) AS person, p.slug AS slug          FROM issue_credits ic LEFT JOIN person p ON p.id = ic.person_id          WHERE ic.issue_id = $1          ORDER BY ic.role, ic.ordinal, COALESCE(p.name, ic.person)",
+        [issue_id.into()],
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|r| IssueCreditEntry {
+                role: r.role,
+                person: r.person,
+                slug: r.slug,
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, issue_id, "issue detail: credits read failed");
+            Vec::new()
+        }
+    };
+    let cast = IssueCastView {
+        characters: refs(
+            app,
+            backend,
+            "SELECT COALESCE(c.name, ic.\"character\") AS name, c.slug AS slug              FROM issue_characters ic LEFT JOIN character c ON c.id = ic.character_id              WHERE ic.issue_id = $1 ORDER BY ic.ordinal, 1",
+            issue_id,
+            "characters",
+        )
+        .await,
+        teams: refs(
+            app,
+            backend,
+            "SELECT COALESCE(t.name, it.team) AS name, t.slug AS slug              FROM issue_teams it LEFT JOIN team t ON t.id = it.team_id              WHERE it.issue_id = $1 ORDER BY it.ordinal, 1",
+            issue_id,
+            "teams",
+        )
+        .await,
+        locations: refs(
+            app,
+            backend,
+            "SELECT COALESCE(l.name, il.location) AS name, l.slug AS slug              FROM issue_locations il LEFT JOIN location l ON l.id = il.location_id              WHERE il.issue_id = $1 ORDER BY il.ordinal, 1",
+            issue_id,
+            "locations",
+        )
+        .await,
+        story_arcs: refs(
+            app,
+            backend,
+            "SELECT sa.name AS name, sa.slug AS slug              FROM issue_arcs ia JOIN story_arc sa ON sa.id = ia.arc_id              WHERE ia.issue_id = $1 ORDER BY ia.position_in_arc NULLS LAST, sa.name",
+            issue_id,
+            "story_arcs",
+        )
+        .await,
+    };
+    let values = |sql: &'static str| async move {
+        ValueRow::find_by_statement(Statement::from_sql_and_values(
+            backend,
+            sql,
+            [issue_id.into()],
+        ))
+        .all(&app.db)
+        .await
+        .map(|rows| rows.into_iter().map(|r| r.value).collect::<Vec<_>>())
+        .unwrap_or_default()
+    };
+    let genres = values(
+        "SELECT genre AS value FROM issue_genres WHERE issue_id = $1 ORDER BY ordinal, genre",
+    )
+    .await;
+    let tags =
+        values("SELECT tag AS value FROM issue_tags WHERE issue_id = $1 ORDER BY ordinal, tag")
+            .await;
+    IssueJunctionLists {
+        credits,
+        cast,
+        genres,
+        tags,
+    }
 }
 
 // ───── PATCH /issues/{id} ─────
