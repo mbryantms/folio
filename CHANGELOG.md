@@ -13,6 +13,23 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.44.0](https://github.com/mbryantms/folio/compare/v0.43.0...v0.44.0) (2026-10-06)
+
+
+### Added
+
+* **metadata:** provider-complete search — park on any quota-denied provider, resume on the same run, flag partial matches ([#1049](https://github.com/mbryantms/folio/issues/1049)) ([80313c2](https://github.com/mbryantms/folio/commit/80313c20c2eefca5851c774aebb4ebcb2f870e43))
+
+
+### Fixed
+
+* **series:** series cover never comes from an annual or a [#0](https://github.com/mbryantms/folio/issues/0) prelude when the run has a real first issue ([#1050](https://github.com/mbryantms/folio/issues/1050)) ([def2980](https://github.com/mbryantms/folio/commit/def29800a30af748c96accf039394084fc5f6bce))
+
+
+### Dependencies
+
+* update dependency pnpm to v12.9.0 ([#1047](https://github.com/mbryantms/folio/issues/1047)) ([fa22aa8](https://github.com/mbryantms/folio/commit/fa22aa8d12a1c9899c372e0a5c9599c356e3167a))
+
 ## [0.43.0](https://github.com/mbryantms/folio/compare/v0.42.0...v0.43.0) (2026-10-05)
 
 
