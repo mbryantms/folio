@@ -49,6 +49,7 @@ pub mod metron;
 pub mod orchestrator;
 pub mod phash;
 pub mod provider;
+pub mod provider_status;
 pub mod range_map;
 pub mod ratcliff;
 pub mod rate_limit;

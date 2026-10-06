@@ -122,6 +122,12 @@ pub struct CandidatesResp {
     /// `NoMatches`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub match_outcome: Option<MatchOutcomeView>,
+    /// Provider-complete search: one entry per provider the run was
+    /// started with — `answered` (with its candidate count), `quota`
+    /// (owed; the run is parked and resumes it), `failed`, or `pending`.
+    /// Empty on runs that predate the bookkeeping and on lookup runs.
+    #[serde(default)]
+    pub provider_status: Vec<crate::metadata::provider_status::ProviderStatus>,
     /// Live provider-quota snapshot + retry ETA (audit B13). Populated
     /// once the run finalizes so the dialog can show remaining budget
     /// before the next batch and a concrete "retries in …" while parked
@@ -3231,6 +3237,9 @@ pub struct BatchAggregate {
     pub failed: i64,
     /// Still queued / searching.
     pub in_flight: i64,
+    /// Searched children where some provider didn't answer (failed, or
+    /// never asked) — their match covers fewer than all providers.
+    pub partial: i64,
     /// Per provider: how many searched children were answered by a direct
     /// lookup through series coverage vs a provider search (with why it
     /// fell back). Empty until a child that may use direct lookups has
@@ -3339,6 +3348,12 @@ pub struct BatchChildRow {
     pub issue_slug: Option<String>,
     /// Parent library id — the review dialog's scope requires it.
     pub library_id: Option<String>,
+    /// Provider-complete search: per-provider state of this child's
+    /// search (`answered` + candidate count / `quota` / `failed` /
+    /// `pending`), so the queue can say whether a match covers every
+    /// provider. Empty for runs that predate the bookkeeping.
+    #[serde(default)]
+    pub providers: Vec<crate::metadata::provider_status::ProviderStatus>,
 }
 
 /// Per-provider remaining budget for the batch's pacing warning.
@@ -3606,8 +3621,14 @@ pub async fn batch_status(
                 any_unfinished = true;
             }
         }
+        let providers =
+            crate::metadata::provider_status::parse(r.provider_status.as_ref()).unwrap_or_default();
         if outcome.is_some() || r.status == "completed" {
             agg.searched += 1;
+            if !providers.is_empty() && !crate::metadata::provider_status::all_answered(&providers)
+            {
+                agg.partial += 1;
+            }
         }
         match outcome.as_deref() {
             Some("single_good") => agg.strong += 1,
@@ -3653,6 +3674,7 @@ pub async fn batch_status(
             series_slug,
             issue_slug,
             library_id,
+            providers,
         });
     }
 
@@ -4180,10 +4202,13 @@ async fn build_candidates_resp(app: &AppState, run: metadata_run::Model) -> Cand
         .collect();
     let quota = build_quota_state(app, &run).await;
     let query = SearchQueryView::from_stored(&run.query);
+    let provider_status =
+        crate::metadata::provider_status::parse(run.provider_status.as_ref()).unwrap_or_default();
     CandidatesResp {
         run_id: run.id,
         status: run.status,
         providers: run.providers,
+        provider_status,
         started_at: run.started_at.to_rfc3339(),
         finished_at: run.finished_at.map(|t| t.to_rfc3339()),
         items_total: run.items_total,

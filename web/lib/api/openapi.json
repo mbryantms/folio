@@ -13235,6 +13235,7 @@
           "awaiting_quota",
           "failed",
           "in_flight",
+          "partial",
           "lookups"
         ],
         "properties": {
@@ -13271,6 +13272,11 @@
           "no_match": {
             "type": "integer",
             "format": "int64"
+          },
+          "partial": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Searched children where some provider didn't answer (failed, or\nnever asked) — their match covers fewer than all providers."
           },
           "searched": {
             "type": "integer",
@@ -13413,6 +13419,13 @@
               "null"
             ],
             "description": "`MatchOutcomeKind` string once searched; `None` while in flight."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderStatus"
+            },
+            "description": "Provider-complete search: per-provider state of this child's\nsearch (`answered` + candidate count / `quota` / `failed` /\n`pending`), so the queue can say whether a match covers every\nprovider. Empty for runs that predate the bookkeeping."
           },
           "run_id": {
             "type": "string",
@@ -14439,6 +14452,13 @@
                 "type": "null"
               }
             ]
+          },
+          "provider_status": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderStatus"
+            },
+            "description": "Provider-complete search: one entry per provider the run was\nstarted with — `answered` (with its candidate count), `quota`\n(owed; the run is parked and resumes it), `failed`, or `pending`.\nEmpty on runs that predate the bookkeeping and on lookup runs."
           },
           "providers": {
             "type": "array",
@@ -25026,6 +25046,54 @@
           },
           "series_id": {
             "type": "string"
+          }
+        }
+      },
+      "ProviderState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "answered",
+          "quota",
+          "failed"
+        ]
+      },
+      "ProviderStatus": {
+        "type": "object",
+        "description": "One provider's state within a run.",
+        "required": [
+          "source",
+          "state"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Candidates this provider contributed (after pre-filter + scoring).\nMeaningful once `answered`.",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`failed` only: the provider error, for the run detail."
+          },
+          "retry_after_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "`quota` only: the bucket's suggested wait when it denied the call.",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string",
+            "description": "`\"comicvine\"` | `\"metron\"` | `\"gcd\"`."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ProviderState"
           }
         }
       },

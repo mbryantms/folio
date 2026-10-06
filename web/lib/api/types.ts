@@ -778,6 +778,8 @@ export type AppPasswordScope = "read" | "read+progress";
 // ───────── metadata-providers-1.0 ─────────
 export type SearchStartedResp = Schemas["SearchStartedResp"];
 export type CandidatesResp = Schemas["CandidatesResp"];
+export type ProviderStatus = Schemas["ProviderStatus"];
+export type ProviderState = Schemas["ProviderState"];
 export type CandidateView = Schemas["CandidateView"];
 export type MatchOutcomeView = Schemas["MatchOutcomeView"];
 export type SearchOverrides = Schemas["SearchOverrides"];

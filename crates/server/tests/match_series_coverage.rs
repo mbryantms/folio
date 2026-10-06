@@ -218,6 +218,8 @@ async fn seed_run(fx: &Fx) -> Uuid {
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(db)

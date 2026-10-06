@@ -139,6 +139,8 @@ async fn seed_issue_run(app: &TestApp, issue_id: &str, source: &str) -> (Uuid, i
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(db)
@@ -722,6 +724,8 @@ async fn apply_series_with_writeback_enabled_composes_per_issue_and_triggers_one
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(&app.state().db)
@@ -846,6 +850,8 @@ async fn apply_series_with_writeback_skips_removed_issues() {
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(&app.state().db)
@@ -935,6 +941,8 @@ async fn apply_series_writeback_disabled_takes_legacy_path() {
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(&app.state().db)
@@ -1352,6 +1360,8 @@ async fn apply_series_with_writeback_persists_uncarriable_series_fields() {
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(&app.state().db)

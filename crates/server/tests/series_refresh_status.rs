@@ -293,6 +293,8 @@ async fn applied_run(fx: &Fx, minutes_ago: i64) -> Uuid {
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(db)

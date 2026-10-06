@@ -97,6 +97,8 @@ async fn seed_run_with_candidate(
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(db)
@@ -574,6 +576,8 @@ async fn apply_issue_writes_credits_through_writer_helpers() {
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(&app.state().db)
@@ -837,6 +841,8 @@ async fn seed_issue_run(app: &TestApp, issue_id: &str, cv_id: &str) -> Uuid {
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(&app.state().db)
@@ -1274,6 +1280,8 @@ async fn seed_issue_with_junction_candidate(
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(&app.state().db)

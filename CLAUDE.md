@@ -497,6 +497,31 @@ Default admin (first registered user becomes admin):
   for the full pipeline diagram, operator-tunable knob list,
   telemetry recipe, and the fixture-adding playbook.
 
+- **Provider-complete search** (`metadata::provider_status`): every
+  search asks every configured provider. A quota-denied provider is
+  **owed**, not skipped: `orchestrator::settle_search` parks the run
+  `awaiting_quota` with the answering providers' candidates stashed in
+  `metadata_run.partial_results` (plus the serialized job), and the
+  once-a-minute `jobs::metadata_resume` sweep re-queues the stashed job
+  on the **same run** once every owed provider has budget; the loop
+  then asks only the owed providers. `metadata_run.provider_status`
+  (one `ProviderStatus` per provider: `pending` / `answered` + count /
+  `quota` / `failed`) survives finalize and is surfaced on
+  `BatchChildRow.providers`, `BatchAggregate.partial` and
+  `CandidatesResp.provider_status`; the strong-match auto-apply gate
+  refuses a run unless `provider_status::all_answered`.
+
+  **Reviewer heuristic — reject PRs that:**
+  - `continue` past a `ProviderError::QuotaExceeded` in a search loop
+    without recording `ProviderOutcome::Quota` — the run would finalize
+    with that provider silently missing (the pre-2026-10 behaviour).
+  - Call `finalize_run` on a run that still has an owed provider, or
+    classify / auto-apply off a parked run's stash.
+  - Resume a parked run by starting a fresh run instead of
+    `resume_parked_run` (re-spends the answered providers' quota and
+    changes the batch child's run id). The fresh-run path is only the
+    fallback for pre-stash rows.
+
 - **Provider series-boundary divergence**: metadata providers
   disagree on series boundaries — ComicVine "lumps" a run into one
   volume while Metron/GCD "split" a legacy-renumbered relaunch into a

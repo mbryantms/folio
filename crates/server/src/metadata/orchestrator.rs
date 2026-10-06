@@ -34,6 +34,7 @@ use crate::metadata::metron::MetronClient;
 use crate::metadata::provider::{
     IssueCandidate, IssueQuery, MetadataProvider, ProviderError, SeriesCandidate, SeriesQuery,
 };
+use crate::metadata::provider_status::{self, PartialSearch, ProviderState, ProviderStatus};
 use crate::metadata::range_map::EffectiveTarget;
 use chrono::Utc;
 use entity::{metadata_run, metadata_run_candidate};
@@ -201,6 +202,12 @@ pub async fn start_run<C: ConnectionTrait>(
         resume_after: Set(None),
         query: Set(Some(query_json)),
         batch_id: Set(args.batch_id),
+        // Every provider starts owed a query; the search loop flips each
+        // entry as it answers / is denied (provider-complete search).
+        provider_status: Set(Some(crate::metadata::provider_status::initial_status_json(
+            args.providers,
+        ))),
+        partial_results: Set(None),
     };
     am.insert(db).await?;
     Ok(id)
@@ -231,6 +238,20 @@ pub async fn fail_run<C: ConnectionTrait>(
     am.status = Set(status::FAILED.to_owned());
     am.finished_at = Set(Some(Utc::now().into()));
     am.error_summary = Set(Some(error.to_owned()));
+    am.update(db).await?;
+    Ok(())
+}
+
+/// A parked run re-queued by the resume sweep: back to `queued` (so the
+/// sweep doesn't re-queue it before the worker picks it up) with its
+/// stash + statuses untouched.
+pub async fn mark_resumed<C: ConnectionTrait>(db: &C, run_id: Uuid) -> Result<(), sea_orm::DbErr> {
+    let Some(row) = metadata_run::Entity::find_by_id(run_id).one(db).await? else {
+        return Ok(());
+    };
+    let mut am: metadata_run::ActiveModel = row.into();
+    am.status = Set(status::QUEUED.to_owned());
+    am.resume_after = Set(None);
     am.update(db).await?;
     Ok(())
 }
@@ -312,6 +333,13 @@ pub struct SearchOpts {
     /// whether the search is skipped (batches), still run (the match
     /// dialog) or never run (issue-level refresh). `None` ⇒ always search.
     pub direct: Option<DirectLookupCtx>,
+    /// The serialized search job driving this run, stashed with the
+    /// partial results when the run parks on quota so the resume sweep
+    /// re-runs the *same* query (overrides, direct-lookup mode, series
+    /// targets) on the owed providers. `None` for direct orchestrator
+    /// callers (tests, lookups); a parked run then resumes from a fresh
+    /// job built off the entity.
+    pub job_payload: Option<serde_json::Value>,
 }
 
 impl Default for SearchOpts {
@@ -320,6 +348,7 @@ impl Default for SearchOpts {
             relax_year_gate: true,
             cover_hasher: None,
             direct: None,
+            job_payload: None,
         }
     }
 }
@@ -333,6 +362,7 @@ impl std::fmt::Debug for SearchOpts {
                 &self.cover_hasher.as_ref().map(|_| "<injected>"),
             )
             .field("direct", &self.direct.is_some())
+            .field("job_payload", &self.job_payload.is_some())
             .finish()
     }
 }
@@ -346,7 +376,7 @@ pub enum CandidatePayload {
     Issue(IssueCandidate),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RankedCandidate {
     pub source: Source,
     pub external_id: String,
@@ -464,6 +494,7 @@ pub async fn finalize_run(
     db: &DatabaseConnection,
     run_id: Uuid,
     ranked: &[RankedCandidate],
+    statuses: Option<&[ProviderStatus]>,
 ) -> Result<(), sea_orm::DbErr> {
     let tx = db.begin().await?;
     let Some(row) = metadata_run::Entity::find_by_id(run_id).one(&tx).await? else {
@@ -504,6 +535,15 @@ pub async fn finalize_run(
     am.items_matched_medium = Set(medium);
     am.items_matched_low = Set(low);
     am.items_no_match = Set(if total == 0 { 1 } else { 0 });
+    // Provider-complete search: the per-provider statuses survive
+    // finalize (the Review queue flags a run some provider didn't
+    // answer); the quota stash is spent.
+    if let Some(statuses) = statuses {
+        let status_json = serde_json::to_value(statuses)
+            .map_err(|e| sea_orm::DbErr::Custom(format!("serialize provider_status: {e}")))?;
+        am.provider_status = Set(Some(status_json));
+    }
+    am.partial_results = Set(None);
     am.update(&tx).await?;
 
     // Matching-accuracy-1.0 M0: stamp one outcome row alongside the
@@ -930,6 +970,14 @@ pub async fn run_series_search_with(
     local_series_id: Option<Uuid>,
     opts: SearchOpts,
 ) -> Result<Vec<RankedCandidate>, ProviderError> {
+    // Provider-complete search: what this run already has (a resumed
+    // run carries the answering providers' candidates + statuses).
+    let SearchBook {
+        mut statuses,
+        mut ranked,
+        lookups,
+        mut year_gate_relaxed,
+    } = load_search_book(db, run_id, providers).await?;
     if let Err(e) = mark_searching(db, run_id).await {
         return Err(ProviderError::Transport(format!("db: {e}")));
     }
@@ -943,12 +991,17 @@ pub async fn run_series_search_with(
         None => None,
     };
 
-    let mut ranked = Vec::new();
-    let mut surfaced_quota: Option<u64> = None;
-    let mut last_error: Option<ProviderError> = None;
-    let mut year_gate_relaxed = false;
     let http = cover_http_client();
     for p in providers {
+        // Only providers still owed a query (a resumed run skips the
+        // ones whose candidates are already in `ranked`).
+        let Some(si) = statuses
+            .iter()
+            .position(|st| st.source == p.id() && st.is_owed())
+        else {
+            continue;
+        };
+        let mut outcome = ProviderOutcome::Answered;
         let q = SeriesQuery {
             name: facts.name.clone(),
             year: facts.year,
@@ -1010,12 +1063,12 @@ pub async fn run_series_search_with(
                 ranked.extend(produced);
             }
             Err(ProviderError::QuotaExceeded { retry_after_secs }) => {
-                surfaced_quota = Some(retry_after_secs);
                 tracing::info!(
                     provider = p.id().as_str(),
                     retry_after_secs,
-                    "metadata search: provider out of quota; falling through"
+                    "metadata search: provider out of quota; run will park and resume it"
                 );
+                outcome = ProviderOutcome::Quota(retry_after_secs);
             }
             Err(e) => {
                 tracing::warn!(
@@ -1023,46 +1076,24 @@ pub async fn run_series_search_with(
                     error = %e,
                     "metadata search: provider returned error; falling through"
                 );
-                last_error = Some(e);
+                outcome = ProviderOutcome::Failed(e.to_string());
             }
         }
+        record_outcome(&mut statuses, si, outcome, &ranked);
     }
 
-    finalize_ranking(&mut ranked);
-    if year_gate_relaxed {
-        note_year_gate_relaxed(db, run_id).await;
-    }
-
-    // If *every* enabled provider was quota-exhausted, surface that
-    // as `awaiting_quota` instead of `completed-with-no-results` so
-    // the M5 UI can render the right state + the operator dashboard
-    // can flag the budget pressure.
-    if ranked.is_empty() && surfaced_quota.is_some() {
-        let resume = Utc::now() + chrono::Duration::seconds(surfaced_quota.unwrap_or(60) as i64);
-        if let Err(e) = mark_awaiting_quota(db, run_id, resume).await {
-            return Err(ProviderError::Transport(format!("db: {e}")));
-        }
-        return Err(ProviderError::QuotaExceeded {
-            retry_after_secs: surfaced_quota.unwrap_or(60),
-        });
-    }
-
-    // If every provider returned a hard error AND we got zero
-    // candidates, fail the run loudly. A single provider failing
-    // while the other succeeds finalizes normally.
-    if ranked.is_empty()
-        && let Some(err) = last_error
-    {
-        if let Err(e) = fail_run(db, run_id, &err.to_string()).await {
-            return Err(ProviderError::Transport(format!("db: {e}")));
-        }
-        return Err(err);
-    }
-
-    if let Err(e) = finalize_run(db, run_id, &ranked).await {
-        return Err(ProviderError::Transport(format!("db: {e}")));
-    }
-    Ok(ranked)
+    settle_search(
+        db,
+        run_id,
+        &opts,
+        SearchBook {
+            statuses,
+            ranked,
+            lookups,
+            year_gate_relaxed,
+        },
+    )
+    .await
 }
 
 /// WP-5.6: provider query shape for a local annual. `"Annual 1"` in
@@ -1129,6 +1160,14 @@ pub async fn run_issue_search_with(
     local_issue_id: Option<&str>,
     opts: SearchOpts,
 ) -> Result<Vec<RankedCandidate>, ProviderError> {
+    // Provider-complete search: what this run already has (a resumed
+    // run carries the answering providers' candidates + statuses).
+    let SearchBook {
+        mut statuses,
+        mut ranked,
+        mut lookups,
+        mut year_gate_relaxed,
+    } = load_search_book(db, run_id, providers).await?;
     if let Err(e) = mark_searching(db, run_id).await {
         return Err(ProviderError::Transport(format!("db: {e}")));
     }
@@ -1163,250 +1202,404 @@ pub async fn run_issue_search_with(
         limit: SEARCH_LIMIT_PER_PROVIDER,
     };
 
-    let mut ranked = Vec::new();
-    let mut surfaced_quota: Option<u64> = None;
-    let mut last_error: Option<ProviderError> = None;
-    let mut year_gate_relaxed = false;
-    let mut lookups: Vec<SourceLookup> = Vec::new();
     let http = cover_http_client();
     for p in providers {
-        // Effective provider target for this issue: a covering
-        // `series_provider_range` mapping wins, else the series-level
-        // external id default (see `metadata::range_map`).
-        //
-        // WP-5.6: for an annual only a *range* target can point at the
-        // annual series; the series-level default is the parent run,
-        // which never carries the annual, so don't narrow to it.
-        let target = series_targets
+        // Only providers still owed a query (a resumed run skips the
+        // ones whose candidates are already in `ranked`).
+        let Some(si) = statuses
             .iter()
-            .find(|t| t.source == p.id() && (annual.is_none() || t.via_range));
-        let narrow_id = target.map(|t| t.provider_series_id.clone());
-        // Gate the candidate year against the mapped sub-series year
-        // when a range supplies one; otherwise the parent series year.
-        // An annual series starts after its parent, so gate an annual
-        // against its own cover year when known.
-        let default_gate_year = if annual.is_some() {
-            facts.issue_year.or(facts.series_year)
-        } else {
-            facts.series_year
+            .position(|st| st.source == p.id() && st.is_owed())
+        else {
+            continue;
         };
-        let gate_year = target.and_then(|t| t.declared_year).or(default_gate_year);
-        // When we narrowed to a known provider series we trust the
-        // mapping and gate hard on the year. When we DIDN'T (this
-        // provider has no series-level id or range for the issue), the
-        // primary search is itself a broad discovery query — a divergent
-        // issue (e.g. a legacy-renumbered #601 that only Metron's "FF
-        // (2012)" series carries) would otherwise be year-gated out
-        // before its cover is ever compared. Use the cover-pHash-aware
-        // gate there so a cover-confirmed candidate survives the year
-        // mismatch even with no mapping configured.
-        let primary_gate = if narrow_id.is_some() {
-            YearGate::Hard(gate_year)
-        } else {
-            YearGate::PhashAware(gate_year)
-        };
+        let mut outcome = ProviderOutcome::Answered;
+        'provider: {
+            // Effective provider target for this issue: a covering
+            // `series_provider_range` mapping wins, else the series-level
+            // external id default (see `metadata::range_map`).
+            //
+            // WP-5.6: for an annual only a *range* target can point at the
+            // annual series; the series-level default is the parent run,
+            // which never carries the annual, so don't narrow to it.
+            let target = series_targets
+                .iter()
+                .find(|t| t.source == p.id() && (annual.is_none() || t.via_range));
+            let narrow_id = target.map(|t| t.provider_series_id.clone());
+            // Gate the candidate year against the mapped sub-series year
+            // when a range supplies one; otherwise the parent series year.
+            // An annual series starts after its parent, so gate an annual
+            // against its own cover year when known.
+            let default_gate_year = if annual.is_some() {
+                facts.issue_year.or(facts.series_year)
+            } else {
+                facts.series_year
+            };
+            let gate_year = target.and_then(|t| t.declared_year).or(default_gate_year);
+            // When we narrowed to a known provider series we trust the
+            // mapping and gate hard on the year. When we DIDN'T (this
+            // provider has no series-level id or range for the issue), the
+            // primary search is itself a broad discovery query — a divergent
+            // issue (e.g. a legacy-renumbered #601 that only Metron's "FF
+            // (2012)" series carries) would otherwise be year-gated out
+            // before its cover is ever compared. Use the cover-pHash-aware
+            // gate there so a cover-confirmed candidate survives the year
+            // mismatch even with no mapping configured.
+            let primary_gate = if narrow_id.is_some() {
+                YearGate::Hard(gate_year)
+            } else {
+                YearGate::PhashAware(gate_year)
+            };
 
-        // ── direct lookup via series coverage ──
-        // The provider series is known and lists this number with an
-        // agreeing cover date: fetch that issue's detail (cached, and the
-        // same row the apply reads) and score it. `Replace` (batches)
-        // skips the search on a hit; `Additive` (the match dialog) keeps
-        // searching for alternatives; `Only` (issue-level refresh) never
-        // searches. A miss falls through to the search below, unchanged,
-        // except under `Only`.
-        if let Some(ctx) = opts.direct.as_ref() {
-            match direct_issue_candidate(
-                db,
-                &http,
-                &opts,
-                ctx,
-                p.as_ref(),
-                target,
-                &query_issue_number,
-                facts,
-                local_phash,
-                alternate_cover_fetch_cap,
-                thresholds,
-                gate_year,
-            )
-            .await
-            {
-                Ok((produced, rec)) => {
-                    lookups.push(rec);
-                    for rc in produced {
-                        if !ranked.iter().any(|x: &RankedCandidate| {
-                            x.source == rc.source && x.external_id == rc.external_id
-                        }) {
-                            ranked.push(rc);
-                        }
-                    }
-                    if ctx.mode != DirectMode::Additive {
-                        continue;
-                    }
-                }
-                Err(rec) => {
-                    lookups.push(rec);
-                    if ctx.mode == DirectMode::Only {
-                        continue;
-                    }
-                }
-            }
-        }
-
-        // ── primary search (narrowed to the provider series when known) ──
-        let primary = match p.search_issue(&issue_query(narrow_id.clone())).await {
-            Ok(candidates) => {
-                let raw = candidates;
-                let mut scored = score_issue_candidates(
+            // ── direct lookup via series coverage ──
+            // The provider series is known and lists this number with an
+            // agreeing cover date: fetch that issue's detail (cached, and the
+            // same row the apply reads) and score it. `Replace` (batches)
+            // skips the search on a hit; `Additive` (the match dialog) keeps
+            // searching for alternatives; `Only` (issue-level refresh) never
+            // searches. A miss falls through to the search below, unchanged,
+            // except under `Only`.
+            if let Some(ctx) = opts.direct.as_ref() {
+                match direct_issue_candidate(
                     db,
                     &http,
-                    opts.cover_hasher.as_ref(),
+                    &opts,
+                    ctx,
+                    p.as_ref(),
+                    target,
+                    &query_issue_number,
                     facts,
-                    raw.clone(),
                     local_phash,
                     alternate_cover_fetch_cap,
                     thresholds,
-                    primary_gate,
+                    gate_year,
                 )
-                .await;
-                // WP-2.8 year-gate escape on the *narrowed* pass: the
-                // user pinned this provider series, the provider
-                // returned issues for it, and the hard gate threw them
-                // all away — almost always a wrong local year rather
-                // than a wrong series. Re-score the same results under
-                // the cover-aware gate before falling through to the
-                // broad search. See `run_series_search_with` for the
-                // guard rationale.
-                if scored.is_empty()
-                    && matches!(primary_gate, YearGate::Hard(_))
-                    && opts.relax_year_gate
-                    && local_phash.is_some()
-                    && gate_year.is_some()
-                    && !raw.is_empty()
+                .await
                 {
-                    scored = score_issue_candidates(
-                        db,
-                        &http,
-                        opts.cover_hasher.as_ref(),
-                        facts,
-                        raw,
-                        local_phash,
-                        alternate_cover_fetch_cap,
-                        thresholds,
-                        YearGate::PhashAware(gate_year),
-                    )
-                    .await;
-                    if !scored.is_empty() {
-                        year_gate_relaxed = true;
+                    Ok((produced, rec)) => {
+                        lookups.push(rec);
+                        for rc in produced {
+                            if !ranked.iter().any(|x: &RankedCandidate| {
+                                x.source == rc.source && x.external_id == rc.external_id
+                            }) {
+                                ranked.push(rc);
+                            }
+                        }
+                        if ctx.mode != DirectMode::Additive {
+                            break 'provider;
+                        }
+                    }
+                    Err(rec) => {
+                        lookups.push(rec);
+                        if ctx.mode == DirectMode::Only {
+                            break 'provider;
+                        }
                     }
                 }
-                scored
             }
-            Err(ProviderError::QuotaExceeded { retry_after_secs }) => {
-                surfaced_quota = Some(retry_after_secs);
-                tracing::info!(
-                    provider = p.id().as_str(),
-                    retry_after_secs,
-                    "metadata search: provider out of quota; falling through"
-                );
-                continue;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    provider = p.id().as_str(),
-                    error = %e,
-                    "metadata search: provider returned error; falling through"
-                );
-                last_error = Some(e);
-                continue;
-            }
-        };
 
-        // ── broad fallback for provider series-boundary divergence ──
-        // We narrowed to the local series' provider id but found nothing.
-        // The issue may belong to a *different* provider series of this
-        // source (a split / legacy-renumbered run, e.g. Fantastic Four
-        // #600–611 in a "FF (2012)" Metron series). Re-search by
-        // name+number and keep candidates the cover confirms even when
-        // the year gate would otherwise drop the relaunch.
-        let mut produced = primary;
-        if produced.is_empty() && narrow_id.is_some() {
-            match p.search_issue(&issue_query(None)).await {
+            // ── primary search (narrowed to the provider series when known) ──
+            let primary = match p.search_issue(&issue_query(narrow_id.clone())).await {
                 Ok(candidates) => {
-                    produced = score_issue_candidates(
+                    let raw = candidates;
+                    let mut scored = score_issue_candidates(
                         db,
                         &http,
                         opts.cover_hasher.as_ref(),
                         facts,
-                        candidates,
+                        raw.clone(),
                         local_phash,
                         alternate_cover_fetch_cap,
                         thresholds,
-                        YearGate::PhashAware(gate_year),
+                        primary_gate,
                     )
                     .await;
+                    // WP-2.8 year-gate escape on the *narrowed* pass: the
+                    // user pinned this provider series, the provider
+                    // returned issues for it, and the hard gate threw them
+                    // all away — almost always a wrong local year rather
+                    // than a wrong series. Re-score the same results under
+                    // the cover-aware gate before falling through to the
+                    // broad search. See `run_series_search_with` for the
+                    // guard rationale.
+                    if scored.is_empty()
+                        && matches!(primary_gate, YearGate::Hard(_))
+                        && opts.relax_year_gate
+                        && local_phash.is_some()
+                        && gate_year.is_some()
+                        && !raw.is_empty()
+                    {
+                        scored = score_issue_candidates(
+                            db,
+                            &http,
+                            opts.cover_hasher.as_ref(),
+                            facts,
+                            raw,
+                            local_phash,
+                            alternate_cover_fetch_cap,
+                            thresholds,
+                            YearGate::PhashAware(gate_year),
+                        )
+                        .await;
+                        if !scored.is_empty() {
+                            year_gate_relaxed = true;
+                        }
+                    }
+                    scored
                 }
                 Err(ProviderError::QuotaExceeded { retry_after_secs }) => {
-                    surfaced_quota = Some(retry_after_secs);
                     tracing::info!(
                         provider = p.id().as_str(),
                         retry_after_secs,
-                        "metadata search: provider out of quota on fallback; falling through"
+                        "metadata search: provider out of quota; run will park and resume it"
                     );
+                    outcome = ProviderOutcome::Quota(retry_after_secs);
+                    break 'provider;
                 }
                 Err(e) => {
                     tracing::warn!(
                         provider = p.id().as_str(),
                         error = %e,
-                        "metadata search: provider fallback error; falling through"
+                        "metadata search: provider returned error; falling through"
                     );
-                    last_error = Some(e);
+                    outcome = ProviderOutcome::Failed(e.to_string());
+                    break 'provider;
+                }
+            };
+
+            // ── broad fallback for provider series-boundary divergence ──
+            // We narrowed to the local series' provider id but found nothing.
+            // The issue may belong to a *different* provider series of this
+            // source (a split / legacy-renumbered run, e.g. Fantastic Four
+            // #600–611 in a "FF (2012)" Metron series). Re-search by
+            // name+number and keep candidates the cover confirms even when
+            // the year gate would otherwise drop the relaunch.
+            let mut produced = primary;
+            if produced.is_empty() && narrow_id.is_some() {
+                match p.search_issue(&issue_query(None)).await {
+                    Ok(candidates) => {
+                        produced = score_issue_candidates(
+                            db,
+                            &http,
+                            opts.cover_hasher.as_ref(),
+                            facts,
+                            candidates,
+                            local_phash,
+                            alternate_cover_fetch_cap,
+                            thresholds,
+                            YearGate::PhashAware(gate_year),
+                        )
+                        .await;
+                    }
+                    Err(ProviderError::QuotaExceeded { retry_after_secs }) => {
+                        tracing::info!(
+                            provider = p.id().as_str(),
+                            retry_after_secs,
+                            "metadata search: provider out of quota on fallback; run will park and resume it"
+                        );
+                        outcome = ProviderOutcome::Quota(retry_after_secs);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            provider = p.id().as_str(),
+                            error = %e,
+                            "metadata search: provider fallback error; falling through"
+                        );
+                        outcome = ProviderOutcome::Failed(e.to_string());
+                    }
+                }
+            }
+
+            // Dedup by (source, external_id) — the fallback can resurface a
+            // candidate the narrowed pass already produced.
+            for rc in produced {
+                if !ranked.iter().any(|x: &RankedCandidate| {
+                    x.source == rc.source && x.external_id == rc.external_id
+                }) {
+                    ranked.push(rc);
                 }
             }
         }
-
-        // Dedup by (source, external_id) — the fallback can resurface a
-        // candidate the narrowed pass already produced.
-        for rc in produced {
-            if !ranked
-                .iter()
-                .any(|x: &RankedCandidate| x.source == rc.source && x.external_id == rc.external_id)
-            {
-                ranked.push(rc);
-            }
-        }
+        record_outcome(&mut statuses, si, outcome, &ranked);
     }
 
-    finalize_ranking(&mut ranked);
-    if year_gate_relaxed {
+    settle_search(
+        db,
+        run_id,
+        &opts,
+        SearchBook {
+            statuses,
+            ranked,
+            lookups,
+            year_gate_relaxed,
+        },
+    )
+    .await
+}
+
+// ───────── provider-complete search bookkeeping ─────────
+
+/// What a search loop starts from and ends with: the per-provider
+/// statuses, the ranked candidates so far, the batch lookup notes and the
+/// year-gate flag. A fresh run starts empty with every provider `pending`;
+/// a run resumed from `awaiting_quota` starts from its stash.
+struct SearchBook {
+    statuses: Vec<ProviderStatus>,
+    ranked: Vec<RankedCandidate>,
+    lookups: Vec<SourceLookup>,
+    year_gate_relaxed: bool,
+}
+
+/// One provider's turn in a search loop.
+enum ProviderOutcome {
+    Answered,
+    Quota(u64),
+    Failed(String),
+}
+
+fn record_outcome(
+    statuses: &mut [ProviderStatus],
+    idx: usize,
+    outcome: ProviderOutcome,
+    ranked: &[RankedCandidate],
+) {
+    let source = statuses[idx].source;
+    match outcome {
+        ProviderOutcome::Answered => {
+            let n = ranked.iter().filter(|c| c.source == source).count();
+            statuses[idx].answered(n);
+        }
+        ProviderOutcome::Quota(retry) => statuses[idx].quota_denied(retry),
+        ProviderOutcome::Failed(err) => statuses[idx].failed(&err),
+    }
+}
+
+/// Load the run's statuses (legacy rows → every provider `pending`; any
+/// provider in `providers` the row doesn't know is added `pending`) and,
+/// when the run is parked, its stash.
+async fn load_search_book(
+    db: &DatabaseConnection,
+    run_id: Uuid,
+    providers: &[Arc<dyn MetadataProvider>],
+) -> Result<SearchBook, ProviderError> {
+    let run = fetch_run(db, run_id)
+        .await
+        .map_err(|e| ProviderError::Transport(format!("db: {e}")))?;
+    // A finalized run is never searched again on the same id (a resume
+    // job that raced the worker, say): finalizing twice would overwrite
+    // its candidates with an empty pass.
+    if let Some(r) = run.as_ref()
+        && matches!(r.status.as_str(), status::COMPLETED | status::FAILED)
+    {
+        return Err(ProviderError::Transport(format!(
+            "run {run_id} already finalized ({})",
+            r.status
+        )));
+    }
+    let mut statuses = run
+        .as_ref()
+        .map(provider_status::for_run)
+        .unwrap_or_default();
+    for p in providers {
+        if !statuses.iter().any(|st| st.source == p.id()) {
+            statuses.push(ProviderStatus::pending(p.id()));
+        }
+    }
+    // A provider the run still owes but that is no longer configured
+    // can't be asked: record it as failed so the run finalizes flagged
+    // instead of parking forever on a bucket nobody refills.
+    for st in statuses.iter_mut() {
+        if st.is_owed() && !providers.iter().any(|p| p.id() == st.source) {
+            st.failed("provider no longer configured");
+        }
+    }
+    // The stash exists only while parked (finalize clears it); the run
+    // may already be `queued` again by the resume sweep.
+    let partial = run
+        .as_ref()
+        .and_then(|r| provider_status::parse_partial(r.partial_results.as_ref()))
+        .unwrap_or_default();
+    Ok(SearchBook {
+        statuses,
+        ranked: partial.ranked,
+        lookups: partial.lookups,
+        year_gate_relaxed: partial.year_gate_relaxed,
+    })
+}
+
+/// Close a search loop. Three ends:
+///
+/// 1. **Some provider is owed** (quota-denied): park the run
+///    `awaiting_quota` with everything gathered so far stashed, and return
+///    `QuotaExceeded` with the shortest suggested wait. The resume sweep
+///    re-runs the owed providers on this run; nothing is finalized, so
+///    no outcome is classified and nothing auto-applies off a partial
+///    provider set.
+/// 2. **No provider answered and at least one failed hard**: fail the
+///    run loudly (the pre-existing rule).
+/// 3. Otherwise finalize with the statuses recorded — a provider that
+///    failed while others answered is flagged, not hidden.
+async fn settle_search(
+    db: &DatabaseConnection,
+    run_id: Uuid,
+    opts: &SearchOpts,
+    mut book: SearchBook,
+) -> Result<Vec<RankedCandidate>, ProviderError> {
+    finalize_ranking(&mut book.ranked);
+    if book.year_gate_relaxed {
         note_year_gate_relaxed(db, run_id).await;
     }
     if opts.direct.is_some() {
-        note_coverage_lookups(db, run_id, &lookups).await;
+        note_coverage_lookups(db, run_id, &book.lookups).await;
     }
 
-    if ranked.is_empty() && surfaced_quota.is_some() {
-        let resume = Utc::now() + chrono::Duration::seconds(surfaced_quota.unwrap_or(60) as i64);
-        if let Err(e) = mark_awaiting_quota(db, run_id, resume).await {
+    let owed: Vec<&ProviderStatus> = book
+        .statuses
+        .iter()
+        .filter(|st| st.state == ProviderState::Quota)
+        .collect();
+    if !owed.is_empty() {
+        let retry_after_secs = owed
+            .iter()
+            .filter_map(|st| st.retry_after_secs)
+            .min()
+            .unwrap_or(60)
+            .max(1);
+        let resume = Utc::now() + chrono::Duration::seconds(retry_after_secs as i64);
+        let partial = PartialSearch {
+            ranked: book.ranked,
+            lookups: book.lookups,
+            year_gate_relaxed: book.year_gate_relaxed,
+            job: opts.job_payload.clone(),
+        };
+        if let Err(e) =
+            provider_status::park_awaiting_quota(db, run_id, &book.statuses, &partial, resume).await
+        {
             return Err(ProviderError::Transport(format!("db: {e}")));
         }
-        return Err(ProviderError::QuotaExceeded {
-            retry_after_secs: surfaced_quota.unwrap_or(60),
-        });
-    }
-    if ranked.is_empty()
-        && let Some(err) = last_error
-    {
-        if let Err(e) = fail_run(db, run_id, &err.to_string()).await {
-            return Err(ProviderError::Transport(format!("db: {e}")));
-        }
-        return Err(err);
+        tracing::info!(
+            run_id = %run_id,
+            owed = ?owed.iter().map(|st| st.source.as_str()).collect::<Vec<_>>(),
+            retry_after_secs,
+            "metadata search: parked awaiting quota with partial results"
+        );
+        return Err(ProviderError::QuotaExceeded { retry_after_secs });
     }
 
-    if let Err(e) = finalize_run(db, run_id, &ranked).await {
+    let answered_any = book
+        .statuses
+        .iter()
+        .any(|st| st.state == ProviderState::Answered);
+    if !answered_any && let Some(err) = book.statuses.iter().find_map(|st| st.error.clone()) {
+        if let Err(e) = fail_run(db, run_id, &err).await {
+            return Err(ProviderError::Transport(format!("db: {e}")));
+        }
+        return Err(ProviderError::Transport(err));
+    }
+
+    if let Err(e) = finalize_run(db, run_id, &book.ranked, Some(&book.statuses)).await {
         return Err(ProviderError::Transport(format!("db: {e}")));
     }
-    Ok(ranked)
+    Ok(book.ranked)
 }
 
 /// One provider's batch direct lookup for an issue

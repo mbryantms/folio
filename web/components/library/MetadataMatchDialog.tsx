@@ -74,11 +74,13 @@ import {
   defaultCompareOrdinals,
   HINT_SOURCES,
 } from "@/lib/metadata/coverage-hint";
+import { providerCoverageSummary } from "@/lib/metadata/provider-status";
 import {
   budgetNote,
   formatRetryEta,
   summarizeProviderQuota,
 } from "@/lib/metadata/quota";
+import { statusToneText } from "@/lib/ui/status-tone";
 import type { MetadataMatchScope } from "@/components/library/metadata-match-scope";
 
 export type { MetadataMatchScope } from "@/components/library/metadata-match-scope";
@@ -398,6 +400,14 @@ export function MetadataMatchForm({
     .filter((n): n is string => n !== null);
   const retryEta = formatRetryEta(quota?.retry_after_seconds);
   const noProvidersConfigured = searchErrorCode === "metadata.no_providers";
+  // Provider-complete search: which providers answered this run. While
+  // parked, the ones still owed name the wait; once finalized, the
+  // summary flags a match that covers fewer than all providers.
+  const providerStatus = candidates.data?.provider_status ?? [];
+  const owedProviders = providerStatus
+    .filter((p) => p.state === "quota")
+    .map((p) => p.source);
+  const coverage = providerCoverageSummary(providerStatus);
 
   // M5: clicking a candidate's "Preview" now stages the diff view
   // instead of immediately writing. The actual apply fires from the
@@ -536,9 +546,11 @@ export function MetadataMatchForm({
     : isPolling
       ? "Searching providers…"
       : runStatus === "awaiting_quota"
-        ? retryEta
-          ? `Providers are out of quota — retries in ${retryEta}.`
-          : "Providers are out of quota — try again shortly."
+        ? `${
+            owedProviders.length > 0
+              ? `Waiting for ${owedProviders.join(", ")} quota`
+              : "Providers are out of quota"
+          } — ${retryEta ? `resumes in ${retryEta}` : "resumes on its own"}; any provider that already answered isn't asked again.`
         : runStatus === "failed"
           ? "Search failed — see Error below."
           : `${candidates.data?.candidates.length ?? 0} match${
@@ -744,6 +756,17 @@ export function MetadataMatchForm({
                 <div className="text-muted-foreground pb-1 text-xs">
                   Showing your last search — providers weren&apos;t re-queried.
                   Use Re-search for fresh results.
+                </div>
+              )}
+              {coverage && runStatus === "completed" && (
+                <div
+                  className={`pb-1 text-xs ${
+                    coverage.partial
+                      ? statusToneText("warning")
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {coverage.text}
                 </div>
               )}
               {runQuery?.lookup && isFinalized && (

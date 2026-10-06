@@ -168,6 +168,8 @@ async fn migration_creates_new_tables_with_expected_constraints() {
         error_summary: Set(None),
         resume_after: Set(None),
         batch_id: Set(None),
+        provider_status: Set(None),
+        partial_results: Set(None),
         query: Set(None),
     }
     .insert(&db)

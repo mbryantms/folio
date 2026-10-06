@@ -316,6 +316,7 @@ function batch(
       awaiting_quota: 0,
       failed: 0,
       in_flight: state === "running" ? 133 : 0,
+      partial: 0,
       lookups: [{ source: "comicvine", direct: 170, search: 3, fallbacks: [] }],
     },
     children: [

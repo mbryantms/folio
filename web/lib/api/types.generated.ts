@@ -5725,6 +5725,12 @@ export interface components {
             no_match: number;
             /**
              * Format: int64
+             * @description Searched children where some provider didn't answer (failed, or
+             *     never asked) — their match covers fewer than all providers.
+             */
+            partial: number;
+            /**
+             * Format: int64
              * @description Children whose search has finalized (completed / failed / awaiting_quota).
              */
             searched: number;
@@ -5771,6 +5777,13 @@ export interface components {
             library_id?: string | null;
             /** @description `MatchOutcomeKind` string once searched; `None` while in flight. */
             outcome_kind?: string | null;
+            /**
+             * @description Provider-complete search: per-provider state of this child's
+             *     search (`answered` + candidate count / `quota` / `failed` /
+             *     `pending`), so the queue can say whether a match covers every
+             *     provider. Empty for runs that predate the bookkeeping.
+             */
+            providers?: components["schemas"]["ProviderStatus"][];
             /** Format: uuid */
             run_id: string;
             scope: string;
@@ -6242,6 +6255,13 @@ export interface components {
             /** Format: int32 */
             items_total: number;
             match_outcome?: components["schemas"]["MatchOutcomeView"] | null;
+            /**
+             * @description Provider-complete search: one entry per provider the run was
+             *     started with — `answered` (with its candidate count), `quota`
+             *     (owed; the run is parked and resumes it), `failed`, or `pending`.
+             *     Empty on runs that predate the bookkeeping and on lookup runs.
+             */
+            provider_status?: components["schemas"]["ProviderStatus"][];
             providers: string[];
             query?: components["schemas"]["SearchQueryView"] | null;
             quota?: components["schemas"]["QuotaStateView"] | null;
@@ -10511,6 +10531,27 @@ export interface components {
         ProviderRangesListResp: {
             rows: components["schemas"]["ProviderRangeRow"][];
             series_id: string;
+        };
+        /** @enum {string} */
+        ProviderState: "pending" | "answered" | "quota" | "failed";
+        /** @description One provider's state within a run. */
+        ProviderStatus: {
+            /**
+             * Format: int32
+             * @description Candidates this provider contributed (after pre-filter + scoring).
+             *     Meaningful once `answered`.
+             */
+            candidates?: number;
+            /** @description `failed` only: the provider error, for the run detail. */
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description `quota` only: the bucket's suggested wait when it denied the call.
+             */
+            retry_after_secs?: number | null;
+            /** @description `"comicvine"` | `"metron"` | `"gcd"`. */
+            source: string;
+            state: components["schemas"]["ProviderState"];
         };
         ProviderView: {
             budget?: components["schemas"]["RequestBudget"] | null;

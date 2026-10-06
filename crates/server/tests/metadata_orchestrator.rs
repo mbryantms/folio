@@ -617,6 +617,7 @@ fn opts_with_cover(cover_png: &[u8], relax_year_gate: bool) -> orchestrator::Sea
             Box::pin(async move { (url == CANDIDATE_COVER_URL).then_some(hash) })
         })),
         direct: None,
+        job_payload: None,
     }
 }
 
@@ -931,4 +932,354 @@ async fn run_issue_search_relaxes_the_narrowed_year_gate_when_cover_confirms() {
         run.query.unwrap().get("year_gate_relaxed").is_none(),
         "no relax note when the year was asserted"
     );
+}
+
+// ───────── provider-complete search (quota parking + resume) ─────────
+
+fn cv_quota_denied() -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!({
+        "status_code": 107,
+        "error": "Rate limit",
+        "results": []
+    }))
+}
+
+async fn mount_metron_saga(metron_mock: &MockServer) {
+    Mock::given(method("GET"))
+        .and(path("/api/series/"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(paged_metron(json!([metron_series_list(
+                300, "Saga", 2012
+            ),]))),
+        )
+        .mount(metron_mock)
+        .await;
+}
+
+fn two_providers(
+    app: &TestApp,
+    metron_mock: &MockServer,
+    cv_mock: &MockServer,
+) -> Vec<Arc<dyn MetadataProvider>> {
+    vec![
+        Arc::new(MetronClient::with_base_url(
+            "u",
+            "p",
+            metron_mock.uri(),
+            app.state().jobs.redis.clone(),
+        )),
+        Arc::new(ComicVineClient::with_base_url(
+            "k".into(),
+            cv_mock.uri(),
+            app.state().jobs.redis.clone(),
+        )),
+    ]
+}
+
+fn saga_facts() -> SeriesQueryFacts {
+    SeriesQueryFacts {
+        name: "Saga".into(),
+        year: Some(2012),
+        publisher: Some("Image Comics".into()),
+        volume: None,
+        format: None,
+    }
+}
+
+fn statuses_of(
+    run: &entity::metadata_run::Model,
+) -> Vec<server::metadata::provider_status::ProviderStatus> {
+    server::metadata::provider_status::parse(run.provider_status.as_ref()).expect("provider_status")
+}
+
+/// One provider answers, the other is quota-denied: the run parks with the
+/// answering provider's candidates stashed (nothing finalized) and the
+/// denied provider recorded as owed.
+#[tokio::test]
+async fn run_series_search_parks_with_partial_results_when_one_provider_is_out_of_quota() {
+    use server::metadata::provider_status::ProviderState;
+    let cv_mock = MockServer::start().await;
+    let metron_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(cv_quota_denied())
+        .mount(&cv_mock)
+        .await;
+    mount_metron_saga(&metron_mock).await;
+
+    let app = TestApp::spawn().await;
+    let providers = two_providers(&app, &metron_mock, &cv_mock);
+    let facts = saga_facts();
+    let run_id = start_series_run(&app, &facts).await;
+    let err = orchestrator::run_series_search(
+        &app.state().db,
+        run_id,
+        &providers,
+        &facts,
+        Thresholds::new(75.0, 70.0),
+        &PreFilter::default(),
+        3,
+        None,
+    )
+    .await
+    .expect_err("one owed provider parks the run");
+    assert!(matches!(
+        err,
+        server::metadata::provider::ProviderError::QuotaExceeded { .. }
+    ));
+
+    let run = entity::metadata_run::Entity::find_by_id(run_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, status::AWAITING_QUOTA);
+    assert!(run.resume_after.is_some());
+    let statuses = statuses_of(&run);
+    let metron = statuses
+        .iter()
+        .find(|s| s.source == Source::Metron)
+        .unwrap();
+    let cv = statuses
+        .iter()
+        .find(|s| s.source == Source::ComicVine)
+        .unwrap();
+    assert_eq!(metron.state, ProviderState::Answered);
+    assert_eq!(metron.candidates, 1);
+    assert_eq!(cv.state, ProviderState::Quota);
+    assert!(cv.retry_after_secs.is_some());
+    // Metron's candidate is stashed, not finalized: no candidate rows yet.
+    let partial = server::metadata::provider_status::parse_partial(run.partial_results.as_ref())
+        .expect("partial stash");
+    assert_eq!(partial.ranked.len(), 1);
+    assert_eq!(partial.ranked[0].source, Source::Metron);
+    assert!(
+        orchestrator::fetch_candidates(&app.state().db, run_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// Resuming the parked run asks only the owed provider: the provider that
+/// already answered is not queried again, its stashed candidate is merged
+/// with the resumed provider's, and the run finalizes fully answered.
+#[tokio::test]
+async fn resumed_run_queries_only_the_owed_provider_and_merges_the_stash() {
+    use server::metadata::provider_status::{ProviderState, all_answered};
+    let cv_mock = MockServer::start().await;
+    let metron_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(cv_quota_denied())
+        .mount(&cv_mock)
+        .await;
+    mount_metron_saga(&metron_mock).await;
+
+    let app = TestApp::spawn().await;
+    let providers = two_providers(&app, &metron_mock, &cv_mock);
+    let facts = saga_facts();
+    let run_id = start_series_run(&app, &facts).await;
+    let thresholds = Thresholds::new(75.0, 70.0);
+    orchestrator::run_series_search(
+        &app.state().db,
+        run_id,
+        &providers,
+        &facts,
+        thresholds,
+        &PreFilter::default(),
+        3,
+        None,
+    )
+    .await
+    .expect_err("parks first");
+    assert_eq!(metron_mock.received_requests().await.unwrap().len(), 1);
+
+    // ComicVine's bucket refills: the same run is searched again.
+    cv_mock.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/volumes"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(ok_envelope_cv(json!([
+                cv_volume(100, "Saga", "2012", "Image Comics"),
+                cv_volume(200, "Saga Adventures", "2013", "Other Pub"),
+            ]))),
+        )
+        .mount(&cv_mock)
+        .await;
+    let ranked = orchestrator::run_series_search(
+        &app.state().db,
+        run_id,
+        &providers,
+        &facts,
+        thresholds,
+        &PreFilter::default(),
+        3,
+        None,
+    )
+    .await
+    .expect("resume finalizes");
+    assert_eq!(ranked.len(), 3, "1 stashed Metron + 2 fresh ComicVine");
+    assert!(ranked.iter().any(|r| r.source == Source::Metron));
+    assert_eq!(
+        ranked
+            .iter()
+            .filter(|r| r.source == Source::ComicVine)
+            .count(),
+        2
+    );
+    // Metron was NOT asked again.
+    assert_eq!(metron_mock.received_requests().await.unwrap().len(), 1);
+
+    let run = entity::metadata_run::Entity::find_by_id(run_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, status::COMPLETED);
+    assert_eq!(run.items_total, 3);
+    assert!(run.partial_results.is_none(), "stash is spent on finalize");
+    assert!(run.resume_after.is_some() || run.resume_after.is_none());
+    let statuses = statuses_of(&run);
+    assert!(all_answered(&statuses));
+    assert_eq!(
+        statuses
+            .iter()
+            .find(|s| s.source == Source::ComicVine)
+            .unwrap()
+            .candidates,
+        2
+    );
+    assert_eq!(
+        statuses
+            .iter()
+            .find(|s| s.source == Source::Metron)
+            .unwrap()
+            .state,
+        ProviderState::Answered
+    );
+    let rows = orchestrator::fetch_candidates(&app.state().db, run_id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 3);
+}
+
+/// A provider that errors hard while another answers: the run finalizes
+/// (unchanged) but the gap is recorded so the match is flagged partial.
+#[tokio::test]
+async fn provider_hard_error_is_recorded_as_failed_on_a_finalized_run() {
+    use server::metadata::provider_status::{ProviderState, all_answered};
+    let cv_mock = MockServer::start().await;
+    let metron_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("upstream blew up"))
+        .mount(&cv_mock)
+        .await;
+    mount_metron_saga(&metron_mock).await;
+
+    let app = TestApp::spawn().await;
+    let providers = two_providers(&app, &metron_mock, &cv_mock);
+    let facts = saga_facts();
+    let run_id = start_series_run(&app, &facts).await;
+    let ranked = orchestrator::run_series_search(
+        &app.state().db,
+        run_id,
+        &providers,
+        &facts,
+        Thresholds::new(75.0, 70.0),
+        &PreFilter::default(),
+        3,
+        None,
+    )
+    .await
+    .expect("one failed provider still finalizes");
+    assert_eq!(ranked.len(), 1);
+    let run = entity::metadata_run::Entity::find_by_id(run_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, status::COMPLETED);
+    let statuses = statuses_of(&run);
+    assert!(!all_answered(&statuses));
+    let cv = statuses
+        .iter()
+        .find(|s| s.source == Source::ComicVine)
+        .unwrap();
+    assert_eq!(cv.state, ProviderState::Failed);
+    assert!(cv.error.as_deref().is_some_and(|e| !e.is_empty()));
+}
+
+/// The resume sweep re-queues a parked run's stashed job on the same run
+/// id, holding the entity's in-flight slot; a second attempt while the
+/// slot is held is reported `InFlight` rather than queued twice.
+#[tokio::test]
+async fn resume_parked_run_requeues_the_stashed_job_once() {
+    use server::jobs::metadata_search::{ResumeOutcome, SearchSeriesJob, resume_parked_run};
+    let cv_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(cv_quota_denied())
+        .mount(&cv_mock)
+        .await;
+    let app = TestApp::spawn().await;
+    let providers = cv_provider(&app, &cv_mock);
+    let facts = saga_facts();
+    let run_id = start_series_run(&app, &facts).await;
+    let series_id = Uuid::now_v7();
+    let job = SearchSeriesJob {
+        run_id,
+        series_id,
+        library_id: None,
+        facts: facts.clone(),
+        year_asserted: false,
+    };
+    orchestrator::run_series_search_with(
+        &app.state().db,
+        run_id,
+        &providers,
+        &facts,
+        Thresholds::new(75.0, 70.0),
+        &PreFilter::default(),
+        3,
+        None,
+        orchestrator::SearchOpts {
+            job_payload: Some(serde_json::to_value(&job).unwrap()),
+            ..orchestrator::SearchOpts::default()
+        },
+    )
+    .await
+    .expect_err("parks");
+
+    let parked = entity::metadata_run::Entity::find_by_id(run_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(parked.status, status::AWAITING_QUOTA);
+    let stash = server::metadata::provider_status::parse_partial(parked.partial_results.as_ref())
+        .expect("stash");
+    assert_eq!(
+        stash
+            .job
+            .as_ref()
+            .and_then(|j| j.get("run_id"))
+            .and_then(|v| v.as_str()),
+        Some(run_id.to_string().as_str())
+    );
+
+    let first = resume_parked_run(&app.state(), &parked)
+        .await
+        .expect("resume");
+    assert!(matches!(first, ResumeOutcome::Resumed), "{first:?}");
+    // Re-queued → `queued` with the stash kept; a second sweep tick (or a
+    // stale model) doesn't double-queue, and nothing replaced the run.
+    let requeued = entity::metadata_run::Entity::find_by_id(run_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(requeued.status, status::QUEUED);
+    assert!(requeued.partial_results.is_some());
+    let second = resume_parked_run(&app.state(), &parked)
+        .await
+        .expect("resume again");
+    assert!(matches!(second, ResumeOutcome::InFlight), "{second:?}");
 }

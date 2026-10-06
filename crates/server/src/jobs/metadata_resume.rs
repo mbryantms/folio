@@ -1,55 +1,57 @@
-//! Auto-resume parked metadata runs (refine-bulk-metadata M5).
+//! Auto-resume parked metadata runs (refine-bulk-metadata M5, reworked for
+//! the provider-complete search).
 //!
-//! When every enabled provider is out of quota mid-search, the orchestrator
-//! parks the run at `status='awaiting_quota'` with a `resume_after`. Nothing
-//! re-drove those runs before — the user had to re-trigger. This sweep (a
-//! once-a-minute scheduler tick) picks up runs whose window has passed and
-//! re-enqueues them through the normal coalesce-gated path, reusing each run's
-//! stored entity + `batch_id` so a parked bulk-fetch finishes on its own.
+//! A run parks at `status='awaiting_quota'` whenever **any** provider it
+//! owes a query was denied by its local quota bucket. The candidates the
+//! other providers already produced are stashed on the run
+//! (`metadata_run.partial_results`, see
+//! [`crate::metadata::provider_status`]). This once-a-minute scheduler tick
+//! picks up runs whose `resume_after` has passed, checks that every provider
+//! the run still owes has budget again, and re-queues the run's own stashed
+//! search job on the **same** run id — the orchestrator then asks only the
+//! owed providers and merges into the stash. Nothing is re-spent on the
+//! providers that already answered.
 //!
-//! Pacing: the tick is gated on a cheap provider quota snapshot (skip entirely
-//! when no provider has budget) and capped per run, so a large backlog drains
-//! gradually rather than bursting back into another denial.
+//! Pacing: a run is resumed only when all of its owed providers have
+//! budget (so it can't bounce straight back into a denial on one of them),
+//! and the tick is capped so a large backlog drains gradually.
 
+use crate::jobs::metadata_search::{ResumeOutcome, resume_parked_run};
+use crate::metadata::identifier::Source;
 use crate::metadata::orchestrator;
+use crate::metadata::provider_status;
 use crate::state::AppState;
 use chrono::Utc;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
-use uuid::Uuid;
+use std::collections::HashMap;
 
 /// Max runs re-enqueued per tick.
 const RESUME_CAP: u64 = 50;
 
-/// Re-enqueue due `awaiting_quota` runs. Returns the count resumed.
+/// Re-enqueue due `awaiting_quota` runs whose owed providers have budget.
+/// Returns the count resumed.
 pub async fn run(state: &AppState) -> usize {
     use entity::metadata_run;
 
-    // Budget pre-check — if no enabled provider has any remaining budget,
-    // skip the whole tick (the buckets would just deny again).
     let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
     if providers.is_empty() {
         return 0;
     }
-    let mut has_budget = false;
+    // One quota snapshot per provider per tick. `None` for a window means
+    // unknown/unmetered → available; a failed snapshot is treated as
+    // available too (the bucket still gates the actual call).
+    let mut has_budget: HashMap<Source, bool> = HashMap::new();
     for p in &providers {
-        match p.quota().await {
+        let ok = match p.quota().await {
             Ok(snap) => {
-                // `None` = unknown/unmetered → treat as available.
-                let hour_ok = snap.remaining_hour.map(|n| n > 0).unwrap_or(true);
-                let day_ok = snap.remaining_day.map(|n| n > 0).unwrap_or(true);
-                if hour_ok && day_ok {
-                    has_budget = true;
-                    break;
-                }
+                snap.remaining_hour.map(|n| n > 0).unwrap_or(true)
+                    && snap.remaining_day.map(|n| n > 0).unwrap_or(true)
             }
-            // Snapshot failed → be optimistic; the bucket still gates the call.
-            Err(_) => {
-                has_budget = true;
-                break;
-            }
-        }
+            Err(_) => true,
+        };
+        has_budget.insert(p.id(), ok);
     }
-    if !has_budget {
+    if !has_budget.values().any(|ok| *ok) {
         return 0;
     }
 
@@ -65,54 +67,21 @@ pub async fn run(state: &AppState) -> usize {
 
     let mut resumed = 0usize;
     for parked in due {
-        let kind = match parked.trigger_kind.as_str() {
-            "weekly_refresh" => orchestrator::trigger_kind::WEEKLY_REFRESH,
-            "scanner" => orchestrator::trigger_kind::SCANNER,
-            "bulk_action" => orchestrator::trigger_kind::BULK_ACTION,
-            _ => orchestrator::trigger_kind::MANUAL,
-        };
-        let outcome = match parked.scope.as_str() {
-            "series" => match parked
-                .scope_entity_id
-                .as_deref()
-                .and_then(|s| Uuid::parse_str(s).ok())
-            {
-                Some(series_id) => crate::jobs::metadata_search::enqueue_series_search(
-                    state,
-                    series_id,
-                    parked.triggered_by,
-                    kind,
-                    parked.batch_id,
-                )
-                .await
-                .ok(),
-                None => None,
-            },
-            "issue" => match parked.scope_entity_id.clone() {
-                Some(issue_id) => crate::jobs::metadata_search::enqueue_issue_search(
-                    state,
-                    &issue_id,
-                    parked.triggered_by,
-                    kind,
-                    parked.batch_id,
-                )
-                .await
-                .ok(),
-                None => None,
-            },
-            _ => None,
-        };
-
-        if let Some(o) = outcome {
-            // Drop the parked row so it doesn't double-count in batch
-            // aggregates — the fresh run carries the same batch_id. Guard
-            // against the (rare) coalesce-onto-self case.
-            if o.run_id != parked.id {
-                let _ = metadata_run::Entity::delete_by_id(parked.id)
-                    .exec(&state.db)
-                    .await;
+        // Every provider this run still owes must have budget; a provider
+        // no longer configured can't be asked and doesn't block the rest.
+        let owed = provider_status::owed_sources(&provider_status::for_run(&parked));
+        let ready = owed
+            .iter()
+            .all(|s| has_budget.get(s).copied().unwrap_or(true));
+        if !ready {
+            continue;
+        }
+        match resume_parked_run(state, &parked).await {
+            Ok(ResumeOutcome::Resumed | ResumeOutcome::Replaced(_)) => resumed += 1,
+            Ok(ResumeOutcome::InFlight) => {}
+            Err(e) => {
+                tracing::warn!(run_id = %parked.id, error = %e, "metadata resume: re-enqueue failed");
             }
-            resumed += 1;
         }
     }
     resumed
