@@ -125,6 +125,15 @@ impl<'a> IssueMetadataInputs<'a> {
 /// rule (`; `-join when any name contains a comma, `, ` otherwise), so
 /// round-trip is lossless. Dedupe is case-insensitive, first casing
 /// wins. Empty pieces dropped.
+///
+/// **Generational suffixes.** Taggers write `"José Marzán, Jr."` /
+/// `"J. Jonah Jameson, Sr"` into the flat credit / character fields, and
+/// a comma split turns one person into two (`"José Marzán"` + `"Jr."`).
+/// A piece that is only such a suffix (`Jr`, `Sr`, `II`–`IV`, with or
+/// without the dot) is re-attached to the piece before it, spelled the
+/// way providers spell it (`"José Marzán Jr."`), so file-tagged and
+/// provider-synced credits land on the same person row. See
+/// [`generational_suffix`].
 pub fn split_csv(value: &str) -> Vec<String> {
     use std::collections::HashSet;
     let mut seen: HashSet<String> = HashSet::new();
@@ -135,12 +144,50 @@ pub fn split_csv(value: &str) -> Vec<String> {
         if trimmed.is_empty() {
             continue;
         }
+        if sep == ','
+            && let Some(suffix) = generational_suffix(trimmed)
+            && let Some(prev) = out.last_mut()
+        {
+            // The previous piece is the name this suffix belongs to; the
+            // dedupe key for the combined name replaces the bare one.
+            let combined = format!("{prev} {suffix}");
+            seen.remove(&prev.to_lowercase());
+            if seen.insert(combined.to_lowercase()) {
+                *prev = combined;
+            } else {
+                // The combined name is already listed earlier: drop
+                // this duplicate pair entirely.
+                out.pop();
+            }
+            continue;
+        }
         let key = trimmed.to_lowercase();
         if seen.insert(key) {
             out.push(trimmed.to_string());
         }
     }
     out
+}
+
+/// The canonical spelling of a piece that is nothing but a generational
+/// suffix — `Jr` / `Jr.` → `"Jr."`, `Sr` / `Sr.` → `"Sr."`, `II` / `III`
+/// / `IV` as written — or `None` for anything else. Deliberately short:
+/// `V` and single letters are real initials, and degrees (`PhD`, `MD`)
+/// don't appear in comic credits.
+pub fn generational_suffix(piece: &str) -> Option<&'static str> {
+    match piece
+        .trim()
+        .trim_end_matches('.')
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "jr" => Some("Jr."),
+        "sr" => Some("Sr."),
+        "ii" => Some("II"),
+        "iii" => Some("III"),
+        "iv" => Some("IV"),
+        _ => None,
+    }
 }
 
 /// Replace this issue's rows in `issue_genres / issue_tags / issue_credits`
@@ -890,6 +937,196 @@ pub async fn replace_issue_metadata_from_model_skipping<C: ConnectionTrait>(
     replace_issue_metadata_skipping(db, &row.id, &inputs, skip).await
 }
 
+// ───────── name-suffix backfill ─────────
+
+/// Postgres regex (use with `~*`) for a CSV field in which some piece is
+/// nothing but a generational suffix — the `"José Marzán, Jr."` shape the
+/// pre-suffix-aware [`split_csv`] turned into two entries.
+pub const SUFFIX_PIECE_RE: &str = r"(^|,)\s*(jr|sr|ii|iii|iv)\.?\s*(,|$)";
+
+/// One page of [`run_name_suffix_backfill_page`].
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct NameSuffixBackfillOutcome {
+    /// Issues whose junctions were re-derived from the row's CSV columns.
+    pub rebuilt: usize,
+    /// Issues left alone because every affected junction is protected by a
+    /// user / provider provenance row.
+    pub skipped: usize,
+}
+
+/// Re-derive the junction tables for one page of issues whose CSV
+/// read-cache columns (`writer` … `locations`) carry a comma-separated
+/// generational suffix, so `"Mike Deodato, Jr."` becomes one person again.
+/// Junctions a provider apply or a user edit owns (`field_provenance`
+/// rows that aren't file-tier) are skipped, exactly as the scanner's
+/// WP-2.5 rule does. Keyset-paginated by issue id; returns the cursor for
+/// the next page, `None` once the last page is done. The series rollups
+/// for every touched series run at the end of the page.
+pub async fn run_name_suffix_backfill_page(
+    db: &sea_orm::DatabaseConnection,
+    after: Option<String>,
+    batch: u64,
+) -> Result<(NameSuffixBackfillOutcome, Option<String>), sea_orm::DbErr> {
+    use crate::metadata::MetadataField as F;
+    use entity::field_provenance;
+    use sea_orm::sea_query::Expr;
+    use sea_orm::{Condition, QueryOrder, QuerySelect};
+    use std::collections::{HashMap, HashSet};
+
+    let csv_columns = [
+        "writer",
+        "penciller",
+        "inker",
+        "colorist",
+        "letterer",
+        "cover_artist",
+        "editor",
+        "translator",
+        "characters",
+        "teams",
+        "locations",
+    ];
+    let mut any = Condition::any();
+    for col in csv_columns {
+        any = any.add(Expr::cust_with_values(
+            format!("{col} ~* $1"),
+            [SUFFIX_PIECE_RE],
+        ));
+    }
+    let mut select = issue::Entity::find()
+        .filter(issue::Column::RemovedAt.is_null())
+        .filter(any);
+    if let Some(after) = after {
+        select = select.filter(issue::Column::Id.gt(after));
+    }
+    let rows = select
+        .order_by_asc(issue::Column::Id)
+        .limit(batch)
+        .all(db)
+        .await?;
+    let full_page = rows.len() as u64 == batch;
+    let next = full_page
+        .then(|| rows.last().map(|r| r.id.clone()))
+        .flatten();
+
+    // Which junction does each CSV column feed.
+    let junction_of = |col: &str| -> F {
+        match col {
+            "characters" => F::Characters,
+            "teams" => F::Teams,
+            "locations" => F::Locations,
+            _ => F::Credits,
+        }
+    };
+    let junction_fields = [
+        F::Credits,
+        F::Characters,
+        F::Teams,
+        F::Locations,
+        F::Genres,
+        F::Tags,
+    ];
+
+    let mut out = NameSuffixBackfillOutcome::default();
+    let mut series_ids: HashSet<uuid::Uuid> = HashSet::new();
+    for row in &rows {
+        // Provenance: a junction with a non-file-tier owner stays as is.
+        let owners: HashMap<String, String> = field_provenance::Entity::find()
+            .filter(field_provenance::Column::EntityType.eq("issue"))
+            .filter(field_provenance::Column::EntityId.eq(row.id.as_str()))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|p| (p.field, p.set_by))
+            .collect();
+        let skip: HashSet<F> = junction_fields
+            .into_iter()
+            .filter(|f| {
+                owners
+                    .get(&f.key())
+                    .is_some_and(|by| !crate::metadata::writers::is_file_tier_set_by(by))
+            })
+            .collect();
+        // Which junctions this row's affected columns feed; if every one of
+        // them is protected there is nothing to rebuild.
+        let affected: HashSet<F> = csv_columns
+            .iter()
+            .filter(|col| {
+                let v = match **col {
+                    "writer" => row.writer.as_deref(),
+                    "penciller" => row.penciller.as_deref(),
+                    "inker" => row.inker.as_deref(),
+                    "colorist" => row.colorist.as_deref(),
+                    "letterer" => row.letterer.as_deref(),
+                    "cover_artist" => row.cover_artist.as_deref(),
+                    "editor" => row.editor.as_deref(),
+                    "translator" => row.translator.as_deref(),
+                    "characters" => row.characters.as_deref(),
+                    "teams" => row.teams.as_deref(),
+                    "locations" => row.locations.as_deref(),
+                    _ => None,
+                };
+                v.is_some_and(csv_has_suffix_piece)
+            })
+            .map(|col| junction_of(col))
+            .collect();
+        if affected.is_subset(&skip) {
+            out.skipped += 1;
+            continue;
+        }
+        replace_issue_metadata_from_model_skipping(db, row, &skip).await?;
+        series_ids.insert(row.series_id);
+        out.rebuilt += 1;
+    }
+    for series_id in series_ids {
+        rollup_series_metadata(db, series_id).await?;
+    }
+    Ok((out, next))
+}
+
+/// Rust-side twin of [`SUFFIX_PIECE_RE`]: does any comma-separated piece
+/// of this CSV consist only of a generational suffix?
+fn csv_has_suffix_piece(csv: &str) -> bool {
+    !csv.contains(';') && csv.split(',').any(|p| generational_suffix(p).is_some())
+}
+
+/// Delete `person` / `character` / `team` / `location` rows that are only
+/// a bare generational suffix (`"Jr."`, `"Sr."`, …) and that no junction
+/// row references any more — the leftovers of the split names once
+/// [`run_name_suffix_backfill_page`] has rebuilt their issues. Returns the
+/// number of rows removed.
+pub async fn prune_orphan_suffix_entities(
+    db: &sea_orm::DatabaseConnection,
+) -> Result<u64, sea_orm::DbErr> {
+    let backend = db.get_database_backend();
+    let statements = [
+        "DELETE FROM person p \
+          WHERE p.name ~* '^(jr|sr|ii|iii|iv)\\.?$' \
+            AND NOT EXISTS (SELECT 1 FROM issue_credits ic WHERE ic.person_id = p.id) \
+            AND NOT EXISTS (SELECT 1 FROM series_credits sc WHERE sc.person_id = p.id)",
+        "DELETE FROM character c \
+          WHERE c.name ~* '^(jr|sr|ii|iii|iv)\\.?$' \
+            AND NOT EXISTS (SELECT 1 FROM issue_characters ic WHERE ic.character_id = c.id) \
+            AND NOT EXISTS (SELECT 1 FROM series_characters sc WHERE sc.character_id = c.id)",
+        "DELETE FROM team t \
+          WHERE t.name ~* '^(jr|sr|ii|iii|iv)\\.?$' \
+            AND NOT EXISTS (SELECT 1 FROM issue_teams it WHERE it.team_id = t.id) \
+            AND NOT EXISTS (SELECT 1 FROM series_teams st WHERE st.team_id = t.id)",
+        "DELETE FROM location l \
+          WHERE l.name ~* '^(jr|sr|ii|iii|iv)\\.?$' \
+            AND NOT EXISTS (SELECT 1 FROM issue_locations il WHERE il.location_id = l.id) \
+            AND NOT EXISTS (SELECT 1 FROM series_locations sl WHERE sl.location_id = l.id)",
+    ];
+    let mut removed = 0u64;
+    for sql in statements {
+        let res = db
+            .execute_raw(Statement::from_string(backend, sql.to_owned()))
+            .await?;
+        removed += res.rows_affected();
+    }
+    Ok(removed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -919,6 +1156,38 @@ mod tests {
         );
         // Same: a single comma-containing name with no separator at all.
         assert_eq!(split_csv("Capes, Inc."), vec!["Capes", "Inc."]);
+    }
+
+    #[test]
+    fn split_csv_reattaches_generational_suffixes_to_the_preceding_name() {
+        assert_eq!(
+            split_csv("Andrew Hennessy, Mike Deodato, Jr., J. P. Mayer"),
+            vec!["Andrew Hennessy", "Mike Deodato Jr.", "J. P. Mayer"],
+        );
+        // Dotless and lowercase spellings normalize to the provider form.
+        assert_eq!(split_csv("John Romita, jr"), vec!["John Romita Jr."]);
+        assert_eq!(
+            split_csv("J. Jonah Jameson, Sr"),
+            vec!["J. Jonah Jameson Sr."]
+        );
+        assert_eq!(split_csv("Timothy Green, II"), vec!["Timothy Green II"]);
+        // Already-joined names pass through untouched.
+        assert_eq!(
+            split_csv("Frank Martin Jr., Dan Brown"),
+            vec!["Frank Martin Jr.", "Dan Brown"]
+        );
+        // Dedupe sees the combined name.
+        assert_eq!(
+            split_csv("Mike Deodato Jr., Mike Deodato, Jr."),
+            vec!["Mike Deodato Jr."],
+        );
+        // A leading suffix with nothing before it stays a piece (garbage in).
+        assert_eq!(split_csv("Jr., Alice"), vec!["Jr.", "Alice"]);
+        // Semicolon-joined values keep commas inside names and never
+        // re-attach (the joiner already made the boundaries explicit).
+        assert_eq!(split_csv("Capes, Inc.; Jr."), vec!["Capes, Inc.", "Jr."]);
+        // Initials are not suffixes.
+        assert_eq!(split_csv("Hugo Strange, V"), vec!["Hugo Strange", "V"]);
     }
 
     #[test]
