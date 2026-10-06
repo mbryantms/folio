@@ -230,6 +230,41 @@ function Dot({ color }: { color: string }) {
 }
 
 /** Providers whose cells carry an assignment (analysed / partial). */
+/** "3 annuals (#1–#3), 1 special" from the analysis' excluded list. */
+export function describeExcludedSpecials(
+  excluded: CoverageAnalysisResp["excluded_specials"],
+): string {
+  const list = excluded ?? [];
+  const LABELS: Record<string, [string, string]> = {
+    Annual: ["annual", "annuals"],
+    OneShot: ["one-shot", "one-shots"],
+    Special: ["special", "specials"],
+    TPB: ["collected edition", "collected editions"],
+  };
+  const byType = new Map<string, string[]>();
+  for (const e of list) {
+    const nums = byType.get(e.special_type) ?? [];
+    if (e.number) nums.push(e.number);
+    byType.set(e.special_type, nums);
+  }
+  return Array.from(byType.entries())
+    .map(([type, nums]) => {
+      const count = list.filter((e) => e.special_type === type).length;
+      const [one, many] = LABELS[type] ?? [
+        type.toLowerCase(),
+        type.toLowerCase() + "s",
+      ];
+      const label = `${count} ${count === 1 ? one : many}`;
+      if (nums.length === 0) return label;
+      const shown = nums
+        .slice(0, 4)
+        .map((n) => `#${n}`)
+        .join(", ");
+      return `${label} (${shown}${nums.length > 4 ? ", …" : ""})`;
+    })
+    .join(", ");
+}
+
 function gridProviders(data: CoverageAnalysisResp): ProviderCoverageView[] {
   return data.providers.filter(
     (p) => p.status === "analyzed" || p.status === "partial",
@@ -263,6 +298,15 @@ export function ProviderCoverageAnalysis({
     <div className="space-y-4" data-testid="coverage-analysis">
       {wide && shown.length > 0 && local.length > 0 && (
         <CoverageGrid local={local} providers={shown} />
+      )}
+      {(data.excluded_specials?.length ?? 0) > 0 && (
+        <p
+          className="text-muted-foreground text-xs"
+          data-testid="coverage-excluded-specials"
+        >
+          Not analyzed: {describeExcludedSpecials(data.excluded_specials)} —
+          annuals, one-shots and specials aren&rsquo;t part of the run.
+        </p>
       )}
       {data.auto_accepted.length > 0 && (
         <p className="text-muted-foreground text-xs">

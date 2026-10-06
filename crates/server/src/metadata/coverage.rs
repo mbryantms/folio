@@ -648,13 +648,41 @@ impl LocalCovIssue {
     }
 }
 
-/// Active local issues with a number, deduplicated by canonical number,
-/// in numeric order (numbers first, then specials in reading order).
+/// A local issue the analysis leaves out: an annual / one-shot / special
+/// / collected edition the scanner tagged (`issue.special_type`, from
+/// ComicInfo `<Format>` or an `Annuals/` / `Specials/` / `Oneshots/`
+/// subfolder). Such a file is not part of the series' run — a
+/// `… Annual 001.cbz` parses to number `1`, and without this exclusion it
+/// would be analyzed as the run's #1 (reported uncovered, or worse, a
+/// provider series that does list a #1 proposed as a range for it).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ExcludedSpecial {
+    pub number: Option<String>,
+    /// `"Annual"` | `"OneShot"` | `"Special"` | `"TPB"`.
+    pub special_type: String,
+}
+
+/// Active **main-run** local issues with a number, deduplicated by
+/// canonical number, in numeric order (numbers first, then non-numeric
+/// numbers in reading order). Issues the scanner tagged with a
+/// `special_type` are excluded — see [`load_local_with_specials`] to also
+/// get them.
 pub async fn load_local<C: ConnectionTrait>(
     db: &C,
     series_id: Uuid,
 ) -> Result<Vec<LocalCovIssue>, sea_orm::DbErr> {
-    let rows: Vec<(Option<String>, Option<i32>, Option<i32>)> = issue::Entity::find()
+    Ok(load_local_with_specials(db, series_id).await?.0)
+}
+
+/// [`load_local`] plus the tagged specials it left out, for the analysis
+/// view ("not analyzed: 3 annuals").
+pub async fn load_local_with_specials<C: ConnectionTrait>(
+    db: &C,
+    series_id: Uuid,
+) -> Result<(Vec<LocalCovIssue>, Vec<ExcludedSpecial>), sea_orm::DbErr> {
+    /// `(number_raw, year, month, special_type)`.
+    type Row = (Option<String>, Option<i32>, Option<i32>, Option<String>);
+    let rows: Vec<Row> = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
         .filter(issue::Column::State.eq("active"))
         .order_by_asc(issue::Column::SortNumber)
@@ -662,11 +690,28 @@ pub async fn load_local<C: ConnectionTrait>(
         .column(issue::Column::NumberRaw)
         .column(issue::Column::Year)
         .column(issue::Column::Month)
+        .column(issue::Column::SpecialType)
         .into_tuple()
         .all(db)
         .await?;
     let mut out: Vec<LocalCovIssue> = Vec::new();
-    for (raw, year, month) in rows {
+    let mut excluded: Vec<ExcludedSpecial> = Vec::new();
+    for (raw, year, month, special_type) in rows {
+        if let Some(kind) = special_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            excluded.push(ExcludedSpecial {
+                number: raw
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned),
+                special_type: kind.to_owned(),
+            });
+            continue;
+        }
         let Some(raw) = raw.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
             continue;
         };
@@ -682,7 +727,7 @@ pub async fn load_local<C: ConnectionTrait>(
         }
     }
     sort_local(&mut out);
-    Ok(out)
+    Ok((out, excluded))
 }
 
 fn sort_local(local: &mut [LocalCovIssue]) {
@@ -1217,7 +1262,10 @@ where
 /// Inputs shared by every provider's analysis.
 pub struct SeriesFacts {
     pub series: series::Model,
+    /// Main-run issues only ([`load_local`]).
     pub local: Vec<LocalCovIssue>,
+    /// Tagged specials left out of the analysis, for the view.
+    pub excluded_specials: Vec<ExcludedSpecial>,
     pub names: Vec<String>,
     pub ext_ids: Vec<external_id::Model>,
     pub ranges: Vec<series_provider_range::Model>,
@@ -1251,7 +1299,7 @@ pub fn seed_for(seeds: &[CoverageSeed], source: Source) -> Option<&CoverageSeed>
 impl SeriesFacts {
     pub async fn load(state: &AppState, series_row: &series::Model) -> anyhow::Result<Self> {
         let db = &state.db;
-        let local = load_local(db, series_row.id).await?;
+        let (local, excluded_specials) = load_local_with_specials(db, series_row.id).await?;
         let ext_ids = external_id::Entity::find()
             .filter(external_id::Column::EntityType.eq("series"))
             .filter(external_id::Column::EntityId.eq(series_row.id.to_string()))
@@ -1287,6 +1335,7 @@ impl SeriesFacts {
         Ok(Self {
             series: series_row.clone(),
             local,
+            excluded_specials,
             names,
             ext_ids,
             ranges,

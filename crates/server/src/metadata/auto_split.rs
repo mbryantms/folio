@@ -380,7 +380,10 @@ pub(crate) fn numeric_value(canonical: &str) -> Option<f64> {
     canonical.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
-/// Active local issues with a number, in reading order.
+/// Active **main-run** local issues with a number, in reading order.
+/// Scanner-tagged specials (annuals / one-shots / specials / collected
+/// editions) are not part of the run and are left out — same rule as
+/// [`super::coverage::load_local`].
 pub(crate) async fn load_local_issues<C: ConnectionTrait>(
     db: &C,
     series_id: Uuid,
@@ -388,6 +391,7 @@ pub(crate) async fn load_local_issues<C: ConnectionTrait>(
     let rows: Vec<(Option<String>, Option<i32>)> = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
         .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::SpecialType.is_null())
         .order_by_asc(issue::Column::SortNumber)
         .select_only()
         .column(issue::Column::NumberRaw)

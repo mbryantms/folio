@@ -72,8 +72,13 @@ pub struct CoverageAnalysisResp {
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub error: Option<String>,
-    /// The grid's rows (empty until the job is done).
+    /// The grid's rows (empty until the job is done): the series' main
+    /// run only.
     pub local_issues: Vec<CoverageLocalIssue>,
+    /// Tagged annuals / one-shots / specials / collected editions the
+    /// analysis left out (they are not part of the run).
+    #[serde(default)]
+    pub excluded_specials: Vec<coverage::ExcludedSpecial>,
     /// One column per provider (empty until the job is done).
     pub providers: Vec<ProviderCoverageView>,
     /// Proposals accepted automatically by this job.
@@ -188,6 +193,7 @@ pub async fn coverage_analysis(
         finished_at: rec.finished_at,
         error: rec.error.clone(),
         local_issues: Vec::new(),
+        excluded_specials: Vec::new(),
         providers: Vec::new(),
         auto_accepted: rec.auto_accepted.clone(),
         trigger: rec.trigger,
@@ -205,6 +211,7 @@ pub async fn coverage_analysis(
             }
         };
         resp.local_issues = coverage::local_view(&facts.local);
+        resp.excluded_specials = facts.excluded_specials.clone();
         resp.providers = rec
             .providers
             .iter()

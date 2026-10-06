@@ -15868,6 +15868,13 @@
               "null"
             ]
           },
+          "excluded_specials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExcludedSpecial"
+            },
+            "description": "Tagged annuals / one-shots / specials / collected editions the\nanalysis left out (they are not part of the run)."
+          },
           "finished_at": {
             "type": [
               "string",
@@ -15883,7 +15890,7 @@
             "items": {
               "$ref": "#/components/schemas/CoverageLocalIssue"
             },
-            "description": "The grid's rows (empty until the job is done)."
+            "description": "The grid's rows (empty until the job is done): the series' main\nrun only."
           },
           "providers": {
             "type": "array",
@@ -19374,6 +19381,25 @@
               "null"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "ExcludedSpecial": {
+        "type": "object",
+        "description": "A local issue the analysis leaves out: an annual / one-shot / special\n/ collected edition the scanner tagged (`issue.special_type`, from\nComicInfo `<Format>` or an `Annuals/` / `Specials/` / `Oneshots/`\nsubfolder). Such a file is not part of the series' run — a\n`… Annual 001.cbz` parses to number `1`, and without this exclusion it\nwould be analyzed as the run's #1 (reported uncovered, or worse, a\nprovider series that does list a #1 proposed as a range for it).",
+        "required": [
+          "special_type"
+        ],
+        "properties": {
+          "number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "special_type": {
+            "type": "string",
+            "description": "`\"Annual\"` | `\"OneShot\"` | `\"Special\"` | `\"TPB\"`."
           }
         }
       },

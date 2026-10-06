@@ -933,6 +933,18 @@ has no anchor and covers ComicVine too. The Details-tab card uses it,
 and so does the post-apply hook (seeded with the applied series, below);
 the detect endpoint stays for the API.
 
+**Main run only.** The local issue set (`coverage::load_local`, and
+`auto_split::load_local_issues` for the detect endpoint) leaves out every
+issue the scanner tagged with a `special_type` — annuals, one-shots,
+specials, collected editions, whether from ComicInfo `<Format>` or an
+`Annuals/` / `Specials/` / `Oneshots/` subfolder. They are not part of
+the series' run: `… Annual 001.cbz` parses to number `1`, and analyzing
+it as the run's #1 either reports a phantom gap or proposes a range to a
+provider series that happens to list a #1. The analysis response carries
+them as `excluded_specials` so the card can say "not analyzed: 3
+annuals". Annuals still match their own provider series through the
+issue search's annual rewrite (WP-5.6); nothing is lost.
+
 **Issue lists.** `MetadataProvider::list_series_issues(id, IssueListOpts)`
 returns `ProviderSeriesIssues` — per distinct canonical number the
 provider **issue id** and **cover date**, plus the series name / year when
