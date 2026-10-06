@@ -363,6 +363,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/metadata/csv-cache-backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["metadata_csv_cache_backfill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/metadata/dashboard": {
         parameters: {
             query?: never;
@@ -5597,7 +5613,10 @@ export interface components {
          */
         BackfillEnqueuedResp: {
             enqueued: boolean;
-            /** @description `cover_phash` | `variant_cover` | `cover_variant` | `name_suffixes`. */
+            /**
+             * @description `cover_phash` | `variant_cover` | `cover_variant` | `name_suffixes` |
+             *     `csv_cache`.
+             */
             kind: string;
         };
         /** @description Server-wide roll-up of [`BackgroundWorkView`]. */
@@ -8058,6 +8077,11 @@ export interface components {
             /** @description `/<kind>/<slug>` target. */
             slug: string;
         };
+        /** @description A named entity with its landing-page slug when the entity row exists. */
+        EntityRefView: {
+            name: string;
+            slug?: string | null;
+        };
         /**
          * @description Name → slug maps for the cast / arc / publisher chips on the series
          *     and issue detail pages, so the web can link each chip to its landing
@@ -8717,6 +8741,16 @@ export interface components {
          * @enum {string}
          */
         HintStatus: "computed" | "not_computed";
+        /**
+         * @description The issue's cast and setting from the junction tables
+         *     (`issue_characters` / `issue_teams` / `issue_locations` / `issue_arcs`).
+         */
+        IssueCastView: {
+            characters: components["schemas"]["EntityRefView"][];
+            locations: components["schemas"]["EntityRefView"][];
+            story_arcs: components["schemas"]["EntityRefView"][];
+            teams: components["schemas"]["EntityRefView"][];
+        };
         IssueCoverRow: {
             fetched_at: string;
             /** Format: int32 */
@@ -8760,6 +8794,21 @@ export interface components {
             fallback_primary_url: string;
             issue_id: string;
         };
+        /**
+         * @description One credit row from `issue_credits` — the source of truth for who
+         *     worked on an issue (the flat `writer` / `inker` / … columns on the
+         *     view are the derived read-cache). `slug` links to `/creators/{slug}`
+         *     once the series rollup has created the `person` row.
+         */
+        IssueCreditEntry: {
+            person: string;
+            /**
+             * @description `writer` | `penciller` | `inker` | `colorist` | `letterer` |
+             *     `cover_artist` | `editor` | `translator`.
+             */
+            role: string;
+            slug?: string | null;
+        };
         IssueDetailView: {
             /**
              * @description User-curated extra links beyond `web_url` (which mirrors ComicInfo).
@@ -8776,6 +8825,11 @@ export interface components {
             allow_archive_writeback?: boolean;
             alternate_series?: string | null;
             black_and_white?: boolean | null;
+            /**
+             * @description Characters / teams / locations / story arcs from the junction
+             *     tables, with landing-page slugs.
+             */
+            cast: components["schemas"]["IssueCastView"];
             characters?: string | null;
             colorist?: string | null;
             comic_info_raw: unknown;
@@ -8803,6 +8857,12 @@ export interface components {
             creator_slugs?: {
                 [key: string]: string;
             };
+            /**
+             * @description Credits from the junction tables, in stored order — what the
+             *     Credits tab renders. The flat per-role columns above are the
+             *     derived read-cache of the same rows.
+             */
+            credits: components["schemas"]["IssueCreditEntry"][];
             /** Format: int32 */
             day?: number | null;
             editor?: string | null;
@@ -8816,6 +8876,11 @@ export interface components {
             file_size: number;
             format?: string | null;
             genre?: string | null;
+            /**
+             * @description `issue_genres` / `issue_tags` rows (the `genre` / `tags` columns
+             *     are their read-cache).
+             */
+            genres: string[];
             gtin?: string | null;
             id: string;
             imprint?: string | null;
@@ -8903,6 +8968,8 @@ export interface components {
             story_arc?: string | null;
             story_arc_number?: string | null;
             summary?: string | null;
+            /** @description `issue_tags` rows (`tags` above is the flat read-cache). */
+            tag_list: string[];
             tags?: string | null;
             teams?: string | null;
             title?: string | null;
@@ -14293,6 +14360,33 @@ export interface operations {
         };
     };
     metadata_cover_variant_backfill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description backfill job enqueued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackfillEnqueuedResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metadata_csv_cache_backfill: {
         parameters: {
             query?: never;
             header?: never;

@@ -1044,6 +1044,36 @@ pub struct IssueSummaryView {
     pub updated_at: String,
 }
 
+/// One credit row from `issue_credits` — the source of truth for who
+/// worked on an issue (the flat `writer` / `inker` / … columns on the
+/// view are the derived read-cache). `slug` links to `/creators/{slug}`
+/// once the series rollup has created the `person` row.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct IssueCreditEntry {
+    /// `writer` | `penciller` | `inker` | `colorist` | `letterer` |
+    /// `cover_artist` | `editor` | `translator`.
+    pub role: String,
+    pub person: String,
+    pub slug: Option<String>,
+}
+
+/// A named entity with its landing-page slug when the entity row exists.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct EntityRefView {
+    pub name: String,
+    pub slug: Option<String>,
+}
+
+/// The issue's cast and setting from the junction tables
+/// (`issue_characters` / `issue_teams` / `issue_locations` / `issue_arcs`).
+#[derive(Debug, Clone, Default, Serialize, utoipa::ToSchema)]
+pub struct IssueCastView {
+    pub characters: Vec<EntityRefView>,
+    pub teams: Vec<EntityRefView>,
+    pub locations: Vec<EntityRefView>,
+    pub story_arcs: Vec<EntityRefView>,
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct IssueDetailView {
     pub id: String,
@@ -1132,6 +1162,18 @@ pub struct IssueDetailView {
     #[schema(value_type = Vec<serde_json::Value>)]
     pub pages: Vec<parsers::comicinfo::PageInfo>,
     pub comic_info_raw: serde_json::Value,
+    /// Credits from the junction tables, in stored order — what the
+    /// Credits tab renders. The flat per-role columns above are the
+    /// derived read-cache of the same rows.
+    pub credits: Vec<IssueCreditEntry>,
+    /// Characters / teams / locations / story arcs from the junction
+    /// tables, with landing-page slugs.
+    pub cast: IssueCastView,
+    /// `issue_genres` / `issue_tags` rows (the `genre` / `tags` columns
+    /// are their read-cache).
+    pub genres: Vec<String>,
+    /// `issue_tags` rows (`tags` above is the flat read-cache).
+    pub tag_list: Vec<String>,
     /// Creator-name → slug map covering every credit name listed in
     /// the per-role CSV fields above (writer/penciller/inker/…). Built
     /// from `issue_credits.person_id` joined to `person`; missing
@@ -1287,6 +1329,11 @@ impl IssueDetailView {
             // already copes with no per-page metadata.
             pages: serde_json::from_value(m.pages).unwrap_or_default(),
             comic_info_raw: m.comic_info_raw,
+            // Populated from the junction tables by the get-one handler.
+            credits: Vec::new(),
+            cast: IssueCastView::default(),
+            genres: Vec::new(),
+            tag_list: Vec::new(),
             creator_slugs: std::collections::HashMap::new(),
             entity_slugs: None,
             last_rewrite_at: m.last_rewrite_at.map(|t| t.to_rfc3339()),

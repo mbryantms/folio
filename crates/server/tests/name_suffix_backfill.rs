@@ -158,12 +158,17 @@ async fn backfill_repairs_split_rows_and_prunes_orphan_suffixes() {
     assert!(!names.contains(&"Jr.".to_owned()), "{names:?}");
     assert!(names.contains(&"Mike Deodato Jr.".to_owned()), "{names:?}");
 
-    // Nothing left to do: a second pass finds no split rows to rebuild
-    // (the CSV still matches, but the junctions already agree — the
-    // writer's short-circuit makes the rebuild a no-op).
-    let (again, _) = run_name_suffix_backfill_page(db, None, 50).await.unwrap();
+    // The series rollup rewrote the CSV column from the junctions, so the
+    // comma-suffix shape is gone and a second pass finds nothing to do.
+    let row = issue::Entity::find_by_id(id.clone())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
-        again.rebuilt, 1,
-        "the row still matches the CSV shape; rebuild is idempotent"
+        row.inker.as_deref(),
+        Some("Andrew Hennessy, Mike Deodato Jr., J. P. Mayer")
     );
+    let (again, _) = run_name_suffix_backfill_page(db, None, 50).await.unwrap();
+    assert_eq!(again.rebuilt, 0);
 }

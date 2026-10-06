@@ -243,7 +243,9 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
             if !desired_genres.is_empty() {
                 let rows: Vec<issue_genre::ActiveModel> = desired_genres
                     .into_iter()
-                    .map(|g| issue_genre::ActiveModel {
+                    .enumerate()
+                    .map(|(ordinal, g)| issue_genre::ActiveModel {
+                        ordinal: Set(ordinal as i32),
                         issue_id: Set(issue_id.to_string()),
                         genre: Set(g),
                     })
@@ -283,7 +285,9 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
             if !desired_tags.is_empty() {
                 let rows: Vec<issue_tag::ActiveModel> = desired_tags
                     .into_iter()
-                    .map(|t| issue_tag::ActiveModel {
+                    .enumerate()
+                    .map(|(ordinal, t)| issue_tag::ActiveModel {
+                        ordinal: Set(ordinal as i32),
                         issue_id: Set(issue_id.to_string()),
                         tag: Set(t),
                     })
@@ -327,24 +331,35 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
                 .exec(db)
                 .await?;
             if !desired_credits.is_empty() {
+                // Position within the role's list: the file's (or
+                // provider's) sequence, which the CSV read-cache rebuild
+                // orders by so the column keeps the source order instead
+                // of alphabetizing.
+                let mut next_ordinal: std::collections::HashMap<String, i32> =
+                    std::collections::HashMap::new();
                 let rows: Vec<issue_credit::ActiveModel> = desired_credits
                     .into_iter()
-                    .map(|(role, person)| issue_credit::ActiveModel {
-                        issue_id: Set(issue_id.to_string()),
-                        role: Set(role),
-                        person: Set(person),
-                        // person_id is populated during the series-level
-                        // rollup (see `ensure_persons_for_series`), which
-                        // runs after this per-issue write. Leaving it
-                        // NULL here keeps this hot path off the slug
-                        // allocator.
-                        person_id: Set(None),
-                        // Scanner has no per-credit ordering signal
-                        // (ComicInfo lists writers in a single CSV);
-                        // default 0 is correct. M4 Apply jobs populate
-                        // the real ordinal from provider responses
-                        // (Metron credits expose stable ordering).
-                        ordinal: Set(0),
+                    .map(|(role, person)| {
+                        let slot = next_ordinal.entry(role.clone()).or_insert(0);
+                        let ordinal = *slot;
+                        *slot += 1;
+                        issue_credit::ActiveModel {
+                            issue_id: Set(issue_id.to_string()),
+                            role: Set(role),
+                            person: Set(person),
+                            // person_id is populated during the series-level
+                            // rollup (see `ensure_persons_for_series`), which
+                            // runs after this per-issue write. Leaving it
+                            // NULL here keeps this hot path off the slug
+                            // allocator.
+                            person_id: Set(None),
+                            // Scanner has no per-credit ordering signal
+                            // (ComicInfo lists writers in a single CSV);
+                            // default 0 is correct. M4 Apply jobs populate
+                            // the real ordinal from provider responses
+                            // (Metron credits expose stable ordering).
+                            ordinal: Set(ordinal),
+                        }
                     })
                     .collect();
                 issue_credit::Entity::insert_many(rows)
@@ -383,7 +398,9 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
             if !desired_characters.is_empty() {
                 let rows: Vec<issue_character::ActiveModel> = desired_characters
                     .into_iter()
-                    .map(|c| issue_character::ActiveModel {
+                    .enumerate()
+                    .map(|(ordinal, c)| issue_character::ActiveModel {
+                        ordinal: Set(ordinal as i32),
                         issue_id: Set(issue_id.to_string()),
                         character: Set(c),
                         // M4 Apply jobs are the first writer to
@@ -431,7 +448,9 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
             if !desired_teams.is_empty() {
                 let rows: Vec<issue_team::ActiveModel> = desired_teams
                     .into_iter()
-                    .map(|t| issue_team::ActiveModel {
+                    .enumerate()
+                    .map(|(ordinal, t)| issue_team::ActiveModel {
+                        ordinal: Set(ordinal as i32),
                         issue_id: Set(issue_id.to_string()),
                         team: Set(t),
                         // See issue_character.rs above: M4 Apply jobs
@@ -477,7 +496,9 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
             if !desired_locations.is_empty() {
                 let rows: Vec<issue_location::ActiveModel> = desired_locations
                     .into_iter()
-                    .map(|l| issue_location::ActiveModel {
+                    .enumerate()
+                    .map(|(ordinal, l)| issue_location::ActiveModel {
+                        ordinal: Set(ordinal as i32),
                         issue_id: Set(issue_id.to_string()),
                         location: Set(l),
                         // See issue_character.rs above: M4 Apply jobs
@@ -642,6 +663,13 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
 
     auto_set_reading_direction(db, series_id).await?;
 
+    // Junctions are the truth for every write path; the CSV read-cache
+    // columns are derived from them. Now that every junction row has its
+    // entity id, rebuild the columns for this series so file-tagged issues
+    // carry the same normalized names ("Mike Deodato Jr.") a provider
+    // apply would — the issue page, OPDS, search and filters all read the
+    // columns and never need their own parsing rules.
+    crate::metadata::writers::rebuild_series_issue_csv_cache(db, series_id).await?;
     Ok(())
 }
 
@@ -986,7 +1014,14 @@ pub async fn run_name_suffix_backfill_page(
         "teams",
         "locations",
     ];
-    let mut any = Condition::any();
+    // Match the column (the pre-fix cache) or the file's own strings:
+    // once a rollup has rebuilt the cache from split junction rows the
+    // column may be alphabetized ("…, J. P. Mayer, Jr., Mike Deodato"),
+    // so the raw ComicInfo is what the rebuild derives from below.
+    let mut any = Condition::any().add(Expr::cust_with_values(
+        "comic_info_raw::text ~* $1",
+        [SUFFIX_PIECE_RE],
+    ));
     for col in csv_columns {
         any = any.add(Expr::cust_with_values(
             format!("{col} ~* $1"),
@@ -1047,34 +1082,70 @@ pub async fn run_name_suffix_backfill_page(
                     .is_some_and(|by| !crate::metadata::writers::is_file_tier_set_by(by))
             })
             .collect();
-        // Which junctions this row's affected columns feed; if every one of
-        // them is protected there is nothing to rebuild.
-        let affected: HashSet<F> = csv_columns
+        // Source strings: the file's own ComicInfo field when it has one
+        // (the split happened when it was parsed, so re-parsing it with
+        // the suffix rule is the exact repair), else the column.
+        let raw: parsers::comicinfo::ComicInfo =
+            serde_json::from_value(row.comic_info_raw.clone()).unwrap_or_default();
+        let pick = |from_raw: &Option<String>, from_col: &Option<String>| -> Option<String> {
+            from_raw
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned)
+                .or_else(|| from_col.clone())
+        };
+        let writer = pick(&raw.writer, &row.writer);
+        let penciller = pick(&raw.penciller, &row.penciller);
+        let inker = pick(&raw.inker, &row.inker);
+        let colorist = pick(&raw.colorist, &row.colorist);
+        let letterer = pick(&raw.letterer, &row.letterer);
+        let cover_artist = pick(&raw.cover_artist, &row.cover_artist);
+        let editor = pick(&raw.editor, &row.editor);
+        let translator = pick(&raw.translator, &row.translator);
+        let characters = pick(&raw.characters, &row.characters);
+        let teams = pick(&raw.teams, &row.teams);
+        let locations = pick(&raw.locations, &row.locations);
+        let sources: [(&str, &Option<String>); 11] = [
+            ("writer", &writer),
+            ("penciller", &penciller),
+            ("inker", &inker),
+            ("colorist", &colorist),
+            ("letterer", &letterer),
+            ("cover_artist", &cover_artist),
+            ("editor", &editor),
+            ("translator", &translator),
+            ("characters", &characters),
+            ("teams", &teams),
+            ("locations", &locations),
+        ];
+        // Which junctions the affected fields feed; if every one of them
+        // is protected there is nothing to rebuild.
+        let affected: HashSet<F> = sources
             .iter()
-            .filter(|col| {
-                let v = match **col {
-                    "writer" => row.writer.as_deref(),
-                    "penciller" => row.penciller.as_deref(),
-                    "inker" => row.inker.as_deref(),
-                    "colorist" => row.colorist.as_deref(),
-                    "letterer" => row.letterer.as_deref(),
-                    "cover_artist" => row.cover_artist.as_deref(),
-                    "editor" => row.editor.as_deref(),
-                    "translator" => row.translator.as_deref(),
-                    "characters" => row.characters.as_deref(),
-                    "teams" => row.teams.as_deref(),
-                    "locations" => row.locations.as_deref(),
-                    _ => None,
-                };
-                v.is_some_and(csv_has_suffix_piece)
-            })
-            .map(|col| junction_of(col))
+            .filter(|(_, v)| v.as_deref().is_some_and(csv_has_suffix_piece))
+            .map(|(col, _)| junction_of(col))
             .collect();
         if affected.is_subset(&skip) {
             out.skipped += 1;
             continue;
         }
-        replace_issue_metadata_from_model_skipping(db, row, &skip).await?;
+        let inputs = IssueMetadataInputs {
+            genre: row.genre.as_deref(),
+            tags: row.tags.as_deref(),
+            writer: writer.as_deref(),
+            penciller: penciller.as_deref(),
+            inker: inker.as_deref(),
+            colorist: colorist.as_deref(),
+            letterer: letterer.as_deref(),
+            cover_artist: cover_artist.as_deref(),
+            editor: editor.as_deref(),
+            translator: translator.as_deref(),
+            characters: characters.as_deref(),
+            teams: teams.as_deref(),
+            locations: locations.as_deref(),
+        };
+        replace_issue_metadata_skipping(db, &row.id, &inputs, &skip).await?;
         series_ids.insert(row.series_id);
         out.rebuilt += 1;
     }

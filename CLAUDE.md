@@ -440,6 +440,20 @@ Default admin (first registered user becomes admin):
   once it stays at zero, the follow-up cleanup PR drops the legacy
   DB-direct apply branch.
 
+- **Junctions are the truth, CSV columns are derived — for every write
+  path.** The scanner copies ComicInfo strings into the flat columns
+  and derives the junctions, then `rollup_series_metadata` rebuilds the
+  columns of the whole series from the junctions
+  (`writers::rebuild_series_issue_csv_cache`), so a file-tagged issue
+  ends up with the same normalized names a provider apply writes. The
+  issue detail endpoint exposes the junction content as
+  `IssueDetailView.credits` / `cast` / `genres` / `tag_list`; the web
+  issue page renders those. **Reviewer heuristic:** reject a web change
+  that splits `issue.writer` / `characters` / … client-side (use the
+  lists), and a server change that reads a CSV column as the source
+  for anything a junction table holds. `split_csv` (server) and
+  `lib/metadata/csv.ts` (web, list views only) must stay twins.
+
 - **Cover-image perceptual hashes** (metadata-providers-1.0 M9):
   every new cover (provider-applied or scanner-extracted) gets
   `phash` + `dhash` + `ahash` computed at write time via

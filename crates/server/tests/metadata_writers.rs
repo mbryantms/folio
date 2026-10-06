@@ -446,8 +446,9 @@ async fn set_issue_characters_reconciles_and_rebuilds_csv() {
         .await
         .unwrap()
         .unwrap();
-    // Alphabetical aggregation: "Atom Eve, Invincible".
-    assert_eq!(after.characters.as_deref(), Some("Atom Eve, Invincible"));
+    // Source order (the provider listed Invincible first): the cache
+    // keeps each list's `ordinal`, so a sidecar rewrite reproduces it.
+    assert_eq!(after.characters.as_deref(), Some("Invincible, Atom Eve"));
 
     // Subsequent call with a smaller set REPLACES (reconcile semantics).
     let batch2 = CsvRebuildBatch::new();
