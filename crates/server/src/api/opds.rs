@@ -2302,10 +2302,12 @@ fn entry_metadata_series(s: &series::Model, facets: Option<&SeriesFacets>) -> St
 /// like Panels, Chunky, KOReader. Without this, OPDS clients fall
 /// back to a generic folder icon for every series entry.
 ///
-/// Pick rule (M1 of opds-richer-feeds): first active, non-removed
-/// issue ordered by `sort_number ASC, file_path ASC` — mirrors what
-/// the web `api::series::get_one` handler already does for the
-/// detail page's hero cover, so OPDS and web see the same image.
+/// Pick rule: the same one as the web grid / detail hero
+/// (`api::series::hydrate_series`), so OPDS and web see the same
+/// image — main run before specials (an `Annuals/… Annual 001` must
+/// not win over the regular run), numbered issues (`sort_number >= 1`)
+/// before #0 / #½ preludes, then `sort_number ASC NULLS LAST,
+/// file_path ASC`.
 ///
 /// One DB round-trip regardless of input length via Postgres'
 /// `DISTINCT ON`. Empty inputs short-circuit. Failures degrade
@@ -2339,7 +2341,11 @@ pub(crate) async fn fetch_cover_issues(
         WHERE series_id = ANY($1)
           AND state = 'active'
           AND removed_at IS NULL
-        ORDER BY series_id, sort_number ASC NULLS LAST, file_path ASC
+        ORDER BY series_id,
+                 (special_type IS NOT NULL),
+                 (CASE WHEN sort_number >= 1 THEN 0 ELSE 1 END),
+                 sort_number ASC NULLS LAST,
+                 file_path ASC
         "#,
         [ids.into()],
     );
