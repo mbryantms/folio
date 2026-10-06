@@ -214,6 +214,11 @@ export type IssueListFilters = {
   order?: SortOrder;
   limit?: number;
   cursor?: string;
+  /** Per-series listing: `main` = the run (no `special_type`), `special` =
+   *  annuals / one-shots / specials / collected editions. Absent = all. */
+  kind?: "main" | "special";
+  /** One `special_type` (`Annual` | `OneShot` | …); implies `special`. */
+  special_type?: string;
 };
 
 /** Cross-library issue search shape. Server caps `q` length and clamps

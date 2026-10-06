@@ -195,14 +195,18 @@ jobs:
         shard: [1, 2, 3, 4]
     env:
       CARGO_INCREMENTAL: 0
-      # Full debuginfo is the bulk of the debug target dir (every workspace
-      # test binary carries it), and since the 2026-07-20 runner-image rollout
-      # some hosted runners ship 72 GB root disks (down from 145 GB) — the
-      # full-debug build no longer fits (PR #512 ENOSPC'd twice on a 72 GB
-      # runner). line-tables-only keeps file:line in test-failure backtraces
-      # while shedding most of that footprint. `test`/`bench` profiles inherit
-      # from `dev`, so this covers nextest binaries and doctests alike.
-      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      # Debuginfo is the bulk of the debug target dir: every one of the ~190
+      # server test binaries links the whole server crate, and with line
+      # tables each is ~700 MB (measured 2026-10-06), so a cold shard build
+      # is well past what a 72 GB runner has left even after the cleanup
+      # below (PRs #1054 / #1055 ENOSPC'd twice each; #512 before them).
+      # Build CI test binaries with no debuginfo at all: a panic still
+      # reports its own file:line (that is compile-time, not debuginfo) and
+      # nextest's output names the failing test; only backtrace frames lose
+      # their line numbers. `test`/`bench` profiles inherit from `dev`, so
+      # this covers nextest binaries and doctests alike.
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_DEV_STRIP: debuginfo
     services:
       postgres:
         image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
@@ -231,27 +235,22 @@ jobs:
       # a prebuilt binary. `docker image prune` keeps the postgres/redis
       # service images (already running) and drops the rest.
       #
-      # The cleanup itself costs ~2.5 min on the critical path, so it only
-      # runs when the runner is actually short: a cold workspace debug build
-      # with every test binary is ~20-25 GB, and 145 GB runners start with
-      # ~86 GB free (measured 2026-10). 60 GB leaves comfortable headroom.
+      # The cleanup costs ~2.5 min on the critical path. It used to run only
+      # below 60 GB free, but a 72 GB runner reports ~60 GB free and then
+      # dies mid-link anyway (the runner itself, not the step, hits ENOSPC —
+      # the job ends with no failed step and no log). Run it always: a dead
+      # shard costs far more than the minutes.
       - name: free runner disk
         run: |
           df -h /
-          avail_gb=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
-          if [ "$avail_gb" -lt 60 ]; then
-            echo "only ${avail_gb} GB free; cleaning up"
-            sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
-              /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache \
-              /usr/local/share/powershell /usr/share/swift \
-              /usr/local/share/chromium /usr/local/lib/node_modules \
-              /usr/lib/google-cloud-sdk /opt/microsoft /opt/az \
-              /usr/share/miniconda /opt/pipx
-            sudo docker image prune -af
-            df -h /
-          else
-            echo "${avail_gb} GB free; skipping cleanup"
-          fi
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
+            /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache \
+            /usr/local/share/powershell /usr/share/swift \
+            /usr/local/share/chromium /usr/local/lib/node_modules \
+            /usr/lib/google-cloud-sdk /opt/microsoft /opt/az \
+            /usr/share/miniconda /opt/pipx
+          sudo docker image prune -af
+          df -h /
       - uses: dtolnay/rust-toolchain@1.96.0
       # One cache entry for all four shards (identical builds). Concurrent
       # saves of the same key are fine: the losers skip "already exists".

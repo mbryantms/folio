@@ -49,16 +49,17 @@ import {
   useBulkMarkSeriesMatchingProgress,
   useCreateSeriesSelectionBatch,
 } from "@/lib/api/mutations";
-import { useMe, useSeriesIssuesInfinite } from "@/lib/api/queries";
+import {
+  type IssueListFilters,
+  useMe,
+  useSeriesIssuesInfinite,
+} from "@/lib/api/queries";
 import { skippedIssueIds } from "@/lib/library/bulk-archive-skips";
 import { ISSUE_TEXT_H } from "@/lib/library/grid-window";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { IssueSort, SortOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
-import {
-  SpecialsExtrasSection,
-  splitMainAndSpecials,
-} from "./SpecialsExtrasSection";
+import { SpecialsExtrasSection } from "./SpecialsExtrasSection";
 
 // Bulk dialogs are heavy (metadata form / archive-edit + dnd) and only open
 // from the selection toolbar — lazy so they stay out of the series-page
@@ -146,17 +147,41 @@ export function IssuesPanel({
     window.history.replaceState({}, "", url.toString());
   }, [debouncedQ]);
 
-  const filters = debouncedQ
+  // Browsing lists the run (`kind=main`) in the grid; the specials come
+  // from their own query below so a section never depends on which pages
+  // of the other happen to be loaded. A search spans both and renders as
+  // one grid.
+  const searching = debouncedQ.length > 0;
+  const filters: IssueListFilters = searching
     ? { q: debouncedQ, limit: 60 }
-    : { sort, order, limit: 60 };
+    : { kind: "main", sort, order, limit: 60 };
 
   const query = useSeriesIssuesInfinite(seriesSlug, filters);
-  const items = query.data?.pages.flatMap((p) => p.items) ?? [];
-  // Split main-run from specials/annuals/oneshots (see spec §6.5).
-  // The grid renders the main run; specials/extras go into a sibling
-  // section below that's hidden when empty.
-  const { mainRun: mainRunItems, specials: specialItems } =
-    splitMainAndSpecials(items);
+  const mainRunItems = query.data?.pages.flatMap((p) => p.items) ?? [];
+  // Specials & Extras: annuals / one-shots / specials / collected
+  // editions (spec §6.5), number order, every page walked up front — the
+  // set is small and the sections need the whole of it.
+  const specialsQuery = useSeriesIssuesInfinite(seriesSlug, {
+    kind: "special",
+    sort: "number",
+    order: "asc",
+    limit: 100,
+  });
+  const {
+    hasNextPage: specialsHasNext,
+    isFetchingNextPage: specialsFetching,
+    fetchNextPage: fetchMoreSpecials,
+  } = specialsQuery;
+  useEffect(() => {
+    if (!searching && specialsHasNext && !specialsFetching) {
+      void fetchMoreSpecials();
+    }
+  }, [searching, specialsHasNext, specialsFetching, fetchMoreSpecials]);
+  const specialItems = searching
+    ? []
+    : (specialsQuery.data?.pages.flatMap((p) => p.items) ?? []);
+  // Everything on screen, for selection / bulk actions.
+  const items = [...mainRunItems, ...specialItems];
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // Multi-select state — first surface to land for the
@@ -359,6 +384,34 @@ export function IssuesPanel({
   const gridStyle = {
     gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
   } as CSSProperties;
+
+  // One card renderer for the main grid and every specials section, so
+  // select mode / bulk actions cover annuals and one-shots too.
+  const renderIssueCard = (iss: (typeof mainRunItems)[number]) => (
+    <IssueCard
+      issue={iss}
+      selectMode={
+        selection.selectMode
+          ? {
+              isActive: true,
+              isSelected: allMatchingSelected || selection.isSelected(iss.id),
+              onToggle: (ev) => {
+                if (allMatchingSelected) {
+                  setAllMatchingSelected(false);
+                  selection.clear();
+                }
+                selection.toggle(iss.id, ev);
+              },
+            }
+          : undefined
+      }
+      onEnterSelectMode={(id) => {
+        // Long-press → sheet → "Select": enter select mode AND
+        // pre-select the long-pressed card.
+        selection.toggle(id);
+      }}
+    />
+  );
 
   return (
     <section className="mt-10">
@@ -569,16 +622,12 @@ export function IssuesPanel({
         </p>
       ) : mainRunItems.length === 0 ? (
         <p className="text-muted-foreground text-sm">
-          {debouncedQ
-            ? `No main-run issues matched "${debouncedQ}".`
-            : "No main-run issues yet — see Specials & Extras below."}
+          No main-run issues yet — see Specials &amp; Extras below.
         </p>
       ) : (
         // Window-virtualize the main run (audit G1, parity with the
-        // library grid). Fetch stays on the sentinel below — it covers
-        // the edge where a loaded page is all specials and `mainRun` is
-        // momentarily empty — so this grid only windows (hasNextPage
-        // false). `splitMainAndSpecials` order is preserved.
+        // library grid). Fetch stays on the sentinel below, so this grid
+        // only windows (hasNextPage false).
         <VirtualizedCardGrid
           items={mainRunItems}
           cardSize={cardSize}
@@ -586,35 +635,9 @@ export function IssuesPanel({
           hasNextPage={false}
           isFetchingNextPage={false}
           fetchNextPage={NOOP}
-          renderCard={(item) => {
-            const iss = item as (typeof mainRunItems)[number];
-            return (
-              <IssueCard
-                issue={iss}
-                selectMode={
-                  selection.selectMode
-                    ? {
-                        isActive: true,
-                        isSelected:
-                          allMatchingSelected || selection.isSelected(iss.id),
-                        onToggle: (ev) => {
-                          if (allMatchingSelected) {
-                            setAllMatchingSelected(false);
-                            selection.clear();
-                          }
-                          selection.toggle(iss.id, ev);
-                        },
-                      }
-                    : undefined
-                }
-                onEnterSelectMode={(id) => {
-                  // Long-press → sheet → "Select": enter select
-                  // mode AND pre-select the long-pressed card.
-                  selection.toggle(id);
-                }}
-              />
-            );
-          }}
+          renderCard={(item) =>
+            renderIssueCard(item as (typeof mainRunItems)[number])
+          }
         />
       )}
 
@@ -632,8 +655,12 @@ export function IssuesPanel({
         </p>
       )}
 
-      {!query.isLoading && specialItems.length > 0 && (
-        <SpecialsExtrasSection items={specialItems} gridStyle={gridStyle} />
+      {!searching && specialItems.length > 0 && (
+        <SpecialsExtrasSection
+          items={specialItems}
+          gridStyle={gridStyle}
+          renderCard={renderIssueCard}
+        />
       )}
     </section>
   );
