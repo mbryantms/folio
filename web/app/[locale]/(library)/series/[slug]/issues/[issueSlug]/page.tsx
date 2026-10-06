@@ -16,6 +16,7 @@ import {
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
+import { primaryCsvEntry, splitCsv } from "@/lib/metadata/csv";
 import { issueUrl, readerUrl, seriesUrl } from "@/lib/urls";
 import { IssueActivityTab } from "@/components/activity/IssueActivityTab";
 import { Cover } from "@/components/Cover";
@@ -940,16 +941,9 @@ function IssueFactRow({
   );
 }
 
-/**
- * First entry of a CSV-style credits field, used by the stats grid where
- * we only have room for the headline name. Falls back to the entire
- * trimmed value if the split yields nothing.
- */
-function primaryCredit(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const first = value.split(/[,;]/)[0]?.trim();
-  return first && first.length > 0 ? first : value.trim() || null;
-}
+/** First entry of a CSV-style credits field, used by the stats grid where
+ *  we only have room for the headline name. */
+const primaryCredit = primaryCsvEntry;
 
 /** Pretty-print a byte count as B / KB / MB / GB / TB with one decimal. */
 function formatFileSize(bytes: number | null | undefined): string | null {
@@ -1087,27 +1081,6 @@ function extractPathScopedId(
 
 function normalizeExternalId(value: string): string {
   return value.trim().replace(/\/+$/, "").toLowerCase();
-}
-
-function splitCsv(value: string | null | undefined): string[] {
-  if (!value) return [];
-  // Mirrors `server::library::scanner::metadata_rollup::split_csv`. If
-  // `;` is present anywhere in the string we treat it as the sole
-  // separator so names containing commas (e.g. `"Capes, Inc."`) survive
-  // the round-trip; otherwise we split on `,` as before. Dedupe is
-  // case-insensitive, first casing wins.
-  const sep = value.includes(";") ? ";" : ",";
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const piece of value.split(sep)) {
-    const trimmed = piece.trim();
-    if (!trimmed) continue;
-    const key = trimmed.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(trimmed);
-  }
-  return out;
 }
 
 function hasAnyCredit(issue: IssueDetailView): boolean {
