@@ -47,7 +47,7 @@ describe("groupSpecials", () => {
       "Collected editions",
       "Zine",
     ]);
-    expect(groups[0].items.map((i) => i.id)).toEqual(["a1", "a2"]);
+    expect(groups[0]?.items.map((i) => i.id)).toEqual(["a1", "a2"]);
     expect(groups.flatMap((g) => g.items).some((i) => i.id === "main")).toBe(
       false,
     );
