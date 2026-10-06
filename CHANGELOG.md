@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.47.0](https://github.com/mbryantms/folio/compare/v0.46.0...v0.47.0) (2026-10-06)
+
+
+### Added
+
+* **web:** drop the "User-set" label from external IDs and linked series ([#1061](https://github.com/mbryantms/folio/issues/1061)) ([620a595](https://github.com/mbryantms/folio/commit/620a595db52d8332e93b32f6657f7d78f056be5e))
+
 ## [0.46.0](https://github.com/mbryantms/folio/compare/v0.45.0...v0.46.0) (2026-10-06)
 
 
