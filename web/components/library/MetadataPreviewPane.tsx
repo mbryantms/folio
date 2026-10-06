@@ -119,11 +119,9 @@ function decisionBadge(decision: string) {
         </Badge>
       );
     case "blocked_by_user":
-      return (
-        <Badge variant="outline" className={statusTone("error")}>
-          User-set
-        </Badge>
-      );
+      // The current value was set by hand and stays; a neutral "Kept"
+      // says what the apply will do without flagging the value itself.
+      return <Badge variant="outline">Kept</Badge>;
     case "no_change":
       return (
         <Badge variant="outline" className="text-muted-foreground">

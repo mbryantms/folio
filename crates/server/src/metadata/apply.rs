@@ -2257,7 +2257,7 @@ async fn apply_external_ids(
                 outcome.external_ids_skipped.push(ExternalIdSkipped {
                     source: id.source.as_str().into(),
                     external_id: id.id.clone(),
-                    reason: "kept the user-set value".into(),
+                    reason: "kept the value already set on this item".into(),
                 })
             }
             Ok(_) => outcome.external_ids_added.push(ExternalIdAdded {

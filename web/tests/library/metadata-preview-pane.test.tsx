@@ -264,7 +264,7 @@ describe("<MetadataPreviewPane>", () => {
     );
     // The blocked_by_user row's checkbox renders the disabled attr —
     // non-admin can't opt the row in even though it's a real diff.
-    expect(html).toContain("User-set");
+    expect(html).toContain(">Kept<");
     expect(html).toMatch(
       /<input[^>]*disabled[^>]*type="checkbox"|<input[^>]*type="checkbox"[^>]*disabled/,
     );

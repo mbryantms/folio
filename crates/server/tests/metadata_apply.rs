@@ -1688,7 +1688,7 @@ async fn apply_series_use_theirs_replaces_user_external_id() {
         outcome
             .external_ids_skipped
             .iter()
-            .any(|s| s.source == "comicvine" && s.reason.contains("user-set")),
+            .any(|s| s.source == "comicvine" && s.reason.contains("already set")),
         "kept user value must be reported as skipped: {outcome:?}"
     );
     let row = cv_row().await;

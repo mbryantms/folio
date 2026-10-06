@@ -44,7 +44,6 @@ import {
   useDeleteExternalIdSeries,
 } from "@/lib/api/mutations";
 import { useExternalIdsIssue, useExternalIdsSeries } from "@/lib/api/queries";
-import { statusTone } from "@/lib/ui/status-tone";
 import type { ExternalIdRow } from "@/lib/api/types";
 
 const SOURCES: Array<{ value: string; label: string }> = [
@@ -188,13 +187,6 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-medium">{r.source_label}</span>
-                    {r.set_by === "user" && (
-                      <span
-                        className={`rounded px-1.5 py-0.5 text-xs ${statusTone("warning")}`}
-                      >
-                        User-set
-                      </span>
-                    )}
                   </div>
                   {r.external_url ? (
                     <a
@@ -243,8 +235,10 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
       //   LABEL (uppercase muted)
       //   [chip]   (clickable, opens external_url in a new tab)
       // The trash-can affordance becomes a tiny ghost button beside
-      // the chip; the User-set marker becomes a small outline badge
-      // sitting alongside.
+      // the chip. An id that is here is shown as-is: who linked it (you,
+      // a provider match, the file) is not labelled, so no id reads as
+      // less trustworthy than another. The precedence rule that keeps a
+      // manually linked id from being replaced still applies server-side.
       <>
         {query.isLoading ? (
           <div className="text-muted-foreground flex items-center gap-2 py-3">
@@ -282,11 +276,6 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
                       className="cursor-default font-normal"
                     >
                       {r.external_id}
-                    </Badge>
-                  )}
-                  {r.set_by === "user" && (
-                    <Badge variant="outline" className="font-normal">
-                      User-set
                     </Badge>
                   )}
                   <Button

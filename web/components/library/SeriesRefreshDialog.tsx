@@ -466,9 +466,6 @@ function MatchStep({
                   #{l.external_id}
                 </code>
               </span>
-              <Badge variant="outline" className="font-normal">
-                {l.set_by === "user" ? "set by you" : "from a match"}
-              </Badge>
             </li>
           ))}
         </ul>

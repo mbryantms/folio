@@ -2442,7 +2442,7 @@ pub async fn accept_provider(
         && u.external_id != main
     {
         out.main_note = Some(format!(
-            "kept your linked series #{} (user-set ids are never overwritten); change it under External IDs first",
+            "kept your linked series #{}; change it under External IDs first",
             u.external_id
         ));
         out.ranges_skipped = view.proposed_ranges;
@@ -2453,10 +2453,7 @@ pub async fn accept_provider(
     if let Some(main) = view.main_series_id.as_deref() {
         match user_row {
             Some(u) if u.external_id != main => {
-                out.main_note = Some(format!(
-                    "kept your linked series #{} (user-set ids are never overwritten)",
-                    u.external_id
-                ));
+                out.main_note = Some(format!("kept your linked series #{}", u.external_id));
             }
             Some(_) => {
                 out.main_note = Some("already your linked series".to_owned());

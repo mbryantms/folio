@@ -501,7 +501,10 @@ describe("<SeriesRefreshFlow>", () => {
     renderFlow();
     await heading(/Step 1 of 4: Series match/);
     expect(screen.getByText("#6211")).toBeTruthy();
-    expect(screen.getByText("set by you")).toBeTruthy();
+    // Linked ids are listed without a who-set-it label.
+    expect(screen.getByText("#1711")).toBeTruthy();
+    expect(screen.queryByText("set by you")).toBeNull();
+    expect(screen.queryByText("from a match")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Keep current match" }));
 
     await heading(/Step 2 of 4: Coverage/);
