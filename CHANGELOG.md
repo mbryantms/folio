@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.46.0](https://github.com/mbryantms/folio/compare/v0.45.0...v0.46.0) (2026-10-06)
+
+
+### Added
+
+* **metadata:** junction tables feed the issue page and the CSV read-cache for every write path ([#1059](https://github.com/mbryantms/folio/issues/1059)) ([f49b56b](https://github.com/mbryantms/folio/commit/f49b56b933c998295db7dbb287089cb6650d3a12))
+
 ## [0.45.0](https://github.com/mbryantms/folio/compare/v0.44.0...v0.45.0) (2026-10-06)
 
 
