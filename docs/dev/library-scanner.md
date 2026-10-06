@@ -1156,3 +1156,24 @@ markers, a saved-view CBL slot). Two recovery paths:
   `audit_log`. Wire `crate::audit::record` calls into `finalize_run`
   and the reconcile paths if/when scan history needs to satisfy the
   same audit trail as admin CRUD.
+
+## CSV name fields and generational suffixes
+
+ComicInfo's credit / character / team / location fields are flat
+comma-separated strings. `metadata_rollup::split_csv` splits them on `,`
+(or on `;` alone when the value contains one — the composer's escape for
+names that themselves contain commas, `"Capes, Inc."`). Taggers also write
+`"José Marzán, Jr."` and `"J. Jonah Jameson, Sr"`, so a comma piece that is
+*only* a generational suffix (`Jr` / `Sr` / `II` / `III` / `IV`, dotted or
+not) is re-attached to the piece before it and spelled the provider way
+(`"José Marzán Jr."`) — one person row shared by file-tagged and
+provider-synced credits. `V` and single letters are initials, not suffixes.
+
+Issues scanned before this rule carry the split rows (`"José Marzán"` +
+`"Jr."`). The admin Metadata dashboard's **Repair split names** backfill
+(`BackfillKind::NameSuffixes`, `POST /admin/metadata/name-suffix-backfill`)
+re-derives the junctions from the stored CSV columns for every issue whose
+fields match `metadata_rollup::SUFFIX_PIECE_RE`, honours the WP-2.5
+provenance skips (user- / provider-owned junctions stay), re-runs the
+series rollups, then deletes `person` / `character` / `team` / `location`
+rows that are a bare suffix and no longer referenced. No archive access.

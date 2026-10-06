@@ -31,6 +31,11 @@ pub enum BackfillKind {
     /// Derive the small (`@sm`) `srcset` cover variant from each issue's
     /// existing full cover (audit G9) — no archive access.
     CoverVariant,
+    /// Re-derive credits / characters / teams / locations for issues whose
+    /// ComicInfo CSV fields carry a comma-separated generational suffix
+    /// (`"José Marzán, Jr."`), which the pre-suffix-aware `split_csv` had
+    /// split into two entries; then prune the orphaned `Jr.` / `Sr.` rows.
+    NameSuffixes,
 }
 
 impl BackfillKind {
@@ -38,6 +43,7 @@ impl BackfillKind {
     pub fn as_str(self) -> &'static str {
         match self {
             BackfillKind::CoverPhash => "cover_phash",
+            BackfillKind::NameSuffixes => "name_suffixes",
             BackfillKind::VariantCover => "variant_cover",
             BackfillKind::CoverVariant => "cover_variant",
         }
@@ -60,6 +66,7 @@ pub async fn handle(job: BackfillJob, state: Data<AppState>) -> Result<(), Error
         BackfillKind::CoverPhash => drain_phash(&state).await,
         BackfillKind::VariantCover => drain_variant_covers(&state).await,
         BackfillKind::CoverVariant => drain_cover_variants(&state).await,
+        BackfillKind::NameSuffixes => drain_name_suffixes(&state).await,
     };
     tracing::info!(
         kind = job.kind.as_str(),
@@ -196,6 +203,39 @@ async fn drain_cover_variants(state: &AppState) -> (u64, u64) {
         }
     }
     (generated, skipped)
+}
+
+/// Returns `(issues rebuilt, issues skipped)` — skipped = every junction
+/// on the issue was protected by a user / provider provenance row.
+async fn drain_name_suffixes(state: &AppState) -> (u64, u64) {
+    use crate::library::scanner::metadata_rollup as rollup;
+    let mut rebuilt = 0u64;
+    let mut skipped = 0u64;
+    let mut cursor: Option<String> = None;
+    for _ in 0..MAX_DRAIN_ITERS {
+        match rollup::run_name_suffix_backfill_page(&state.db, cursor.take(), 200).await {
+            Ok((o, next)) => {
+                rebuilt += o.rebuilt as u64;
+                skipped += o.skipped as u64;
+                match next {
+                    Some(c) => cursor = Some(c),
+                    None => break,
+                }
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "name-suffix backfill: page failed");
+                break;
+            }
+        }
+    }
+    match rollup::prune_orphan_suffix_entities(&state.db).await {
+        Ok(n) => tracing::info!(
+            pruned = n,
+            "name-suffix backfill: orphan suffix rows pruned"
+        ),
+        Err(e) => tracing::warn!(error = %e, "name-suffix backfill: prune failed"),
+    }
+    (rebuilt, skipped)
 }
 
 /// Enqueue a backfill drain. Returns `false` only if the push itself fails.

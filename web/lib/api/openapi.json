@@ -1012,6 +1012,26 @@
         }
       }
     },
+    "/api/admin/metadata/name-suffix-backfill": {
+      "post": {
+        "operationId": "metadata_name_suffix_backfill",
+        "responses": {
+          "202": {
+            "description": "backfill job enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackfillEnqueuedResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/metadata/phash-backfill": {
       "post": {
         "operationId": "metadata_phash_backfill",
@@ -13026,7 +13046,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`cover_phash` | `variant_cover`."
+            "description": "`cover_phash` | `variant_cover` | `cover_variant` | `name_suffixes`."
           }
         }
       },

@@ -54,6 +54,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(run_phash_backfill))
         .routes(routes!(run_variant_cover_backfill))
         .routes(routes!(run_cover_variant_backfill))
+        .routes(routes!(run_name_suffix_backfill))
         .routes(routes!(list_auto_synced))
 }
 
@@ -1000,7 +1001,7 @@ fn resolve_apply_label(
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct BackfillEnqueuedResp {
     pub enqueued: bool,
-    /// `cover_phash` | `variant_cover`.
+    /// `cover_phash` | `variant_cover` | `cover_variant` | `name_suffixes`.
     pub kind: String,
 }
 
@@ -1117,6 +1118,33 @@ pub async fn run_cover_variant_backfill(
         &ctx,
         BackfillKind::CoverVariant,
         "admin.metadata.cover_variant_backfill",
+    )
+    .await
+}
+
+// ───────── /admin/metadata/name-suffix-backfill ─────────
+
+#[utoipa::path(
+    operation_id = "metadata_name_suffix_backfill",
+    post,
+    path = "/admin/metadata/name-suffix-backfill",
+    responses(
+        (status = 202, body = BackfillEnqueuedResp, description = "backfill job enqueued"),
+        (status = 403, description = "admin only"),
+    )
+)]
+#[handler]
+pub async fn run_name_suffix_backfill(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+) -> Response {
+    enqueue_backfill(
+        &app,
+        actor.id,
+        &ctx,
+        BackfillKind::NameSuffixes,
+        "admin.metadata.name_suffix_backfill",
     )
     .await
 }
