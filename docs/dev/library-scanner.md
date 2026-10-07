@@ -1165,7 +1165,7 @@ markers, a saved-view CBL slot). Two recovery paths:
   and the reconcile paths if/when scan history needs to satisfy the
   same audit trail as admin CRUD.
 
-## CSV name fields and generational suffixes
+## CSV name fields, generational suffixes and tagger ids
 
 ComicInfo's credit / character / team / location fields are flat
 comma-separated strings. `metadata_rollup::split_csv` splits them on `,`
@@ -1177,14 +1177,31 @@ not) is re-attached to the piece before it and spelled the provider way
 (`"José Marzán Jr."`) — one person row shared by file-tagged and
 provider-synced credits. `V` and single letters are initials, not suffixes.
 
-Issues scanned before this rule carry the split rows (`"José Marzán"` +
-`"Jr."`). The admin Metadata dashboard's **Repair split names** backfill
-(`BackfillKind::NameSuffixes`, `POST /admin/metadata/name-suffix-backfill`)
-re-derives the junctions from the stored CSV columns for every issue whose
-fields match `metadata_rollup::SUFFIX_PIECE_RE`, honours the WP-2.5
+Some taggers glue the provider's database id onto the name —
+`"John Doe [15487]"`. `split_csv` drops a trailing `[digits]` group at
+ingest (`metadata_rollup::strip_tagger_id`; `"Marvel [UK]"` is left alone),
+so the person row is `"John Doe"` and name-matches what ComicVine / Metron
+return. The ids themselves aren't kept: provider ids live in `external_ids`.
+
+Issues scanned before these rules carry the split rows (`"José Marzán"` +
+`"Jr."`) or the tagged names. The admin Metadata dashboard's **Repair
+names** backfill (`BackfillKind::NameSuffixes`, `POST
+/admin/metadata/name-suffix-backfill`) re-derives the junctions from the
+stored file metadata for every issue whose fields match
+`metadata_rollup::SUFFIX_PIECE_RE` or `TAGGER_ID_RE`, honours the WP-2.5
 provenance skips (user- / provider-owned junctions stay), re-runs the
 series rollups, then deletes `person` / `character` / `team` / `location`
-rows that are a bare suffix and no longer referenced. No archive access.
+rows that are a bare suffix or still tagged and no longer referenced. No
+archive access.
+
+The metadata preview and apply treat tagged names as a signal, not data:
+a junction whose current names carry tagger ids counts as *missing* in the
+fill-missing matrix (`metadata::diff::JunctionContents::low_quality`), so a
+provider's clean credits replace them without `replace_all`; and the
+count-shaped diff rows compare normalized name sets, not counts
+(`diff::issue_junction_signature` vs `detail_junction_signature`), so three
+tagged credits against three clean ones read as a change rather than
+"no change".
 
 Since the same change, the series rollup ends by rebuilding every issue's
 flat CSV columns from the junction tables

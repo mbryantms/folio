@@ -242,6 +242,35 @@ fn count_csv(csv: Option<&str>) -> usize {
         .unwrap_or(0)
 }
 
+/// Junction fields whose contents are names the diff can compare.
+fn is_named_junction(field: MetadataField) -> bool {
+    matches!(
+        field,
+        MetadataField::Credits
+            | MetadataField::Characters
+            | MetadataField::Teams
+            | MetadataField::Locations
+            | MetadataField::StoryArcs
+            | MetadataField::Tags
+            | MetadataField::Genres
+    )
+}
+
+/// The issue's current names for `field` are file-tagged junk
+/// (`"John Doe [15487]"`) — treat as missing so fill-missing replaces them.
+fn junction_low_quality(row: &issue::Model, field: MetadataField) -> bool {
+    use crate::metadata::diff::{csv_has_tagger_ids, issue_row_credits_tagged};
+    match field {
+        MetadataField::Credits => {
+            issue_row_credits_tagged(&crate::metadata::diff::CsvColumns::from(row))
+        }
+        MetadataField::Characters => row.characters.as_deref().is_some_and(csv_has_tagger_ids),
+        MetadataField::Teams => row.teams.as_deref().is_some_and(csv_has_tagger_ids),
+        MetadataField::Locations => row.locations.as_deref().is_some_and(csv_has_tagger_ids),
+        _ => false,
+    }
+}
+
 fn count_string(n: usize) -> Option<String> {
     match n {
         0 => None,
@@ -470,9 +499,26 @@ pub async fn compute_composite_diff(
                 .find(|d| d.ordinal == ord)
                 .and_then(|d| merge::field_value_as_string(&d.detail, field, scope))
         });
+        // Junctions display as counts but *classify* on contents: equal
+        // counts with different names ("John Doe [15487]" vs "John Doe")
+        // must read as a change, and file-tagged names count as missing.
+        let (classify_current, classify_incoming) = match (scope, issue_row.as_ref()) {
+            (MergeScope::Issue, Some(row)) if is_named_junction(field) => {
+                let cols = crate::metadata::diff::CsvColumns::from(row);
+                let current = crate::metadata::diff::issue_junction_signature(&cols, field)
+                    .filter(|_| !junction_low_quality(row, field));
+                let incoming = chosen_ordinal.and_then(|ord| {
+                    details.iter().find(|d| d.ordinal == ord).and_then(|d| {
+                        crate::metadata::diff::detail_junction_signature(&d.detail, field)
+                    })
+                });
+                (current, incoming)
+            }
+            _ => (current_value.clone(), chosen_value.clone()),
+        };
         let decision = classify_field(
-            current_value.as_deref(),
-            chosen_value.as_deref(),
+            classify_current.as_deref(),
+            classify_incoming.as_deref(),
             &provenance,
             field,
             &args,

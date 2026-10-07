@@ -815,7 +815,17 @@ pub struct SeriesView {
     /// the scanner from ComicInfo or by admins via `PATCH /series/{slug}`.
     pub comicvine_id: Option<i64>,
     pub metron_id: Option<i64>,
+    /// Every non-removed issue in the series — main run *and* specials.
     pub issue_count: Option<i64>,
+    /// Non-removed issues in the **main run** only (`special_type IS
+    /// NULL`). This is what `total_issues` (the publisher's `<Count>` /
+    /// `series.json` total) describes, so collection completeness compares
+    /// against this number, not `issue_count` — an annual on the shelf
+    /// must not make a 4-of-5 run read "5 / 5, complete".
+    pub main_issue_count: Option<i64>,
+    /// Non-removed annuals / one-shots / specials / TPBs (`special_type`
+    /// set). Rendered as "+N specials" next to the main-run count.
+    pub special_issue_count: Option<i64>,
     /// URL of the first issue's cover thumbnail. Null when no active issue exists.
     pub cover_url: Option<String>,
     /// RFC3339 timestamps from the series row.
@@ -981,6 +991,8 @@ impl From<series::Model> for SeriesView {
             comicvine_id: None,
             metron_id: None,
             issue_count: None,
+            main_issue_count: None,
+            special_issue_count: None,
             cover_url: None,
             created_at: m.created_at.to_rfc3339(),
             updated_at: m.updated_at.to_rfc3339(),
@@ -2349,23 +2361,7 @@ pub(crate) async fn hydrate_series(
     }
 
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let counts = issue::Entity::find()
-        .filter(issue::Column::SeriesId.is_in(series_ids.clone()))
-        .filter(issue::Column::RemovedAt.is_null())
-        .select_only()
-        .column(issue::Column::SeriesId)
-        .column_as(
-            Expr::from(Func::count(Expr::col(issue::Column::Id))),
-            "issue_count",
-        )
-        .group_by(issue::Column::SeriesId)
-        .into_model::<SeriesIssueCountRow>()
-        .all(&app.db)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|row| (row.series_id, row.issue_count))
-        .collect::<HashMap<_, _>>();
+    let counts = fetch_issue_counts(&app.db, &series_ids).await;
 
     let mut covers: HashMap<Uuid, String> = HashMap::new();
     // Prefer issue #1 as the series cover even when a preceding
@@ -2441,7 +2437,9 @@ pub(crate) async fn hydrate_series(
         .map(|s| {
             let series_id = s.id;
             let mut v = SeriesView::from(s);
-            v.issue_count = counts.get(&series_id).copied();
+            if let Some(c) = counts.get(&series_id) {
+                c.apply_to(&mut v);
+            }
             v.cover_url = covers
                 .get(&series_id)
                 .map(|id| format!("/issues/{id}/pages/0/thumb"));
@@ -2643,10 +2641,57 @@ pub(crate) fn assess_issue_view(
     report
 }
 
-#[derive(Debug, FromQueryResult)]
+/// Per-series issue tallies: everything on the shelf, and the main run on
+/// its own. One grouped query serves both the list hydration and
+/// `get_one` so the card on `/library` and the detail page agree.
+#[derive(Debug, Clone, Copy, FromQueryResult)]
 struct SeriesIssueCountRow {
     series_id: Uuid,
+    /// Every non-removed issue (main run + specials).
     issue_count: i64,
+    /// Non-removed issues with `special_type IS NULL`.
+    main_issue_count: i64,
+}
+
+impl SeriesIssueCountRow {
+    fn apply_to(self, v: &mut SeriesView) {
+        v.issue_count = Some(self.issue_count);
+        v.main_issue_count = Some(self.main_issue_count);
+        v.special_issue_count = Some(self.issue_count - self.main_issue_count);
+    }
+}
+
+/// `COUNT(*)` and `COUNT(*) FILTER (WHERE special_type IS NULL)` per
+/// series over non-removed issues. Series with no issues are absent from
+/// the map (callers leave the view's counts `None`, as before).
+async fn fetch_issue_counts(
+    db: &sea_orm::DatabaseConnection,
+    series_ids: &[Uuid],
+) -> HashMap<Uuid, SeriesIssueCountRow> {
+    if series_ids.is_empty() {
+        return HashMap::new();
+    }
+    issue::Entity::find()
+        .filter(issue::Column::SeriesId.is_in(series_ids.iter().copied()))
+        .filter(issue::Column::RemovedAt.is_null())
+        .select_only()
+        .column(issue::Column::SeriesId)
+        .column_as(
+            Expr::from(Func::count(Expr::col(issue::Column::Id))),
+            "issue_count",
+        )
+        .column_as(
+            Expr::cust("COUNT(*) FILTER (WHERE special_type IS NULL)"),
+            "main_issue_count",
+        )
+        .group_by(issue::Column::SeriesId)
+        .into_model::<SeriesIssueCountRow>()
+        .all(db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| (row.series_id, row))
+        .collect()
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -3296,12 +3341,12 @@ pub async fn get_one(
     // `RemovedAt.is_null()` keeps soft-deleted and confirmed-removed issues
     // out of the count, cover and writer aggregation — they belong on the
     // library's Removed tab, not on the series detail page.
-    let count = issue::Entity::find()
-        .filter(issue::Column::SeriesId.eq(row.id))
-        .filter(issue::Column::RemovedAt.is_null())
-        .count(&app.db)
+    // Same grouped tally as `hydrate_series` (total + main-run), so the
+    // "Issues" card and the library grid dot agree on completeness.
+    let counts = fetch_issue_counts(&app.db, std::slice::from_ref(&row.id))
         .await
-        .ok();
+        .remove(&row.id);
+    let count = counts.map(|c| c.issue_count as u64);
     // Match `hydrate_series`'s cover-pick rule: main run before
     // specials, numbered (>= 1) before preludes, then natural
     // sort_number ascending. Keeps the detail-page hero cover consistent with what
@@ -3392,7 +3437,9 @@ pub async fn get_one(
             .iter()
             .find_map(|r| r.summary.clone().filter(|s| !s.trim().is_empty()));
     }
-    v.issue_count = count.map(|c| c as i64);
+    if let Some(c) = counts {
+        c.apply_to(&mut v);
+    }
     v.cover_url = cover_issue.map(|i| format!("/issues/{}/pages/0/thumb", i.id));
     v.writers = metadata_facets.credits_for("writer");
     v.pencillers = metadata_facets.credits_for("penciller");

@@ -1500,9 +1500,17 @@ pub(crate) async fn write_issue_fields(
 
     // Junctions.
     let rebuild_batch = CsvRebuildBatch::new();
+    // A junction whose current names are file-tagged junk (`"John Doe
+    // [15487]"` — a tagger's database id glued onto the name) counts as
+    // *missing* here: fill-missing replaces it with the provider's clean
+    // names instead of protecting it. Provenance still wins — a user pin
+    // blocks as usual via `should_apply`.
     if !detail.credits.is_empty()
         && should_apply(
-            issue_row_has_credits(row),
+            issue_row_has_credits(row)
+                && !crate::metadata::diff::issue_row_credits_tagged(
+                    &crate::metadata::diff::CsvColumns::from(row),
+                ),
             &provenance,
             MetadataField::Credits,
             &args,
@@ -1533,9 +1541,7 @@ pub(crate) async fn write_issue_fields(
 
     if !detail.characters.is_empty()
         && should_apply(
-            row.characters
-                .as_deref()
-                .is_some_and(|s| !s.trim().is_empty()),
+            csv_present_and_clean(row.characters.as_deref()),
             &provenance,
             MetadataField::Characters,
             &args,
@@ -1565,7 +1571,7 @@ pub(crate) async fn write_issue_fields(
 
     if !detail.teams.is_empty()
         && should_apply(
-            row.teams.as_deref().is_some_and(|s| !s.trim().is_empty()),
+            csv_present_and_clean(row.teams.as_deref()),
             &provenance,
             MetadataField::Teams,
             &args,
@@ -1599,9 +1605,7 @@ pub(crate) async fn write_issue_fields(
 
     if !detail.locations.is_empty()
         && should_apply(
-            row.locations
-                .as_deref()
-                .is_some_and(|s| !s.trim().is_empty()),
+            csv_present_and_clean(row.locations.as_deref()),
             &provenance,
             MetadataField::Locations,
             &args,
@@ -2272,6 +2276,12 @@ async fn apply_external_ids(
         }
     }
     Ok(())
+}
+
+/// Non-empty and free of tagger ids — the "has a value worth protecting"
+/// test for the name-shaped junction columns.
+fn csv_present_and_clean(csv: Option<&str>) -> bool {
+    csv.is_some_and(|s| !s.trim().is_empty() && !crate::metadata::diff::csv_has_tagger_ids(s))
 }
 
 fn issue_row_has_credits(row: &issue::Model) -> bool {

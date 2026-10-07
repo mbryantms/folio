@@ -202,7 +202,10 @@ export function seriesGroups(p: ProviderCoverageView): SeriesGroup[] {
   return groups;
 }
 
-function candidateLabel(c: CoverageCandidateView | undefined, id: string) {
+export function candidateLabel(
+  c: CoverageCandidateView | undefined,
+  id: string,
+) {
   if (!c?.name) return `#${id}`;
   return c.year != null ? `${c.name} (${c.year})` : c.name;
 }
@@ -657,7 +660,7 @@ function SeriesLine({
   );
 }
 
-function GroupedList({
+export function GroupedList({
   p,
   local,
 }: {

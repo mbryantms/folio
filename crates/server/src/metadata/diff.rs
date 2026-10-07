@@ -419,76 +419,79 @@ pub async fn compute_issue_diff(state: &AppState, args: ApplyArgs) -> Result<Dif
                 )
         })
         .count();
+    // Each junction row carries the *contents* comparison too: equal
+    // counts used to read as "no change", which hid a provider's clean
+    // credits behind file-tagged ones of the same length (`"John Doe
+    // [15487]"` ×3 vs `"John Doe"` ×3). Compare normalized name sets.
     push_count_row(
         &mut rows,
         MetadataField::Credits,
         "Credits",
         count_credits(&row),
         proposed_credits_count,
+        JunctionContents {
+            same: issue_junction_signature(&CsvColumns::from(&row), MetadataField::Credits)
+                == detail_junction_signature(&detail, MetadataField::Credits),
+            low_quality: issue_row_credits_tagged(&CsvColumns::from(&row)),
+        },
         &provenance,
         &provenance_full,
         &args,
     );
-    push_count_row(
-        &mut rows,
-        MetadataField::Characters,
-        "Characters",
-        count_csv(row.characters.as_deref()),
-        detail.characters.len(),
-        &provenance,
-        &provenance_full,
-        &args,
-    );
-    push_count_row(
-        &mut rows,
-        MetadataField::Teams,
-        "Teams",
-        count_csv(row.teams.as_deref()),
-        detail.teams.len(),
-        &provenance,
-        &provenance_full,
-        &args,
-    );
-    push_count_row(
-        &mut rows,
-        MetadataField::Locations,
-        "Locations",
-        count_csv(row.locations.as_deref()),
-        detail.locations.len(),
-        &provenance,
-        &provenance_full,
-        &args,
-    );
-    push_count_row(
-        &mut rows,
-        MetadataField::StoryArcs,
-        "Story arcs",
-        count_csv(row.story_arc.as_deref()),
-        detail.story_arcs.len(),
-        &provenance,
-        &provenance_full,
-        &args,
-    );
-    push_count_row(
-        &mut rows,
-        MetadataField::Tags,
-        "Tags",
-        count_csv(row.tags.as_deref()),
-        detail.tags.len(),
-        &provenance,
-        &provenance_full,
-        &args,
-    );
-    push_count_row(
-        &mut rows,
-        MetadataField::Genres,
-        "Genres",
-        count_csv(row.genre.as_deref()),
-        detail.genres.len(),
-        &provenance,
-        &provenance_full,
-        &args,
-    );
+    for (field, label, csv, incoming_count) in [
+        (
+            MetadataField::Characters,
+            "Characters",
+            row.characters.as_deref(),
+            detail.characters.len(),
+        ),
+        (
+            MetadataField::Teams,
+            "Teams",
+            row.teams.as_deref(),
+            detail.teams.len(),
+        ),
+        (
+            MetadataField::Locations,
+            "Locations",
+            row.locations.as_deref(),
+            detail.locations.len(),
+        ),
+        (
+            MetadataField::StoryArcs,
+            "Story arcs",
+            row.story_arc.as_deref(),
+            detail.story_arcs.len(),
+        ),
+        (
+            MetadataField::Tags,
+            "Tags",
+            row.tags.as_deref(),
+            detail.tags.len(),
+        ),
+        (
+            MetadataField::Genres,
+            "Genres",
+            row.genre.as_deref(),
+            detail.genres.len(),
+        ),
+    ] {
+        push_count_row(
+            &mut rows,
+            field,
+            label,
+            count_csv(csv),
+            incoming_count,
+            JunctionContents {
+                same: issue_junction_signature(&CsvColumns::from(&row), field)
+                    == detail_junction_signature(&detail, field),
+                low_quality: csv.is_some_and(csv_has_tagger_ids),
+            },
+            &provenance,
+            &provenance_full,
+            &args,
+        );
+    }
     // Variant covers — count the active variant rows in `issue_cover`
     // and the provider's non-empty `variants` Vec. The composer skips
     // entries with no image URL so we match that filter here too.
@@ -504,6 +507,11 @@ pub async fn compute_issue_diff(state: &AppState, args: ApplyArgs) -> Result<Dif
         "Variant covers",
         current_variant_count,
         incoming_variant_count,
+        // Variant rows aren't name-shaped; equal counts stay the heuristic.
+        JunctionContents {
+            same: current_variant_count == incoming_variant_count,
+            low_quality: false,
+        },
         &provenance,
         &provenance_full,
         &args,
@@ -533,14 +541,25 @@ pub async fn compute_issue_diff(state: &AppState, args: ApplyArgs) -> Result<Dif
 
 // ───────── helpers ─────────
 
+/// How a junction's current contents relate to the proposal — what the
+/// count-shaped diff row can't tell from the two numbers alone.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct JunctionContents {
+    /// Normalized name sets are equal: nothing to write even in
+    /// `replace_all`.
+    pub same: bool,
+    /// The current names are file-tagged junk (`"John Doe [15487]"`): the
+    /// field counts as *missing* for the fill-missing matrix, so a
+    /// provider's clean names replace it without `replace_all`.
+    pub low_quality: bool,
+}
+
 /// Synthetic diff row for an issue's junction / variant fields. Counts
-/// stand in for the per-row contents (which would be too verbose for a
-/// pre-apply preview); the user-facing decision logic mirrors
-/// [`crate::metadata::apply::classify_field`] except `no_change` is a
-/// heuristic — equal counts likely means equal contents, but the
-/// composer overwrites the junction anyway in `replace_all` mode if
-/// names differ. The row is still actionable in that case via the
-/// per-row checkbox.
+/// stand in for the per-row contents in the *display* (names would be too
+/// verbose for a pre-apply preview), but the decision compares the actual
+/// normalized name sets ([`JunctionContents::same`]) — equal counts with
+/// different names is a change, not `no_change`. Mirrors
+/// [`crate::metadata::apply::classify_field`] otherwise.
 #[allow(clippy::too_many_arguments)]
 fn push_count_row(
     rows: &mut Vec<ScalarDiffRow>,
@@ -548,6 +567,7 @@ fn push_count_row(
     label: &str,
     current_count: usize,
     incoming_count: usize,
+    contents: JunctionContents,
     provenance: &HashMap<String, String>,
     provenance_full: &HashMap<String, field_provenance::Model>,
     args: &ApplyArgs,
@@ -557,12 +577,9 @@ fn push_count_row(
         crate::metadata::apply::DiffDecision::NoIncomingValue
     } else if user_set && !args.override_user_edits {
         crate::metadata::apply::DiffDecision::BlockedByUser
-    } else if current_count == 0 {
+    } else if current_count == 0 || contents.low_quality {
         crate::metadata::apply::DiffDecision::WouldFill
-    } else if current_count == incoming_count {
-        // Heuristic: equal counts likely = same contents. Names might
-        // differ but the diff isn't deep enough to detect that. Users
-        // can still toggle on the row to force a rewrite.
+    } else if contents.same {
         crate::metadata::apply::DiffDecision::NoChange
     } else if matches!(args.mode, crate::metadata::apply::ApplyMode::ReplaceAll) {
         crate::metadata::apply::DiffDecision::WouldReplace
@@ -611,6 +628,178 @@ fn count_credits(row: &issue::Model) -> usize {
         + count_csv(row.cover_artist.as_deref())
         + count_csv(row.editor.as_deref())
         + count_csv(row.translator.as_deref())
+}
+
+// ───────── junction contents ─────────
+
+/// Trim + lowercase, the same key `writers::normalize` uses for person /
+/// character dedupe, so the signature agrees with what an apply would
+/// upsert.
+fn norm_name(s: &str) -> String {
+    s.trim().to_lowercase()
+}
+
+/// The name-shaped CSV read-cache columns of an issue row — the slice of
+/// `issue::Model` the junction comparison reads, borrowed so unit tests
+/// can build one without a full row.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct CsvColumns<'a> {
+    pub writer: Option<&'a str>,
+    pub penciller: Option<&'a str>,
+    pub inker: Option<&'a str>,
+    pub colorist: Option<&'a str>,
+    pub letterer: Option<&'a str>,
+    pub cover_artist: Option<&'a str>,
+    pub editor: Option<&'a str>,
+    pub translator: Option<&'a str>,
+    pub characters: Option<&'a str>,
+    pub teams: Option<&'a str>,
+    pub locations: Option<&'a str>,
+    pub story_arc: Option<&'a str>,
+    pub tags: Option<&'a str>,
+    pub genre: Option<&'a str>,
+}
+
+impl<'a> From<&'a issue::Model> for CsvColumns<'a> {
+    fn from(r: &'a issue::Model) -> Self {
+        Self {
+            writer: r.writer.as_deref(),
+            penciller: r.penciller.as_deref(),
+            inker: r.inker.as_deref(),
+            colorist: r.colorist.as_deref(),
+            letterer: r.letterer.as_deref(),
+            cover_artist: r.cover_artist.as_deref(),
+            editor: r.editor.as_deref(),
+            translator: r.translator.as_deref(),
+            characters: r.characters.as_deref(),
+            teams: r.teams.as_deref(),
+            locations: r.locations.as_deref(),
+            story_arc: r.story_arc.as_deref(),
+            tags: r.tags.as_deref(),
+            genre: r.genre.as_deref(),
+        }
+    }
+}
+
+impl CsvColumns<'_> {
+    /// Role columns keyed by the lowercased canonical ComicInfo role
+    /// (`coverartist`, not `cover_artist`) so provider roles compare
+    /// against the same key.
+    fn credit_columns(&self) -> [(&'static str, Option<&str>); 8] {
+        [
+            ("writer", self.writer),
+            ("penciller", self.penciller),
+            ("inker", self.inker),
+            ("colorist", self.colorist),
+            ("letterer", self.letterer),
+            ("coverartist", self.cover_artist),
+            ("editor", self.editor),
+            ("translator", self.translator),
+        ]
+    }
+}
+
+/// Any role CSV column on the issue carries a tagger id.
+pub(crate) fn issue_row_credits_tagged(cols: &CsvColumns<'_>) -> bool {
+    cols.credit_columns()
+        .iter()
+        .any(|(_, csv)| csv.is_some_and(csv_has_tagger_ids))
+}
+
+/// Does this CSV column carry a tagger id (`"John Doe [15487]"`)?
+pub(crate) fn csv_has_tagger_ids(csv: &str) -> bool {
+    crate::library::scanner::metadata_rollup::csv_has_tagger_id(csv)
+}
+
+/// Separator between entries of a signature — never part of a name.
+const SIG_SEP: char = '\u{1f}';
+
+/// The issue's current names for a junction field, as a sorted, normalized
+/// signature (`"role|name"` for credits, bare names otherwise). `None`
+/// when the column is empty. The CSV read-cache mirrors the junction
+/// (`writers::rebuild_series_issue_csv_cache`), so reading it here costs
+/// no extra query; names go through the scanner's `split_csv`, so a
+/// stale tagger id is dropped before comparing.
+pub(crate) fn issue_junction_signature(
+    cols: &CsvColumns<'_>,
+    field: MetadataField,
+) -> Option<String> {
+    use crate::library::scanner::metadata_rollup::split_csv;
+    let mut set: std::collections::BTreeSet<String> = Default::default();
+    match field {
+        MetadataField::Credits => {
+            for (role, csv) in cols.credit_columns() {
+                for name in csv.map(split_csv).unwrap_or_default() {
+                    set.insert(format!("{role}|{}", norm_name(&name)));
+                }
+            }
+        }
+        _ => {
+            let csv = match field {
+                MetadataField::Characters => cols.characters,
+                MetadataField::Teams => cols.teams,
+                MetadataField::Locations => cols.locations,
+                MetadataField::StoryArcs => cols.story_arc,
+                MetadataField::Tags => cols.tags,
+                MetadataField::Genres => cols.genre,
+                _ => return None,
+            };
+            for name in csv.map(split_csv).unwrap_or_default() {
+                set.insert(norm_name(&name));
+            }
+        }
+    }
+    signature(set)
+}
+
+/// The proposal's names for a junction field, in the same shape as
+/// [`issue_junction_signature`]. Credits keep only the roles ComicInfo can
+/// represent (the same filter the proposed count uses) and key by the
+/// canonical role, so `"cover"` and `"CoverArtist"` compare equal.
+pub(crate) fn detail_junction_signature(
+    detail: &crate::metadata::provider::GenericMetadata,
+    field: MetadataField,
+) -> Option<String> {
+    let mut set: std::collections::BTreeSet<String> = Default::default();
+    match field {
+        MetadataField::Credits => {
+            for c in &detail.credits {
+                let canonical = crate::metadata::provider::canonicalize_role(&c.role).or({
+                    match c.role.as_str() {
+                        "Writer" | "Penciller" | "Inker" | "Colorist" | "Letterer"
+                        | "CoverArtist" | "Editor" | "Translator" => Some(c.role.as_str()),
+                        _ => None,
+                    }
+                });
+                if let Some(role) = canonical {
+                    set.insert(format!("{}|{}", role.to_lowercase(), norm_name(&c.name)));
+                }
+            }
+        }
+        MetadataField::Characters => {
+            set.extend(detail.characters.iter().map(|e| norm_name(&e.name)));
+        }
+        MetadataField::Teams => set.extend(detail.teams.iter().map(|e| norm_name(&e.name))),
+        MetadataField::Locations => {
+            set.extend(detail.locations.iter().map(|e| norm_name(&e.name)));
+        }
+        MetadataField::StoryArcs => {
+            set.extend(detail.story_arcs.iter().map(|e| norm_name(&e.name)));
+        }
+        MetadataField::Tags => set.extend(detail.tags.iter().map(|s| norm_name(s))),
+        MetadataField::Genres => set.extend(detail.genres.iter().map(|s| norm_name(s))),
+        _ => return None,
+    }
+    set.retain(|s| !s.is_empty() && !s.ends_with('|'));
+    signature(set)
+}
+
+fn signature(set: std::collections::BTreeSet<String>) -> Option<String> {
+    (!set.is_empty()).then(|| {
+        set.into_iter()
+            .collect::<Vec<_>>()
+            .join(&SIG_SEP.to_string())
+    })
 }
 
 /// Count active variant cover rows in `issue_cover` for the issue.
@@ -760,6 +949,128 @@ mod tests {
             selected_fields: None,
             override_external_id_sources: std::collections::HashSet::new(),
         }
+    }
+
+    fn credit(name: &str, role: &str) -> crate::metadata::provider::CreditCandidate {
+        crate::metadata::provider::CreditCandidate {
+            name: name.into(),
+            role: role.into(),
+            ordinal: None,
+            identifiers: vec![],
+        }
+    }
+
+    #[test]
+    fn junction_signatures_compare_names_not_counts() {
+        let row = CsvColumns {
+            writer: Some("John Doe [15487]"),
+            cover_artist: Some("Jane Roe"),
+            characters: Some("Batman [1699], Martian Manhunter"),
+            ..Default::default()
+        };
+        assert!(issue_row_credits_tagged(&row));
+        assert!(csv_has_tagger_ids(row.characters.unwrap()));
+
+        let detail = crate::metadata::provider::GenericMetadata {
+            credits: vec![
+                credit("john doe", "Writer"),
+                credit("Jane Roe", "cover"),
+                // Not a ComicInfo role: ignored, as in the proposed count.
+                credit("Someone", "journalist"),
+            ],
+            characters: vec![
+                crate::metadata::provider::EntityCandidate {
+                    name: "Martian Manhunter".into(),
+                    identifiers: vec![],
+                    is_first_appearance: false,
+                    died_in_issue: None,
+                    disbanded_in_issue: None,
+                    position_in_arc: None,
+                },
+                crate::metadata::provider::EntityCandidate {
+                    name: "BATMAN".into(),
+                    identifiers: vec![],
+                    is_first_appearance: false,
+                    died_in_issue: None,
+                    disbanded_in_issue: None,
+                    position_in_arc: None,
+                },
+            ],
+            ..Default::default()
+        };
+        // The tagger id is dropped before comparing, roles canonicalize,
+        // case and order don't matter: same contents.
+        assert_eq!(
+            issue_junction_signature(&row, MetadataField::Credits),
+            detail_junction_signature(&detail, MetadataField::Credits)
+        );
+        assert_eq!(
+            issue_junction_signature(&row, MetadataField::Characters),
+            detail_junction_signature(&detail, MetadataField::Characters)
+        );
+        // Same count, different person: a change.
+        let other = crate::metadata::provider::GenericMetadata {
+            credits: vec![
+                credit("John Doe", "Writer"),
+                credit("Someone Else", "cover"),
+            ],
+            ..Default::default()
+        };
+        assert_ne!(
+            issue_junction_signature(&row, MetadataField::Credits),
+            detail_junction_signature(&other, MetadataField::Credits)
+        );
+        // Empty either side is None.
+        assert_eq!(issue_junction_signature(&row, MetadataField::Teams), None);
+        assert_eq!(
+            detail_junction_signature(&other, MetadataField::Teams),
+            None
+        );
+    }
+
+    #[test]
+    fn count_row_decides_on_contents_and_tagged_names() {
+        use crate::metadata::apply::ApplyMode;
+        let prov = HashMap::new();
+        let full = HashMap::new();
+        let decide = |mode, contents| {
+            let mut rows = Vec::new();
+            push_count_row(
+                &mut rows,
+                MetadataField::Credits,
+                "Credits",
+                3,
+                3,
+                contents,
+                &prov,
+                &full,
+                &make_args(mode, false),
+            );
+            rows.pop().unwrap().decision
+        };
+        let same = JunctionContents {
+            same: true,
+            low_quality: false,
+        };
+        let differ = JunctionContents {
+            same: false,
+            low_quality: false,
+        };
+        let tagged = JunctionContents {
+            same: false,
+            low_quality: true,
+        };
+        assert_eq!(decide(ApplyMode::FillMissing, same), "no_change");
+        assert_eq!(decide(ApplyMode::ReplaceAll, same), "no_change");
+        // Equal counts, different names: no longer "no change".
+        assert_eq!(
+            decide(ApplyMode::FillMissing, differ),
+            "skipped_fill_missing_has_value"
+        );
+        assert_eq!(decide(ApplyMode::ReplaceAll, differ), "would_replace");
+        // Tagged names count as missing in either mode.
+        assert_eq!(decide(ApplyMode::FillMissing, tagged), "would_fill");
+        assert_eq!(decide(ApplyMode::ReplaceAll, tagged), "would_fill");
     }
 
     #[test]

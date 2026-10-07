@@ -28996,7 +28996,8 @@
               "integer",
               "null"
             ],
-            "format": "int64"
+            "format": "int64",
+            "description": "Every non-removed issue in the series — main run *and* specials."
           },
           "language_code": {
             "type": "string"
@@ -29035,6 +29036,14 @@
             "items": {
               "type": "string"
             }
+          },
+          "main_issue_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Non-removed issues in the **main run** only (`special_type IS\nNULL`). This is what `total_issues` (the publisher's `<Count>` /\n`series.json` total) describes, so collection completeness compares\nagainst this number, not `issue_count` — an annual on the shelf\nmust not make a 4-of-5 run read \"5 / 5, complete\"."
           },
           "metadata_completeness": {
             "oneOf": [
@@ -29122,6 +29131,14 @@
               "null"
             ],
             "description": "Search-result excerpt with `<mark>…</mark>` tags around matched\nterms. Populated only on search-mode list responses; `None`\neverywhere else. The frontend renders this as HTML with a small\nallowlist sanitiser so future field changes can't introduce\nXSS surface area."
+          },
+          "special_issue_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Non-removed annuals / one-shots / specials / TPBs (`special_type`\nset). Rendered as \"+N specials\" next to the main-run count."
           },
           "status": {
             "type": "string"

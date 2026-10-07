@@ -34,7 +34,9 @@ pub enum BackfillKind {
     /// Re-derive credits / characters / teams / locations for issues whose
     /// ComicInfo CSV fields carry a comma-separated generational suffix
     /// (`"José Marzán, Jr."`), which the pre-suffix-aware `split_csv` had
-    /// split into two entries; then prune the orphaned `Jr.` / `Sr.` rows.
+    /// split into two entries, or a tagger id (`"John Doe [15487]"`) that
+    /// `split_csv` now strips; then prune the orphaned `Jr.` / `[15487]`
+    /// rows. The kind keeps its original name — it's the wire value.
     NameSuffixes,
     /// Rebuild every issue's CSV read-cache columns from the junction
     /// tables (one set-based UPDATE per series) — the catch-up for issues

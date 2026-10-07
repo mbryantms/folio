@@ -28,7 +28,7 @@ import type { SeriesResumeView, SeriesView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { statusToneDot, statusToneSolid } from "@/lib/ui/status-tone";
 import { formatPublicationStatus } from "@/lib/format";
-import { collectionStatus } from "@/lib/series-status";
+import { collectionStatus, collectionTooltip } from "@/lib/series-status";
 import { seriesUrl } from "@/lib/urls";
 import { useShareLink } from "@/lib/ui/use-share-link";
 
@@ -336,12 +336,7 @@ function CollectionDot({ series }: { series: SeriesView }) {
   const dotPref = useCoverCollectionDot();
   const state = collectionStatus(series);
   if (!state || !dotPref.enabled) return null;
-  const have = series.issue_count ?? 0;
-  const total = series.total_issues ?? 0;
-  const tooltip =
-    state === "complete"
-      ? `Complete: ${have} of ${total} issues`
-      : `${have} of ${total} issues`;
+  const tooltip = collectionTooltip(series);
   return (
     <span
       title={tooltip}
