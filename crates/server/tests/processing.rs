@@ -1236,6 +1236,48 @@ async fn rollup_skipped_on_no_change_rescan() {
     );
 }
 
+/// A file that isn't a readable archive at all (no container magic, not a
+/// zip) is a different problem from a bad `ComicInfo.xml` and gets its own
+/// kind — `MalformedArchive` — so the operator isn't told to re-tag a file
+/// that can't be opened.
+#[tokio::test]
+async fn corrupt_archive_surfaces_malformed_archive_not_comicinfo() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Corrupt (2025)");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("Corrupt 001.cbz"),
+        b"definitely not a zip, rar, 7z or tar",
+    )
+    .unwrap();
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    let stats = scanner::scan_library(&state, lib_id)
+        .await
+        .expect("scan succeeds");
+    assert_eq!(stats.files_malformed, 1, "{stats:?}");
+
+    let rows = HealthEntity::find().all(&state.db).await.unwrap();
+    let kinds: Vec<&str> = rows.iter().map(|r| r.kind.as_str()).collect();
+    assert!(
+        kinds.contains(&"MalformedArchive"),
+        "expected a MalformedArchive row: {kinds:?}"
+    );
+    assert!(
+        !kinds.contains(&"MalformedComicInfo"),
+        "a corrupt container must not be blamed on ComicInfo: {kinds:?}"
+    );
+    let row = rows.iter().find(|r| r.kind == "MalformedArchive").unwrap();
+    assert_eq!(row.severity, "error");
+    assert!(
+        row.payload.to_string().contains("Corrupt 001"),
+        "{}",
+        row.payload
+    );
+}
+
 /// CQ-TEST-3 (audit 2026-07): the tolerate-and-surface contract for the
 /// most common corruption — a malformed `ComicInfo.xml` — verified through
 /// a REAL scan: the scan succeeds (other files ingest), the broken file

@@ -26,8 +26,14 @@
 //!
 //! The container decides the decoder, not the extension: a `.cb7` that is
 //! really a RAR converts through the RAR reader and vice versa. The
-//! *extension* decides which per-library opt-in gates the conversion (the
-//! callers check that before calling in here).
+//! *container* also decides which per-library opt-in gates the conversion
+//! (the callers check that before calling in here): a RAR named `.cbz` is
+//! gated by `auto_convert_cbr_on_scan` exactly like a RAR named `.cbr`.
+//! Such a mislabeled file converts **in place** — the destination is its
+//! own path, so the original survives as `<name>.cbz.bak`.
+//!
+//! Detection itself lives in [`archive::container`] so this converter, the
+//! archive reader dispatch and the page-server cache can never disagree.
 //!
 //! The RAR path mirrors the page editor's CBR branch
 //! ([`crate::jobs::archive_edit::edit_one_issue`]) minus the page ops.
@@ -36,6 +42,7 @@ use crate::archive_rewrite::{self, RewriteError};
 use archive::cb7::Cb7;
 use archive::cbr::Cbr;
 use archive::comic_archive::ComicArchive;
+use archive::container::{Container, detect_container};
 use archive::{ArchiveLimits, cbz_write};
 use std::path::{Path, PathBuf};
 
@@ -52,37 +59,6 @@ pub enum CbrConvertError {
     UnknownContainer,
     #[error(transparent)]
     Rewrite(#[from] RewriteError),
-}
-
-/// What the file actually is, by magic bytes — independent of its extension.
-enum Container {
-    Zip,
-    Rar,
-    SevenZ,
-    Unknown,
-}
-
-/// Sniff the leading magic bytes. ZIP: `PK\x03\x04` / `PK\x05\x06` (empty) /
-/// `PK\x07\x08` (spanned). RAR: `Rar!\x1a\x07` (covers RAR4 and RAR5). 7z:
-/// `7z\xBC\xAF\x27\x1C`.
-fn detect_container(src: &Path) -> Result<Container, std::io::Error> {
-    use std::io::Read;
-    let mut head = [0u8; 8];
-    let mut f = std::fs::File::open(src)?;
-    let n = f.read(&mut head)?;
-    let head = &head[..n];
-    if head.starts_with(b"PK\x03\x04")
-        || head.starts_with(b"PK\x05\x06")
-        || head.starts_with(b"PK\x07\x08")
-    {
-        Ok(Container::Zip)
-    } else if head.starts_with(b"Rar!\x1a\x07") {
-        Ok(Container::Rar)
-    } else if head.starts_with(b"7z\xBC\xAF\x27\x1C") {
-        Ok(Container::SevenZ)
-    } else {
-        Ok(Container::Unknown)
-    }
 }
 
 /// Convert `src` (a `.cbr`) into a sibling `.cbz`. Returns the new `.cbz`
@@ -102,7 +78,12 @@ pub fn convert_cb7_to_cbz(src: &Path, limits: ArchiveLimits) -> Result<PathBuf, 
 
 fn convert_to_cbz(src: &Path, limits: ArchiveLimits) -> Result<PathBuf, CbrConvertError> {
     let dst = src.with_extension("cbz");
-    if dst.exists() {
+    // A RAR / 7z already *named* `.cbz` (the extension lied) converts in
+    // place: the destination is the source path itself, so the twin check
+    // doesn't apply and `convert_atomic` parks the original at
+    // `<name>.cbz.bak` before the fresh ZIP takes its name.
+    let in_place = dst == src;
+    if !in_place && dst.exists() {
         return Err(CbrConvertError::DestinationExists(dst));
     }
     match detect_container(src).map_err(RewriteError::Io)? {
@@ -111,8 +92,10 @@ fn convert_to_cbz(src: &Path, limits: ArchiveLimits) -> Result<PathBuf, CbrConve
             // place byte-for-byte. The rename is atomic on the same
             // directory/filesystem, so a crash can't leave a half-file. No
             // `.bak`: the identical bytes now live at `dst`, nothing to roll
-            // back to.
-            std::fs::rename(src, &dst).map_err(RewriteError::Io)?;
+            // back to. (In place there is nothing to do at all.)
+            if !in_place {
+                std::fs::rename(src, &dst).map_err(RewriteError::Io)?;
+            }
         }
         Container::Rar => {
             archive_rewrite::convert_atomic(src, &dst, |tmp| {
@@ -129,7 +112,9 @@ fn convert_to_cbz(src: &Path, limits: ArchiveLimits) -> Result<PathBuf, CbrConve
                 repack(&mut cb7, tmp, limits)
             })?;
         }
-        Container::Unknown => return Err(CbrConvertError::UnknownContainer),
+        // A tar has its own reader and writer (`.cbt`); it is not something
+        // this converter repacks, so a tar wearing `.cbr` is "unknown" here.
+        Container::Tar | Container::Unknown => return Err(CbrConvertError::UnknownContainer),
     }
     Ok(dst)
 }
@@ -189,20 +174,61 @@ mod tests {
         p
     }
 
+    /// The committed `fixtures/synthetic-3page.cbr` copied into `dir` as
+    /// `name` — any name, so a test can give a RAR the wrong extension.
+    fn cbr_fixture(dir: &Path, name: &str) -> PathBuf {
+        let src =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/synthetic-3page.cbr");
+        let dst = dir.join(name);
+        std::fs::copy(&src, &dst).unwrap();
+        dst
+    }
+
+    /// A RAR named `.cbz` (the Martian Manhunter (2006) #2/#3 case: opens in
+    /// YACreader, which sniffs; used to land as `MalformedComicInfo` here)
+    /// converts in place — same path, now a real ZIP, original kept as
+    /// `<name>.cbz.bak`.
     #[test]
-    fn detects_container_from_magic_bytes() {
+    fn rar_disguised_as_cbz_converts_in_place() {
         let tmp = tempfile::tempdir().unwrap();
-        let zip = write(tmp.path(), "z.cbr", b"PK\x03\x04rest");
-        let rar = write(tmp.path(), "r.cbr", b"Rar!\x1a\x07\x00x");
-        let sz = write(tmp.path(), "s.cb7", b"7z\xBC\xAF\x27\x1C\x00\x04");
-        let other = write(tmp.path(), "o.cbr", b"\x00\x01\x02\x03junk");
-        assert!(matches!(detect_container(&zip).unwrap(), Container::Zip));
-        assert!(matches!(detect_container(&rar).unwrap(), Container::Rar));
-        assert!(matches!(detect_container(&sz).unwrap(), Container::SevenZ));
-        assert!(matches!(
-            detect_container(&other).unwrap(),
-            Container::Unknown
-        ));
+        let src = cbr_fixture(tmp.path(), "issue.cbz");
+        let original = std::fs::read(&src).unwrap();
+        assert!(matches!(detect_container(&src).unwrap(), Container::Rar));
+
+        let dst = convert_cbr_to_cbz(&src, ArchiveLimits::default()).unwrap();
+        assert_eq!(dst, src, "in-place conversion keeps the path");
+        assert!(matches!(detect_container(&dst).unwrap(), Container::Zip));
+        let bak = tmp.path().join("issue.cbz.bak");
+        assert_eq!(
+            std::fs::read(&bak).unwrap(),
+            original,
+            "original parked as .bak"
+        );
+
+        let cbz = archive::cbz::Cbz::open(&dst, ArchiveLimits::default()).unwrap();
+        assert_eq!(cbz.pages().len(), 3);
+    }
+
+    /// A genuine ZIP named `.cbz` never reaches the converter from the
+    /// scanner, but the in-place path must still be a no-op if it does.
+    #[test]
+    fn zip_named_cbz_is_left_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("issue.cbz");
+        {
+            let f = std::fs::File::create(&src).unwrap();
+            let mut zw = zip::ZipWriter::new(f);
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zw.start_file("p001.jpg", opts).unwrap();
+            zw.write_all(&[0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3]).unwrap();
+            zw.finish().unwrap();
+        }
+        let original = std::fs::read(&src).unwrap();
+        let dst = convert_cbr_to_cbz(&src, ArchiveLimits::default()).unwrap();
+        assert_eq!(dst, src);
+        assert_eq!(std::fs::read(&dst).unwrap(), original);
+        assert!(!tmp.path().join("issue.cbz.bak").exists());
     }
 
     #[test]

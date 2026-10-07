@@ -43,7 +43,19 @@ pub enum IssueKind {
     MissingComicInfo {
         path: PathBuf,
     },
+    /// The archive opened but its `ComicInfo.xml` failed to parse. The fix
+    /// is to re-tag the file.
     MalformedComicInfo {
+        path: PathBuf,
+        error: String,
+    },
+    /// The file could not be opened as an archive at all: not a ZIP / tar /
+    /// RAR / 7z any reader recognizes (`archive::container` sniffs the
+    /// bytes first, so a mislabeled extension alone never lands here), or a
+    /// container whose structure is broken past the recovery branches.
+    /// Distinct from [`Self::MalformedComicInfo`] because the operator's
+    /// fix is different — replace the file, not re-tag it.
+    MalformedArchive {
         path: PathBuf,
         error: String,
     },
@@ -188,6 +200,7 @@ impl IssueKind {
             Self::UnreadableArchive { .. } => "UnreadableArchive",
             Self::MissingComicInfo { .. } => "MissingComicInfo",
             Self::MalformedComicInfo { .. } => "MalformedComicInfo",
+            Self::MalformedArchive { .. } => "MalformedArchive",
             Self::FolderNameMismatch { .. } => "FolderNameMismatch",
             Self::MixedSeriesInFolder { .. } => "MixedSeriesInFolder",
             Self::DuplicateContent { .. } => "DuplicateContent",
@@ -206,7 +219,8 @@ impl IssueKind {
         match self {
             Self::UnreadableFile { .. }
             | Self::UnreadableArchive { .. }
-            | Self::MalformedComicInfo { .. } => Severity::Error,
+            | Self::MalformedComicInfo { .. }
+            | Self::MalformedArchive { .. } => Severity::Error,
 
             Self::FileAtRoot { .. }
             | Self::EmptyFolder { .. }
@@ -237,6 +251,9 @@ impl IssueKind {
             Self::MissingComicInfo { path } => format!("MissingComicInfo:{}", path.display()),
             Self::MalformedComicInfo { path, .. } => {
                 format!("MalformedComicInfo:{}", path.display())
+            }
+            Self::MalformedArchive { path, .. } => {
+                format!("MalformedArchive:{}", path.display())
             }
             Self::FolderNameMismatch { folder, .. } => format!("FolderNameMismatch:{folder}"),
             Self::MixedSeriesInFolder { folder, .. } => {
@@ -322,6 +339,7 @@ impl IssueKind {
             | Self::UnreadableArchive { path, .. }
             | Self::MissingComicInfo { path }
             | Self::MalformedComicInfo { path, .. }
+            | Self::MalformedArchive { path, .. }
             | Self::UnsupportedArchiveFormat { path, .. }
             | Self::RecoveredArchive { path, .. }
             | Self::SkippedArchiveEntries { path, .. }

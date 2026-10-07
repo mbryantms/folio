@@ -45,7 +45,7 @@ pub struct DeepValidateStats {
     /// Issues opened successfully and probed.
     pub issues_probed: u32,
     /// Issues that couldn't be opened (already surfaced as
-    /// `MalformedComicInfo` etc. by the regular scan; we don't
+    /// `MalformedArchive` etc. by the regular scan; we don't
     /// re-emit, just count).
     pub issues_unopenable: u32,
     /// Pages successfully decoded.
@@ -150,7 +150,7 @@ pub async fn run(state: &AppState, library_id: Uuid) -> anyhow::Result<DeepValid
 /// Open one archive and decode every page entry. Per-page failures
 /// are emitted into `health`; the function returns `Err` only if the
 /// archive itself can't be opened (which the regular scan already
-/// flags as `MalformedComicInfo` etc., so we don't re-emit here).
+/// flags as `MalformedArchive` etc., so we don't re-emit here).
 async fn probe_one(
     state: &AppState,
     path: &std::path::Path,

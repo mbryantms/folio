@@ -104,6 +104,143 @@ async fn scan_converts_cbr_to_cbz_when_enabled() {
     let _ = bak_path; // RAR-only artifact; not asserted here.
 }
 
+/// A RAR wearing `.cbz` (Martian Manhunter (2006) #2/#3: opens in YACreader,
+/// used to surface as a misleading `MalformedComicInfo` here) is the same
+/// read-only container under the wrong name. With conversion enabled it is
+/// repacked **in place** — same path, now a real ZIP — and ingested.
+#[tokio::test]
+async fn scan_converts_rar_named_cbz_in_place_when_enabled() {
+    let fixture = first_cbr_fixture()
+        .expect("fixtures/synthetic-3page.cbr is committed — see fixtures/make-cbr-fixture.py");
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Martian Manhunter (2006)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let cbz_path = folder.join("Martian Manhunter V2006 002 (November 2006).cbz");
+    std::fs::copy(&fixture, &cbz_path).unwrap();
+    let original = std::fs::read(&cbz_path).unwrap();
+
+    let db = &app.state().db;
+    let lib_id = LibrarySeed::new(tmp.path())
+        .with_auto_convert_cbr_on_scan()
+        .insert(db)
+        .await;
+    let state = app.state();
+
+    let stats = scanner::scan_library(&state, lib_id).await.expect("scan");
+    assert_eq!(
+        stats.files_converted, 1,
+        "mislabeled RAR converted: {stats:?}"
+    );
+    assert_eq!(stats.files_added, 1, "converted CBZ ingested: {stats:?}");
+    assert_eq!(
+        stats.files_malformed, 0,
+        "nothing reported malformed: {stats:?}"
+    );
+
+    // Same path, now a ZIP; the RAR bytes survive as `<name>.cbz.bak`.
+    assert!(cbz_path.exists(), ".cbz still at its path");
+    assert_eq!(
+        archive::container::detect_container(&cbz_path).unwrap(),
+        archive::container::Container::Zip
+    );
+    let bak = folder.join("Martian Manhunter V2006 002 (November 2006).cbz.bak");
+    assert_eq!(
+        std::fs::read(&bak).unwrap(),
+        original,
+        "original parked as .bak"
+    );
+
+    let issues = IssueEntity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].state, "active");
+    assert_eq!(issues[0].page_count, Some(3));
+
+    // No misleading ComicInfo diagnosis anywhere.
+    let rows = HealthEntity::find()
+        .filter(entity::library_health_issue::Column::LibraryId.eq(lib_id))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert!(
+        rows.iter()
+            .all(|r| r.kind != "MalformedComicInfo" && r.kind != "MalformedArchive"),
+        "no malformed rows: {rows:?}"
+    );
+
+    // Rescan is idempotent: `.cbz.bak` isn't enumerated and the `.cbz` is
+    // now a plain ZIP on the fast path.
+    let second = scanner::scan_library(&state, lib_id).await.expect("rescan");
+    assert_eq!(second.files_converted, 0, "no re-conversion: {second:?}");
+    assert_eq!(second.files_added, 0, "no new rows: {second:?}");
+}
+
+/// Same file with conversion off: it is skipped exactly like a `.cbr`
+/// would be — an `UnsupportedArchiveFormat` row naming the real container,
+/// not a `MalformedComicInfo` row blaming an XML file the archive doesn't
+/// even contain. The bytes are untouched.
+#[tokio::test]
+async fn scan_flags_rar_named_cbz_as_unsupported_when_disabled() {
+    let fixture = first_cbr_fixture()
+        .expect("fixtures/synthetic-3page.cbr is committed — see fixtures/make-cbr-fixture.py");
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Martian Manhunter (2006)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let cbz_path = folder.join("Martian Manhunter V2006 003 (December 2006).cbz");
+    std::fs::copy(&fixture, &cbz_path).unwrap();
+    let original = std::fs::read(&cbz_path).unwrap();
+
+    let db = &app.state().db;
+    let lib_id = LibrarySeed::new(tmp.path()).insert(db).await;
+    let state = app.state();
+
+    let stats = scanner::scan_library(&state, lib_id).await.expect("scan");
+    assert_eq!(stats.files_converted, 0, "no conversion: {stats:?}");
+    assert_eq!(stats.files_added, 0, "no rows added: {stats:?}");
+    assert_eq!(stats.files_malformed, 0, "not counted malformed: {stats:?}");
+    assert_eq!(
+        std::fs::read(&cbz_path).unwrap(),
+        original,
+        "file untouched"
+    );
+    assert!(
+        !folder
+            .join("Martian Manhunter V2006 003 (December 2006).cbz.bak")
+            .exists()
+    );
+
+    let rows = HealthEntity::find()
+        .filter(entity::library_health_issue::Column::LibraryId.eq(lib_id))
+        .all(&state.db)
+        .await
+        .unwrap();
+    let unsupported: Vec<_> = rows
+        .iter()
+        .filter(|r| r.kind == "UnsupportedArchiveFormat")
+        .collect();
+    assert_eq!(
+        unsupported.len(),
+        1,
+        "one UnsupportedArchiveFormat row: {rows:?}"
+    );
+    assert!(unsupported[0].resolved_at.is_none(), "issue is open");
+    assert_eq!(
+        unsupported[0].payload["data"]["ext"].as_str(),
+        Some("cbr"),
+        "payload names the real container: {}",
+        unsupported[0].payload
+    );
+    assert!(
+        rows.iter().all(|r| r.kind != "MalformedComicInfo"),
+        "no MalformedComicInfo row: {rows:?}"
+    );
+}
+
 #[tokio::test]
 async fn scan_skips_cbr_when_disabled() {
     let fixture = first_cbr_fixture()

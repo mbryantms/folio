@@ -10,6 +10,41 @@ import {
 
 const SERIES_ID = "0190a4f2-0000-7000-8000-000000000001";
 
+describe("archive-container kinds", () => {
+  it("names a mislabeled container on UnsupportedArchiveFormat", () => {
+    const payload = {
+      kind: "unsupported_archive_format",
+      data: { path: "/lib/MM (2006)/MM 002.cbz", ext: "cbr" },
+    };
+    expect(healthPayloadSummary("UnsupportedArchiveFormat", payload)).toBe(
+      "/lib/MM (2006)/MM 002.cbz — CBR archive mislabeled as .cbz",
+    );
+    expect(healthKindHint("UnsupportedArchiveFormat")).toMatch(/conversion/);
+  });
+
+  it("keeps a plain summary when the extension matches the container", () => {
+    const payload = {
+      kind: "unsupported_archive_format",
+      data: { path: "/lib/Thanos (2020)/Thanos 001.cbr", ext: "cbr" },
+    };
+    expect(healthPayloadSummary("UnsupportedArchiveFormat", payload)).toBe(
+      "/lib/Thanos (2020)/Thanos 001.cbr — CBR archive",
+    );
+  });
+
+  it("distinguishes a corrupt archive from a malformed ComicInfo", () => {
+    expect(healthKindLabel("MalformedArchive")).toMatch(/archive/i);
+    expect(healthKindLabel("MalformedArchive")).not.toMatch(/ComicInfo/);
+    expect(healthKindHint("MalformedArchive")).toMatch(/Replace/);
+    expect(
+      healthPayloadSummary("MalformedArchive", {
+        kind: "malformed_archive",
+        data: { path: "/lib/X 001.cbz", error: "Could not find EOCD" },
+      }),
+    ).toBe("/lib/X 001.cbz — Could not find EOCD");
+  });
+});
+
 describe("health-issue presentation (WP-3.4 kinds)", () => {
   it("summarizes FolderNameMismatch and links the series", () => {
     const payload = {

@@ -92,6 +92,59 @@ fn cb7_rejects_non_7z_gracefully() {
     );
 }
 
+/// Dispatch is by container, not extension: the committed RAR fixture
+/// renamed to `.cbz` opens through the RAR reader (the Martian Manhunter
+/// (2006) #2/#3 case — a RAR named `.cbz` that YACreader opens fine).
+#[test]
+fn rar_named_cbz_opens_via_sniffed_container() {
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/synthetic-3page.cbr");
+    let tmp = tempdir().unwrap();
+    let p = tmp.path().join("Martian Manhunter V2006 002.cbz");
+    std::fs::copy(&fixture, &p).unwrap();
+    let archive = open(&p, ArchiveLimits::default()).expect("RAR-in-.cbz opens");
+    assert_eq!(archive.pages().len(), 3);
+}
+
+/// The inverse mislabel: a ZIP named `.cbr` opens through the zip reader.
+#[test]
+fn zip_named_cbr_opens_via_sniffed_container() {
+    let tmp = tempdir().unwrap();
+    let p = tmp.path().join("renamed.cbr");
+    {
+        let f = std::fs::File::create(&p).unwrap();
+        let mut zw = zip::ZipWriter::new(f);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("page-001.png", opts).unwrap();
+        std::io::Write::write_all(&mut zw, b"\x89PNG\r\n\x1a\nfake").unwrap();
+        zw.finish().unwrap();
+    }
+    let archive = open(&p, ArchiveLimits::default()).expect("ZIP-in-.cbr opens");
+    assert_eq!(archive.pages().len(), 1);
+}
+
+/// Bytes with no magic still fall back to the extension, so a genuinely
+/// corrupt `.cbz` keeps its typed zip error (not "unsupported extension").
+#[test]
+fn magic_less_cbz_falls_back_to_zip_reader_error() {
+    let tmp = tempdir().unwrap();
+    let p = tmp.path().join("corrupt.cbz");
+    std::fs::write(&p, b"this is not an archive of any kind").unwrap();
+    let err = open(&p, ArchiveLimits::default())
+        .err()
+        .expect("corrupt zip fails");
+    match err {
+        ArchiveError::Malformed(msg) => {
+            assert!(
+                !msg.contains("unsupported archive extension"),
+                "extension fallback must reach the zip reader: {msg}"
+            );
+        }
+        other => panic!("expected Malformed, got {other:?}"),
+    }
+}
+
 #[test]
 fn unknown_extension_rejected() {
     let tmp = tempdir().unwrap();

@@ -140,7 +140,14 @@ enum ArchiveOutcome {
         info: ComicInfo,
         actual_pages: u32,
     },
+    /// The archive opened but its `ComicInfo.xml` didn't parse.
     Malformed(String),
+    /// The file couldn't be opened as an archive at all (not a container
+    /// any reader recognizes, or structurally broken past the recovery
+    /// branches). Routed to `MalformedArchive`, not `MalformedComicInfo` —
+    /// the operator's fix is different (replace / rename the file, not
+    /// re-tag it).
+    MalformedArchive(String),
     Encrypted,
     Unreadable(String),
 }
@@ -411,9 +418,18 @@ async fn parse_archive_for_ingest(
             (ComicInfo::default(), None, 0, "encrypted")
         }
         ArchiveOutcome::Malformed(e) => {
-            tracing::warn!(path = %path.display(), error = %e, "malformed archive");
+            tracing::warn!(path = %path.display(), error = %e, "malformed ComicInfo.xml");
             stats.files_malformed += 1;
             health.emit(IssueKind::MalformedComicInfo {
+                path: path.to_path_buf(),
+                error: e.clone(),
+            });
+            (ComicInfo::default(), None, 0, "malformed")
+        }
+        ArchiveOutcome::MalformedArchive(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "malformed archive");
+            stats.files_malformed += 1;
+            health.emit(IssueKind::MalformedArchive {
                 path: path.to_path_buf(),
                 error: e.clone(),
             });
@@ -707,14 +723,24 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         return Ok(());
     }
 
-    // Spec §10.1 UnsupportedArchiveFormat — a recognized extension we can't
-    // ingest directly. `cbr` and `cb7` have read-only readers but no writer
-    // (and no random-access page streaming): when the library opts into
+    // Spec §10.1 UnsupportedArchiveFormat — a container we can't ingest
+    // directly. RAR and 7z have read-only readers but no writer (and no
+    // random-access page streaming): when the library opts into
     // `auto_convert_cbr_on_scan` / `auto_convert_cb7_on_scan` (and writeback
     // is enabled on a writable mount) we convert the file to a sibling
     // `.cbz` in place — keeping the original as `.cbr.bak` / `.cb7.bak` —
     // and ingest the `.cbz` instead. Otherwise the file is skipped with the
     // health issue.
+    //
+    // The *container* is what matters, not the extension. A RAR named
+    // `.cbz` (common in the wild; every mainstream reader sniffs and opens
+    // it) is the same read-only format wearing the wrong name, so it takes
+    // the same gate — converting in place to a real ZIP at its own path
+    // (original kept as `.cbz.bak`) — instead of the zip reader choking on
+    // it and the file landing as a misleading `MalformedComicInfo`. The
+    // sniff is a 512-byte read, only paid by files already past the
+    // size+mtime fast path; an I/O failure falls through so the normal path
+    // reports `UnreadableArchive`.
     let ext_lower = path
         .extension()
         .and_then(|s| s.to_str())
@@ -722,6 +748,11 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     let convertible = match ext_lower.as_deref() {
         Some("cbr") => Some(ConvertibleFormat::Cbr),
         Some("cb7") => Some(ConvertibleFormat::Cb7),
+        Some("cbz") | Some("cbt") => match archive::container::detect_container(path) {
+            Ok(archive::container::Container::Rar) => Some(ConvertibleFormat::Cbr),
+            Ok(archive::container::Container::SevenZ) => Some(ConvertibleFormat::Cb7),
+            _ => None,
+        },
         _ => None,
     };
     if let Some(format) = convertible {
@@ -747,8 +778,9 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
                             "to": dst.to_string_lossy(),
                         }));
                     events.push(e);
-                    // The original is now `<name>.cbr.bak` / `.cb7.bak` (not a
-                    // recognized extension), so it won't re-enumerate and
+                    // The original is now `<name>.cbr.bak` / `.cb7.bak` (or
+                    // `.cbz.bak` for a mislabeled file converted in place) —
+                    // not a recognized extension, so it won't re-enumerate and
                     // conversion never re-fires. For CBR, stamp the library's
                     // first-conversion ack so the page editor stops prompting
                     // (CB7 has no page-editor path). Then ingest the fresh
@@ -1678,7 +1710,7 @@ fn parse_archive_timed_with(
         }
         Err(other) => {
             return (
-                ArchiveOutcome::Malformed(other.to_string()),
+                ArchiveOutcome::MalformedArchive(other.to_string()),
                 timing,
                 ArchiveDiagnostics::default(),
             );
