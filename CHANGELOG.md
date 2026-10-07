@@ -13,6 +13,26 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.48.0](https://github.com/mbryantms/folio/compare/v0.47.0...v0.48.0) (2026-10-07)
+
+
+### Added
+
+* **metadata:** main-run issue counts, fuller refresh wizard, and clean file-tagged credits ([#1069](https://github.com/mbryantms/folio/issues/1069)) ([45afe5b](https://github.com/mbryantms/folio/commit/45afe5b5e84df6ca1b34f3f479b61a4684d2f077))
+
+
+### Fixed
+
+* **scanner:** read archives by sniffed container, not extension ([#1068](https://github.com/mbryantms/folio/issues/1068)) ([b2f9d9d](https://github.com/mbryantms/folio/commit/b2f9d9d71f5c0e68f0c546aa6d3ece9de0551284))
+
+
+### Dependencies
+
+* update dependency @tanstack/react-table to v9.2.5 ([#1065](https://github.com/mbryantms/folio/issues/1065)) ([4288bb4](https://github.com/mbryantms/folio/commit/4288bb454c6d5a39e8da6b08bf50cd17267ed7d4))
+* update dependency lucide-react to v1.52.0 ([#1067](https://github.com/mbryantms/folio/issues/1067)) ([7e30900](https://github.com/mbryantms/folio/commit/7e30900daafa2998843ad51d4fed107ae76146da))
+* update dependency pnpm to v12.9.1 ([#1063](https://github.com/mbryantms/folio/issues/1063)) ([d4aaa06](https://github.com/mbryantms/folio/commit/d4aaa064b5a2a6d8494b2c28f2142b308a48dd7b))
+* update serwist monorepo to v9.5.13 ([#1066](https://github.com/mbryantms/folio/issues/1066)) ([b07cdde](https://github.com/mbryantms/folio/commit/b07cddec60926d46d72dc191a3eac7d7a87416bd))
+
 ## [0.47.0](https://github.com/mbryantms/folio/compare/v0.46.0...v0.47.0) (2026-10-06)
 
 
