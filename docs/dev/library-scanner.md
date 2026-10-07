@@ -257,9 +257,11 @@ without per-library configuration.
      batch still commits. Per-archive ingest is
      [`ingest_one_with_fingerprint`](../../crates/server/src/library/scanner/process.rs#L129),
      which handles:
-     - extension dispatch for `.cbr` / `.cb7`
+     - container dispatch for RAR / 7z
        ([process.rs](../../crates/server/src/library/scanner/process.rs),
-       the `ConvertibleFormat` branch): both are read-only formats
+       the `ConvertibleFormat` branch — by extension for `.cbr` / `.cb7`,
+       and by sniffed magic for a RAR / 7z wearing `.cbz` / `.cbt`, which
+       converts **in place** keeping `<name>.cbz.bak`): both are read-only formats
        (RAR / 7z have no writer, and neither has random-access page
        streaming), so each is converted in place to a sibling `.cbz`
        (original kept as `.cbr.bak` / `.cb7.bak`) and the `.cbz`
@@ -269,12 +271,18 @@ without per-library configuration.
        ([scanner/cbr_convert.rs](../../crates/server/src/library/scanner/cbr_convert.rs));
        otherwise skipped with `UnsupportedArchiveFormat`. The converter
        picks the decoder by magic bytes (ZIP → plain rename, RAR →
-       `unrar`, 7z → `sevenz-rust2`), not by extension
+       `unrar`, 7z → `sevenz-rust2`), not by extension. The same sniff
+       ([`archive::container`](../../crates/archive/src/container.rs))
+       drives `archive::open` and the page-server reader cache, so a
+       mislabeled file is read as what it *is* everywhere — the way
+       YACreader / ComicRack / Komga open it
      - blocking BLAKE3 hash + ComicInfo + MetronInfo parse on a
        semaphore-protected pool
        ([process.rs:197–210](../../crates/server/src/library/scanner/process.rs#L197-L210))
      - archive-outcome dispatch: `Ok` / `MissingComicInfo` /
-       `Encrypted` / `Malformed` / `Unreadable`
+       `Encrypted` / `Malformed` (ComicInfo didn't parse →
+       `MalformedComicInfo`) / `MalformedArchive` (the file isn't a
+       readable container → `MalformedArchive`) / `Unreadable`
        ([process.rs:211–250](../../crates/server/src/library/scanner/process.rs#L211-L250))
      - ComicInfo PageCount storage as metadata only; mismatches with
        archive image count are ignored because the tag is frequently

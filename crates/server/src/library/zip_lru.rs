@@ -6,8 +6,10 @@
 //!
 //! The name predates multi-format support: the cache started as CBZ-only
 //! and the `zip_lru` config / metric names are public surface, so they
-//! stay. Today it dispatches on extension — `.cbz` opens the zip reader
-//! unchanged, `.cbt` opens the tar reader. Both expose the same
+//! stay. Today it dispatches on the sniffed container
+//! ([`archive::container`]), falling back to the extension when the bytes
+//! carry no magic — a ZIP opens the zip reader, a tar opens the tar
+//! reader, whatever the file is called. Both expose the same
 //! random-access page surface ([`CachedReader`]) and a [`PreadIndex`], so
 //! the page server's zero-lock streaming path is format-agnostic.
 //!
@@ -49,17 +51,23 @@ pub enum CachedReader {
 }
 
 impl CachedReader {
-    /// Open the reader matching `path`'s extension (case-insensitive).
+    /// Open the reader matching `path`'s container (sniffed), falling back
+    /// to its extension (case-insensitive) when the bytes carry no magic.
     pub fn open(path: &Path, limits: ArchiveLimits) -> Result<Self, ArchiveError> {
+        use archive::container::{Container, detect_container};
         let ext = path
             .extension()
             .and_then(|s| s.to_str())
             .map(str::to_ascii_lowercase);
-        match ext.as_deref() {
-            Some("cbz") => Cbz::open(path, limits).map(Self::Cbz),
-            Some("cbt") => Cbt::open(path, limits).map(Self::Cbt),
+        let format = match detect_container(path)? {
+            Container::Unknown => ext.clone().unwrap_or_default(),
+            known => known.comic_ext().unwrap_or_default().to_owned(),
+        };
+        match format.as_str() {
+            "cbz" => Cbz::open(path, limits).map(Self::Cbz),
+            "cbt" => Cbt::open(path, limits).map(Self::Cbt),
             other => Err(ArchiveError::Malformed(format!(
-                "no page reader for archive extension: {other:?}"
+                "no page reader for archive format: {other:?} (extension {ext:?})"
             ))),
         }
     }

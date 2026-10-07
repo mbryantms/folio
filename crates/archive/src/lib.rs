@@ -16,13 +16,24 @@ pub mod cbt_write;
 pub mod cbz;
 pub mod cbz_write;
 pub mod comic_archive;
+pub mod container;
 pub mod entry_name;
 pub mod image_sniff;
 pub mod rewrite_policy;
 
 pub use comic_archive::ComicArchive;
 
-/// Open a comic archive of any supported format. Dispatch is by extension.
+/// Open a comic archive of any supported format.
+///
+/// Dispatch is by **container**, not extension: the leading bytes are
+/// sniffed ([`container::detect_container`]) and the matching reader is
+/// chosen, so a RAR named `.cbz` opens through the RAR reader exactly as
+/// YACreader / ComicRack / Komga would open it. Only when the bytes carry
+/// no recognizable magic (a v7 tar, a truncated file, junk) does the
+/// extension decide, which also keeps the old typed error messages for
+/// genuinely corrupt `.cbz` files. A file with neither a recognizable
+/// container nor a known extension is `Malformed`.
+///
 /// Returns the boxed reader as `dyn ComicArchive` so the scanner doesn't
 /// branch on format.
 ///
@@ -39,17 +50,24 @@ pub fn open(path: &Path, limits: ArchiveLimits) -> Result<Box<dyn ComicArchive>,
         .extension()
         .and_then(|s| s.to_str())
         .map(str::to_ascii_lowercase);
-    match ext.as_deref() {
-        Some("cbz") => {
+    let format = match container::detect_container(path)? {
+        container::Container::Zip => "cbz",
+        container::Container::Rar => "cbr",
+        container::Container::SevenZ => "cb7",
+        container::Container::Tar => "cbt",
+        container::Container::Unknown => ext.as_deref().unwrap_or(""),
+    };
+    match format {
+        "cbz" => {
             let c = cbz::Cbz::open(path, limits)?;
             Ok(Box::new(c) as Box<dyn ComicArchive>)
         }
-        Some("cbt") => {
+        "cbt" => {
             let c = cbt::Cbt::open(path, limits)?;
             Ok(Box::new(c) as Box<dyn ComicArchive>)
         }
-        Some("cbr") => cbr::Cbr::open(path, limits).map(|c| Box::new(c) as _),
-        Some("cb7") => cb7::Cb7::open(path, limits).map(|c| Box::new(c) as _),
+        "cbr" => cbr::Cbr::open(path, limits).map(|c| Box::new(c) as _),
+        "cb7" => cb7::Cb7::open(path, limits).map(|c| Box::new(c) as _),
         _ => Err(ArchiveError::Malformed(format!(
             "unsupported archive extension: {:?}",
             ext

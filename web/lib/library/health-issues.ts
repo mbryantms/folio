@@ -49,6 +49,10 @@ const KIND_COPY: Record<string, KindCopy> = {
     label: "Malformed ComicInfo.xml",
     hint: "Re-tag the archive.",
   },
+  MalformedArchive: {
+    label: "Corrupt or unrecognized archive",
+    hint: "The file isn't a readable ZIP, TAR, RAR or 7z. Replace it from a good copy.",
+  },
   FolderNameMismatch: {
     label: "Folder name ≠ ComicInfo series",
     hint: "ComicInfo wins for the series name. Rename the folder, or re-tag the archives if the folder is right.",
@@ -65,7 +69,10 @@ const KIND_COPY: Record<string, KindCopy> = {
     label: "Orphaned series.json",
     hint: "The folder has a series.json but no archives — restore the archives or delete the folder.",
   },
-  UnsupportedArchiveFormat: { label: "Unsupported archive format" },
+  UnsupportedArchiveFormat: {
+    label: "Unsupported archive format",
+    hint: "Turn on CBR / CB7 → CBZ conversion for the library, or convert the file to CBZ yourself.",
+  },
   RecoveredArchive: { label: "Recovered archive" },
   SkippedArchiveEntries: { label: "Skipped archive entries" },
   UnreadablePage: { label: "Unreadable page" },
@@ -143,6 +150,20 @@ export function healthPayloadSummary(kind: string, p: unknown): string {
       if (count !== undefined)
         parts.push(`${plural(count, "archive")} skipped`);
       return parts.filter(Boolean).join(" — ");
+    }
+    case "UnsupportedArchiveFormat": {
+      // `ext` is the *container* the scanner found (cbr / cb7). When it
+      // differs from the file's own extension the extension lied — say so,
+      // because "unsupported format" on a `.cbz` otherwise reads as a bug.
+      const ext = str(obj.ext);
+      if (!ext) break;
+      const named = path.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+      const container = ext.toUpperCase();
+      const suffix =
+        named && named !== ext.toLowerCase()
+          ? `${container} archive mislabeled as .${named}`
+          : `${container} archive`;
+      return path ? `${path} — ${suffix}` : suffix;
     }
     case "OrphanedSeriesJson":
       return str(obj.folder) ?? "";
