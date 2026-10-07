@@ -335,6 +335,21 @@ comparison happens via `path.parent() != series_folder` so an
 archive sitting directly in the series folder always falls through
 to the filename/format heuristics.
 
+**A marker is relative to its series.** After the rules above, the tag
+is dropped when the *series folder's* own name carries the same marker
+as a whole word (`series_name_carries_marker`): in
+`The Amazing Spider-Man Annual (1965)` every file says "Annual" because
+that is the series, so none of them is a special — they are its main run,
+counted as such on the detail card and included in coverage analysis.
+This applies to `Annual` / `Special` / `OneShot` from any source,
+`<Format>` included; `TPB` is never dropped. `Batman (2016)/Annuals/…`
+is unaffected (the series folder says nothing about annuals). The folder
+name, not the file's `<Series>`, is compared because membership is
+folder-pinned and an annual under `Batman/Annuals/` legitimately says
+`<Series>Batman Annual</Series>`. Rows scanned before this rule were
+repaired once by migration `m20270608_000001_series_named_specials`
+(keyed on `series.name`).
+
 ### 4.5 Reconcile
 
 Two reconciles run after all folders complete:

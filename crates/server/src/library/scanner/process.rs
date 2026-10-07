@@ -950,11 +950,19 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         .filter(|p| *p != series_folder)
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str());
+    // The series folder's own name decides whether a marker is a marker:
+    // in `The Amazing Spider-Man Annual (1965)` every file says "Annual"
+    // because that *is* the series, so none of them is a special.
+    // Membership is folder-pinned, so the folder name (not this file's
+    // `<Series>`, which an annual under `Batman/Annuals/` also sets to
+    // "Batman Annual") is the identity to compare against.
+    let series_folder_name = series_folder.file_name().and_then(|n| n.to_str());
     let special_type = detect_special_type(
         info.format.as_deref(),
         leaf,
         number_raw.is_some(),
         parent_folder_name,
+        series_folder_name,
     )
     .map(|s| s.to_string());
 
@@ -2356,12 +2364,59 @@ fn join_csv_unambiguous(names: &[String]) -> String {
 ///   5. No recognizable issue number → OneShot
 ///   6. Otherwise → None
 ///
+/// Then one override: a marker is relative to the series it sits in.
+/// When `series_name` itself carries the marker — `The Amazing
+/// Spider-Man Annual`, `Marvel Holiday Special`, `Batman: One-Shots` —
+/// the issues *are* the run, so the matching tag is dropped (`None`)
+/// whatever source produced it, `<Format>` included. `TPB` is never
+/// dropped: a collected-editions series is still a series of TPBs.
+/// Pass the series *folder* name (membership is folder-pinned); a
+/// `Batman (2016)/Annuals/` layout keeps its annuals because the
+/// series folder says nothing about annuals.
+///
 /// `parent_folder_name` should be the *immediate* parent folder's
 /// name (`Path::file_name()`) when the archive lives in a subfolder of
 /// the series folder, and `None` when it lives at the series folder
 /// itself. Callers in the scanner derive this by comparing
 /// `path.parent()` to the series folder.
 pub fn detect_special_type(
+    format: Option<&str>,
+    filename: &str,
+    has_number: bool,
+    parent_folder_name: Option<&str>,
+    series_name: Option<&str>,
+) -> Option<&'static str> {
+    let tag = detect_special_type_raw(format, filename, has_number, parent_folder_name)?;
+    match series_name {
+        Some(name) if series_name_carries_marker(name, tag) => None,
+        _ => Some(tag),
+    }
+}
+
+/// Does the series' own name carry the `tag` marker (`"annual"` /
+/// `"special"` / `"one-shot"` as a whole word)? Tokenized on
+/// non-alphanumerics so `"Semiannual"` and `"Specialists"` don't match
+/// but `"Annuals"`, `"One Shot"`, `"One-Shots"` and `"Oneshot"` do.
+pub fn series_name_carries_marker(series_name: &str, tag: &str) -> bool {
+    let lower = series_name.to_ascii_lowercase();
+    let tokens: Vec<&str> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
+    match tag {
+        "Annual" => tokens.iter().any(|t| matches!(*t, "annual" | "annuals")),
+        "Special" => tokens.iter().any(|t| matches!(*t, "special" | "specials")),
+        "OneShot" => {
+            tokens.iter().any(|t| matches!(*t, "oneshot" | "oneshots"))
+                || tokens
+                    .windows(2)
+                    .any(|w| w[0] == "one" && matches!(w[1], "shot" | "shots"))
+        }
+        _ => false,
+    }
+}
+
+fn detect_special_type_raw(
     format: Option<&str>,
     filename: &str,
     has_number: bool,
@@ -2756,34 +2811,119 @@ mod tests {
         // Filename has a number, no recognizable token, but the
         // parent folder is `Specials` → Special wins.
         assert_eq!(
-            detect_special_type(None, "Artbook 1.cbz", true, Some("Specials")),
+            detect_special_type(None, "Artbook 1.cbz", true, Some("Specials"), None),
             Some("Special"),
         );
         assert_eq!(
-            detect_special_type(None, "Vol 2024.cbz", true, Some("Annuals")),
+            detect_special_type(None, "Vol 2024.cbz", true, Some("Annuals"), None),
             Some("Annual"),
         );
         assert_eq!(
-            detect_special_type(None, "Ashcan 1.cbz", true, Some("Oneshots")),
+            detect_special_type(None, "Ashcan 1.cbz", true, Some("Oneshots"), None),
             Some("OneShot"),
         );
         // Allowlist is case-insensitive.
         assert_eq!(
-            detect_special_type(None, "Artbook 1.cbz", true, Some("SPECIALS")),
+            detect_special_type(None, "Artbook 1.cbz", true, Some("SPECIALS"), None),
             Some("Special"),
         );
         // Non-allowlist subfolder name doesn't trigger the path rule.
         assert_eq!(
-            detect_special_type(None, "Foo 001.cbz", true, Some("Volume 2")),
+            detect_special_type(None, "Foo 001.cbz", true, Some("Volume 2"), None),
             None,
         );
+    }
+
+    /// A series that *is* the annuals (`The Amazing Spider-Man Annual
+    /// (1965)`): the "Annual" every filename carries describes the series,
+    /// not a special within it. Whatever source produced the tag —
+    /// filename, `<Format>`, even an `Annuals/` subfolder — it's dropped.
+    #[test]
+    fn detect_special_type_series_named_for_the_marker_is_the_run() {
+        let series = Some("The Amazing Spider-Man Annual (1965)");
+        assert_eq!(
+            detect_special_type(None, "Spider-Man Annual V1964 001.cbz", true, None, series),
+            None,
+        );
+        assert_eq!(
+            detect_special_type(
+                Some("Annual"),
+                "Spider-Man Annual 002.cbz",
+                true,
+                None,
+                series
+            ),
+            None,
+        );
+        assert_eq!(
+            detect_special_type(None, "x 003.cbz", true, Some("Annuals"), series),
+            None,
+        );
+        // Only the matching marker is dropped: a special inside an
+        // annuals series is still a special.
+        assert_eq!(
+            detect_special_type(
+                Some("Special"),
+                "Spider-Man Annual Special.cbz",
+                true,
+                None,
+                series
+            ),
+            Some("Special"),
+        );
+        assert_eq!(
+            detect_special_type(
+                None,
+                "Marvel Holiday Special 001.cbz",
+                true,
+                None,
+                Some("Marvel Holiday Special")
+            ),
+            None,
+        );
+        assert_eq!(
+            detect_special_type(
+                None,
+                "Origin.cbz",
+                false,
+                None,
+                Some("Batman: One-Shots (2020)")
+            ),
+            None,
+        );
+        // A TPB series keeps its TPBs.
+        assert_eq!(
+            detect_special_type(Some("TPB"), "Saga Vol 1.cbz", true, None, Some("Saga TPB")),
+            Some("TPB"),
+        );
+        // The ordinary layout is untouched: `Batman (2016)/Annuals/…` is
+        // still an annual, and "Semiannual" is not the word "annual".
+        assert_eq!(
+            detect_special_type(
+                None,
+                "Batman Annual 001.cbz",
+                true,
+                Some("Annuals"),
+                Some("Batman (2016)")
+            ),
+            Some("Annual"),
+        );
+        assert!(!series_name_carries_marker("Semiannual Report", "Annual"));
+        assert!(series_name_carries_marker("Doctor Aphra Annual", "Annual"));
+        assert!(series_name_carries_marker("Star Wars: One Shot", "OneShot"));
     }
 
     #[test]
     fn detect_special_type_format_beats_subfolder() {
         // ComicInfo Format wins over path hint.
         assert_eq!(
-            detect_special_type(Some("Annual"), "Artbook 1.cbz", true, Some("Specials")),
+            detect_special_type(
+                Some("Annual"),
+                "Artbook 1.cbz",
+                true,
+                Some("Specials"),
+                None
+            ),
             Some("Annual"),
         );
     }
@@ -2794,7 +2934,7 @@ mod tests {
         // The Annuals parent must win because path-derived runs before
         // filename heuristics.
         assert_eq!(
-            detect_special_type(None, "x_sp_y 001.cbz", true, Some("Annuals")),
+            detect_special_type(None, "x_sp_y 001.cbz", true, Some("Annuals"), None),
             Some("Annual"),
         );
     }
@@ -2804,15 +2944,15 @@ mod tests {
         // No parent means the archive sits directly in the series
         // folder. Filename heuristics still run.
         assert_eq!(
-            detect_special_type(None, "Series Annual 2024.cbz", true, None),
+            detect_special_type(None, "Series Annual 2024.cbz", true, None, None),
             Some("Annual"),
         );
         assert_eq!(
-            detect_special_type(None, "Series Origin.cbz", false, None),
+            detect_special_type(None, "Series Origin.cbz", false, None, None),
             Some("OneShot"),
         );
         assert_eq!(
-            detect_special_type(None, "Series 001.cbz", true, None),
+            detect_special_type(None, "Series 001.cbz", true, None, None),
             None
         );
     }

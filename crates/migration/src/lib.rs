@@ -125,6 +125,7 @@ mod m20270601_000001_canonical_credit_roles;
 mod m20270604_000001_page_hash_backfill_idx;
 mod m20270606_000001_metadata_run_provider_status;
 mod m20270607_000001_junction_ordinals;
+mod m20270608_000001_series_named_specials;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -258,6 +259,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270604_000001_page_hash_backfill_idx::Migration),
             Box::new(m20270606_000001_metadata_run_provider_status::Migration),
             Box::new(m20270607_000001_junction_ordinals::Migration),
+            Box::new(m20270608_000001_series_named_specials::Migration),
         ]
     }
 }
