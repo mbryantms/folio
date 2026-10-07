@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.48.1](https://github.com/mbryantms/folio/compare/v0.48.0...v0.48.1) (2026-10-07)
+
+
+### Fixed
+
+* **scanner:** a series named for its marker ("X Annual") is the run, not specials ([#1070](https://github.com/mbryantms/folio/issues/1070)) ([8946ff3](https://github.com/mbryantms/folio/commit/8946ff3f61f5c3147b30b9e089c0d5c763b1ea85))
+
 ## [0.48.0](https://github.com/mbryantms/folio/compare/v0.47.0...v0.48.0) (2026-10-07)
 
 
