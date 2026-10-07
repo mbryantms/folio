@@ -159,6 +159,64 @@ async fn special_type_detection_classifies_files() {
     assert_eq!(st("Pi Origin Story"), Some("OneShot".into()));
 }
 
+/// A series that *is* the annuals: `Spider-Man Annual (1964)` holds files
+/// that all carry "Annual" (and a `<Format>Annual</Format>`), yet none of
+/// them is a special *within that series* — they are its run. The detail
+/// card must count them as the main run, not "0 / N · +N specials", and
+/// the coverage analysis must not exclude them.
+#[tokio::test]
+async fn series_named_for_its_marker_keeps_its_issues_in_the_main_run() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let annuals = tmp.path().join("Spider-Man Annual (1964)");
+    std::fs::create_dir_all(&annuals).unwrap();
+    write_cbz_with_xml(
+        &annuals.join("Spider-Man Annual V1964 001.cbz"),
+        1,
+        2,
+        Some(
+            r#"<?xml version="1.0"?><ComicInfo><Series>Spider-Man Annual</Series><Number>1</Number><Format>Annual</Format></ComicInfo>"#,
+        ),
+        None,
+    );
+    write_cbz_with_xml(
+        &annuals.join("Spider-Man Annual V1964 002.cbz"),
+        2,
+        2,
+        None,
+        None,
+    );
+    // Control: the ordinary layout keeps its annual.
+    let batman = tmp.path().join("Batman (2016)");
+    std::fs::create_dir_all(batman.join("Annuals")).unwrap();
+    write_cbz_with_xml(&batman.join("Batman 001.cbz"), 3, 2, None, None);
+    write_cbz_with_xml(
+        &batman.join("Annuals").join("Batman Annual 001.cbz"),
+        4,
+        2,
+        None,
+        None,
+    );
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let issues = IssueEntity::find().all(&state.db).await.unwrap();
+    let st = |needle: &str| -> Option<String> {
+        issues
+            .iter()
+            .find(|i| i.file_path.contains(needle))
+            .unwrap_or_else(|| panic!("{needle} ingested"))
+            .special_type
+            .clone()
+    };
+    assert_eq!(st("Annual V1964 001"), None, "the series is the annuals");
+    assert_eq!(st("Annual V1964 002"), None);
+    assert_eq!(st("Batman 001"), None);
+    assert_eq!(st("Batman Annual 001"), Some("Annual".into()));
+}
+
 /// M2.5 regression — an artbook tucked under `Specials/` must classify
 /// as `special_type = Special` even though its filename has a number
 /// and ComicInfo is silent. Before M2.5 this collided with the v01
