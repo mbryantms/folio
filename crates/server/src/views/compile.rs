@@ -660,9 +660,13 @@ fn metadata_completeness_subquery() -> SelectStatement {
         .to_owned()
 }
 
-/// `SELECT series_id, COUNT(*) AS active_count FROM issues WHERE state =
-/// 'active' AND removed_at IS NULL GROUP BY series_id`. Joined LEFT so
-/// series with zero on-disk issues land as NULL → COALESCE'd to 0.
+/// `SELECT series_id, COUNT(*) AS active_count, COUNT(*) FILTER (WHERE
+/// special_type IS NULL) AS main_count FROM issues WHERE state = 'active'
+/// AND removed_at IS NULL GROUP BY series_id`. Joined LEFT so series with
+/// zero on-disk issues land as NULL → COALESCE'd to 0. `main_count` is the
+/// main run alone — what `series.total_issues` describes — so the
+/// completeness predicate ignores annuals / specials, matching
+/// `SeriesView.main_issue_count`.
 fn active_issue_count_subquery() -> SelectStatement {
     use entity::issue;
     Query::select()
@@ -670,6 +674,10 @@ fn active_issue_count_subquery() -> SelectStatement {
         .expr_as(
             Func::count(Expr::col((issue::Entity, issue::Column::Id))),
             Alias::new("active_count"),
+        )
+        .expr_as(
+            Expr::cust("COUNT(*) FILTER (WHERE special_type IS NULL)"),
+            Alias::new("main_count"),
         )
         .from(issue::Entity)
         .and_where(Expr::col(issue::Column::State).eq("active"))
@@ -901,12 +909,13 @@ fn series_computed_predicate(
     match tag {
         "collection_completeness" => {
             // Evaluates against `series.total_issues` (canonical expected
-            // count from ComicInfo) and `aic.active_count` (current on-
-            // disk count, NULL when zero — COALESCE'd to 0).
+            // count from ComicInfo) and `aic.main_count` (current on-disk
+            // main-run count — specials excluded, NULL when zero —
+            // COALESCE'd to 0).
             let lhs: SimpleExpr = Expr::cust(
                 "CASE \
                  WHEN series.total_issues IS NULL THEN 'unknown' \
-                 WHEN COALESCE(aic.active_count, 0) >= series.total_issues THEN 'complete' \
+                 WHEN COALESCE(aic.main_count, 0) >= series.total_issues THEN 'complete' \
                  ELSE 'incomplete' END",
             );
             Ok(SeaCondition::all().add(scalar_predicate(cond, kind, lhs)?))

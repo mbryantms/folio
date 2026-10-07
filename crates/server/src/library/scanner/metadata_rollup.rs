@@ -134,13 +134,20 @@ impl<'a> IssueMetadataInputs<'a> {
 /// way providers spell it (`"José Marzán Jr."`), so file-tagged and
 /// provider-synced credits land on the same person row. See
 /// [`generational_suffix`].
+///
+/// **Tagger ids.** Some taggers write the provider's database id after the
+/// name — `"John Doe [15487]"` — so a file-tagged credit never name-matches
+/// the provider's `"John Doe"`, and a provider apply that happens to carry
+/// the same number of credits looked like "no change". The bracketed id
+/// is dropped at ingest ([`strip_tagger_id`]); the numbers aren't data
+/// Folio keeps (provider ids live in `external_ids`, keyed per person).
 pub fn split_csv(value: &str) -> Vec<String> {
     use std::collections::HashSet;
     let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<String> = Vec::new();
     let sep: char = if value.contains(';') { ';' } else { ',' };
     for piece in value.split(sep) {
-        let trimmed = piece.trim();
+        let trimmed = strip_tagger_id(piece.trim());
         if trimmed.is_empty() {
             continue;
         }
@@ -167,6 +174,38 @@ pub fn split_csv(value: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// `"John Doe [15487]"` → `"John Doe"`: drop a trailing bracketed numeric
+/// tag some taggers append to credit / character names (the provider's
+/// database id). Only a `[digits]` group at the very end counts — `"Marvel
+/// [UK]"`, `"Earth-616 [alt]"` and anything else stay as written. The
+/// returned slice is trimmed.
+pub fn strip_tagger_id(piece: &str) -> &str {
+    let piece = piece.trim();
+    let Some(rest) = piece.strip_suffix(']') else {
+        return piece;
+    };
+    let Some(open) = rest.rfind('[') else {
+        return piece;
+    };
+    let inner = rest[open + 1..].trim();
+    if inner.is_empty() || !inner.bytes().all(|b| b.is_ascii_digit()) {
+        return piece;
+    }
+    // A bare `[123]` is nothing but the tag; the caller drops the empty
+    // piece.
+    rest[..open].trim_end()
+}
+
+/// Does any piece of this CSV carry a trailing tagger id (`"Name [123]"`)?
+/// Twin of [`TAGGER_ID_RE`] for rows already in memory.
+pub fn csv_has_tagger_id(csv: &str) -> bool {
+    let sep: char = if csv.contains(';') { ';' } else { ',' };
+    csv.split(sep).any(|p| {
+        let t = p.trim();
+        !t.is_empty() && strip_tagger_id(t) != t
+    })
 }
 
 /// The canonical spelling of a piece that is nothing but a generational
@@ -965,12 +1004,17 @@ pub async fn replace_issue_metadata_from_model_skipping<C: ConnectionTrait>(
     replace_issue_metadata_skipping(db, &row.id, &inputs, skip).await
 }
 
-// ───────── name-suffix backfill ─────────
+// ───────── credit-name repair backfill ─────────
 
 /// Postgres regex (use with `~*`) for a CSV field in which some piece is
 /// nothing but a generational suffix — the `"José Marzán, Jr."` shape the
 /// pre-suffix-aware [`split_csv`] turned into two entries.
 pub const SUFFIX_PIECE_RE: &str = r"(^|,)\s*(jr|sr|ii|iii|iv)\.?\s*(,|$)";
+
+/// Postgres regex (use with `~`) for a CSV field in which some piece ends
+/// in a tagger id — `"John Doe [15487]"` — the shape [`strip_tagger_id`]
+/// now drops at ingest.
+pub const TAGGER_ID_RE: &str = r"\[\s*[0-9]+\s*\]\s*(,|;|$)";
 
 /// One page of [`run_name_suffix_backfill_page`].
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -984,7 +1028,8 @@ pub struct NameSuffixBackfillOutcome {
 
 /// Re-derive the junction tables for one page of issues whose CSV
 /// read-cache columns (`writer` … `locations`) carry a comma-separated
-/// generational suffix, so `"Mike Deodato, Jr."` becomes one person again.
+/// generational suffix (so `"Mike Deodato, Jr."` becomes one person again)
+/// or a tagger id (so `"John Doe [15487]"` becomes `"John Doe"`).
 /// Junctions a provider apply or a user edit owns (`field_provenance`
 /// rows that aren't file-tier) are skipped, exactly as the scanner's
 /// WP-2.5 rule does. Keyset-paginated by issue id; returns the cursor for
@@ -1018,14 +1063,23 @@ pub async fn run_name_suffix_backfill_page(
     // once a rollup has rebuilt the cache from split junction rows the
     // column may be alphabetized ("…, J. P. Mayer, Jr., Mike Deodato"),
     // so the raw ComicInfo is what the rebuild derives from below.
-    let mut any = Condition::any().add(Expr::cust_with_values(
-        "comic_info_raw::text ~* $1",
-        [SUFFIX_PIECE_RE],
-    ));
+    let mut any = Condition::any()
+        .add(Expr::cust_with_values(
+            "comic_info_raw::text ~* $1",
+            [SUFFIX_PIECE_RE],
+        ))
+        .add(Expr::cust_with_values(
+            "comic_info_raw::text ~ $1",
+            [TAGGER_ID_RE],
+        ));
     for col in csv_columns {
         any = any.add(Expr::cust_with_values(
             format!("{col} ~* $1"),
             [SUFFIX_PIECE_RE],
+        ));
+        any = any.add(Expr::cust_with_values(
+            format!("{col} ~ $1"),
+            [TAGGER_ID_RE],
         ));
     }
     let mut select = issue::Entity::find()
@@ -1123,7 +1177,7 @@ pub async fn run_name_suffix_backfill_page(
         // is protected there is nothing to rebuild.
         let affected: HashSet<F> = sources
             .iter()
-            .filter(|(_, v)| v.as_deref().is_some_and(csv_has_suffix_piece))
+            .filter(|(_, v)| v.as_deref().is_some_and(csv_needs_name_repair))
             .map(|(col, _)| junction_of(col))
             .collect();
         if affected.is_subset(&skip) {
@@ -1161,16 +1215,38 @@ fn csv_has_suffix_piece(csv: &str) -> bool {
     !csv.contains(';') && csv.split(',').any(|p| generational_suffix(p).is_some())
 }
 
+/// Rust-side twin of the backfill's row predicate: a split suffix piece
+/// or a tagger id in the CSV.
+fn csv_needs_name_repair(csv: &str) -> bool {
+    csv_has_suffix_piece(csv) || csv_has_tagger_id(csv)
+}
+
 /// Delete `person` / `character` / `team` / `location` rows that are only
-/// a bare generational suffix (`"Jr."`, `"Sr."`, …) and that no junction
-/// row references any more — the leftovers of the split names once
-/// [`run_name_suffix_backfill_page`] has rebuilt their issues. Returns the
-/// number of rows removed.
+/// a bare generational suffix (`"Jr."`, `"Sr."`, …) or that still carry a
+/// tagger id (`"John Doe [15487]"`), and that no junction row references
+/// any more — the leftovers once [`run_name_suffix_backfill_page`] has
+/// rebuilt their issues. Returns the number of rows removed.
 pub async fn prune_orphan_suffix_entities(
     db: &sea_orm::DatabaseConnection,
 ) -> Result<u64, sea_orm::DbErr> {
     let backend = db.get_database_backend();
     let statements = [
+        "DELETE FROM person p \
+          WHERE p.name ~ '\\[\\s*[0-9]+\\s*\\]$' \
+            AND NOT EXISTS (SELECT 1 FROM issue_credits ic WHERE ic.person_id = p.id) \
+            AND NOT EXISTS (SELECT 1 FROM series_credits sc WHERE sc.person_id = p.id)",
+        "DELETE FROM character c \
+          WHERE c.name ~ '\\[\\s*[0-9]+\\s*\\]$' \
+            AND NOT EXISTS (SELECT 1 FROM issue_characters ic WHERE ic.character_id = c.id) \
+            AND NOT EXISTS (SELECT 1 FROM series_characters sc WHERE sc.character_id = c.id)",
+        "DELETE FROM team t \
+          WHERE t.name ~ '\\[\\s*[0-9]+\\s*\\]$' \
+            AND NOT EXISTS (SELECT 1 FROM issue_teams it WHERE it.team_id = t.id) \
+            AND NOT EXISTS (SELECT 1 FROM series_teams st WHERE st.team_id = t.id)",
+        "DELETE FROM location l \
+          WHERE l.name ~ '\\[\\s*[0-9]+\\s*\\]$' \
+            AND NOT EXISTS (SELECT 1 FROM issue_locations il WHERE il.location_id = l.id) \
+            AND NOT EXISTS (SELECT 1 FROM series_locations sl WHERE sl.location_id = l.id)",
         "DELETE FROM person p \
           WHERE p.name ~* '^(jr|sr|ii|iii|iv)\\.?$' \
             AND NOT EXISTS (SELECT 1 FROM issue_credits ic WHERE ic.person_id = p.id) \
@@ -1227,6 +1303,36 @@ mod tests {
         );
         // Same: a single comma-containing name with no separator at all.
         assert_eq!(split_csv("Capes, Inc."), vec!["Capes", "Inc."]);
+    }
+
+    #[test]
+    fn strip_tagger_id_drops_only_a_trailing_numeric_bracket() {
+        assert_eq!(strip_tagger_id("John Doe [15487]"), "John Doe");
+        assert_eq!(strip_tagger_id("John Doe [ 15487 ]"), "John Doe");
+        assert_eq!(strip_tagger_id("  John Doe[42]  "), "John Doe");
+        // Not a tagger id: letters, empty, or not at the end.
+        assert_eq!(strip_tagger_id("Marvel [UK]"), "Marvel [UK]");
+        assert_eq!(strip_tagger_id("Earth-616 [alt]"), "Earth-616 [alt]");
+        assert_eq!(strip_tagger_id("Name []"), "Name []");
+        assert_eq!(strip_tagger_id("[12] Name"), "[12] Name");
+        assert_eq!(strip_tagger_id("Plain Name"), "Plain Name");
+        // Nothing but the tag → empty, so split_csv drops the piece.
+        assert_eq!(strip_tagger_id("[123]"), "");
+    }
+
+    #[test]
+    fn split_csv_strips_tagger_ids_and_dedupes_the_clean_name() {
+        assert_eq!(
+            split_csv("John Doe [15487], Jane Roe [99], john doe, [7]"),
+            vec!["John Doe", "Jane Roe"],
+        );
+        assert_eq!(
+            split_csv("Capes, Inc. [5]; Comet Twins [6]"),
+            vec!["Capes, Inc.", "Comet Twins"],
+        );
+        assert!(csv_has_tagger_id("Jane Roe [99], John Doe"));
+        assert!(!csv_has_tagger_id("Jane Roe, John Doe"));
+        assert!(!csv_has_tagger_id("Marvel [UK]"));
     }
 
     #[test]

@@ -912,6 +912,11 @@ async fn collection_completeness_three_state_rollup() {
     seed_series_with_issues(&app, "uc", "Unknown", 7, None).await;
     // Edge: more issues on disk than expected (still counts as complete)
     seed_series_with_issues(&app, "oc", "Overshoot", 12, Some(10)).await;
+    // Specials don't count toward the run: 4 numbered issues + 1 annual
+    // against an expected 5 is still incomplete. (The pre-fix predicate
+    // counted the annual and called this complete.)
+    let (_, annualled) = seed_series_with_issues(&app, "an", "Annualled", 5, Some(5)).await;
+    mark_special(&app, &annualled[4], "Annual").await;
 
     let complete = run_filter_for_names(
         &app,
@@ -942,8 +947,62 @@ async fn collection_completeness_three_state_rollup() {
     .await;
 
     assert_eq!(complete, vec!["Complete", "Overshoot"]);
-    assert_eq!(incomplete, vec!["Incomplete"]);
+    assert_eq!(incomplete, vec!["Annualled", "Incomplete"]);
     assert_eq!(unknown, vec!["Unknown"]);
+}
+
+/// Flip one seeded issue into the specials bucket (`special_type`).
+async fn mark_special(app: &TestApp, issue_id: &str, special_type: &str) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let mut am: IssueAM = entity::issue::Entity::find_by_id(issue_id.to_owned())
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("seeded issue")
+        .into();
+    am.special_type = Set(Some(special_type.to_owned()));
+    am.update(&db).await.unwrap();
+}
+
+/// `SeriesView` splits what's on the shelf into the main run and the
+/// specials: `issue_count` is everything, `main_issue_count` is what
+/// `total_issues` describes, `special_issue_count` the extras. Both the
+/// detail endpoint and the list hydration report the same split, so the
+/// "Issues" card reads "4 / 5 · +1 special", never "5 / 5".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_view_counts_split_main_run_from_specials() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "counts-split@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+
+    let (_, ids) = seed_series_with_issues(&app, "sp", "Split", 6, Some(5)).await;
+    mark_special(&app, &ids[4], "Annual").await;
+    mark_special(&app, &ids[5], "OneShot").await;
+
+    let (status, detail) = http(&app, Method::GET, "/api/series/sp-Split", Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    assert_eq!(
+        detail["issue_count"], 6,
+        "everything on the shelf: {detail}"
+    );
+    assert_eq!(detail["main_issue_count"], 4, "main run only: {detail}");
+    assert_eq!(
+        detail["special_issue_count"], 2,
+        "annual + one-shot: {detail}"
+    );
+    assert_eq!(detail["total_issues"], 5);
+
+    let (status, list) = http(&app, Method::GET, "/api/series?limit=50", Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let row = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "Split")
+        .expect("series listed");
+    assert_eq!(row["issue_count"], 6);
+    assert_eq!(row["main_issue_count"], 4);
+    assert_eq!(row["special_issue_count"], 2);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

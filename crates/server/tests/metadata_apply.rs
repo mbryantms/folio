@@ -675,6 +675,110 @@ async fn apply_issue_writes_credits_through_writer_helpers() {
     assert_eq!(row.writer.as_deref(), Some("Brian K. Vaughan"));
 }
 
+/// File-tagged credits (`"John Doe [15487]"`) count as *missing*: a
+/// fill-missing apply replaces them with the provider's clean names even
+/// though the column isn't empty — and even when the counts match, which
+/// used to read as "nothing to do".
+#[tokio::test]
+async fn apply_issue_fill_missing_replaces_tagger_id_credits() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Martian Manhunter")
+        .insert(&app.state().db)
+        .await;
+    let cbz = dir.path().join("mm.cbz");
+    let issue_id = common::seed::IssueSeed::new(lib_id, series_id, &cbz, b"mm", 1.0)
+        .insert(&app.state().db)
+        .await;
+    // The pre-fix state: two tagged credits in the CSV cache, file-tier
+    // provenance (what a scan writes).
+    let mut am: issue::ActiveModel = issue::Entity::find_by_id(&issue_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    am.writer = Set(Some("A. J. Lieberman [15487]".into()));
+    am.penciller = Set(Some("Al Barrionuevo [20011]".into()));
+    am.update(&app.state().db).await.unwrap();
+
+    let run_id = seed_issue_run(&app, &issue_id, "67890").await;
+    use server::metadata::cache;
+    use server::metadata::identifier::{Identifier, Source};
+    let credit = |name: &str, role: &str, pid: &str| server::metadata::provider::CreditCandidate {
+        name: name.into(),
+        role: role.into(),
+        ordinal: None,
+        identifiers: vec![Identifier::with_canonical_url(
+            Source::ComicVine,
+            pid,
+            "person",
+        )],
+    };
+    let prefilled = server::metadata::provider::GenericMetadata {
+        issue_number: Some("1".into()),
+        // Same count as the tagged pair — the old count heuristic
+        // would have called this "no change".
+        credits: vec![
+            credit("A. J. Lieberman", "writer", "15487"),
+            credit("Al Barrionuevo", "penciler", "20011"),
+        ],
+        identifiers: vec![Identifier::with_canonical_url(
+            Source::ComicVine,
+            "67890",
+            "issue",
+        )],
+        source_provider: Some(Source::ComicVine),
+        source_external_id: Some("67890".into()),
+        ..Default::default()
+    };
+    cache::put(
+        &app.state().db,
+        Source::ComicVine,
+        cache::CacheEntity::Issue,
+        "67890",
+        &prefilled,
+    )
+    .await
+    .unwrap();
+
+    // The preview agrees: credits are a fill, not a skip.
+    let diff = server::metadata::diff::compute_issue_diff(
+        &app.state(),
+        args(run_id, 0, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("diff");
+    let credits_row = diff.rows.iter().find(|r| r.field == "credits").unwrap();
+    assert_eq!(credits_row.decision, "would_fill", "{credits_row:?}");
+
+    let outcome = server::jobs::metadata_apply::apply_issue_inline(
+        &app.state(),
+        &issue_id,
+        args(run_id, 0, ApplyMode::FillMissing, false),
+    )
+    .await
+    .expect("apply_issue");
+    assert!(
+        outcome.applied_fields.contains(&"credits".to_owned()),
+        "{outcome:?}"
+    );
+    let row = issue::Entity::find_by_id(&issue_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.writer.as_deref(), Some("A. J. Lieberman"));
+    assert_eq!(row.penciller.as_deref(), Some("Al Barrionuevo"));
+    let people = person::Entity::find().all(&app.state().db).await.unwrap();
+    assert!(
+        people.iter().all(|p| !p.name.contains('[')),
+        "{:?}",
+        people.iter().map(|p| &p.name).collect::<Vec<_>>()
+    );
+}
+
 /// WP-8.1 regression: the provider mappers emit ComicInfo PascalCase
 /// roles (`Writer`, `CoverArtist`), but the per-role CSV rebuild, the
 /// filters and the UI match lowercase keys. A non-writeback apply used to

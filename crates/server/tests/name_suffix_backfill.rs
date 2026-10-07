@@ -172,3 +172,104 @@ async fn backfill_repairs_split_rows_and_prunes_orphan_suffixes() {
     let (again, _) = run_name_suffix_backfill_page(db, None, 50).await.unwrap();
     assert_eq!(again.rebuilt, 0);
 }
+
+/// Seed an issue whose CSV columns carry tagger ids (`"Name [123]"`).
+async fn seed_tagged_issue(app: &TestApp, dir: &std::path::Path) -> (uuid::Uuid, String) {
+    let lib_id = LibrarySeed::new(dir).insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Martian Manhunter")
+        .insert(&app.state().db)
+        .await;
+    let path = dir.join("mm-1.cbz");
+    let id = IssueSeed::new(lib_id, series_id, &path, b"mm-1", 1.0)
+        .insert(&app.state().db)
+        .await;
+    let mut am: issue::ActiveModel = issue::Entity::find_by_id(id.clone())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    am.writer = Set(Some("A. J. Lieberman [15487]".into()));
+    am.penciller = Set(Some("Al Barrionuevo [20011], Bit [7]".into()));
+    am.characters = Set(Some("Martian Manhunter [1443], Batman [1699]".into()));
+    am.update(&app.state().db).await.unwrap();
+    (series_id, id)
+}
+
+/// `"A. J. Lieberman [15487]"` ingests as `"A. J. Lieberman"`: the tagger
+/// id is dropped, so the person row name-matches a provider credit.
+#[tokio::test]
+async fn ingest_strips_tagger_ids_from_names() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let (series_id, id) = seed_tagged_issue(&app, dir.path()).await;
+
+    replace_issue_metadata_from_row(&app.state().db, &id)
+        .await
+        .unwrap();
+    assert_eq!(credits(&app, &id, "writer").await, vec!["A. J. Lieberman"]);
+    assert_eq!(
+        credits(&app, &id, "penciller").await,
+        vec!["Al Barrionuevo", "Bit"]
+    );
+    assert_eq!(
+        characters(&app, &id).await,
+        vec!["Batman", "Martian Manhunter"]
+    );
+
+    rollup_series_metadata(&app.state().db, series_id)
+        .await
+        .unwrap();
+    let names = person_names(&app).await;
+    assert!(names.contains(&"A. J. Lieberman".to_owned()), "{names:?}");
+    assert!(!names.iter().any(|n| n.contains('[')), "{names:?}");
+    // The CSV read-cache was rebuilt from the clean junctions.
+    let row = issue::Entity::find_by_id(id.clone())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.writer.as_deref(), Some("A. J. Lieberman"));
+}
+
+/// Issues scanned before the rule hold `"Name [id]"` rows; the backfill's
+/// predicate finds them, the rebuild cleans them, the prune drops the
+/// orphaned tagged person.
+#[tokio::test]
+async fn backfill_repairs_tagged_rows_and_prunes_orphans() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let (series_id, id) = seed_tagged_issue(&app, dir.path()).await;
+    let db = &app.state().db;
+
+    issue_credit::ActiveModel {
+        issue_id: Set(id.clone()),
+        role: Set("writer".into()),
+        person: Set("A. J. Lieberman [15487]".into()),
+        person_id: Set(None),
+        ordinal: Set(0),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    rollup_series_metadata(db, series_id).await.unwrap();
+    assert!(
+        person_names(&app)
+            .await
+            .contains(&"A. J. Lieberman [15487]".to_owned())
+    );
+
+    let (outcome, next) = run_name_suffix_backfill_page(db, None, 50).await.unwrap();
+    assert_eq!(outcome.rebuilt, 1, "{outcome:?}");
+    assert!(next.is_none());
+    assert_eq!(credits(&app, &id, "writer").await, vec!["A. J. Lieberman"]);
+    let pruned = prune_orphan_suffix_entities(db).await.unwrap();
+    assert!(pruned >= 1, "the tagged person row is gone: {pruned}");
+    let names = person_names(&app).await;
+    assert!(!names.iter().any(|n| n.contains('[')), "{names:?}");
+    assert!(names.contains(&"A. J. Lieberman".to_owned()), "{names:?}");
+
+    // Second pass: nothing left to repair.
+    let (again, _) = run_name_suffix_backfill_page(db, None, 50).await.unwrap();
+    assert_eq!(again.rebuilt, 0, "{again:?}");
+}

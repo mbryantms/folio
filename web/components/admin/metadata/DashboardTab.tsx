@@ -288,13 +288,13 @@ function CoverVariantBackfillCard() {
 function NameSuffixBackfillCard() {
   return (
     <BackfillCard
-      title="Split creator and character names"
+      title="Repair creator and character names"
       description={
-        'Rebuild credits, characters, teams and locations for issues whose ComicInfo lists a name as "José Marzán, Jr." — older scans split that into two entries ("José Marzán" and "Jr."). Re-derives them from the stored file metadata, leaves anything a provider or you set alone, and removes the orphaned "Jr." / "Sr." rows. No archive access; safe to re-run.'
+        'Rebuild credits, characters, teams and locations for issues whose ComicInfo lists a name as "José Marzán, Jr." (older scans split that into "José Marzán" and "Jr.") or with a tagger id glued on ("John Doe [15487]"). Re-derives them from the stored file metadata, leaves anything a provider or you set alone, and removes the orphaned "Jr." / "[15487]" rows. No archive access; safe to re-run.'
       }
       endpoint="/admin/metadata/name-suffix-backfill"
       icon={<Users className="mr-2 h-4 w-4" />}
-      label="Repair split names"
+      label="Repair names"
     />
   );
 }

@@ -558,6 +558,97 @@ describe("<SeriesRefreshFlow>", () => {
     });
   });
 
+  it("shows what each provider proposes and lets you pick the main series", async () => {
+    srv.status = status({ resume_step: "coverage", coverage: coverageJob() });
+    srv.analysis = coverage([
+      provider("metron", "Metron", {
+        main_series_id: "1713",
+        current_series_id: "1711",
+        confidence: "medium",
+        confidence_reasons: ["2 candidates list your issues"],
+        candidates: [
+          {
+            provider_series_id: "1711",
+            name: "Fantastic Four",
+            year: 1961,
+            publisher: "Marvel",
+            url: "https://metron.cloud/series/1711",
+            origin: "search",
+            strict: true,
+            listed_count: 416,
+            local_matches: 160,
+            assigned: 160,
+            partial: false,
+          },
+          {
+            provider_series_id: "1713",
+            name: "Fantastic Four",
+            year: 2012,
+            publisher: "Marvel",
+            url: "https://metron.cloud/series/1713",
+            origin: "search",
+            strict: true,
+            listed_count: 13,
+            local_matches: 13,
+            assigned: 13,
+            partial: false,
+          },
+        ],
+        proposed_ranges: [],
+        uncovered: ["700"],
+      }),
+    ]);
+    renderFlow();
+    await heading(/Step 2 of 4: Coverage/);
+    const row = await waitFor(() =>
+      screen.getByTestId("refresh-coverage-metron"),
+    );
+    // The headline, then the facts the Details tab shows.
+    expect(row.textContent).toContain(
+      "Metron proposes a different main series",
+    );
+    expect(row.textContent).toContain("Proposed main");
+    expect(row.textContent).toContain("Fantastic Four (2012)");
+    expect(row.textContent).toContain("lists 13 issues, 13 of yours");
+    expect(row.textContent).toContain("Linked now");
+    expect(row.textContent).toContain("Fantastic Four (1961)");
+    expect(row.textContent).toContain("2 candidates list your issues");
+    expect(screen.getByTestId("coverage-list-metron")).toBeTruthy();
+    expect(row.textContent).toContain("No Metron series has #700");
+    // More than one candidate → the main-series picker is offered.
+    expect(
+      screen.getByRole("combobox", { name: "Metron main series" }),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Accept Metron" }));
+    await waitFor(() =>
+      expect(sent("POST", "/provider-coverage/accept")).toHaveLength(1),
+    );
+    // Following the proposal sends null (the server uses its main).
+    expect(sent("POST", "/provider-coverage/accept")[0]!.body).toEqual({
+      source: "metron",
+      main_series_id: null,
+    });
+  });
+
+  it("accepts a provider whose proposal conflicts with a user range", async () => {
+    // The Details tab lets you accept despite a conflict (the server
+    // refuses only a differing user-set link); the wizard now matches.
+    srv.status = status({ resume_step: "coverage", coverage: coverageJob() });
+    srv.analysis = coverage([
+      provider("metron", "Metron", {
+        conflicts: ["your range #600–611 → #1799 disagrees"],
+      }),
+    ]);
+    renderFlow();
+    await heading(/Step 2 of 4: Coverage/);
+    const row = await waitFor(() =>
+      screen.getByTestId("refresh-coverage-metron"),
+    );
+    expect(row.textContent).toContain("your range #600–611 → #1799 disagrees");
+    expect(screen.getByRole("button", { name: "Accept Metron" })).toBeTruthy();
+  });
+
   it("runs the analysis when no job exists", async () => {
     srv.status = status({ resume_step: "coverage" });
     renderFlow();
@@ -638,6 +729,41 @@ describe("<SeriesRefreshFlow>", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe("<SeriesRefreshFlow> review — Replace all", () => {
+  it("offers Replace all, confirms, then replaces needs-review and strong", async () => {
+    srv.status = status({
+      resume_step: "review",
+      batch: {
+        batch_id: "b1",
+        created_at: T2,
+        items_total: 173,
+        unfinished: 0,
+      },
+    });
+    srv.batch = batch("completed");
+    renderFlow();
+    await heading(/Step 4 of 4: Review/);
+    // 3 strong + 2 needs-review.
+    const open = await waitFor(() =>
+      screen.getByRole("button", { name: "Replace all (5)" }),
+    );
+    fireEvent.click(open);
+    const confirm = await waitFor(() =>
+      screen.getByRole("button", { name: "Replace all" }),
+    );
+    expect(screen.getByText(/Replace metadata for 5 issues\?/)).toBeTruthy();
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(sent("POST", "/metadata/batch/b1/apply")).toHaveLength(2),
+    );
+    const bodies = sent("POST", "/metadata/batch/b1/apply").map((c) => c.body);
+    expect(bodies).toEqual([
+      { filter: "all_needs_review", mode: "replace_all" },
+      { filter: "all_strong", mode: "replace_all" },
+    ]);
   });
 });
 

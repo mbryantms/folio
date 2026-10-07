@@ -12208,7 +12208,10 @@ export interface components {
             id: string;
             imprint?: string | null;
             inkers?: string[];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Every non-removed issue in the series — main run *and* specials.
+             */
             issue_count?: number | null;
             language_code: string;
             /**
@@ -12223,6 +12226,15 @@ export interface components {
             letterers?: string[];
             library_id: string;
             locations?: string[];
+            /**
+             * Format: int64
+             * @description Non-removed issues in the **main run** only (`special_type IS
+             *     NULL`). This is what `total_issues` (the publisher's `<Count>` /
+             *     `series.json` total) describes, so collection completeness compares
+             *     against this number, not `issue_count` — an annual on the shelf
+             *     must not make a 4-of-5 run read "5 / 5, complete".
+             */
+            main_issue_count?: number | null;
             metadata_completeness?: components["schemas"]["CompletenessReport"] | null;
             metadata_completeness_summary?: components["schemas"]["MetadataCompletenessSummary"] | null;
             /**
@@ -12264,6 +12276,12 @@ export interface components {
              *     XSS surface area.
              */
             snippet?: string | null;
+            /**
+             * Format: int64
+             * @description Non-removed annuals / one-shots / specials / TPBs (`special_type`
+             *     set). Rendered as "+N specials" next to the main-run count.
+             */
+            special_issue_count?: number | null;
             status: string;
             summary?: string | null;
             tags?: string[];

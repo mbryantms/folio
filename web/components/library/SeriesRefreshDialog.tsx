@@ -43,6 +43,20 @@ import { useQueryClient } from "@tanstack/react-query";
 import { BatchLookupSummary } from "@/components/admin/metadata/BatchLookupSummary";
 import { promptHeadline } from "@/components/library/CoverageAfterMatchPrompt";
 import { MetadataMatchForm } from "@/components/library/MetadataMatchDialog";
+import {
+  GroupedList,
+  candidateLabel,
+} from "@/components/library/ProviderCoverageAnalysis";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -55,6 +69,13 @@ import {
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   useAcceptProviderCoverage,
   useAnalyzeProviderCoverage,
@@ -70,8 +91,10 @@ import {
 import type {
   BatchStatusResp,
   CoverageAnalysisResp,
+  CoverageLocalIssue,
   FetchScopeEstimate,
   ProposedRange,
+  ProviderCoverageView,
   RefreshStep,
   SeriesBatchScope,
   SeriesRefreshStatusResp,
@@ -572,10 +595,12 @@ function CoverageStep({
     view?.state === "running";
 
   const runAnalysis = () => analyze.mutate({ auto_accept: false });
-  const onAccept = (source: string) => {
+  // `mainSeriesId` is the admin's pick from "Choose series"; `null` follows
+  // the proposal's main — the same contract as the Details tab card.
+  const onAccept = (source: string, mainSeriesId: string | null) => {
     setAccepting(source);
     accept.mutate(
-      { source, main_series_id: null },
+      { source, main_series_id: mainSeriesId },
       { onSettled: () => setAccepting(null) },
     );
   };
@@ -679,87 +704,19 @@ function CoverageStep({
         Nothing is written until you accept.
       </p>
       <ul className="space-y-2" aria-label="Coverage by provider">
-        {view.providers.map((p) => {
-          const auto = autoSources.has(p.source);
-          const newRanges = p.proposed_ranges.filter((r) => r.status === "new");
-          const canAccept = !auto && p.has_changes && p.conflicts.length === 0;
-          const isSkipped = skipped.has(p.source);
-          return (
-            <li
-              key={p.source}
-              className="border-border/60 flex flex-wrap items-start justify-between gap-2 rounded-md border p-3"
-            >
-              <div className="min-w-0 flex-1 space-y-0.5">
-                <p className="break-words">
-                  {promptHeadline(p, localTotal, auto)}
-                </p>
-                {newRanges.length > 0 && !auto && (
-                  <ul className="text-muted-foreground text-xs">
-                    {newRanges.map((r) => (
-                      <li
-                        key={`${r.provider_series_id}-${r.low}`}
-                        className="break-words"
-                      >
-                        {rangeLabel(r)}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {p.conflicts.length > 0 && !auto && (
-                  <p
-                    className={cn(
-                      "text-xs break-words",
-                      statusToneText("warning"),
-                    )}
-                  >
-                    {p.conflicts[0]} — review it on the Details tab.
-                  </p>
-                )}
-                <p className="text-muted-foreground text-xs tabular-nums">
-                  {p.requests} of {p.request_budget} requests · {p.confidence}{" "}
-                  confidence
-                </p>
-              </div>
-              {canAccept && !isSkipped ? (
-                <div className="flex shrink-0 gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() => onAccept(p.source)}
-                    disabled={accepting !== null}
-                    aria-label={`Accept ${p.source_label}`}
-                  >
-                    {accepting === p.source ? (
-                      <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Check className="mr-1 h-3.5 w-3.5" />
-                    )}
-                    Accept
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() =>
-                      setSkipped((prev) => new Set(prev).add(p.source))
-                    }
-                    aria-label={`Skip ${p.source_label}`}
-                  >
-                    Skip
-                  </Button>
-                </div>
-              ) : (
-                <Badge variant="outline" className="shrink-0 font-normal">
-                  {auto
-                    ? "Accepted"
-                    : isSkipped
-                      ? "Skipped"
-                      : p.has_changes
-                        ? "Needs review"
-                        : "Done"}
-                </Badge>
-              )}
-            </li>
-          );
-        })}
+        {view.providers.map((p) => (
+          <CoverageProviderRow
+            key={p.source}
+            p={p}
+            local={view.local_issues}
+            localTotal={localTotal}
+            auto={autoSources.has(p.source)}
+            skipped={skipped.has(p.source)}
+            accepting={accepting}
+            onAccept={onAccept}
+            onSkip={() => setSkipped((prev) => new Set(prev).add(p.source))}
+          />
+        ))}
       </ul>
       <div className="flex flex-wrap gap-2">
         <Button onClick={onContinue}>Continue to per-issue fetch</Button>
@@ -776,6 +733,221 @@ function CoverageStep({
 }
 
 // ───────── 3. per-issue fetch ─────────
+
+/**
+ * One provider in the coverage step: the headline (what would change),
+ * then the same facts the Details tab's analysis card shows — which
+ * provider series is proposed as the main and which one you're linked
+ * to now, how confident the analysis is and why, the series → issues
+ * breakdown, every conflict and stale mapping — plus "Choose series"
+ * when more than one candidate lists your issues. Enough to accept
+ * here without opening the Details tab first.
+ */
+function CoverageProviderRow({
+  p,
+  local,
+  localTotal,
+  auto,
+  skipped,
+  accepting,
+  onAccept,
+  onSkip,
+}: {
+  p: ProviderCoverageView;
+  local: CoverageLocalIssue[];
+  localTotal: number;
+  auto: boolean;
+  skipped: boolean;
+  accepting: string | null;
+  onAccept: (source: string, mainSeriesId: string | null) => void;
+  onSkip: () => void;
+}) {
+  const [picked, setPicked] = React.useState<string | null>(null);
+  const chosen = picked ?? p.main_series_id ?? "";
+  const chosenOther = !!chosen && chosen !== p.main_series_id;
+  const assigned = p.status === "analyzed" || p.status === "partial";
+  const newRanges = p.proposed_ranges.filter((r) => r.status === "new");
+  const conflictRanges = p.proposed_ranges.filter(
+    (r) => r.status === "conflict",
+  );
+  // A conflict (your own link or range disagrees) still accepts here: the
+  // server refuses only when a user-set link differs, and says so.
+  const canAccept =
+    !auto && assigned && !!p.main_series_id && (p.has_changes || chosenOther);
+  const main = p.candidates.find(
+    (c) => c.provider_series_id === p.main_series_id,
+  );
+  const current = p.current_series_id
+    ? p.candidates.find((c) => c.provider_series_id === p.current_series_id)
+    : undefined;
+  const busy = accepting !== null;
+
+  return (
+    <li
+      className="border-border/60 space-y-2 rounded-md border p-3"
+      data-testid={`refresh-coverage-${p.source}`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <p className="min-w-0 flex-1 break-words">
+          {promptHeadline(p, localTotal, auto)}
+        </p>
+        {!(canAccept && !skipped) && (
+          <Badge variant="outline" className="shrink-0 font-normal">
+            {auto
+              ? "Accepted"
+              : skipped
+                ? "Skipped"
+                : p.has_changes
+                  ? "Needs review"
+                  : "Done"}
+          </Badge>
+        )}
+      </div>
+
+      {assigned && p.main_series_id && (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+          <dt className="text-muted-foreground">Proposed main</dt>
+          <dd className="min-w-0 break-words">
+            {main?.url ? (
+              <a
+                href={main.url}
+                target="_blank"
+                rel="noreferrer"
+                className="hover:underline"
+              >
+                {candidateLabel(main, p.main_series_id)}
+              </a>
+            ) : (
+              candidateLabel(main, p.main_series_id)
+            )}
+            {main && (
+              <span className="text-muted-foreground">
+                {" "}
+                · lists {main.listed_count} issues, {main.local_matches} of
+                yours
+              </span>
+            )}
+          </dd>
+          <dt className="text-muted-foreground">Linked now</dt>
+          <dd className="min-w-0 break-words">
+            {p.current_series_id
+              ? p.current_series_id === p.main_series_id
+                ? "the same series"
+                : candidateLabel(current, p.current_series_id)
+              : "nothing yet"}
+          </dd>
+        </dl>
+      )}
+
+      {assigned && p.confidence_reasons.length > 0 && (
+        <p className="text-muted-foreground text-xs">
+          {p.confidence_reasons.join(" · ")}
+        </p>
+      )}
+      {assigned && <GroupedList p={p} local={local} />}
+      {newRanges.length > 0 && !auto && (
+        <ul className="text-muted-foreground text-xs">
+          {newRanges.map((r) => (
+            <li
+              key={`${r.provider_series_id}-${r.low}`}
+              className="break-words"
+            >
+              {rangeLabel(r)}
+            </li>
+          ))}
+        </ul>
+      )}
+      {p.uncovered.length > 0 && (
+        <p className="text-xs">
+          <span className="text-muted-foreground">
+            No {p.source_label} series has{" "}
+          </span>
+          {p.uncovered.map((n) => `#${n}`).join(", ")}
+        </p>
+      )}
+      {!auto && (p.conflicts.length > 0 || conflictRanges.length > 0) && (
+        <ul className={cn("space-y-0.5 text-xs", statusToneText("warning"))}>
+          {p.conflicts.map((c) => (
+            <li key={c} className="break-words">
+              {c}
+            </li>
+          ))}
+          {conflictRanges
+            .filter((r) => r.note)
+            .map((r) => (
+              <li key={`${r.low}-${r.high}`} className="break-words">
+                #{r.low}–{r.high} not mapped: {r.note}
+              </li>
+            ))}
+        </ul>
+      )}
+      {!auto && p.stale_ranges.length > 0 && (
+        <ul className="text-muted-foreground space-y-0.5 text-xs">
+          {p.stale_ranges.map((r) => (
+            <li key={r.id} className="break-words">
+              Stale mapping{" "}
+              {r.range_low === r.range_high
+                ? `#${r.range_low}`
+                : `#${r.range_low ?? ""}–${r.range_high ?? ""}`}{" "}
+              → {r.provider_series_name ?? `#${r.provider_series_id}`} — removed
+              on accept ({r.reason})
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-muted-foreground text-xs tabular-nums">
+        {p.requests} of {p.request_budget} requests · {p.confidence} confidence
+      </p>
+
+      {canAccept && !skipped && (
+        <div className="flex flex-wrap items-center gap-2">
+          {p.candidates.length > 1 && (
+            <Select value={chosen} onValueChange={setPicked}>
+              <SelectTrigger
+                className="h-8 w-full text-xs sm:w-64"
+                aria-label={`${p.source_label} main series`}
+              >
+                <SelectValue placeholder="Main series" />
+              </SelectTrigger>
+              <SelectContent>
+                {p.candidates.map((c) => (
+                  <SelectItem
+                    key={c.provider_series_id}
+                    value={c.provider_series_id}
+                  >
+                    {candidateLabel(c, c.provider_series_id)} ·{" "}
+                    {c.local_matches} of yours
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Button
+            size="sm"
+            onClick={() => onAccept(p.source, chosenOther ? chosen : null)}
+            disabled={busy}
+            aria-label={`Accept ${p.source_label}`}
+          >
+            {accepting === p.source ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Check className="mr-1 h-3.5 w-3.5" />
+            )}
+            Accept
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onSkip}
+            aria-label={`Skip ${p.source_label}`}
+          >
+            Skip
+          </Button>
+        </div>
+      )}
+    </li>
+  );
+}
 
 function FetchStep({
   seriesSlug,
@@ -951,6 +1123,7 @@ function ReviewStep({
   onDone: () => void;
 }) {
   const apply = useBatchApply(batchId);
+  const [confirmReplace, setConfirmReplace] = React.useState(false);
   if (!batch) {
     return (
       <p className="text-muted-foreground flex items-center gap-2 text-sm">
@@ -969,6 +1142,23 @@ function ReviewStep({
       ) && !c.applied,
   ).length;
   const reviewHref = `/admin/metadata?tab=review&batch=${encodeURIComponent(batchId)}`;
+  const replaceable = strong + needsReview;
+  // "Replace all" covers every unapplied match: strong ones with their
+  // single candidate, needs-review ones with the most-complete merge
+  // across providers — both in replace_all mode, so existing non-pinned
+  // fields and the primary cover are overwritten.
+  const replaceAll = async () => {
+    setConfirmReplace(false);
+    if (needsReview > 0) {
+      await apply.mutateAsync({
+        filter: "all_needs_review",
+        mode: "replace_all",
+      });
+    }
+    if (strong > 0) {
+      await apply.mutateAsync({ filter: "all_strong", mode: "replace_all" });
+    }
+  };
   return (
     <div className="space-y-3 text-sm">
       {batchRunning(batch) && (
@@ -1019,13 +1209,46 @@ function ReviewStep({
         >
           Fill missing ({needsReview})
         </Button>
+        <Button
+          variant="outline"
+          disabled={replaceable === 0 || apply.isPending}
+          onClick={() => setConfirmReplace(true)}
+        >
+          Replace all ({replaceable})
+        </Button>
       </div>
       <p className="text-muted-foreground text-xs">
         <em>Fill missing</em> applies the most complete merge across providers
-        to the needs-review issues without replacing what&rsquo;s there; fields
-        you set by hand are kept. Open the Review page to go through issues one
-        by one, see no-match issues, or replace all.
+        to the needs-review issues without replacing what&rsquo;s there.{" "}
+        <em>Replace all</em> overwrites existing non-pinned fields on every
+        unapplied issue — strong matches with their match, needs-review issues
+        with the merge. Fields you set by hand are always kept. Open the Review
+        page to go through issues one by one or see no-match issues.
       </p>
+      <AlertDialog open={confirmReplace} onOpenChange={setConfirmReplace}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Replace metadata for {replaceable} issue
+              {replaceable === 1 ? "" : "s"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This overwrites existing non-pinned fields and the primary cover:
+              strong matches take their single match, needs-review issues take
+              the most-complete merge across every provider that matched (the
+              richest credits, characters and teams; other fields from the
+              preferred provider). Fields you pinned are preserved. This
+              can&rsquo;t be undone in bulk.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void replaceAll()}>
+              Replace all
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <div className="flex flex-wrap gap-2">
         <Button asChild variant="outline">
           <Link href={reviewHref}>Open in Review</Link>

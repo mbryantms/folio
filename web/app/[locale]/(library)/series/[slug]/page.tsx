@@ -53,7 +53,12 @@ import {
   formatReadingTimeCompact,
   formatRelativeDate,
 } from "@/lib/format";
-import { collectionStatus } from "@/lib/series-status";
+import {
+  collectionStatus,
+  collectionTooltip,
+  formatSpecialsSuffix,
+  ownedMainCount,
+} from "@/lib/series-status";
 import { type ReadState, readButtonLabel } from "@/lib/reading-state";
 import { statusTone } from "@/lib/ui/status-tone";
 
@@ -528,7 +533,7 @@ export default async function SeriesPage({
                   items={[
                     {
                       label: "Owned issues",
-                      value: series.issue_count,
+                      value: formatOwnedIssues(series),
                     },
                     {
                       label: "Expected issues",
@@ -801,8 +806,11 @@ function formatYearRange(
   return `${lo}–${hi}`;
 }
 
+/** "4 / 4" — the main run against the publisher's total. Specials are
+ *  reported separately by {@link formatCollectionHint}, never folded into
+ *  the owned number (an annual must not turn 4-of-4 into "5 / 4"). */
 function formatIssueTotal(series: SeriesView): string | null {
-  const owned = series.issue_count ?? null;
+  const owned = series.main_issue_count ?? series.issue_count ?? null;
   const expected = series.total_issues ?? null;
   if (owned == null && expected == null) return null;
   if (owned != null && expected != null && expected > 0) {
@@ -811,10 +819,17 @@ function formatIssueTotal(series: SeriesView): string | null {
   return String(owned ?? expected);
 }
 
+/** "Complete collection · +1 special" — the completeness verdict for the
+ *  main run, then whatever extras sit alongside it. */
 function formatCollectionHint(series: SeriesView): string | null {
   const state = collectionStatus(series);
-  if (!state) return null;
-  return state === "complete" ? "Complete collection" : "Incomplete collection";
+  const extras = formatSpecialsSuffix(series);
+  const verdict = !state
+    ? null
+    : state === "complete"
+      ? "Complete collection"
+      : "Incomplete collection";
+  return [verdict, extras].filter(Boolean).join(" · ") || null;
 }
 
 /**
@@ -918,6 +933,14 @@ function hasAny(...lists: (string[] | undefined)[]): boolean {
   return lists.some((l) => Array.isArray(l) && l.length > 0);
 }
 
+/** "4" or "4 + 1 special" — main run, then extras. */
+function formatOwnedIssues(series: SeriesView): string | null {
+  if (series.issue_count == null) return null;
+  const extras = formatSpecialsSuffix(series);
+  const main = String(ownedMainCount(series));
+  return extras ? `${main} ${extras.replace(/^\+/, "+ ")}` : main;
+}
+
 /** Renders a Complete / Incomplete badge derived from `total_issues`
  *  vs. `issue_count`. Returns nothing when the helper has no signal
  *  (no `total_issues` known) so the row stays clean for series the
@@ -925,12 +948,7 @@ function hasAny(...lists: (string[] | undefined)[]): boolean {
 function CollectionBadge({ series }: { series: SeriesView }) {
   const state = collectionStatus(series);
   if (!state) return null;
-  const have = series.issue_count ?? 0;
-  const total = series.total_issues ?? 0;
-  const tooltip =
-    state === "complete"
-      ? `Complete: ${have} of ${total} issues`
-      : `${have} of ${total} issues`;
+  const tooltip = collectionTooltip(series);
   return state === "complete" ? (
     <Badge
       variant="secondary"
