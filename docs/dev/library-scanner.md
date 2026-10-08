@@ -347,8 +347,12 @@ is unaffected (the series folder says nothing about annuals). The folder
 name, not the file's `<Series>`, is compared because membership is
 folder-pinned and an annual under `Batman/Annuals/` legitimately says
 `<Series>Batman Annual</Series>`. Rows scanned before this rule were
-repaired once by migration `m20270608_000001_series_named_specials`
-(keyed on `series.name`).
+repaired once by migration `m20270608_000001_series_named_specials`,
+keyed on the same identity: the `series.folder_path` basename, falling
+back to `series.name` only for rows that predate the folder-path fast
+path. The single-issue rescan derives a missing `folder_path` from the
+archive's parent, stepping over a category bucket (`Annuals/`) so the
+bucket's own name is never compared as the series name.
 
 ### 4.5 Reconcile
 

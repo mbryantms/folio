@@ -7,10 +7,17 @@
 //! excluded all of them, and the Issues tab filed the whole run under
 //! Specials. `detect_special_type` now drops a tag the series folder name
 //! itself carries (annual / special / one-shot — never TPB); this is the
-//! one-off repair for rows scanned before that rule, keyed on
-//! `series.name` since the folder isn't in the database. Rescans don't
+//! one-off repair for rows scanned before that rule. Rescans don't
 //! revisit unchanged files, so without this the fix would wait for a
 //! forced scan of each series.
+//!
+//! Keyed on the same identity the scanner compares against: the series
+//! *folder* name (`series.folder_path` basename). `series.name` comes
+//! from the first-scanned file's `<Series>`, which an annual under
+//! `Batman (2016)/Annuals/` legitimately sets to "Batman Annual" — keying
+//! on it would strip real annuals the scanner keeps tagged. Rows from
+//! before the folder-path fast path have no `folder_path`; only those
+//! fall back to `name`.
 
 use sea_orm_migration::prelude::*;
 
@@ -21,17 +28,28 @@ pub(crate) struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let conn = manager.get_connection();
-        // `\m` / `\M` are Postgres word boundaries (so "Semiannual" and
-        // "Specialists" don't match); `~*` is case-insensitive.
+        // Whole-word match mirroring `series_name_carries_marker`: tokens
+        // are split on any non-alphanumeric (space, hyphen, underscore,
+        // colon …), so "Semiannual" / "Specialists" don't match but
+        // "Annuals", "Batman_Annual", "One Shot", "One-Shots" and
+        // "Oneshot" do. Postgres `\m` / `\M` can't be used here because
+        // they treat `_` as a word character. `~*` is case-insensitive.
         conn.execute_unprepared(
             r"UPDATE issues i SET special_type = NULL
-                FROM series s
+                FROM (
+                    SELECT id,
+                           COALESCE(
+                               NULLIF(regexp_replace(rtrim(folder_path, '/'), '^.*/', ''), ''),
+                               name
+                           ) AS ident
+                      FROM series
+                ) s
                WHERE s.id = i.series_id
                  AND i.special_type IS NOT NULL
                  AND (
-                      (i.special_type = 'Annual'  AND s.name ~* '\mannuals?\M')
-                   OR (i.special_type = 'Special' AND s.name ~* '\mspecials?\M')
-                   OR (i.special_type = 'OneShot' AND s.name ~* '(\moneshots?\M|\mone[ -]shots?\M)')
+                      (i.special_type = 'Annual'  AND s.ident ~* '(^|[^a-z0-9])annuals?($|[^a-z0-9])')
+                   OR (i.special_type = 'Special' AND s.ident ~* '(^|[^a-z0-9])specials?($|[^a-z0-9])')
+                   OR (i.special_type = 'OneShot' AND s.ident ~* '(^|[^a-z0-9])one[^a-z0-9]*shots?($|[^a-z0-9])')
                  )",
         )
         .await?;
