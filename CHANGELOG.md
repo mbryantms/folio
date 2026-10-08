@@ -13,6 +13,22 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.48.2](https://github.com/mbryantms/folio/compare/v0.48.1...v0.48.2) (2026-10-08)
+
+
+### Fixed
+
+* **scanner:** key the series-named-specials repair on the series folder, not its name ([#1078](https://github.com/mbryantms/folio/issues/1078)) ([9f3a546](https://github.com/mbryantms/folio/commit/9f3a546d7636f0d557097c2fbc381f583e18fb78))
+
+
+### Dependencies
+
+* update dependency @tanstack/react-table to v9.2.6 ([#1072](https://github.com/mbryantms/folio/issues/1072)) ([3f8d07a](https://github.com/mbryantms/folio/commit/3f8d07a81eac16a47bd779e53a0c8248a9c163c3))
+* update dependency cronstrue to v3.28.0 ([#1074](https://github.com/mbryantms/folio/issues/1074)) ([7fe1e67](https://github.com/mbryantms/folio/commit/7fe1e67bf9281c65e0fa710664e24db1aee5b36d))
+* update dependency cronstrue to v3.29.0 ([#1075](https://github.com/mbryantms/folio/issues/1075)) ([dd7fc2a](https://github.com/mbryantms/folio/commit/dd7fc2a18e75e6d97e992db2285345dc4f340d58))
+* update dependency nanoid@&lt;3.3.19 to v3.3.20 ([#1077](https://github.com/mbryantms/folio/issues/1077)) ([ad8aad7](https://github.com/mbryantms/folio/commit/ad8aad7b57be1b69b1589795df81b309ae0c2e36))
+* update dependency postcss@&lt;8.5.10 to v8.5.29 ([#1076](https://github.com/mbryantms/folio/issues/1076)) ([d905429](https://github.com/mbryantms/folio/commit/d9054299b45c7e779751a822b6e5b85636d0620c))
+
 ## [0.48.1](https://github.com/mbryantms/folio/compare/v0.48.0...v0.48.1) (2026-10-07)
 
 
