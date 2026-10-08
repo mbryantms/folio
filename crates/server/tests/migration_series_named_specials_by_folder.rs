@@ -1,6 +1,6 @@
-//! `m20270608_000001_series_named_specials` round-trip: the one-off repair
-//! that clears `issues.special_type` where the series' own identity
-//! carries the marker must key on the same identity the scanner compares
+//! `m20270609_000001_series_named_specials_by_folder` round-trip: the
+//! one-off repair that clears `issues.special_type` where the series' own
+//! identity carries the marker must key on the same identity the scanner compares
 //! against — the series *folder* name — and tokenize the way
 //! `series_name_carries_marker` does.
 //!
@@ -16,7 +16,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use std::path::Path;
 use uuid::Uuid;
 
-const MIGRATION: &str = "m20270608_000001_series_named_specials";
+const MIGRATION: &str = "m20270609_000001_series_named_specials_by_folder";
 
 /// How many migrations to roll back so ours is the last one undone.
 fn steps_to_undo_ours() -> u32 {
