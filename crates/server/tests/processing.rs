@@ -217,6 +217,68 @@ async fn series_named_for_its_marker_keeps_its_issues_in_the_main_run() {
     assert_eq!(st("Batman Annual 001"), Some("Annual".into()));
 }
 
+/// The single-issue rescan ("Scan issue") falls back to the archive's
+/// parent when a legacy series row has no `folder_path`. For an annual
+/// under `Batman (2016)/Annuals/` that parent is the category bucket, and
+/// the series-named-marker rule must not read "Annuals" as the series
+/// name and strip the tag the bucket implies.
+#[tokio::test]
+async fn single_issue_rescan_without_folder_path_keeps_bucket_annual_tagged() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let batman = tmp.path().join("Batman (2016)");
+    std::fs::create_dir_all(batman.join("Annuals")).unwrap();
+    write_cbz_with_xml(&batman.join("Batman 001.cbz"), 1, 2, None, None);
+    write_cbz_with_xml(
+        &batman.join("Annuals").join("Batman Annual 001.cbz"),
+        2,
+        2,
+        None,
+        None,
+    );
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let annual = IssueEntity::find()
+        .filter(entity::issue::Column::FilePath.contains("Batman Annual 001"))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .expect("annual ingested");
+    assert_eq!(annual.special_type.as_deref(), Some("Annual"));
+
+    // Model a row from before the folder-path identity fast path.
+    let mut legacy: entity::series::ActiveModel = SeriesEntity::find_by_id(annual.series_id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    legacy.folder_path = Set(None);
+    legacy.update(&state.db).await.unwrap();
+
+    let stats = scanner::scan_issue_file(&state, lib_id, &annual.id, true, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        stats.files_updated, 1,
+        "forced rescan re-ingests: {stats:?}"
+    );
+
+    let after = IssueEntity::find_by_id(annual.id.clone())
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after.special_type.as_deref(),
+        Some("Annual"),
+        "the bucket's parent is the series, not the bucket"
+    );
+}
+
 /// M2.5 regression — an artbook tucked under `Specials/` must classify
 /// as `special_type = Special` even though its filename has a number
 /// and ComicInfo is silent. Before M2.5 this collided with the v01

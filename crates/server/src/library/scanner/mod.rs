@@ -1481,16 +1481,30 @@ async fn run_issue_phase(
         process::IssueManifest::for_paths(&state.db, std::slice::from_ref(&path)).await?;
     let txn = state.db.begin().await?;
     // Series folder is needed so the path-derived special_type rule
-    // (M2.5) can tell a `Specials/Artbook.cbz` from a main-run issue.
-    // Fall back to the archive's parent if the series row has no
-    // recorded folder_path (e.g., legacy rows from before the
-    // folder-path identity fast path landed).
+    // (M2.5) can tell a `Specials/Artbook.cbz` from a main-run issue,
+    // and so the series-named-marker rule compares against the series
+    // identity. Fall back to the archive's parent if the series row has
+    // no recorded folder_path (e.g., legacy rows from before the
+    // folder-path identity fast path landed) — stepping over a category
+    // bucket (`Series/Annuals/x.cbz`): the series folder is the bucket's
+    // parent, never the bucket, or "Annuals" would read as the series
+    // name and strip the very tag the bucket implies.
     let series_folder: PathBuf = series::Entity::find_by_id(row.series_id)
         .one(&state.db)
         .await?
         .and_then(|s| s.folder_path)
         .map(PathBuf::from)
-        .unwrap_or_else(|| path.parent().map(PathBuf::from).unwrap_or_default());
+        .unwrap_or_else(|| {
+            let parent = path.parent().map(PathBuf::from).unwrap_or_default();
+            let is_bucket = parent
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(enumerate::is_series_subfolder_name);
+            match parent.parent() {
+                Some(grand) if is_bucket => grand.to_path_buf(),
+                _ => parent,
+            }
+        });
     let ctx = process::IngestCtx {
         state,
         lib,
