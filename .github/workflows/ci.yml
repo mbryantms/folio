@@ -207,9 +207,13 @@ jobs:
       # this covers nextest binaries and doctests alike.
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_DEV_STRIP: debuginfo
+    # Service containers are pulled by the runner before any step runs, so
+    # neither a login nor a daemon mirror can be applied first: reference
+    # Docker Hub's official images through mirror.gcr.io directly (same
+    # digests — the mirror serves Docker Hub's own manifests).
     services:
       postgres:
-        image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        image: mirror.gcr.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
         env:
           POSTGRES_USER: comic
           POSTGRES_PASSWORD: comic
@@ -218,7 +222,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U comic" --health-interval 5s --health-timeout 3s --health-retries 10
       redis:
-        image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        image: mirror.gcr.io/library/redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
         ports: ["6379:6379"]
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
@@ -318,7 +322,7 @@ jobs:
       CARGO_INCREMENTAL: 0
     services:
       postgres:
-        image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        image: mirror.gcr.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
         env:
           POSTGRES_USER: comic
           POSTGRES_PASSWORD: comic
@@ -396,18 +400,26 @@ jobs:
         if: env.DEPS == 'true'
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         if: env.DEPS == 'true'
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
-        if: env.DEPS == 'true'
-        with:
-          command: check
-      # Prebuilt binary — avoids the ~1min `cargo install cargo-audit` compile.
+      # Prebuilt binaries — avoids the ~1min `cargo install` compiles. cargo-deny
+      # used to run through EmbarkStudios/cargo-deny-action, a Docker action
+      # whose image is built from `rust:alpine` on docker.io at job start —
+      # before any step can log in — and Docker Hub's anonymous pull limit on
+      # the shared runner IPs failed the v0.50.0 release-please PR (429 Too
+      # Many Requests, 2026-10-09). The binary comes from GitHub Releases.
       - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2
         if: env.DEPS == 'true'
         with:
-          tool: cargo-audit
+          tool: cargo-deny@0.20.2,cargo-audit
+      - name: cargo deny
+        if: env.DEPS == 'true'
+        run: cargo deny check
+      # Own advisory-db path: `cargo deny check` above already cloned the
+      # RustSec db into $CARGO_HOME/advisory-db in its own layout (it used
+      # to do that inside the action's container), and cargo-audit refuses
+      # to clone into a non-empty directory.
       - name: cargo audit
         if: env.DEPS == 'true'
-        run: cargo audit
+        run: cargo audit --db "$RUNNER_TEMP/advisory-db"
 
   web-check:
     name: Web — lint / typecheck / test
@@ -777,8 +789,22 @@ jobs:
             dockerfile: web/Dockerfile
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Pull docker.io base images (rust, node, debian, the dockerfile syntax
+      # image) through Google's pull-through mirror: Docker Hub's anonymous
+      # pull limit is per source IP, shared by every GitHub-hosted runner,
+      # and 429'd the v0.50.0 release build (2026-10-09). Digest pins stay
+      # byte-identical — the mirror serves Docker Hub's own manifests.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
         if: env.BUILD == 'true'
+        with:
+          # The docker-container driver pulls its own BuildKit image from
+          # docker.io before the mirror config below can apply; fetch that
+          # from the mirror too (auth.docker.io token requests timed out on
+          # the runners, 2026-10-09).
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
       - name: Log in to GHCR (cache write)
         if: env.BUILD == 'true' && env.CACHE_WRITE == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
@@ -878,6 +904,11 @@ jobs:
           pattern: image-*
           path: ${{ runner.temp }}/images
           merge-multiple: true
+      # `compose up` below pulls postgres/redis/alpine/curl: compose.test.yml
+      # references them through mirror.gcr.io directly. A daemon-level
+      # `registry-mirrors` entry was tried first and still ended up on
+      # registry-1.docker.io (the daemon falls back to the upstream and its
+      # auth.docker.io token fetch timed out, 2026-10-09).
       - name: Load images
         if: env.SMOKE == 'true'
         env:

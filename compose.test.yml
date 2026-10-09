@@ -18,7 +18,7 @@ services:
   # See `compose.prod.yml` for rationale — distroless nonroot can't write
   # a freshly-created named volume without this fixup.
   app-init:
-    image: alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+    image: mirror.gcr.io/library/alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
     restart: "no"
     command:
       - sh
@@ -96,7 +96,7 @@ services:
       start_period: 10s
 
   postgres:
-    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    image: mirror.gcr.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     environment:
       POSTGRES_USER: comic
       POSTGRES_PASSWORD: smoke
@@ -111,7 +111,7 @@ services:
       retries: 15
 
   redis:
-    image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+    image: mirror.gcr.io/library/redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
     tmpfs: ["/data"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -120,7 +120,7 @@ services:
       retries: 15
 
   smoke:
-    image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+    image: mirror.gcr.io/curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
     depends_on:
       app:
         condition: service_healthy
