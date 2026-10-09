@@ -78,6 +78,52 @@ fn pull_groups(input: &str) -> (String, Vec<String>) {
     (cleaned, groups)
 }
 
+/// The publication year carried by a bracket group that is a *date*, not
+/// just a bare year: `(July 1988)`, `(Jul 1988)`, `(2001-06)`,
+/// `(2001-08-00)` (Mylar / ComicRack cover-date stamps) as well as plain
+/// `(1988)`. Anything else — `(of 12)`, `(digital)`, `(1987-2000)` — is
+/// `None`.
+fn year_from_date_group(s: &str) -> Option<i32> {
+    if let Some(y) = looks_like_year(s) {
+        return Some(y);
+    }
+    // `Month YYYY` / `Mon YYYY`, case-insensitive.
+    let mut words = s.split_whitespace();
+    if let (Some(month), Some(year), None) = (words.next(), words.next(), words.next())
+        && MONTHS.iter().any(|m| {
+            let lc = month.to_ascii_lowercase();
+            lc == *m || (lc.len() == 3 && m.starts_with(lc.as_str()))
+        })
+    {
+        return looks_like_year(year);
+    }
+    // ISO-ish `YYYY-MM` / `YYYY-MM-DD` (day may be `00`).
+    let mut parts = s.split('-');
+    let year = parts.next().and_then(looks_like_year)?;
+    let month = parts.next()?;
+    let day = parts.next();
+    if parts.next().is_some() {
+        return None;
+    }
+    let two_digits = |p: &str| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit());
+    (two_digits(month) && day.is_none_or(two_digits)).then_some(year)
+}
+
+const MONTHS: [&str; 12] = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+];
+
 /// Returns true if the string is a 4-digit year between 1900–2100.
 fn looks_like_year(s: &str) -> Option<i32> {
     if s.len() != 4 {
@@ -212,7 +258,7 @@ pub fn infer_with_opts(filename: &str, opts: InferOpts) -> InferredName {
 
     for group in groups {
         let trimmed = group.trim();
-        if let Some(year) = looks_like_year(trimmed)
+        if let Some(year) = year_from_date_group(trimmed)
             && out.year.is_none()
         {
             out.year = Some(year);
@@ -343,9 +389,40 @@ mod tests {
         assert_eq!(i.series, "Deadpool & The Mercs For Money");
         assert_eq!(i.number.as_deref(), Some("001"));
         assert_eq!(i.volume, None, "V2016 must not be parsed as volume");
-        // The `(April 2016)` bracket group doesn't match `looks_like_year`
-        // (requires bare 4 digits), so year stays None — that's the
-        // existing inference behavior, unchanged by the volume fix.
+        // The `(April 2016)` cover-date group supplies the year.
+        assert_eq!(i.year, Some(2016));
+    }
+
+    #[test]
+    fn cover_date_groups_supply_the_year() {
+        // Mylar's `(Month YYYY)` stamp — the common shape for a run
+        // tagged from ComicVine, previously left with no year at all.
+        let i = infer("The Flash V1987 014 (July 1988).cbz");
+        assert_eq!(i.series, "The Flash");
+        assert_eq!(i.number.as_deref(), Some("014"));
+        assert_eq!(i.year, Some(1988));
+        assert!(
+            i.extras.is_empty(),
+            "the date group is consumed, not an extra"
+        );
+        assert_eq!(infer("X 001 (jul 1988).cbz").year, Some(1988));
+        assert_eq!(infer("X 001 (2001-06).cbz").year, Some(2001));
+        assert_eq!(infer("X 001 (2001-08-00).cbz").year, Some(2001));
+        // The first date group wins; non-dates stay extras.
+        let i = infer("X 001 (March 1999) (2005) (digital).cbz");
+        assert_eq!(i.year, Some(1999));
+        assert_eq!(i.extras, vec!["2005", "digital"]);
+        for junk in [
+            "(1987-2000)",
+            "(of 12)",
+            "(Jupiter 1988)",
+            "(1988-7)",
+            "(July)",
+            "(July 88)",
+        ] {
+            let i = infer(&format!("X 001 {junk}.cbz"));
+            assert_eq!(i.year, None, "{junk}");
+        }
     }
 
     #[test]
