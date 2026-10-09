@@ -2186,6 +2186,17 @@ async fn process_planned_folder(
             hint.volume = Some(v);
         }
 
+        // Start year: the folder leaf's `(YYYY)` names the run's start and
+        // outranks the peeked archive's cover year — `archives[0]` is
+        // whatever `read_dir` listed first, and a 250-issue folder's first
+        // entry can be its 2004 issue as easily as its 1987 one. The
+        // series slug is minted from this year, so a wrong value is sticky.
+        if let Some(leaf) = folder.file_name().map(|n| n.to_string_lossy().into_owned())
+            && let Some(y) = parsers::filename::folder_year_token(&leaf)
+        {
+            hint.year = Some(y);
+        }
+
         if let Some(meta) = series_json.as_ref() {
             // series.json is the authoritative source for curated
             // per-series fields when present. For `name`, `volume`, and
@@ -2194,7 +2205,9 @@ async fn process_planned_folder(
             // filename/folder heuristics, which are the dominant source
             // of contamination (Mylar3 `V<year>` stamps, etc.).
             //
-            // The remaining fields (`year`, `imprint`, …) still fall
+            // `year_began` replaces too: it is the series' start year by
+            // definition, where the peeked archive only knows its own
+            // cover year. The remaining fields (`imprint`, …) still fall
             // back to fill-if-empty because ComicInfo carries them
             // reliably and overriding adds little value.
             if let Some(name) = meta.name.as_deref()
@@ -2210,8 +2223,8 @@ async fn process_planned_folder(
             {
                 hint.publisher = Some(publisher.to_string());
             }
-            if hint.year.is_none() {
-                hint.year = meta.year_began;
+            if let Some(y) = meta.year_began {
+                hint.year = Some(y);
             }
             if hint.imprint.is_none() {
                 hint.imprint = meta.imprint.clone();

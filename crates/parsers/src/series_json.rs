@@ -52,6 +52,9 @@ pub struct SeriesMetadata {
     pub publisher: Option<String>,
     pub imprint: Option<String>,
     pub comic_image: Option<String>,
+    /// Mylar3 writes the start year as `"year"`; the Folio-native key is
+    /// `"year_began"`.
+    #[serde(alias = "year")]
     pub year_began: Option<i32>,
     pub year_end: Option<i32>,
     pub total_issues: Option<i32>,
@@ -158,5 +161,20 @@ mod tests {
         assert_eq!(normalize_status(Some("On Hiatus")), "hiatus");
         assert_eq!(normalize_status(None), "continuing");
         assert_eq!(normalize_status(Some("???")), "continuing");
+    }
+}
+
+#[cfg(test)]
+mod year_alias_tests {
+    use super::parse;
+
+    #[test]
+    fn mylar_year_key_is_the_start_year() {
+        // Mylar3's series.json carries `"year"`, not `"year_began"`.
+        let m = parse(br#"{"version":"1.0.2","metadata":{"type":"comicSeries","name":"The Flash","year":1987,"volume":2,"total_issues":250}}"#)
+            .unwrap()
+            .metadata;
+        assert_eq!(m.year_began, Some(1987));
+        assert_eq!(m.volume, Some(2));
     }
 }

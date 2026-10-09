@@ -161,6 +161,16 @@ pub fn folder_volume_token(folder_leaf: &str) -> Option<i32> {
     None
 }
 
+/// The series start year a folder leaf carries as a bare `(YYYY)` group:
+/// `The Flash (1987)` → `1987`, `Saga` → `None`. The first such group
+/// wins; `(1987-2000)`, `(July 1988)` and scanner tags don't count. A
+/// series folder is named for the run's start, so this outranks the cover
+/// year of whichever archive the scanner happens to peek first.
+pub fn folder_year_token(folder_leaf: &str) -> Option<i32> {
+    let (_, groups) = pull_groups(folder_leaf);
+    groups.iter().find_map(|g| looks_like_year(g.trim()))
+}
+
 /// Plausibility filter for a parsed `V<N>` volume token.
 ///
 /// Real comic-series volumes are small positive integers — in mainstream
@@ -443,6 +453,24 @@ mod tests {
             "V<year> must be rejected",
         );
         assert_eq!(folder_volume_token("Silk V2015 (2015)"), None);
+    }
+
+    #[test]
+    fn folder_year_token_reads_the_bare_year_group() {
+        assert_eq!(folder_year_token("The Flash (1987)"), Some(1987));
+        assert_eq!(
+            folder_year_token("Deadpool & The Mercs For Money V2 (2016)"),
+            Some(2016)
+        );
+        assert_eq!(folder_year_token("Saga [2012] (digital)"), Some(2012));
+        // Ranges, dates and tags aren't a start year; no group → None.
+        assert_eq!(
+            folder_year_token("Annuals (01-13)(1987-2000)(digital)"),
+            None
+        );
+        assert_eq!(folder_year_token("X (July 1988)"), None);
+        assert_eq!(folder_year_token("Saga"), None);
+        assert_eq!(folder_year_token("Year One (0001)"), None);
     }
 
     #[test]

@@ -1838,3 +1838,67 @@ async fn series_reconcile_writes_series_json_provenance() {
         Some("series_json")
     );
 }
+
+/// The series start year is the folder's `(YYYY)`, then series.json's
+/// `year_began` — never the cover year of whichever archive `read_dir`
+/// listed first. The Flash (1987) came up as "the-flash-2004" because the
+/// peek landed on a 2004 issue and the slug, which takes the year on a
+/// name collision, is sticky.
+#[tokio::test]
+async fn series_start_year_prefers_folder_and_series_json_over_first_archive() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Folder year beats the (only, hence first) archive's cover year.
+    let folder = tmp.path().join("Series Rho (1987)");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz_with_xml(
+        &folder.join("Rho 205.cbz"),
+        205,
+        2,
+        Some(
+            r#"<?xml version="1.0"?><ComicInfo><Series>Rho</Series><Number>205</Number><Year>2004</Year></ComicInfo>"#,
+        ),
+        None,
+    );
+
+    // series.json (Mylar's `"year"` spelling) beats both.
+    let folder2 = tmp.path().join("Series Sigma (1987)");
+    std::fs::create_dir_all(&folder2).unwrap();
+    write_cbz_with_xml(
+        &folder2.join("Sigma 205.cbz"),
+        205,
+        2,
+        Some(
+            r#"<?xml version="1.0"?><ComicInfo><Series>Sigma</Series><Number>205</Number><Year>2004</Year></ComicInfo>"#,
+        ),
+        None,
+    );
+    std::fs::write(
+        folder2.join("series.json"),
+        r#"{"version":"1.0.2","metadata":{"type":"comicSeries","name":"Sigma","year":1990}}"#,
+    )
+    .unwrap();
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let rows = SeriesEntity::find()
+        .filter(entity::series::Column::LibraryId.eq(lib_id))
+        .all(&state.db)
+        .await
+        .unwrap();
+    let rho = rows.iter().find(|s| s.name == "Rho").expect("Rho");
+    let sigma = rows.iter().find(|s| s.name == "Sigma").expect("Sigma");
+    assert_eq!(
+        rho.year,
+        Some(1987),
+        "folder (YYYY) outranks the first archive's cover year"
+    );
+    assert_eq!(
+        sigma.year,
+        Some(1990),
+        "series.json year_began/year outranks the folder year"
+    );
+}
