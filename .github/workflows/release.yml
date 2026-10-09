@@ -182,6 +182,15 @@ jobs:
       # fetch left a published, unsigned image and a stuck pre-release.
       # One retry covers the transient case; a second failure still fails
       # the job (an unsigned release must never be promoted silently).
+      #
+      # The action only *generates* here (`upload-artifact` /
+      # `upload-release-assets` off). Its built-in release attach
+      # re-downloads the run artifact it just uploaded and has no retry;
+      # the artifact service isn't always consistent that quickly (v0.49.0,
+      # 2026-10-09: 404 0.7 s after "finalized"), and the retry step then
+      # died on the 409 for the artifact name it had already created. The
+      # two steps below upload and attach the file ourselves, idempotently
+      # (`overwrite` / `--clobber`), so a rerun of the job also works.
       - name: Generate SBOM (SPDX)
         id: sbom
         continue-on-error: true
@@ -189,7 +198,9 @@ jobs:
         with:
           image: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
           format: spdx-json
-          artifact-name: ${{ matrix.image }}-sbom.spdx.json
+          output-file: ${{ runner.temp }}/${{ matrix.image }}-sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
           dependency-snapshot: false
       - name: Generate SBOM (SPDX) — retry
         if: steps.sbom.outcome == 'failure'
@@ -197,8 +208,27 @@ jobs:
         with:
           image: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
           format: spdx-json
-          artifact-name: ${{ matrix.image }}-sbom.spdx.json
+          output-file: ${{ runner.temp }}/${{ matrix.image }}-sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
           dependency-snapshot: false
+      - name: Upload SBOM as run artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.image }}-sbom.spdx.json
+          path: ${{ runner.temp }}/${{ matrix.image }}-sbom.spdx.json
+          if-no-files-found: error
+          overwrite: true
+      - name: Attach SBOM to the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SBOM: ${{ runner.temp }}/${{ matrix.image }}-sbom.spdx.json
+        run: |
+          set -euo pipefail
+          # release-please already created the release for this tag.
+          gh release upload "${GITHUB_REF_NAME}" "${SBOM}" --clobber
 
       - name: Install cosign
         # cosign-installer publishes specific tags (v4.1.2) but no floating `v4`
