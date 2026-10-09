@@ -316,7 +316,49 @@ pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
         }
     }
 
+    // Mylar3's native tagger files its ComicVine issue id in `<Genre>` as
+    // `CVDB<id>`, next to the real genres. That is an identifier, not a
+    // genre: pull it out so it never reaches the genre junction (or a
+    // series' genre chips), and use it as the issue id when neither an
+    // explicit tag nor the `<Web>` URL supplied one.
+    if let Some(genre) = info.genre.take() {
+        let (clean, marker) = split_mylar_cvdb_marker(&genre);
+        info.genre = clean;
+        if info.comicvine_id.is_none()
+            && let Some(n) = marker
+        {
+            info.comicvine_id = Some(n);
+        }
+    }
+
     Ok(info)
+}
+
+/// Split Mylar3's `CVDB<id>` marker out of a `<Genre>` list: `("Superhero,
+/// CVDB34263", …)` → `(Some("Superhero"), Some(34263))`. The list keeps
+/// its separator (`;` when present, else `,`); a list that was only the
+/// marker becomes `None`. The first marker wins.
+pub fn split_mylar_cvdb_marker(genre: &str) -> (Option<String>, Option<i64>) {
+    let sep = if genre.contains(';') { ';' } else { ',' };
+    let mut kept: Vec<&str> = Vec::new();
+    let mut marker: Option<i64> = None;
+    for piece in genre.split(sep).map(str::trim).filter(|p| !p.is_empty()) {
+        let id = piece
+            .get(..4)
+            .filter(|p| p.eq_ignore_ascii_case("cvdb"))
+            .and_then(|_| piece[4..].parse::<i64>().ok())
+            .filter(|n| *n > 0);
+        match id {
+            Some(n) => marker = marker.or(Some(n)),
+            None => kept.push(piece),
+        }
+    }
+    let clean = if kept.is_empty() {
+        None
+    } else {
+        Some(kept.join(&format!("{sep} ")))
+    };
+    (clean, marker)
 }
 
 /// Emit a ComicInfo.xml document from `info`. UTF-8, 2-space indent,
@@ -954,6 +996,41 @@ mod tests {
         let info = parse(xml.as_bytes()).unwrap();
         assert_eq!(info.comicvine_id, Some(381432));
         assert_eq!(info.comicvine_series_id, Some(49901));
+    }
+
+    #[test]
+    fn mylar_cvdb_genre_marker_is_an_id_not_a_genre() {
+        // Mylar3's native tagger: `<Genre>Superhero, CVDB34263</Genre>`.
+        let xml = br#"<?xml version="1.0"?><ComicInfo>
+            <Series>The Flash</Series><Number>56</Number>
+            <Genre>Superhero, CVDB34263</Genre>
+            <Notes>Scraped metadata from ComicVine [CVDB34263].</Notes>
+        </ComicInfo>"#;
+        let info = parse(xml).unwrap();
+        assert_eq!(info.genre.as_deref(), Some("Superhero"));
+        assert_eq!(info.comicvine_id, Some(34263));
+
+        // Marker only → no genre at all; explicit ids and <Web> still win.
+        let xml = br#"<?xml version="1.0"?><ComicInfo>
+            <Genre>cvdb99</Genre>
+            <Web>https://comicvine.gamespot.com/the-flash-56/4000-34839/</Web>
+        </ComicInfo>"#;
+        let info = parse(xml).unwrap();
+        assert_eq!(info.genre, None);
+        assert_eq!(info.comicvine_id, Some(34839));
+
+        assert_eq!(
+            split_mylar_cvdb_marker("Action; CVDB1; Adventure"),
+            (Some("Action; Adventure".to_owned()), Some(1))
+        );
+        assert_eq!(
+            split_mylar_cvdb_marker("CVDBx, Superhero"),
+            (Some("CVDBx, Superhero".to_owned()), None)
+        );
+        assert_eq!(
+            split_mylar_cvdb_marker("Superhero"),
+            (Some("Superhero".to_owned()), None)
+        );
     }
 
     #[test]
