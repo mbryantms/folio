@@ -13,6 +13,20 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.49.2](https://github.com/mbryantms/folio/compare/v0.49.1...v0.49.2) (2026-10-09)
+
+
+### Fixed
+
+* **gcd:** drop a leading "The" from the series search term ([#1095](https://github.com/mbryantms/folio/issues/1095)) ([71b5387](https://github.com/mbryantms/folio/commit/71b538705809859fa2f3a430402b4724cadcb876))
+* **scanner:** take a new series' start year from the folder and series.json, not the first archive ([#1094](https://github.com/mbryantms/folio/issues/1094)) ([7de67ec](https://github.com/mbryantms/folio/commit/7de67ec788f7d1616d53cea6aa10314cf4c0e29a))
+
+
+### Dependencies
+
+* update rust crate hyper to v1.12.0 ([#1092](https://github.com/mbryantms/folio/issues/1092)) ([0b95ac5](https://github.com/mbryantms/folio/commit/0b95ac5dac1076aba83d66e9959ac8b72769c049))
+* update taiki-e/install-action digest to f7e5d7c ([#1091](https://github.com/mbryantms/folio/issues/1091)) ([ae6e0e8](https://github.com/mbryantms/folio/commit/ae6e0e86f344cf33fd41fe0d252a55409b8b236e))
+
 ## [0.49.1](https://github.com/mbryantms/folio/compare/v0.49.0...v0.49.1) (2026-10-09)
 
 
