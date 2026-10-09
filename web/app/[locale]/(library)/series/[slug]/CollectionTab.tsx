@@ -67,12 +67,15 @@ const STATUS_LABELS: Record<ChipStatus, string> = {
   complete: "Complete",
 };
 
-/** A main-run issue is an owned, integer-numbered, non-special issue. */
-function isMainRun(e: CollectionIssueEntry): boolean {
+/** A main-run issue is an owned, integer-numbered, non-special issue that
+ *  the server didn't push off the run (`main_run.off_run`: a stunt number
+ *  such as #1,000,000 far past the last contiguous issue). */
+function isMainRun(e: CollectionIssueEntry, offRun: Set<number>): boolean {
   return (
     e.special_type == null &&
     e.sort_number != null &&
-    Number.isInteger(e.sort_number)
+    Number.isInteger(e.sort_number) &&
+    !offRun.has(e.sort_number)
   );
 }
 
@@ -108,12 +111,15 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
   const manifest = data.manifest ?? null;
 
   // Index owned main-run issues by their integer number for chip coloring.
+  const offRun = new Set<number>(data.main_run.off_run ?? []);
   const mainByInt = new Map<number, CollectionIssueEntry>();
   for (const e of data.issues) {
-    if (isMainRun(e)) mainByInt.set(Math.round(e.sort_number as number), e);
+    if (isMainRun(e, offRun))
+      mainByInt.set(Math.round(e.sort_number as number), e);
   }
-  // Owned issues that aren't on the main run (annuals, one-shots, point issues).
-  const specialEntries = data.issues.filter((e) => !isMainRun(e));
+  // Owned issues that aren't on the main run (annuals, one-shots, point
+  // issues, off-run stunt numbers).
+  const specialEntries = data.issues.filter((e) => !isMainRun(e, offRun));
 
   const hi = max != null ? Math.round(max) : -1;
   const runChips = collectionRunChips(data, mainByInt.keys());
@@ -315,8 +321,9 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
             })}
           </div>
           <p className="text-muted-foreground text-xs">
-            Annuals, one-shots, and point issues aren&rsquo;t counted toward the
-            main-run gap math above.
+            Annuals, one-shots, point issues and stunt numbers far past the run
+            (#1,000,000) aren&rsquo;t counted toward the main-run gap math
+            above.
           </p>
         </section>
       )}

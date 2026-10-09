@@ -22558,6 +22558,7 @@
           "present_labels",
           "missing",
           "possibly_missing",
+          "off_run",
           "trailing_missing"
         ],
         "properties": {
@@ -22583,6 +22584,14 @@
               "format": "int64"
             },
             "description": "Main-run integers not owned (e.g. `[3]`). Interpolated over\n`min..=max` for `series_total`; exact (every provider with accepted\ncoverage lists them) for `provider_manifest` — see\n[`CollectionReportView::expected_source`]."
+          },
+          "off_run": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Owned integer numbers that sit more than [`MAX_INTERPOLATED_GAP`]\nabove the previous owned number (DC One Million's `#1,000,000`\nafter `#247`), ascending. They are not part of the run: `max`,\n`missing` and `trailing_missing` ignore them and they are listed\nunder [`CollectionReportView::specials`] instead, so a stunt number\nnever puts a million chips in the grid."
           },
           "possibly_missing": {
             "type": "array",
@@ -22610,7 +22619,7 @@
           "trailing_missing": {
             "type": "integer",
             "format": "int64",
-            "description": "Count expected beyond `max` when `total_expected > max` (e.g. own up to\n#4 with `total_expected = 6` → `2`). Always 0 for `provider_manifest`\n(numbers past `max` are in `missing`)."
+            "description": "Count expected beyond `max` for `series_total`: the publisher total\nminus the integers the run spans (`min..=max`, owned or missing)\nminus the owned point / off-run issues the total also counts (own\n#1–#4 with `total_expected = 6` → `2`; own #0–#247 plus `#½` and\n`#1,000,000` with a total of 250 → `0`). Always 0 for\n`provider_manifest` (numbers past `max` are in `missing`)."
           }
         }
       },

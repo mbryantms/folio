@@ -2938,15 +2938,33 @@ pub struct MainRunReport {
     /// `provider_manifest` only: main-run integers some providers list and
     /// others don't (or can't confirm). Empty otherwise.
     pub possibly_missing: Vec<i64>,
+    /// Owned integer numbers that sit more than [`MAX_INTERPOLATED_GAP`]
+    /// above the previous owned number (DC One Million's `#1,000,000`
+    /// after `#247`), ascending. They are not part of the run: `max`,
+    /// `missing` and `trailing_missing` ignore them and they are listed
+    /// under [`CollectionReportView::specials`] instead, so a stunt number
+    /// never puts a million chips in the grid.
+    pub off_run: Vec<i64>,
     /// Lowest / highest owned main-run number (as f64), `None` when the run is
     /// empty.
     pub min: Option<f64>,
     pub max: Option<f64>,
-    /// Count expected beyond `max` when `total_expected > max` (e.g. own up to
-    /// #4 with `total_expected = 6` → `2`). Always 0 for `provider_manifest`
-    /// (numbers past `max` are in `missing`).
+    /// Count expected beyond `max` for `series_total`: the publisher total
+    /// minus the integers the run spans (`min..=max`, owned or missing)
+    /// minus the owned point / off-run issues the total also counts (own
+    /// #1–#4 with `total_expected = 6` → `2`; own #0–#247 plus `#½` and
+    /// `#1,000,000` with a total of 250 → `0`). Always 0 for
+    /// `provider_manifest` (numbers past `max` are in `missing`).
     pub trailing_missing: i64,
 }
+
+/// Largest jump between two consecutive owned main-run integers that the
+/// report still bridges by interpolation. Legacy renumberings jump by a few
+/// hundred at most (`#70 → #500`); a stunt number such as DC One Million's
+/// `#1,000,000` sits far beyond that, and interpolating up to it would
+/// produce ~1M "missing" chips. Everything from the first such jump on is
+/// reported as [`MainRunReport::off_run`].
+pub(crate) const MAX_INTERPOLATED_GAP: i64 = 1000;
 
 /// A non-main-run issue: special_type-tagged, fractional, or unnumbered.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -3009,18 +3027,15 @@ fn build_collection_report(
     total_expected: Option<i32>,
 ) -> CollectionReportView {
     let total_owned = rows.len() as i64;
-    let mut present: Vec<f64> = Vec::new();
-    let mut present_labels: Vec<String> = Vec::new();
-    let mut present_ints: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
     let mut specials: Vec<SpecialEntry> = Vec::new();
+    // Integer-numbered, untagged rows keyed by their integer; several rows
+    // may share one (duplicate rips), and the input is not assumed ordered.
+    let mut by_int: std::collections::BTreeMap<i64, Vec<CollectionNumberRow>> =
+        std::collections::BTreeMap::new();
 
     for r in rows {
         match classify_issue_number(r.sort_number, r.special_type.as_deref()) {
-            NumberClass::MainRun(n) => {
-                present.push(r.sort_number.unwrap_or(n as f64));
-                present_labels.push(r.number_raw.unwrap_or_else(|| n.to_string()));
-                present_ints.insert(n);
-            }
+            NumberClass::MainRun(n) => by_int.entry(n).or_default().push(r),
             NumberClass::Special => specials.push(SpecialEntry {
                 number_raw: r.number_raw,
                 sort_number: r.sort_number,
@@ -3029,16 +3044,54 @@ fn build_collection_report(
         }
     }
 
+    // Walk ascending; the first jump wider than `MAX_INTERPOLATED_GAP` ends
+    // the run and everything from there on is off-run.
+    let mut present: Vec<f64> = Vec::new();
+    let mut present_labels: Vec<String> = Vec::new();
+    let mut present_ints: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
+    let mut off_run: Vec<i64> = Vec::new();
+    let mut prev: Option<i64> = None;
+    for (n, rows) in by_int {
+        let jumped = prev.is_some_and(|p| n - p > MAX_INTERPOLATED_GAP);
+        if jumped || !off_run.is_empty() {
+            off_run.push(n);
+            specials.extend(rows.into_iter().map(|r| SpecialEntry {
+                number_raw: r.number_raw,
+                sort_number: r.sort_number,
+                special_type: r.special_type,
+            }));
+        } else {
+            for r in rows {
+                present.push(r.sort_number.unwrap_or(n as f64));
+                present_labels.push(r.number_raw.unwrap_or_else(|| n.to_string()));
+            }
+            present_ints.insert(n);
+        }
+        prev = Some(n);
+    }
+
     let min = present_ints.iter().next().copied();
     let max = present_ints.iter().next_back().copied();
     let mut missing: Vec<i64> = Vec::new();
     if let (Some(lo), Some(hi)) = (min, max) {
         missing.extend((lo..=hi).filter(|k| !present_ints.contains(k)));
     }
-    let max_owned = max.unwrap_or(0);
-    let trailing_missing = match total_expected {
-        Some(t) if (t as i64) > max_owned => (t as i64) - max_owned,
+    // What the publisher total still has to account for beyond the run: the
+    // integers the run spans (owned + missing) and the owned untagged
+    // extras a provider total also counts (`#½`, `#1,000,000`). Tagged
+    // specials (annuals in `Annuals/`) are separate volumes to a provider
+    // and stay out of the subtraction.
+    let run_span = match (min, max) {
+        (Some(lo), Some(hi)) => hi - lo + 1,
         _ => 0,
+    };
+    let counted_extras = specials
+        .iter()
+        .filter(|s| s.special_type.is_none() && s.sort_number.is_some())
+        .count() as i64;
+    let trailing_missing = match total_expected {
+        Some(t) => ((t as i64) - run_span - counted_extras).max(0),
+        None => 0,
     };
 
     let completeness_pct = total_expected.map(|t| {
@@ -3059,6 +3112,7 @@ fn build_collection_report(
             present_labels,
             missing,
             possibly_missing: Vec::new(),
+            off_run,
             min: min.map(|n| n as f64),
             max: max.map(|n| n as f64),
             trailing_missing,
@@ -4026,6 +4080,61 @@ mod tests {
         assert_eq!(r.completeness_state, "complete");
         assert_eq!(r.completeness_pct, Some(100.0));
         assert_eq!(r.main_run.trailing_missing, 0);
+    }
+
+    #[test]
+    fn stunt_number_is_off_run_not_a_million_gaps() {
+        // The Flash (1987): #0–#247 plus DC One Million's #1,000,000. The
+        // run ends at #247; the stunt number is listed, not interpolated to.
+        let mut rows = main_run(&[0, 1, 2, 247, 1_000_000]);
+        rows.reverse();
+        let r = build_collection_report(rows, Some(250));
+        assert_eq!(r.main_run.max, Some(247.0));
+        assert_eq!(r.main_run.off_run, vec![1_000_000]);
+        assert_eq!(r.main_run.missing.len(), 244);
+        assert_eq!(r.main_run.present, vec![0.0, 1.0, 2.0, 247.0]);
+        assert_eq!(r.specials.len(), 1);
+        assert_eq!(r.specials[0].number_raw.as_deref(), Some("1000000"));
+        assert!(r.specials[0].special_type.is_none());
+        // 250 = #0..=#247 (248) + #1,000,000 + one more extra the provider
+        // counts (#½), which isn't owned here.
+        assert_eq!(r.main_run.trailing_missing, 1);
+        assert_eq!(r.total_owned, 5);
+    }
+
+    #[test]
+    fn everything_after_the_first_wide_jump_is_off_run() {
+        // Once the run has ended, a contiguous tail doesn't restart it.
+        let r = build_collection_report(main_run(&[1, 2, 5000, 5001]), None);
+        assert_eq!(r.main_run.max, Some(2.0));
+        assert_eq!(r.main_run.off_run, vec![5000, 5001]);
+        assert!(r.main_run.missing.is_empty());
+        assert_eq!(r.specials.len(), 2);
+    }
+
+    #[test]
+    fn legacy_renumbering_still_interpolates() {
+        // #70 → #500 is a real publisher jump (Fantastic Four); it stays in
+        // the run and the gap is interpolated (the provider manifest, when
+        // present, replaces it with the exact list).
+        let r = build_collection_report(main_run(&[69, 70, 500, 501]), None);
+        assert!(r.main_run.off_run.is_empty());
+        assert_eq!(r.main_run.max, Some(501.0));
+        assert_eq!(r.main_run.missing.len(), 429);
+    }
+
+    #[test]
+    fn trailing_missing_counts_owned_point_issues_against_the_total() {
+        // Own #0–#4 and #½ with a provider total of 6 → the total is met.
+        let mut rows = main_run(&[0, 1, 2, 3, 4]);
+        rows.push(row(Some(0.5), Some("½"), None));
+        let r = build_collection_report(rows, Some(6));
+        assert_eq!(r.main_run.trailing_missing, 0);
+        // A tagged annual is a separate volume to the provider: not counted.
+        let mut rows = main_run(&[1, 2, 3, 4]);
+        rows.push(row(Some(1.0), Some("Annual 1"), Some("Annual")));
+        let r = build_collection_report(rows, Some(6));
+        assert_eq!(r.main_run.trailing_missing, 2);
     }
 
     #[test]

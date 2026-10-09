@@ -61,6 +61,7 @@ function base(nums: number[]): CollectionReportView {
       present_labels: nums.map(String),
       missing: [],
       possibly_missing: [],
+      off_run: [],
       min: Math.min(...nums),
       max: Math.max(...nums),
       trailing_missing: 0,
