@@ -811,7 +811,10 @@ does the whole refresh in one dialog, step by step:
    searching. Otherwise (or with **Search for a match**) the usual match
    list appears, coverage hints included.
 2. **Coverage.** After a match you applied here, the dialog waits for the
-   coverage check that match queued (usually 1–3 requests). Without one it
+   coverage check that match queued. It analyses every provider: the one
+   you matched lists its series and skips the name search (1–3 requests),
+   the other two run their full analysis, so the Metron / GCD ids a
+   ComicVine match doesn't carry get found. Without a queued check it
    offers **Analyze coverage** (at most 40 ComicVine, 30 Metron and 30
    GCD requests). Accept or skip each provider; nothing is saved until
    you accept.
