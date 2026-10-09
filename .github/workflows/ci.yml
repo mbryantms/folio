@@ -899,15 +899,11 @@ jobs:
           pattern: image-*
           path: ${{ runner.temp }}/images
           merge-multiple: true
-      # `compose up` below pulls postgres/redis from docker.io through the
-      # runner's daemon; route it via the pull-through mirror for the same
-      # reason as the buildx builds (anonymous Docker Hub rate limit).
-      - name: Route docker.io pulls through mirror.gcr.io
-        if: env.SMOKE == 'true'
-        run: |
-          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker
-          docker info --format '{{json .RegistryConfig.Mirrors}}'
+      # `compose up` below pulls postgres/redis/alpine/curl: compose.test.yml
+      # references them through mirror.gcr.io directly. A daemon-level
+      # `registry-mirrors` entry was tried first and still ended up on
+      # registry-1.docker.io (the daemon falls back to the upstream and its
+      # auth.docker.io token fetch timed out, 2026-10-09).
       - name: Load images
         if: env.SMOKE == 'true'
         env:
