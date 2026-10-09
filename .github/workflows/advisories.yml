@@ -44,15 +44,17 @@ jobs:
       failed: ${{ steps.summary.outputs.failed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
-        id: deny
-        continue-on-error: true
-        with:
-          command: check advisories
       - uses: dtolnay/rust-toolchain@1.96.0
+      # Prebuilt binaries from GitHub Releases. cargo-deny no longer runs via
+      # the Docker-based cargo-deny-action: its image is built from
+      # `rust:alpine` on docker.io at job start, and Docker Hub's anonymous
+      # pull limit on the shared runner IPs 429'd CI on 2026-10-09.
       - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2
         with:
-          tool: cargo-audit
+          tool: cargo-deny@0.20.2,cargo-audit
+      - id: deny
+        continue-on-error: true
+        run: cargo deny check advisories
       # --deny unsound: bare `cargo audit` exits 0 on unsound/informational
       # advisories, so e.g. RUSTSEC-2026-0186 (memmap2) never failed anything.
       # Accepted-risk unsound advisories live in .cargo/audit.toml with the

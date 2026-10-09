@@ -88,7 +88,16 @@ jobs:
         with:
           fetch-depth: 0  # full history so `git describe` works for tags
 
+      # docker.io base images go through Google's pull-through mirror: Docker
+      # Hub's anonymous pull limit is per source IP, shared by every GitHub-
+      # hosted runner, and 429'd the v0.50.0 `deps` layer build (2026-10-09).
+      # Digest pins stay byte-identical — the mirror serves Docker Hub's own
+      # manifests. Same setting as the CI docker build job.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+        with:
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
