@@ -142,11 +142,19 @@ export function SeriesSettingsMenu({
             toast.info(
               scope === "incomplete"
                 ? "Every issue already has complete metadata"
-                : "No issues to search",
+                : resp.recently_fetched > 0
+                  ? "Every issue was searched in the last 24 hours — results are in Review"
+                  : "No issues to search",
             );
             return;
           }
-          toast.success(`Searching ${resp.items_total} issues for metadata`, {
+          // The 200-per-run cap is never silent: say what this run covers
+          // and that the next click takes the rest.
+          const summary =
+            resp.remainder > 0
+              ? `Searching ${resp.items_total} of ${resp.eligible} issues for metadata — ${resp.remainder} more on the next run`
+              : `Searching ${resp.items_total} issues for metadata`;
+          toast.success(summary, {
             action: {
               label: "Review",
               onClick: () =>

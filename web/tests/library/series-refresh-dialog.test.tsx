@@ -23,6 +23,8 @@ import type {
 type Call = { method: string; url: string; body: unknown };
 
 const srv = vi.hoisted(() => ({
+  batchItems: 173,
+  batchEligible: 173,
   calls: [] as Call[],
   status: null as unknown,
   analysis: null as unknown,
@@ -85,10 +87,13 @@ vi.mock("@/lib/api/auth-refresh", () => ({
       return json(
         {
           batch_id: "b1",
-          items_total: 173,
-          jobs_enqueued: 173,
+          items_total: srv.batchItems,
+          jobs_enqueued: srv.batchItems,
           jobs_coalesced: 0,
           jobs_failed: 0,
+          eligible: srv.batchEligible,
+          recently_fetched: 0,
+          remainder: srv.batchEligible - srv.batchItems,
         },
         202,
       );
@@ -149,6 +154,9 @@ function status(
       {
         scope: "all",
         issues: 173,
+        eligible: 173,
+        recently_fetched: 0,
+        remainder: 0,
         providers: [
           { source: "comicvine", direct: 170, search: 3 },
           { source: "metron", direct: 173, search: 0 },
@@ -158,6 +166,9 @@ function status(
       {
         scope: "incomplete",
         issues: 12,
+        eligible: 12,
+        recently_fetched: 0,
+        remainder: 0,
         providers: [
           { source: "comicvine", direct: 12, search: 0 },
           { source: "metron", direct: 12, search: 0 },
@@ -370,6 +381,8 @@ beforeEach(() => {
   srv.batch = null;
   srv.onApply = null;
   srv.onAccept = null;
+  srv.batchItems = 173;
+  srv.batchEligible = 173;
 });
 
 // ───────── tests ─────────
@@ -670,6 +683,67 @@ describe("<SeriesRefreshFlow>", () => {
     });
     await waitFor(() =>
       expect(screen.getByText(/Listing candidate series/)).toBeTruthy(),
+    );
+  });
+
+  it("says what a capped run covers and offers the remainder from Review", async () => {
+    // 247 issues, 200 per run: the fetch step says so, and once the batch
+    // finishes the (refetched) estimate says 47 are left → one click more.
+    const est = (issues: number, eligible: number, recent: number) => ({
+      scope: "all" as const,
+      issues,
+      eligible,
+      recently_fetched: recent,
+      remainder: eligible - recent - issues,
+      providers: [{ source: "comicvine", direct: issues, search: 0 }],
+    });
+    srv.status = status({
+      resume_step: "fetch",
+      fetch_estimate: [est(200, 247, 0), status().fetch_estimate[1]!],
+    });
+    srv.batchItems = 200;
+    srv.batchEligible = 247;
+    renderFlow();
+    await heading(/Step 3 of 4: Per-issue fetch/);
+    fireEvent.click(screen.getByRole("radio", { name: /All issues/ }));
+    expect(screen.getByTestId("fetch-cap-note").textContent).toContain(
+      "this one covers 200 of 247",
+    );
+    // The batch finishes; the status now reports the 47 unfetched.
+    srv.batch = batch("completed", { items_total: 200 });
+    srv.status = status({
+      resume_step: "review",
+      batch: {
+        batch_id: "b1",
+        created_at: T2,
+        items_total: 200,
+        unfinished: 0,
+      },
+      fetch_estimate: [est(47, 247, 200), status().fetch_estimate[1]!],
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Fetch 200 of 247 issues" }),
+    );
+    await heading(/Step 4 of 4: Review/);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Fetch the remaining 47 issues" }),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByTestId("review-remaining").textContent).toContain(
+      "47 more are still unfetched",
+    );
+    srv.batchItems = 47;
+    srv.batchEligible = 247;
+    fireEvent.click(
+      screen.getByRole("button", { name: "Fetch the remaining 47 issues" }),
+    );
+    // Two batch starts (the first run, then the remainder); `all` is the
+    // endpoint's default scope, so neither carries a query string.
+    await waitFor(() =>
+      expect(
+        sent("POST", "/series/fantastic-four/metadata/batch"),
+      ).toHaveLength(2),
     );
   });
 

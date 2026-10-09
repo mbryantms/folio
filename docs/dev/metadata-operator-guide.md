@@ -818,7 +818,14 @@ does the whole refresh in one dialog, step by step:
 3. **Per-issue fetch.** Choose *Only missing or partial* or *All issues*.
    The dialog shows, per provider, how many issues will be looked up
    directly through the series' coverage (one request each, no search)
-   and how many will be searched (one or two requests each).
+   and how many will be searched (one or two requests each). A run takes
+   at most 200 issues (`REFRESH_BATCH_CAP`): a bigger series says "Fetch
+   200 of 247 issues", and *All issues* skips issues searched in the last
+   24 hours, so the Review step's **Fetch the remaining 47 issues** (and
+   a second *All issues* from the series menu) takes the next chunk
+   rather than the same first 200. Provider quota is handled underneath:
+   a child a provider denies parks as `awaiting_quota` and resumes on its
+   own (see *Quota exhaustion*).
 4. **Review.** When the fetch finishes: the strong / need-review /
    no-match counts, how many issues each provider answered directly,
    **Accept all strong** and **Fill missing**, and **Open in Review** for

@@ -114,6 +114,9 @@ export const REFRESH_STEPS: ReadonlyArray<{ id: RefreshStep; label: string }> =
 const stepIndex = (s: RefreshStep) =>
   REFRESH_STEPS.findIndex((x) => x.id === s);
 
+/** Issues one series batch fans out over (`refresh::REFRESH_BATCH_CAP`). */
+const BATCH_CAP = 200;
+
 /** Coverage request bound per analysis (`coverage::request_budget`). */
 const COVERAGE_BUDGET = "40 ComicVine, 30 Metron and 30 GCD";
 
@@ -250,6 +253,17 @@ export function SeriesRefreshFlow({
 
   const current: RefreshStep | null =
     step === "fetch" && batchDone && autoAdvance ? "review" : step;
+  // The status' `scope=all` estimate becomes "what's still unfetched" once
+  // a batch has finished (searched issues drop out for 24 h): refetch it
+  // so Review can offer the remainder of a capped run.
+  const refetchOnDone = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!batchDone || !batchId || refetchOnDone.current === batchId) return;
+    refetchOnDone.current = batchId;
+    void qc.invalidateQueries({
+      queryKey: queryKeys.seriesRefreshStatus(seriesSlug),
+    });
+  }, [batchDone, batchId, qc, seriesSlug]);
 
   // Furthest step reached: steps up to it are clickable in the stepper.
   const [maxIdx, setMaxIdx] = React.useState(0);
@@ -430,7 +444,24 @@ export function SeriesRefreshFlow({
           />
         )}
         {current === "review" && batchId && (
-          <ReviewStep batchId={batchId} batch={batch.data} onDone={onClose} />
+          <ReviewStep
+            seriesSlug={seriesSlug}
+            batchId={batchId}
+            batch={batch.data}
+            remaining={
+              batchDone
+                ? (data.fetch_estimate.find((e) => e.scope === "all")?.issues ??
+                  0)
+                : 0
+            }
+            onStarted={(id) => {
+              setBatchChoice(id);
+              setAutoAdvance(true);
+              setStep("fetch");
+              void refetchStatus();
+            }}
+            onDone={onClose}
+          />
         )}
         {current === "review" && !batchId && (
           <p className="text-muted-foreground text-sm">
@@ -1090,6 +1121,20 @@ function FetchStep({
             Plus each provider series&rsquo; issue list once (cached 24 hours).
             Results wait for your review — nothing is applied automatically.
           </p>
+          {(chosen?.remainder ?? 0) > 0 && (
+            <p data-testid="fetch-cap-note">
+              A run takes at most {BATCH_CAP} issues: this one covers{" "}
+              {chosen?.issues} of {chosen?.eligible}, and the remaining{" "}
+              {chosen?.remainder} are offered when it finishes.
+            </p>
+          )}
+          {(chosen?.recently_fetched ?? 0) > 0 && (
+            <p data-testid="fetch-recent-note">
+              {chosen?.recently_fetched} issue
+              {chosen?.recently_fetched === 1 ? "" : "s"} searched in the last
+              24 hours {chosen?.recently_fetched === 1 ? "is" : "are"} skipped.
+            </p>
+          )}
         </div>
       )}
       <Button
@@ -1099,9 +1144,18 @@ function FetchStep({
         {createBatch.isPending && (
           <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
         )}
-        Fetch {chosen?.issues ?? 0} issue
-        {(chosen?.issues ?? 0) === 1 ? "" : "s"}
+        {(chosen?.remainder ?? 0) > 0
+          ? `Fetch ${chosen?.issues ?? 0} of ${chosen?.eligible ?? 0} issues`
+          : `Fetch ${chosen?.issues ?? 0} issue${(chosen?.issues ?? 0) === 1 ? "" : "s"}`}
       </Button>
+      {(chosen?.issues ?? 0) === 0 &&
+        scope === "all" &&
+        (chosen?.recently_fetched ?? 0) > 0 && (
+          <p className="text-muted-foreground text-xs">
+            Every issue was searched in the last 24 hours; results are in
+            Review.
+          </p>
+        )}
       {(chosen?.issues ?? 0) === 0 && scope === "incomplete" && (
         <p className="text-muted-foreground text-xs">
           Every issue already has complete metadata.
@@ -1114,15 +1168,33 @@ function FetchStep({
 // ───────── 4. review ─────────
 
 function ReviewStep({
+  seriesSlug,
   batchId,
   batch,
+  remaining,
+  onStarted,
   onDone,
 }: {
+  seriesSlug: string;
   batchId: string;
   batch: BatchStatusResp | undefined;
+  /** `scope=all` issues still unfetched after this batch (the cap's
+   *  remainder, from the refetched status) — offered as a follow-up. */
+  remaining: number;
+  onStarted: (batchId: string) => void;
   onDone: () => void;
 }) {
   const apply = useBatchApply(batchId);
+  const createBatch = useCreateSeriesBatch(seriesSlug);
+  const fetchRemaining = () =>
+    createBatch.mutate(
+      { scope: "all" },
+      {
+        onSuccess: (resp) => {
+          if (resp && resp.items_total > 0) onStarted(resp.batch_id);
+        },
+      },
+    );
   const [confirmReplace, setConfirmReplace] = React.useState(false);
   if (!batch) {
     return (
@@ -1249,7 +1321,25 @@ function ReviewStep({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {!batchRunning(batch) && remaining > 0 && (
+        <p
+          className="text-muted-foreground text-xs"
+          data-testid="review-remaining"
+        >
+          This batch covered {batch.items_total} issues; {remaining} more
+          {remaining === 1 ? " is" : " are"} still unfetched (a run takes at
+          most {BATCH_CAP}).
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
+        {!batchRunning(batch) && remaining > 0 && (
+          <Button onClick={fetchRemaining} disabled={createBatch.isPending}>
+            {createBatch.isPending && (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            )}
+            Fetch the remaining {remaining} issue{remaining === 1 ? "" : "s"}
+          </Button>
+        )}
         <Button asChild variant="outline">
           <Link href={reviewHref}>Open in Review</Link>
         </Button>
