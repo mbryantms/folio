@@ -207,9 +207,13 @@ jobs:
       # this covers nextest binaries and doctests alike.
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_DEV_STRIP: debuginfo
+    # Service containers are pulled by the runner before any step runs, so
+    # neither a login nor a daemon mirror can be applied first: reference
+    # Docker Hub's official images through mirror.gcr.io directly (same
+    # digests — the mirror serves Docker Hub's own manifests).
     services:
       postgres:
-        image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        image: mirror.gcr.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
         env:
           POSTGRES_USER: comic
           POSTGRES_PASSWORD: comic
@@ -218,7 +222,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U comic" --health-interval 5s --health-timeout 3s --health-retries 10
       redis:
-        image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        image: mirror.gcr.io/library/redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
         ports: ["6379:6379"]
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
@@ -318,7 +322,7 @@ jobs:
       CARGO_INCREMENTAL: 0
     services:
       postgres:
-        image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        image: mirror.gcr.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
         env:
           POSTGRES_USER: comic
           POSTGRES_PASSWORD: comic
@@ -409,9 +413,13 @@ jobs:
       - name: cargo deny
         if: env.DEPS == 'true'
         run: cargo deny check
+      # Own advisory-db path: `cargo deny check` above already cloned the
+      # RustSec db into $CARGO_HOME/advisory-db in its own layout (it used
+      # to do that inside the action's container), and cargo-audit refuses
+      # to clone into a non-empty directory.
       - name: cargo audit
         if: env.DEPS == 'true'
-        run: cargo audit
+        run: cargo audit --db "$RUNNER_TEMP/advisory-db"
 
   web-check:
     name: Web — lint / typecheck / test

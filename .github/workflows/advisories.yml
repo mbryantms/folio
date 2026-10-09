@@ -61,7 +61,10 @@ jobs:
       # same documented-ignore convention as deny.toml.
       - id: audit
         continue-on-error: true
-        run: cargo audit --deny unsound
+        # Own db path: `cargo deny` above already cloned the RustSec db into
+        # $CARGO_HOME/advisory-db in its own layout; cargo-audit refuses to
+        # clone into a non-empty directory.
+        run: cargo audit --deny unsound --db "$RUNNER_TEMP/advisory-db"
       - id: summary
         if: always()
         run: |
