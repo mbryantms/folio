@@ -128,20 +128,115 @@ pub struct ArchiveWalk {
 /// these names inside a series folder is a "category bucket"
 /// (Specials/Annuals/etc.), not its own series. These names also
 /// drive path-derived `special_type` in M2.5.
-const SERIES_SUBFOLDER_ALLOWLIST: &[&str] = &[
-    "specials",
-    "extras",
-    "bonus",
-    "tie-ins",
-    "annuals",
-    "annual",
-    "oneshots",
-    "one-shots",
+///
+/// Markers are compared on their lowercased alphanumerics (`Tie-Ins` ≡
+/// `tie ins` ≡ `TieIns`), each mapped to the `special_type` the bucket's
+/// archives get. See [`series_subfolder_kind`] for where in the name a
+/// marker counts.
+const SERIES_SUBFOLDER_MARKERS: &[(&str, &str)] = &[
+    ("specials", "Special"),
+    ("special", "Special"),
+    ("extras", "Special"),
+    ("extra", "Special"),
+    ("bonus", "Special"),
+    ("tieins", "Special"),
+    ("annuals", "Annual"),
+    ("annual", "Annual"),
+    ("oneshots", "OneShot"),
+    ("oneshot", "OneShot"),
+    ("tpb", "TPB"),
+    ("tpbs", "TPB"),
+    ("trade", "TPB"),
+    ("trades", "TPB"),
+    ("tradepaperbacks", "TPB"),
+    ("collected", "TPB"),
+    ("collectededition", "TPB"),
+    ("collectededitions", "TPB"),
+    ("collections", "TPB"),
+    ("collection", "TPB"),
+    ("hardcover", "TPB"),
+    ("hardcovers", "TPB"),
+    ("omnibus", "TPB"),
 ];
 
+/// Is `name` a *bucket* subfolder of a series (its archives are extras,
+/// not the run), and which `special_type` does it imply?
+///
+/// A name counts when, with bracket groups removed, it
+/// - is exactly a marker (`Annuals`, `Extras`, `One-Shots`),
+/// - starts with one (`Annuals (01-13)(1987-2000)(digital)`,
+///   `Specials - misc`), or
+/// - ends with one (`The Flash v2 Extras`, `Batman Specials`),
+///
+/// and carries no `(YYYY)` series-year group: `The Flash Annual (2012)`
+/// is a series folder, not a bucket, because the year group is how a
+/// series folder is named. Semi-matches (`Semiannual`) never count — the
+/// comparison is per word, joined pairs included (`One Shots`, `Tie Ins`).
+pub fn series_subfolder_kind(name: &str) -> Option<&'static str> {
+    let (head, groups) = split_bracket_groups(name);
+    let has_year_group = groups
+        .iter()
+        .any(|g| g.len() == 4 && g.bytes().all(|b| b.is_ascii_digit()));
+    let words: Vec<String> = head
+        .split_whitespace()
+        .map(|w| {
+            w.chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .map(|c| c.to_ascii_lowercase())
+                .collect::<String>()
+        })
+        .filter(|w| !w.is_empty())
+        .collect();
+    let lookup = |key: &str| {
+        SERIES_SUBFOLDER_MARKERS
+            .iter()
+            .find(|(m, _)| *m == key)
+            .map(|(_, tag)| *tag)
+    };
+    let n = words.len();
+    // A `(YYYY)` group is how a series folder is named; whatever words
+    // surround it, the folder is a series, not a bucket.
+    if n == 0 || has_year_group {
+        return None;
+    }
+    // Leading marker: the single first word, or the first two joined
+    // ("one shots", "tie ins").
+    let lead = lookup(&words[0]).or_else(|| {
+        (n >= 2)
+            .then(|| format!("{}{}", words[0], words[1]))
+            .and_then(|k| lookup(&k))
+    });
+    if lead.is_some() {
+        return lead;
+    }
+    lookup(&words[n - 1]).or_else(|| {
+        (n >= 2)
+            .then(|| format!("{}{}", words[n - 2], words[n - 1]))
+            .and_then(|k| lookup(&k))
+    })
+}
+
+/// `(text outside brackets, contents of each `(…)` / `[…]` group)`.
+fn split_bracket_groups(name: &str) -> (String, Vec<String>) {
+    let mut head = String::with_capacity(name.len());
+    let mut groups = Vec::new();
+    let mut current: Option<(char, String)> = None;
+    for c in name.chars() {
+        match (&mut current, c) {
+            (None, '(' | '[') => current = Some((c, String::new())),
+            (Some((open, buf)), ')' | ']') if (*open == '(') == (c == ')') => {
+                groups.push(buf.trim().to_owned());
+                current = None;
+            }
+            (Some((_, buf)), c) => buf.push(c),
+            (None, c) => head.push(c),
+        }
+    }
+    (head, groups)
+}
+
 pub fn is_series_subfolder_name(name: &str) -> bool {
-    let lc = name.to_ascii_lowercase();
-    SERIES_SUBFOLDER_ALLOWLIST.contains(&lc.as_str())
+    series_subfolder_kind(name).is_some()
 }
 
 /// Walk the immediate children of `root`. Returns folders (series
@@ -1001,5 +1096,87 @@ mod tests {
             enumerate_scoped(root, &IgnoreRules::default(), &[root.to_path_buf()], &known).unwrap();
         assert!(scoped.tops.is_empty(), "{:?}", scoped.tops);
         assert_eq!(scoped.result.files_at_root.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod subfolder_kind_tests {
+    use super::{is_series_subfolder_name, series_subfolder_kind, split_bracket_groups};
+
+    #[test]
+    fn exact_markers_in_any_case() {
+        for (name, tag) in [
+            ("Specials", "Special"),
+            ("EXTRAS", "Special"),
+            ("Bonus", "Special"),
+            ("Tie-Ins", "Special"),
+            ("Tie Ins", "Special"),
+            ("Annuals", "Annual"),
+            ("annual", "Annual"),
+            ("Oneshots", "OneShot"),
+            ("One-Shots", "OneShot"),
+            ("One Shots", "OneShot"),
+            ("TPB", "TPB"),
+            ("Trades", "TPB"),
+            ("Trade Paperbacks", "TPB"),
+            ("Collected Editions", "TPB"),
+            ("Hardcovers", "TPB"),
+        ] {
+            assert_eq!(series_subfolder_kind(name), Some(tag), "{name}");
+            assert!(is_series_subfolder_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn leading_marker_survives_decoration() {
+        assert_eq!(
+            series_subfolder_kind("Annuals (01-13)(1987-2000)(digital)"),
+            Some("Annual")
+        );
+        assert_eq!(series_subfolder_kind("Specials - misc"), Some("Special"));
+        assert_eq!(series_subfolder_kind("Extras [scans]"), Some("Special"));
+    }
+
+    #[test]
+    fn trailing_marker_counts_only_without_a_year_group() {
+        assert_eq!(
+            series_subfolder_kind("The Flash v2 Extras"),
+            Some("Special")
+        );
+        assert_eq!(series_subfolder_kind("Batman Specials"), Some("Special"));
+        assert_eq!(
+            series_subfolder_kind("Saga Collected Editions"),
+            Some("TPB")
+        );
+        // Series folders named for the marker keep their year group → not
+        // a bucket (they are a series whose run *is* the annuals).
+        assert_eq!(series_subfolder_kind("The Flash Annual (2012)"), None);
+        assert_eq!(series_subfolder_kind("Marvel Holiday Special (2004)"), None);
+        assert!(!is_series_subfolder_name("The Flash Annual (2012)"));
+    }
+
+    #[test]
+    fn non_buckets_are_left_alone() {
+        for name in [
+            "Volume 2",
+            "Semiannual Report",
+            "The Flash (1987)",
+            "Specialists (2020)",
+            "Annual Report (2019)",
+            "",
+            "(digital)",
+        ] {
+            assert_eq!(series_subfolder_kind(name), None, "{name:?}");
+        }
+    }
+
+    #[test]
+    fn bracket_groups_split() {
+        let (head, groups) = split_bracket_groups("Annuals (01-13)(1987-2000) [digital] x");
+        assert_eq!(
+            head.split_whitespace().collect::<Vec<_>>(),
+            vec!["Annuals", "x"]
+        );
+        assert_eq!(groups, vec!["01-13", "1987-2000", "digital"]);
     }
 }

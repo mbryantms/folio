@@ -2422,16 +2422,8 @@ fn detect_special_type_raw(
     has_number: bool,
     parent_folder_name: Option<&str>,
 ) -> Option<&'static str> {
-    if let Some(fmt) = format {
-        let lc = fmt.to_ascii_lowercase();
-        match lc.as_str() {
-            "special" => return Some("Special"),
-            "one-shot" | "oneshot" | "one_shot" => return Some("OneShot"),
-            "annual" => return Some("Annual"),
-            "tpb" | "trade paperback" => return Some("TPB"),
-            "graphic novel" | "gn" => return Some("TPB"),
-            _ => {}
-        }
+    if let Some(tag) = format.and_then(special_type_from_format) {
+        return Some(tag);
     }
     if let Some(name) = parent_folder_name
         && let Some(tag) = special_type_from_subfolder(name)
@@ -2456,10 +2448,33 @@ fn detect_special_type_raw(
 /// allowlist, including the canonical "main run lives here" case
 /// where the archive sits directly in the series folder.
 fn special_type_from_subfolder(name: &str) -> Option<&'static str> {
-    match name.to_ascii_lowercase().as_str() {
-        "specials" | "extras" | "bonus" | "tie-ins" => Some("Special"),
-        "annuals" | "annual" => Some("Annual"),
-        "oneshots" | "one-shots" => Some("OneShot"),
+    // One allowlist for layout classification and tagging — see
+    // `enumerate::series_subfolder_kind` for which names count.
+    super::enumerate::series_subfolder_kind(name)
+}
+
+/// Map a ComicInfo / MetronInfo `<Format>` to a `special_type`. Compared on
+/// the lowercased alphanumerics, so `Trade Paper Back`, `trade-paperback`
+/// and `TPB` agree. `None` for the run's own formats (`Single Issue`,
+/// `Limited Series`, `Digital Chapter`) and anything unrecognised.
+pub fn special_type_from_format(format: &str) -> Option<&'static str> {
+    let key: String = format
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    match key.as_str() {
+        "annual" => Some("Annual"),
+        "oneshot" => Some("OneShot"),
+        "special"
+        | "80pagegiant"
+        | "100pagegiant"
+        | "giantsize"
+        | "secretfiles"
+        | "secretfilesorigins"
+        | "secretfilesandorigins" => Some("Special"),
+        "tpb" | "tradepaperback" | "graphicnovel" | "gn" | "hardcover" | "hc" | "omnibus"
+        | "collectededition" | "collection" => Some("TPB"),
         _ => None,
     }
 }
@@ -2911,6 +2926,93 @@ mod tests {
         assert!(!series_name_carries_marker("Semiannual Report", "Annual"));
         assert!(series_name_carries_marker("Doctor Aphra Annual", "Annual"));
         assert!(series_name_carries_marker("Star Wars: One Shot", "OneShot"));
+    }
+
+    #[test]
+    fn detect_special_type_formats_compare_on_alphanumerics() {
+        // ComicVine / Mylar / Metron spellings all agree after
+        // normalisation; the run's own formats stay untagged.
+        for f in [
+            "TPB",
+            "Trade Paper Back",
+            "trade-paperback",
+            "Hardcover",
+            "HC",
+            "Omnibus",
+        ] {
+            assert_eq!(special_type_from_format(f), Some("TPB"), "{f}");
+        }
+        for f in [
+            "80-Page Giant",
+            "Secret Files & Origins",
+            "Giant-Size",
+            "SPECIAL",
+        ] {
+            assert_eq!(special_type_from_format(f), Some("Special"), "{f}");
+        }
+        assert_eq!(special_type_from_format("One-Shot"), Some("OneShot"));
+        assert_eq!(special_type_from_format("one_shot"), Some("OneShot"));
+        assert_eq!(special_type_from_format("Annual"), Some("Annual"));
+        for f in ["Single Issue", "Limited Series", "Digital Chapter", ""] {
+            assert_eq!(special_type_from_format(f), None, "{f:?}");
+        }
+        assert_eq!(
+            detect_special_type(
+                Some("Trade Paper Back"),
+                "Flash by Johns v01.cbz",
+                true,
+                None,
+                None
+            ),
+            Some("TPB"),
+        );
+    }
+
+    #[test]
+    fn detect_special_type_accepts_decorated_bucket_folders() {
+        // Real-world bucket names: a marker with scanner tags after it, or
+        // a series-prefixed marker without a year group.
+        assert_eq!(
+            detect_special_type(
+                None,
+                "The Flash Annual 01 (1987).cbz",
+                true,
+                Some("Annuals (01-13)(1987-2000)(digital)"),
+                Some("The Flash (1987)")
+            ),
+            Some("Annual"),
+        );
+        assert_eq!(
+            detect_special_type(
+                None,
+                "Secret Origins 041 (1989).cbz",
+                true,
+                Some("The Flash v2 Extras"),
+                Some("The Flash (1987)")
+            ),
+            Some("Special"),
+        );
+        assert_eq!(
+            detect_special_type(
+                None,
+                "Saga Book 1.cbz",
+                true,
+                Some("Collected Editions"),
+                None
+            ),
+            Some("TPB"),
+        );
+        // A year group marks a series folder, not a bucket.
+        assert_eq!(
+            detect_special_type(
+                None,
+                "x 001.cbz",
+                true,
+                Some("The Flash Annual (2012)"),
+                None
+            ),
+            None,
+        );
     }
 
     #[test]

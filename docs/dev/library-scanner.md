@@ -176,11 +176,19 @@ classifies the same way — but a publisher-inside-publisher (3-deep
 nesting) is `AmbiguousFolder`, since Folio caps support at two levels.
 Imprint metadata belongs in ComicInfo, not the filesystem.
 
-Series-subfolder allowlist (case-insensitive): `Specials`, `Extras`,
-`Bonus`, `Tie-Ins`, `Annuals`, `Annual`, `Oneshots`, `One-Shots`. See
-[`enumerate::is_series_subfolder_name`](../../crates/server/src/library/scanner/enumerate.rs).
-The same allowlist drives `special_type` assignment for archives
-nested inside it (see §4.4 Process folder).
+Series-subfolder ("bucket") markers, compared per word on lowercased
+alphanumerics: `Specials` / `Special` / `Extras` / `Extra` / `Bonus` /
+`Tie-Ins`, `Annuals` / `Annual`, `Oneshots` / `One-Shots`, and the
+collected-edition set `TPB` / `TPBs` / `Trades` / `Trade Paperbacks` /
+`Collected` / `Collections` / `Hardcovers` / `Omnibus`. A folder name is
+a bucket when, with bracket groups removed, it is exactly a marker,
+starts with one (`Annuals (01-13)(1987-2000)(digital)`), or ends with
+one and has no `(YYYY)` series-year group (`The Flash v2 Extras`,
+`Batman Specials`). `The Flash Annual (2012)` keeps its year group and
+is a series folder, not a bucket. See
+[`enumerate::series_subfolder_kind`](../../crates/server/src/library/scanner/enumerate.rs).
+The same function drives `special_type` assignment for archives
+nested inside a bucket (see §4.4 Process folder).
 
 There is **no `scan_layout` override knob.** The folder shape is
 self-describing; the auto-classifier handles both Layout A and Layout B
@@ -316,19 +324,30 @@ Rules are evaluated top-to-bottom; the first match wins:
 
 | Rule | Source | Wins over |
 |---|---|---|
-| ComicInfo `<Format>` | author signal | everything |
-| Allowlist subfolder name | path | filename heuristics |
+| ComicInfo `<Format>` (`special_type_from_format`) | author signal | everything |
+| Bucket subfolder name (`enumerate::series_subfolder_kind`) | path | filename heuristics |
 | Filename `Annual` token | heuristic | none |
 | Filename `_SP_` / `special` token | heuristic | none |
 | No recognizable issue number | filename | none → `OneShot` |
 
-Allowlist-subfolder → tag mapping:
+`<Format>` is compared on its lowercased alphanumerics, so ComicVine /
+Mylar / Metron spellings agree: `Annual` → `Annual`; `One-Shot` /
+`one_shot` → `OneShot`; `Special`, `80-Page Giant`, `Giant-Size`,
+`Secret Files & Origins` → `Special`; `TPB`, `Trade Paperback`,
+`Trade Paper Back`, `Graphic Novel`, `Hardcover` / `HC`, `Omnibus`,
+`Collected Edition` → `TPB`. The run's own formats (`Single Issue`,
+`Limited Series`, `Digital Chapter`) and unknown strings yield nothing
+and fall through to the next rule.
 
-| Subfolder name (case-insensitive)                | `special_type` |
-|---                                               |---             |
-| `Specials`, `Extras`, `Bonus`, `Tie-Ins`         | `Special`      |
-| `Annuals`, `Annual`                              | `Annual`       |
-| `Oneshots`, `One-Shots`                          | `OneShot`      |
+Bucket-subfolder → tag mapping (markers may be decorated as described
+in §4.2):
+
+| Subfolder marker (case-insensitive)                         | `special_type` |
+|---                                                          |---             |
+| `Specials`, `Special`, `Extras`, `Extra`, `Bonus`, `Tie-Ins` | `Special`      |
+| `Annuals`, `Annual`                                         | `Annual`       |
+| `Oneshots`, `One-Shots`                                     | `OneShot`      |
+| `TPB(s)`, `Trades`, `Trade Paperbacks`, `Collected`, `Collections`, `Hardcovers`, `Omnibus` | `TPB` |
 
 The series folder is established by §4.2 classification; the
 comparison happens via `path.parent() != series_folder` so an
