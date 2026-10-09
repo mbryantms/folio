@@ -1110,12 +1110,26 @@ pub(crate) fn split_series_display(raw: &str) -> (String, Option<i32>) {
     (t.to_owned(), None)
 }
 
-/// The search term to send for `name`. GCD's Apache front end rejects an
-/// encoded `/` (`%2F` → 404), so a slashed title (`Batman/Superman`)
-/// searches on its longest slash-free fragment; `icontains` still finds
-/// the real series and the matcher scores the full name.
+/// The search term to send for `name`. GCD's name filter is a plain
+/// `icontains`, so the term must be a *substring* of the series name as
+/// GCD spells it:
+///
+/// - A leading `The` is dropped: GCD titles the 1987 Wally West run
+///   `Flash`, which "The Flash" never matches, while "Flash" matches both
+///   spellings and [`name_key`] (which also drops the article) still ranks
+///   the exact run first.
+/// - GCD's Apache front end rejects an encoded `/` (`%2F` → 404), so a
+///   slashed title (`Batman/Superman`) searches on its longest slash-free
+///   fragment; `icontains` still finds the real series and the matcher
+///   scores the full name.
 pub(crate) fn search_name(name: &str) -> String {
     let t = name.trim();
+    let t = match t.split_once(char::is_whitespace) {
+        Some((first, rest)) if first.eq_ignore_ascii_case("the") && !rest.trim().is_empty() => {
+            rest.trim()
+        }
+        _ => t,
+    };
     if !t.contains(['/', '\\']) {
         return t.to_owned();
     }
@@ -3234,6 +3248,13 @@ mod tests {
         assert_eq!(search_name("Batman/Superman"), "Superman");
         assert_eq!(search_name("Spider-Man/Deadpool"), "Spider-Man");
         assert_eq!(search_name("Saga"), "Saga");
+        // GCD titles the 1987 run "Flash": the article would hide it from
+        // an `icontains` search.
+        assert_eq!(search_name("The Flash"), "Flash");
+        assert_eq!(search_name("the  Amazing Spider-Man"), "Amazing Spider-Man");
+        assert_eq!(search_name("The Batman/Superman"), "Superman");
+        assert_eq!(search_name("The"), "The");
+        assert_eq!(search_name("Theodore"), "Theodore");
         assert_eq!(name_key("The Amazing Spider-Man"), "amazing spider man");
         assert_eq!(name_key("Batman/Superman"), name_key("Batman / Superman"));
         assert_eq!(name_key("The"), "the");
