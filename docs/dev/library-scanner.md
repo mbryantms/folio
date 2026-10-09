@@ -232,11 +232,18 @@ without per-library configuration.
      Build a `SeriesIdentityHint` by merging, in precedence order
      (lowest-first):
      - `process::peek_identity_hint(&archives[0])` — first archive's
-       ComicInfo + filename inference
+       ComicInfo + filename inference. `archives[0]` is whatever
+       `read_dir` listed first, so its cover year is *that issue's*
+       year, not the run's.
+     - folder leaf: `V<N>` fills the volume when the peek had none;
+       a bare `(YYYY)` group (`parsers::filename::folder_year_token`)
+       **replaces** the peeked year — the folder is named for the
+       run's start, and the slug is minted from this year.
      - `process::read_series_json(&folder)` — Mylar3 sidecar
-       (gap-fills name, year, publisher, imprint, age_rating,
-       total_issues, volume, comicvine_id; ComicInfo wins on
-       overlapping fields per spec §6.7)
+       (**replaces** name, volume, publisher and `year_began` —
+       Mylar's `"year"` key is accepted as an alias; gap-fills
+       imprint, age_rating, total_issues, comicvine_id; ComicInfo
+       wins on the remaining overlapping fields per spec §6.7)
      - `publisher_hint` — parent folder name for Layout B. Last-resort
        fallback; only consulted when ComicInfo and series.json are both
        silent on publisher. Closes the "nested library shows no
