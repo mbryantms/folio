@@ -10,8 +10,11 @@
 //! 1. **Candidates** per provider (at most [`MAX_CANDIDATES`]): known ids
 //!    (series `external_ids`, the latest applied match, existing range
 //!    rows, Metron's curated `cv_id` / `gcd_id` cross-reference, the free
-//!    metadata-cache bridge), then series searches on the local name and
-//!    aliases with no year filter, run through [`PreFilter`] (publisher
+//!    metadata-cache bridge), then series searches on the local name, the
+//!    distinct `<Series>` values the folder's own files carry (a renamed
+//!    continuation such as `Firestorm: The Nuclear Man` inside
+//!    `Firestorm (2004)`) and the aliases ([`search_names`]), with no
+//!    year filter, run through [`PreFilter`] (publisher
 //!    blacklist + the hard year gate against the *latest* local issue
 //!    year) and [`matcher::score_series`]. Issue numbers no candidate
 //!    covers get up to [`MAX_GAP_SEARCHES`] issue searches, as the split
@@ -90,6 +93,10 @@ pub const MAX_CANDIDATES: usize = 8;
 
 /// Alias searches per provider on top of the series-name search.
 pub const MAX_ALIAS_SEARCHES: usize = 2;
+
+/// Distinct `<Series>` values from the folder's own files searched in
+/// addition to the series name (see [`search_names`]).
+pub const MAX_FILE_NAME_SEARCHES: usize = 2;
 
 /// Issue searches per provider for local issues no candidate covers.
 pub const MAX_GAP_SEARCHES: usize = 2;
@@ -1296,6 +1303,89 @@ pub fn seed_for(seeds: &[CoverageSeed], source: Source) -> Option<&CoverageSeed>
     seeds.iter().find(|s| s.source == source)
 }
 
+/// The names a provider is searched for, in search order: the local
+/// series name, then the distinct `<Series>` values the folder's own
+/// main-run files carry (most files first, at most
+/// [`MAX_FILE_NAME_SEARCHES`]), then the series' aliases / alternate
+/// names (at most [`MAX_ALIAS_SEARCHES`]). Near-duplicates (sanitized
+/// similarity ≥ 0.999) collapse onto the earlier entry.
+///
+/// The file names matter for renamed continuations: `Firestorm (2004)`
+/// holds #1–22 tagged `Firestorm` and #23–35 tagged `Firestorm: The
+/// Nuclear Man`, which Metron and GCD file as a separate series. A search
+/// for "Firestorm" never returns it, and a gap issue search that does is
+/// dropped by [`NAME_FLOOR`] because "Firestorm: The Nuclear Man" is not
+/// similar enough to "Firestorm" — unless that name is one of ours. The
+/// same names feed [`SeriesFacts::best_name_score`], so the continuation
+/// also counts as an exact-name candidate.
+pub fn search_names(
+    series_name: &str,
+    alias_lists: [&serde_json::Value; 2],
+    file_series_names: &[String],
+) -> Vec<String> {
+    let mut names: Vec<String> = vec![series_name.trim().to_owned()];
+    let push = |names: &mut Vec<String>, raw: &str| -> bool {
+        let a = raw.trim();
+        if a.is_empty()
+            || names
+                .iter()
+                .any(|n| matcher::name_similarity(n, a) >= 0.999)
+        {
+            return false;
+        }
+        names.push(a.to_owned());
+        true
+    };
+    let mut added = 0;
+    for f in file_series_names {
+        if added >= MAX_FILE_NAME_SEARCHES {
+            break;
+        }
+        if push(&mut names, f) {
+            added += 1;
+        }
+    }
+    let mut added = 0;
+    for v in alias_lists {
+        if let Some(arr) = v.as_array() {
+            for a in arr.iter().filter_map(|x| x.as_str()) {
+                if added >= MAX_ALIAS_SEARCHES {
+                    break;
+                }
+                if push(&mut names, a) {
+                    added += 1;
+                }
+            }
+        }
+    }
+    names
+}
+
+/// Distinct ComicInfo `<Series>` values across the series' active
+/// main-run issues, most frequent first. Specials are left out: an annual
+/// under `Annuals/` legitimately says `<Series>Batman Annual</Series>`.
+async fn file_series_names<C: ConnectionTrait>(
+    db: &C,
+    series_id: Uuid,
+) -> Result<Vec<String>, sea_orm::DbErr> {
+    use sea_orm::{DatabaseBackend, Statement};
+    let rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT comic_info_raw->>'series' AS name, COUNT(*) AS n \
+               FROM issues \
+              WHERE series_id = $1 AND state = 'active' AND removed_at IS NULL \
+                AND special_type IS NULL \
+                AND COALESCE(comic_info_raw->>'series', '') <> '' \
+              GROUP BY 1 ORDER BY n DESC, name",
+            [series_id.into()],
+        ))
+        .await?;
+    rows.into_iter()
+        .map(|r| r.try_get::<String>("", "name"))
+        .collect()
+}
+
 impl SeriesFacts {
     pub async fn load(state: &AppState, series_row: &series::Model) -> anyhow::Result<Self> {
         let db = &state.db;
@@ -1316,22 +1406,12 @@ impl SeriesFacts {
             .as_ref()
             .map(PreFilter::from_library)
             .unwrap_or_default();
-        let mut names = vec![series_row.name.clone()];
-        for v in [&series_row.aliases, &series_row.alternate_names] {
-            if let Some(arr) = v.as_array() {
-                for a in arr.iter().filter_map(|x| x.as_str()) {
-                    let a = a.trim();
-                    if !a.is_empty()
-                        && !names
-                            .iter()
-                            .any(|n| matcher::name_similarity(n, a) >= 0.999)
-                    {
-                        names.push(a.to_owned());
-                    }
-                }
-            }
-        }
-        names.truncate(1 + MAX_ALIAS_SEARCHES);
+        let file_names = file_series_names(db, series_row.id).await?;
+        let names = search_names(
+            &series_row.name,
+            [&series_row.aliases, &series_row.alternate_names],
+            &file_names,
+        );
         Ok(Self {
             series: series_row.clone(),
             local,
@@ -3114,5 +3194,56 @@ mod tests {
         assert_eq!(h.listed_count, 4);
         assert!(!h.partial);
         assert_eq!(h.requests, 2);
+    }
+}
+
+#[cfg(test)]
+mod search_names_tests {
+    use super::{MAX_ALIAS_SEARCHES, MAX_FILE_NAME_SEARCHES, search_names};
+    use serde_json::json;
+
+    #[test]
+    fn file_series_names_come_right_after_the_series_name() {
+        // Firestorm (2004): #1–22 say "Firestorm", #23–35 say
+        // "Firestorm: The Nuclear Man" — Metron / GCD file the latter as
+        // its own series, so it has to be searched for by that name.
+        let names = search_names(
+            "Firestorm",
+            [&json!([]), &json!([])],
+            &["Firestorm".into(), "Firestorm: The Nuclear Man".into()],
+        );
+        assert_eq!(names, vec!["Firestorm", "Firestorm: The Nuclear Man"]);
+    }
+
+    #[test]
+    fn near_duplicates_collapse_and_caps_hold() {
+        let names = search_names(
+            "The Department of Truth",
+            [&json!(["Dept. of Truth", "DoT", "Truth"]), &json!(["Alt"])],
+            &[
+                "Department of Truth".into(), // article-only difference → same
+                "The Department of Truth".into(),
+                "Dept of Truth Omnibus".into(),
+                "Fourth".into(),
+                "Fifth".into(),
+            ],
+        );
+        // series name + MAX_FILE_NAME_SEARCHES file names + MAX_ALIAS_SEARCHES aliases
+        assert_eq!(names.len(), 1 + MAX_FILE_NAME_SEARCHES + MAX_ALIAS_SEARCHES);
+        assert_eq!(names[0], "The Department of Truth");
+        assert_eq!(names[1], "Dept of Truth Omnibus");
+        assert_eq!(names[2], "Fourth");
+        assert_eq!(names[3], "Dept. of Truth");
+        assert_eq!(names[4], "DoT");
+    }
+
+    #[test]
+    fn blank_and_whitespace_entries_are_skipped() {
+        let names = search_names(
+            "Saga",
+            [&json!(["  ", null, 7]), &json!(null)],
+            &["".into()],
+        );
+        assert_eq!(names, vec!["Saga"]);
     }
 }
