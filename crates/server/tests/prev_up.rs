@@ -719,3 +719,47 @@ async fn prev_up_acl_returns_404_for_invisible_current_issue() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["error"]["code"], "not_found");
 }
+
+/// Tag an issue as a special, the way the scanner does for an archive
+/// under `Annuals/` / `Specials/`.
+async fn tag_special(app: &TestApp, issue_id: &str, special_type: &str) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    entity::issue::ActiveModel {
+        id: Unchanged(issue_id.into()),
+        special_type: Set(Some(special_type.into())),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn prev_up_stays_in_the_main_run_past_specials() {
+    // Main run #1, #3 with an annual sorted between them: backing up from
+    // #3 lands on #1, not the annual.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "prev-up-lane@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "pu-lane").await;
+    let annual_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "pu-lane-annual").await;
+    let issue3_id = seed_extra_issue(&app, lib_id, series_id, 3.0, "pu-lane-3").await;
+    tag_special(&app, &annual_id, "Annual").await;
+    grant_access(&app, user.user_id, lib_id).await;
+
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        &format!("/api/issues/{issue3_id}/prev-up"),
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["source"], "series");
+    assert_eq!(
+        body["target"]["id"], issue1_id,
+        "annual {annual_id} must be skipped"
+    );
+}

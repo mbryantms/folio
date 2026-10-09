@@ -1388,11 +1388,13 @@ pub async fn next_in_series(
 
     // Match the series-page sort: sort_number ASC NULLS LAST, then id.
     // The "next" cursor is the (sort_number, id) tuple of the current row;
-    // anything strictly after is a candidate.
+    // anything strictly after *in the same lane* (main run / annuals /
+    // one-shots — see `next_up::same_lane`) is a candidate.
     let mut select = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(row.series_id))
         .filter(issue::Column::RemovedAt.is_null())
-        .filter(issue::Column::Id.ne(row.id.clone()));
+        .filter(issue::Column::Id.ne(row.id.clone()))
+        .filter(crate::api::next_up::same_lane(row.special_type.as_deref()));
 
     // Sort handling — emulate "NULLS LAST" via a synthesized ASC bool.
     let nulls_last = Expr::cust("sort_number IS NULL");
@@ -1481,7 +1483,9 @@ pub async fn prev_in_series(
     let mut select = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(row.series_id))
         .filter(issue::Column::RemovedAt.is_null())
-        .filter(issue::Column::Id.ne(row.id.clone()));
+        .filter(issue::Column::Id.ne(row.id.clone()))
+        // Same lane as the current issue (see `next_up::same_lane`).
+        .filter(crate::api::next_up::same_lane(row.special_type.as_deref()));
 
     // Reverse of next_in_series' sort so `.one()` yields the *immediate*
     // predecessor: (sort_number IS NULL) DESC, sort_number DESC, id DESC.

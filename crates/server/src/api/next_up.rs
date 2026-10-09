@@ -479,34 +479,19 @@ pub(crate) async fn pick_next_in_series(
     series_id: Uuid,
     acl: &access::VisibleLibraries,
 ) -> Result<Option<issue::Model>, Response> {
-    let mut sel = issue::Entity::find()
-        .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null());
-    // WP-2.7: never resolve "up next" onto an issue the caller can't open.
-    if let Some(cap) = acl.issue_cap_condition() {
-        sel = sel.filter(cap);
+    // Lane rule (see `same_lane`): On Deck continues the main run and only
+    // falls back to the specials when the series has no main run at all
+    // (an annuals-only folder).
+    let mut issues = series_lane_rows(app, series_id, acl, same_lane(None)).await?;
+    if issues.is_empty() {
+        issues = series_lane_rows(
+            app,
+            series_id,
+            acl,
+            issue::Column::SpecialType.is_not_null(),
+        )
+        .await?;
     }
-    // WP-3.6: walk the series on the card projection; only the picked
-    // issue is loaded in full (callers render an OPDS entry from it).
-    let issues: Vec<IssueCardRow> = match sel
-        .order_by_asc(Expr::cust("sort_number IS NULL"))
-        .order_by_asc(issue::Column::SortNumber)
-        .order_by_asc(issue::Column::Id)
-        .into_partial_model::<IssueCardRow>()
-        .all(&app.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(error = %e, "rails: pick_next_in_series issues lookup failed");
-            return Err(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "internal",
-            ));
-        }
-    };
     if issues.is_empty() {
         return Ok(None);
     }
@@ -546,6 +531,50 @@ pub(crate) async fn pick_next_in_series(
         "rails: pick_next_in_series pick hydrate failed",
     )
     .await
+}
+
+/// Reader navigation stays in the current issue's *lane*: a main-run issue
+/// (`special_type` NULL) steps to main-run issues only, an annual to
+/// annuals, a one-shot to one-shots. Finishing #247 of a run therefore
+/// never lands on the annual, special or TPB filed beside it, and reading
+/// Annual #1 continues to Annual #2 rather than main-run #2. Shared by the
+/// next-up / prev-up resolvers and the series-page `next` / `prev`
+/// endpoints so the pill, the end-of-issue card and the issue page agree.
+pub(crate) fn same_lane(special_type: Option<&str>) -> sea_orm::sea_query::SimpleExpr {
+    match special_type {
+        None => issue::Column::SpecialType.is_null(),
+        Some(t) => issue::Column::SpecialType.eq(t),
+    }
+}
+
+/// The ACL-visible, active issues of `series_id` matching `lane`, in the
+/// series-page order (`sort_number` ASC NULLS LAST, then `id`), on the
+/// card projection (WP-3.6).
+async fn series_lane_rows(
+    app: &AppState,
+    series_id: Uuid,
+    acl: &access::VisibleLibraries,
+    lane: sea_orm::sea_query::SimpleExpr,
+) -> Result<Vec<IssueCardRow>, Response> {
+    let mut sel = issue::Entity::find()
+        .filter(issue::Column::SeriesId.eq(series_id))
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
+        .filter(lane);
+    // WP-2.7: never resolve onto an issue the caller can't open.
+    if let Some(cap) = acl.issue_cap_condition() {
+        sel = sel.filter(cap);
+    }
+    sel.order_by_asc(Expr::cust("sort_number IS NULL"))
+        .order_by_asc(issue::Column::SortNumber)
+        .order_by_asc(issue::Column::Id)
+        .into_partial_model::<IssueCardRow>()
+        .all(&app.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "next_up: series lane lookup failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        })
 }
 
 /// Load one full `issue::Model` by id — the tail of the projected walks
@@ -646,34 +675,15 @@ async fn pick_next_in_series_after(
     current: &issue::Model,
     acl: &access::VisibleLibraries,
 ) -> Result<Option<IssueCardRow>, Response> {
-    let mut sel = issue::Entity::find()
-        .filter(issue::Column::SeriesId.eq(current.series_id))
-        .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null());
-    // WP-2.7: skip issues rated above the caller's cap.
-    if let Some(cap) = acl.issue_cap_condition() {
-        sel = sel.filter(cap);
-    }
-    // WP-3.6: every issue in the series is walked; project the card
-    // columns instead of hydrating each wide row.
-    let issues: Vec<IssueCardRow> = match sel
-        .order_by_asc(Expr::cust("sort_number IS NULL"))
-        .order_by_asc(issue::Column::SortNumber)
-        .order_by_asc(issue::Column::Id)
-        .into_partial_model::<IssueCardRow>()
-        .all(&app.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(error = %e, "next_up: pick_next_in_series_after issues lookup failed");
-            return Err(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "internal",
-            ));
-        }
-    };
+    // Same lane as the current issue (see `same_lane`); every issue in
+    // the lane is walked on the card projection (WP-3.6).
+    let issues = series_lane_rows(
+        app,
+        current.series_id,
+        acl,
+        same_lane(current.special_type.as_deref()),
+    )
+    .await?;
     if issues.is_empty() {
         return Ok(None);
     }
@@ -1239,33 +1249,14 @@ async fn pick_prev_in_series_before(
     if !acl.contains(current.library_id) {
         return Ok(None);
     }
-    let mut sel = issue::Entity::find()
-        .filter(issue::Column::SeriesId.eq(current.series_id))
-        .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null());
-    // WP-2.7: skip issues rated above the caller's cap.
-    if let Some(cap) = acl.issue_cap_condition() {
-        sel = sel.filter(cap);
-    }
-    // WP-3.6: card projection (see `pick_next_in_series_after`).
-    let issues: Vec<IssueCardRow> = match sel
-        .order_by_asc(Expr::cust("sort_number IS NULL"))
-        .order_by_asc(issue::Column::SortNumber)
-        .order_by_asc(issue::Column::Id)
-        .into_partial_model::<IssueCardRow>()
-        .all(&app.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(error = %e, "prev_up: pick_prev_in_series_before issues lookup failed");
-            return Err(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "internal",
-            ));
-        }
-    };
+    // Same lane as the current issue (see `same_lane`), card projection.
+    let issues = series_lane_rows(
+        app,
+        current.series_id,
+        acl,
+        same_lane(current.special_type.as_deref()),
+    )
+    .await?;
 
     // Walk forward, track the latest issue seen before `current`. When
     // we hit current, return the tracked candidate. Simpler than a

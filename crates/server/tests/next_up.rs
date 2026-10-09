@@ -926,3 +926,94 @@ async fn next_up_cbl_belonging_to_other_user_is_silently_ignored() {
     );
     assert_eq!(body["target"]["id"], issue2_id);
 }
+
+/// Tag an issue as a special (`special_type`), the way the scanner does for
+/// an archive under `Annuals/` / `Specials/` or with `<Format>Annual`.
+async fn tag_special(app: &TestApp, issue_id: &str, special_type: &str) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    entity::issue::ActiveModel {
+        id: Unchanged(issue_id.into()),
+        special_type: Set(Some(special_type.into())),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn next_up_series_stays_in_the_main_run_past_specials() {
+    // Main run #1, #3 with an annual sorted as 2.0 between them and a
+    // special after the last issue: finishing #1 goes to #3, finishing
+    // #3 ends the series — never onto the annual or the special.
+    let app = TestApp::spawn().await;
+    let user = register(&app, "next-up-lane@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, issue1_id) = seed_one_issue(&app, "nu-lane").await;
+    let annual_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "nu-lane-annual").await;
+    let issue3_id = seed_extra_issue(&app, lib_id, series_id, 3.0, "nu-lane-3").await;
+    let special_id = seed_extra_issue(&app, lib_id, series_id, 4.0, "nu-lane-special").await;
+    tag_special(&app, &annual_id, "Annual").await;
+    tag_special(&app, &special_id, "Special").await;
+    grant_access(&app, user.user_id, lib_id).await;
+    finish_issue(&app, user.user_id, &issue1_id).await;
+
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        &format!("/api/issues/{issue1_id}/next-up"),
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(body["source"], "series");
+    assert_eq!(
+        body["target"]["id"], issue3_id,
+        "annual {annual_id} must be skipped"
+    );
+
+    finish_issue(&app, user.user_id, &issue3_id).await;
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        &format!("/api/issues/{issue3_id}/next-up"),
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(
+        body["source"], "none",
+        "the special {special_id} after the last main-run issue is not up next"
+    );
+}
+
+#[tokio::test]
+async fn next_up_from_an_annual_continues_with_the_next_annual() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "next-up-annual-lane@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let (lib_id, series_id, _issue1_id) = seed_one_issue(&app, "nu-annuals").await;
+    let annual1_id = seed_extra_issue(&app, lib_id, series_id, 5.0, "nu-annuals-a1").await;
+    let _issue2_id = seed_extra_issue(&app, lib_id, series_id, 2.0, "nu-annuals-2").await;
+    let annual2_id = seed_extra_issue(&app, lib_id, series_id, 6.0, "nu-annuals-a2").await;
+    tag_special(&app, &annual1_id, "Annual").await;
+    tag_special(&app, &annual2_id, "Annual").await;
+    grant_access(&app, user.user_id, lib_id).await;
+    finish_issue(&app, user.user_id, &annual1_id).await;
+
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        &format!("/api/issues/{annual1_id}/next-up"),
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(body["source"], "series");
+    assert_eq!(
+        body["target"]["id"], annual2_id,
+        "Annual #1 continues to Annual #2"
+    );
+}
