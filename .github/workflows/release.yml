@@ -95,6 +95,11 @@ jobs:
       # manifests. Same setting as the CI docker build job.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
         with:
+          # The docker-container driver pulls its own BuildKit image from
+          # docker.io before the mirror config below can apply; fetch that
+          # from the mirror too (auth.docker.io token requests timed out on
+          # the runners, 2026-10-09).
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
           buildkitd-config-inline: |
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
