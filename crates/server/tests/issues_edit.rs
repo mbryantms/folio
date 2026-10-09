@@ -1425,3 +1425,94 @@ async fn delete_field_pin_refuses_to_clear_provider_set_provenance() {
         .expect("provider-set row should still exist");
     assert_eq!(row.set_by, "comicvine");
 }
+
+/// Tag an issue as a special, the way the scanner does for an archive
+/// under `Annuals/` / `Specials/`.
+async fn tag_special(app: &TestApp, issue_id: &str, special_type: &str) {
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    entity::issue::ActiveModel {
+        id: sea_orm::Unchanged(issue_id.into()),
+        special_type: Set(Some(special_type.into())),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn next_and_prev_in_series_stay_in_the_current_lane() {
+    // Main run #1, #3 with an annual sorted as 2.0 between them and a
+    // special after #3. The series-page next/prev never cross lanes: the
+    // main run skips the annual and the special; the annual's own lane
+    // has nothing after it.
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let (_lib, _sid, series_slug, ids) = seed(
+        &app,
+        "lane",
+        &[
+            IssueSeed {
+                slug: "issue-1",
+                sort_number: Some(1.0),
+                number_raw: Some("1"),
+            },
+            IssueSeed {
+                slug: "annual-1",
+                sort_number: Some(2.0),
+                number_raw: Some("Annual 1"),
+            },
+            IssueSeed {
+                slug: "issue-3",
+                sort_number: Some(3.0),
+                number_raw: Some("3"),
+            },
+            IssueSeed {
+                slug: "special-1",
+                sort_number: Some(4.0),
+                number_raw: Some("Special 1"),
+            },
+        ],
+    )
+    .await;
+    tag_special(&app, &ids[1], "Annual").await;
+    tag_special(&app, &ids[3], "Special").await;
+
+    let (status, json) = get(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1/next?limit=5"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {json}");
+    let slugs: Vec<&str> = json["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["slug"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        slugs,
+        vec!["issue-3"],
+        "annual and special are not in the main run"
+    );
+
+    let (_, json) = get(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-3/prev"),
+    )
+    .await;
+    assert_eq!(json["item"]["slug"], "issue-1");
+
+    let (_, json) = get(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/annual-1/next"),
+    )
+    .await;
+    assert!(
+        json["items"].as_array().unwrap().is_empty(),
+        "the only annual has no next in its lane"
+    );
+}
