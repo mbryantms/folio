@@ -637,7 +637,10 @@ parts, is handled the same way.
 
 - **How it decides.** For each provider Folio collects up to 8 candidate
   series (ids it already has, Metron's own ComicVine/GCD
-  cross-reference, and a series search on the name and aliases with no
+  cross-reference, and a series search on the name, on the distinct
+  `<Series>` values your own files carry — a run that was renamed
+  mid-way, like `Firestorm: The Nuclear Man` inside `Firestorm (2004)`,
+  is found through the files that say so — and on the aliases, with no
   year filter; your library's publisher blacklist applies), lists every
   candidate's issues *with cover dates*, and assigns each of your issues
   to the series that has that number **and** a cover date within six
