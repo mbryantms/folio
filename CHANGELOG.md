@@ -13,6 +13,29 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.49.0](https://github.com/mbryantms/folio/compare/v0.48.2...v0.49.0) (2026-10-09)
+
+
+### Added
+
+* **parsers:** read the year from (Month YYYY) and (YYYY-MM) filename groups ([#1088](https://github.com/mbryantms/folio/issues/1088)) ([0774cbb](https://github.com/mbryantms/folio/commit/0774cbb8abee0d8267439612bab943d7454a7343))
+* **scanner:** recognise decorated bucket folders and more &lt;Format&gt; spellings ([#1087](https://github.com/mbryantms/folio/issues/1087)) ([8cf8e27](https://github.com/mbryantms/folio/commit/8cf8e27051440d16fa3fec4445063389389c8ba9))
+
+
+### Fixed
+
+* **reader:** keep next/prev navigation in the current issue's lane ([#1086](https://github.com/mbryantms/folio/issues/1086)) ([a1d5181](https://github.com/mbryantms/folio/commit/a1d5181738f69c2f85ee9d49260f8b8f9ba99a66))
+* **series:** keep stunt numbers like [#1](https://github.com/mbryantms/folio/issues/1),000,000 off the collection run ([#1085](https://github.com/mbryantms/folio/issues/1085)) ([b89cc21](https://github.com/mbryantms/folio/commit/b89cc21a26acba94dbaecc20f9f01fc6967f06de))
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.78 ([#1079](https://github.com/mbryantms/folio/issues/1079)) ([02840a1](https://github.com/mbryantms/folio/commit/02840a1b7c45891ed9f4916f8d507ca77b05bd18))
+* update dependency pnpm to v12.10.0 ([#1082](https://github.com/mbryantms/folio/issues/1082)) ([8100c3f](https://github.com/mbryantms/folio/commit/8100c3f4282a62a215899ea51c6696cd8cafa51d))
+* update node.js to d6aa754 ([#1083](https://github.com/mbryantms/folio/issues/1083)) ([189633d](https://github.com/mbryantms/folio/commit/189633d3e671d23219bba9aee111667a599becbf))
+* update radix-ui ([#1081](https://github.com/mbryantms/folio/issues/1081)) ([48e774f](https://github.com/mbryantms/folio/commit/48e774f89f3415dfcc03a3309ae3c0b58ad64046))
+* update rust:1-slim-bookworm docker digest to 2c3a22f ([#1084](https://github.com/mbryantms/folio/issues/1084)) ([4a6d29e](https://github.com/mbryantms/folio/commit/4a6d29e91b3a9445db8cbc98d318230e64a1e086))
+
 ## [0.48.2](https://github.com/mbryantms/folio/compare/v0.48.1...v0.48.2) (2026-10-08)
 
 
