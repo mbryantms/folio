@@ -136,9 +136,13 @@ export function MetadataMatchForm({
   open,
   onCompareModeChange,
   embedded = false,
+  initialLookupUrl = null,
 }: {
   scope: MetadataMatchScope;
   onClose: () => void;
+  /** Fetch this provider page on open instead of searching (see
+   *  `useMetadataCandidateSearch`). */
+  initialLookupUrl?: string | null;
   /** Fired after a successful apply re-hydrates. When set, the dialog
    *  defers to it instead of self-closing (worklist auto-advance). */
   onApplied?: () => void;
@@ -216,7 +220,7 @@ export function MetadataMatchForm({
     reused,
     researchFromScratch,
     adoptRun,
-  } = useMetadataCandidateSearch({ scope, open });
+  } = useMetadataCandidateSearch({ scope, open, lookupUrl: initialLookupUrl });
   const seriesCandidates = useMetadataCandidatesSeries(
     scope.kind === "series" ? scope.seriesSlug : "",
     scope.kind === "series" ? runId : null,

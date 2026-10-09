@@ -344,13 +344,13 @@ async fn save_coverage_job(fx: &Fx, minutes_ago: i64, state: CoverageJobState) -
 // ───────── tests ─────────
 
 #[tokio::test]
-async fn unmatched_series_resumes_at_match_and_every_issue_searches() {
+async fn unmatched_series_resumes_at_coverage_and_every_issue_searches() {
     let fx = ff().await;
     let cookie = register(&fx.app, "admin@example.com").await;
 
     let body = status(&fx, &cookie).await;
     assert_eq!(body["series_id"], fx.series_id.to_string());
-    assert_eq!(body["resume_step"], "match", "{body}");
+    assert_eq!(body["resume_step"], "coverage", "{body}");
     assert_eq!(body["series_match"]["links"], json!([]));
     assert_eq!(body["series_match"]["latest_run"], Value::Null);
     assert_eq!(body["series_match"]["applied_at"], Value::Null);
@@ -403,7 +403,7 @@ async fn linked_series_estimates_direct_lookups_per_provider() {
         && l["set_by"] == "user"));
     // A link alone (no apply / coverage / batch in the window) still
     // starts at the match step, where "keep current match" is offered.
-    assert_eq!(body["resume_step"], "match");
+    assert_eq!(body["resume_step"], "coverage");
 
     // ComicVine: the series id covers every issue; Metron: 1711 plus the
     // #600–611 range → 1713; GCD has no series → every issue searches.
@@ -418,10 +418,11 @@ async fn resume_follows_apply_then_coverage_then_batch() {
     let fx = ff().await;
     let cookie = register(&fx.app, "admin@example.com").await;
 
-    // 1. A series match applied 30 minutes ago → coverage.
+    // 1. A series match applied 30 minutes ago → fetch (the step after
+    //    confirming the series).
     let run_id = applied_run(&fx, 30).await;
     let body = status(&fx, &cookie).await;
-    assert_eq!(body["resume_step"], "coverage", "{body}");
+    assert_eq!(body["resume_step"], "fetch", "{body}");
     assert_eq!(
         body["series_match"]["latest_run"]["run_id"],
         run_id.to_string()
@@ -430,10 +431,10 @@ async fn resume_follows_apply_then_coverage_then_batch() {
     assert!(body["series_match"]["applied_at"].is_string());
     assert_eq!(body["coverage"], Value::Null);
 
-    // 2. The seeded coverage job it queued → still coverage, job reported.
+    // 2. The seeded coverage job it queued → still fetch, job reported.
     let job_id = save_coverage_job(&fx, 25, CoverageJobState::Running).await;
     let body = status(&fx, &cookie).await;
-    assert_eq!(body["resume_step"], "coverage");
+    assert_eq!(body["resume_step"], "fetch");
     assert_eq!(body["coverage"]["job_id"], job_id.to_string());
     assert_eq!(body["coverage"]["state"], "running");
     assert_eq!(body["coverage"]["trigger"], "series_match");
@@ -506,11 +507,11 @@ async fn resume_follows_apply_then_coverage_then_batch() {
     assert_eq!(body["resume_step"], "review", "{body}");
     assert_eq!(body["batch"]["unfinished"], 0);
 
-    // 6. A newer series match restarts the flow at coverage: the batch
+    // 6. A newer series match puts the flow back at fetch: the batch
     //    is older than it.
     applied_run(&fx, 0).await;
     let body = status(&fx, &cookie).await;
-    assert_eq!(body["resume_step"], "coverage", "{body}");
+    assert_eq!(body["resume_step"], "fetch", "{body}");
 
     assert_eq!(provider_requests(&fx).await, 0);
 }
@@ -523,7 +524,7 @@ async fn state_older_than_the_window_is_ignored() {
     let body = status(&fx, &cookie).await;
     assert_eq!(body["series_match"]["applied_at"], Value::Null);
     assert!(body["series_match"]["latest_run"].is_object(), "any age");
-    assert_eq!(body["resume_step"], "match");
+    assert_eq!(body["resume_step"], "coverage");
 }
 
 #[tokio::test]
