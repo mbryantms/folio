@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.49.1](https://github.com/mbryantms/folio/compare/v0.49.0...v0.49.1) (2026-10-09)
+
+
+### Build & CI
+
+* **release:** upload and attach the SBOM ourselves, idempotently ([#1089](https://github.com/mbryantms/folio/issues/1089)) ([c47b385](https://github.com/mbryantms/folio/commit/c47b38555ca68fca4c93c9f13c1454e264909b25))
+
 ## [0.49.0](https://github.com/mbryantms/folio/compare/v0.48.2...v0.49.0) (2026-10-09)
 
 
