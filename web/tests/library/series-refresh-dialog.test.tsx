@@ -392,24 +392,25 @@ describe("<SeriesRefreshFlow>", () => {
   it("walks coverage → confirm series → fetch → review", async () => {
     // Coverage first, on the folder's own tags: the analysis proposes a
     // Metron main (1711) plus a range; accepting links the series.
+    const main1711 = [
+      {
+        provider_series_id: "1711",
+        name: "Fantastic Four",
+        year: 1998,
+        publisher: "Marvel",
+        url: "https://metron.cloud/series/1711/",
+        origin: "search" as const,
+        strict: true,
+        listed_count: 173,
+        local_matches: 160,
+        assigned: 160,
+        partial: false,
+      },
+    ];
     srv.analysis = coverage([
       provider("metron", "Metron", {
         current_series_id: null,
-        candidates: [
-          {
-            provider_series_id: "1711",
-            name: "Fantastic Four",
-            year: 1998,
-            publisher: "Marvel",
-            url: "https://metron.cloud/series/1711/",
-            origin: "search",
-            strict: true,
-            listed_count: 173,
-            local_matches: 160,
-            assigned: 160,
-            partial: false,
-          },
-        ],
+        candidates: main1711,
       }),
     ]);
     srv.onAccept = () => {
@@ -417,7 +418,7 @@ describe("<SeriesRefreshFlow>", () => {
         provider("metron", "Metron", {
           has_changes: false,
           proposed_ranges: [],
-          candidates: srv.analysis!.providers[0]!.candidates,
+          candidates: main1711,
         }),
       ]);
       srv.status = status({
