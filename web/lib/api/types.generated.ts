@@ -9493,6 +9493,15 @@ export interface components {
              */
             missing: number[];
             /**
+             * @description Owned integer numbers that sit more than [`MAX_INTERPOLATED_GAP`]
+             *     above the previous owned number (DC One Million's `#1,000,000`
+             *     after `#247`), ascending. They are not part of the run: `max`,
+             *     `missing` and `trailing_missing` ignore them and they are listed
+             *     under [`CollectionReportView::specials`] instead, so a stunt number
+             *     never puts a million chips in the grid.
+             */
+            off_run: number[];
+            /**
              * @description `provider_manifest` only: main-run integers some providers list and
              *     others don't (or can't confirm). Empty otherwise.
              */
@@ -9503,9 +9512,12 @@ export interface components {
             present_labels: string[];
             /**
              * Format: int64
-             * @description Count expected beyond `max` when `total_expected > max` (e.g. own up to
-             *     #4 with `total_expected = 6` → `2`). Always 0 for `provider_manifest`
-             *     (numbers past `max` are in `missing`).
+             * @description Count expected beyond `max` for `series_total`: the publisher total
+             *     minus the integers the run spans (`min..=max`, owned or missing)
+             *     minus the owned point / off-run issues the total also counts (own
+             *     #1–#4 with `total_expected = 6` → `2`; own #0–#247 plus `#½` and
+             *     `#1,000,000` with a total of 250 → `0`). Always 0 for
+             *     `provider_manifest` (numbers past `max` are in `missing`).
              */
             trailing_missing: number;
         };
