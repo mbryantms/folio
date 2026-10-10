@@ -157,6 +157,7 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(api::admin_settings::routes())
         .merge(api::admin_email::routes())
         .merge(api::admin_metadata::routes())
+        .merge(api::admin_metadata_coverage::routes())
         .merge(api::metadata_search::routes())
         .merge(api::external_ids::routes())
         .merge(api::provider_ranges::routes())

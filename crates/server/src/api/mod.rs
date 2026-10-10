@@ -5,6 +5,7 @@ pub mod admin_email;
 pub mod admin_fs;
 pub mod admin_logs;
 pub mod admin_metadata;
+pub mod admin_metadata_coverage;
 pub mod admin_ocr;
 pub mod admin_queue;
 pub mod admin_settings;

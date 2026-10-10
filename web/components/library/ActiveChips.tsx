@@ -8,6 +8,8 @@ import {
   type CreditState,
   type MetadataCompletenessTier,
   PROVIDER_MATCH_LABELS,
+  PROVIDER_SOURCE_LABELS,
+  type ProviderSource,
   type ProviderMatch,
 } from "@/components/library/library-grid-filters";
 import {
@@ -27,6 +29,7 @@ export function ActiveChips({
   status,
   metadataCompleteness,
   providerMatch,
+  providerSource,
   readStatus,
   yearFrom,
   yearTo,
@@ -61,6 +64,7 @@ export function ActiveChips({
   status: string;
   metadataCompleteness: MetadataCompletenessTier | undefined;
   providerMatch: ProviderMatch | undefined;
+  providerSource?: ProviderSource;
   readStatus: string[];
   yearFrom: string;
   yearTo: string;
@@ -111,7 +115,9 @@ export function ActiveChips({
       ) : null}
       {providerMatch ? (
         <Chip
-          label={`Provider: ${PROVIDER_MATCH_LABELS[providerMatch]}`}
+          label={`Provider: ${PROVIDER_MATCH_LABELS[providerMatch]}${
+            providerSource ? ` · ${PROVIDER_SOURCE_LABELS[providerSource]}` : ""
+          }`}
           onRemove={onClearProviderMatch}
         />
       ) : null}

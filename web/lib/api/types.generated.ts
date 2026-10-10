@@ -363,6 +363,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/metadata/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_metadata_coverage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/metadata/csv-cache-backfill": {
         parameters: {
             query?: never;
@@ -8600,6 +8616,15 @@ export interface components {
          * @enum {string}
          */
         Field: "library" | "name" | "year" | "volume" | "total_issues" | "publisher" | "imprint" | "status" | "age_rating" | "language_code" | "created_at" | "updated_at" | "genres" | "tags" | "writer" | "penciller" | "inker" | "colorist" | "letterer" | "cover_artist" | "editor" | "translator" | "characters" | "teams" | "locations" | "read_progress" | "last_read" | "read_count" | "read_status" | "unread_issues" | "collection_completeness" | "metadata_completeness" | "special_type" | "format" | "story_arc" | "title" | "rating" | "has_notes" | "has_bookmarks" | "has_highlights" | "has_favorites";
+        FieldCount: {
+            /**
+             * @description [`crate::metadata::MetadataField::key`] or
+             *     [`completeness::EXTERNAL_ID_KEY`].
+             */
+            field: string;
+            /** Format: int64 */
+            issues: number;
+        };
         /**
          * @description One field's provenance: which source set it, when, and (for provider
          *     sources) which external record it came from.
@@ -8613,6 +8638,66 @@ export interface components {
             source_external_id?: string | null;
             /** @description Human label for `set_by` (e.g. `"ComicInfo.xml"`, `"You"`). */
             source_label: string;
+        };
+        FillCost: {
+            /**
+             * Format: int64
+             * @description The provider's documented daily budget for detail requests.
+             */
+            daily_budget: number;
+            /**
+             * Format: int64
+             * @description Active issues without this provider's id.
+             */
+            issues_without_id: number;
+            /** Format: int64 */
+            list_page_size: number;
+            /**
+             * Format: int64
+             * @description Series without this provider's series id.
+             */
+            series_without_id: number;
+            source: string;
+            /**
+             * Format: int64
+             * @description Requests to fetch each missing issue's detail record instead.
+             */
+            via_detail_requests: number;
+            /**
+             * Format: int64
+             * @description Requests to link ids from the provider's issue lists: one series
+             *     search per unmatched series plus one list page per
+             *     `list_page_size` issues of every series.
+             */
+            via_lists_requests: number;
+        };
+        FillTools: {
+            /**
+             * Format: int64
+             * @description Libraries with `metadata_auto_apply_strong_matches` on.
+             */
+            auto_apply_libraries: number;
+            /**
+             * Format: int64
+             * @description Series with a coverage analysis still on record (24 h).
+             */
+            coverage_analysed_series: number;
+            issue_refresh_enabled: boolean;
+            /** Format: int32 */
+            issue_refresh_per_provider_cap: number;
+            /** Format: int64 */
+            issues_synced: number;
+            /** Format: int64 */
+            libraries_total: number;
+            /**
+             * Format: int64
+             * @description Series / issues ever synced with a provider through Folio.
+             */
+            series_synced: number;
+            /** Format: int32 */
+            stale_after_days: number;
+            weekly_refresh_cron: string;
+            weekly_refresh_enabled: boolean;
         };
         FilterDsl: {
             conditions: components["schemas"]["Condition"][];
@@ -8786,6 +8871,14 @@ export interface components {
          * @enum {string}
          */
         HintStatus: "computed" | "not_computed";
+        IdentifierCoverage: {
+            /** Format: int64 */
+            issues_with_id: number;
+            label: string;
+            /** Format: int64 */
+            series_with_id: number;
+            source: string;
+        };
         /**
          * @description The issue's cast and setting from the junction tables
          *     (`issue_characters` / `issue_teams` / `issue_locations` / `issue_arcs`).
@@ -9209,6 +9302,19 @@ export interface components {
             scan_run_id?: string | null;
             severity: string;
             summary: string;
+        };
+        LibraryGap: {
+            /** Format: int64 */
+            issues_total: number;
+            library_id: string;
+            name: string;
+            slug: string;
+            /** Format: int64 */
+            without_comicvine: number;
+            /** Format: int64 */
+            without_gcd: number;
+            /** Format: int64 */
+            without_metron: number;
         };
         LibraryView: {
             /**
@@ -9867,6 +9973,59 @@ export interface components {
             complete: number;
             /** Format: int64 */
             total: number;
+        };
+        MetadataCoverageResp: {
+            /** Format: int64 */
+            all_sources_issues: number;
+            /**
+             * Format: int64
+             * @description Series / issues that carry all three provider ids.
+             */
+            all_sources_series: number;
+            /**
+             * @description Per library: issues without each provider's id. Libraries with no
+             *     active issues are omitted.
+             */
+            by_library: components["schemas"]["LibraryGap"][];
+            /** @description `true` when this response came from the Redis cache. */
+            cached: boolean;
+            /** @description When the snapshot was computed (RFC 3339). */
+            computed_at: string;
+            /** @description What closing each provider's issue-id gap costs, by route. */
+            fill_cost: components["schemas"]["FillCost"][];
+            /** @description One row per provider: how many series / issues carry its id. */
+            identifiers: components["schemas"]["IdentifierCoverage"][];
+            /** Format: int64 */
+            issues_total: number;
+            /** Format: int64 */
+            libraries_total: number;
+            /**
+             * @description Core fields absent among the incomplete issues (not complete, not
+             *     accepted), by field key.
+             */
+            missing_core: components["schemas"]["FieldCount"][];
+            /**
+             * @description Live provider quota / budget views (same shape as the dashboard).
+             *     Live state: filled on every response (the cached snapshot carries
+             *     an empty list).
+             */
+            providers: components["schemas"]["ProviderView"][];
+            /** @description Recommended (non-gating) fields present, whole library. */
+            recommended: components["schemas"]["FieldCount"][];
+            series_fields: components["schemas"]["SeriesFieldCounts"];
+            /** Format: int64 */
+            series_total: number;
+            /**
+             * @description Which tagging tool wrote the files' sidecars, and which ids the
+             *     scanner read from them.
+             */
+            tag_sources: components["schemas"]["TagSourceRow"][];
+            /** @description Issue completeness tiers, library-wide. */
+            tiers: components["schemas"]["TierCounts"];
+            /** @description The state of the tools that close the gap over time. */
+            tools: components["schemas"]["FillTools"];
+            /** @description Per provider: the series with the most issues lacking its id. */
+            top_series: components["schemas"]["TopSeriesForSource"][];
         };
         MetadataCoverageView: {
             /** Format: int64 */
@@ -12033,6 +12192,14 @@ export interface components {
             /** Format: int32 */
             year?: number | null;
         };
+        SeriesFieldCounts: {
+            /** Format: int64 */
+            synced: number;
+            /** Format: int64 */
+            with_series_type: number;
+            /** Format: int64 */
+            with_summary: number;
+        };
         SeriesListView: {
             items: components["schemas"]["SeriesView"][];
             next_cursor?: string | null;
@@ -12656,6 +12823,22 @@ export interface components {
             count: number;
             tag: string;
         };
+        TagSourceRow: {
+            /** Format: int64 */
+            issues: number;
+            /**
+             * @description `folio` | `comictagger_comicvine` | `comictagger_metron` |
+             *     `comictagger_gcd` | `comictagger_other` | `mylar` | `scraper` |
+             *     `untagged`.
+             */
+            tool: string;
+            /** Format: int64 */
+            with_comicvine: number;
+            /** Format: int64 */
+            with_gcd: number;
+            /** Format: int64 */
+            with_metron: number;
+        };
         /** @description A long-running task spawned outside the job queues. */
         TaskWorkView: {
             /** @description `deep_validate` | `cbl_rematch`. */
@@ -12832,6 +13015,16 @@ export interface components {
              */
             total: number;
         };
+        TierCounts: {
+            /** Format: int64 */
+            accepted: number;
+            /** Format: int64 */
+            complete: number;
+            /** Format: int64 */
+            needs_metadata: number;
+            /** Format: int64 */
+            partial: number;
+        };
         TimeOfDayBuckets: {
             /** @description 12:00–16:59 */
             afternoon: components["schemas"]["TimeOfDayCell"];
@@ -12871,6 +13064,18 @@ export interface components {
             series_id: string;
             /** Format: int64 */
             sessions: number;
+        };
+        TopSeriesForSource: {
+            series: components["schemas"]["TopSeriesRow"][];
+            source: string;
+        };
+        TopSeriesRow: {
+            /** Format: int64 */
+            issues_without_id: number;
+            name: string;
+            slug: string;
+            /** Format: int32 */
+            year?: number | null;
         };
         TotalsBlock: {
             /** Format: int64 */
@@ -14467,6 +14672,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BackfillEnqueuedResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_metadata_coverage: {
+        parameters: {
+            query?: {
+                /** @description Recompute instead of serving the cached snapshot. */
+                refresh?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetadataCoverageResp"];
                 };
             };
             /** @description admin only */

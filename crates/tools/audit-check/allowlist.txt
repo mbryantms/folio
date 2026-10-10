@@ -160,3 +160,6 @@ coverage_analysis   # GET /series/{slug}/provider-coverage/analysis — read-onl
 
 # ── series_refresh.rs (guided "Refresh this series…") ───────
 refresh_status      # GET /series/{slug}/metadata/refresh-status — read-only resume state + fetch estimate
+
+# ── admin_metadata_coverage.rs ──────────────────────────────
+coverage         # GET /admin/metadata/coverage — read-only snapshot

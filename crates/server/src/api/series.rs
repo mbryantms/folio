@@ -1506,6 +1506,13 @@ pub struct ListSeriesQuery {
     /// to the row. Invalid values 422.
     #[serde(default)]
     pub provider_match: Option<String>,
+    /// Narrows `provider_match` to one provider (`comicvine` | `metron` |
+    /// `gcd`): `provider_match=unmatched&provider_source=metron` lists the
+    /// series without a Metron series id. The admin Coverage tab's
+    /// identifier counts link here. Ignored without `provider_match`;
+    /// invalid values 422.
+    #[serde(default)]
+    pub provider_source: Option<String>,
 }
 
 /// `external_ids.source` values that make a series "matched": the same
@@ -1513,6 +1520,8 @@ pub struct ListSeriesQuery {
 pub(crate) const PROVIDER_SERIES_ID_SOURCES_SQL: &str =
     "'comicvine','metron','gcd','marvel','locg'";
 const PROVIDER_MATCH_VALUES: &[&str] = &["matched", "unmatched"];
+/// `provider_source` values: the providers the dashboard counts, one at a time.
+const PROVIDER_SOURCE_VALUES: &[&str] = &["comicvine", "metron", "gcd"];
 
 const VALID_STATUSES: &[&str] = &["continuing", "ended", "cancelled", "hiatus"];
 pub(crate) const READ_STATUSES: &[&str] = &["unread", "in_progress", "read"];
@@ -1703,6 +1712,11 @@ fn validate_list_series_query_params(q: &ListSeriesQuery) -> Result<(), &'static
         && !PROVIDER_MATCH_VALUES.contains(&v.trim())
     {
         return Err("provider_match must be matched or unmatched");
+    }
+    if let Some(v) = q.provider_source.as_deref()
+        && !PROVIDER_SOURCE_VALUES.contains(&v.trim())
+    {
+        return Err("provider_source must be comicvine, metron or gcd");
     }
     Ok(())
 }
@@ -1975,10 +1989,16 @@ fn apply_series_provider_match_filter(
     let Some(v) = q.provider_match.as_deref().map(str::trim) else {
         return select;
     };
+    // One provider when `provider_source` narrows it (validated upstream),
+    // else any of the dashboard's sources.
+    let sources = match q.provider_source.as_deref().map(str::trim) {
+        Some(src) if PROVIDER_SOURCE_VALUES.contains(&src) => format!("'{src}'"),
+        _ => PROVIDER_SERIES_ID_SOURCES_SQL.to_owned(),
+    };
     let exists = format!(
         "EXISTS (SELECT 1 FROM external_ids e \
            WHERE e.entity_type = 'series' AND e.entity_id = \"series\".\"id\"::text \
-             AND e.source IN ({PROVIDER_SERIES_ID_SOURCES_SQL}))"
+             AND e.source IN ({sources}))"
     );
     match v {
         "matched" => select.filter(Expr::cust(exists)),

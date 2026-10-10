@@ -13,6 +13,7 @@ import {
   type LibraryGridInitialFilters,
   type LibraryGridMode,
   type LibraryGridUrlState,
+  type ProviderSource,
   type MetadataCompletenessTier,
   type ProviderMatch,
 } from "@/components/library/library-grid-filters";
@@ -126,6 +127,11 @@ export function useLibraryGridFilters(
   const [providerMatch, setProviderMatch] = React.useState<
     ProviderMatch | undefined
   >(init.providerMatch);
+  // One provider for the facet (`?provider_source=metron`); the admin
+  // Coverage tab's identifier counts deep-link here. Cleared with the facet.
+  const [providerSource, setProviderSource] = React.useState<
+    ProviderSource | undefined
+  >(init.providerMatch ? init.providerSource : undefined);
   // Per-user read state (series mode only): CSV subset of
   // unread/in_progress/read; multiple values OR together.
   const [readStatus, setReadStatus] = React.useState<string[]>(
@@ -268,6 +274,7 @@ export function useLibraryGridFilters(
     // Completeness rollup is series-only (the worklist filter).
     metadata_completeness: metadataCompleteness,
     provider_match: providerMatch,
+    provider_source: providerMatch ? providerSource : undefined,
     // A–Z jump — matched against normalized_name (the Name-sort column).
     starts_with: startsWith ?? undefined,
   };
@@ -283,6 +290,7 @@ export function useLibraryGridFilters(
     status,
     metadataCompleteness,
     providerMatch,
+    providerSource,
     readStatus,
     startsWith,
     yearFrom,
@@ -359,6 +367,8 @@ export function useLibraryGridFilters(
       setModeState,
       setStatus,
       setMetadataCompleteness,
+      setProviderMatch,
+      setProviderSource,
       setReadStatus,
       setStartsWith,
       setYearFrom,
@@ -405,6 +415,7 @@ export function useLibraryGridFilters(
     setStatus("any");
     setMetadataCompleteness(undefined);
     setProviderMatch(undefined);
+    setProviderSource(undefined);
     setReadStatus([]);
     setStartsWith(null);
     setYearFrom("");
@@ -447,6 +458,8 @@ export function useLibraryGridFilters(
     setMetadataCompleteness,
     providerMatch,
     setProviderMatch,
+    providerSource,
+    setProviderSource,
     readStatus,
     setReadStatus,
     startsWith,
@@ -503,6 +516,8 @@ function urlStateFromParsed(
     mode: p.mode ?? fallbackMode,
     status: p.status,
     metadataCompleteness: p.metadataCompleteness,
+    providerMatch: p.providerMatch,
+    providerSource: p.providerMatch ? p.providerSource : undefined,
     readStatus: p.readStatus ?? [],
     startsWith: p.startsWith ?? null,
     yearFrom: p.yearFrom,
@@ -525,6 +540,8 @@ type FacetSetters = {
   setModeState: (m: LibraryGridMode) => void;
   setStatus: (v: string) => void;
   setMetadataCompleteness: (v: MetadataCompletenessTier | undefined) => void;
+  setProviderMatch: (v: ProviderMatch | undefined) => void;
+  setProviderSource: (v: ProviderSource | undefined) => void;
   setReadStatus: (v: string[]) => void;
   setStartsWith: (v: string | null) => void;
   setYearFrom: (v: string) => void;
@@ -552,6 +569,8 @@ function applyParsedToState(
   if (p.mode) s.setModeState(p.mode);
   s.setStatus(p.status ?? "any");
   s.setMetadataCompleteness(p.metadataCompleteness);
+  s.setProviderMatch(p.providerMatch);
+  s.setProviderSource(p.providerMatch ? p.providerSource : undefined);
   s.setReadStatus(p.readStatus ?? []);
   s.setStartsWith(p.startsWith ?? null);
   s.setYearFrom(p.yearFrom ?? "");

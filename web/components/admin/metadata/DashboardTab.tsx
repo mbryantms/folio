@@ -468,7 +468,7 @@ function StatCard({
   );
 }
 
-function ProviderQuotaRow({ provider }: { provider: ProviderView }) {
+export function ProviderQuotaRow({ provider }: { provider: ProviderView }) {
   const enabled = provider.enabled;
   const quota = provider.quota;
   return (
