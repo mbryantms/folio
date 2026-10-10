@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.52.1](https://github.com/mbryantms/folio/compare/v0.52.0...v0.52.1) (2026-10-10)
+
+
+### Fixed
+
+* **metadata:** specials keep their own series through apply and search; ComicVine by-name search works ([#1116](https://github.com/mbryantms/folio/issues/1116)) ([1c95f69](https://github.com/mbryantms/folio/commit/1c95f69b97d4c56c5943b0556dc3b50f1950d8e5))
+
 ## [0.52.0](https://github.com/mbryantms/folio/compare/v0.51.0...v0.52.0) (2026-10-10)
 
 
