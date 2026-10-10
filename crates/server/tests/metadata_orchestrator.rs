@@ -1093,8 +1093,12 @@ async fn resumed_run_queries_only_the_owed_provider_and_merges_the_stash() {
     .expect_err("parks first");
     assert_eq!(metron_mock.received_requests().await.unwrap().len(), 1);
 
-    // ComicVine's bucket refills: the same run is searched again.
+    // ComicVine's window passes: upstream answers again, and the local
+    // bucket the 107 drained (`rate_limit::exhaust`) expires with it.
     cv_mock.reset().await;
+    server::metadata::rate_limit::comicvine_refill(&mut app.state().jobs.redis.clone())
+        .await
+        .expect("refill comicvine buckets");
     Mock::given(method("GET"))
         .and(path("/volumes"))
         .respond_with(

@@ -287,6 +287,24 @@ pub async fn exhaust(redis: &mut ConnectionManager, bucket: &BucketDef, retry_af
     }
 }
 
+/// Forget `bucket`'s current window, as if it had expired: the next
+/// reservation starts a fresh one at full capacity. For tests that
+/// simulate a provider's window passing, and for an operator reset.
+pub async fn refill(redis: &mut ConnectionManager, bucket: &BucketDef) -> Result<(), BucketError> {
+    use redis::AsyncCommands;
+    let _: () = redis.del(redis_key(bucket.key)).await?;
+    Ok(())
+}
+
+/// [`refill`] every ComicVine bucket: the five hourly resources and the
+/// velocity bucket.
+pub async fn comicvine_refill(redis: &mut ConnectionManager) -> Result<(), BucketError> {
+    for r in COMICVINE_RESOURCES {
+        refill(redis, &comicvine_hour(r)).await?;
+    }
+    refill(redis, &COMICVINE_SEC).await
+}
+
 /// Atomically reserve one token from `bucket`.
 pub async fn reserve(
     redis: &mut ConnectionManager,
