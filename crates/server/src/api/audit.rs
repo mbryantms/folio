@@ -42,6 +42,10 @@ pub struct AuditEntryView {
     /// or unresolvable rows.
     pub target_label: Option<String>,
     pub payload: serde_json::Value,
+    /// The issue / series / library the action's target and payload name,
+    /// resolved to labels and slugs (`api::work_targets`): an archive edit's
+    /// `issue_id` is a content hash, a scan's `series_id` a UUID.
+    pub targets: Vec<crate::api::work_targets::WorkTargetView>,
     pub ip: Option<String>,
     pub user_agent: Option<String>,
     pub created_at: String,
@@ -167,6 +171,9 @@ pub async fn list(
 struct LabelLookup {
     users: HashMap<Uuid, String>,
     libraries: HashMap<Uuid, String>,
+    /// Issue / series / library targets named by `target_type` + `target_id`
+    /// or anywhere in the payload (`api::work_targets`).
+    work: crate::api::work_targets::Resolved,
 }
 
 async fn resolve_labels(
@@ -175,27 +182,37 @@ async fn resolve_labels(
 ) -> Result<LabelLookup, sea_orm::DbErr> {
     let mut user_ids: HashSet<Uuid> = HashSet::new();
     let mut library_ids: HashSet<Uuid> = HashSet::new();
+    let mut work_refs = crate::api::work_targets::TargetRefs::default();
 
     for r in rows {
         // Every actor today is a user; resolve regardless of `actor_type` so
         // future actor kinds with user-shaped ids still get a label.
         user_ids.insert(r.actor_id);
-        if let (Some(tt), Some(tid)) = (r.target_type.as_deref(), r.target_id.as_deref())
-            && let Ok(uuid) = Uuid::parse_str(tid)
-        {
-            match tt {
-                "user" => {
+        if let (Some(tt), Some(tid)) = (r.target_type.as_deref(), r.target_id.as_deref()) {
+            match (tt, Uuid::parse_str(tid)) {
+                ("user", Ok(uuid)) => {
                     user_ids.insert(uuid);
                 }
-                "library" => {
+                ("library", Ok(uuid)) => {
                     library_ids.insert(uuid);
+                    work_refs.libraries.insert(uuid);
+                }
+                ("series", Ok(uuid)) => {
+                    work_refs.series.insert(uuid);
+                }
+                ("issue", _) => {
+                    work_refs.issues.insert(tid.to_owned());
                 }
                 _ => {}
             }
         }
+        crate::api::work_targets::collect_refs(&r.payload, &mut work_refs);
     }
 
-    let mut out = LabelLookup::default();
+    let mut out = LabelLookup {
+        work: crate::api::work_targets::resolve(app, work_refs).await?,
+        ..LabelLookup::default()
+    };
     if !user_ids.is_empty() {
         let rows = user::Entity::find()
             .filter(user::Column::Id.is_in(user_ids))
@@ -235,8 +252,37 @@ impl AuditEntryView {
                 .as_deref()
                 .and_then(|s| Uuid::parse_str(s).ok())
                 .and_then(|id| labels.libraries.get(&id).cloned()),
+            Some("series") => m
+                .target_id
+                .as_deref()
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .and_then(|id| labels.work.series.get(&id))
+                .map(|t| t.label.clone()),
+            Some("issue") => m
+                .target_id
+                .as_deref()
+                .and_then(|id| labels.work.issues.get(id))
+                .map(|t| t.label.clone()),
             _ => None,
         };
+        // The payload's targets plus the row's own target (an archive edit
+        // audits `target_type = issue` with the hash as `target_id`).
+        let mut targets = crate::api::work_targets::targets_for(&m.payload, &labels.work);
+        let own = match (m.target_type.as_deref(), m.target_id.as_deref()) {
+            (Some("issue"), Some(id)) => labels.work.issues.get(id).cloned(),
+            (Some("series"), Some(id)) => Uuid::parse_str(id)
+                .ok()
+                .and_then(|u| labels.work.series.get(&u).cloned()),
+            (Some("library"), Some(id)) => Uuid::parse_str(id)
+                .ok()
+                .and_then(|u| labels.work.libraries.get(&u).cloned()),
+            _ => None,
+        };
+        if let Some(t) = own
+            && !targets.iter().any(|x| x.kind == t.kind && x.id == t.id)
+        {
+            targets.insert(0, t);
+        }
         Self {
             id: m.id.to_string(),
             actor_id: m.actor_id.to_string(),
@@ -247,6 +293,7 @@ impl AuditEntryView {
             target_id: m.target_id,
             target_label,
             payload: m.payload,
+            targets,
             ip: m.ip,
             user_agent: m.user_agent,
             created_at: m.created_at.to_rfc3339(),

@@ -222,6 +222,7 @@ export type QueueClearResp = Schemas["QueueClearResp"];
 export type DeadLetterCount = Schemas["DeadLetterCount"];
 export type DeadLetterView = Schemas["DeadLetterView"];
 export type DeadJob = Schemas["DeadJob"];
+export type WorkTargetView = Schemas["WorkTargetView"];
 export type DeadJobsView = Schemas["DeadJobsView"];
 export type DeadJobRetryReq = Schemas["DeadJobRetryReq"];
 export type DeadJobRetryResp = Schemas["DeadJobRetryResp"];

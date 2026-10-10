@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   ChevronLeft,
@@ -33,7 +34,8 @@ import {
 } from "@/lib/api/queries";
 import { QUEUE_LABELS as QUEUE_LABELS_BY_KEY } from "@/lib/admin/background-work";
 import { usePurgeDeadJobs, useRetryDeadJob } from "@/lib/api/mutations";
-import type { AuditEntryView, DeadJob } from "@/lib/api/types";
+import type { AuditEntryView, DeadJob, WorkTargetView } from "@/lib/api/types";
+import { adminLibraryUrl, issueUrl, seriesUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
 /**
@@ -212,7 +214,7 @@ function ArchiveOpRow({ row }: { row: AuditEntryView }) {
               {isBulk ? "bulk" : "edit"}
             </span>
             <span className="truncate">
-              {summarize(payload, isBulk, error)}
+              {summarize(payload, isBulk, error, row.targets)}
             </span>
           </span>
           <span className="text-muted-foreground shrink-0 text-xs">{when}</span>
@@ -221,6 +223,7 @@ function ArchiveOpRow({ row }: { row: AuditEntryView }) {
           <div className="text-muted-foreground mb-1 text-xs">
             {row.actor_label ?? row.actor_id}
           </div>
+          <TargetLinks targets={row.targets} className="mb-2" />
           <pre className="bg-muted/40 overflow-x-auto rounded p-2 text-xs">
             {JSON.stringify(payload, null, 2)}
           </pre>
@@ -234,8 +237,16 @@ function summarize(
   payload: Record<string, unknown>,
   isBulk: boolean,
   error: string | null,
+  targets: WorkTargetView[],
 ): string {
-  if (error) return `Failed: ${error}`;
+  // The issue the server resolved ("The Flash #12 — Title"); the raw
+  // content hash only when nothing resolved (a removed issue).
+  const issueLabel =
+    targets.find((t) => t.kind === "issue")?.label ??
+    (typeof payload.issue_id === "string"
+      ? `Issue ${payload.issue_id}`
+      : "Issue");
+  if (error) return `Failed: ${issueLabel} — ${error}`;
   if (isBulk) {
     const queued = numberOr(payload.queued, 0);
     const skipped = numberOr(payload.skipped, 0);
@@ -243,10 +254,61 @@ function summarize(
   }
   const before = numberOr(payload.page_count_before, null);
   const after = numberOr(payload.page_count_after, null);
-  const issue = typeof payload.issue_id === "string" ? payload.issue_id : "";
   const pages =
     before != null && after != null ? ` — ${before} → ${after} pages` : "";
-  return `Issue ${issue}${pages}`;
+  return `${issueLabel}${pages}`;
+}
+
+/** Where a target links: the issue page, the series page, the library's
+ *  admin page. */
+function targetHref(t: WorkTargetView): string | null {
+  if (t.kind === "issue" && t.series_slug && t.issue_slug) {
+    return issueUrl(t.series_slug, t.issue_slug);
+  }
+  if (t.kind === "series" && t.series_slug) return seriesUrl(t.series_slug);
+  if (t.kind === "library" && t.library_slug) {
+    return adminLibraryUrl(t.library_slug);
+  }
+  return null;
+}
+
+/**
+ * The entities a job or action targeted, as links — what an admin can
+ * act on. Ids on their own (a content hash, a UUID) stay in the raw
+ * payload below.
+ */
+function TargetLinks({
+  targets,
+  className,
+}: {
+  targets: WorkTargetView[];
+  className?: string;
+}) {
+  if (targets.length === 0) return null;
+  return (
+    <p
+      className={cn("text-xs", className)}
+      data-testid="work-targets"
+      aria-label="Targets"
+    >
+      {targets.map((t, i) => {
+        const href = targetHref(t);
+        return (
+          <React.Fragment key={`${t.kind}-${t.id}`}>
+            {i > 0 && <span className="text-muted-foreground"> · </span>}
+            <span className="text-muted-foreground">{t.kind} </span>
+            {href ? (
+              <Link href={href} className="text-primary hover:underline">
+                {t.label}
+              </Link>
+            ) : (
+              <span>{t.label}</span>
+            )}
+          </React.Fragment>
+        );
+      })}
+    </p>
+  );
 }
 
 function numberOr<T>(v: unknown, fallback: T): number | T {
@@ -437,6 +499,9 @@ function DeadJobRow({
             <span className="text-destructive truncate">
               {job.error ?? "Unknown error"}
             </span>
+            {job.targets.length > 0 ? (
+              <TargetLinks targets={job.targets} />
+            ) : null}
             <span className="text-muted-foreground truncate text-xs">
               {when} · {job.task_id}
             </span>

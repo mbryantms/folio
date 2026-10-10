@@ -329,6 +329,11 @@ pub struct DeadJob {
     /// library / issue / series the dead job targeted without per-queue code.
     #[schema(value_type = Object, nullable = true)]
     pub payload: Option<serde_json::Value>,
+    /// The issue / series / library the payload names, resolved to labels
+    /// and slugs (`api::work_targets`) — an issue id is a content hash, a
+    /// series id a UUID, neither readable on their own. Empty when the
+    /// payload names nothing resolvable (or the row was removed).
+    pub targets: Vec<crate::api::work_targets::WorkTargetView>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -396,14 +401,36 @@ pub async fn dead_jobs(
     let page_size = q.page_size.unwrap_or(20).clamp(1, 100);
     let offset = (i64::from(page) - 1) * i64::from(page_size);
     match list_dead(&app, &dead_set, &data_hash, offset, i64::from(page_size)).await {
-        Ok((jobs, total)) => Json(DeadJobsView {
-            queue: q.queue,
-            jobs,
-            total,
-            page,
-            page_size,
-        })
-        .into_response(),
+        Ok((mut jobs, total)) => {
+            // One bulk lookup for the page's payload ids → labels + slugs.
+            let mut refs = crate::api::work_targets::TargetRefs::default();
+            for j in &jobs {
+                if let Some(p) = &j.payload {
+                    crate::api::work_targets::collect_refs(p, &mut refs);
+                }
+            }
+            match crate::api::work_targets::resolve(&app, refs).await {
+                Ok(resolved) => {
+                    for j in &mut jobs {
+                        if let Some(p) = &j.payload {
+                            j.targets = crate::api::work_targets::targets_for(p, &resolved);
+                        }
+                    }
+                }
+                // Labels are a convenience; the raw payload still shows.
+                Err(e) => {
+                    tracing::warn!(error = %e, queue = %q.queue, "dead_jobs: target labels failed")
+                }
+            }
+            Json(DeadJobsView {
+                queue: q.queue,
+                jobs,
+                total,
+                page,
+                page_size,
+            })
+            .into_response()
+        }
         Err(e) => {
             tracing::error!(error = %e, queue = %q.queue, "dead_jobs: redis read failed");
             internal()
@@ -603,6 +630,7 @@ async fn list_dead(
                 failed_at: Some(score),
                 error,
                 payload,
+                targets: Vec::new(),
             }
         })
         .collect();
