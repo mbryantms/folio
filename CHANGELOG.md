@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.53.1](https://github.com/mbryantms/folio/compare/v0.53.0...v0.53.1) (2026-10-10)
+
+
+### Fixed
+
+* **admin:** metadata gap links open the library grid, not the home page ([#1124](https://github.com/mbryantms/folio/issues/1124)) ([61b6dce](https://github.com/mbryantms/folio/commit/61b6dceb8f79a924e9250783e0f6586f9bd380ac))
+
+
+### Dependencies
+
+* update dependency @playwright/test to v1.64.0 ([#1122](https://github.com/mbryantms/folio/issues/1122)) ([d2eea46](https://github.com/mbryantms/folio/commit/d2eea467966b30cd2d508e8a46072b5e5f6c0310))
+
 ## [0.53.0](https://github.com/mbryantms/folio/compare/v0.52.1...v0.53.0) (2026-10-10)
 
 
