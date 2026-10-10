@@ -867,6 +867,22 @@ export type CoverageRangeRef = Schemas["CoverageRangeRef"];
 export type AcceptOutcome = Schemas["AcceptOutcome"];
 // Guided "Refresh this series…" (resume state + per-issue fetch estimate)
 export type SeriesRefreshStatusResp = Schemas["SeriesRefreshStatusResp"];
+// Series page › Metadata tab.
+export type SeriesMetadataOverview = Schemas["SeriesMetadataOverview"];
+export type IssueIdCounts = Schemas["IssueIdCounts"];
+export type SeriesTierCounts = Schemas["SeriesTierCounts"];
+export type SeriesSyncState = Schemas["SeriesSyncState"];
+export type SeriesFilesState = Schemas["SeriesFilesState"];
+export type ExtensionCount = Schemas["ExtensionCount"];
+export type SeriesLastRun = Schemas["SeriesLastRun"];
+export type ProvenanceRow = Schemas["ProvenanceRow"];
+export type IssueProvenanceCounts = Schemas["IssueProvenanceCounts"];
+export type SeriesMetadataIssuesResp = Schemas["SeriesMetadataIssuesResp"];
+export type SeriesMetadataIssueRow = Schemas["SeriesMetadataIssueRow"];
+export type IssueSourceIds = Schemas["IssueSourceIds"];
+export type IssueLastRun = Schemas["IssueLastRun"];
+export type AcceptIssuesReq = Schemas["AcceptIssuesReq"];
+export type AcceptIssuesResp = Schemas["AcceptIssuesResp"];
 export type RefreshStep = Schemas["RefreshStep"];
 export type FetchScopeEstimate = Schemas["FetchScopeEstimate"];
 export type ProviderFetchEstimate = Schemas["ProviderFetchEstimate"];

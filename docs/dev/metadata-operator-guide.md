@@ -35,14 +35,20 @@ things misbehave.
    surfaces the actual quota remaining.
 
 3. **Fetch metadata on a series.** Navigate to a series page →
-   Actions menu → **Fetch metadata**. The dialog runs a search
+   **Metadata** tab → **Match this series…**. The dialog runs a search
    across every enabled+configured provider, ranks results, and
    shows them with a HIGH/MEDIUM/LOW confidence badge. Click
    **Preview** on a candidate to see the per-field diff, opt in
    to the fields you want to apply, and **Apply**.
 
 The same flow works at the issue level: open an issue → Actions
-menu → Fetch metadata.
+menu → Fetch metadata. Everything administrative about a series'
+metadata — its provider ids, the provider series mapping, the fetch
+actions, a per-issue audit list (tier, missing fields, ids, the tagging
+tool, the last run), the folder's sidecars and field provenance — lives
+on the series' **Metadata** tab; the header, Issues and Collection stay
+reading surfaces. Collection answers only "owned?" and "metadata
+complete?" per issue and links to the Metadata tab for the detail.
 
 ## Settings reference
 
@@ -466,7 +472,7 @@ Add the correct external_id by hand via the `<ExternalIdsCard>` on
 the series page; that pins the row as `set_by='user'` and prevents
 future auto-matches from overwriting. If the series shouldn't be
 touched by the weekly cron at all, turn its auto-sync off on the
-series Details tab (it defaults off — it has to be opted in).
+series Metadata tab (it defaults off — it has to be opted in).
 
 ### Weekly cron is enabled but nothing is happening
 
@@ -645,7 +651,7 @@ drop the legacy DB-direct apply branch — flag a maintainer.
 
 ## Analyze coverage
 
-The **Analyze coverage** button on a series' Details tab (admins only)
+The **Analyze coverage** button on a series' Metadata tab (admins only)
 works out which ComicVine, Metron and GCD series hold which of this
 series' issues. It needs no prior match: a folder that mixes a 1998
 volume with its legacy-numbered #500+ run, or two relaunches in equal
@@ -692,7 +698,7 @@ parts, is handled the same way.
   ids are recorded as provider-set, not as your choice.
 - **Your links win.** If you linked a provider series yourself, the
   analysis is built around it and Accept never replaces it; to change it,
-  edit the External IDs card first.
+  edit the Identifiers card on the Metadata tab first.
 - **Budget.** Per analysis Folio spends at most 40 ComicVine requests (of
   the 200/hour each resource gets), 30 Metron (it waits out the 20/minute burst once) and 30 GCD
   (of 100/hour). Issue lists are cached for 24 hours, so a second
@@ -704,7 +710,7 @@ parts, is handled the same way.
 ### Batches use coverage instead of searching
 
 Once a series has its provider series (accepted coverage, an applied
-match, or a range mapping), **Fetch metadata → All issues** (and *Only
+match, or a range mapping), **Fetch metadata · all issues** (and *only
 missing or partial*, a grid selection or a saved-view batch) looks each
 issue up directly: Folio reads the provider series' issue list (cached
 24 hours), picks the issue with the same number and a cover date within
@@ -810,7 +816,7 @@ legacy-renumbered relaunch, say), it finds that series with one issue
 search and proposes a range mapping. Usually 1–3 requests per match.
 
 The result appears at the top of the **Coverage analysis** section on
-the series' Details tab: "This folder spans 2 Metron series — accept
+the series' Metadata tab: "This folder spans 2 Metron series — accept
 the range?" with **Accept**, or "your match covers all 173 issues —
 nothing left to accept". Nothing is written until you accept, unless
 `metadata.coverage_auto_accept` is on and the result is High confidence
@@ -819,7 +825,7 @@ replaced. Set `metadata.coverage_after_series_apply` to `off` to stop it.
 
 ### Refresh this series (guided)
 
-**Fetch metadata → Refresh this series…** in a series' ⋯ menu (admins)
+**Refresh this series…** on a series' Metadata tab (admins)
 does the whole refresh in one dialog, step by step:
 
 1. **Series match.** If the series is already matched you see its

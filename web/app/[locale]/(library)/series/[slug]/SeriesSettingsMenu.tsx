@@ -12,14 +12,13 @@ import {
   Link2,
   Loader2,
   Pencil,
-  ListChecks,
   RefreshCw,
   RotateCcw,
   Settings,
   Sparkles,
 } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -41,7 +40,6 @@ import {
 import { DropdownMenuResponsiveSub } from "@/components/ui/dropdown-menu-responsive-sub";
 import {
   useAddCollectionEntry,
-  useCreateSeriesBatch,
   useGenerateSeriesPageMap,
   useRegenerateSeriesCover,
   useRemoveCollectionEntry,
@@ -53,26 +51,6 @@ import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type { IssueSummaryView } from "@/lib/api/types";
 import { readerUrl, seriesUrl } from "@/lib/urls";
 import { useShareLink } from "@/lib/ui/use-share-link";
-
-// Heavy match dialog (~1.2k lines + provider-compare UI) — lazy so it stays
-// out of the series-page initial bundle; the chunk loads on first open (G6).
-const MetadataMatchDialog = dynamic(
-  () =>
-    import("@/components/library/MetadataMatchDialog").then(
-      (m) => m.MetadataMatchDialog,
-    ),
-  { ssr: false },
-);
-
-// Guided "Refresh this series…" stepper (match → coverage → per-issue
-// fetch → review) — lazy, like the match dialog; it embeds the match form.
-const SeriesRefreshDialog = dynamic(
-  () =>
-    import("@/components/library/SeriesRefreshDialog").then(
-      (m) => m.SeriesRefreshDialog,
-    ),
-  { ssr: false },
-);
 
 // "Download for offline" dialog (WP-4.6) — lazy, like the match dialog.
 const OfflineDownloadDialog = dynamic(
@@ -130,43 +108,6 @@ export function SeriesSettingsMenu({
   const scan = useTriggerSeriesScan(seriesSlug, libraryId);
   const regenerateCover = useRegenerateSeriesCover(seriesSlug, libraryId);
   const generatePageMap = useGenerateSeriesPageMap(seriesSlug, libraryId);
-  const createBatch = useCreateSeriesBatch(seriesSlug);
-
-  const fetchAllMetadata = (scope: "all" | "incomplete" = "all") => {
-    createBatch.mutate(
-      { scope },
-      {
-        onSuccess: (resp) => {
-          if (!resp) return;
-          if (resp.items_total === 0) {
-            toast.info(
-              scope === "incomplete"
-                ? "Every issue already has complete metadata"
-                : resp.recently_fetched > 0
-                  ? "Every issue was searched in the last 24 hours — results are in Review"
-                  : "No issues to search",
-            );
-            return;
-          }
-          // The 200-per-run cap is never silent: say what this run covers
-          // and that the next click takes the rest.
-          const summary =
-            resp.remainder > 0
-              ? `Searching ${resp.items_total} of ${resp.eligible} issues for metadata — ${resp.remainder} more on the next run`
-              : `Searching ${resp.items_total} issues for metadata`;
-          toast.success(summary, {
-            action: {
-              label: "Review",
-              onClick: () =>
-                router.push(
-                  `/admin/metadata?tab=review&batch=${resp.batch_id}`,
-                ),
-            },
-          });
-        },
-      },
-    );
-  };
 
   // Want to Read is the per-user auto-seeded collection (system_key='want_to_read').
   // The sidebar fetch of /me/collections seeds it on first load; by the time the
@@ -179,49 +120,10 @@ export function SeriesSettingsMenu({
   const addToWtr = useAddCollectionEntry(wtrId);
   const removeFromWtr = useRemoveCollectionEntry(wtrId);
   const [collectionDialogOpen, setCollectionDialogOpen] = useState(false);
-  // Deep-link: a "Needs metadata" chip (e.g. on a SeriesCard) navigates
-  // here with ?match=1 to pop the match dialog straight open — "chips
-  // link to the fix" (B4). Seed open-state from the param on mount.
-  const searchParams = useSearchParams();
-  const [metadataDialogOpen, setMetadataDialogOpen] = useState(
-    () => searchParams.get("match") === "1",
-  );
-  // Mount the lazy match dialog on first open and keep it mounted so its
-  // open/close animation still runs on later toggles (G6).
-  const [metadataMounted, setMetadataMounted] = useState(false);
-  if (metadataDialogOpen && !metadataMounted) setMetadataMounted(true);
-  // Guided refresh (admin only — coverage and the Review page are admin
-  // surfaces). Mounted on first open, kept mounted for the close animation.
-  const [refreshOpen, setRefreshOpen] = useState(false);
-  const [refreshMounted, setRefreshMounted] = useState(false);
-  if (refreshOpen && !refreshMounted) setRefreshMounted(true);
-  // The dialog has no trigger of its own (the menu item unmounts with the
-  // menu), so closing it returns focus to the menu's gear button.
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const returnFocusToTrigger = (e: Event) => {
-    const el = triggerRef.current;
-    if (el?.isConnected) {
-      e.preventDefault();
-      el.focus();
-    }
-  };
   const [offlineOpen, setOfflineOpen] = useState(false);
   const [offlineMounted, setOfflineMounted] = useState(false);
   if (offlineOpen && !offlineMounted) setOfflineMounted(true);
-
-  // Toggling the dialog also strips ?match from the address bar (via
-  // replaceState, no RSC round-trip — same idiom as IssuesPanel) so a
-  // refresh or back-nav doesn't re-pop it after a manual close.
-  const handleMetadataOpenChange = (next: boolean) => {
-    setMetadataDialogOpen(next);
-    if (!next && typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      if (url.searchParams.has("match")) {
-        url.searchParams.delete("match");
-        window.history.replaceState({}, "", url.toString());
-      }
-    }
-  };
 
   const addToReadingList = () => {
     if (!wtrId) {
@@ -381,35 +283,17 @@ export function SeriesSettingsMenu({
                 Copy link
               </DropdownMenuItem>
             )}
-            <DropdownMenuResponsiveSub
-              icon={<Sparkles className="mr-2 h-4 w-4" />}
-              label="Fetch metadata"
+            {/* The fetch actions (refresh, match, per-issue batches) live on
+                the series' Metadata tab with everything else administrative;
+                this item only takes you there. */}
+            <DropdownMenuItem
+              onSelect={() =>
+                router.push(`${seriesUrl(seriesSlug)}?tab=metadata`)
+              }
             >
-              {isAdmin && (
-                <DropdownMenuItem onSelect={() => setRefreshOpen(true)}>
-                  <ListChecks className="mr-2 h-4 w-4" />
-                  Refresh this series…
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem onSelect={() => setMetadataDialogOpen(true)}>
-                <Sparkles className="mr-2 h-4 w-4" />
-                Match this series…
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() => fetchAllMetadata("all")}
-                disabled={createBatch.isPending}
-              >
-                <Sparkles className="mr-2 h-4 w-4" />
-                All issues
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() => fetchAllMetadata("incomplete")}
-                disabled={createBatch.isPending}
-              >
-                <Sparkles className="mr-2 h-4 w-4" />
-                Only missing or partial
-              </DropdownMenuItem>
-            </DropdownMenuResponsiveSub>
+              <Sparkles className="mr-2 h-4 w-4" />
+              Metadata
+            </DropdownMenuItem>
           </DropdownMenuGroup>
 
           {isAdmin && (
@@ -485,23 +369,6 @@ export function SeriesSettingsMenu({
             series: { id: seriesId, slug: seriesSlug, name: seriesName },
             issueCount,
           }}
-        />
-      )}
-      {refreshMounted && (
-        <SeriesRefreshDialog
-          open={refreshOpen}
-          onOpenChange={setRefreshOpen}
-          seriesSlug={seriesSlug}
-          seriesName={seriesName}
-          libraryId={libraryId}
-          onCloseAutoFocus={returnFocusToTrigger}
-        />
-      )}
-      {metadataMounted && (
-        <MetadataMatchDialog
-          open={metadataDialogOpen}
-          onOpenChange={handleMetadataOpenChange}
-          scope={{ kind: "series", seriesSlug, libraryId }}
         />
       )}
     </>

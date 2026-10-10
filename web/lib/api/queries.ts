@@ -22,7 +22,7 @@ import { apiFetch, getCsrfToken } from "./auth-refresh";
 // hooks below; re-exported (where the object used to live) so the
 // long-standing `import { queryKeys } from "@/lib/api/queries"` is
 // unchanged for every consumer.
-import { queryKeys } from "./query-keys";
+import { queryKeys, type SeriesMetadataIssueFilters } from "./query-keys";
 import type {
   HashBackfillView,
   ActivityKind,
@@ -2697,6 +2697,45 @@ export function useMetadataSyncStatus(seriesSlug: string) {
   });
 }
 
+/** Series page › Metadata tab summary: provider ids, issue-id counts,
+ *  completeness tiers, sync and sidecar state, the folder, the latest run,
+ *  provenance. */
+export function useSeriesMetadataOverview(seriesSlug: string) {
+  return useQuery({
+    queryKey: queryKeys.seriesMetadataOverview(seriesSlug),
+    queryFn: () =>
+      jsonFetch<SeriesMetadataOverview>(
+        `/series/${encodeURIComponent(seriesSlug)}/metadata/overview`,
+      ),
+    enabled: !!seriesSlug,
+    staleTime: 30_000,
+  });
+}
+
+/** Series page › Metadata tab audit table: every active issue with its
+ *  tier, missing core fields, provider ids, tagging tool and latest run.
+ *  Filters are server-side; the list is the whole series (domain-bounded,
+ *  like the Collection report), so a plain `useQuery` is correct. */
+export function useSeriesMetadataIssues(
+  seriesSlug: string,
+  filters: SeriesMetadataIssueFilters = {},
+) {
+  const qs = new URLSearchParams();
+  if (filters.tier) qs.set("tier", filters.tier);
+  if (filters.without) qs.set("without", filters.without);
+  if (filters.kind) qs.set("kind", filters.kind);
+  const suffix = qs.size > 0 ? `?${qs.toString()}` : "";
+  return useQuery({
+    queryKey: queryKeys.seriesMetadataIssues(seriesSlug, filters),
+    queryFn: () =>
+      jsonFetch<SeriesMetadataIssuesResp>(
+        `/series/${encodeURIComponent(seriesSlug)}/metadata/issues${suffix}`,
+      ),
+    enabled: !!seriesSlug,
+    staleTime: 30_000,
+  });
+}
+
 /** Collection-completeness report: owned vs. expected issue counts plus the
  *  inferred missing main-run numbers. Single-shot (not a cursor list), so a
  *  plain `useQuery` is correct. */
@@ -3006,6 +3045,8 @@ import type {
   RunsListResp,
   AutoSyncedResp,
   MetadataCoverageResp,
+  SeriesMetadataIssuesResp,
+  SeriesMetadataOverview,
 } from "./types";
 
 /** The admin Coverage tab's snapshot (identifier coverage, completeness

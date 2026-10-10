@@ -701,7 +701,7 @@ function CoverageStep({
 
   const runAnalysis = () => analyze.mutate({ auto_accept: false });
   // `mainSeriesId` is the admin's pick from "Choose series"; `null` follows
-  // the proposal's main — the same contract as the Details tab card.
+  // the proposal's main — the same contract as the Metadata tab card.
   const onAccept = (source: string, mainSeriesId: string | null) => {
     setAccepting(source);
     accept.mutate(
@@ -822,12 +822,12 @@ function CoverageStep({
 
 /**
  * One provider in the coverage step: the headline (what would change),
- * then the same facts the Details tab's analysis card shows — which
+ * then the same facts the Metadata tab's analysis card shows — which
  * provider series is proposed as the main and which one you're linked
  * to now, how confident the analysis is and why, the series → issues
  * breakdown, every conflict and stale mapping — plus "Choose series"
  * when more than one candidate lists your issues. Enough to accept
- * here without opening the Details tab first.
+ * here without opening the Metadata tab first.
  */
 function CoverageProviderRow({
   p,

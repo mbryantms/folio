@@ -4608,6 +4608,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{slug}/metadata/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["series_metadata_issues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/metadata/issues/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["series_metadata_accept_issues"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{slug}/metadata/lookup": {
         parameters: {
             query?: never;
@@ -4618,6 +4650,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["metadata_lookup_series"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/metadata/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["series_metadata_overview"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5180,6 +5228,18 @@ export interface components {
             main_series_id?: string | null;
             /** @description `comicvine` | `metron` | `gcd`. */
             source: string;
+        };
+        AcceptIssuesReq: {
+            /** @description `true` marks the issues complete enough; `false` reverts. */
+            accepted: boolean;
+            issue_ids: string[];
+        };
+        AcceptIssuesResp: {
+            /**
+             * Format: int64
+             * @description Issues of this series the request changed.
+             */
+            updated: number;
         };
         AcceptMetadataResp: {
             /**
@@ -8517,6 +8577,11 @@ export interface components {
              */
             view_system_key?: string | null;
         };
+        ExtensionCount: {
+            /** Format: int64 */
+            count: number;
+            extension: string;
+        };
         /**
          * @description External-ID conflict row — surfaces in the preview pane as an
          *     amber row with a Keep mine / Use theirs control.
@@ -9135,6 +9200,27 @@ export interface components {
             /** Format: int32 */
             year?: number | null;
         };
+        IssueIdCounts: {
+            /** Format: int64 */
+            all_sources: number;
+            /** Format: int64 */
+            comicvine: number;
+            /** Format: int64 */
+            gcd: number;
+            /** Format: int64 */
+            metron: number;
+            /** Format: int64 */
+            total: number;
+        };
+        IssueLastRun: {
+            /** Format: int32 */
+            applied: number;
+            id: string;
+            /** Format: int32 */
+            matched_high: number;
+            started_at: string;
+            status: string;
+        };
         IssueLink: {
             /** @description Display label. `null` falls back to the URL host on the client. */
             label?: string | null;
@@ -9155,6 +9241,20 @@ export interface components {
              *     pages. The reader overlay slices client-side by `page_index`.
              */
             items: components["schemas"]["MarkerView"][];
+        };
+        IssueProvenanceCounts: {
+            /**
+             * Format: int64
+             * @description `comicinfo` / `metroninfo` / `series_json` / `scanner_inference`.
+             */
+            file: number;
+            /**
+             * Format: int64
+             * @description `comicvine` / `metron` / `gcd`.
+             */
+            provider: number;
+            /** Format: int64 */
+            user: number;
         };
         /**
          * @description Portable identity for an issue. `issue_id` is Folio's BLAKE3 id;
@@ -9214,6 +9314,11 @@ export interface components {
         };
         IssueSearchView: {
             items: components["schemas"]["IssueSearchHit"][];
+        };
+        IssueSourceIds: {
+            comicvine?: string | null;
+            gcd?: string | null;
+            metron?: string | null;
         };
         IssueSummaryView: {
             cover_url?: string | null;
@@ -10702,6 +10807,12 @@ export interface components {
          * @enum {string}
          */
         ProposedRangeStatus: "new" | "already_mapped" | "conflict";
+        ProvenanceRow: {
+            field: string;
+            set_at: string;
+            set_by: string;
+            source_external_id?: string | null;
+        };
         /** @description Per-provider remaining budget for the batch's pacing warning. */
         ProviderBudget: {
             /** Format: int32 */
@@ -12200,6 +12311,38 @@ export interface components {
             /** Format: int64 */
             with_summary: number;
         };
+        SeriesFilesState: {
+            /** Format: int64 */
+            archives: number;
+            /**
+             * Format: int64
+             * @description `.bak` backups in the folder; `None` when the folder can't be read.
+             */
+            backups?: number | null;
+            /** @description Archive count per extension (`cbz`, `cbr`, …), largest first. */
+            by_extension: components["schemas"]["ExtensionCount"][];
+            /** @description A Mylar `cvinfo` file sits in the folder. */
+            cvinfo_present: boolean;
+            folder_path?: string | null;
+            series_json_present: boolean;
+            /** Format: int64 */
+            with_comicinfo: number;
+            /** Format: int64 */
+            with_metroninfo: number;
+        };
+        SeriesLastRun: {
+            id: string;
+            /** Format: int32 */
+            items_applied: number;
+            /** Format: int32 */
+            items_matched_high: number;
+            /** Format: int32 */
+            items_total: number;
+            /** @description `series` | `issue`. */
+            scope: string;
+            started_at: string;
+            status: string;
+        };
         SeriesListView: {
             items: components["schemas"]["SeriesView"][];
             next_cursor?: string | null;
@@ -12224,6 +12367,57 @@ export interface components {
              *     confirmed match the user may keep.
              */
             links: components["schemas"]["SeriesProviderLink"][];
+        };
+        SeriesMetadataIssueRow: {
+            accepted: boolean;
+            /** @description `YYYY-MM` or `YYYY` when known. */
+            cover_date?: string | null;
+            id: string;
+            /** @description Provider issue ids by source. */
+            ids: components["schemas"]["IssueSourceIds"];
+            /** @description `#12`, `Annual 3`, `Special 1` — what the chip grids show. */
+            label: string;
+            last_run?: components["schemas"]["IssueLastRun"] | null;
+            /** @description Missing core field keys (`external_id`, `summary`, …). */
+            missing_core: string[];
+            number_raw?: string | null;
+            slug: string;
+            /** Format: double */
+            sort_number?: number | null;
+            special_type?: string | null;
+            /** @description [`tag_tool`] key for the file's ComicInfo notes. */
+            tagged_by: string;
+            tier: components["schemas"]["CompletenessTier"];
+            title?: string | null;
+        };
+        SeriesMetadataIssuesResp: {
+            items: components["schemas"]["SeriesMetadataIssueRow"][];
+            /**
+             * Format: int64
+             * @description Active issues in the series, before any filter.
+             */
+            series_total: number;
+            /**
+             * Format: int64
+             * @description Rows after the filters (what `items` holds).
+             */
+            total: number;
+        };
+        SeriesMetadataOverview: {
+            files: components["schemas"]["SeriesFilesState"];
+            issue_ids: components["schemas"]["IssueIdCounts"];
+            /** @description Distinct issues with at least one provenance row of each strength. */
+            issue_provenance: components["schemas"]["IssueProvenanceCounts"];
+            last_run?: components["schemas"]["SeriesLastRun"] | null;
+            /** Format: int64 */
+            runs_total: number;
+            series_id: string;
+            /** @description The series' provider ids (`external_ids`, series level). */
+            series_ids: components["schemas"]["ExternalIdRow"][];
+            /** @description `field_provenance` rows on the series row. */
+            series_provenance: components["schemas"]["ProvenanceRow"][];
+            sync: components["schemas"]["SeriesSyncState"];
+            tiers: components["schemas"]["SeriesTierCounts"];
         };
         /**
          * @description Per-user, server-computed read progress for the whole series. Sidesteps
@@ -12388,6 +12582,32 @@ export interface components {
          */
         SeriesSelectionBatchReq: {
             issue_ids: string[];
+        };
+        SeriesSyncState: {
+            /**
+             * Format: int64
+             * @description Issues ever synced with a provider through Folio.
+             */
+            issues_synced: number;
+            last_rewrite_at?: string | null;
+            metadata_sync_paused: boolean;
+            /** @description `series.last_metadata_sync_at` (RFC 3339). */
+            series_last_sync_at?: string | null;
+            /**
+             * Format: int64
+             * @description Issues whose sidecars Folio has rewritten, and the latest rewrite.
+             */
+            sidecars_rewritten: number;
+        };
+        SeriesTierCounts: {
+            /** Format: int64 */
+            accepted: number;
+            /** Format: int64 */
+            complete: number;
+            /** Format: int64 */
+            needs_metadata: number;
+            /** Format: int64 */
+            partial: number;
         };
         SeriesView: {
             age_rating?: string | null;
@@ -23454,6 +23674,90 @@ export interface operations {
             };
         };
     };
+    series_metadata_issues: {
+        parameters: {
+            query?: {
+                /**
+                 * @description `complete` | `partial` | `needs_metadata` | `accepted` | `incomplete`
+                 *     (partial + needs metadata).
+                 */
+                tier?: string | null;
+                /** @description `comicvine` | `metron` | `gcd`: only issues lacking that id. */
+                without?: string | null;
+                /** @description `specials` (annuals, specials, one-shots, …) | `main`. */
+                kind?: string | null;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesMetadataIssuesResp"];
+                };
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown filter value */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_metadata_accept_issues: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptIssuesReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcceptIssuesResp"];
+                };
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description empty selection */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     metadata_lookup_series: {
         parameters: {
             query?: never;
@@ -23507,6 +23811,34 @@ export interface operations {
             };
             /** @description provider quota exhausted */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_metadata_overview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesMetadataOverview"];
+                };
+            };
+            /** @description series not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

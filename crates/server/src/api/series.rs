@@ -3189,14 +3189,14 @@ fn build_collection_report(
 /// Per-issue projection for the collection report's metadata-completeness
 /// scan. Carries exactly the columns [`assess_issue_view`]'s logic needs.
 #[derive(Debug, FromQueryResult)]
-struct IssueCompletenessRow {
-    id: String,
-    slug: String,
-    number_raw: Option<String>,
-    title: Option<String>,
-    sort_number: Option<f64>,
-    special_type: Option<String>,
-    year: Option<i32>,
+pub(crate) struct IssueCompletenessRow {
+    pub(crate) id: String,
+    pub(crate) slug: String,
+    pub(crate) number_raw: Option<String>,
+    pub(crate) title: Option<String>,
+    pub(crate) sort_number: Option<f64>,
+    pub(crate) special_type: Option<String>,
+    pub(crate) year: Option<i32>,
     summary: Option<String>,
     page_count: Option<i32>,
     writer: Option<String>,
@@ -3208,7 +3208,7 @@ struct IssueCompletenessRow {
     editor: Option<String>,
     translator: Option<String>,
     state: String,
-    metadata_review_accepted_at: Option<sea_orm::prelude::DateTimeWithTimeZone>,
+    pub(crate) metadata_review_accepted_at: Option<sea_orm::prelude::DateTimeWithTimeZone>,
 }
 
 /// Score every active issue in a series for metadata completeness, ordered by
@@ -3216,7 +3216,7 @@ struct IssueCompletenessRow {
 /// lookup), then a pure per-issue scoring loop — no N+1. Returns each issue
 /// row paired with its report so callers can project whatever they need
 /// (the Collection grid, the bulk-fetch tier filter) off one source of truth.
-async fn score_series_issues(
+pub(crate) async fn score_series_issues(
     app: &AppState,
     series_id: Uuid,
 ) -> Vec<(

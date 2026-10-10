@@ -56,6 +56,7 @@ pub mod rate_limit;
 pub mod refresh;
 pub mod series_link;
 pub mod sidecar_compose;
+pub mod tag_tool;
 pub mod title_norm;
 pub mod writeback_progress;
 pub mod writers;

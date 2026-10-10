@@ -565,15 +565,7 @@ async fn compute(app: &AppState) -> Result<MetadataCoverageResp, sea_orm::DbErr>
         with_gcd: i64,
     }
     let sql = format!(
-        "SELECT CASE \
-             WHEN n ILIKE 'Tagged with Folio%' THEN 'folio' \
-             WHEN n ILIKE '%ComicTagger%' AND n ILIKE '%from Metron%' THEN 'comictagger_metron' \
-             WHEN n ILIKE '%ComicTagger%' AND (n ILIKE '%from Comic Vine%' OR n ILIKE '%from ComicVine%') THEN 'comictagger_comicvine' \
-             WHEN n ILIKE '%ComicTagger%' AND n ILIKE '%Grand Comics%' THEN 'comictagger_gcd' \
-             WHEN n ILIKE '%ComicTagger%' THEN 'comictagger_other' \
-             WHEN n ILIKE '%Mylar%' OR g ILIKE '%CVDB%' THEN 'mylar' \
-             WHEN n ILIKE '%Scraped%' OR n ILIKE '%[CVDB%' OR w <> '' THEN 'scraper' \
-             ELSE 'untagged' END AS tool, \
+        "SELECT {tool} AS tool, \
            count(*)::bigint AS issues, \
            count(*) FILTER (WHERE {cv})::bigint AS with_comicvine, \
            count(*) FILTER (WHERE {m})::bigint AS with_metron, \
@@ -583,6 +575,7 @@ async fn compute(app: &AppState) -> Result<MetadataCoverageResp, sea_orm::DbErr>
                       COALESCE(i.comic_info_raw->>'web', '') AS w \
                  FROM issues i WHERE {ACTIVE}) i \
          GROUP BY 1 ORDER BY issues DESC",
+        tool = crate::metadata::tag_tool::sql_case("n", "g", "w"),
         cv = issue_has_source("i", "comicvine"),
         m = issue_has_source("i", "metron"),
         g = issue_has_source("i", "gcd"),

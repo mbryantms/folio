@@ -17,7 +17,7 @@
  * a main series + ranges per provider (`<ProviderCoverageAnalysis>`),
  * which the admin accepts per provider. Once nothing is left to act on
  * (every provider up to date) the analysis collapses to a one-line
- * disclosure under the mapping, so the Details tab shows the result, not
+ * disclosure under the mapping, so the Metadata tab shows the result, not
  * the working; it opens by itself while a decision is pending (see
  * `analysisAttention`). A manual open/close sticks for this visit.
  *

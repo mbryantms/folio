@@ -10499,6 +10499,116 @@
         }
       }
     },
+    "/api/series/{slug}/metadata/issues": {
+      "get": {
+        "operationId": "series_metadata_issues",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tier",
+            "in": "query",
+            "description": "`complete` | `partial` | `needs_metadata` | `accepted` | `incomplete`\n(partial + needs metadata).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "without",
+            "in": "query",
+            "description": "`comicvine` | `metron` | `gcd`: only issues lacking that id.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "`specials` (annuals, specials, one-shots, …) | `main`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesMetadataIssuesResp"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "series not found"
+          },
+          "422": {
+            "description": "unknown filter value"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/metadata/issues/accept": {
+      "post": {
+        "operationId": "series_metadata_accept_issues",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptIssuesReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptIssuesResp"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "series not found"
+          },
+          "422": {
+            "description": "empty selection"
+          }
+        }
+      }
+    },
     "/api/series/{slug}/metadata/lookup": {
       "post": {
         "operationId": "metadata_lookup_series",
@@ -10546,6 +10656,35 @@
           },
           "503": {
             "description": "provider quota exhausted"
+          }
+        }
+      }
+    },
+    "/api/series/{slug}/metadata/overview": {
+      "get": {
+        "operationId": "series_metadata_overview",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesMetadataOverview"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "series not found"
           }
         }
       }
@@ -11979,6 +12118,38 @@
           "source": {
             "type": "string",
             "description": "`comicvine` | `metron` | `gcd`."
+          }
+        }
+      },
+      "AcceptIssuesReq": {
+        "type": "object",
+        "required": [
+          "issue_ids",
+          "accepted"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "description": "`true` marks the issues complete enough; `false` reverts."
+          },
+          "issue_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "AcceptIssuesResp": {
+        "type": "object",
+        "required": [
+          "updated"
+        ],
+        "properties": {
+          "updated": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues of this series the request changed."
           }
         }
       },
@@ -20360,6 +20531,22 @@
           }
         }
       },
+      "ExtensionCount": {
+        "type": "object",
+        "required": [
+          "extension",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "extension": {
+            "type": "string"
+          }
+        }
+      },
       "ExternalIdConflictRow": {
         "type": "object",
         "description": "External-ID conflict row — surfaces in the preview pane as an\namber row with a Keep mine / Use theirs control.",
@@ -21751,6 +21938,67 @@
           }
         }
       },
+      "IssueIdCounts": {
+        "type": "object",
+        "required": [
+          "total",
+          "comicvine",
+          "metron",
+          "gcd",
+          "all_sources"
+        ],
+        "properties": {
+          "all_sources": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "comicvine": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "gcd": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "metron": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "IssueLastRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "started_at",
+          "matched_high",
+          "applied"
+        ],
+        "properties": {
+          "applied": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "string"
+          },
+          "matched_high": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "IssueLink": {
         "type": "object",
         "required": [
@@ -21809,6 +22057,30 @@
               "$ref": "#/components/schemas/MarkerView"
             },
             "description": "Every marker the calling user has on this issue, across all\npages. The reader overlay slices client-side by `page_index`."
+          }
+        }
+      },
+      "IssueProvenanceCounts": {
+        "type": "object",
+        "required": [
+          "file",
+          "provider",
+          "user"
+        ],
+        "properties": {
+          "file": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`comicinfo` / `metroninfo` / `series_json` / `scanner_inference`."
+          },
+          "provider": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`comicvine` / `metron` / `gcd`."
+          },
+          "user": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -21973,6 +22245,29 @@
             "items": {
               "$ref": "#/components/schemas/IssueSearchHit"
             }
+          }
+        }
+      },
+      "IssueSourceIds": {
+        "type": "object",
+        "properties": {
+          "comicvine": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "gcd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metron": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -25194,6 +25489,31 @@
           "already_mapped",
           "conflict"
         ]
+      },
+      "ProvenanceRow": {
+        "type": "object",
+        "required": [
+          "field",
+          "set_by",
+          "set_at"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "set_at": {
+            "type": "string"
+          },
+          "set_by": {
+            "type": "string"
+          },
+          "source_external_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
       },
       "ProviderBudget": {
         "type": "object",
@@ -28914,6 +29234,98 @@
           }
         }
       },
+      "SeriesFilesState": {
+        "type": "object",
+        "required": [
+          "archives",
+          "by_extension",
+          "with_comicinfo",
+          "with_metroninfo",
+          "series_json_present",
+          "cvinfo_present"
+        ],
+        "properties": {
+          "archives": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "backups": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "`.bak` backups in the folder; `None` when the folder can't be read."
+          },
+          "by_extension": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExtensionCount"
+            },
+            "description": "Archive count per extension (`cbz`, `cbr`, …), largest first."
+          },
+          "cvinfo_present": {
+            "type": "boolean",
+            "description": "A Mylar `cvinfo` file sits in the folder."
+          },
+          "folder_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series_json_present": {
+            "type": "boolean"
+          },
+          "with_comicinfo": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "with_metroninfo": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SeriesLastRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "scope",
+          "status",
+          "started_at",
+          "items_total",
+          "items_matched_high",
+          "items_applied"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "items_applied": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "items_matched_high": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "items_total": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "scope": {
+            "type": "string",
+            "description": "`series` | `issue`."
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "SeriesListView": {
         "type": "object",
         "required": [
@@ -28973,6 +29385,184 @@
               "$ref": "#/components/schemas/SeriesProviderLink"
             },
             "description": "The series' provider ids (`external_ids`) — a non-empty list is a\nconfirmed match the user may keep."
+          }
+        }
+      },
+      "SeriesMetadataIssueRow": {
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "label",
+          "tier",
+          "accepted",
+          "missing_core",
+          "ids",
+          "tagged_by"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          },
+          "cover_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`YYYY-MM` or `YYYY` when known."
+          },
+          "id": {
+            "type": "string"
+          },
+          "ids": {
+            "$ref": "#/components/schemas/IssueSourceIds",
+            "description": "Provider issue ids by source."
+          },
+          "label": {
+            "type": "string",
+            "description": "`#12`, `Annual 3`, `Special 1` — what the chip grids show."
+          },
+          "last_run": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssueLastRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "missing_core": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Missing core field keys (`external_id`, `summary`, …)."
+          },
+          "number_raw": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "slug": {
+            "type": "string"
+          },
+          "sort_number": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "special_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tagged_by": {
+            "type": "string",
+            "description": "[`tag_tool`] key for the file's ComicInfo notes."
+          },
+          "tier": {
+            "$ref": "#/components/schemas/CompletenessTier"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SeriesMetadataIssuesResp": {
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "series_total"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesMetadataIssueRow"
+            }
+          },
+          "series_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active issues in the series, before any filter."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows after the filters (what `items` holds)."
+          }
+        }
+      },
+      "SeriesMetadataOverview": {
+        "type": "object",
+        "required": [
+          "series_id",
+          "series_ids",
+          "issue_ids",
+          "tiers",
+          "sync",
+          "files",
+          "runs_total",
+          "series_provenance",
+          "issue_provenance"
+        ],
+        "properties": {
+          "files": {
+            "$ref": "#/components/schemas/SeriesFilesState"
+          },
+          "issue_ids": {
+            "$ref": "#/components/schemas/IssueIdCounts"
+          },
+          "issue_provenance": {
+            "$ref": "#/components/schemas/IssueProvenanceCounts",
+            "description": "Distinct issues with at least one provenance row of each strength."
+          },
+          "last_run": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SeriesLastRun",
+                "description": "The latest metadata run on the series or any of its issues."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runs_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "series_id": {
+            "type": "string"
+          },
+          "series_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIdRow"
+            },
+            "description": "The series' provider ids (`external_ids`, series level)."
+          },
+          "series_provenance": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProvenanceRow"
+            },
+            "description": "`field_provenance` rows on the series row."
+          },
+          "sync": {
+            "$ref": "#/components/schemas/SeriesSyncState"
+          },
+          "tiers": {
+            "$ref": "#/components/schemas/SeriesTierCounts"
           }
         }
       },
@@ -29302,6 +29892,69 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "SeriesSyncState": {
+        "type": "object",
+        "required": [
+          "metadata_sync_paused",
+          "issues_synced",
+          "sidecars_rewritten"
+        ],
+        "properties": {
+          "issues_synced": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues ever synced with a provider through Folio."
+          },
+          "last_rewrite_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata_sync_paused": {
+            "type": "boolean"
+          },
+          "series_last_sync_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`series.last_metadata_sync_at` (RFC 3339)."
+          },
+          "sidecars_rewritten": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues whose sidecars Folio has rewritten, and the latest rewrite."
+          }
+        }
+      },
+      "SeriesTierCounts": {
+        "type": "object",
+        "required": [
+          "complete",
+          "partial",
+          "needs_metadata",
+          "accepted"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "complete": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "needs_metadata": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "partial": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
