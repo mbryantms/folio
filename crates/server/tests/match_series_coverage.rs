@@ -529,15 +529,23 @@ async fn manual_series_apply_queues_coverage_seeded_with_the_match() {
     assert_eq!(rec.seeds.len(), 1);
     assert_eq!(rec.seeds[0].source, Source::Metron);
     assert_eq!(rec.seeds[0].provider_series_id, "1711");
-    assert_eq!(rec.sources, vec![Source::Metron]);
+    // A match the user applied analyses every provider (the seed only
+    // spares Metron its name search); `sources` empty = all.
+    assert!(rec.sources.is_empty(), "{:?}", rec.sources);
+    assert_eq!(
+        rec.analysed_sources(),
+        vec![Source::ComicVine, Source::Metron, Source::Gcd]
+    );
     assert_eq!(coverage_jobs_waiting(&fx.app).await, 1);
 
     provider_coverage::process(&fx.app.state(), rec.job_id)
         .await
         .unwrap();
 
-    // Only Metron analysed; the seed is the main; #600–611 proposed as a
-    // range onto 1713, found by one gap issue search.
+    // Every provider analysed; Metron (seeded) lists 1711 as the main and
+    // proposes #600–611 as a range onto 1713, found by one gap issue
+    // search. ComicVine / GCD ran their own searches against mocks that
+    // don't serve them and report that, without touching Metron's result.
     let (st, body) = get(
         &fx.app,
         &cookie,
@@ -547,9 +555,11 @@ async fn manual_series_apply_queues_coverage_seeded_with_the_match() {
     assert_eq!(st, StatusCode::OK, "{body}");
     assert_eq!(body["trigger"], "series_match");
     let providers = body["providers"].as_array().unwrap();
-    assert_eq!(providers.len(), 1, "{body}");
-    let m = &providers[0];
-    assert_eq!(m["source"], "metron");
+    assert_eq!(providers.len(), 3, "{body}");
+    let m = providers
+        .iter()
+        .find(|p| p["source"] == "metron")
+        .expect("metron analysed");
     assert_eq!(m["seeded_series_id"], "1711");
     assert_eq!(m["main_series_id"], "1711");
     assert_eq!(m["uncovered"], json!([]), "{m}");
@@ -561,8 +571,10 @@ async fn manual_series_apply_queues_coverage_seeded_with_the_match() {
     assert_eq!(ranges[0]["status"], "new");
     assert_eq!(m["confidence"], "high", "{m}");
 
-    // Cost: the 1711 list was cached by the hint ⇒ one issue search + the
-    // 1713 list. No series-name search, no other provider touched.
+    // Cost on the seeded provider: the 1711 list was cached by the hint ⇒
+    // one issue search + the 1713 list, and no series-name search. The
+    // other two providers run their own (name) searches so the ids the
+    // Metron match doesn't carry get found.
     let metron_spent = count(&fx.metron, |_| true).await - metron_before;
     assert_eq!(metron_spent, 2, "search #600 + list 1713");
     assert_eq!(m["requests"], 2);
@@ -570,8 +582,8 @@ async fn manual_series_apply_queues_coverage_seeded_with_the_match() {
         count(&fx.metron, |r| r.url.path() == "/api/series/").await,
         0
     );
-    assert_eq!(count(&fx.cv, |_| true).await, 0);
-    assert_eq!(count(&fx.gcd, |_| true).await, 0);
+    assert!(count(&fx.cv, |_| true).await > 0, "ComicVine searched too");
+    assert!(count(&fx.gcd, |_| true).await > 0, "GCD searched too");
 
     // Nothing written without the admin's Accept.
     let ranges_written = entity::series_provider_range::Entity::find()

@@ -13,6 +13,33 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.50.0](https://github.com/mbryantms/folio/compare/v0.49.2...v0.50.0) (2026-10-09)
+
+
+### Added
+
+* **coverage:** search providers for the series names the folder's own files carry ([#1103](https://github.com/mbryantms/folio/issues/1103)) ([48dc6a1](https://github.com/mbryantms/folio/commit/48dc6a1ba9d7b14caacbfa6e46a41d82f805a920))
+
+
+### Fixed
+
+* **parsers:** Mylar's CVDB&lt;id&gt; genre marker is an identifier, not a genre ([#1102](https://github.com/mbryantms/folio/issues/1102)) ([1f1f208](https://github.com/mbryantms/folio/commit/1f1f20832bff3e7f4c730ff36b60ebc72ee748fa))
+
+
+### Dependencies
+
+* update dependency cronstrue to v3.30.0 ([#1098](https://github.com/mbryantms/folio/issues/1098)) ([56046e2](https://github.com/mbryantms/folio/commit/56046e285376a4661e3d10151272f35d30217353))
+* update dependency eslint to v10 ([#377](https://github.com/mbryantms/folio/issues/377)) ([2aa4ce4](https://github.com/mbryantms/folio/commit/2aa4ce441827b573f48d070479032106a9725afa))
+* update dependency next to v16.4.0 ([#1101](https://github.com/mbryantms/folio/issues/1101)) ([0e5bf92](https://github.com/mbryantms/folio/commit/0e5bf92cc33a42586696d561ca4ff9a1c7d550d7))
+* update dependency pnpm to v12.10.1 ([#1096](https://github.com/mbryantms/folio/issues/1096)) ([608aa9b](https://github.com/mbryantms/folio/commit/608aa9b0ee0b8398430604cd1b7ea8a0c8f8f5bf))
+* update nextjs monorepo to v16.4.0 ([#1100](https://github.com/mbryantms/folio/issues/1100)) ([83c1ae9](https://github.com/mbryantms/folio/commit/83c1ae9f08d9d40b3ad465c38f0fd2783590aae3))
+* update rust crate zeroize to v1.9.1 ([#1097](https://github.com/mbryantms/folio/issues/1097)) ([9da9cb3](https://github.com/mbryantms/folio/commit/9da9cb3704bb53bb568b91bba728c17ea42a59a5))
+
+
+### Build & CI
+
+* stop depending on anonymous Docker Hub pulls ([#1104](https://github.com/mbryantms/folio/issues/1104)) ([f8df503](https://github.com/mbryantms/folio/commit/f8df50360673a5c522f3fbf95fd375f227e3a106))
+
 ## [0.49.2](https://github.com/mbryantms/folio/compare/v0.49.1...v0.49.2) (2026-10-09)
 
 

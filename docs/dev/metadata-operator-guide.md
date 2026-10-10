@@ -806,21 +806,18 @@ replaced. Set `metadata.coverage_after_series_apply` to `off` to stop it.
 **Fetch metadata → Refresh this series…** in a series' ⋯ menu (admins)
 does the whole refresh in one dialog, step by step:
 
-1. **Coverage.** Runs first, on the files' own tags: **Analyze coverage**
-   (at most 40 ComicVine, 30 Metron and 30 GCD requests) works out which
-   series on each provider hold which of your issues, so a run that was
-   renamed mid-way (`Firestorm: The Nuclear Man` inside `Firestorm
-   (2004)`) is found before anything rewrites those tags. Accept or skip
-   each provider; accepting writes the series id and the ranges. Nothing
-   is saved until you accept.
-2. **Confirm series.** The series coverage found are listed per provider
-   (**linked** when the series already points there). **Use this series**
-   fetches that exact provider page — one request, no search — into the
-   usual preview, where **Apply** writes the series shape (name,
-   publisher, run-wide fields) onto every issue; because the ranges are
-   already in place, a renamed continuation keeps its own identity.
-   **Keep current match** leaves the series untouched; **Search for a
-   match** is the usual match list, coverage hints included.
+1. **Series match.** If the series is already matched you see its
+   provider ids — **Keep current match** skips straight on without
+   searching. Otherwise (or with **Search for a match**) the usual match
+   list appears, coverage hints included.
+2. **Coverage.** After a match you applied here, the dialog waits for the
+   coverage check that match queued. It analyses every provider: the one
+   you matched lists its series and skips the name search (1–3 requests),
+   the other two run their full analysis, so the Metron / GCD ids a
+   ComicVine match doesn't carry get found. Without a queued check it
+   offers **Analyze coverage** (at most 40 ComicVine, 30 Metron and 30
+   GCD requests). Accept or skip each provider; nothing is saved until
+   you accept.
 3. **Per-issue fetch.** Choose *Only missing or partial* or *All issues*.
    The dialog shows, per provider, how many issues will be looked up
    directly through the series' coverage (one request each, no search)

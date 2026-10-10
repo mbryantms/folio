@@ -826,6 +826,7 @@ pub(crate) async fn apply_series_via_sidecar(
     );
 
     let mut composed_sidecars: u32 = 0;
+    let mut divergent_tags: u32 = 0;
     let mut skip_reasons: Vec<String> = Vec::new();
     let mut suppressed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
@@ -865,7 +866,25 @@ pub(crate) async fn apply_series_via_sidecar(
         // the rescan, `issues.summary`). See `series_payload_for_issue`.
         let mut provider_for_issue =
             crate::metadata::sidecar_compose::series_payload_for_issue(&series_detail, issue_row);
+        // No range covers this issue and its archive names a materially
+        // different series (`Firestorm: The Nuclear Man` inside
+        // `Firestorm (2004)`, before coverage has filed it): the main
+        // match's identity and ids are *not* its. Keep the series shape
+        // (publisher, run-wide attributes) but drop the identity, so the
+        // composer keeps the archive's own `<Series>` and the main's
+        // provider series ids don't land in a file that belongs elsewhere.
+        let divergent = covering.is_none()
+            && crate::metadata::sidecar_compose::archive_series_name(issue_row)
+                .zip(series_detail.series_name.as_deref())
+                .is_some_and(|(own, main)| {
+                    crate::metadata::sidecar_compose::names_a_different_series(&own, main)
+                });
+        if divergent {
+            strip_series_identity(&mut provider_for_issue);
+            divergent_tags += 1;
+        }
         let series_ids_for_issue = match covering {
+            _ if divergent => std::borrow::Cow::Owned(std::collections::BTreeMap::new()),
             Some(r) => {
                 // Override only the series *name* with the splitter's — the
                 // identity readers see. Deliberately NOT `volume`: the range
@@ -994,6 +1013,13 @@ pub(crate) async fn apply_series_via_sidecar(
     // carry this bookkeeping field.
     bump_series_sync(&state.db, series_row.id).await?;
 
+    if divergent_tags > 0 {
+        tracing::info!(
+            series_id = %series_row.id,
+            divergent_tags,
+            "series apply: kept the archive's own <Series> on issues whose tag names a different series (no range covers them yet)"
+        );
+    }
     let outcome = ApplyOutcome {
         enqueued_rewrite: composed_sidecars > 0,
         composed_sidecars,
@@ -2549,5 +2575,65 @@ mod tests {
             MetadataField::Title,
             &args(ApplyMode::ReplaceAll, false)
         ));
+    }
+}
+
+/// Drop the series *identity* from a per-issue payload — name / sort
+/// name / type / volume / years / aliases / identifiers — leaving the
+/// series shape (publisher, imprint, run-wide attributes) in place. Used
+/// for issues whose archive names a different series than the main match
+/// and that no range has filed yet (see `apply_series_via_sidecar`).
+fn strip_series_identity(p: &mut crate::metadata::provider::GenericMetadata) {
+    p.series_name = None;
+    p.series_sort_name = None;
+    p.series_type = None;
+    p.series_external_id = None;
+    p.volume = None;
+    p.year_began = None;
+    p.year_end = None;
+    p.aliases = Default::default();
+    p.identifiers = Default::default();
+}
+
+#[cfg(test)]
+mod divergent_tag_tests {
+    use super::strip_series_identity;
+    use crate::metadata::provider::GenericMetadata;
+    use crate::metadata::sidecar_compose::names_a_different_series;
+
+    #[test]
+    fn renamed_continuations_are_different_but_variants_are_not() {
+        assert!(names_a_different_series(
+            "Firestorm: The Nuclear Man",
+            "Firestorm"
+        ));
+        assert!(names_a_different_series(
+            "Superman: Save the Planet",
+            "Superman"
+        ));
+        assert!(!names_a_different_series("Flash", "The Flash"));
+        assert!(!names_a_different_series("The Flash (1987)", "The Flash"));
+        assert!(!names_a_different_series(
+            "Department of Truth",
+            "The Department of Truth"
+        ));
+    }
+
+    #[test]
+    fn strip_keeps_the_series_shape() {
+        let mut p = GenericMetadata {
+            series_name: Some("Firestorm".into()),
+            volume: Some(3),
+            year_began: Some(2004),
+            publisher: Some("DC Comics".into()),
+            age_rating: Some("Teen".into()),
+            ..Default::default()
+        };
+        strip_series_identity(&mut p);
+        assert_eq!(p.series_name, None);
+        assert_eq!(p.volume, None);
+        assert_eq!(p.year_began, None);
+        assert_eq!(p.publisher.as_deref(), Some("DC Comics"));
+        assert_eq!(p.age_rating.as_deref(), Some("Teen"));
     }
 }

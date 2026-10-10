@@ -249,8 +249,18 @@ pub async fn enqueue_request(
         error: None,
         providers: Vec::new(),
         auto_accepted: Vec::new(),
+        // A match the user applied analyses every provider: the seeded one
+        // lists its known series and skips the name search, the others run
+        // the full search — that is how the Metron / GCD ids a ComicVine
+        // match doesn't carry get found. Bulk / automatic applies (setting
+        // `all`) stay restricted to the providers they matched so a library
+        // refresh doesn't fan out into three full analyses per series.
+        sources: if req.trigger == CoverageTrigger::SeriesMatch {
+            Vec::new()
+        } else {
+            req.seeds.iter().map(|s| s.source).collect()
+        },
         trigger: req.trigger,
-        sources: req.seeds.iter().map(|s| s.source).collect(),
         seeds: req.seeds,
     };
     save(redis, &rec).await?;

@@ -200,11 +200,7 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
         // Series-level fields. Title at the series level == `<Series>`
         // in ComicInfo. The Anansi schema fuses series+issue into one
         // doc per archive.
-        series: prefer_user_str(
-            ctx.is_series_pinned("title"),
-            &ctx.series.name,
-            ctx.provider.series_name.as_deref(),
-        ),
+        series: series_name_for_issue(ctx),
         // The scanner rejects implausible volumes on ingest
         // (`filename::plausible_volume`): ComicTagger stamps a ComicVine
         // series' *start year* into `<Volume>` (`2021`), which Folio
@@ -482,11 +478,7 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
             ctx.issue.title.as_deref(),
             ctx.provider.title.as_deref(),
         ),
-        series: prefer_user_str(
-            ctx.is_series_pinned("title"),
-            &ctx.series.name,
-            ctx.provider.series_name.as_deref(),
-        ),
+        series: series_name_for_issue(ctx),
         publisher: prefer_user_opt_str(
             ctx.is_series_pinned("publisher"),
             ctx.series.publisher.as_deref(),
@@ -720,17 +712,68 @@ fn prefer_user_opt_str(
     pick.filter(|s| !s.trim().is_empty()).map(str::to_owned)
 }
 
-/// Series.name is `String` (not `Option`); when the user pinned the
-/// series title, prefer it. Provider's series_name (Option) is the
-/// fallback when not pinned.
-fn prefer_user_str(user_pinned: bool, db: &str, provider: Option<&str>) -> Option<String> {
-    if user_pinned {
-        return Some(db.to_owned()).filter(|s| !s.trim().is_empty());
+/// The `<Series>` one issue's sidecar carries: the user-pinned series
+/// title; else the provider's series name (a series apply's main match,
+/// or the splitter a `series_provider_range` overlays); else — when the
+/// archive's own `<Series>` names a materially different series — that
+/// tag; else the series row's name.
+///
+/// The archive fallback is what keeps a renamed continuation intact:
+/// `Firestorm (2004)` holds #23–35 tagged `Firestorm: The Nuclear Man`,
+/// which Metron and GCD file as their own series. A series edit or an
+/// apply that carries no name for those issues used to stamp the folder's
+/// name over the tag, and the rescan then erased the one signal coverage
+/// analysis uses to find the continuation. A tag that is merely a
+/// *variant* of the series name (`Flash` under `The Flash`, scanner
+/// decorations) still normalises to the series name.
+fn series_name_for_issue(ctx: &ComposeContext) -> Option<String> {
+    if ctx.is_series_pinned("title") {
+        return Some(ctx.series.name.clone()).filter(|s| !s.trim().is_empty());
     }
-    if let Some(p) = provider.filter(|s| !s.trim().is_empty()) {
+    if let Some(p) = ctx
+        .provider
+        .series_name
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
         return Some(p.to_owned());
     }
-    Some(db.to_owned()).filter(|s| !s.trim().is_empty())
+    if let Some(own) = archive_series_name(ctx.issue)
+        && names_a_different_series(&own, &ctx.series.name)
+    {
+        return Some(own);
+    }
+    Some(ctx.series.name.clone()).filter(|s| !s.trim().is_empty())
+}
+
+/// The `<Series>` the archive itself carries (`comic_info_raw`), if any.
+pub fn archive_series_name(issue: &issue::Model) -> Option<String> {
+    comic_info_raw_str(&issue.comic_info_raw, "series", "Series")
+}
+
+/// Does `tag` name a materially different series than `name`? Compared
+/// on the matcher's sanitized similarity with the coverage name floor, so
+/// articles, punctuation and scanner decorations don't count as different
+/// but a renamed continuation does.
+pub fn names_a_different_series(tag: &str, name: &str) -> bool {
+    let (tag, name) = (strip_bracket_groups(tag), strip_bracket_groups(name));
+    crate::metadata::matcher::name_similarity(&tag, &name) < crate::metadata::coverage::NAME_FLOOR
+}
+
+/// `"The Flash (1987) [digital]"` → `"The Flash"`: a tagger's year /
+/// scanner groups decorate the name, they don't change which series it is.
+fn strip_bracket_groups(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut depth = 0usize;
+    for c in s.chars() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn prefer_user_int(user_pinned: bool, db: Option<i32>, provider: Option<i32>) -> Option<i32> {
@@ -1042,7 +1085,7 @@ mod tests {
         BTreeMap::new()
     }
 
-    fn make_series(name: &str) -> series::Model {
+    pub(super) fn make_series(name: &str) -> series::Model {
         let now = chrono::Utc::now().fixed_offset();
         series::Model {
             id: uuid::Uuid::nil(),
@@ -1085,7 +1128,7 @@ mod tests {
         }
     }
 
-    fn make_issue(title: &str) -> issue::Model {
+    pub(super) fn make_issue(title: &str) -> issue::Model {
         let now = chrono::Utc::now().fixed_offset();
         issue::Model {
             id: "fixture-issue".into(),
@@ -2040,5 +2083,102 @@ mod tests {
         issue.genre = None;
         let p = series_payload_for_issue(&record, &issue);
         assert_eq!(p.genres, vec!["Science Fiction".to_owned()]);
+    }
+}
+
+#[cfg(test)]
+mod archive_series_name_tests {
+    use super::*;
+    use std::collections::{BTreeMap, HashSet};
+
+    fn ctx_parts() -> (series::Model, issue::Model) {
+        let now = chrono::Utc::now().fixed_offset();
+        let series = series::Model {
+            id: uuid::Uuid::nil(),
+            library_id: uuid::Uuid::nil(),
+            name: "Firestorm".into(),
+            normalized_name: "firestorm".into(),
+            ..tests::make_series("Firestorm")
+        };
+        let mut issue = tests::make_issue("A Hawk in the Nest");
+        issue.comic_info_raw =
+            serde_json::json!({ "series": "Firestorm: The Nuclear Man", "number": "23" });
+        let _ = now;
+        (series, issue)
+    }
+
+    #[test]
+    fn archive_tag_naming_another_series_survives_a_db_only_compose() {
+        let (series, issue) = ctx_parts();
+        let provider = GenericMetadata::default();
+        let pins: HashSet<String> = HashSet::new();
+        let ids: BTreeMap<String, String> = BTreeMap::new();
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &ids,
+            series_external_ids: &ids,
+            issue_user_pins: &pins,
+            series_user_pins: &pins,
+        };
+        assert_eq!(
+            compose_comicinfo(&ctx).series.as_deref(),
+            Some("Firestorm: The Nuclear Man")
+        );
+        assert_eq!(
+            compose_metroninfo(&ctx).series.as_deref(),
+            Some("Firestorm: The Nuclear Man")
+        );
+    }
+
+    #[test]
+    fn provider_name_and_user_pin_still_win_and_variants_normalise() {
+        let (series, mut issue) = ctx_parts();
+        let pins: HashSet<String> = HashSet::new();
+        let ids: BTreeMap<String, String> = BTreeMap::new();
+        // A provider name (main match or range splitter) wins.
+        let provider = GenericMetadata {
+            series_name: Some("Firestorm: The Nuclear Man (Metron)".into()),
+            ..Default::default()
+        };
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &ids,
+            series_external_ids: &ids,
+            issue_user_pins: &pins,
+            series_user_pins: &pins,
+        };
+        assert_eq!(
+            compose_comicinfo(&ctx).series.as_deref(),
+            Some("Firestorm: The Nuclear Man (Metron)")
+        );
+        // A user-pinned series title beats the archive tag.
+        let none = GenericMetadata::default();
+        let pinned: HashSet<String> = ["title".to_owned()].into();
+        let ctx = ComposeContext {
+            provider: &none,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &ids,
+            series_external_ids: &ids,
+            issue_user_pins: &pins,
+            series_user_pins: &pinned,
+        };
+        assert_eq!(compose_comicinfo(&ctx).series.as_deref(), Some("Firestorm"));
+        // A mere variant of the series name normalises to it.
+        issue.comic_info_raw = serde_json::json!({ "series": "firestorm (2004)" });
+        let ctx = ComposeContext {
+            provider: &none,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &ids,
+            series_external_ids: &ids,
+            issue_user_pins: &pins,
+            series_user_pins: &pins,
+        };
+        assert_eq!(compose_comicinfo(&ctx).series.as_deref(), Some("Firestorm"));
     }
 }
