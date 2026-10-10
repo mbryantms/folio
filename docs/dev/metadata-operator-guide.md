@@ -9,9 +9,12 @@ things misbehave.
 
 1. **Get API credentials.**
    - **ComicVine**: free; register at <https://comicvine.gamespot.com/api/> and copy the API key
-     from your profile. Rate limit: 200 requests/hour, max 1
-     request/second (Folio honors both via the per-provider token
-     bucket).
+     from your profile. Rate limit: 200 requests per hour **per
+     resource** (series search, issue search, series detail, issue
+     detail each count separately) and roughly 1 request/second
+     (Folio honors both via Redis buckets shared by every worker;
+     a 429 from ComicVine drains the matching local bucket for its
+     `Retry-After`).
    - **Metron**: free; create an account at <https://metron.cloud/>,
      then generate a token under **API Tokens** on your account page
      and paste it as the *API token*. Username + password (HTTP
@@ -88,7 +91,8 @@ provider series' issue list once a day (ComicVine / Metron: one request
 per 100 issues; GCD: index + one overview page per 50 numbers). An
 issue the list doesn't have, or whose cover date disagrees, is recorded
 as a miss — it is **never searched**. So one run costs at most
-`cap` detail requests per provider (200 ComicVine of its 200/hour,
+`cap` detail requests per provider (200 ComicVine of the issue-detail
+resource's 200/hour — the lists come out of a separate 200/hour,
 200 Metron of its 5,000/day) plus the lists; the jobs go through the
 normal queue and provider rate limiters (ComicVine ≈ 1 request/second,
 Metron 20/minute), so a full run takes a few minutes (ComicVine) to
@@ -180,7 +184,8 @@ and the
 - **Budget bar.** `/admin/metadata` → Providers shows, per provider,
   a bar for the headline window — Metron's daily budget as last
   reported upstream (or the local day bucket before the first call),
-  ComicVine's local 200/h bucket (CV sends no budget headers) — plus
+  ComicVine's tightest per-resource 200/h bucket (CV sends no budget
+  headers; the resource with the least left is shown) — plus
   the reset countdown and the last provider error. The Fetch-metadata
   dialog adds a one-line "Metron: 812 of 5,000 requests left today"
   note once a provider is under 20%.
@@ -298,7 +303,7 @@ or re-fetch once the provider is healthy.
 
 If you're hitting quota constantly:
 1. **Disable the lower-priority provider.** ComicVine has the
-   tighter rate cap (200/hr) and richer dataset; Metron is faster
+   tighter rate cap (200/hr per resource) and richer dataset; Metron is faster
    (20/min × 60 = 1200/hr, 5,000/day) but has narrower coverage. If
    you don't need both, turn one off.
 2. **Reduce weekly_refresh_window_days** so fewer series fall into
@@ -678,7 +683,7 @@ parts, is handled the same way.
   analysis is built around it and Accept never replaces it; to change it,
   edit the External IDs card first.
 - **Budget.** Per analysis Folio spends at most 40 ComicVine requests (of
-  200/hour), 30 Metron (it waits out the 20/minute burst once) and 30 GCD
+  the 200/hour each resource gets), 30 Metron (it waits out the 20/minute burst once) and 30 GCD
   (of 100/hour). Issue lists are cached for 24 hours, so a second
   analysis usually costs one search per provider. A provider that hits
   its limit shows **Rate limited**; the others still finish.

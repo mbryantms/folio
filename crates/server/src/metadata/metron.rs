@@ -355,6 +355,18 @@ impl MetronClient {
             },
             _ => ProviderError::Upstream(format!("HTTP {status}: {}", resp.snippet(256))),
         };
+        if let ProviderError::QuotaExceeded { retry_after_secs } = err {
+            // Metron's throttle answered before our bucket did: drain the
+            // window its `Retry-After` points at (a minute-scale wait is
+            // the burst throttle, anything longer the daily one).
+            let bucket = if retry_after_secs <= rate_limit::METRON_MIN.window.as_secs() {
+                rate_limit::METRON_MIN
+            } else {
+                rate_limit::METRON_DAY
+            };
+            let mut redis = self.inner.redis.clone();
+            rate_limit::exhaust(&mut redis, &bucket, retry_after_secs).await;
+        }
         budget::record_error(&self.inner.redis, Source::Metron, &err.to_string()).await;
         Err(err)
     }

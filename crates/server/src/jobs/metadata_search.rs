@@ -10,8 +10,8 @@
 //!
 //! Worker concurrency is intentionally bounded to 1 per job type —
 //! the per-provider Redis token bucket already enforces budget, and
-//! the velocity cap on the ComicVine client serializes through a
-//! per-instance mutex. Running multiple search workers concurrently
+//! the ComicVine velocity cap is a Redis bucket every client shares.
+//! Running multiple search workers concurrently
 //! gains nothing on the happy path and risks burst-deny on bucket
 //! exhaustion.
 

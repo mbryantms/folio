@@ -41,7 +41,7 @@ XML (per-library opt-in flag, drift surfacing, flush button), see
 │ metadata/        │   │ metadata/cache + metadata/rate_limit     │
 │  provider impls  │   │  - TTL-bounded GenericMetadata cache     │
 │  (comicvine.rs,  │   │  - Redis token bucket per provider       │
-│   metron.rs)     │   │  - velocity caps (CV 1/sec; Metron 30/m) │
+│   metron.rs)     │   │  - velocity cap (CV 1/sec, Redis-shared) │
 └──────────────────┘   └──────────────────────────────────────────┘
                        ▼
 ┌────────────────────────────────────────────────────────────────┐
@@ -94,11 +94,17 @@ user click → [METADATA_FETCH governor: per-IP] → enqueue job
   user-triggered API endpoints. A single misbehaving client can't
   fill the job queue.
 - **Per-provider Redis token bucket** — Lua-script atomic decrement +
-  TTL refresh. Keys: `metadata:bucket:comicvine:hour`,
-  `metadata:bucket:metron:min` (20), `metadata:bucket:metron:day`
+  TTL refresh. Keys: `metadata:bucket:comicvine:hour:<resource>` (200
+  each for `volumes` / `search` / `issues` / `volume` / `issue` — CV's
+  limit is per resource), `metadata:bucket:comicvine:sec` (1, the
+  velocity cap), `metadata:bucket:metron:min` (20), `metadata:bucket:metron:day`
   (5,000), `metadata:bucket:gcd:hour` (100), `metadata:bucket:gcd:day`
   (2,000). Survives restarts (the bucket state lives in Redis, not
-  in-process); shared across replicas.
+  in-process); shared across replicas. When a provider answers 429
+  (or ComicVine's status 107) the client drains the matching local
+  bucket for the response's `Retry-After`, so other workers park on
+  the local bucket instead of each spending a request to learn the
+  same thing.
 
 Workers reserve N tokens before each HTTP call. Token-bucket deny
 requeues the job with `backoff = quota_resets_at - now + jitter`.
@@ -148,8 +154,9 @@ what the other providers already produced stashed — see
 <provider> quota" state instead of "failed".
 
 Worker concurrency is intentionally bounded to 1 per job type — the
-per-provider velocity cap already serializes through a
-per-instance mutex (the CV client's 1-req/sec rule) and running
+ComicVine 1-req/sec velocity cap is a Redis bucket every client shares
+(the search, apply and coverage workers and the API handlers all pace
+through it) and running
 multiple search workers concurrently gains nothing on the happy
 path while risking burst-deny.
 

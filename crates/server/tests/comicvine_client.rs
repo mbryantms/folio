@@ -9,7 +9,9 @@
 //! Coverage:
 //! - happy path: search_series + fetch_series + fetch_issue
 //! - envelope status_code mapping: 100 (auth), 101 (not found), 107 (rate limit)
-//! - velocity cap: two back-to-back calls have ≥1s gap (CV's per-sec rule)
+//! - velocity cap: two back-to-back calls have ≥1s gap (CV's per-sec rule),
+//!   also across two separate clients sharing the Redis bucket
+//! - API feedback: a 429 drains the local bucket for that resource only
 //! - response cache: second fetch hits cache, no second wiremock request
 
 mod common;
@@ -23,7 +25,7 @@ use server::metadata::provider::{IssueQuery, MetadataProvider, ProviderError, Se
 use std::time::Instant;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{method, path, query_param},
+    matchers::{method, path, path_regex, query_param},
 };
 
 // ────────────────────── fixtures ──────────────────────
@@ -327,6 +329,119 @@ async fn velocity_cap_enforces_one_second_floor() {
         elapsed >= std::time::Duration::from_millis(1000),
         "second call too fast: {elapsed:?}; velocity cap not enforced",
     );
+}
+
+#[tokio::test]
+async fn velocity_cap_is_shared_across_clients() {
+    let mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(json!([]))))
+        .mount(&mock)
+        .await;
+
+    let app = TestApp::spawn_with_comicvine("test-key", true).await;
+    let make = || {
+        ComicVineClient::with_base_url(
+            "test-key".into(),
+            mock.uri(),
+            app.state().jobs.redis.clone(),
+        )
+    };
+    let q = SeriesQuery {
+        name: "warmup".into(),
+        year: None,
+        publisher: None,
+        limit: 1,
+    };
+    // Every job builds its own client; the 1 req/s cap must still hold
+    // between them, so the second client waits for the first's second.
+    make().search_series(&q).await.expect("first client");
+    let start = Instant::now();
+    make().search_series(&q).await.expect("second client");
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed >= std::time::Duration::from_millis(1000),
+        "second client too fast: {elapsed:?}; velocity cap is per-client, not shared",
+    );
+}
+
+#[tokio::test]
+async fn api_quota_response_drains_only_that_resource() {
+    let mock = MockServer::start().await;
+    // `/volumes` (series search) is out of budget upstream; `/volume/…`
+    // (series detail) is a different resource and still answers.
+    Mock::given(method("GET"))
+        .and(path_regex("^/volumes"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "120"))
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex("^/volume/4050-1"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(ok_envelope(cv_volume_fixture(1, "Saga", "2012"))),
+        )
+        .mount(&mock)
+        .await;
+
+    let app = TestApp::spawn_with_comicvine("test-key", true).await;
+    let make = || {
+        ComicVineClient::with_base_url(
+            "test-key".into(),
+            mock.uri(),
+            app.state().jobs.redis.clone(),
+        )
+    };
+    let q = SeriesQuery {
+        name: "saga".into(),
+        year: None,
+        publisher: None,
+        limit: 1,
+    };
+    let err = make().search_series(&q).await.expect_err("upstream 429");
+    assert!(
+        matches!(
+            err,
+            ProviderError::QuotaExceeded {
+                retry_after_secs: 120
+            }
+        ),
+        "{err:?}"
+    );
+
+    // A fresh client (another worker) is denied locally for the same
+    // window, without spending another real request.
+    let err = make().search_series(&q).await.expect_err("drained locally");
+    match err {
+        ProviderError::QuotaExceeded { retry_after_secs } => {
+            assert!(
+                (100..=120).contains(&retry_after_secs),
+                "{retry_after_secs}"
+            );
+        }
+        other => panic!("expected local quota denial, got {other:?}"),
+    }
+    let volumes_hits = mock
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path().starts_with("/volumes"))
+        .count();
+    assert_eq!(
+        volumes_hits, 1,
+        "the drained bucket must stop further /volumes calls"
+    );
+
+    // The series-detail resource has its own 200/h bucket: untouched.
+    make()
+        .fetch_series("1")
+        .await
+        .expect("other resource still has budget");
+
+    // And the gauge reports the tightest resource (the drained one).
+    let quota = make().quota().await.expect("quota snapshot");
+    assert_eq!(quota.remaining_hour, Some(0));
 }
 
 #[tokio::test]

@@ -140,7 +140,7 @@ pub fn parse_metron_headers(headers: &HeaderMap) -> Vec<RequestBudget> {
 /// - ComicVine: derived from the local hourly bucket (the upstream
 ///   enforces 200/h per resource with no feedback headers).
 pub async fn for_provider(redis: &ConnectionManager, source: Source) -> Option<RequestBudget> {
-    use crate::metadata::rate_limit::{self, COMICVINE_HOUR, GCD_DAY, METRON_DAY};
+    use crate::metadata::rate_limit::{self, COMICVINE_HOUR_CAPACITY, GCD_DAY, METRON_DAY};
     match source {
         Source::Metron => {
             if let Some(headline) = load(redis, source)
@@ -160,11 +160,10 @@ pub async fn for_provider(redis: &ConnectionManager, source: Source) -> Option<R
         }
         Source::ComicVine => {
             let mut conn = redis.clone();
-            let (remaining, ttl) = rate_limit::snapshot(&mut conn, &COMICVINE_HOUR)
-                .await
-                .ok()?;
+            // Per-resource buckets; the tightest one is the budget.
+            let (remaining, ttl) = rate_limit::comicvine_hour_snapshot(&mut conn).await.ok()?;
             Some(RequestBudget::from_bucket(
-                COMICVINE_HOUR.capacity,
+                COMICVINE_HOUR_CAPACITY,
                 remaining,
                 ttl,
                 BudgetWindow::Hour,
