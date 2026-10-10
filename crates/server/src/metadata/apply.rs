@@ -1320,8 +1320,19 @@ async fn apply_issue_impl(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
     {
         match crate::jobs::rewrite_sidecars::sidecar_refusal(&lib, &row.file_path) {
             None => {
-                return apply_issue_via_sidecar(state, &args, &row, source, detail, &resolver)
+                let series_ext = detail.series_external_id.clone();
+                let out =
+                    apply_issue_via_sidecar(state, &args, &row, source, detail, &resolver).await;
+                if out.is_ok() {
+                    promote_series_id_from_issue(
+                        state,
+                        row.series_id,
+                        source,
+                        series_ext.as_deref(),
+                    )
                     .await;
+                }
+                return out;
             }
             Some(reason) => {
                 tracing::warn!(
@@ -1339,6 +1350,13 @@ async fn apply_issue_impl(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
     let ordinal = args.ordinal;
     let mut outcome =
         write_issue_fields(state, &row, &detail, args, &resolver, &*provider, source).await?;
+    promote_series_id_from_issue(
+        state,
+        row.series_id,
+        source,
+        detail.series_external_id.as_deref(),
+    )
+    .await;
     outcome.sidecar_skip_reasons.extend(sidecar_refused);
     flip_candidate_applied(&state.db, run_id, ordinal).await?;
     bump_run_counts(&state.db, run_id, &outcome).await?;
@@ -1364,6 +1382,52 @@ async fn apply_issue_impl(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
 /// the provider whose cover URL sits in `detail.cover_image_url`. Does
 /// NOT flip run candidates or bump run counts.
 #[allow(clippy::too_many_arguments)]
+/// An applied issue record names its provider series; when the local
+/// series has no id of that source yet, that is the series id — at no
+/// request. Post-apply and series-row only (never inside the sidecar
+/// apply, which stays XML-canonical), never over an existing row of the
+/// source, best-effort.
+async fn promote_series_id_from_issue(
+    state: &AppState,
+    series_id: Uuid,
+    source: Source,
+    provider_series_id: Option<&str>,
+) {
+    let Some(sid) = provider_series_id.map(str::trim).filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let series_key = series_id.to_string();
+    let has = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("series"))
+        .filter(entity::external_id::Column::EntityId.eq(series_key.clone()))
+        .filter(entity::external_id::Column::Source.eq(source.as_str()))
+        .one(&state.db)
+        .await;
+    match has {
+        Ok(Some(_)) => return,
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, series_id = %series_id, "series id promotion: lookup failed");
+            return;
+        }
+    }
+    let identifier =
+        crate::metadata::identifier::Identifier::with_canonical_url(source, sid, "series");
+    if let Err(e) = crate::metadata::writers::set_external_id_promoting(
+        &state.db,
+        "series",
+        &series_key,
+        &identifier,
+        SetBy::Provider(source),
+    )
+    .await
+    {
+        tracing::warn!(error = %e, series_id = %series_id, "series id promotion failed");
+    } else {
+        tracing::info!(series_id = %series_id, source = source.as_str(), provider_series_id = sid, "series id promoted from an applied issue");
+    }
+}
+
 pub(crate) async fn write_issue_fields(
     state: &AppState,
     row: &issue::Model,

@@ -1289,6 +1289,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         )
         .await?;
         emit_external_id_skips(health, path, skips);
+        write_notes_gcd_id(db, &updated.id, info.gcd_id).await?;
         // metadata-providers-1.0 M8: MetronInfo's `<ID source="…">` list
         // carries IDs for any number of providers (GCD, Marvel, LoCG,
         // ISBN, etc.) — not just CV/Metron. Write each one so cross-
@@ -1468,6 +1469,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             crate::metadata::writers::SetBy::ComicInfo,
         )
         .await?;
+        write_notes_gcd_id(db, &inserted.id, info.gcd_id).await?;
         emit_external_id_skips(health, path, skips);
         // metadata-providers-1.0 M8 — see the matching block on the
         // update path above for the cross-source-IDs rationale.
@@ -2595,6 +2597,30 @@ fn truncate_to_micros(t: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chro
     let micros = t.timestamp_micros();
     chrono::DateTime::<chrono::Utc>::from_timestamp_micros(micros)
         .expect("timestamp_micros round-trip in the supported chrono range")
+}
+
+/// A Grand Comics Database issue id read from a ComicTagger `<Notes>`
+/// trace (ComicInfo has no element for it). File tier, like the trio: it
+/// never replaces a `user` or provider row.
+async fn write_notes_gcd_id<C: ConnectionTrait>(
+    db: &C,
+    issue_id: &str,
+    gcd_id: Option<i64>,
+) -> Result<(), sea_orm::DbErr> {
+    let Some(n) = gcd_id else { return Ok(()) };
+    crate::metadata::writers::set_external_id(
+        db,
+        "issue",
+        issue_id,
+        &crate::metadata::identifier::Identifier::with_canonical_url(
+            crate::metadata::identifier::Source::Gcd,
+            n.to_string(),
+            "issue",
+        ),
+        crate::metadata::writers::SetBy::ComicInfo,
+    )
+    .await?;
+    Ok(())
 }
 
 /// Detect identifier tags in a series folder name —
