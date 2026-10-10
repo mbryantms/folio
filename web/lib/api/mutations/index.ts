@@ -35,6 +35,8 @@ export * from "./page-overrides";
 export * from "./relationship-suggestions";
 
 import type {
+  AcceptIssuesReq,
+  AcceptIssuesResp,
   AcceptMetadataResp,
   AccountReq,
   AdminUserDetailView,
@@ -2630,6 +2632,37 @@ export function useCreateSeriesBatch(seriesSlug: string) {
  *  series' issues (the grid multi-select) → one batch. The caller owns the
  *  success toast so it can attach a "Review results" deep-link to the
  *  returned `batch_id` (B5 — bulk fetch is no longer fire-and-forget). */
+/** Mark a selection of a series' issues "metadata complete enough" (or
+ *  revert): the per-issue acknowledgement, batched. Invalidates the
+ *  Metadata tab's queries and the Collection report so the tiers move. */
+export function useAcceptSeriesIssues(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<AcceptIssuesResp, AcceptIssuesReq>(
+    (body) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/issues/accept`,
+      method: "POST",
+      body,
+    }),
+    {
+      successMessage: (data, input) =>
+        input.accepted
+          ? `Marked ${data?.updated ?? 0} issue${data?.updated === 1 ? "" : "s"} complete`
+          : `Reverted ${data?.updated ?? 0} issue${data?.updated === 1 ? "" : "s"}`,
+      onSuccess: () => {
+        qc.invalidateQueries({
+          queryKey: queryKeys.seriesMetadataOverview(seriesSlug),
+        });
+        qc.invalidateQueries({
+          queryKey: ["series", seriesSlug, "metadata", "issues"],
+        });
+        qc.invalidateQueries({
+          queryKey: queryKeys.seriesCollection(seriesSlug),
+        });
+      },
+    },
+  );
+}
+
 export function useCreateSeriesSelectionBatch(seriesSlug: string) {
   return useApiMutation<BatchCreatedResp, { issue_ids: string[] }>((input) => ({
     path: `/series/${encodeURIComponent(seriesSlug)}/metadata/batch/selection`,

@@ -20,8 +20,6 @@ import {
   DetailSummaryItem,
 } from "@/components/library/DetailSection";
 import { Description } from "@/components/library/Description";
-import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
-import { SeriesProviderRangesCard } from "@/components/library/SeriesProviderRangesCard";
 import { SeriesRelatedTab } from "@/components/library/SeriesRelatedTab";
 import { MetadataGrid } from "@/components/library/MetadataGrid";
 import { Stat } from "@/components/library/Stat";
@@ -70,6 +68,7 @@ import { CollectionTab } from "./CollectionTab";
 import { AppearancesTab } from "@/components/library/AppearancesTab";
 import { IssuesPanel } from "./IssuesPanel";
 import { SeriesActions } from "./SeriesActions";
+import { SeriesMetadataTab } from "./SeriesMetadataTab";
 import { SeriesTabs } from "./SeriesTabs";
 import { SeriesSourcesFooter } from "./SeriesSourcesFooter";
 import { entityHrefFor } from "@/lib/entities";
@@ -79,10 +78,13 @@ export default async function SeriesPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ q?: string; tab?: string }>;
+  searchParams: Promise<{ q?: string; tab?: string; match?: string }>;
 }) {
   const { slug } = await params;
-  const { q: initialQuery, tab: initialTab } = await searchParams;
+  const { q: initialQuery, tab, match } = await searchParams;
+  // `?match=1` (the needs-metadata worklist's "Find metadata") lands on the
+  // Metadata tab, where the match dialog opens.
+  const initialTab = tab ?? (match === "1" ? "metadata" : undefined);
 
   let series: SeriesView;
   let firstIssuePage: IssueListView;
@@ -600,27 +602,18 @@ export default async function SeriesPage({
                 </p>
               )}
             </DetailSection>
-
-            <DetailSection
-              title="External IDs"
-              description="Provider identifiers linked to this series."
-            >
-              <ExternalIdsCard
-                entityType="series"
-                seriesSlug={series.slug}
-                chrome="bare"
-              />
-            </DetailSection>
-
-            <DetailSection
-              title="Provider series mapping"
-              description="How this run maps onto each metadata provider's series. Most issues use the default series; add an override when a provider splits part of the run (e.g. a legacy renumbering) into a separate series."
-            >
-              <SeriesProviderRangesCard seriesSlug={series.slug} />
-            </DetailSection>
           </StackedTabsPanel>
           <StackedTabsPanel value="collection">
             <CollectionTab seriesSlug={series.slug} />
+          </StackedTabsPanel>
+          {/* Identifiers, provider mapping, the fetch actions and the
+              per-issue audit list — the administrative view of the series. */}
+          <StackedTabsPanel value="metadata">
+            <SeriesMetadataTab
+              seriesSlug={series.slug}
+              seriesName={series.name}
+              libraryId={series.library_id}
+            />
           </StackedTabsPanel>
           {/* WP-7.7: relationships, same universe and similar series. Not
               force-mounted, so nothing in it fetches until the tab opens. */}

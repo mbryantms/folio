@@ -14,6 +14,7 @@ export const SERIES_TABS = [
   "related",
   "appearances",
   "activity",
+  "metadata",
   "markers",
 ] as const;
 export type SeriesTab = (typeof SERIES_TABS)[number];
@@ -121,6 +122,10 @@ export function SeriesTabs({
           <TabsTrigger value="appearances">Appears in</TabsTrigger>
         )}
         <TabsTrigger value="activity">Activity</TabsTrigger>
+        {/* Everything administrative about the series' metadata lives here
+            (ids, provider mapping, fetch actions, the audit list), so the
+            reading surfaces stay clean. */}
+        <TabsTrigger value="metadata">Metadata</TabsTrigger>
         {hasNotes && <TabsTrigger value="markers">Your notes</TabsTrigger>}
       </TabsList>
       {children}

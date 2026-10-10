@@ -562,7 +562,7 @@ Default admin (first registered user becomes admin):
     assigns each local issue to the series that lists its number with a
     non-conflicting cover date, and takes a minimum set cover: the
     largest coverer is the main, the rest become `series_provider_range`
-    rows. It runs as the `provider_coverage` job — from the Details tab's
+    rows. It runs as the `provider_coverage` job — from the series Metadata tab's
     **Analyze coverage**, and after a series match per
     `metadata.coverage_after_series_apply` (`off` | `manual_only` default
     | `all`), seeded with the chosen series. Results are **proposals**:

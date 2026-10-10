@@ -12,9 +12,10 @@
  *      gaps are *inferred* by interpolating the integer run between the
  *      lowest and highest owned issue (`series.json` carries only a count),
  *      and labelled as such.
- *   2. **Metadata** — each owned issue is colored by completeness
- *      (complete / partial / needs-metadata). Click any chip to see exactly
- *      what's missing and jump to the issue.
+ *   2. **Metadata** — each owned issue is colored complete or incomplete.
+ *      The field-level detail (which core fields are missing, provider ids,
+ *      the fetch actions) lives on the Metadata tab; this view only answers
+ *      "owned?" and "complete?".
  *
  * The progress header stacks both signals: an overall bar (owned **and**
  * metadata-complete) plus two sub-bars for ownership and metadata on their own.
@@ -35,37 +36,40 @@ import {
   manifestProviderLabel,
 } from "@/lib/collection-manifest";
 import { ISSUE_GRID_CELL_RADIUS, ISSUE_GRID_COLS } from "@/lib/issue-grid";
-import { metadataFieldLabels } from "@/lib/metadata-fields";
 import { cn } from "@/lib/utils";
 import { statusTone, statusToneDot } from "@/lib/ui/status-tone";
 import { issueUrl } from "@/lib/urls";
 
-type ChipStatus =
-  "missing" | "possibly_missing" | "needs_metadata" | "partial" | "complete";
+/** One colour per question: owned and complete, owned but incomplete, not
+ *  owned, not owned but every provider lists it. The partial / needs-metadata
+ *  split and the missing fields are the Metadata tab's. `complete` rides the
+ *  success token, `incomplete` the warning token, `missing` the border so it
+ *  still tracks the theme. */
+type ChipStatus = "missing" | "possibly_missing" | "incomplete" | "complete";
 
-/** Status → cell classes. The success/warning/error triad uses the
- *  conventional emerald → amber → red so the four states stay clearly
- *  distinguishable regardless of the active theme accent (a primary-tinted
- *  "complete" collided with amber "partial" on warm themes). `needs_metadata`
- *  rides the `--destructive` token and `missing` rides `--border`/muted so
- *  those two still track the theme. */
 const STATUS_CLASSES: Record<ChipStatus, string> = {
   missing: "border border-dashed border-border text-muted-foreground/70",
   possibly_missing:
     "border border-dotted border-warning/60 text-muted-foreground/70",
-  needs_metadata:
-    "bg-destructive/15 text-destructive ring-1 ring-destructive/30",
-  partial: "bg-warning/15 text-warning ring-1 ring-warning/30",
+  incomplete: "bg-warning/15 text-warning ring-1 ring-warning/30",
   complete: "bg-success/15 text-success ring-1 ring-success/30",
 };
 
 const STATUS_LABELS: Record<ChipStatus, string> = {
   missing: "Missing",
   possibly_missing: "Possibly missing",
-  needs_metadata: "Needs metadata",
-  partial: "Partial metadata",
+  incomplete: "Incomplete metadata",
   complete: "Complete",
 };
+
+/** The Collection view's two-state reading of an issue's metadata tier
+ *  (an operator-accepted issue counts as complete here). */
+function chipStatusOf(entry: CollectionIssueEntry): ChipStatus {
+  return entry.metadata_tier === "complete" ||
+    entry.metadata_tier === "accepted"
+    ? "complete"
+    : "incomplete";
+}
 
 /** A main-run issue is an owned, integer-numbered, non-special issue that
  *  the server didn't push off the run (`main_run.off_run`: a stunt number
@@ -130,7 +134,7 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
     : [];
 
   const completeCount = data.issues.filter(
-    (e) => e.metadata_tier === "complete",
+    (e) => chipStatusOf(e) === "complete",
   ).length;
   const ownedCount = total_owned;
   // Denominator for the bars: the publisher total when known, else what we own.
@@ -140,7 +144,7 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
   function statusOf(n: number): ChipStatus {
     const entry = mainByInt.get(n);
     if (!entry) return possiblyMissing.has(n) ? "possibly_missing" : "missing";
-    return entry.metadata_tier as ChipStatus;
+    return chipStatusOf(entry);
   }
 
   return (
@@ -190,6 +194,17 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
             barClassName={statusToneDot("success")}
           />
         </div>
+        <p className="text-muted-foreground text-xs">
+          Which fields are missing, provider ids and the fetch actions are on
+          the{" "}
+          <Link
+            href={`/series/${encodeURIComponent(seriesSlug)}?tab=metadata`}
+            className="text-primary hover:underline"
+          >
+            Metadata tab
+          </Link>
+          .
+        </p>
       </section>
 
       {/* ── Issue grid (ownership + metadata status) ── */}
@@ -297,7 +312,7 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
           </h3>
           <div className="flex flex-wrap gap-1.5">
             {specialEntries.map((e) => {
-              const status = e.metadata_tier as ChipStatus;
+              const status = chipStatusOf(e);
               const isSel =
                 selected?.kind === "issue" && selected.entry.slug === e.slug;
               return (
@@ -390,8 +405,7 @@ function SubBar({
 function Legend({ showPossibly = false }: { showPossibly?: boolean }) {
   const items: { status: ChipStatus; label: string }[] = [
     { status: "complete", label: "Complete" },
-    { status: "partial", label: "Partial" },
-    { status: "needs_metadata", label: "Needs metadata" },
+    { status: "incomplete", label: "Incomplete metadata" },
     { status: "missing", label: "Missing" },
     ...(showPossibly
       ? [{ status: "possibly_missing" as const, label: "Possibly missing" }]
@@ -471,7 +485,7 @@ function SelectionDetail({
   }
 
   const { entry } = selection;
-  const status = entry.metadata_tier as ChipStatus;
+  const status = chipStatusOf(entry);
   const heading = entry.number_raw
     ? `#${entry.number_raw}`
     : (entry.title ?? "Issue");
@@ -497,33 +511,29 @@ function SelectionDetail({
               {STATUS_LABELS[status]}
             </span>
           </div>
-          <p className="text-muted-foreground mt-1 text-xs">
-            {entry.missing_core.length > 0
-              ? `Missing: ${metadataFieldLabels(entry.missing_core)}`
-              : "All core metadata present."}
-          </p>
         </div>
         <ClearButton onClear={onClear} />
       </div>
-      {status === "needs_metadata" || status === "partial" ? (
-        // Incomplete metadata → "link to the fix" (B4): deep-link to the
-        // issue with ?match=1, which auto-opens the match dialog.
-        <Link
-          href={`${issueUrl(seriesSlug, entry.slug)}?match=1`}
-          className="text-primary mt-2 inline-flex items-center gap-1 text-xs font-medium hover:underline"
-        >
-          Find metadata
-          <ChevronRight className="h-3.5 w-3.5" />
-        </Link>
-      ) : (
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
         <Link
           href={issueUrl(seriesSlug, entry.slug)}
-          className="text-primary mt-2 inline-flex items-center gap-1 text-xs font-medium hover:underline"
+          className="text-primary inline-flex items-center gap-1 text-xs font-medium hover:underline"
         >
           Open issue
           <ChevronRight className="h-3.5 w-3.5" />
         </Link>
-      )}
+        {status === "incomplete" ? (
+          // Incomplete metadata → the fix lives on the Metadata tab (what is
+          // missing, the fetch actions).
+          <Link
+            href={`/series/${encodeURIComponent(seriesSlug)}?tab=metadata`}
+            className="text-primary inline-flex items-center gap-1 text-xs font-medium hover:underline"
+          >
+            What&rsquo;s missing
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Link>
+        ) : null}
+      </div>
     </div>
   );
 }

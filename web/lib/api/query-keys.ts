@@ -32,6 +32,13 @@ import type {
   UserListFilters,
 } from "./queries";
 
+/** Server-side filters of `GET /series/{slug}/metadata/issues`. */
+export type SeriesMetadataIssueFilters = {
+  tier?: "complete" | "partial" | "needs_metadata" | "accepted" | "incomplete";
+  without?: "comicvine" | "metron" | "gcd";
+  kind?: "specials" | "main";
+};
+
 export const queryKeys = {
   me: ["auth", "me"] as const,
   libraries: ["libraries"] as const,
@@ -338,6 +345,10 @@ export const queryKeys = {
     ["series", slug, "metadata", "status"] as const,
   /** Collection-completeness report (owned vs. expected + missing issues). */
   seriesCollection: (slug: string) => ["series", slug, "collection"] as const,
+  seriesMetadataOverview: (slug: string) =>
+    ["series", slug, "metadata", "overview"] as const,
+  seriesMetadataIssues: (slug: string, filters: SeriesMetadataIssueFilters) =>
+    ["series", slug, "metadata", "issues", filters] as const,
   /** Reading lists / collections / arcs this series appears in. */
   seriesAppearances: (slug: string) => ["series", slug, "appearances"] as const,
   /** Bulk-metadata batch status (live progress + child list). */
