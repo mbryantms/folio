@@ -528,19 +528,64 @@ async fn search_issue_filters_by_volume_when_id_known() {
 }
 
 #[tokio::test]
-async fn search_issue_by_name_matches_zero_padded_number() {
-    // Regression (Spawn #14): a zero-padded scan value "014" must match CV's
-    // un-padded "14". The /search fallback (no known volume id) filters
-    // candidates client-side; before the fix it compared raw strings, so
-    // "14" != "014" dropped the real issue and the fetch found "no matches".
+async fn search_issue_by_name_asks_the_matching_volumes_for_the_number() {
+    // No known volume id: find the volumes with that name, then ask each
+    // for the number (`/search` ranks across every resource and returns a
+    // flat list, which is how ComicVine never answered a by-name search).
+    // Regression (Spawn #14): the zero-padded scan value "014" is sent
+    // canonical ("14"), or CV's filter misses it.
     let mock = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/search"))
-        .and(query_param("query", "Spawn"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(json!({
-            "issue": [cv_issue_fixture(37769, "14")]
-        }))))
+        .and(path("/volumes"))
+        .and(query_param("filter", "name:Spawn"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(json!([
+            cv_volume_fixture(18, "Spawn", "1992"),
+            cv_volume_fixture(99, "Spawn", "2020"),
+            cv_volume_fixture(50, "The Spawn", "1993"),
+            cv_volume_fixture(60, "Spawn: Blood Feud", "1993"),
+            cv_volume_fixture(7, "Batman", "1940"),
+        ]))))
         .expect(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/issues"))
+        .and(query_param("filter", "issue_number:14,volume:18"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(ok_envelope(json!([cv_issue_fixture(37769, "14")]))),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/issues"))
+        .and(query_param("filter", "issue_number:14,volume:50"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(json!([]))))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    // Starts after the cover year + 1: never asked. Nor are the volumes
+    // whose names say another series.
+    Mock::given(method("GET"))
+        .and(path("/issues"))
+        .and(query_param("filter", "issue_number:14,volume:99"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(json!([]))))
+        .expect(0)
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/issues"))
+        .and(query_param("filter", "issue_number:14,volume:60"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(json!([]))))
+        .expect(0)
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/issues"))
+        .and(query_param("filter", "issue_number:14,volume:7"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_envelope(json!([]))))
+        .expect(0)
         .mount(&mock)
         .await;
 
@@ -553,7 +598,7 @@ async fn search_issue_by_name_matches_zero_padded_number() {
 
     let out = client
         .search_issue(&IssueQuery {
-            series_external_id: None, // forces the /search-by-name path
+            series_external_id: None, // forces the by-name path
             series_name: Some("Spawn".into()),
             series_year: Some(2016), // intentionally wrong — must not gate this path
             issue_number: "014".into(),

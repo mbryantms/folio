@@ -873,12 +873,20 @@ pub(crate) async fn apply_series_via_sidecar(
         // (publisher, run-wide attributes) but drop the identity, so the
         // composer keeps the archive's own `<Series>` and the main's
         // provider series ids don't land in a file that belongs elsewhere.
+        //
+        // A special (annual / special / one-shot) filed under the run is
+        // divergent by nature: the providers file it as its own series,
+        // so the main's name must not become its `<Series>` either — even
+        // when the archive carried no sidecar to say so.
         let divergent = covering.is_none()
-            && crate::metadata::sidecar_compose::archive_series_name(issue_row)
-                .zip(series_detail.series_name.as_deref())
-                .is_some_and(|(own, main)| {
-                    crate::metadata::sidecar_compose::names_a_different_series(&own, main)
-                });
+            && series_detail.series_name.as_deref().is_some_and(|main| {
+                crate::metadata::sidecar_compose::special_series_name(issue_row, main).is_some()
+                    || crate::metadata::sidecar_compose::archive_series_name(issue_row).is_some_and(
+                        |own| {
+                            crate::metadata::sidecar_compose::names_a_different_series(&own, main)
+                        },
+                    )
+            });
         if divergent {
             strip_series_identity(&mut provider_for_issue);
             divergent_tags += 1;
