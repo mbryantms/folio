@@ -53,6 +53,15 @@ export const PROVIDER_MATCH_LABELS: Record<ProviderMatch, string> = {
   matched: "Matched",
   unmatched: "Unmatched",
 };
+/** `provider_source` narrows `provider_match` to one provider; the admin
+ *  Coverage tab's identifier counts deep-link here. */
+export const PROVIDER_SOURCE_VALUES = ["comicvine", "metron", "gcd"] as const;
+export type ProviderSource = (typeof PROVIDER_SOURCE_VALUES)[number];
+export const PROVIDER_SOURCE_LABELS: Record<ProviderSource, string> = {
+  comicvine: "ComicVine",
+  metron: "Metron",
+  gcd: "GCD",
+};
 export const METADATA_COMPLETENESS_LABELS: Record<
   MetadataCompletenessTier,
   string
@@ -81,6 +90,9 @@ export type LibraryGridInitialFilters = {
   /** Provider-match facet (series mode only) — the `provider_match` query
    *  param; the admin dashboard's "Unmatched" tile deep-links here. */
   providerMatch?: ProviderMatch;
+  /** One provider for `providerMatch` (the `provider_source` query param);
+   *  meaningless without it. */
+  providerSource?: ProviderSource;
   /** Per-user read state — CSV subset of `unread,in_progress,read`
    *  (series mode only). */
   readStatus?: string[];
@@ -170,6 +182,11 @@ export function parseLibraryGridFilters(
     )
       ? (raw.provider_match as ProviderMatch)
       : undefined,
+    providerSource: (PROVIDER_SOURCE_VALUES as readonly string[]).includes(
+      raw.provider_source ?? "",
+    )
+      ? (raw.provider_source as ProviderSource)
+      : undefined,
     readStatus: csv("read_status"),
     startsWith: parseStartsWithParam(raw.starts_with),
     yearFrom: raw.year_from || undefined,
@@ -202,6 +219,7 @@ export type LibraryGridUrlState = {
   status?: string;
   metadataCompleteness?: MetadataCompletenessTier;
   providerMatch?: ProviderMatch;
+  providerSource?: ProviderSource;
   readStatus: string[];
   startsWith: string | null;
   yearFrom?: string;
@@ -237,7 +255,11 @@ export function serializeLibraryGridFilters(
   if (state.status && state.status !== "any") sp.set("status", state.status);
   if (state.metadataCompleteness)
     sp.set("metadata_completeness", state.metadataCompleteness);
-  if (state.providerMatch) sp.set("provider_match", state.providerMatch);
+  if (state.providerMatch) {
+    sp.set("provider_match", state.providerMatch);
+    // The source only means something next to the facet.
+    if (state.providerSource) sp.set("provider_source", state.providerSource);
+  }
   if (state.readStatus.length)
     sp.set("read_status", state.readStatus.join(","));
   if (state.startsWith) sp.set("starts_with", state.startsWith);

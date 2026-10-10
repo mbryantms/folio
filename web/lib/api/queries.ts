@@ -210,6 +210,9 @@ export type SeriesListFilters = {
    *  provider id. The admin metadata dashboard's "Unmatched" tile deep-links
    *  here. */
   provider_match?: string;
+  /** `comicvine` | `metron` | `gcd`: narrows `provider_match` to one
+   *  provider. The admin Coverage tab deep-links here. */
+  provider_source?: string;
 };
 
 export type IssueListFilters = {
@@ -3002,7 +3005,22 @@ import type {
   RunDetailResp,
   RunsListResp,
   AutoSyncedResp,
+  MetadataCoverageResp,
 } from "./types";
+
+/** The admin Coverage tab's snapshot (identifier coverage, completeness
+ *  tiers, gaps, tag sources, tool state, fill costs). Served from a 6 h
+ *  Redis cache; `refresh` recomputes. */
+export function useAdminMetadataCoverage(refresh = false) {
+  return useQuery({
+    queryKey: queryKeys.adminMetadataCoverage(refresh),
+    queryFn: () =>
+      jsonFetch<MetadataCoverageResp>(
+        `/admin/metadata/coverage${refresh ? "?refresh=true" : ""}`,
+      ),
+    staleTime: 60_000,
+  });
+}
 
 export function useAdminMetadataDashboard() {
   return useQuery({

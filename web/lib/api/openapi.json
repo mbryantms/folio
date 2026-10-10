@@ -974,6 +974,36 @@
         }
       }
     },
+    "/api/admin/metadata/coverage": {
+      "get": {
+        "operationId": "admin_metadata_coverage",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "description": "Recompute instead of serving the cached snapshot.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetadataCoverageResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
     "/api/admin/metadata/csv-cache-backfill": {
       "post": {
         "operationId": "metadata_csv_cache_backfill",
@@ -20574,6 +20604,23 @@
           "has_favorites"
         ]
       },
+      "FieldCount": {
+        "type": "object",
+        "required": [
+          "field",
+          "issues"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "[`crate::metadata::MetadataField::key`] or\n[`completeness::EXTERNAL_ID_KEY`]."
+          },
+          "issues": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "FieldProvenanceRow": {
         "type": "object",
         "description": "One field's provenance: which source set it, when, and (for provider\nsources) which external record it came from.",
@@ -20604,6 +20651,111 @@
           "source_label": {
             "type": "string",
             "description": "Human label for `set_by` (e.g. `\"ComicInfo.xml\"`, `\"You\"`)."
+          }
+        }
+      },
+      "FillCost": {
+        "type": "object",
+        "required": [
+          "source",
+          "issues_without_id",
+          "series_without_id",
+          "via_lists_requests",
+          "via_detail_requests",
+          "daily_budget",
+          "list_page_size"
+        ],
+        "properties": {
+          "daily_budget": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The provider's documented daily budget for detail requests."
+          },
+          "issues_without_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active issues without this provider's id."
+          },
+          "list_page_size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "series_without_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Series without this provider's series id."
+          },
+          "source": {
+            "type": "string"
+          },
+          "via_detail_requests": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests to fetch each missing issue's detail record instead."
+          },
+          "via_lists_requests": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests to link ids from the provider's issue lists: one series\nsearch per unmatched series plus one list page per\n`list_page_size` issues of every series."
+          }
+        }
+      },
+      "FillTools": {
+        "type": "object",
+        "required": [
+          "weekly_refresh_enabled",
+          "weekly_refresh_cron",
+          "stale_after_days",
+          "issue_refresh_enabled",
+          "issue_refresh_per_provider_cap",
+          "auto_apply_libraries",
+          "libraries_total",
+          "coverage_analysed_series",
+          "series_synced",
+          "issues_synced"
+        ],
+        "properties": {
+          "auto_apply_libraries": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Libraries with `metadata_auto_apply_strong_matches` on."
+          },
+          "coverage_analysed_series": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Series with a coverage analysis still on record (24 h)."
+          },
+          "issue_refresh_enabled": {
+            "type": "boolean"
+          },
+          "issue_refresh_per_provider_cap": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "issues_synced": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "libraries_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "series_synced": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Series / issues ever synced with a provider through Folio."
+          },
+          "stale_after_days": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "weekly_refresh_cron": {
+            "type": "string"
+          },
+          "weekly_refresh_enabled": {
+            "type": "boolean"
           }
         }
       },
@@ -20974,6 +21126,31 @@
           "computed",
           "not_computed"
         ]
+      },
+      "IdentifierCoverage": {
+        "type": "object",
+        "required": [
+          "source",
+          "label",
+          "series_with_id",
+          "issues_with_id"
+        ],
+        "properties": {
+          "issues_with_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "label": {
+            "type": "string"
+          },
+          "series_with_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "source": {
+            "type": "string"
+          }
+        }
       },
       "IssueCastView": {
         "type": "object",
@@ -22026,6 +22203,45 @@
           },
           "summary": {
             "type": "string"
+          }
+        }
+      },
+      "LibraryGap": {
+        "type": "object",
+        "required": [
+          "library_id",
+          "name",
+          "slug",
+          "issues_total",
+          "without_comicvine",
+          "without_metron",
+          "without_gcd"
+        ],
+        "properties": {
+          "issues_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "library_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "without_comicvine": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "without_gcd": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "without_metron": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -23361,6 +23577,127 @@
           "total": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "MetadataCoverageResp": {
+        "type": "object",
+        "required": [
+          "computed_at",
+          "cached",
+          "series_total",
+          "issues_total",
+          "libraries_total",
+          "identifiers",
+          "all_sources_series",
+          "all_sources_issues",
+          "tiers",
+          "missing_core",
+          "recommended",
+          "series_fields",
+          "by_library",
+          "top_series",
+          "tag_sources",
+          "tools",
+          "providers",
+          "fill_cost"
+        ],
+        "properties": {
+          "all_sources_issues": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "all_sources_series": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Series / issues that carry all three provider ids."
+          },
+          "by_library": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryGap"
+            },
+            "description": "Per library: issues without each provider's id. Libraries with no\nactive issues are omitted."
+          },
+          "cached": {
+            "type": "boolean",
+            "description": "`true` when this response came from the Redis cache."
+          },
+          "computed_at": {
+            "type": "string",
+            "description": "When the snapshot was computed (RFC 3339)."
+          },
+          "fill_cost": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FillCost"
+            },
+            "description": "What closing each provider's issue-id gap costs, by route."
+          },
+          "identifiers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdentifierCoverage"
+            },
+            "description": "One row per provider: how many series / issues carry its id."
+          },
+          "issues_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "libraries_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "missing_core": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldCount"
+            },
+            "description": "Core fields absent among the incomplete issues (not complete, not\naccepted), by field key."
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderView"
+            },
+            "description": "Live provider quota / budget views (same shape as the dashboard).\nLive state: filled on every response (the cached snapshot carries\nan empty list)."
+          },
+          "recommended": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldCount"
+            },
+            "description": "Recommended (non-gating) fields present, whole library."
+          },
+          "series_fields": {
+            "$ref": "#/components/schemas/SeriesFieldCounts"
+          },
+          "series_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tag_sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TagSourceRow"
+            },
+            "description": "Which tagging tool wrote the files' sidecars, and which ids the\nscanner read from them."
+          },
+          "tiers": {
+            "$ref": "#/components/schemas/TierCounts",
+            "description": "Issue completeness tiers, library-wide."
+          },
+          "tools": {
+            "$ref": "#/components/schemas/FillTools",
+            "description": "The state of the tools that close the gap over time."
+          },
+          "top_series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TopSeriesForSource"
+            },
+            "description": "Per provider: the series with the most issues lacking its id."
           }
         }
       },
@@ -28555,6 +28892,28 @@
           }
         }
       },
+      "SeriesFieldCounts": {
+        "type": "object",
+        "required": [
+          "with_summary",
+          "with_series_type",
+          "synced"
+        ],
+        "properties": {
+          "synced": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "with_series_type": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "with_summary": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "SeriesListView": {
         "type": "object",
         "required": [
@@ -29868,6 +30227,38 @@
           }
         }
       },
+      "TagSourceRow": {
+        "type": "object",
+        "required": [
+          "tool",
+          "issues",
+          "with_comicvine",
+          "with_metron",
+          "with_gcd"
+        ],
+        "properties": {
+          "issues": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tool": {
+            "type": "string",
+            "description": "`folio` | `comictagger_comicvine` | `comictagger_metron` |\n`comictagger_gcd` | `comictagger_other` | `mylar` | `scraper` |\n`untagged`."
+          },
+          "with_comicvine": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "with_gcd": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "with_metron": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "TaskWorkView": {
         "type": "object",
         "description": "A long-running task spawned outside the job queues.",
@@ -30181,6 +30572,33 @@
           }
         }
       },
+      "TierCounts": {
+        "type": "object",
+        "required": [
+          "complete",
+          "partial",
+          "needs_metadata",
+          "accepted"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "complete": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "needs_metadata": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "partial": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "TimeOfDayBuckets": {
         "type": "object",
         "required": [
@@ -30294,6 +30712,51 @@
           "sessions": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "TopSeriesForSource": {
+        "type": "object",
+        "required": [
+          "source",
+          "series"
+        ],
+        "properties": {
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TopSeriesRow"
+            }
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
+      "TopSeriesRow": {
+        "type": "object",
+        "required": [
+          "slug",
+          "name",
+          "issues_without_id"
+        ],
+        "properties": {
+          "issues_without_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
           }
         }
       },

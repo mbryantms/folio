@@ -105,6 +105,8 @@ export function LibraryGridView({
     setMetadataCompleteness,
     providerMatch,
     setProviderMatch,
+    providerSource,
+    setProviderSource,
     readStatus,
     setReadStatus,
     startsWith,
@@ -433,6 +435,7 @@ export function LibraryGridView({
           status={status}
           metadataCompleteness={metadataCompleteness}
           providerMatch={providerMatch}
+          providerSource={providerSource}
           readStatus={readStatus}
           yearFrom={yearFrom}
           yearTo={yearTo}
@@ -449,7 +452,10 @@ export function LibraryGridView({
           locations={locations}
           onClearStatus={() => setStatus("any")}
           onClearMetadataCompleteness={() => setMetadataCompleteness(undefined)}
-          onClearProviderMatch={() => setProviderMatch(undefined)}
+          onClearProviderMatch={() => {
+            setProviderMatch(undefined);
+            setProviderSource(undefined);
+          }}
           onRemoveReadStatus={(v) =>
             setReadStatus(readStatus.filter((x) => x !== v))
           }
@@ -598,7 +604,10 @@ export function LibraryGridView({
         metadataCompleteness={metadataCompleteness}
         onMetadataCompleteness={setMetadataCompleteness}
         providerMatch={providerMatch}
-        onProviderMatch={setProviderMatch}
+        onProviderMatch={(v) => {
+          setProviderMatch(v);
+          if (!v) setProviderSource(undefined);
+        }}
         readStatus={readStatus}
         onReadStatus={setReadStatus}
         yearFrom={yearFrom}

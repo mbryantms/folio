@@ -177,3 +177,30 @@ describe("parseStartsWithParam", () => {
     expect(parseStartsWithParam(undefined)).toBeUndefined();
   });
 });
+
+describe("provider_source", () => {
+  it("round-trips next to provider_match and is dropped without it", () => {
+    const withSource = baseState({
+      providerMatch: "unmatched",
+      providerSource: "metron",
+    });
+    const qs = serializeLibraryGridFilters(withSource);
+    expect(qs).toContain("provider_match=unmatched");
+    expect(qs).toContain("provider_source=metron");
+    const parsed = parseLibraryGridFilters(
+      Object.fromEntries(new URLSearchParams(qs)),
+    );
+    expect(parsed?.providerMatch).toBe("unmatched");
+    expect(parsed?.providerSource).toBe("metron");
+    // No facet: the source means nothing and is not emitted.
+    const bare = baseState({ providerSource: "gcd" });
+    expect(serializeLibraryGridFilters(bare)).not.toContain("provider_source");
+    // Unknown sources are ignored.
+    expect(
+      parseLibraryGridFilters({
+        provider_match: "matched",
+        provider_source: "wikipedia",
+      })?.providerSource,
+    ).toBeUndefined();
+  });
+});

@@ -953,6 +953,18 @@ export type CompositeProposal = Schemas["CompositeProposal"];
 export type CompositeApplyResp = Schemas["CompositeApplyResp"];
 // M6 admin surface
 export type DashboardResp = Schemas["DashboardResp"];
+// Admin › Metadata › Coverage tab (visibility only).
+export type MetadataCoverageResp = Schemas["MetadataCoverageResp"];
+export type IdentifierCoverage = Schemas["IdentifierCoverage"];
+export type TierCounts = Schemas["TierCounts"];
+export type FieldCount = Schemas["FieldCount"];
+export type SeriesFieldCounts = Schemas["SeriesFieldCounts"];
+export type LibraryGap = Schemas["LibraryGap"];
+export type TopSeriesForSource = Schemas["TopSeriesForSource"];
+export type TopSeriesRow = Schemas["TopSeriesRow"];
+export type TagSourceRow = Schemas["TagSourceRow"];
+export type FillTools = Schemas["FillTools"];
+export type FillCost = Schemas["FillCost"];
 export type MatchQualityResp = Schemas["MatchQualityResp"];
 export type MatchQualityWindow = Schemas["MatchQualityWindow"];
 export type ProviderView = Schemas["ProviderView"];

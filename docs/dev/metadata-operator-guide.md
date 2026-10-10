@@ -181,6 +181,17 @@ and the
   *real* remaining budget comes from the `X-RateLimit-{Burst,Sustained}-
   {Limit,Remaining,Reset}` headers Metron returns on every response
   (`Reset` is a Unix timestamp), which Folio stores after each call.
+- **Coverage tab.** `/admin/metadata` → Coverage shows, for the whole
+  library, how many series and issues carry each provider's id (with
+  links into the grid: `?provider_match=unmatched&provider_source=metron`),
+  the issue completeness tiers and which core fields are missing, the
+  libraries and series with the most unmatched issues, which tagging tool
+  wrote the files' sidecars (and whether its ids were read), the state of
+  weekly refresh / issue refresh / strong-match auto-apply / coverage
+  analyses, the live budgets, and what closing each gap costs via provider
+  issue lists versus per-issue fetches. It is visibility only — nothing on
+  it starts work. The snapshot is cached for six hours; **Recompute**
+  refreshes it.
 - **Budget bar.** `/admin/metadata` → Providers shows, per provider,
   a bar for the headline window — Metron's daily budget as last
   reported upstream (or the local day bucket before the first call),

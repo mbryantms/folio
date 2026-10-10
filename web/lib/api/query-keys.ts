@@ -390,6 +390,8 @@ export const queryKeys = {
   issueCovers: (issueId: string) => ["issues", issueId, "covers"] as const,
   // ── M6 admin surface ──
   adminMetadataDashboard: ["admin", "metadata", "dashboard"] as const,
+  adminMetadataCoverage: (refresh: boolean) =>
+    ["admin", "metadata", "coverage", refresh] as const,
   adminMetadataMatchQuality: ["admin", "metadata", "match-quality"] as const,
   adminMetadataProviders: ["admin", "metadata", "providers"] as const,
   adminMetadataRuns: (filters: {

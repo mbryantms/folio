@@ -1,8 +1,10 @@
 "use client";
 
 /**
- * Tab shell for `/admin/metadata`. Five tabs:
+ * Tab shell for `/admin/metadata`. Tabs:
  *   - Dashboard — counts + quota gauges (M6)
+ *   - Coverage — identifier / completeness coverage of the whole library
+ *     and the state of the tools that fill it (visibility only)
  *   - Providers — per-provider test buttons + credential forms (M6)
  *   - Review — bulk-fetch result queue, deep-linkable via `?batch=`
  *   - Runs — paginated metadata_run history with detail drilldown (M6)
@@ -45,8 +47,14 @@ const ReviewTab = dynamic(
   },
 );
 
+const CoverageTab = dynamic(
+  () => import("./CoverageTab").then((m) => m.CoverageTab),
+  { ssr: false, loading: () => <Skeleton className="h-64 w-full" /> },
+);
+
 const TABS = [
   { value: "dashboard", label: "Dashboard" },
+  { value: "coverage", label: "Coverage" },
   { value: "review", label: "Review" },
   { value: "providers", label: "Providers" },
   { value: "auto-synced", label: "Auto-synced" },
@@ -75,6 +83,9 @@ export function AdminMetadataTabs() {
       </TabsList>
       <TabsContent value="dashboard" className="pt-4">
         <DashboardTab />
+      </TabsContent>
+      <TabsContent value="coverage" className="pt-4">
+        <CoverageTab />
       </TabsContent>
       <TabsContent value="review" className="pt-4">
         <ReviewTab initialBatchId={initialBatchId} />

@@ -59,7 +59,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(list_auto_synced))
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ProviderView {
     /// Stable identifier — `"comicvine"` | `"metron"` (M2) | `"gcd"` (WP-6.1).
     pub id: String,
@@ -79,7 +79,7 @@ pub struct ProviderView {
     pub last_error: Option<ProviderLastError>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct QuotaView {
     pub remaining_hour: Option<u32>,
     pub remaining_day: Option<u32>,
@@ -114,7 +114,7 @@ pub async fn list_providers(State(app): State<AppState>, _admin: RequireAdmin) -
 
 /// One `ProviderView` per known provider — shared by `list_providers`
 /// and the dashboard so the two surfaces can't drift.
-async fn provider_views(app: &AppState) -> Vec<ProviderView> {
+pub(crate) async fn provider_views(app: &AppState) -> Vec<ProviderView> {
     let cfg = app.cfg();
     let redis = &app.jobs.redis;
     let mut providers = Vec::with_capacity(3);
