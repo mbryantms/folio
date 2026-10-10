@@ -197,13 +197,11 @@ async fn mount(extended_1713: bool) -> Mocks {
         .respond_with(CvDetail(cv_rows.clone()))
         .mount(&cv)
         .await;
-    for p in ["/issues", "/search"] {
-        Mock::given(method("GET"))
-            .and(path(p))
-            .respond_with(ok(json!({"status_code": 1, "error": "OK", "results": []})))
-            .mount(&cv)
-            .await;
-    }
+    Mock::given(method("GET"))
+        .and(path("/issues"))
+        .respond_with(ok(json!({"status_code": 1, "error": "OK", "results": []})))
+        .mount(&cv)
+        .await;
 
     let m1711 = [
         fixture("metron_issues_1711_p1.json"),
@@ -274,11 +272,10 @@ fn has_param(r: &WmRequest, k: &str) -> bool {
     r.url.query_pairs().any(|(key, _)| key == k)
 }
 
+/// By-number issue lookups (`/issues?filter=issue_number:…`), the second
+/// leg of a ComicVine by-name search.
 async fn cv_searches(m: &Mocks) -> usize {
-    count(&m.cv, |r| {
-        r.url.path() == "/issues" || r.url.path() == "/search"
-    })
-    .await
+    count(&m.cv, |r| r.url.path() == "/issues").await
 }
 
 async fn metron_searches(m: &Mocks) -> usize {
@@ -642,6 +639,16 @@ async fn compare_mode_uses_coverage_assigned_candidates() {
 #[tokio::test]
 async fn compare_mode_without_coverage_is_todays_search() {
     let m = mount(false).await;
+    // A by-name ComicVine search first finds the volumes with that name,
+    // then asks each for the number.
+    Mock::given(method("GET"))
+        .and(path("/volumes"))
+        .respond_with(ok(json!({
+            "status_code": 1, "error": "OK",
+            "results": [{"id": 6211, "name": "Fantastic Four", "start_year": "1961"}]
+        })))
+        .mount(&m.cv)
+        .await;
     let app = TestApp::spawn_with_all_providers(m.cv.uri(), m.metron.uri(), m.gcd.uri()).await;
     let cookie = register_admin(&app).await;
     let ff = seed_ff(&app, &[("600".into(), 2012, 1)], false).await;

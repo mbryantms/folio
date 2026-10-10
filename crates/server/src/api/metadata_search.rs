@@ -1104,7 +1104,8 @@ pub async fn search_issue(
             },
         ),
         special_type: i.special_type.clone(),
-        archive_series_name: crate::metadata::sidecar_compose::archive_series_name(&i),
+        archive_series_name: crate::metadata::sidecar_compose::special_series_name(&i, &s.name)
+            .or_else(|| crate::metadata::sidecar_compose::archive_series_name(&i)),
     };
     overrides.apply_to_issue(&mut facts);
     let year_asserted = overrides.year.is_some();
@@ -1328,7 +1329,8 @@ pub async fn lookup_issue(
             },
         ),
         special_type: i.special_type.clone(),
-        archive_series_name: crate::metadata::sidecar_compose::archive_series_name(&i),
+        archive_series_name: crate::metadata::sidecar_compose::special_series_name(&i, &s.name)
+            .or_else(|| crate::metadata::sidecar_compose::archive_series_name(&i)),
     };
     run_lookup(
         &app,
@@ -1483,6 +1485,7 @@ async fn run_lookup(
             matched_via_alternate: false,
             format: 0.0,
             format_mismatch: false,
+            parent_run_collision: false,
         },
         bucket: crate::metadata::matcher::Confidence::High,
         payload,

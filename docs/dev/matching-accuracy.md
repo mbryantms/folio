@@ -93,6 +93,31 @@ tankōbon volume that providers file as either ongoing issues or trades.
 A `OneShot` special type is skipped too, because the scanner infers it
 from a missing number.
 
+**Specials filed under their host run** (annuals, specials, one-shots
+in the run's folder, `issue.special_type` set). Three rules keep them
+off the run's same-numbered issue:
+
+- **The query leaves the run.** `sidecar_compose::special_series_name`
+  gives the special its own series — the archive's `<Series>` when it
+  names another series, else `"<Series> Annual"` for an annual, else the
+  filename's series (`Wonder Woman Secret Files _ Origins 003.cbz` →
+  `Wonder Woman Secret Files & Origins`) — and
+  `orchestrator::special_query_rewrite` searches that instead of the
+  host. The composer uses the same name, so a series apply never writes
+  the host's name into a special that carried no sidecar (which is what
+  used to turn "Secret Files #3" into a search for the run's #3).
+- **The host's twin is held at LOW.** `Score::parent_run_collision`: a
+  candidate from the host series with the special's number is a
+  different comic; `bucket()` keeps it LOW unless the cover is a strong
+  match (`≤ STRONG_SCORE_THRESH`). This is what stops cover-less GCD
+  calling the run's #3 HIGH for a Secret Files #3.
+- **ComicVine searches by name through volumes.** With no volume id
+  the client finds the volumes named like the query (`/volumes`, up to
+  5 by name similarity, dropping any that start after the cover year +
+  1) and asks each for the number (`/issues?filter=issue_number:…,
+  volume:…`). The old `/search` path parsed its flat result list as a
+  per-resource map and failed on every hit.
+
 **Untagged issues default to Single** (owner decision 2026-09-30). This
 applies when nothing above matched and the issue number is plain: an
 integer, a decimal, or `½`, with no `Annual` or volume marker and no

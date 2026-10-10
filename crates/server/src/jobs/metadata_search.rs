@@ -602,7 +602,8 @@ pub async fn enqueue_issue_search_with(
             },
         ),
         special_type: i.special_type.clone(),
-        archive_series_name: crate::metadata::sidecar_compose::archive_series_name(&i),
+        archive_series_name: crate::metadata::sidecar_compose::special_series_name(&i, &s.name)
+            .or_else(|| crate::metadata::sidecar_compose::archive_series_name(&i)),
     };
 
     // Ids only — building the clients here would cost three TLS client

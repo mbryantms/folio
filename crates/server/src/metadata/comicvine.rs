@@ -8,7 +8,6 @@
 //! (`rate_limit::COMICVINE_SEC`).
 //!
 //! Endpoints we use:
-//! - `GET /search?resources=volume,issue,publisher&query=...` — keyword search.
 //! - `GET /volumes?filter=name:...` — series search (name only; year filtering
 //!   is the tolerant `pre_filter_series` gate's job, not a hard provider filter).
 //! - `GET /volume/4050-{id}` — series detail.
@@ -83,6 +82,13 @@ pub const ISSUE_LIST_PAGE_SIZE: usize = 100;
 /// Default page cap for one volume listing (2,000 issues). Past it the
 /// listing is returned with `complete = false`.
 pub const ISSUE_LIST_MAX_PAGES: u32 = 20;
+
+/// By-name issue search: how many volumes `/volumes?filter=name:` may
+/// return, how many of those (best name match first) are asked for the
+/// number, and the name similarity a volume needs to be asked at all.
+const NAME_SEARCH_VOLUME_LIMIT: u32 = 25;
+const NAME_SEARCH_VOLUME_CAP: usize = 5;
+const NAME_SEARCH_VOLUME_FLOOR: f32 = 0.5;
 
 const ISSUE_FIELDS: &str = "id,name,issue_number,cover_date,store_date,deck,description,image,associated_images,person_credits,character_credits,team_credits,location_credits,concept_credits,object_credits,story_arc_credits,first_appearance_characters,first_appearance_teams,first_appearance_locations,first_appearance_concepts,first_appearance_objects,first_appearance_storyarcs,characters_died_in,teams_disbanded_in,volume,site_detail_url,date_last_updated,aliases";
 
@@ -203,6 +209,50 @@ impl ComicVineClient {
         Err(ProviderError::Transport(
             "comicvine: velocity bucket busy for too long".to_owned(),
         ))
+    }
+
+    /// Ids of the volumes named `name`, best name match first, at most
+    /// [`NAME_SEARCH_VOLUME_CAP`]. A volume that starts after `cover_year`
+    /// + 1 can't carry the issue and is dropped before it costs a request.
+    async fn volumes_for_name(
+        &self,
+        name: &str,
+        cover_year: Option<i32>,
+    ) -> ProviderResult<Vec<String>> {
+        let envelope: CvEnvelope<Vec<CvVolume>> = self
+            .request(
+                "/volumes",
+                &[
+                    ("filter", format!("name:{}", name.replace(',', " "))),
+                    ("limit", NAME_SEARCH_VOLUME_LIMIT.to_string()),
+                    ("field_list", "id,name,start_year".to_owned()),
+                ],
+            )
+            .await?;
+        let mut scored: Vec<(f32, i64)> = envelope
+            .results
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|v| {
+                let id = v.id?;
+                if let (Some(c), Some(s)) = (cover_year, parse_year(&v.start_year))
+                    && s > c + 1
+                {
+                    return None;
+                }
+                let sim = crate::metadata::matcher::name_similarity(
+                    name,
+                    v.name.as_deref().unwrap_or(""),
+                );
+                (sim >= NAME_SEARCH_VOLUME_FLOOR).then_some((sim, id))
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+        Ok(scored
+            .into_iter()
+            .take(NAME_SEARCH_VOLUME_CAP)
+            .map(|(_, id)| id.to_string())
+            .collect())
     }
 
     async fn request<T: serde::de::DeserializeOwned>(
@@ -923,34 +973,28 @@ impl MetadataProvider for ComicVineClient {
         if let Some(vol) = query.series_external_id.as_deref() {
             filters.push(format!("volume:{vol}"));
         } else if let Some(name) = query.series_name.as_deref() {
-            // CV's /issues endpoint doesn't filter by volume_name, so
-            // fall back to the search endpoint which scores across
-            // both volume and issue resources.
-            let envelope: CvEnvelope<CvSearchResults> = self
-                .request(
-                    "/search",
-                    &[
-                        ("resources", "issue".to_owned()),
-                        ("query", name.to_owned()),
-                        ("limit", limit.clone()),
-                        ("field_list", ISSUE_FIELDS.to_owned()),
-                    ],
-                )
-                .await?;
-            let mut out = envelope
-                .results
-                .map(|r| r.issue.unwrap_or_default())
-                .unwrap_or_default();
-            // Filter to matching issue_number client-side since
-            // /search doesn't honour the filter param. Compare canonical
-            // forms so "014" (scan) matches CV's "14".
-            out.retain(|i| {
-                i.issue_number
-                    .as_deref()
-                    .map(|n| canonical_issue_number(n) == qnum)
-                    .unwrap_or(false)
-            });
-            return Ok(out.iter().filter_map(cv_issue_to_candidate).collect());
+            // CV's /issues endpoint doesn't filter by volume name, and its
+            // /search endpoint ranks across every resource (an issue asked
+            // for by number is rarely on its first page — and its results
+            // are a flat list of mixed resources, not keyed by type). Find
+            // the volumes with that name, then ask each for the number:
+            // ComicTagger's shape.
+            let mut out = Vec::new();
+            for vol in self.volumes_for_name(name, query.cover_year).await? {
+                let envelope: CvEnvelope<Vec<CvIssue>> = self
+                    .request(
+                        "/issues",
+                        &[
+                            ("filter", format!("issue_number:{qnum},volume:{vol}")),
+                            ("limit", limit.clone()),
+                            ("field_list", ISSUE_FIELDS.to_owned()),
+                        ],
+                    )
+                    .await?;
+                let results = envelope.results.unwrap_or_default();
+                out.extend(results.iter().filter_map(cv_issue_to_candidate));
+            }
+            return Ok(out);
         }
         let envelope: CvEnvelope<Vec<CvIssue>> = self
             .request(
@@ -1104,20 +1148,6 @@ fn redact_api_key(s: &str) -> String {
     }
     out.push_str(rest);
     out
-}
-
-// CV /search responses are typed per-resource-key; the API returns
-// `{ results: { issue: [...], volume: [...] } }` when multiple
-// resources are requested OR `{ results: [...] }` for a single
-// resource. We only ask for one resource at a time, but it's still
-// keyed-by-resource in the response.
-#[derive(Debug, Deserialize, Default)]
-#[allow(dead_code)] // `volume` reserved for future cross-resource searches
-struct CvSearchResults {
-    #[serde(default)]
-    issue: Option<Vec<CvIssue>>,
-    #[serde(default)]
-    volume: Option<Vec<CvVolume>>,
 }
 
 #[cfg(test)]

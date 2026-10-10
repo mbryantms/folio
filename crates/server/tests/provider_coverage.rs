@@ -973,13 +973,21 @@ async fn comicvine_listing_paginates_past_100() {
 async fn uncovered_issues_are_reported_within_budget() {
     let cv = MockServer::start().await;
     mount_cv_daredevil(&cv).await;
-    // Gap issue searches (broad, by name) find nothing.
-    Mock::given(method("GET"))
-        .and(path("/search"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(cv_env(json!({"issue": []}), 0)))
-        .expect(2)
-        .mount(&cv)
-        .await;
+    // Gap issue searches (broad, by name) find nothing. A ComicVine by-name
+    // search is the volume search plus one `/issues` lookup per matching
+    // volume: both Daredevil volumes start before the gap issues' years.
+    for (n, vol) in [("4.5", 2190), ("4.5", 6458), ("499", 2190), ("499", 6458)] {
+        Mock::given(method("GET"))
+            .and(path("/issues"))
+            .and(query_param(
+                "filter",
+                format!("issue_number:{n},volume:{vol}"),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(cv_env(json!([]), 0)))
+            .expect(1)
+            .mount(&cv)
+            .await;
+    }
     let app = TestApp::spawn_with_comicvine_at("cv-key", cv.uri()).await;
     // #4.5, #499 and #900 exist in no volume. Each sits between covered
     // issues, so they are three separate runs — but the gap search budget
@@ -992,10 +1000,12 @@ async fn uncovered_issues_are_reported_within_budget() {
     assert_eq!(c["uncovered"], json!(["4.5", "499", "900"]), "{c}");
     assert!(cell(c, "900")["provider_series_id"].is_null());
     assert_eq!(c["main_series_id"], "6458");
-    // 1 series search + 2 listings + 2 gap searches.
+    // 1 series search + 2 listings + 2 gap searches: the budget counts
+    // provider calls, and each by-name gap search is 3 HTTP requests
+    // underneath (volumes, then the number in each of the two volumes).
     assert_eq!(c["requests"], 5);
     assert!(c["requests"].as_u64().unwrap() <= c["request_budget"].as_u64().unwrap());
-    assert_eq!(cv.received_requests().await.unwrap().len(), 5);
+    assert_eq!(cv.received_requests().await.unwrap().len(), 9);
     // Unconfigured providers are reported as such.
     assert_eq!(provider(&body, "metron")["status"], "not_configured");
     assert_eq!(provider(&body, "gcd")["status"], "not_configured");

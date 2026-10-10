@@ -1847,6 +1847,9 @@ pub async fn analyze_provider<C: ConnectionTrait>(
                     break;
                 }
             };
+            // One unit per provider call; a by-name search may be several
+            // HTTP requests underneath (ComicVine: the volumes, then the
+            // number in each), as a GCD search already was.
             budget.used += 1;
             let Ok(cands) = res else { continue };
             for ic in cands {

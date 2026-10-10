@@ -187,7 +187,7 @@ async fn mount() -> Mocks {
         .respond_with(CvDetail(cv_rows.clone()))
         .mount(&cv)
         .await;
-    for p in ["/issues", "/search"] {
+    for p in ["/issues", "/volumes"] {
         Mock::given(method("GET"))
             .and(path(p))
             .respond_with(ok(json!({"status_code": 1, "error": "OK", "results": []})))
@@ -259,10 +259,7 @@ fn has_param(r: &WmRequest, k: &str) -> bool {
 }
 
 async fn cv_searches(m: &Mocks) -> usize {
-    count(&m.cv, |r| {
-        r.url.path() == "/issues" || r.url.path() == "/search"
-    })
-    .await
+    count(&m.cv, |r| r.url.path() == "/issues").await
 }
 
 async fn metron_searches(m: &Mocks) -> usize {

@@ -738,12 +738,62 @@ fn series_name_for_issue(ctx: &ComposeContext) -> Option<String> {
     {
         return Some(p.to_owned());
     }
+    if let Some(own) = special_series_name(ctx.issue, &ctx.series.name) {
+        return Some(own);
+    }
     if let Some(own) = archive_series_name(ctx.issue)
         && names_a_different_series(&own, &ctx.series.name)
     {
         return Some(own);
     }
     Some(ctx.series.name.clone()).filter(|s| !s.trim().is_empty())
+}
+
+/// The series a special is filed under at the providers, when the
+/// folder's series is only its host: the archive's own `<Series>` when
+/// it names a different series; else, for an annual, `"<Series> Annual"`;
+/// else the filename's series when *it* names a different one
+/// (`Wonder Woman Secret Files _ Origins 001 (1998).cbz` under Wonder
+/// Woman). `None` for an ordinary issue, and for a special whose own
+/// identity is nowhere to be found — the host's name is then the best
+/// there is. Feeds both the composer (so a series apply never writes the
+/// host's name into a special that carried none) and the issue search
+/// (`orchestrator::special_query_rewrite`).
+pub fn special_series_name(issue: &issue::Model, series_name: &str) -> Option<String> {
+    let special = issue
+        .special_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    if let Some(own) =
+        archive_series_name(issue).filter(|n| names_a_different_series(n, series_name))
+    {
+        return Some(own);
+    }
+    let host = series_name.trim();
+    match special {
+        "Annual" => Some(if crate::metadata::title_norm::has_annual_token(host) {
+            host.to_owned()
+        } else {
+            format!("{host} Annual")
+        }),
+        _ => {
+            let leaf = std::path::Path::new(&issue.file_path)
+                .file_name()?
+                .to_str()?;
+            let inferred = tidy_filename_series(&parsers::filename::infer(leaf).series);
+            (!inferred.is_empty() && names_a_different_series(&inferred, host)).then_some(inferred)
+        }
+    }
+}
+
+/// `"Wonder Woman Secret Files _ Origins"` → `"Wonder Woman Secret Files
+/// & Origins"`: a lone `_` is how a filename spells the `&` it can't carry.
+fn tidy_filename_series(s: &str) -> String {
+    s.split_whitespace()
+        .map(|t| if t == "_" { "&" } else { t })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The `<Series>` the archive itself carries (`comic_info_raw`), if any.
@@ -1208,6 +1258,82 @@ mod tests {
             metadata_review_accepted_at: None,
             metadata_review_accepted_by: None,
         }
+    }
+
+    fn special(file: &str, special_type: &str, archive_series: Option<&str>) -> issue::Model {
+        let mut i = make_issue("");
+        i.file_path = format!("/library/Wonder Woman (1987)/Specials/{file}");
+        i.special_type = Some(special_type.into());
+        if let Some(s) = archive_series {
+            i.comic_info_raw = serde_json::json!({ "series": s });
+        }
+        i
+    }
+
+    #[test]
+    fn special_series_name_finds_the_specials_own_series() {
+        // An annual with no sidecar: the host's name plus "Annual".
+        let annual = special("Wonder Woman Annual 007 (1998) (scan).cbz", "Annual", None);
+        assert_eq!(
+            special_series_name(&annual, "Wonder Woman").as_deref(),
+            Some("Wonder Woman Annual")
+        );
+        // A special with no sidecar: the filename's series, `_` read as `&`.
+        let sf = special(
+            "Wonder Woman Secret Files _ Origins 003 (2002) (scan).cbz",
+            "Special",
+            None,
+        );
+        assert_eq!(
+            special_series_name(&sf, "Wonder Woman").as_deref(),
+            Some("Wonder Woman Secret Files & Origins")
+        );
+        // The archive's own `<Series>` wins when it names another series.
+        let tagged = special(
+            "Wonder Woman Secret Files _ Origins 001 (1998).cbz",
+            "Special",
+            Some("Wonder Woman: Secret Files & Origins"),
+        );
+        assert_eq!(
+            special_series_name(&tagged, "Wonder Woman").as_deref(),
+            Some("Wonder Woman: Secret Files & Origins")
+        );
+        // A one-shot whose filename only says the host's name: nothing better
+        // than the host, so nothing.
+        let bare = special("Wonder Woman 001 (1992).cbz", "OneShot", None);
+        assert_eq!(special_series_name(&bare, "Wonder Woman"), None);
+        // An ordinary issue is never rewritten.
+        let mut plain = special("Wonder Woman V1987 003 (April 1987).cbz", "", None);
+        plain.special_type = None;
+        assert_eq!(special_series_name(&plain, "Wonder Woman"), None);
+    }
+
+    #[test]
+    fn series_apply_composes_a_specials_own_series_not_the_hosts() {
+        // The series-scope payload reaches a special with its identity
+        // stripped (`apply::strip_series_identity`): the composed `<Series>`
+        // must be the special's own, not the host run's.
+        let series = make_series("Wonder Woman");
+        let issue = special("Wonder Woman Annual 007 (1998) (scan).cbz", "Annual", None);
+        let mut provider = make_provider();
+        provider.series_name = None;
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &empty_ids(),
+            series_external_ids: &empty_ids(),
+            issue_user_pins: &empty_pins(),
+            series_user_pins: &empty_pins(),
+        };
+        assert_eq!(
+            compose_comicinfo(&ctx).series.as_deref(),
+            Some("Wonder Woman Annual")
+        );
+        assert_eq!(
+            compose_metroninfo(&ctx).series.as_deref(),
+            Some("Wonder Woman Annual")
+        );
     }
 
     fn make_provider() -> GenericMetadata {

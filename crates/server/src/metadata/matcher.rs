@@ -148,6 +148,15 @@ pub struct Score {
     /// auto-applied, even on a strong cover match (a trade's cover is
     /// usually its first issue's cover).
     pub format_mismatch: bool,
+    /// True when the local issue is a special (annual / special /
+    /// one-shot) filed under its host run and the candidate is the host
+    /// run's issue of the same number. The run's #3 is never "Secret
+    /// Files #3", however well the text scores; [`Self::bucket`] holds
+    /// such a candidate at LOW unless a near-identical cover says
+    /// otherwise. `#[serde(default)]` for stored breakdowns that predate
+    /// the flag.
+    #[serde(default)]
+    pub parent_run_collision: bool,
 }
 
 impl Score {
@@ -179,6 +188,13 @@ impl Score {
             Some(_) => Confidence::Low,
             None => Confidence::from_score(self.total, thresholds),
         };
+        // A special's host-run twin (same series, same number) is a
+        // different comic; only a strong cover match can overrule that.
+        if self.parent_run_collision
+            && !matches!(self.cover_hamming, Some(d) if d <= STRONG_SCORE_THRESH)
+        {
+            return Confidence::Low;
+        }
         // WP-5.6: a known format mismatch is a *soft* penalty — it
         // demotes HIGH to MEDIUM (review, never auto-apply) but never
         // vetoes to LOW. Same shape as the gap-to-next-best guard.
@@ -294,10 +310,12 @@ pub struct IssueQueryFacts {
     /// provider series (`orchestrator::special_query_rewrite`).
     #[serde(default)]
     pub special_type: Option<String>,
-    /// The archive's own `<Series>` (`sidecar_compose::archive_series_name`)
-    /// — "Wonder Woman Secret Files" / "Wonder Woman Annual" for a special
-    /// filed under Wonder Woman. The query uses it when it names a
-    /// different series than the folder.
+    /// The special's own series (`sidecar_compose::special_series_name`:
+    /// the archive's `<Series>`, else `"<Series> Annual"`, else the
+    /// filename's series) — "Wonder Woman Secret Files" / "Wonder Woman
+    /// Annual" for a special filed under Wonder Woman; for an ordinary
+    /// issue, the archive's own `<Series>`. The query uses it when it
+    /// names a different series than the folder.
     #[serde(default)]
     pub archive_series_name: Option<String>,
 }
@@ -449,6 +467,7 @@ pub fn score_series_with_phash(
         matched_via_alternate,
         format,
         format_mismatch,
+        parent_run_collision: false,
     }
 }
 
@@ -536,6 +555,15 @@ pub fn score_issue_with_phash(
     let volume = 0.0;
     let (cover_hamming, matched_via_alternate) =
         best_cover_match(local_cover_phash, candidate_cover_phashes);
+    // A special filed under its host run shares its number with the
+    // run's own issue; a candidate from that run is not the special.
+    let parent_run_collision = matches!(
+        query.special_type.as_deref(),
+        Some("Annual" | "Special" | "OneShot")
+    ) && !candidate_annual
+        && issue_number >= W_ISSUE_NUMBER
+        && name_similarity(&query.series_name, candidate_series)
+            >= crate::metadata::coverage::NAME_FLOOR;
 
     // WP-5.6 format penalty. An "Annual N" number is the most specific
     // signal (it beats an inherited `series_type = ongoing`); otherwise
@@ -571,6 +599,7 @@ pub fn score_issue_with_phash(
         matched_via_alternate,
         format,
         format_mismatch,
+        parent_run_collision,
     }
 }
 
@@ -1349,6 +1378,49 @@ mod tests {
         // Bit-set diff: 0 vs 0xFF = 8 bits flipped → Hamming 8.
         let off_by_eight = score_series_with_phash(&q, &c, Some(0), &[Some(0xFF)]);
         assert_eq!(off_by_eight.cover_hamming, Some(8));
+    }
+
+    #[test]
+    fn a_specials_host_run_twin_is_low_unless_the_cover_proves_it() {
+        // "Secret Files #3" filed under Wonder Woman (1987): the run's own #3
+        // scores a perfect text match, and cover-less GCD would call it HIGH.
+        let q = IssueQueryFacts {
+            series_name: "Wonder Woman".into(),
+            series_year: Some(1987),
+            publisher: Some("DC Comics".into()),
+            volume: Some(2),
+            issue_number: "003".into(),
+            issue_year: Some(2002),
+            format: None,
+            special_type: Some("Special".into()),
+            archive_series_name: Some("Wonder Woman Secret Files & Origins".into()),
+        };
+        let twin = issue_candidate("Wonder Woman", Some(1987), "3");
+        let s = score_issue(&q, &twin);
+        assert!(s.parent_run_collision);
+        assert_eq!(s.bucket(Thresholds::default()), Confidence::Low);
+        // A near-identical cover overrules the guard.
+        let proven = score_issue_with_phash(&q, &twin, Some(0x1234), &[Some(0x1234)]);
+        assert_eq!(proven.bucket(Thresholds::default()), Confidence::High);
+        // A merely similar cover does not.
+        let close = score_issue_with_phash(&q, &twin, Some(0), &[Some(0b11_1111_1111_1111)]);
+        assert!(close.parent_run_collision);
+        assert_eq!(close.bucket(Thresholds::default()), Confidence::Low);
+        // The special's own series is not a collision.
+        let own = issue_candidate("Wonder Woman Secret Files", Some(1998), "3");
+        assert!(!score_issue(&q, &own).parent_run_collision);
+        // An annual's provider series ("<Series> Annual") isn't the run.
+        let mut aq = q.clone();
+        aq.special_type = Some("Annual".into());
+        let annual = issue_candidate("Wonder Woman Annual", Some(1988), "3");
+        assert!(!score_issue(&aq, &annual).parent_run_collision);
+        // An ordinary issue of the run keeps its text score.
+        let mut plain = q.clone();
+        plain.special_type = None;
+        plain.archive_series_name = None;
+        let s = score_issue(&plain, &twin);
+        assert!(!s.parent_run_collision);
+        assert_ne!(s.bucket(Thresholds::default()), Confidence::Low);
     }
 
     #[test]
