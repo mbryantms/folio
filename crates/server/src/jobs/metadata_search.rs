@@ -601,6 +601,8 @@ pub async fn enqueue_issue_search_with(
                 issue_number: i.number_raw.as_deref(),
             },
         ),
+        special_type: i.special_type.clone(),
+        archive_series_name: crate::metadata::sidecar_compose::archive_series_name(&i),
     };
 
     // Ids only — building the clients here would cost three TLS client

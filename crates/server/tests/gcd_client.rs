@@ -1078,6 +1078,8 @@ async fn issue_search_then_apply_round_trips_through_the_factory() {
         .await;
 
     let facts = IssueQueryFacts {
+        special_type: None,
+        archive_series_name: None,
         series_name: "Fantastic Four".into(),
         series_year: Some(1961),
         publisher: None,

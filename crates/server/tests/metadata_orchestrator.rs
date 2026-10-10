@@ -380,6 +380,8 @@ async fn run_issue_search_buckets_high_when_number_and_name_match() {
         app.state().jobs.redis.clone(),
     ))];
     let facts = IssueQueryFacts {
+        special_type: None,
+        archive_series_name: None,
         series_name: "Saga".into(),
         series_year: Some(2012),
         publisher: None,
@@ -470,6 +472,8 @@ async fn run_issue_search_range_target_rescues_relaunch_from_year_gate() {
     ))];
     // Local series started in 2001; the candidate relaunch started 2012.
     let facts = IssueQueryFacts {
+        special_type: None,
+        archive_series_name: None,
         series_name: "Fantastic Four".into(),
         series_year: Some(2001),
         publisher: None,
@@ -838,6 +842,8 @@ async fn run_issue_search_relaxes_the_narrowed_year_gate_when_cover_confirms() {
         app.state().jobs.redis.clone(),
     ))];
     let facts = IssueQueryFacts {
+        special_type: None,
+        archive_series_name: None,
         series_name: "Fantastic Four".into(),
         series_year: Some(2001),
         publisher: None,

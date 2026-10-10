@@ -289,6 +289,17 @@ pub struct IssueQueryFacts {
     /// penalty).
     #[serde(default)]
     pub format: Option<String>,
+    /// `issue.special_type` (`Annual` / `Special` / `OneShot` / `TPB`):
+    /// lets the query leave the parent run for the special's own
+    /// provider series (`orchestrator::special_query_rewrite`).
+    #[serde(default)]
+    pub special_type: Option<String>,
+    /// The archive's own `<Series>` (`sidecar_compose::archive_series_name`)
+    /// — "Wonder Woman Secret Files" / "Wonder Woman Annual" for a special
+    /// filed under Wonder Woman. The query uses it when it names a
+    /// different series than the folder.
+    #[serde(default)]
+    pub archive_series_name: Option<String>,
 }
 
 /// Local columns that feed [`local_issue_format_hint`].
@@ -1165,6 +1176,8 @@ mod tests {
             issue_number: "Annual 1".into(),
             issue_year: Some(2020),
             format: Some("ongoing".into()),
+            special_type: None,
+            archive_series_name: None,
         };
         let mut c = issue_candidate("X-Men Annual", Some(2020), "1");
         c.format = Some("Annual Series".into());
@@ -1218,6 +1231,8 @@ mod tests {
             issue_number: "1".into(),
             issue_year: None,
             format: None,
+            special_type: None,
+            archive_series_name: None,
         };
         let c = issue_candidate("Saga", Some(2012), "1");
         let s = score_issue(&q, &c);
@@ -1237,6 +1252,8 @@ mod tests {
             issue_number: "1".into(),
             issue_year: None,
             format: None,
+            special_type: None,
+            archive_series_name: None,
         };
         let c = issue_candidate("Saga", Some(2012), "5");
         let s = score_issue(&q, &c);

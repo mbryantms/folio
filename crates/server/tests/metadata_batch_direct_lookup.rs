@@ -831,6 +831,8 @@ async fn cover_hash_confirms_or_rejects_a_direct_lookup() {
         app.state().jobs.redis.clone(),
     ))];
     let facts = IssueQueryFacts {
+        special_type: None,
+        archive_series_name: None,
         series_name: "Fantastic Four".into(),
         series_year: Some(2001),
         publisher: Some("Marvel".into()),
