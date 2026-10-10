@@ -12902,6 +12902,7 @@
           "actor_type",
           "action",
           "payload",
+          "targets",
           "created_at"
         ],
         "properties": {
@@ -12952,6 +12953,13 @@
               "string",
               "null"
             ]
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkTargetView"
+            },
+            "description": "The issue / series / library the action's target and payload name,\nresolved to labels and slugs (`api::work_targets`): an archive edit's\n`issue_id` is a content hash, a scan's `series_id` a UUID."
           },
           "user_agent": {
             "type": [
@@ -18015,7 +18023,8 @@
         "description": "One dead-lettered job surfaced for inspection / retry.",
         "required": [
           "task_id",
-          "payload"
+          "payload",
+          "targets"
         ],
         "properties": {
           "error": {
@@ -18039,6 +18048,13 @@
               "null"
             ],
             "description": "The job's `args` payload as opaque JSON, so the UI can show which\nlibrary / issue / series the dead job targeted without per-queue code."
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkTargetView"
+            },
+            "description": "The issue / series / library the payload names, resolved to labels\nand slugs (`api::work_targets`) — an issue id is a content hash, a\nseries id a UUID, neither readable on their own. Empty when the\npayload names nothing resolvable (or the row was removed)."
           },
           "task_id": {
             "type": "string",
@@ -31836,6 +31852,49 @@
             "format": "int64",
             "description": "Effective `scanner.watch_poll_interval_secs`.",
             "minimum": 0
+          }
+        }
+      },
+      "WorkTargetView": {
+        "type": "object",
+        "description": "A labelled entity a background job or audit action targeted.",
+        "required": [
+          "kind",
+          "id",
+          "label"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "issue_slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The issue's slug (issue targets)."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`issue` | `series` | `library`."
+          },
+          "label": {
+            "type": "string",
+            "description": "Human label: `\"The Flash #12 — Learning Curve\"`, `\"The Flash\n(1987)\"`, `\"DC\"`."
+          },
+          "library_slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The library's slug (library targets)."
+          },
+          "series_slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The owning series' slug (issue and series targets)."
           }
         }
       },

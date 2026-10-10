@@ -662,3 +662,77 @@ async fn scan_that_fails_before_opening_closes_its_queued_run() {
     assert!(run.ended_at.is_some());
     assert!(run.error.is_some());
 }
+
+#[tokio::test]
+async fn dead_jobs_resolve_their_targets_to_labels_and_slugs() {
+    use common::seed::{IssueSeed, SeriesSeed, seed_library};
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let db = app.state().db.clone();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = SeriesSeed::new(lib_id, "The Flash").insert(&db).await;
+    let file = tmp.path().join("flash-012.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &file, b"flash-12", 12.0)
+        .with_title("Learning Curve")
+        .insert(&db)
+        .await;
+    let series_slug = entity::series::Entity::find_by_id(series_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .slug;
+    let issue_slug = entity::issue::Entity::find_by_id(issue_id.clone())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .slug;
+
+    // A dead job whose args name an issue by hash, a series and a library
+    // by UUID — the shapes the apply / rewrite / scan queues use.
+    let (dead, data, result, mut conn) = scan_dead_keys(&app);
+    let _: i64 = conn.zadd(&dead, "task-x", 3000i64).await.unwrap();
+    let blob = json!({
+        "args": {
+            "issue_id": issue_id,
+            "series_id": series_id.to_string(),
+            "library_id": lib_id.to_string(),
+            "actor_id": Uuid::now_v7().to_string(),
+        },
+        "parts": {}
+    });
+    let _: i64 = conn.hset(&data, "task-x", blob.to_string()).await.unwrap();
+    let _: i64 = conn.hset(&result, "task-x", "boom").await.unwrap();
+
+    let resp = send_authed(
+        &app,
+        &admin,
+        Method::GET,
+        "/api/admin/queue/dead-jobs?queue=scan",
+        None,
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let targets = body["jobs"][0]["targets"].as_array().expect("targets");
+    assert_eq!(targets.len(), 3, "{body}");
+    assert_eq!(targets[0]["kind"], "issue");
+    assert_eq!(targets[0]["label"], "The Flash #12 — Learning Curve");
+    assert_eq!(targets[0]["series_slug"], series_slug);
+    assert_eq!(targets[0]["issue_slug"], issue_slug);
+    assert_eq!(targets[1]["kind"], "series");
+    assert!(
+        targets[1]["label"]
+            .as_str()
+            .unwrap()
+            .starts_with("The Flash"),
+        "{body}"
+    );
+    assert_eq!(targets[1]["series_slug"], series_slug);
+    assert_eq!(targets[2]["kind"], "library");
+    assert!(targets[2]["library_slug"].is_string());
+    // The raw payload is still there for the details view.
+    assert_eq!(body["jobs"][0]["payload"]["issue_id"], issue_id);
+}

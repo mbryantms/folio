@@ -5579,6 +5579,12 @@ export interface components {
              */
             target_label?: string | null;
             target_type?: string | null;
+            /**
+             * @description The issue / series / library the action's target and payload name,
+             *     resolved to labels and slugs (`api::work_targets`): an archive edit's
+             *     `issue_id` is a content hash, a scan's `series_id` a UUID.
+             */
+            targets: components["schemas"]["WorkTargetView"][];
             user_agent?: string | null;
         };
         AuditListView: {
@@ -7684,6 +7690,13 @@ export interface components {
              *     library / issue / series the dead job targeted without per-queue code.
              */
             payload: Record<string, never> | null;
+            /**
+             * @description The issue / series / library the payload names, resolved to labels
+             *     and slugs (`api::work_targets`) — an issue id is a content hash, a
+             *     series id a UUID, neither readable on their own. Empty when the
+             *     payload names nothing resolvable (or the row was removed).
+             */
+            targets: components["schemas"]["WorkTargetView"][];
             /** @description apalis task id (ULID) — the retry key. */
             task_id: string;
         };
@@ -13585,6 +13598,23 @@ export interface components {
              * @description Effective `scanner.watch_poll_interval_secs`.
              */
             poll_interval_secs: number;
+        };
+        /** @description A labelled entity a background job or audit action targeted. */
+        WorkTargetView: {
+            id: string;
+            /** @description The issue's slug (issue targets). */
+            issue_slug?: string | null;
+            /** @description `issue` | `series` | `library`. */
+            kind: string;
+            /**
+             * @description Human label: `"The Flash #12 — Learning Curve"`, `"The Flash
+             *     (1987)"`, `"DC"`.
+             */
+            label: string;
+            /** @description The library's slug (library targets). */
+            library_slug?: string | null;
+            /** @description The owning series' slug (issue and series targets). */
+            series_slug?: string | null;
         };
         WsTicketResp: {
             /** Format: int64 */
