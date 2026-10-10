@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.51.0](https://github.com/mbryantms/folio/compare/v0.50.0...v0.51.0) (2026-10-10)
+
+
+### Added
+
+* **metadata:** make the 200-issue series batch cap visible and resumable ([#1108](https://github.com/mbryantms/folio/issues/1108)) ([ce8273a](https://github.com/mbryantms/folio/commit/ce8273afd359aa7b2acd33dcce3c7bf2ae7251e3))
+* **refresh:** run coverage before the series match; confirm the series from what coverage found ([#1106](https://github.com/mbryantms/folio/issues/1106)) ([2b25079](https://github.com/mbryantms/folio/commit/2b250799f98f0b7574e0bfb62935b47e1adbc881))
+
+
+### Fixed
+
+* **metadata:** keep an archive's own &lt;Series&gt; when it names another series; post-match coverage analyses every provider ([#1105](https://github.com/mbryantms/folio/issues/1105)) ([53fe5cd](https://github.com/mbryantms/folio/commit/53fe5cd6b289643b9ff1e97b1ed0166c0cc69f6b))
+
 ## [0.50.0](https://github.com/mbryantms/folio/compare/v0.49.2...v0.50.0) (2026-10-09)
 
 
