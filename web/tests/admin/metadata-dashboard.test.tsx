@@ -161,7 +161,7 @@ describe("<DashboardTab>", () => {
     expect(html).toContain("ENABLED");
     expect(html).toContain("NOT CONFIGURED");
     // The Unmatched tile is a link to the grid filtered to those series.
-    expect(html).toContain('href="/?provider_match=unmatched"');
+    expect(html).toContain('href="/?library=all&amp;provider_match=unmatched"');
     expect(html).toContain("180 /hr");
     expect(html).toContain("resets in");
   });

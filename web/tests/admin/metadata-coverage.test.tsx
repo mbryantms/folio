@@ -196,7 +196,7 @@ describe("<CoverageTab>", () => {
     expect(html).toContain("41,614 / 44,201");
     // The Metron series gap links to the grid narrowed to Metron.
     expect(html).toContain(
-      "/?provider_match=unmatched&amp;provider_source=metron",
+      "/?library=all&amp;provider_match=unmatched&amp;provider_source=metron",
     );
     expect(html).toContain("4,237 unmatched");
     expect(html).toContain("42,566 without id");
@@ -218,7 +218,9 @@ describe("<CoverageTab>", () => {
     expect(html).toContain("among the 3,782 incomplete");
     expect(html).toContain("Provider id");
     expect(html).toContain("Story arc");
-    expect(html).toContain("/?metadata_completeness=needs_metadata");
+    expect(html).toContain(
+      "/?library=all&amp;metadata_completeness=needs_metadata",
+    );
   });
 
   it("renders per-library and per-series gaps with links", () => {

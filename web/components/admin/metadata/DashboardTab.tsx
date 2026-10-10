@@ -73,7 +73,9 @@ export function DashboardTab() {
           }
           icon={<XCircle className="h-4 w-4" />}
           href={
-            d.series_unmatched > 0 ? "/?provider_match=unmatched" : undefined
+            d.series_unmatched > 0
+              ? "/?library=all&provider_match=unmatched"
+              : undefined
           }
         />
         <StatCard
