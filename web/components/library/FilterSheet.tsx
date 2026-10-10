@@ -12,6 +12,9 @@ import {
   type CreditState,
   type LibraryGridMode,
   type MetadataCompletenessTier,
+  PROVIDER_MATCH_LABELS,
+  PROVIDER_MATCH_VALUES,
+  type ProviderMatch,
 } from "@/components/library/library-grid-filters";
 import { MultiSelectEditor } from "@/components/filters/value-editors/MultiSelectEditor";
 import type { OptionsEndpoint } from "@/components/filters/field-registry";
@@ -84,6 +87,8 @@ export function FilterSheet({
   onStatus,
   metadataCompleteness,
   onMetadataCompleteness,
+  providerMatch,
+  onProviderMatch,
   readStatus,
   onReadStatus,
   yearFrom,
@@ -121,6 +126,8 @@ export function FilterSheet({
   onStatus: (v: string) => void;
   metadataCompleteness: MetadataCompletenessTier | undefined;
   onMetadataCompleteness: (v: MetadataCompletenessTier | undefined) => void;
+  providerMatch: ProviderMatch | undefined;
+  onProviderMatch: (v: ProviderMatch | undefined) => void;
   readStatus: string[];
   onReadStatus: (v: string[]) => void;
   yearFrom: string;
@@ -230,6 +237,33 @@ export function FilterSheet({
                     {METADATA_COMPLETENESS_OPTIONS.map((o) => (
                       <SelectItem key={o.value} value={o.value}>
                         {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Section>
+            ) : null}
+            {/* Provider match — does the series have a ComicVine / Metron /
+                GCD id. The admin metadata dashboard's "Unmatched" tile
+                deep-links here. Series only. */}
+            {mode === "series" ? (
+              <Section title="Provider match">
+                <Select
+                  value={providerMatch ?? "any"}
+                  onValueChange={(v) =>
+                    onProviderMatch(
+                      v === "any" ? undefined : (v as ProviderMatch),
+                    )
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="any">Any</SelectItem>
+                    {PROVIDER_MATCH_VALUES.map((v) => (
+                      <SelectItem key={v} value={v}>
+                        {PROVIDER_MATCH_LABELS[v]}
                       </SelectItem>
                     ))}
                   </SelectContent>

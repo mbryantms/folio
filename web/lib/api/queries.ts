@@ -206,6 +206,10 @@ export type SeriesListFilters = {
   /** A–Z jump-rail bucket: a single letter `a`–`z` or `#`, matched against
    *  `normalized_name` (the Name-sort column). */
   starts_with?: string;
+  /** `matched` | `unmatched`: whether the series has a series-level
+   *  provider id. The admin metadata dashboard's "Unmatched" tile deep-links
+   *  here. */
+  provider_match?: string;
 };
 
 export type IssueListFilters = {

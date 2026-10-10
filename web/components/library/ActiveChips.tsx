@@ -7,6 +7,8 @@ import {
   type CreditKey,
   type CreditState,
   type MetadataCompletenessTier,
+  PROVIDER_MATCH_LABELS,
+  type ProviderMatch,
 } from "@/components/library/library-grid-filters";
 import {
   LIBRARY_GRID_METADATA_COMPLETENESS_OPTIONS,
@@ -24,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 export function ActiveChips({
   status,
   metadataCompleteness,
+  providerMatch,
   readStatus,
   yearFrom,
   yearTo,
@@ -40,6 +43,7 @@ export function ActiveChips({
   locations,
   onClearStatus,
   onClearMetadataCompleteness,
+  onClearProviderMatch,
   onRemoveReadStatus,
   onClearYear,
   onClearRating,
@@ -56,6 +60,7 @@ export function ActiveChips({
 }: {
   status: string;
   metadataCompleteness: MetadataCompletenessTier | undefined;
+  providerMatch: ProviderMatch | undefined;
   readStatus: string[];
   yearFrom: string;
   yearTo: string;
@@ -72,6 +77,7 @@ export function ActiveChips({
   locations: string[];
   onClearStatus: () => void;
   onClearMetadataCompleteness: () => void;
+  onClearProviderMatch: () => void;
   onRemoveReadStatus: (v: string) => void;
   onClearYear: () => void;
   onClearRating: () => void;
@@ -101,6 +107,12 @@ export function ActiveChips({
             metadataCompleteness,
           )}`}
           onRemove={onClearMetadataCompleteness}
+        />
+      ) : null}
+      {providerMatch ? (
+        <Chip
+          label={`Provider: ${PROVIDER_MATCH_LABELS[providerMatch]}`}
+          onRemove={onClearProviderMatch}
         />
       ) : null}
       {readStatus.map((v) => (

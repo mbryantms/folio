@@ -478,9 +478,12 @@ async fn matched_series_count(app: &AppState) -> i64 {
     struct Count {
         c: i64,
     }
+    // Same source list as the series grid's `provider_match` facet, so
+    // the "Unmatched" tile and the list it links to agree to the row.
     let stmt = Statement::from_string(
         sea_orm::DatabaseBackend::Postgres,
-        r#"
+        format!(
+            r#"
         SELECT COUNT(DISTINCT s.id)::bigint AS c
         FROM series s
         WHERE s.removed_at IS NULL
@@ -488,10 +491,11 @@ async fn matched_series_count(app: &AppState) -> i64 {
             SELECT 1 FROM external_ids e
             WHERE e.entity_type = 'series'
               AND e.entity_id = s.id::text
-              AND e.source IN ('comicvine','metron','gcd','marvel','locg')
+              AND e.source IN ({})
           )
-        "#
-        .to_owned(),
+        "#,
+            crate::api::series::PROVIDER_SERIES_ID_SOURCES_SQL
+        ),
     );
     Count::find_by_statement(stmt)
         .one(&app.db)

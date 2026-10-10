@@ -1500,7 +1500,19 @@ pub struct ListSeriesQuery {
     /// appears). Invalid values 422.
     #[serde(default)]
     pub starts_with: Option<String>,
+    /// Provider-match facet: `matched` (the series has a series-level
+    /// ComicVine / Metron / GCD id) or `unmatched` (it has none). The admin
+    /// metadata dashboard's "Unmatched" tile links here, so the two agree
+    /// to the row. Invalid values 422.
+    #[serde(default)]
+    pub provider_match: Option<String>,
 }
+
+/// `external_ids.source` values that make a series "matched": the same
+/// list the admin metadata dashboard counts (`admin_metadata`).
+pub(crate) const PROVIDER_SERIES_ID_SOURCES_SQL: &str =
+    "'comicvine','metron','gcd','marvel','locg'";
+const PROVIDER_MATCH_VALUES: &[&str] = &["matched", "unmatched"];
 
 const VALID_STATUSES: &[&str] = &["continuing", "ended", "cancelled", "hiatus"];
 pub(crate) const READ_STATUSES: &[&str] = &["unread", "in_progress", "read"];
@@ -1686,6 +1698,11 @@ fn validate_list_series_query_params(q: &ListSeriesQuery) -> Result<(), &'static
         && parse_starts_with(raw).is_none()
     {
         return Err("starts_with must be a single letter or #");
+    }
+    if let Some(v) = q.provider_match.as_deref()
+        && !PROVIDER_MATCH_VALUES.contains(&v.trim())
+    {
+        return Err("provider_match must be matched or unmatched");
     }
     Ok(())
 }
@@ -1947,6 +1964,29 @@ fn apply_series_starts_with_filter(
     }
 }
 
+/// `provider_match` grid facet: whether the series has a series-level
+/// provider id in `external_ids` (same source list the admin metadata
+/// dashboard counts as "matched"), so the dashboard's Unmatched tile and
+/// this filter agree to the row.
+fn apply_series_provider_match_filter(
+    select: sea_orm::Select<series::Entity>,
+    q: &ListSeriesQuery,
+) -> sea_orm::Select<series::Entity> {
+    let Some(v) = q.provider_match.as_deref().map(str::trim) else {
+        return select;
+    };
+    let exists = format!(
+        "EXISTS (SELECT 1 FROM external_ids e \
+           WHERE e.entity_type = 'series' AND e.entity_id = \"series\".\"id\"::text \
+             AND e.source IN ({PROVIDER_SERIES_ID_SOURCES_SQL}))"
+    );
+    match v {
+        "matched" => select.filter(Expr::cust(exists)),
+        "unmatched" => select.filter(Expr::cust(format!("NOT {exists}"))),
+        _ => select,
+    }
+}
+
 /// `metadata_completeness` grid facet (single tier). Filters series by the
 /// per-series completeness rollup — the same `complete_count >= active_count`
 /// / `= 0` / in-between split the card-badge tier and the saved-view
@@ -2170,6 +2210,7 @@ pub async fn list(
     select = apply_series_user_rating_filter(select, &q, user.id);
     select = apply_series_read_status_filter(select, &q, user.id);
     select = apply_series_metadata_completeness_filter(select, &q);
+    select = apply_series_provider_match_filter(select, &q);
     select = apply_series_starts_with_filter(select, &q);
 
     let limit = clamp_limit(q.limit);
