@@ -13500,12 +13500,20 @@
           "items_total",
           "jobs_enqueued",
           "jobs_coalesced",
-          "jobs_failed"
+          "jobs_failed",
+          "eligible",
+          "recently_fetched",
+          "remainder"
         ],
         "properties": {
           "batch_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "eligible": {
+            "type": "integer",
+            "description": "Issues the request's scope covers (series batches; `0` for the\nselection / saved-view batches, which have no cap remainder).",
+            "minimum": 0
           },
           "items_total": {
             "type": "integer",
@@ -13523,6 +13531,16 @@
           },
           "jobs_failed": {
             "type": "integer",
+            "minimum": 0
+          },
+          "recently_fetched": {
+            "type": "integer",
+            "description": "`scope=all` only: eligible issues skipped because they were\nsearched in the last 24 hours (a re-trigger walks on).",
+            "minimum": 0
+          },
+          "remainder": {
+            "type": "integer",
+            "description": "Eligible issues this batch did not reach (the 200-per-run cap): a\nsecond request with the same scope fetches them.",
             "minimum": 0
           }
         }
@@ -20455,13 +20473,21 @@
         "required": [
           "scope",
           "issues",
+          "eligible",
+          "recently_fetched",
+          "remainder",
           "providers"
         ],
         "properties": {
+          "eligible": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues the scope covers before the cap and the recent-fetch skip."
+          },
           "issues": {
             "type": "integer",
             "format": "int64",
-            "description": "Issues the batch would search."
+            "description": "Issues the batch would search (at most the 200-per-run cap)."
           },
           "providers": {
             "type": "array",
@@ -20469,6 +20495,16 @@
               "$ref": "#/components/schemas/ProviderFetchEstimate"
             },
             "description": "Per enabled provider (ComicVine, Metron, GCD order)."
+          },
+          "recently_fetched": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`all` only: eligible issues skipped because they were searched in\nthe last 24 hours (a re-trigger walks on to the next chunk)."
+          },
+          "remainder": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Eligible issues this batch would not reach; a second run with the\nsame scope takes them."
           },
           "scope": {
             "$ref": "#/components/schemas/SeriesBatchScope"

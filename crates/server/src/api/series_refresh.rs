@@ -40,7 +40,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
-use super::metadata_search::{SeriesBatchScope, series_batch_issue_ids};
+use super::metadata_search::{SeriesBatchScope, series_batch_selection};
 use crate::auth::RequireAdmin;
 use crate::jobs::provider_coverage::{self, CoverageJobState, CoverageTrigger};
 use crate::metadata::coverage::COVERAGE_SOURCES;
@@ -141,8 +141,16 @@ pub struct RefreshBatch {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FetchScopeEstimate {
     pub scope: SeriesBatchScope,
-    /// Issues the batch would search.
+    /// Issues the batch would search (at most the 200-per-run cap).
     pub issues: i64,
+    /// Issues the scope covers before the cap and the recent-fetch skip.
+    pub eligible: i64,
+    /// `all` only: eligible issues skipped because they were searched in
+    /// the last 24 hours (a re-trigger walks on to the next chunk).
+    pub recently_fetched: i64,
+    /// Eligible issues this batch would not reach; a second run with the
+    /// same scope takes them.
+    pub remainder: i64,
     /// Per enabled provider (ComicVine, Metron, GCD order).
     pub providers: Vec<ProviderFetchEstimate>,
 }
@@ -385,7 +393,8 @@ async fn estimate_scope(
     use entity::{issue, series_provider_range};
     use sea_orm::QuerySelect;
 
-    let ids = series_batch_issue_ids(app, series_id, scope).await?;
+    let selection = series_batch_selection(app, series_id, scope).await?;
+    let ids = selection.ids.clone();
     let numbers: Vec<Option<String>> = if ids.is_empty() {
         Vec::new()
     } else {
@@ -440,6 +449,9 @@ async fn estimate_scope(
     Ok(FetchScopeEstimate {
         scope,
         issues: total,
+        eligible: selection.eligible as i64,
+        recently_fetched: selection.recently_fetched as i64,
+        remainder: selection.remainder() as i64,
         providers: enabled
             .iter()
             .zip(direct)

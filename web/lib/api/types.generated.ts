@@ -5837,6 +5837,11 @@ export interface components {
         BatchCreatedResp: {
             /** Format: uuid */
             batch_id: string;
+            /**
+             * @description Issues the request's scope covers (series batches; `0` for the
+             *     selection / saved-view batches, which have no cap remainder).
+             */
+            eligible: number;
             /** @description Child runs created under this batch (the progress denominator). */
             items_total: number;
             /**
@@ -5846,6 +5851,16 @@ export interface components {
             jobs_coalesced: number;
             jobs_enqueued: number;
             jobs_failed: number;
+            /**
+             * @description `scope=all` only: eligible issues skipped because they were
+             *     searched in the last 24 hours (a re-trigger walks on).
+             */
+            recently_fetched: number;
+            /**
+             * @description Eligible issues this batch did not reach (the 200-per-run cap): a
+             *     second request with the same scope fetches them.
+             */
+            remainder: number;
         };
         BatchFallbackCount: {
             /** Format: int64 */
@@ -8539,11 +8554,28 @@ export interface components {
         FetchScopeEstimate: {
             /**
              * Format: int64
-             * @description Issues the batch would search.
+             * @description Issues the scope covers before the cap and the recent-fetch skip.
+             */
+            eligible: number;
+            /**
+             * Format: int64
+             * @description Issues the batch would search (at most the 200-per-run cap).
              */
             issues: number;
             /** @description Per enabled provider (ComicVine, Metron, GCD order). */
             providers: components["schemas"]["ProviderFetchEstimate"][];
+            /**
+             * Format: int64
+             * @description `all` only: eligible issues skipped because they were searched in
+             *     the last 24 hours (a re-trigger walks on to the next chunk).
+             */
+            recently_fetched: number;
+            /**
+             * Format: int64
+             * @description Eligible issues this batch would not reach; a second run with the
+             *     same scope takes them.
+             */
+            remainder: number;
             scope: components["schemas"]["SeriesBatchScope"];
         };
         /**

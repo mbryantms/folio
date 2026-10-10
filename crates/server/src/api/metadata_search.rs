@@ -2695,6 +2695,15 @@ pub struct BatchCreatedResp {
     /// under that run, not this batch).
     pub jobs_coalesced: usize,
     pub jobs_failed: usize,
+    /// Issues the request's scope covers (series batches; `0` for the
+    /// selection / saved-view batches, which have no cap remainder).
+    pub eligible: usize,
+    /// `scope=all` only: eligible issues skipped because they were
+    /// searched in the last 24 hours (a re-trigger walks on).
+    pub recently_fetched: usize,
+    /// Eligible issues this batch did not reach (the 200-per-run cap): a
+    /// second request with the same scope fetches them.
+    pub remainder: usize,
 }
 
 /// Insert a `metadata_batch` row in the `running` state. `items_total` is
@@ -2815,13 +2824,14 @@ pub async fn create_series_batch(
         );
     }
 
-    let issue_ids = match series_batch_issue_ids(&app, s.id, q.scope).await {
-        Ok(ids) => ids,
+    let selection = match series_batch_selection(&app, s.id, q.scope).await {
+        Ok(sel) => sel,
         Err(e) => {
             tracing::error!(error = %e, "create_series_batch: issue query failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+    let issue_ids = selection.ids.clone();
 
     let batch_id =
         match insert_metadata_batch(&app.db, "series_issues", Some(s.library_id), Some(user.id))
@@ -2845,32 +2855,83 @@ pub async fn create_series_batch(
             jobs_enqueued: outcome.jobs_enqueued,
             jobs_coalesced: outcome.jobs_coalesced,
             jobs_failed: outcome.jobs_failed,
+            eligible: selection.eligible,
+            recently_fetched: selection.recently_fetched,
+            remainder: selection.remainder(),
         }),
     )
         .into_response()
 }
 
+/// What a series batch of a scope would fan out over, and what it leaves
+/// behind — the cap is never silent.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SeriesBatchSelection {
+    /// The issues this batch searches, in issue order, at most
+    /// [`refresh::REFRESH_BATCH_CAP`].
+    pub(crate) ids: Vec<String>,
+    /// Issues the scope covers before the cap and the recent-fetch skip.
+    pub(crate) eligible: usize,
+    /// `all` only: eligible issues skipped because a search for them
+    /// completed inside the last [`RECENT_FETCH_WINDOW_HOURS`] hours — a
+    /// re-trigger walks on to the next chunk instead of repeating the
+    /// first one.
+    pub(crate) recently_fetched: usize,
+}
+
+impl SeriesBatchSelection {
+    /// Eligible issues still unfetched after this batch (the cap's
+    /// remainder): what a second run would take.
+    pub(crate) fn remainder(&self) -> usize {
+        self.eligible
+            .saturating_sub(self.recently_fetched)
+            .saturating_sub(self.ids.len())
+    }
+}
+
+/// How long a completed issue search keeps that issue out of an `all`
+/// batch. Matches the refresh flow's resume window (`series_refresh`),
+/// so "fetch the remaining N" after a capped batch picks up exactly the
+/// issues the first batch did not reach.
+pub(crate) const RECENT_FETCH_WINDOW_HOURS: i64 = 24;
+
 /// The issues a series metadata batch of `scope` fans out over (capped
 /// like the library refresh fan-out), in issue order for `all`. Shared by
 /// [`create_series_batch`] and the guided refresh's fetch estimate
-/// (`api::series_refresh`) so the two can't drift.
-pub(crate) async fn series_batch_issue_ids(
+/// (`api::series_refresh`) so the two can't drift. `all` skips issues
+/// whose search completed in the last [`RECENT_FETCH_WINDOW_HOURS`]
+/// hours, so a 247-issue series fetches #1–200 on the first click and
+/// #201–247 on the second instead of #1–200 twice.
+pub(crate) async fn series_batch_selection(
     app: &AppState,
     series_id: Uuid,
     scope: SeriesBatchScope,
-) -> Result<Vec<String>, sea_orm::DbErr> {
+) -> Result<SeriesBatchSelection, sea_orm::DbErr> {
     match scope {
-        SeriesBatchScope::All => Ok(issue::Entity::find()
-            .select_only()
-            .column(issue::Column::Id)
-            .filter(issue::Column::SeriesId.eq(series_id))
-            .filter(issue::Column::State.eq("active"))
-            .filter(issue::Column::RemovedAt.is_null())
-            .order_by_asc(issue::Column::SortNumber)
-            .limit(refresh::REFRESH_BATCH_CAP as u64)
-            .into_tuple::<String>()
-            .all(&app.db)
-            .await?),
+        SeriesBatchScope::All => {
+            let all: Vec<String> = issue::Entity::find()
+                .select_only()
+                .column(issue::Column::Id)
+                .filter(issue::Column::SeriesId.eq(series_id))
+                .filter(issue::Column::State.eq("active"))
+                .filter(issue::Column::RemovedAt.is_null())
+                .order_by_asc(issue::Column::SortNumber)
+                .into_tuple::<String>()
+                .all(&app.db)
+                .await?;
+            let eligible = all.len();
+            let recent = recently_searched_issues(&app.db, &all).await?;
+            let ids: Vec<String> = all
+                .into_iter()
+                .filter(|id| !recent.contains(id))
+                .take(refresh::REFRESH_BATCH_CAP)
+                .collect();
+            Ok(SeriesBatchSelection {
+                ids,
+                eligible,
+                recently_fetched: recent.len(),
+            })
+        }
         SeriesBatchScope::Incomplete => {
             use crate::metadata::completeness::CompletenessTier;
             // `incomplete` scores each active issue and keeps only the
@@ -2886,8 +2947,7 @@ pub(crate) async fn series_batch_issue_ids(
                     std::collections::HashSet::new()
                 }
             };
-            Ok(
-                crate::api::series::assess_series_issue_tiers(app, series_id)
+            let eligible: Vec<String> = crate::api::series::assess_series_issue_tiers(app, series_id)
                 .await
                 .into_iter()
                 // Skip Complete AND Accepted (operator marked it done, B4) — the
@@ -2897,11 +2957,43 @@ pub(crate) async fn series_batch_issue_ids(
                         || !matches!(tier, CompletenessTier::Complete | CompletenessTier::Accepted)
                 })
                 .map(|(id, _)| id)
-                .take(refresh::REFRESH_BATCH_CAP)
-                .collect(),
-            )
+                .collect();
+            let n = eligible.len();
+            Ok(SeriesBatchSelection {
+                ids: eligible
+                    .into_iter()
+                    .take(refresh::REFRESH_BATCH_CAP)
+                    .collect(),
+                eligible: n,
+                recently_fetched: 0,
+            })
         }
     }
+}
+
+/// Of `issue_ids`, those with an issue-scope search that completed inside
+/// the last [`RECENT_FETCH_WINDOW_HOURS`] hours.
+async fn recently_searched_issues(
+    db: &sea_orm::DatabaseConnection,
+    issue_ids: &[String],
+) -> Result<std::collections::HashSet<String>, sea_orm::DbErr> {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    if issue_ids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let since = chrono::Utc::now() - chrono::Duration::hours(RECENT_FETCH_WINDOW_HOURS);
+    let rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT DISTINCT scope_entity_id FROM metadata_run \
+              WHERE scope = 'issue' AND status = 'completed' \
+                AND started_at >= $1 AND scope_entity_id = ANY($2)",
+            [since.into(), issue_ids.to_vec().into()],
+        ))
+        .await?;
+    rows.into_iter()
+        .map(|r| r.try_get::<String>("", "scope_entity_id"))
+        .collect()
 }
 
 /// Active issues of a series whose description duplicates the series
@@ -3053,6 +3145,9 @@ pub async fn create_series_selection_batch(
             jobs_enqueued: outcome.jobs_enqueued,
             jobs_coalesced: outcome.jobs_coalesced,
             jobs_failed: outcome.jobs_failed,
+            eligible: 0,
+            recently_fetched: 0,
+            remainder: 0,
         }),
     )
         .into_response()
@@ -3188,6 +3283,9 @@ pub async fn create_saved_view_batch(
                     jobs_enqueued: t.jobs_enqueued,
                     jobs_coalesced: t.jobs_coalesced,
                     jobs_failed: t.jobs_failed,
+                    eligible: 0,
+                    recently_fetched: 0,
+                    remainder: 0,
                 }),
             )
                 .into_response()
@@ -3211,6 +3309,9 @@ pub async fn create_saved_view_batch(
                     jobs_enqueued: outcome.jobs_enqueued,
                     jobs_coalesced: outcome.jobs_coalesced,
                     jobs_failed: outcome.jobs_failed,
+                    eligible: 0,
+                    recently_fetched: 0,
+                    remainder: 0,
                 }),
             )
                 .into_response()
