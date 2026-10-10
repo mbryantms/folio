@@ -1,14 +1,18 @@
 //! Guided "Refresh this series…" flow — one read-only status endpoint the
-//! web stepper resumes from (coverage tie-ins PR 3).
+//! web stepper resumes from (coverage tie-ins PR 3; reordered so coverage
+//! runs before the series match).
 //!
 //! The flow itself only drives existing endpoints, in order:
 //!
-//! 1. **Series match** — `POST /series/{slug}/metadata/search` →
-//!    candidates (with coverage hints) → `POST …/metadata/apply`, or
-//!    "keep current match" when the series already has provider ids.
-//! 2. **Coverage** — the analysis the apply queued (seeded, see
-//!    `jobs::provider_coverage::enqueue_after_series_apply`) or
-//!    `POST …/provider-coverage/analyze`; accept per provider.
+//! 1. **Coverage** — `POST …/provider-coverage/analyze` (all providers,
+//!    on the folder's own tags, before anything rewrites them); accept
+//!    per provider. Accepting writes the series-level ids and the ranges.
+//! 2. **Confirm series** — apply the series shape from one provider:
+//!    `POST …/metadata/lookup` with the accepted main's URL (or
+//!    `POST …/metadata/search` → candidates with coverage hints) →
+//!    `POST …/metadata/apply`, or "keep current match" when the series
+//!    already has provider ids. The apply runs with the ranges in place,
+//!    so a renamed continuation keeps its own identity.
 //! 3. **Per-issue fetch** — `POST …/metadata/batch?scope=all|incomplete`
 //!    (direct lookups through series coverage, see
 //!    `metadata::direct_lookup`).
@@ -58,9 +62,10 @@ pub fn routes() -> OpenApiRouter<AppState> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RefreshStep {
-    /// Pick / apply a series match (or keep the current one).
+    /// Confirm / apply a series match (or keep the current one). Second
+    /// step; the wire name predates the reorder.
     Match,
-    /// Run or reuse the coverage analysis; accept per provider.
+    /// Run or reuse the coverage analysis; accept per provider. First step.
     Coverage,
     /// Start (or watch) the per-issue batch.
     Fetch,
@@ -295,8 +300,9 @@ async fn build_status(
 ///
 /// - a batch newer than the last apply and the coverage job → `fetch`
 ///   while children are unfinished, else `review`;
-/// - otherwise a coverage job or an applied match → `coverage`;
-/// - otherwise `match`.
+/// - otherwise an applied match → `fetch` (the step after confirming);
+/// - otherwise a coverage job → `match` (confirm the series);
+/// - otherwise `coverage`.
 pub fn resume_step(
     applied_at: Option<DateTime<Utc>>,
     coverage_requested_at: Option<DateTime<Utc>>,
@@ -312,10 +318,12 @@ pub fn resume_step(
             RefreshStep::Review
         };
     }
-    if latest_before_batch.is_some() {
-        RefreshStep::Coverage
-    } else {
+    if applied_at.is_some() {
+        RefreshStep::Fetch
+    } else if coverage_requested_at.is_some() {
         RefreshStep::Match
+    } else {
+        RefreshStep::Coverage
     }
 }
 
@@ -453,17 +461,18 @@ mod tests {
     }
 
     #[test]
-    fn nothing_yet_resumes_at_match() {
-        assert_eq!(resume_step(None, None, None), RefreshStep::Match);
+    fn nothing_yet_resumes_at_coverage() {
+        assert_eq!(resume_step(None, None, None), RefreshStep::Coverage);
     }
 
     #[test]
-    fn an_apply_or_a_coverage_job_resumes_at_coverage() {
-        assert_eq!(resume_step(Some(t(0)), None, None), RefreshStep::Coverage);
-        assert_eq!(resume_step(None, Some(t(0)), None), RefreshStep::Coverage);
+    fn a_coverage_job_resumes_at_confirm_and_an_apply_at_fetch() {
+        assert_eq!(resume_step(None, Some(t(0)), None), RefreshStep::Match);
+        assert_eq!(resume_step(Some(t(0)), None, None), RefreshStep::Fetch);
+        // The seeded job an apply queues doesn't send the user back.
         assert_eq!(
             resume_step(Some(t(0)), Some(t(1)), None),
-            RefreshStep::Coverage
+            RefreshStep::Fetch
         );
     }
 
@@ -478,7 +487,7 @@ mod tests {
             RefreshStep::Review
         );
         assert_eq!(
-            resume_step(None, None, Some((t(2), 0))),
+            resume_step(None, None, Some((t(0), 0))),
             RefreshStep::Review
         );
     }
@@ -487,11 +496,11 @@ mod tests {
     fn a_batch_older_than_the_latest_match_is_ignored() {
         assert_eq!(
             resume_step(Some(t(5)), None, Some((t(2), 0))),
-            RefreshStep::Coverage
+            RefreshStep::Fetch
         );
         assert_eq!(
             resume_step(None, Some(t(5)), Some((t(2), 0))),
-            RefreshStep::Coverage
+            RefreshStep::Match
         );
     }
 }

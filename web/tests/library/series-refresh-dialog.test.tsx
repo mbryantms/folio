@@ -72,6 +72,9 @@ vi.mock("@/lib/api/auth-refresh", () => ({
     if (url.includes("/metadata/coverage-hints")) {
       return json({ max_per_request: 3, hints: [] });
     }
+    if (url.includes("/metadata/lookup")) {
+      return json({ run_id: "run-1", source: "metron", external_id: "1711" });
+    }
     if (url.includes("/metadata/candidates")) return json(candidates());
     if (url.includes("/metadata/apply") && url.includes("/series/")) {
       srv.onApply?.();
@@ -140,7 +143,7 @@ function status(
 ): SeriesRefreshStatusResp {
   return {
     series_id: "s1",
-    resume_step: "match",
+    resume_step: "coverage",
     series_match: { links: [], latest_run: null, applied_at: null },
     coverage: null,
     coverage_after_series_apply: "manual_only",
@@ -386,53 +389,53 @@ describe("estimateLine", () => {
 });
 
 describe("<SeriesRefreshFlow>", () => {
-  it("walks match → coverage → fetch → review", async () => {
-    // The apply lands the match; the seeded coverage job appears a poll
-    // later (the flow waits for it instead of starting a second one).
-    srv.onApply = () => {
-      srv.status = status({
-        resume_step: "coverage",
-        series_match: {
-          links: [{ source: "metron", external_id: "1711", set_by: "metron" }],
-          latest_run: { run_id: "run-1", status: "completed", started_at: T0 },
-          applied_at: T0,
-        },
-      });
-    };
-    renderFlow();
-
-    // 1. No match yet → the embedded match form searches (probe reuses
-    //    the completed run) and offers the strong match.
-    await heading(/Step 1 of 4: Series match/);
-    const apply = await waitFor(() =>
-      screen.getByRole("button", { name: "Apply" }),
-    );
-    fireEvent.click(apply);
-
-    // 2. Coverage: waits for the queued job, then shows the proposal.
-    await heading(/Step 2 of 4: Coverage/);
-    expect(document.activeElement).toBe(
-      screen.getByRole("heading", { name: /Step 2 of 4/ }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByText(/Waiting for the coverage check your match queued/),
-      ).toBeTruthy(),
-    );
-    expect(sent("POST", "/provider-coverage/analyze")).toHaveLength(0);
-    srv.status = status({
-      ...(srv.status as SeriesRefreshStatusResp),
-      coverage: coverageJob(),
-    });
-    srv.analysis = coverage([provider("metron", "Metron")]);
+  it("walks coverage → confirm series → fetch → review", async () => {
+    // Coverage first, on the folder's own tags: the analysis proposes a
+    // Metron main (1711) plus a range; accepting links the series.
+    const main1711 = [
+      {
+        provider_series_id: "1711",
+        name: "Fantastic Four",
+        year: 1998,
+        publisher: "Marvel",
+        url: "https://metron.cloud/series/1711/",
+        origin: "search" as const,
+        strict: true,
+        listed_count: 173,
+        local_matches: 160,
+        assigned: 160,
+        partial: false,
+      },
+    ];
+    srv.analysis = coverage([
+      provider("metron", "Metron", {
+        current_series_id: null,
+        candidates: main1711,
+      }),
+    ]);
     srv.onAccept = () => {
       srv.analysis = coverage([
         provider("metron", "Metron", {
           has_changes: false,
           proposed_ranges: [],
+          candidates: main1711,
         }),
       ]);
+      srv.status = status({
+        resume_step: "match",
+        series_match: {
+          links: [{ source: "metron", external_id: "1711", set_by: "metron" }],
+          latest_run: null,
+          applied_at: null,
+        },
+        coverage: coverageJob(),
+      });
     };
+    srv.status = status({ resume_step: "coverage", coverage: coverageJob() });
+    renderFlow();
+
+    // 1. Coverage: the proposal, accepted here.
+    await heading(/Step 1 of 4: Coverage/);
     await waitFor(
       () =>
         expect(
@@ -451,10 +454,42 @@ describe("<SeriesRefreshFlow>", () => {
       main_series_id: null,
     });
 
-    // 3. Per-issue fetch: "All issues", with the quota estimate.
+    // 2. Confirm series: the series coverage found is offered; "Use this
+    //    series" fetches that exact page (no search) into the match form.
     fireEvent.click(
-      screen.getByRole("button", { name: "Continue to per-issue fetch" }),
+      screen.getByRole("button", { name: "Continue to confirm series" }),
     );
+    await heading(/Step 2 of 4: Confirm series/);
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { name: /Step 2 of 4/ }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/Fantastic Four \(1998\)/)).toBeTruthy(),
+    );
+    expect(screen.getByText("linked")).toBeTruthy();
+    srv.onApply = () => {
+      srv.status = status({
+        resume_step: "fetch",
+        series_match: {
+          links: [{ source: "metron", external_id: "1711", set_by: "metron" }],
+          latest_run: { run_id: "run-1", status: "completed", started_at: T0 },
+          applied_at: T1,
+        },
+        coverage: coverageJob(),
+      });
+    };
+    fireEvent.click(screen.getByRole("button", { name: "Use this series" }));
+    const apply = await waitFor(() =>
+      screen.getByRole("button", { name: "Apply" }),
+    );
+    expect(sent("POST", "/metadata/lookup")).toHaveLength(1);
+    expect(sent("POST", "/metadata/lookup")[0]!.body).toEqual({
+      url: "https://metron.cloud/series/1711/",
+    });
+    expect(sent("POST", "/metadata/search")).toHaveLength(0);
+    fireEvent.click(apply);
+
+    // 3. Per-issue fetch: "All issues", with the quota estimate.
     await heading(/Step 3 of 4: Per-issue fetch/);
     fireEvent.click(screen.getByRole("radio", { name: /All issues/ }));
     expect(
@@ -482,13 +517,18 @@ describe("<SeriesRefreshFlow>", () => {
     });
 
     // Every step done in the stepper.
-    for (const name of [/1\. Series match/, /2\. Coverage/, /3\. Per-issue/]) {
+    for (const name of [
+      /1\. Coverage/,
+      /2\. Confirm series/,
+      /3\. Per-issue/,
+    ]) {
       expect(stepButton(name).textContent).toContain("(done)");
     }
   });
 
   it("keeps the current match without searching", async () => {
     srv.status = status({
+      resume_step: "match",
       series_match: {
         links: [
           { source: "comicvine", external_id: "6211", set_by: "user" },
@@ -497,9 +537,10 @@ describe("<SeriesRefreshFlow>", () => {
         latest_run: null,
         applied_at: null,
       },
+      coverage: coverageJob(),
     });
     renderFlow();
-    await heading(/Step 1 of 4: Series match/);
+    await heading(/Step 2 of 4: Confirm series/);
     expect(screen.getByText("#6211")).toBeTruthy();
     // Linked ids are listed without a who-set-it label.
     expect(screen.getByText("#1711")).toBeTruthy();
@@ -507,13 +548,18 @@ describe("<SeriesRefreshFlow>", () => {
     expect(screen.queryByText("from a match")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Keep current match" }));
 
-    await heading(/Step 2 of 4: Coverage/);
-    expect(stepButton(/1\. Series match/).textContent).toContain("(skipped)");
-    // No series search, no candidate probe.
+    await heading(/Step 3 of 4: Per-issue fetch/);
+    expect(stepButton(/2\. Confirm series/).textContent).toContain("(skipped)");
+    // No series search, no candidate probe, no lookup.
     expect(sent("POST", "/metadata/search")).toHaveLength(0);
     expect(sent("GET", "/metadata/candidates")).toHaveLength(0);
+    expect(sent("POST", "/metadata/lookup")).toHaveLength(0);
+  });
 
-    // No coverage job yet → offer the analysis (with its budget) or skip.
+  it("offers the analysis with its budget, or skipping, when no job exists", async () => {
+    srv.status = status({ resume_step: "coverage" });
+    renderFlow();
+    await heading(/Step 1 of 4: Coverage/);
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Analyze coverage" }),
@@ -521,9 +567,11 @@ describe("<SeriesRefreshFlow>", () => {
     );
     expect(screen.getByText(/40 ComicVine, 30 Metron and 30 GCD/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Skip coverage" }));
-    await heading(/Step 3 of 4: Per-issue fetch/);
-    expect(stepButton(/2\. Coverage/).textContent).toContain("(skipped)");
+    await heading(/Step 2 of 4: Confirm series/);
+    expect(stepButton(/1\. Coverage/).textContent).toContain("(skipped)");
     expect(sent("POST", "/provider-coverage/analyze")).toHaveLength(0);
+    // Nothing linked and nothing from coverage → straight to the search form.
+    await waitFor(() => screen.getByRole("button", { name: "Apply" }));
   });
 
   it("accepts one provider's coverage and skips another", async () => {
@@ -536,7 +584,7 @@ describe("<SeriesRefreshFlow>", () => {
       provider("metron", "Metron"),
     ]);
     renderFlow();
-    await heading(/Step 2 of 4: Coverage/);
+    await heading(/Step 1 of 4: Coverage/);
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Accept Metron" }),
@@ -599,7 +647,7 @@ describe("<SeriesRefreshFlow>", () => {
       }),
     ]);
     renderFlow();
-    await heading(/Step 2 of 4: Coverage/);
+    await heading(/Step 1 of 4: Coverage/);
     const row = await waitFor(() =>
       screen.getByTestId("refresh-coverage-metron"),
     );
@@ -641,7 +689,7 @@ describe("<SeriesRefreshFlow>", () => {
       }),
     ]);
     renderFlow();
-    await heading(/Step 2 of 4: Coverage/);
+    await heading(/Step 1 of 4: Coverage/);
     const row = await waitFor(() =>
       screen.getByTestId("refresh-coverage-metron"),
     );
@@ -652,7 +700,7 @@ describe("<SeriesRefreshFlow>", () => {
   it("runs the analysis when no job exists", async () => {
     srv.status = status({ resume_step: "coverage" });
     renderFlow();
-    await heading(/Step 2 of 4: Coverage/);
+    await heading(/Step 1 of 4: Coverage/);
     const run = await waitFor(() =>
       screen.getByRole("button", { name: "Analyze coverage" }),
     );
@@ -802,8 +850,8 @@ describe("<SeriesRefreshDialog> resume", () => {
     await waitFor(() =>
       expect(screen.getByText("Searching issues…")).toBeTruthy(),
     );
-    expect(stepButton(/1\. Series match/).textContent).toContain("(done)");
-    expect(stepButton(/2\. Coverage/).textContent).toContain("(done)");
+    expect(stepButton(/2\. Confirm series/).textContent).toContain("(done)");
+    expect(stepButton(/1\. Coverage/).textContent).toContain("(done)");
 
     // Closed mid-flow; meanwhile the batch finishes.
     rerender(ui(false));

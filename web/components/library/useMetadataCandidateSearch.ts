@@ -64,9 +64,15 @@ export interface MetadataCandidateSearch {
 export function useMetadataCandidateSearch({
   scope,
   open,
+  lookupUrl = null,
 }: {
   scope: MetadataMatchScope;
   open: boolean;
+  /** A provider series / issue page URL to fetch *instead of* searching
+   *  on open: the run then holds that one candidate. Used by the refresh
+   *  flow's "Confirm series" step to offer the series coverage accepted.
+   *  "Re-search" still runs the normal search. */
+  lookupUrl?: string | null;
 }): MetadataCandidateSearch {
   const qc = useQueryClient();
   const [runId, setRunId] = React.useState<string | null>(null);
@@ -98,6 +104,14 @@ export function useMetadataCandidateSearch({
             "metadata",
             "candidates",
           ],
+    [scope],
+  );
+
+  const lookupPath = React.useMemo(
+    () =>
+      scope.kind === "series"
+        ? `/series/${encodeURIComponent(scope.seriesSlug)}/metadata/lookup`
+        : `/series/${encodeURIComponent(scope.seriesSlug)}/issues/${encodeURIComponent(scope.issueSlug)}/metadata/lookup`,
     [scope],
   );
 
@@ -155,6 +169,23 @@ export function useMetadataCandidateSearch({
     let cancelled = false;
     void (async () => {
       try {
+        if (lookupUrl) {
+          // Direct fetch of a known provider page: one request, no search
+          // fan-out, and the run holds exactly that candidate.
+          const result = await apiMutate<SearchStartedResp>({
+            path: lookupPath,
+            method: "POST",
+            body: { url: lookupUrl },
+          });
+          if (cancelled) return;
+          if (result?.run_id) {
+            setRunId(result.run_id);
+            qc.invalidateQueries({ queryKey: candidatesInvalidateKey });
+          } else {
+            setSearchError("Empty response from lookup endpoint.");
+          }
+          return;
+        }
         const latest = await jsonFetch<CandidatesResp>(
           candidatesProbePath,
         ).catch(() => null);
@@ -194,7 +225,14 @@ export function useMetadataCandidateSearch({
     return () => {
       cancelled = true;
     };
-  }, [searchPath, candidatesProbePath, candidatesInvalidateKey, qc]);
+  }, [
+    searchPath,
+    candidatesProbePath,
+    candidatesInvalidateKey,
+    lookupPath,
+    lookupUrl,
+    qc,
+  ]);
 
   const kickedRef = React.useRef(false);
   React.useEffect(() => {

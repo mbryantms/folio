@@ -6,12 +6,15 @@
  * One stepper over the three things you'd otherwise have to know to run
  * in order, plus the review:
  *
- *   1. **Series match** — the embedded "Match this series…" form (coverage
- *      hints included), or *Keep current match* when the series already
- *      has provider ids.
- *   2. **Coverage** — the analysis a series apply queues on its own
- *      (seeded with the match), or *Analyze coverage*; accept or skip per
- *      provider.
+ *   1. **Coverage** — *Analyze coverage* across every provider, run first
+ *      so it sees the folder's own tags before anything rewrites them;
+ *      accept or skip per provider (accepting writes the series ids and
+ *      the ranges).
+ *   2. **Confirm series** — apply the series shape from one provider: the
+ *      series coverage accepted (fetched directly, no search), the
+ *      embedded "Match this series…" search as the fallback, or *Keep
+ *      current match*. Applied after coverage, so a renamed continuation
+ *      keeps its own identity through the apply's fan-out.
  *   3. **Per-issue fetch** — an *All issues* / *Only missing or partial*
  *      batch, which looks covered issues up directly instead of searching.
  *   4. **Review** — the batch's strong / needs-review counts, direct vs
@@ -105,8 +108,8 @@ import { cn } from "@/lib/utils";
 
 export const REFRESH_STEPS: ReadonlyArray<{ id: RefreshStep; label: string }> =
   [
-    { id: "match", label: "Series match" },
     { id: "coverage", label: "Coverage" },
+    { id: "match", label: "Confirm series" },
     { id: "fetch", label: "Per-issue fetch" },
     { id: "review", label: "Review" },
   ];
@@ -209,12 +212,7 @@ export function SeriesRefreshFlow({
   onWideChange?: (wide: boolean) => void;
 }) {
   const qc = useQueryClient();
-  // Polls only while the coverage step waits for the job a series apply
-  // queues server-side (it appears a moment after the apply lands).
-  const [waitForCoverageJob, setWaitForCoverageJob] = React.useState(false);
-  const status = useSeriesRefreshStatus(seriesSlug, {
-    poll: waitForCoverageJob,
-  });
+  const status = useSeriesRefreshStatus(seriesSlug, { poll: false });
   const data = status.data;
 
   // The step the flow resumed at is pinned on first load: later status
@@ -229,7 +227,6 @@ export function SeriesRefreshFlow({
   const [outcomes, setOutcomes] = React.useState<
     Partial<Record<RefreshStep, StepOutcome>>
   >({});
-  const [matchedHere, setMatchedHere] = React.useState(false);
   // `undefined` = not decided yet (follow the server's batch on resume),
   // `null` = no batch for this run of the flow, else the batch id.
   const [batchChoice, setBatchChoice] = React.useState<
@@ -388,30 +385,29 @@ export function SeriesRefreshFlow({
           Step {currentIdx + 1} of {REFRESH_STEPS.length}: {stepLabel}
         </h3>
 
-        {current === "match" && (
-          <MatchStep
-            seriesSlug={seriesSlug}
-            libraryId={libraryId}
-            status={data}
-            onWideChange={onWideChange}
-            onKeep={() => go("coverage", "skipped")}
-            onApplied={() => {
-              setMatchedHere(true);
-              setWaitForCoverageJob(true);
-              void refetchStatus();
-              onWideChange?.(false);
-              go("coverage", "done");
-            }}
-          />
-        )}
         {current === "coverage" && (
           <CoverageStep
             seriesSlug={seriesSlug}
             status={data}
-            matchedHere={matchedHere}
-            onWaitingChange={setWaitForCoverageJob}
-            onSkip={() => go("fetch", "skipped")}
-            onContinue={() => go("fetch", "done")}
+            onSkip={() => go("match", "skipped")}
+            onContinue={() => {
+              void refetchStatus();
+              go("match", "done");
+            }}
+          />
+        )}
+        {current === "match" && (
+          <ConfirmStep
+            seriesSlug={seriesSlug}
+            libraryId={libraryId}
+            status={data}
+            onWideChange={onWideChange}
+            onKeep={() => go("fetch", "skipped")}
+            onApplied={() => {
+              void refetchStatus();
+              onWideChange?.(false);
+              go("fetch", "done");
+            }}
           />
         )}
         {current === "fetch" && (
@@ -449,9 +445,16 @@ export function SeriesRefreshFlow({
   );
 }
 
-// ───────── 1. series match ─────────
+// ───────── 2. confirm series ─────────
 
-function MatchStep({
+/**
+ * Pick where the series shape comes from. With an accepted (or proposed)
+ * coverage main for a provider, "Use this series" fetches that exact
+ * provider page — one request, no search — into the embedded match form
+ * for the usual preview + Apply. The search form stays as the fallback,
+ * and a series that already has provider ids can keep them untouched.
+ */
+function ConfirmStep({
   seriesSlug,
   libraryId,
   status,
@@ -467,39 +470,130 @@ function MatchStep({
   onApplied: () => void;
 }) {
   const links = status.series_match.links;
-  const [searching, setSearching] = React.useState(links.length === 0);
+  const analysis = useProviderCoverageAnalysis(seriesSlug);
+  const view = analysis.data;
+  // Coverage mains worth offering: the provider's main series, when the
+  // analysis found one. Linked = the series' id for that provider already
+  // points there (an accepted proposal, or an earlier match).
+  const mains = (view?.providers ?? []).flatMap((p) => {
+    if (!p.main_series_id) return [];
+    const c = p.candidates.find(
+      (x) => x.provider_series_id === p.main_series_id,
+    );
+    if (!c?.url) return [];
+    return [
+      {
+        source: p.source,
+        label: p.source_label,
+        id: p.main_series_id,
+        name: c.name,
+        year: c.year,
+        url: c.url,
+        linked: p.current_series_id === p.main_series_id,
+      },
+    ];
+  });
+  // `null` = search; a string = fetch that provider page.
+  const [lookupUrl, setLookupUrl] = React.useState<string | null>(null);
+  const [mode, setMode] = React.useState<"choose" | "form">(
+    links.length === 0 && mains.length === 0 ? "form" : "choose",
+  );
   const scope = React.useMemo(
     () => ({ kind: "series" as const, seriesSlug, libraryId }),
     [seriesSlug, libraryId],
   );
 
-  if (!searching) {
+  if (mode === "choose") {
     return (
       <div className="space-y-3 text-sm">
-        <p>This series is already matched:</p>
-        <ul className="border-border/60 divide-border/60 divide-y rounded-md border">
-          {links.map((l) => (
-            <li
-              key={`${l.source}-${l.external_id}`}
-              className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+        {mains.length > 0 && (
+          <>
+            <p>Series found by coverage:</p>
+            <ul
+              className="border-border/60 divide-border/60 divide-y rounded-md border"
+              aria-label="Series from coverage"
             >
-              <span>
-                {providerLabel(l.source)}{" "}
-                <code className="text-muted-foreground text-xs">
-                  #{l.external_id}
-                </code>
-              </span>
-            </li>
-          ))}
-        </ul>
+              {mains.map((m) => (
+                <li
+                  key={`${m.source}-${m.id}`}
+                  className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+                >
+                  <span className="min-w-0">
+                    {m.label}{" "}
+                    <code className="text-muted-foreground text-xs">
+                      #{m.id}
+                    </code>
+                    {m.name && (
+                      <span className="text-muted-foreground">
+                        {" "}
+                        — {m.name}
+                        {m.year ? ` (${m.year})` : ""}
+                      </span>
+                    )}
+                    {m.linked && (
+                      <Badge variant="secondary" className="ml-2">
+                        linked
+                      </Badge>
+                    )}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setLookupUrl(m.url);
+                      setMode("form");
+                    }}
+                  >
+                    Use this series
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {links.length > 0 && (
+          <>
+            <p>
+              {mains.length > 0
+                ? "Linked now:"
+                : "This series is already matched:"}
+            </p>
+            <ul className="border-border/60 divide-border/60 divide-y rounded-md border">
+              {links.map((l) => (
+                <li
+                  key={`${l.source}-${l.external_id}`}
+                  className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+                >
+                  <span>
+                    {providerLabel(l.source)}{" "}
+                    <code className="text-muted-foreground text-xs">
+                      #{l.external_id}
+                    </code>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         <p className="text-muted-foreground text-xs">
-          Keep it to go straight to coverage, or search again to pick a
-          different series (asks each enabled provider once; a recent search
-          with results is reused).
+          Applying a series writes its name, publisher and run-wide fields onto
+          every issue (the ranges coverage accepted keep a renamed
+          continuation&rsquo;s own identity). Keep the current match to leave
+          the series untouched and go straight to the per-issue fetch, or search
+          to pick a different series (asks each enabled provider once; a recent
+          search with results is reused).
         </p>
         <div className="flex flex-wrap gap-2">
-          <Button onClick={onKeep}>Keep current match</Button>
-          <Button variant="outline" onClick={() => setSearching(true)}>
+          {links.length > 0 && (
+            <Button onClick={onKeep}>Keep current match</Button>
+          )}
+          <Button
+            variant={links.length > 0 ? "outline" : "default"}
+            onClick={() => {
+              setLookupUrl(null);
+              setMode("form");
+            }}
+          >
             Search for a match
           </Button>
         </div>
@@ -509,23 +603,25 @@ function MatchStep({
 
   return (
     <div className="space-y-2">
-      {links.length > 0 && (
+      {(links.length > 0 || mains.length > 0) && (
         <Button
           variant="link"
           size="sm"
           className="h-auto p-0 text-xs"
           onClick={() => {
             onWideChange?.(false);
-            setSearching(false);
+            setMode("choose");
           }}
         >
-          ← Keep the current match instead
+          ← Back to the series choices
         </Button>
       )}
       <MetadataMatchForm
+        key={lookupUrl ?? "search"}
         embedded
         open
         scope={scope}
+        initialLookupUrl={lookupUrl}
         onClose={() => {}}
         onApplied={onApplied}
         onCompareModeChange={onWideChange}
@@ -534,21 +630,16 @@ function MatchStep({
   );
 }
 
-// ───────── 2. coverage ─────────
+// ───────── 1. coverage ─────────
 
 function CoverageStep({
   seriesSlug,
   status,
-  matchedHere,
-  onWaitingChange,
   onSkip,
   onContinue,
 }: {
   seriesSlug: string;
   status: SeriesRefreshStatusResp;
-  /** A series match was applied in this run of the flow. */
-  matchedHere: boolean;
-  onWaitingChange: (waiting: boolean) => void;
   onSkip: () => void;
   onContinue: () => void;
 }) {
@@ -559,23 +650,6 @@ function CoverageStep({
   const [skipped, setSkipped] = React.useState<Set<string>>(new Set());
 
   const job = status.coverage;
-  const appliedAt = status.series_match.applied_at;
-  // A match applied here queues its own (seeded) analysis unless the
-  // setting is off; until that job shows up — newer than the apply — wait
-  // for it rather than starting a second, unseeded one.
-  const jobAfterMatch =
-    !!job &&
-    (!appliedAt || Date.parse(job.requested_at) >= Date.parse(appliedAt));
-  const waiting =
-    matchedHere &&
-    status.coverage_after_series_apply !== "off" &&
-    !jobAfterMatch &&
-    !analyze.isPending &&
-    !analyze.isSuccess;
-  React.useEffect(() => {
-    onWaitingChange(waiting);
-    return () => onWaitingChange(false);
-  }, [waiting, onWaitingChange]);
 
   const view: CoverageAnalysisResp | null | undefined = analysis.data;
   // The status names a newer job than the cached analysis (the seeded one
@@ -608,30 +682,9 @@ function CoverageStep({
   const budgetNote = (
     <p className="text-muted-foreground text-xs">
       Spends at most {COVERAGE_BUDGET} requests; issue lists are cached for 24
-      hours, so a repeat usually costs one search per provider. A check after a
-      match only lists the matched series (about 1–3 requests).
+      hours, so a repeat usually costs one search per provider.
     </p>
   );
-
-  if (waiting) {
-    return (
-      <div className="space-y-3 text-sm">
-        <p className="text-muted-foreground flex items-center gap-2">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Waiting for the coverage check your match queued…
-        </p>
-        {budgetNote}
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={runAnalysis}>
-            Run it now
-          </Button>
-          <Button variant="ghost" onClick={onSkip}>
-            Skip coverage
-          </Button>
-        </div>
-      </div>
-    );
-  }
 
   if (running) {
     return (
@@ -655,8 +708,10 @@ function CoverageStep({
       <div className="space-y-3 text-sm">
         <p>
           Coverage works out which ComicVine, Metron and GCD series hold which
-          of this series&rsquo; issues (by number and cover date), so the
-          per-issue fetch can look issues up directly instead of searching.
+          of this series&rsquo; issues (by number and cover date). It runs
+          first, on the files&rsquo; own tags, so a run that was renamed mid-way
+          is found before anything rewrites those tags; the series confirm and
+          the per-issue fetch then use what it accepted.
         </p>
         {budgetNote}
         <div className="flex flex-wrap gap-2">
@@ -719,7 +774,7 @@ function CoverageStep({
         ))}
       </ul>
       <div className="flex flex-wrap gap-2">
-        <Button onClick={onContinue}>Continue to per-issue fetch</Button>
+        <Button onClick={onContinue}>Continue to confirm series</Button>
         <Button
           variant="outline"
           onClick={runAnalysis}
