@@ -13,6 +13,26 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.52.0](https://github.com/mbryantms/folio/compare/v0.51.0...v0.52.0) (2026-10-10)
+
+
+### Added
+
+* **admin:** label the issues, series and libraries behind failed jobs and archive operations ([#1112](https://github.com/mbryantms/folio/issues/1112)) ([022fcea](https://github.com/mbryantms/folio/commit/022fceaff4e20c6011a613f748e108a502a4fec2))
+* **library:** provider_match series filter; the dashboard's Unmatched tile links to it ([#1114](https://github.com/mbryantms/folio/issues/1114)) ([c92431a](https://github.com/mbryantms/folio/commit/c92431a9c387199ed2bd3d469928589f445c12ed))
+
+
+### Fixed
+
+* **metadata:** ComicVine quota per resource, shared 1 req/s cap, drain buckets on 429 ([#1115](https://github.com/mbryantms/folio/issues/1115)) ([8d641a0](https://github.com/mbryantms/folio/commit/8d641a0db8812dfe721a36ef3c9876a3cc00323a))
+* **metadata:** search a special's own provider series, not the parent run ([#1113](https://github.com/mbryantms/folio/issues/1113)) ([3a68bdf](https://github.com/mbryantms/folio/commit/3a68bdf5cefff6174f17ecde521b1d5ff0fe9570))
+
+
+### Dependencies
+
+* update actions/download-artifact action to v8.0.2 ([#1109](https://github.com/mbryantms/folio/issues/1109)) ([6a33995](https://github.com/mbryantms/folio/commit/6a33995e0141e91ea8e1c1c09ace0df29636a87c))
+* update actions/upload-artifact action to v7.0.2 ([#1110](https://github.com/mbryantms/folio/issues/1110)) ([9a92b5a](https://github.com/mbryantms/folio/commit/9a92b5ae3ed2030ff76bb36c95b33c4dba268fe3))
+
 ## [0.51.0](https://github.com/mbryantms/folio/compare/v0.50.0...v0.51.0) (2026-10-10)
 
 
