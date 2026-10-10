@@ -1103,6 +1103,8 @@ pub async fn search_issue(
                 issue_number: i.number_raw.as_deref(),
             },
         ),
+        special_type: i.special_type.clone(),
+        archive_series_name: crate::metadata::sidecar_compose::archive_series_name(&i),
     };
     overrides.apply_to_issue(&mut facts);
     let year_asserted = overrides.year.is_some();
@@ -1325,6 +1327,8 @@ pub async fn lookup_issue(
                 issue_number: i.number_raw.as_deref(),
             },
         ),
+        special_type: i.special_type.clone(),
+        archive_series_name: crate::metadata::sidecar_compose::archive_series_name(&i),
     };
     run_lookup(
         &app,

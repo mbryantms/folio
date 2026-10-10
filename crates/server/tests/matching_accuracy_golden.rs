@@ -140,6 +140,8 @@ fn issue_fmt(
 
 fn issue_facts(series_name: &str, series_year: Option<i32>, number: &str) -> IssueQueryFacts {
     IssueQueryFacts {
+        special_type: None,
+        archive_series_name: None,
         series_name: series_name.to_owned(),
         series_year,
         publisher: None,
@@ -158,6 +160,8 @@ fn issue_facts_fmt(
     format: Option<String>,
 ) -> IssueQueryFacts {
     IssueQueryFacts {
+        special_type: None,
+        archive_series_name: None,
         format,
         ..issue_facts(series_name, series_year, number)
     }
@@ -290,6 +294,8 @@ fn known_correct_issues() -> Vec<IssueGoldenCase> {
             // Annual-aware name + number + year window -> 87.5, HIGH.
             name: "annual: local 'Annual 1' <-> provider '<Series> Annual' #1",
             facts: IssueQueryFacts {
+                special_type: None,
+                archive_series_name: None,
                 issue_year: Some(2020),
                 ..issue_facts("X-Men", Some(2019), "Annual 1")
             },

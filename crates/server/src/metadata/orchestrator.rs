@@ -1116,6 +1116,52 @@ pub(crate) fn annual_query_rewrite(
     Some((name, number))
 }
 
+/// Provider query shape for a local *special*: the series the special
+/// belongs to on the providers, which is never the parent run.
+///
+/// - `"Annual 1"` numbering → [`annual_query_rewrite`] (unchanged).
+/// - `special_type = Annual` with a plain number (an `Annuals/` folder,
+///   `Wonder Woman Annual 001.cbz` → number `1`) → `"<Series> Annual"`,
+///   or the archive's own `<Series>` when it carries the annual token.
+/// - `Special` / `OneShot` / `TPB` → the archive's own `<Series>` when it
+///   names a different series than the folder (`Wonder Woman Secret
+///   Files`, `Wonder Woman Special`). Without such a tag there is nothing
+///   better to ask for, so the query stays as-is — and the format
+///   mismatch penalty is what keeps the parent run's issue out of HIGH.
+///
+/// Without this, every special numbered `1` in a 200-issue run searched
+/// `"<Series>" #1` and ranked the run's #1 first; covers demoted it to
+/// LOW on ComicVine and Metron but GCD (cover-less) still proposed it as
+/// a medium match (Wonder Woman (1987), 2026-10-10).
+pub(crate) fn special_query_rewrite(facts: &IssueQueryFacts) -> Option<(String, String)> {
+    if let Some(r) = annual_query_rewrite(&facts.series_name, &facts.issue_number) {
+        return Some(r);
+    }
+    let number = crate::metadata::matcher::canonical_issue_number(&facts.issue_number);
+    let own = facts
+        .archive_series_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| {
+            !n.is_empty()
+                && crate::metadata::sidecar_compose::names_a_different_series(n, &facts.series_name)
+        });
+    match facts.special_type.as_deref() {
+        Some("Annual") => {
+            let name = match own.filter(|n| crate::metadata::title_norm::has_annual_token(n)) {
+                Some(n) => n.to_owned(),
+                None if crate::metadata::title_norm::has_annual_token(&facts.series_name) => {
+                    facts.series_name.clone()
+                }
+                None => format!("{} Annual", facts.series_name.trim()),
+            };
+            Some((name, number))
+        }
+        Some("Special" | "OneShot" | "TPB") => own.map(|n| (n.to_owned(), number)),
+        _ => None,
+    }
+}
+
 /// Run an issue search across `providers`. Same shape as
 /// [`run_series_search`]; the issue-specific bits live in
 /// [`matcher::score_issue`].
@@ -1189,7 +1235,11 @@ pub async fn run_issue_search_with(
     // series on both ComicVine and Metron, numbered plain "N". Query
     // that shape instead of asking the parent series for an issue
     // literally numbered "Annual N" (which neither provider has).
-    let annual = annual_query_rewrite(&facts.series_name, &facts.issue_number);
+    // Specials (annuals, specials, one-shots, trades) live in their own
+    // provider series: see `special_query_rewrite`. `annual` keeps its
+    // name below — a rewritten query of any kind must not narrow to the
+    // parent run's series id and gates on its own cover year.
+    let annual = special_query_rewrite(facts);
     let (query_series_name, query_issue_number) = annual
         .clone()
         .unwrap_or_else(|| (facts.series_name.clone(), facts.issue_number.clone()));
@@ -1829,6 +1879,83 @@ mod tests {
         assert_eq!(annual_query_rewrite("X-Men", "Annual"), None);
     }
 
+    fn facts(
+        series: &str,
+        number: &str,
+        special: Option<&str>,
+        own: Option<&str>,
+    ) -> IssueQueryFacts {
+        IssueQueryFacts {
+            series_name: series.into(),
+            series_year: Some(1987),
+            publisher: None,
+            volume: None,
+            issue_number: number.into(),
+            issue_year: None,
+            format: None,
+            special_type: special.map(str::to_owned),
+            archive_series_name: own.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn specials_query_their_own_series_not_the_parent_run() {
+        // Wonder Woman (1987): the run's #1 must not be what an annual, a
+        // special or a Secret Files #1 asks the providers for.
+        assert_eq!(
+            special_query_rewrite(&facts("Wonder Woman", "1", Some("Annual"), None)),
+            Some(("Wonder Woman Annual".into(), "1".into()))
+        );
+        assert_eq!(
+            special_query_rewrite(&facts(
+                "Wonder Woman",
+                "1",
+                Some("Annual"),
+                Some("Wonder Woman Annual")
+            )),
+            Some(("Wonder Woman Annual".into(), "1".into()))
+        );
+        assert_eq!(
+            special_query_rewrite(&facts(
+                "Wonder Woman",
+                "001",
+                Some("Special"),
+                Some("Wonder Woman Secret Files & Origins")
+            )),
+            Some(("Wonder Woman Secret Files & Origins".into(), "1".into()))
+        );
+        // A special whose tag is just the series (or absent) keeps the
+        // plain query — nothing better is known.
+        assert_eq!(
+            special_query_rewrite(&facts(
+                "Wonder Woman",
+                "1",
+                Some("Special"),
+                Some("Wonder Woman")
+            )),
+            None
+        );
+        assert_eq!(
+            special_query_rewrite(&facts("Wonder Woman", "1", Some("Special"), None)),
+            None
+        );
+        // Main-run issues are untouched, whatever their tag says.
+        assert_eq!(
+            special_query_rewrite(&facts(
+                "Wonder Woman",
+                "1",
+                None,
+                Some("Wonder Woman Annual")
+            )),
+            None
+        );
+        // "Annual N" numbering still routes through the old rewrite.
+        assert_eq!(
+            special_query_rewrite(&facts("X-Men", "Annual 2", None, None)),
+            Some(("X-Men Annual".into(), "2".into()))
+        );
+    }
+
     #[test]
     fn stored_query_round_trips() {
         let series = StoredQuery::Series(SeriesQueryFacts {
@@ -2106,6 +2233,8 @@ mod tests {
             issue_number: "1".into(),
             issue_year: None,
             format: None,
+            special_type: None,
+            archive_series_name: None,
         };
         let candidates = vec![
             IssueCandidate {
