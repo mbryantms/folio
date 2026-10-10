@@ -103,6 +103,8 @@ export function LibraryGridView({
     setStatus,
     metadataCompleteness,
     setMetadataCompleteness,
+    providerMatch,
+    setProviderMatch,
     readStatus,
     setReadStatus,
     startsWith,
@@ -430,6 +432,7 @@ export function LibraryGridView({
         <ActiveChips
           status={status}
           metadataCompleteness={metadataCompleteness}
+          providerMatch={providerMatch}
           readStatus={readStatus}
           yearFrom={yearFrom}
           yearTo={yearTo}
@@ -446,6 +449,7 @@ export function LibraryGridView({
           locations={locations}
           onClearStatus={() => setStatus("any")}
           onClearMetadataCompleteness={() => setMetadataCompleteness(undefined)}
+          onClearProviderMatch={() => setProviderMatch(undefined)}
           onRemoveReadStatus={(v) =>
             setReadStatus(readStatus.filter((x) => x !== v))
           }
@@ -593,6 +597,8 @@ export function LibraryGridView({
         onStatus={setStatus}
         metadataCompleteness={metadataCompleteness}
         onMetadataCompleteness={setMetadataCompleteness}
+        providerMatch={providerMatch}
+        onProviderMatch={setProviderMatch}
         readStatus={readStatus}
         onReadStatus={setReadStatus}
         yearFrom={yearFrom}

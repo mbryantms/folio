@@ -14,6 +14,7 @@ import {
   type LibraryGridMode,
   type LibraryGridUrlState,
   type MetadataCompletenessTier,
+  type ProviderMatch,
 } from "@/components/library/library-grid-filters";
 import type {
   IssuesCrossListFilters,
@@ -120,6 +121,11 @@ export function useLibraryGridFilters(
   const [metadataCompleteness, setMetadataCompleteness] = React.useState<
     MetadataCompletenessTier | undefined
   >(init.metadataCompleteness);
+  // Provider-match facet (series mode only); the admin metadata dashboard's
+  // "Unmatched" tile deep-links here via ?provider_match=unmatched.
+  const [providerMatch, setProviderMatch] = React.useState<
+    ProviderMatch | undefined
+  >(init.providerMatch);
   // Per-user read state (series mode only): CSV subset of
   // unread/in_progress/read; multiple values OR together.
   const [readStatus, setReadStatus] = React.useState<string[]>(
@@ -261,6 +267,7 @@ export function useLibraryGridFilters(
     read_status: csvOrUndef(readStatus),
     // Completeness rollup is series-only (the worklist filter).
     metadata_completeness: metadataCompleteness,
+    provider_match: providerMatch,
     // A–Z jump — matched against normalized_name (the Name-sort column).
     starts_with: startsWith ?? undefined,
   };
@@ -275,6 +282,7 @@ export function useLibraryGridFilters(
     mode,
     status,
     metadataCompleteness,
+    providerMatch,
     readStatus,
     startsWith,
     yearFrom,
@@ -378,6 +386,7 @@ export function useLibraryGridFilters(
   const facetCount =
     (status !== "any" ? 1 : 0) +
     (metadataCompleteness ? 1 : 0) +
+    (providerMatch ? 1 : 0) +
     readStatus.length +
     (yearFrom || yearTo ? 1 : 0) +
     (ratingRange ? 1 : 0) +
@@ -395,6 +404,7 @@ export function useLibraryGridFilters(
   function clearFacets() {
     setStatus("any");
     setMetadataCompleteness(undefined);
+    setProviderMatch(undefined);
     setReadStatus([]);
     setStartsWith(null);
     setYearFrom("");
@@ -435,6 +445,8 @@ export function useLibraryGridFilters(
     setStatus,
     metadataCompleteness,
     setMetadataCompleteness,
+    providerMatch,
+    setProviderMatch,
     readStatus,
     setReadStatus,
     startsWith,

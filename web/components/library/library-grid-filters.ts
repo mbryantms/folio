@@ -46,6 +46,13 @@ export const METADATA_COMPLETENESS_TIERS = [
 ] as const;
 export type MetadataCompletenessTier =
   (typeof METADATA_COMPLETENESS_TIERS)[number];
+/** `provider_match` facet values — does the series have a provider id. */
+export const PROVIDER_MATCH_VALUES = ["matched", "unmatched"] as const;
+export type ProviderMatch = (typeof PROVIDER_MATCH_VALUES)[number];
+export const PROVIDER_MATCH_LABELS: Record<ProviderMatch, string> = {
+  matched: "Matched",
+  unmatched: "Unmatched",
+};
 export const METADATA_COMPLETENESS_LABELS: Record<
   MetadataCompletenessTier,
   string
@@ -71,6 +78,9 @@ export type LibraryGridInitialFilters = {
   /** Metadata-completeness tier (series mode only) — the `metadata_completeness`
    *  query param. `needs_metadata` is the worklist deep-link target. */
   metadataCompleteness?: MetadataCompletenessTier;
+  /** Provider-match facet (series mode only) — the `provider_match` query
+   *  param; the admin dashboard's "Unmatched" tile deep-links here. */
+  providerMatch?: ProviderMatch;
   /** Per-user read state — CSV subset of `unread,in_progress,read`
    *  (series mode only). */
   readStatus?: string[];
@@ -155,6 +165,11 @@ export function parseLibraryGridFilters(
     ).includes(completeness ?? "")
       ? (completeness as MetadataCompletenessTier)
       : undefined,
+    providerMatch: (PROVIDER_MATCH_VALUES as readonly string[]).includes(
+      raw.provider_match ?? "",
+    )
+      ? (raw.provider_match as ProviderMatch)
+      : undefined,
     readStatus: csv("read_status"),
     startsWith: parseStartsWithParam(raw.starts_with),
     yearFrom: raw.year_from || undefined,
@@ -186,6 +201,7 @@ export type LibraryGridUrlState = {
   mode: LibraryGridMode;
   status?: string;
   metadataCompleteness?: MetadataCompletenessTier;
+  providerMatch?: ProviderMatch;
   readStatus: string[];
   startsWith: string | null;
   yearFrom?: string;
@@ -221,6 +237,7 @@ export function serializeLibraryGridFilters(
   if (state.status && state.status !== "any") sp.set("status", state.status);
   if (state.metadataCompleteness)
     sp.set("metadata_completeness", state.metadataCompleteness);
+  if (state.providerMatch) sp.set("provider_match", state.providerMatch);
   if (state.readStatus.length)
     sp.set("read_status", state.readStatus.join(","));
   if (state.startsWith) sp.set("starts_with", state.startsWith);

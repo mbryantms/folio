@@ -68,8 +68,13 @@ export function DashboardTab() {
         <StatCard
           label="Unmatched"
           value={d.series_unmatched.toLocaleString()}
-          accent={d.series_unmatched > 0 ? "needs search" : "none"}
+          accent={
+            d.series_unmatched > 0 ? "needs search — open the list" : "none"
+          }
           icon={<XCircle className="h-4 w-4" />}
+          href={
+            d.series_unmatched > 0 ? "/?provider_match=unmatched" : undefined
+          }
         />
         <StatCard
           label="Applies (7d)"
@@ -432,25 +437,34 @@ function StatCard({
   value,
   accent,
   icon,
+  href,
 }: {
   label: string;
   value: string;
   accent?: string;
   icon?: React.ReactNode;
+  /** Where the number leads — the series grid filtered to those rows. */
+  href?: string;
 }) {
+  const body = (
+    <CardContent className="space-y-1 p-4">
+      <div className="text-muted-foreground flex items-center gap-1.5 text-xs tracking-wide uppercase">
+        {icon}
+        {label}
+      </div>
+      <div className="text-2xl font-semibold">{value}</div>
+      {accent && <div className="text-muted-foreground text-xs">{accent}</div>}
+    </CardContent>
+  );
+  if (!href) return <Card>{body}</Card>;
   return (
-    <Card>
-      <CardContent className="space-y-1 p-4">
-        <div className="text-muted-foreground flex items-center gap-1.5 text-xs tracking-wide uppercase">
-          {icon}
-          {label}
-        </div>
-        <div className="text-2xl font-semibold">{value}</div>
-        {accent && (
-          <div className="text-muted-foreground text-xs">{accent}</div>
-        )}
-      </CardContent>
-    </Card>
+    <Link
+      href={href}
+      className="focus-visible:ring-ring block rounded-xl focus-visible:ring-2 focus-visible:outline-none"
+      aria-label={`${label}: ${value} — open the list`}
+    >
+      <Card className="hover:bg-muted/40 transition-colors">{body}</Card>
+    </Link>
   );
 }
 
