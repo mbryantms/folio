@@ -13,6 +13,15 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.53.0](https://github.com/mbryantms/folio/compare/v0.52.1...v0.53.0) (2026-10-10)
+
+
+### Added
+
+* **admin:** Coverage tab on /admin/metadata — identifier and completeness coverage of the whole library ([#1118](https://github.com/mbryantms/folio/issues/1118)) ([aef7b2e](https://github.com/mbryantms/folio/commit/aef7b2e13d5c7a7f5b5f6bdb1b95544007824a7e))
+* **metadata:** read provider ids from tagger notes; promote series ids from applied issues; repair existing rows ([#1120](https://github.com/mbryantms/folio/issues/1120)) ([817d6f9](https://github.com/mbryantms/folio/commit/817d6f99b3a4c62535ae4785ebebeaf7cc3c38a8))
+* **series:** Metadata tab — ids, provider mapping, fetch actions and a per-issue audit list; Collection becomes a health view ([#1119](https://github.com/mbryantms/folio/issues/1119)) ([dbc830f](https://github.com/mbryantms/folio/commit/dbc830f8ae8fe137514979f749cda1265bdf6eb1))
+
 ## [0.52.1](https://github.com/mbryantms/folio/compare/v0.52.0...v0.52.1) (2026-10-10)
 
 
