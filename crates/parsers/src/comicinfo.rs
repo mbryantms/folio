@@ -70,6 +70,11 @@ pub struct ComicInfo {
     /// as `4000-N` for issues / `4050-N` for series).
     pub comicvine_id: Option<i64>,
     pub metron_id: Option<i64>,
+    /// Grand Comics Database issue id. ComicInfo has no element for it;
+    /// it comes from a ComicTagger `<Notes>` trace (`using info from Grand
+    /// Comics Database … [Issue ID n]`). Never serialized — MetronInfo's
+    /// `<ID source="gcd">` is the sidecar home for it.
+    pub gcd_id: Option<i64>,
     /// Series-scope external IDs (from `<ComicVineSeriesID>`, `<MetronSeriesID>`,
     /// or extracted from a series-shaped `<Web>` URL). The scanner copies these
     /// onto the parent series row.
@@ -331,7 +336,70 @@ pub fn parse(bytes: &[u8]) -> Result<ComicInfo, ParseError> {
         }
     }
 
+    // The tagger's own trace in `<Notes>` is the last resort: ComicTagger
+    // names the provider and the issue id (`using info from Metron …
+    // [Issue ID 28577]`; Metron's `<Web>` is a slug, so this is the only
+    // numeric id such a file carries), and ComicRack-era scrapers wrote
+    // `[CVDB n]`. Explicit tags, the `<Web>` URL and the genre marker win.
+    if let Some(notes) = info.notes.as_deref() {
+        let found = ids_from_tagger_notes(notes);
+        if info.comicvine_id.is_none() {
+            info.comicvine_id = found.comicvine;
+        }
+        if info.metron_id.is_none() {
+            info.metron_id = found.metron;
+        }
+        if info.gcd_id.is_none() {
+            info.gcd_id = found.gcd;
+        }
+    }
+
     Ok(info)
+}
+
+/// Issue ids a tagger left in `<Notes>`.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct TaggerNoteIds {
+    pub comicvine: Option<i64>,
+    pub metron: Option<i64>,
+    pub gcd: Option<i64>,
+}
+
+/// Read the ids out of a tagger's `<Notes>` trace: ComicTagger's
+/// `… using info from <Provider> … [Issue ID n]` (the provider decides
+/// which id it is) and the ComicRack-era `[CVDB n]` marker (ComicVine).
+/// Anything else, including an `[Issue ID n]` with no provider named, is
+/// ignored — an id of unknown source is worse than none.
+pub fn ids_from_tagger_notes(notes: &str) -> TaggerNoteIds {
+    let mut out = TaggerNoteIds::default();
+    let lower = notes.to_ascii_lowercase();
+    if let Some(n) = bracketed_number(&lower, "[cvdb") {
+        out.comicvine = Some(n);
+    }
+    if lower.contains("comictagger")
+        && let Some(rest) = lower.split("using info from ").nth(1)
+        && let Some(n) = bracketed_number(&lower, "[issue id ")
+    {
+        let provider = rest.trim_start();
+        if provider.starts_with("metron") {
+            out.metron = Some(n);
+        } else if provider.starts_with("comic vine") || provider.starts_with("comicvine") {
+            out.comicvine = out.comicvine.or(Some(n));
+        } else if provider.starts_with("grand comics") || provider.starts_with("gcd") {
+            out.gcd = Some(n);
+        }
+    }
+    out
+}
+
+/// The digits right after `prefix` up to the closing `]`, e.g.
+/// `[Issue ID 28577]` with prefix `[issue id ` → 28577. `text` is
+/// expected lower-cased by the caller.
+fn bracketed_number(text: &str, prefix: &str) -> Option<i64> {
+    let start = text.find(prefix)? + prefix.len();
+    let rest = &text[start..];
+    let end = rest.find(']')?;
+    rest[..end].trim().parse::<i64>().ok()
 }
 
 /// Split Mylar3's `CVDB<id>` marker out of a `<Genre>` list: `("Superhero,
@@ -1031,6 +1099,60 @@ mod tests {
             split_mylar_cvdb_marker("Superhero"),
             (Some("Superhero".to_owned()), None)
         );
+    }
+
+    #[test]
+    fn comictagger_notes_supply_the_issue_id_of_the_named_provider() {
+        // Metron's <Web> is a slug: the notes carry the only numeric id.
+        let xml = br#"<?xml version="1.0"?><ComicInfo>
+            <Series>Detective Comics</Series><Number>514</Number>
+            <Notes>Tagged with ComicTagger 1.6.0b5.dev0 using info from Metron on 2025-05-02 19:32:49. [Issue ID 28577]</Notes>
+            <Web>https://metron.cloud/issue/detective-comics-1937-514/</Web>
+        </ComicInfo>"#;
+        let info = parse(xml).unwrap();
+        assert_eq!(info.metron_id, Some(28577));
+        assert_eq!(info.comicvine_id, None);
+        assert_eq!(info.gcd_id, None);
+
+        let cv = br#"<ComicInfo>
+            <Notes>Tagged with ComicTagger 1.5.5 using info from Comic Vine on 2024-01-01 10:00:00. [Issue ID 381432]</Notes>
+        </ComicInfo>"#;
+        let info = parse(cv).unwrap();
+        assert_eq!(info.comicvine_id, Some(381432));
+        assert_eq!(info.metron_id, None);
+
+        let gcd = br#"<ComicInfo>
+            <Notes>Tagged with ComicTagger 1.6.0 using info from Grand Comics Database on 2025-01-01. [Issue ID 2673636]</Notes>
+        </ComicInfo>"#;
+        let info = parse(gcd).unwrap();
+        assert_eq!(info.gcd_id, Some(2673636));
+        assert_eq!(info.comicvine_id, None);
+
+        // ComicRack-era scrapers: `[CVDB n]` in the notes.
+        let cr = br#"<ComicInfo>
+            <Notes>Scraped metadata from ComicVine [CVDB121185].</Notes>
+        </ComicInfo>"#;
+        let info = parse(cr).unwrap();
+        assert_eq!(info.comicvine_id, Some(121185));
+
+        // An id with no provider named is not an id.
+        let anon = br#"<ComicInfo><Notes>Tagged by hand. [Issue ID 7]</Notes></ComicInfo>"#;
+        let info = parse(anon).unwrap();
+        assert_eq!(info.comicvine_id, None);
+        assert_eq!(info.metron_id, None);
+        assert_eq!(info.gcd_id, None);
+    }
+
+    #[test]
+    fn explicit_tags_and_web_url_win_over_notes() {
+        let xml = br#"<ComicInfo>
+            <MetronID>1</MetronID>
+            <Web>https://comicvine.gamespot.com/x/4000-2/</Web>
+            <Notes>Tagged with ComicTagger 1.6 using info from Metron on 2025-01-01. [Issue ID 999]</Notes>
+        </ComicInfo>"#;
+        let info = parse(xml).unwrap();
+        assert_eq!(info.metron_id, Some(1));
+        assert_eq!(info.comicvine_id, Some(2));
     }
 
     #[test]

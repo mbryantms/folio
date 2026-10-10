@@ -330,6 +330,9 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
         metron_id: external_id_i64(ctx.issue_external_ids, "metron"),
         comicvine_series_id: external_id_i64(ctx.series_external_ids, "comicvine"),
         metron_series_id: external_id_i64(ctx.series_external_ids, "metron"),
+        // Read-only: a ComicTagger notes trace supplies it at scan time;
+        // the composed sidecar carries GCD ids in MetronInfo instead.
+        gcd_id: None,
         // Junctions / CSV-shaped lists.
         characters: compose_csv_field(
             ctx.is_issue_pinned("characters"),

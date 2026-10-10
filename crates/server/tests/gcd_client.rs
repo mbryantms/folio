@@ -1138,6 +1138,18 @@ async fn issue_search_then_apply_round_trips_through_the_factory() {
     let outcome = apply_issue_inline(&state, &issue_id, args)
         .await
         .expect("apply GCD issue");
+    // The applied issue record names its series: the local series had no
+    // GCD id, so it takes that one — a series-level id at no request.
+    let series_gcd = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("series"))
+        .filter(entity::external_id::Column::EntityId.eq(series_id.to_string()))
+        .filter(entity::external_id::Column::Source.eq("gcd"))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .expect("series GCD id promoted from the applied issue");
+    assert!(!series_gcd.external_id.is_empty());
+    assert_eq!(series_gcd.set_by, "gcd");
     assert!(!outcome.cover_replaced);
     assert!(
         outcome

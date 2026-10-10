@@ -1902,3 +1902,70 @@ async fn series_start_year_prefers_folder_and_series_json_over_first_archive() {
         "series.json year_began/year outranks the folder year"
     );
 }
+
+/// A ComicTagger `<Notes>` trace names the provider and the issue id
+/// (`using info from Metron … [Issue ID n]`); Metron's `<Web>` is a slug,
+/// so the notes are the only numeric id such a file carries. The scanner
+/// lands it in `external_ids` (file tier), and the GCD variant too.
+#[tokio::test]
+async fn comictagger_notes_ids_land_in_external_ids() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Detective Comics (1937)");
+    std::fs::create_dir_all(&folder).unwrap();
+
+    let metron_tagged = r#"<?xml version="1.0"?>
+        <ComicInfo>
+            <Series>Detective Comics</Series>
+            <Number>514</Number>
+            <Notes>Tagged with ComicTagger 1.6.0b5.dev0 using info from Metron on 2025-05-02 19:32:49. [Issue ID 28577]</Notes>
+            <Web>https://metron.cloud/issue/detective-comics-1937-514/</Web>
+        </ComicInfo>"#;
+    let gcd_tagged = r#"<?xml version="1.0"?>
+        <ComicInfo>
+            <Series>Detective Comics</Series>
+            <Number>515</Number>
+            <Notes>Tagged with ComicTagger 1.6.0 using info from Grand Comics Database on 2025-05-03. [Issue ID 36000]</Notes>
+        </ComicInfo>"#;
+    write_cbz_with_xml(
+        &folder.join("Detective Comics 514.cbz"),
+        1,
+        2,
+        Some(metron_tagged),
+        None,
+    );
+    write_cbz_with_xml(
+        &folder.join("Detective Comics 515.cbz"),
+        2,
+        2,
+        Some(gcd_tagged),
+        None,
+    );
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let rows = ExternalIdEntity::find()
+        .filter(entity::external_id::Column::EntityType.eq("issue"))
+        .all(&state.db)
+        .await
+        .unwrap();
+    let mut found: Vec<(String, String, String)> = rows
+        .into_iter()
+        .map(|r| (r.source, r.external_id, r.set_by))
+        .collect();
+    found.sort();
+    assert_eq!(
+        found,
+        vec![
+            ("gcd".to_owned(), "36000".to_owned(), "comicinfo".to_owned()),
+            (
+                "metron".to_owned(),
+                "28577".to_owned(),
+                "comicinfo".to_owned()
+            ),
+        ],
+        "{found:?}"
+    );
+}
