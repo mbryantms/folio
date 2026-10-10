@@ -1,7 +1,11 @@
 //! ComicVine API client (`comicvine.gamespot.com/api`).
 //!
 //! TOS: non-commercial only, attribution required, caching encouraged.
-//! Rate: 200 req / resource / hour + ~1 req/sec velocity cap.
+//! Rate: "200 requests per resource, per hour" — one Redis bucket per
+//! resource (`rate_limit::comicvine_hour`), so `/issues` searches and
+//! `/issue` details don't drain each other — plus a 1 req/sec velocity
+//! bucket shared across every client, worker and replica
+//! (`rate_limit::COMICVINE_SEC`).
 //!
 //! Endpoints we use:
 //! - `GET /search?resources=volume,issue,publisher&query=...` — keyword search.
@@ -24,11 +28,12 @@
 //! - 107 → rate limit / abuse
 //! - 200 → upstream filter error (we treat as InvalidResponse)
 //!
-//! Velocity cap: a `Mutex<Instant>` tracks the last successful HTTP
-//! request and sleeps the worker out to the per-second floor. Combined
-//! with the per-hour Redis token bucket, this keeps us inside both the
-//! velocity cap and the per-resource hour budget without coordinating
-//! across instances.
+//! Velocity cap: every request takes the shared 1-second Redis bucket
+//! first; when another client took it this second, the worker sleeps
+//! out the window and tries again (bounded), rather than parking the
+//! run. A per-client `Mutex<Instant>` couldn't do this: each job builds
+//! its own client, and the search / apply / coverage workers and the API
+//! handlers run side by side.
 
 use crate::metadata::budget;
 use crate::metadata::cache;
@@ -40,7 +45,7 @@ use crate::metadata::provider::{
     MetadataProvider, ProviderError, ProviderIssue, ProviderResult, ProviderSeriesIssues,
     QuotaSnapshot, SeriesCandidate, SeriesQuery, VariantCoverCandidate,
 };
-use crate::metadata::rate_limit::{self, BucketDef, Reservation};
+use crate::metadata::rate_limit::{self, Reservation};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use redis::aio::ConnectionManager;
@@ -49,7 +54,6 @@ use serde::Deserialize;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
 
 /// User-agent reported to CV — TOS asks for a unique identifier.
 const USER_AGENT: &str = crate::build_info::USER_AGENT_METADATA;
@@ -57,7 +61,10 @@ const USER_AGENT: &str = crate::build_info::USER_AGENT_METADATA;
 /// Floor between successful API calls. ComicVine's documented rate
 /// is "≤ 1 req/sec sustained"; we conservatively wait 1s + a small
 /// jitter ceiling to absorb clock skew.
-const VELOCITY_FLOOR: Duration = Duration::from_millis(1100);
+/// How many 1-second windows a request waits for the shared velocity
+/// bucket before giving up (a transport error, not quota: the hour
+/// budget was already reserved).
+const VELOCITY_WAIT_ATTEMPTS: u32 = 15;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -92,11 +99,6 @@ struct Inner {
     base_url: String,
     http: reqwest::Client,
     redis: ConnectionManager,
-    /// Last successful HTTP request — used to enforce the 1 req/sec
-    /// velocity cap. Held briefly to compute the sleep delta; never
-    /// across the actual HTTP call itself.
-    last_request: Mutex<Option<Instant>>,
-    bucket: BucketDef,
 }
 
 impl ComicVineClient {
@@ -123,8 +125,6 @@ impl ComicVineClient {
                 base_url,
                 http,
                 redis,
-                last_request: Mutex::new(None),
-                bucket: rate_limit::COMICVINE_HOUR,
             }),
         }
     }
@@ -171,27 +171,38 @@ impl ComicVineClient {
         .await
     }
 
-    async fn reserve_slot(&self) -> ProviderResult<()> {
+    /// Take one token from the request path's hourly resource bucket,
+    /// then the shared per-second velocity bucket.
+    async fn reserve_slot(&self, path: &str) -> ProviderResult<()> {
         let mut redis = self.inner.redis.clone();
-        match rate_limit::reserve(&mut redis, &self.inner.bucket).await {
+        let resource = rate_limit::ComicVineResource::from_path(path);
+        match rate_limit::reserve(&mut redis, &rate_limit::comicvine_hour(resource)).await {
             Ok(Reservation::Granted { .. }) => {}
             Ok(Reservation::Denied { retry_after_secs }) => {
+                tracing::info!(
+                    resource = resource.as_str(),
+                    retry_after_secs,
+                    "comicvine: hourly budget for resource exhausted"
+                );
                 return Err(ProviderError::QuotaExceeded { retry_after_secs });
             }
             Err(e) => return Err(ProviderError::Transport(format!("redis: {e}"))),
         }
-        let mut last = self.inner.last_request.lock().await;
-        if let Some(prev) = *last {
-            let elapsed = prev.elapsed();
-            if elapsed < VELOCITY_FLOOR {
-                let wait = VELOCITY_FLOOR - elapsed;
-                drop(last);
-                tokio::time::sleep(wait).await;
-                last = self.inner.last_request.lock().await;
+        // Velocity: one request per second across everything that talks
+        // to CV. A denial is "someone else fired this second" — wait the
+        // window out and try again; the hour token is already ours.
+        for _ in 0..VELOCITY_WAIT_ATTEMPTS {
+            match rate_limit::reserve(&mut redis, &rate_limit::COMICVINE_SEC).await {
+                Ok(Reservation::Granted { .. }) => return Ok(()),
+                Ok(Reservation::Denied { retry_after_secs }) => {
+                    tokio::time::sleep(Duration::from_secs(retry_after_secs.clamp(1, 2))).await;
+                }
+                Err(e) => return Err(ProviderError::Transport(format!("redis: {e}"))),
             }
         }
-        *last = Some(Instant::now());
-        Ok(())
+        Err(ProviderError::Transport(
+            "comicvine: velocity bucket busy for too long".to_owned(),
+        ))
     }
 
     async fn request<T: serde::de::DeserializeOwned>(
@@ -199,7 +210,7 @@ impl ComicVineClient {
         path: &str,
         extra_query: &[(&str, String)],
     ) -> ProviderResult<T> {
-        self.reserve_slot().await?;
+        self.reserve_slot(path).await?;
         let result = self.request_inner(path, extra_query).await;
         match &result {
             Ok(_) => budget::clear_error(&self.inner.redis, Source::ComicVine).await,
@@ -208,6 +219,20 @@ impl ComicVineClient {
             }
         }
         result
+    }
+
+    /// ComicVine said this resource is out of budget: make the local
+    /// bucket agree so the other workers park instead of each burning a
+    /// request to learn the same thing.
+    async fn drain_resource(&self, path: &str, retry_after_secs: u64) {
+        let resource = rate_limit::ComicVineResource::from_path(path);
+        let mut redis = self.inner.redis.clone();
+        rate_limit::exhaust(
+            &mut redis,
+            &rate_limit::comicvine_hour(resource),
+            retry_after_secs,
+        )
+        .await;
     }
 
     async fn request_inner<T: serde::de::DeserializeOwned>(
@@ -236,12 +261,10 @@ impl ComicVineClient {
         let resp = http::send_with_retry(build, &opts, &redact_api_key).await?;
         let status = resp.status;
         if status.as_u16() == 429 {
-            return Err(ProviderError::QuotaExceeded {
-                retry_after_secs: http::retry_after_secs(
-                    &resp.headers,
-                    http::DEFAULT_RETRY_AFTER_SECS,
-                ),
-            });
+            let retry_after_secs =
+                http::retry_after_secs(&resp.headers, http::DEFAULT_RETRY_AFTER_SECS);
+            self.drain_resource(path, retry_after_secs).await;
+            return Err(ProviderError::QuotaExceeded { retry_after_secs });
         }
         // Parse the standard envelope first so we can map status_code
         // before the typed deserialize.
@@ -264,9 +287,9 @@ impl ComicVineClient {
                 // CV's "rate limit exceeded" envelope. It rarely carries a
                 // `Retry-After`; the hourly window is the documented
                 // fallback.
-                return Err(ProviderError::QuotaExceeded {
-                    retry_after_secs: http::retry_after_secs(&resp.headers, 3600),
-                });
+                let retry_after_secs = http::retry_after_secs(&resp.headers, 3600);
+                self.drain_resource(path, retry_after_secs).await;
+                return Err(ProviderError::QuotaExceeded { retry_after_secs });
             }
             other => {
                 return Err(ProviderError::Upstream(format!(
@@ -854,7 +877,8 @@ impl MetadataProvider for ComicVineClient {
 
     async fn quota(&self) -> ProviderResult<QuotaSnapshot> {
         let mut redis = self.inner.redis.clone();
-        let (remaining, ttl) = rate_limit::snapshot(&mut redis, &self.inner.bucket)
+        // The tightest resource binds: that's the number worth showing.
+        let (remaining, ttl) = rate_limit::comicvine_hour_snapshot(&mut redis)
             .await
             .map_err(|e| ProviderError::Transport(format!("redis: {e}")))?;
         Ok(QuotaSnapshot {

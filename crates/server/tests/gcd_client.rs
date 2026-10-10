@@ -919,10 +919,6 @@ async fn auth_quota_and_schema_errors_classify() {
         c.fetch_series("1").await,
         Err(ProviderError::Unauthorized(_))
     ));
-    match c.fetch_series("2").await {
-        Err(ProviderError::QuotaExceeded { retry_after_secs }) => assert_eq!(retry_after_secs, 120),
-        other => panic!("expected QuotaExceeded, got {other:?}"),
-    }
     assert!(matches!(
         c.fetch_series("3").await,
         Err(ProviderError::InvalidResponse(_))
@@ -936,6 +932,23 @@ async fn auth_quota_and_schema_errors_classify() {
         .await
         .expect("last error recorded");
     assert!(last.message.contains("not found"), "{}", last.message);
+    // The 429 goes last: GCD's own `Retry-After` drains the local hour
+    // bucket, so the next call is denied here without an HTTP request.
+    match c.fetch_series("2").await {
+        Err(ProviderError::QuotaExceeded { retry_after_secs }) => assert_eq!(retry_after_secs, 120),
+        other => panic!("expected QuotaExceeded, got {other:?}"),
+    }
+    let before = mock.received_requests().await.unwrap().len();
+    match c.fetch_series("3").await {
+        Err(ProviderError::QuotaExceeded { retry_after_secs }) => {
+            assert!(
+                (100..=120).contains(&retry_after_secs),
+                "{retry_after_secs}"
+            );
+        }
+        other => panic!("expected local quota denial after upstream 429, got {other:?}"),
+    }
+    assert_eq!(mock.received_requests().await.unwrap().len(), before);
 }
 
 // ────────────────────── round trips ──────────────────────

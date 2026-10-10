@@ -404,6 +404,17 @@ impl GcdClient {
             },
             _ => ProviderError::Upstream(format!("HTTP {status}: {}", resp.snippet(256))),
         };
+        if let ProviderError::QuotaExceeded { retry_after_secs } = err {
+            // GCD's throttle answered before our bucket did: drain the
+            // window its `Retry-After` points at.
+            let bucket = if retry_after_secs <= rate_limit::GCD_HOUR.window.as_secs() {
+                rate_limit::GCD_HOUR
+            } else {
+                rate_limit::GCD_DAY
+            };
+            let mut redis = self.inner.redis.clone();
+            rate_limit::exhaust(&mut redis, &bucket, retry_after_secs).await;
+        }
         // A 404 past page 1 is DRF's expected "invalid page" (an
         // overview probe ran off the end), not a provider fault worth
         // surfacing on the admin card.
