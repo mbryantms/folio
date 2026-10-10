@@ -165,7 +165,7 @@ function IdentifierCoverageCard({ d }: { d: MetadataCoverageResp }) {
                 link={
                   seriesMissing > 0
                     ? {
-                        href: `/?provider_match=unmatched&provider_source=${row.source}`,
+                        href: `/?library=all&provider_match=unmatched&provider_source=${row.source}`,
                         label: `${seriesMissing.toLocaleString()} unmatched`,
                       }
                     : undefined
@@ -276,7 +276,7 @@ function CompletenessCard({ d }: { d: MetadataCoverageResp }) {
             hint="marked complete by hand"
           />
           <Link
-            href="/?metadata_completeness=needs_metadata"
+            href="/?library=all&metadata_completeness=needs_metadata"
             className="text-primary ml-auto text-xs hover:underline"
           >
             Open the needs-metadata worklist →
