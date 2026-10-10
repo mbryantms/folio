@@ -181,6 +181,18 @@ and the
   *real* remaining budget comes from the `X-RateLimit-{Burst,Sustained}-
   {Limit,Remaining,Reset}` headers Metron returns on every response
   (`Reset` is a Unix timestamp), which Folio stores after each call.
+- **Ids read from the files, at no request.** The scanner takes an
+  issue's provider ids from, in order: explicit `<ComicVineID>` /
+  `<MetronID>` elements, a ComicVine `<Web>` URL, Mylar's `CVDB<n>`
+  genre marker, and the tagger's `<Notes>` trace — ComicTagger's
+  `using info from <Provider> … [Issue ID n]` (Metron, Comic Vine or
+  Grand Comics Database; Metron's `<Web>` is a slug, so the notes are the
+  only numeric id such a file has) and the ComicRack-era `[CVDB n]`.
+  Migration `m20270611` repaired rows scanned before the notes rule and
+  also gave series a Metron / GCD / ComicVine series id from their
+  issues' cached provider records; from now on an issue apply promotes
+  the record's series id onto the series whenever it has none of that
+  source.
 - **Coverage tab.** `/admin/metadata` → Coverage shows, for the whole
   library, how many series and issues carry each provider's id (with
   links into the grid: `?provider_match=unmatched&provider_source=metron`),
