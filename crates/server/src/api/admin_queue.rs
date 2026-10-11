@@ -54,6 +54,7 @@ const DEAD_QUEUES: &[&str] = &[
     "hash_backfill",
     "relationship_suggest",
     "provider_coverage",
+    "entity_enrich",
 ];
 
 /// One queue's outstanding jobs, split by where they are held.
@@ -96,6 +97,8 @@ pub struct QueueDepthView {
     pub relationship_suggest: i64,
     /// Pending provider coverage analyses (one per series request).
     pub provider_coverage: i64,
+    /// Entity profile fetches (character / team / location / arc pages).
+    pub entity_enrich: i64,
     /// Sum across all queues — convenient for the topbar pill.
     pub total: i64,
     /// Of `total`, the jobs a worker has fetched (executing or prefetched).
@@ -609,6 +612,7 @@ fn dead_keys(app: &AppState, queue: &str) -> Option<(String, String)> {
         "hash_backfill" => keys!(j.hash_backfill_storage),
         "relationship_suggest" => keys!(j.relationship_suggest_storage),
         "provider_coverage" => keys!(j.provider_coverage_storage),
+        "entity_enrich" => keys!(j.entity_enrich_storage),
         _ => None,
     }
 }
@@ -713,6 +717,7 @@ async fn retry_one(app: &AppState, queue: &str, task_id: &str) -> anyhow::Result
         "hash_backfill" => try_retry!(app.jobs.hash_backfill_storage),
         "relationship_suggest" => try_retry!(app.jobs.relationship_suggest_storage),
         "provider_coverage" => try_retry!(app.jobs.provider_coverage_storage),
+        "entity_enrich" => try_retry!(app.jobs.entity_enrich_storage),
         _ => return Ok(false),
     };
     if !pushed {
@@ -783,6 +788,7 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
         hash_backfill: of("hash_backfill"),
         relationship_suggest: of("relationship_suggest"),
         provider_coverage: of("provider_coverage"),
+        entity_enrich: of("entity_enrich"),
         total: counts
             .iter()
             .map(crate::jobs::QueueCount::outstanding)

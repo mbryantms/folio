@@ -35,6 +35,7 @@ pub mod coverage;
 pub mod diff;
 pub mod direct_lookup;
 pub mod drift;
+pub mod entity_profile;
 pub mod field;
 pub mod gcd;
 pub mod http;

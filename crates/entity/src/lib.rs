@@ -20,6 +20,7 @@ pub mod cbl_refresh_log;
 pub mod character;
 pub mod collection_entry;
 pub mod concept;
+pub mod entity_profile;
 pub mod external_id;
 pub mod field_provenance;
 pub mod imprint;
@@ -99,6 +100,7 @@ pub mod prelude {
     pub use super::character::Entity as Character;
     pub use super::collection_entry::Entity as CollectionEntry;
     pub use super::concept::Entity as Concept;
+    pub use super::entity_profile::Entity as EntityProfile;
     pub use super::external_id::Entity as ExternalId;
     pub use super::field_provenance::Entity as FieldProvenance;
     pub use super::imprint::Entity as Imprint;

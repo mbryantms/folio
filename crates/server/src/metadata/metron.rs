@@ -1562,3 +1562,162 @@ mod tests {
         assert!(parse_price(&None).is_none());
     }
 }
+
+// ───────── entity records (character / team / story arc) ─────────
+//
+// Metron is the identity source for the landing pages: its record names
+// the ComicVine and GCD ids, so a Metron match resolves the ComicVine
+// record with no search step. Metron has no location endpoint.
+
+/// The kinds Metron serves entity records for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetronEntityKind {
+    Character,
+    Team,
+    StoryArc,
+}
+
+impl MetronEntityKind {
+    fn path(self) -> &'static str {
+        match self {
+            Self::Character => "character",
+            Self::Team => "team",
+            Self::StoryArc => "arc",
+        }
+    }
+}
+
+/// One hit of an entity name search (`/api/<kind>/?name=`).
+#[derive(Clone, Debug)]
+pub struct MetronEntityHit {
+    pub id: i64,
+    pub name: String,
+}
+
+/// A Metron entity record as the landing page consumes it.
+#[derive(Clone, Debug, Default)]
+pub struct MetronEntityRecord {
+    pub id: i64,
+    pub name: String,
+    pub aliases: Vec<String>,
+    pub description: Option<String>,
+    pub image_url: Option<String>,
+    pub creators: Vec<String>,
+    pub teams: Vec<String>,
+    pub universes: Vec<String>,
+    pub cv_id: Option<i64>,
+    pub gcd_id: Option<i64>,
+    pub resource_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MEntityListRow {
+    id: Option<i64>,
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MEntityDetail {
+    id: Option<i64>,
+    name: Option<String>,
+    #[serde(default)]
+    alias: Option<Vec<String>>,
+    desc: Option<String>,
+    image: Option<String>,
+    #[serde(default)]
+    creators: Option<Vec<MNamedRef>>,
+    #[serde(default)]
+    teams: Option<Vec<MNamedRef>>,
+    #[serde(default)]
+    universes: Option<Vec<MNamedRef>>,
+    cv_id: Option<i64>,
+    gcd_id: Option<i64>,
+    resource_url: Option<String>,
+}
+
+fn m_names(list: &Option<Vec<MNamedRef>>) -> Vec<String> {
+    list.iter()
+        .flatten()
+        .filter_map(|n| n.name.as_deref().map(str::trim))
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+impl MetronClient {
+    /// `GET /api/<kind>/?name=<name>` — name search (one page).
+    pub async fn search_entities(
+        &self,
+        kind: MetronEntityKind,
+        name: &str,
+    ) -> ProviderResult<Vec<MetronEntityHit>> {
+        let envelope: Paged<MEntityListRow> = self
+            .request(
+                &format!("/api/{}/", kind.path()),
+                &[("name", name.to_owned()), ("page_size", "50".to_owned())],
+            )
+            .await?;
+        Ok(envelope
+            .results
+            .into_iter()
+            .filter_map(|r| {
+                Some(MetronEntityHit {
+                    id: r.id?,
+                    name: r.name?.trim().to_owned(),
+                })
+            })
+            .collect())
+    }
+
+    /// `GET /api/<kind>/{id}/` — one entity record.
+    pub async fn fetch_entity(
+        &self,
+        kind: MetronEntityKind,
+        external_id: &str,
+    ) -> ProviderResult<MetronEntityRecord> {
+        let d: MEntityDetail = self
+            .request(&format!("/api/{}/{external_id}/", kind.path()), &[])
+            .await?;
+        let (Some(id), Some(name)) = (d.id, d.name.as_deref().map(str::trim)) else {
+            return Err(ProviderError::NotFound(format!(
+                "{}/{external_id}",
+                kind.path()
+            )));
+        };
+        Ok(MetronEntityRecord {
+            id,
+            name: name.to_owned(),
+            aliases: d
+                .alias
+                .unwrap_or_default()
+                .into_iter()
+                .map(|a| a.trim().to_owned())
+                .filter(|a| !a.is_empty())
+                .collect(),
+            description: d.desc.filter(|s| !s.trim().is_empty()),
+            image_url: d.image.filter(|s| !s.trim().is_empty()),
+            creators: m_names(&d.creators),
+            teams: m_names(&d.teams),
+            universes: m_names(&d.universes),
+            cv_id: d.cv_id,
+            gcd_id: d.gcd_id,
+            resource_url: d.resource_url,
+        })
+    }
+
+    /// `GET /api/<kind>/{id}/issue_list/` — only the total is read: the
+    /// number of issues Metron lists for the entity (one request).
+    pub async fn count_entity_issues(
+        &self,
+        kind: MetronEntityKind,
+        external_id: &str,
+    ) -> ProviderResult<Option<u64>> {
+        let envelope: Paged<serde_json::Value> = self
+            .request(
+                &format!("/api/{}/{external_id}/issue_list/", kind.path()),
+                &[("page_size", "1".to_owned())],
+            )
+            .await?;
+        Ok(envelope.count)
+    }
+}

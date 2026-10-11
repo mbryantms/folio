@@ -163,3 +163,6 @@ refresh_status      # GET /series/{slug}/metadata/refresh-status — read-only r
 
 # ── admin_metadata_coverage.rs ──────────────────────────────
 coverage         # GET /admin/metadata/coverage — read-only snapshot
+
+# ── characters.rs / teams.rs / locations.rs / arcs.rs ───────
+refresh_profile  # POST /<kind>/{slug}/profile/refresh — delegate: entity_pages::refresh_profile_handler records admin.entity.refresh_profile
