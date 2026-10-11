@@ -3724,6 +3724,9 @@ pub async fn batch_status(
                 any_failed = true;
             }
             "completed" => {}
+            // Closed by an admin (queue cleared / batch cancelled): terminal,
+            // nothing in flight.
+            "cancelled" => {}
             _ => {
                 agg.in_flight += 1;
                 any_unfinished = true;
@@ -3841,7 +3844,7 @@ pub async fn list_batches(State(app): State<AppState>, user: CurrentUser) -> Res
             SELECT batch_id,
                    COUNT(*) FILTER (WHERE status = 'awaiting_quota')::BIGINT AS awaiting_quota,
                    COUNT(*) FILTER (
-                       WHERE status NOT IN ('completed', 'failed', 'awaiting_quota')
+                       WHERE status NOT IN ('completed', 'failed', 'cancelled', 'awaiting_quota')
                    )::BIGINT AS unfinished,
                    COUNT(*) FILTER (WHERE status = 'failed')::BIGINT AS failed,
                    MAX(finished_at) AS last_finished_at

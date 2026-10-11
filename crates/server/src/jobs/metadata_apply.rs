@@ -175,6 +175,12 @@ pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result
         bulk,
     } = job;
 
+    // Cancelled before the apply ran (queue cleared / batch cancelled):
+    // nothing to write.
+    if crate::metadata::orchestrator::run_is_cancelled(&state.db, run_id).await {
+        tracing::info!(run_id = %run_id, "metadata_apply: run cancelled; skipping");
+        return Ok(());
+    }
     let claimed = match try_claim_series_mutex(&state, series_id).await {
         Ok(b) => b,
         Err(e) => {
@@ -368,6 +374,12 @@ pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(
         composite,
     } = job;
 
+    // Cancelled before the apply ran (queue cleared / batch cancelled):
+    // nothing to write.
+    if crate::metadata::orchestrator::run_is_cancelled(&state.db, run_id).await {
+        tracing::info!(run_id = %run_id, "metadata_apply: run cancelled; skipping");
+        return Ok(());
+    }
     let claimed = match try_claim_issue_mutex(&state, &issue_id).await {
         Ok(b) => b,
         Err(e) => {

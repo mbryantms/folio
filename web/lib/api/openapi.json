@@ -954,6 +954,40 @@
         }
       }
     },
+    "/api/admin/metadata/batches/{id}/cancel": {
+      "post": {
+        "summary": "Stop a metadata batch: its pending runs close as `cancelled`, the batch\nfinishes, and the job handlers skip the runs' jobs when they come up\n(the Redis queue itself is left alone — the jobs are cheap no-ops once\ntheir run is cancelled). The Background work page's per-batch Cancel.",
+        "operationId": "admin_metadata_cancel_batch",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelBatchResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "batch not found"
+          }
+        }
+      }
+    },
     "/api/admin/metadata/cover-variant-backfill": {
       "post": {
         "operationId": "metadata_cover_variant_backfill",
@@ -14581,6 +14615,25 @@
           }
         }
       },
+      "CancelBatchResp": {
+        "type": "object",
+        "required": [
+          "batch_id",
+          "cancelled_runs"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "cancelled_runs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Member runs closed as `cancelled` (queued, searching or awaiting\nquota). Runs that had already finished are untouched.",
+            "minimum": 0
+          }
+        }
+      },
       "CandidateOrigin": {
         "type": "string",
         "description": "Where a candidate provider series came from.",
@@ -26127,6 +26180,7 @@
           "target",
           "deleted_keys",
           "cancelled_scan_runs",
+          "cancelled_metadata_runs",
           "before",
           "after",
           "running_jobs_may_finish"
@@ -26137,6 +26191,12 @@
           },
           "before": {
             "$ref": "#/components/schemas/QueueDepthView"
+          },
+          "cancelled_metadata_runs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pending metadata runs (queued / searching / awaiting quota) closed\nas `cancelled` (metadata targets only).",
+            "minimum": 0
           },
           "cancelled_scan_runs": {
             "type": "integer",
@@ -26162,7 +26222,8 @@
         "enum": [
           "all",
           "scans",
-          "thumbnails"
+          "thumbnails",
+          "metadata"
         ]
       },
       "QueueDepthEntry": {

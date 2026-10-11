@@ -12,6 +12,9 @@ import type { BackgroundWorkView } from "@/lib/api/types";
 
 const state: { data: BackgroundWorkView | undefined } = { data: undefined };
 
+vi.mock("@/lib/api/mutations", () => ({
+  useCancelMetadataBatch: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 vi.mock("@/lib/api/queries", () => ({
   useBackgroundWork: () => ({
     data: state.data,
@@ -189,6 +192,9 @@ describe("BackgroundWorkClient", () => {
     // Metadata batch.
     expect(html).toContain("Library refresh");
     expect(html).toContain("waiting on provider quota");
+    // Every unfinished batch can be cancelled from here — the pill's trash
+    // only clears scans and thumbnails.
+    expect(html).toContain('aria-label="Cancel this metadata batch"');
     expect(html).toContain("10 / 40");
   });
 

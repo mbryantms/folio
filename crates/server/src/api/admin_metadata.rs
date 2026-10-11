@@ -57,6 +57,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(run_name_suffix_backfill))
         .routes(routes!(run_csv_cache_backfill))
         .routes(routes!(list_auto_synced))
+        .routes(routes!(cancel_batch))
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
@@ -1243,4 +1244,74 @@ pub async fn list_auto_synced(State(app): State<AppState>, _admin: RequireAdmin)
         })
         .collect();
     Json(AutoSyncedResp { series }).into_response()
+}
+
+// ───────── POST /admin/metadata/batches/{id}/cancel ─────────
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CancelBatchResp {
+    pub batch_id: Uuid,
+    /// Member runs closed as `cancelled` (queued, searching or awaiting
+    /// quota). Runs that had already finished are untouched.
+    pub cancelled_runs: u64,
+}
+
+/// Stop a metadata batch: its pending runs close as `cancelled`, the batch
+/// finishes, and the job handlers skip the runs' jobs when they come up
+/// (the Redis queue itself is left alone — the jobs are cheap no-ops once
+/// their run is cancelled). The Background work page's per-batch Cancel.
+#[utoipa::path(
+    operation_id = "admin_metadata_cancel_batch",
+    post,
+    path = "/admin/metadata/batches/{id}/cancel",
+    params(("id" = Uuid, Path,)),
+    responses(
+        (status = 200, body = CancelBatchResp),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "batch not found"),
+    )
+)]
+#[handler]
+pub async fn cancel_batch(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Path(id): Path<Uuid>,
+) -> Response {
+    let Ok(Some(_batch)) = entity::metadata_batch::Entity::find_by_id(id)
+        .one(&app.db)
+        .await
+    else {
+        return error(StatusCode::NOT_FOUND, "not_found", "batch not found");
+    };
+    let cancelled_runs = match crate::metadata::orchestrator::cancel_pending_runs(
+        &app.db,
+        crate::metadata::orchestrator::CancelScope::Batch(id),
+        "batch cancelled by admin",
+    )
+    .await
+    {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::error!(error = %e, batch_id = %id, "cancel_batch: run update failed");
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "couldn't cancel the batch",
+            );
+        }
+    };
+    crate::record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.metadata.batch.cancel",
+        target = ("metadata_batch", id.to_string()),
+        payload = serde_json::json!({ "cancelled_runs": cancelled_runs }),
+    );
+    Json(CancelBatchResp {
+        batch_id: id,
+        cancelled_runs,
+    })
+    .into_response()
 }

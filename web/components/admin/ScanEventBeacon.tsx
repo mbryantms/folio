@@ -116,16 +116,18 @@ export function ScanEventBeacon() {
           <AlertDialogHeader>
             <AlertDialogTitle>Clear pending queues?</AlertDialogTitle>
             <AlertDialogDescription>
-              Remove pending work by queue type. A job that is already executing
-              may still finish and report its normal events.
+              Remove pending work by queue type. Metadata clears also close the
+              pending searches and applies as cancelled, so Review and
+              Background work stop waiting on them. A job that is already
+              executing may still finish and report its normal events.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {/* Four buttons don't fit cleanly on one row at typical dialog
-              widths — "Clear thumbnails" wraps mid-label. Force a
-              two-column grid so each button gets equal width and labels
-              don't break. The destructive "Clear all" remains visually
-              distinct via the bg-destructive override. */}
-          <div className="grid grid-cols-2 gap-2 pt-2 sm:grid-cols-4">
+          {/* Five buttons don't fit cleanly on one row at typical dialog
+              widths — labels wrap mid-word. Force a two-column grid so
+              each button gets equal width and labels don't break. The
+              destructive "Clear all" remains visually distinct via the
+              bg-destructive override. */}
+          <div className="grid grid-cols-2 gap-2 pt-2 sm:grid-cols-5">
             <AlertDialogCancel disabled={clearQueue.isPending} className="m-0">
               Cancel
             </AlertDialogCancel>
@@ -154,6 +156,19 @@ export function ScanEventBeacon() {
               }
             >
               Thumbnails only
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={clearQueue.isPending}
+              onClick={() =>
+                clearQueue.mutate(
+                  { target: "metadata" },
+                  { onSettled: () => setConfirmClear(false) },
+                )
+              }
+            >
+              Metadata only
             </Button>
             <AlertDialogAction
               disabled={clearQueue.isPending}
