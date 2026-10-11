@@ -55,6 +55,11 @@ const DialogContent = React.forwardRef<
         // (At `< sm` the bottom sheet owns geometry; callers
         // shouldn't override there anyway.)
         "sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95 sm:data-[state=closed]:slide-out-to-left-1/2 sm:data-[state=closed]:slide-out-to-top-[48%] sm:data-[state=open]:slide-in-from-left-1/2 sm:data-[state=open]:slide-in-from-top-[48%] sm:top-[50%] sm:left-[50%] sm:max-w-lg sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg",
+        // A modal taller than a short window (iPad landscape, a small
+        // laptop) used to run off both edges with no way to reach its
+        // footer. Cap it to the viewport and scroll the overflow; dialogs
+        // with their own inner scroller never overflow the cap.
+        "sm:max-h-[calc(100dvh-2rem)] sm:overflow-y-auto",
         className,
       )}
       {...props}

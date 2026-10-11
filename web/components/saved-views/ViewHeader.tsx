@@ -105,12 +105,15 @@ export function ViewHeader({
             <p className="text-muted-foreground text-sm">{view.description}</p>
           ) : null}
         </div>
-        {/* `min-w-0` lets the cluster shrink below content width on
-         *  narrow viewports so the inner `flex-wrap` actually triggers
-         *  (without it, `shrink-0` froze the cluster wider than the
-         *  viewport). `md:shrink-0` restores the no-shrink behavior on
-         *  desktop where the full set fits in one row. */}
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 md:shrink-0">
+        {/* `min-w-0 max-w-full` and no `shrink-0` at any width: the
+         *  cluster must be able to shrink to the row so its own
+         *  `flex-wrap` can fold the controls onto more lines. With
+         *  `md:shrink-0` an iPad with the sidebar open laid the cluster
+         *  out at its full content width (wider than the page column) and
+         *  the overflow menu's trigger sat past the right edge of the
+         *  screen — the menu opened off-screen. Desktop still gets one
+         *  row whenever the set fits. */}
+        <div className="flex max-w-full min-w-0 flex-wrap items-center justify-end gap-2">
           {extraActions}
           {view.is_system ? (
             <span
