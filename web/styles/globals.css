@@ -594,3 +594,20 @@ body {
     outline: 2px solid Highlight;
   }
 }
+
+/* ── Scrollbars ──────────────────────────────────────────────────────
+ * Every native scroll container — menus and popovers that cap to the
+ * viewport, sheets and dialogs that scroll their overflow, tables in
+ * their `overflow-x-auto` boxes, the settings rails — draws the same
+ * scrollbar the shadcn `ScrollArea` does: a thin thumb in the theme's
+ * border token on a transparent track, so it follows the active theme
+ * instead of the UA's grey. (`color-scheme` on each theme block already
+ * picks the UA's light/dark variant; this replaces its colours.)
+ * Containers that hide their scrollbar on purpose (`[scrollbar-width:none]`
+ * on the home rails and the tab strips) keep doing so — those utilities
+ * sit on the element and win over this universal rule. iOS/iPadOS
+ * overlay scrollbars are not styleable and stay native. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}

@@ -33,7 +33,24 @@ export function safeAreaCollisionPadding():
   return {
     top: inset("--safe-top"),
     right: inset("--safe-right"),
-    bottom: inset("--safe-bottom"),
+    // A fixed bar along the bottom edge (the phone tab bar) covers that
+    // part of the viewport as surely as the home indicator does: a menu
+    // that opened over it had its last items under the bar, visible but
+    // not tappable. The bar's rendered height already includes the safe
+    // inset, so it replaces it rather than adding to it.
+    bottom: Math.max(inset("--safe-bottom"), bottomBarInset()),
     left: inset("--safe-left"),
   };
+}
+
+/** Height (px, plus the gutter) of a visible fixed bottom bar marked
+ *  `data-bottom-inset`, else 0. */
+function bottomBarInset(): number {
+  const bar = document.querySelector<HTMLElement>("[data-bottom-inset]");
+  if (!bar) return 0;
+  const rect = bar.getBoundingClientRect();
+  if (rect.height <= 0 || getComputedStyle(bar).display === "none") return 0;
+  // Only the part that actually overlaps the viewport's bottom edge.
+  const overlap = Math.max(0, Math.round(window.innerHeight - rect.top));
+  return overlap > 0 ? overlap + EDGE_GUTTER : 0;
 }
