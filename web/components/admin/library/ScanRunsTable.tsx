@@ -219,7 +219,7 @@ function ScanRunDetails({ run }: { run: ScanRunView }) {
             No phase timing data recorded for this run.
           </p>
         ) : (
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {phases.map(([phase, ms]) => (
               <DetailMetric
                 key={phase}

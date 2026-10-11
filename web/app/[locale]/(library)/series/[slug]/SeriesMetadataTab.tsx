@@ -119,7 +119,7 @@ export function SeriesMetadataTab({
         libraryId={libraryId}
         overview={overview.data}
       />
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Section
           title="Identifiers"
           description="Provider identifiers linked to this series."
@@ -138,7 +138,7 @@ export function SeriesMetadataTab({
         </Section>
       </div>
       <IssuesTable seriesSlug={seriesSlug} overview={overview.data} />
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <FilesCard overview={overview.data} />
         <ProvenanceCard overview={overview.data} />
       </div>
@@ -169,7 +169,7 @@ function SummaryStrip({
   const byMs = new Map(overview.series_ids.map((r) => [r.source, r]));
   return (
     <section
-      className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+      className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
       data-testid="series-metadata-summary"
     >
       <Tile label="Series identifiers">

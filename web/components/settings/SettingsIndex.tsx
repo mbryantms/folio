@@ -32,7 +32,7 @@ export function SettingsIndex() {
           </h2>
           <ul
             role="list"
-            className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+            className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
           >
             {section.items.map((item) => {
               const Icon = navIcons[item.icon];
@@ -58,7 +58,7 @@ export function SettingsIndex() {
           </h2>
           <ul
             role="list"
-            className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+            className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
           >
             <li>
               <SettingsCard href="/admin/server" label="About Folio">

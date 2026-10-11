@@ -530,7 +530,7 @@ export function RelationshipForm({
         )}
 
         {(qualifiers.length > 0 || (allowsCoverage && !isExternal)) && (
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {qualifiers.length > 0 && (
               <FormField
                 control={form.control}
@@ -601,7 +601,7 @@ export function RelationshipForm({
         )}
 
         {!isExternal && (
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField
               control={form.control}
               name="from_range"
@@ -701,7 +701,7 @@ function ExternalTargetFields() {
         in your library&rdquo; with a link to the provider, and becomes a normal
         relationship once that series is added and matched.
       </p>
-      <div className="grid gap-4 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)]">
         <FormField
           control={control}
           name="source"
@@ -745,7 +745,7 @@ function ExternalTargetFields() {
           )}
         />
       </div>
-      <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,7rem)]">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,7rem)]">
         <FormField
           control={control}
           name="name"
