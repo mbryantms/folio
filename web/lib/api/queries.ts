@@ -254,7 +254,8 @@ export type CreatorsListFilters = {
 
 /** URL segment of an entity landing page (WP-5.5). Doubles as the
  *  `EntityDetailView.kind` wire value. */
-export type EntityKindPath = "characters" | "teams" | "arcs" | "publishers";
+export type EntityKindPath =
+  "characters" | "teams" | "locations" | "arcs" | "publishers";
 
 /** Entity browse-index shape (`/characters` etc., WP-5.5). */
 export type EntityListFilters = {
@@ -1640,6 +1641,22 @@ export function useEntityListInfinite(
       ),
     getNextPageParam: entityNextPage,
     gcTime: 30 * 60_000,
+  });
+}
+
+/** Global-search source for the entity categories (characters, teams,
+ *  locations, story arcs): the first page of the browse index filtered
+ *  by `q`. Same 2-char minimum as the other category searches. */
+export function useEntitySearch(
+  kind: EntityKindPath,
+  filters: EntityListFilters = {},
+) {
+  const enabled = !!filters.q && filters.q.length >= 2;
+  return useQuery({
+    queryKey: queryKeys.entitySearch(kind, filters),
+    queryFn: () => jsonFetch<EntityListView>(`/${kind}${buildQuery(filters)}`),
+    enabled,
+    placeholderData: keepPreviousData,
   });
 }
 

@@ -271,8 +271,8 @@ export function SearchView({
         </div>
         {activeDef ? null : (
           <p className="text-muted-foreground text-sm">
-            Search across your library. Series, issues, bookmarks, and people
-            are live.
+            Search across your library: series, issues, bookmarks, people,
+            characters, teams, locations and story arcs.
           </p>
         )}
         <div className="border-border bg-card focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm focus-within:ring-2">
@@ -284,7 +284,7 @@ export function SearchView({
             type="search"
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
-            placeholder="Search series, issues, bookmarks, people…"
+            placeholder="Search series, issues, people, characters, places…"
             aria-label="Search the library"
             autoFocus
             className="placeholder:text-muted-foreground w-full bg-transparent text-sm focus:outline-none"

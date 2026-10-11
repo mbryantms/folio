@@ -204,7 +204,8 @@ function libraryParamFor(filterField: string): string {
 
 /** Credit-role facets get a dedicated creator detail page —
  *  everything else (genres / tags / characters / teams / locations)
- *  stays on the filtered library grid. Keep this list aligned with
+ *  stays on the filtered library grid unless `entitySlugs` resolves
+ *  the name to an entity landing page. Keep this list aligned with
  *  the backend's ROLE_ORDER + the registry in `api/creators.rs`. */
 function isCreditRole(filterField: string): boolean {
   switch (filterField) {

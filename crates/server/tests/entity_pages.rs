@@ -425,6 +425,107 @@ async fn teams_include_series_level_membership() {
 }
 
 #[tokio::test]
+async fn locations_match_fk_and_name_rows_and_search() {
+    let app = TestApp::spawn().await;
+    let f = fixture(&app).await;
+    let gotham = add_entity(&f.db, "location", "gotham-city", "Gotham City").await;
+    add_entity(&f.db, "location", "metropolis", "Metropolis").await;
+    // One provider-linked row (FK), one scanner name-only row, the capped
+    // issue, and a series-level setting row.
+    for (issue, fk) in [(&f.a_issues[0], Some(gotham)), (&f.a_issues[1], None)] {
+        exec(
+            &f.db,
+            "INSERT INTO issue_locations (issue_id, location, location_id) VALUES ($1, $2, $3)",
+            vec![issue.as_str().into(), "Gotham City".into(), fk.into()],
+        )
+        .await;
+    }
+    exec(
+        &f.db,
+        "INSERT INTO issue_locations (issue_id, location) VALUES ($1, 'gotham city ')",
+        vec![f.a_mature.as_str().into()],
+    )
+    .await;
+    exec(
+        &f.db,
+        "INSERT INTO issue_locations (issue_id, location) VALUES ($1, 'Metropolis')",
+        vec![f.b_issues[0].as_str().into()],
+    )
+    .await;
+    exec(
+        &f.db,
+        "INSERT INTO series_locations (series_id, location) VALUES ($1, 'Gotham City')",
+        vec![f.series_a.into()],
+    )
+    .await;
+
+    // Browse index: the global search's `q` is this substring filter.
+    let (s, body) = get_json(&app, "/api/locations?q=goth", &f.user).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["slug"], "gotham-city");
+    assert_eq!(items[0]["issue_count"], 2, "capped issue excluded");
+    assert_eq!(items[0]["series_count"], 1);
+    let (_, body) = get_json(&app, "/api/locations?q=metro", &f.user).await;
+    assert!(
+        body["items"].as_array().unwrap().is_empty(),
+        "Metropolis is library-B only"
+    );
+    let (_, body) = get_json(&app, "/api/locations", &f.admin).await;
+    assert_eq!(body["total"], 2);
+
+    // Detail + grids.
+    let (s, body) = get_json(&app, "/api/locations/gotham-city", &f.user).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["kind"], "locations");
+    assert_eq!(body["issue_count"], 2);
+    assert_eq!(body["series_count"], 1);
+    let (_, body) = get_json(&app, "/api/locations/gotham-city/issues", &f.user).await;
+    assert_eq!(body["items"].as_array().unwrap().len(), 2);
+    let (_, body) = get_json(&app, "/api/locations/gotham-city/series", &f.user).await;
+    assert_eq!(body["items"].as_array().unwrap().len(), 1);
+    let (s, _) = get_json(&app, "/api/locations/metropolis", &f.user).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "no visible appearance");
+
+    // The issue detail hands the chip its landing-page slug (the chips
+    // read the CSV read-cache column the rollup derives from the junction).
+    exec(
+        &f.db,
+        "UPDATE issues SET locations = 'Gotham City' WHERE id = $1",
+        vec![f.a_issues[0].as_str().into()],
+    )
+    .await;
+    use sea_orm::FromQueryResult;
+    #[derive(FromQueryResult)]
+    struct Slugs {
+        series_slug: String,
+        issue_slug: String,
+    }
+    let row = Slugs::find_by_statement(Statement::from_sql_and_values(
+        f.db.get_database_backend(),
+        "SELECT s.slug AS series_slug, i.slug AS issue_slug \
+           FROM issues i JOIN series s ON s.id = i.series_id WHERE i.id = $1",
+        [f.a_issues[0].clone().into()],
+    ))
+    .one(&f.db)
+    .await
+    .unwrap()
+    .unwrap();
+    let (s, body) = get_json(
+        &app,
+        &format!("/api/series/{}/issues/{}", row.series_slug, row.issue_slug),
+        &f.user,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["entity_slugs"]["locations"]["Gotham City"],
+        "gotham-city"
+    );
+}
+
+#[tokio::test]
 async fn arcs_merge_fk_and_csv_rows_in_reading_order() {
     let app = TestApp::spawn().await;
     let f = fixture(&app).await;

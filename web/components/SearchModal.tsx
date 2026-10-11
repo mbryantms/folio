@@ -168,7 +168,7 @@ export function SearchModal({
             placeholder={
               commandMode
                 ? "Jump to settings, admin pages, sections…"
-                : "Search series, issues, people…  Type > for commands"
+                : "Search series, issues, people, characters…  Type > for commands"
             }
             aria-label="Search the library"
           />

@@ -14,6 +14,7 @@ import { ENTITY_KINDS, entityHrefFor, entityUrl } from "@/lib/entities";
 const slugs: EntitySlugs = {
   characters: { Batman: "batman", "Harley Quinn": "harley-quinn" },
   teams: { "Justice League": "justice-league" },
+  locations: { "Gotham City": "gotham-city" },
   arcs: { Knightfall: "knightfall" },
   publishers: { "DC Comics": "dc-comics" },
 };
@@ -32,11 +33,15 @@ describe("entityHrefFor", () => {
     expect(entityHrefFor("publisher", "DC Comics", slugs)).toBe(
       "/publishers/dc-comics",
     );
+    expect(entityHrefFor("locations", "Gotham City", slugs)).toBe(
+      "/locations/gotham-city",
+    );
   });
 
   it("returns null for unknown names, fields without pages, or no map", () => {
     expect(entityHrefFor("characters", "Robin", slugs)).toBeNull();
     expect(entityHrefFor("locations", "Gotham", slugs)).toBeNull();
+    expect(entityHrefFor("genres", "Crime", slugs)).toBeNull();
     expect(entityHrefFor("characters", "Batman", undefined)).toBeNull();
   });
 
