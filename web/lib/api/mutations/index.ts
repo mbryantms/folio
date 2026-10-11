@@ -35,6 +35,7 @@ export * from "./page-overrides";
 export * from "./relationship-suggestions";
 
 import type {
+  CancelBatchResp,
   AcceptIssuesReq,
   AcceptIssuesResp,
   AcceptMetadataResp,
@@ -794,7 +795,9 @@ export function useClearQueue() {
             ? "thumbnail"
             : input.target === "scans"
               ? "scan"
-              : "background";
+              : input.target === "metadata"
+                ? "metadata"
+                : "background";
         return stopped > 0
           ? `Cleared ${stopped} ${scope} job${stopped === 1 ? "" : "s"}`
           : `No pending ${scope} jobs to clear`;
@@ -802,6 +805,35 @@ export function useClearQueue() {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.queueDepth });
         qc.invalidateQueries({ queryKey: ["admin", "libraries"] });
+        qc.invalidateQueries({ queryKey: queryKeys.backgroundWork });
+        qc.invalidateQueries({ queryKey: queryKeys.metadataBatches });
+      },
+    },
+  );
+}
+
+/** `POST /admin/metadata/batches/{id}/cancel`: close a metadata batch's
+ *  pending runs as cancelled; its jobs become no-ops when they come up.
+ *  The Background work page's per-batch Cancel. */
+export function useCancelMetadataBatch() {
+  const qc = useQueryClient();
+  return useApiMutation<CancelBatchResp, { id: string }>(
+    ({ id }) => ({
+      path: `/admin/metadata/batches/${encodeURIComponent(id)}/cancel`,
+      method: "POST",
+    }),
+    {
+      successMessage: (data) => {
+        const n = data?.cancelled_runs ?? 0;
+        return n > 0
+          ? `Cancelled the batch — ${n} pending run${n === 1 ? "" : "s"} closed`
+          : "Nothing left to cancel in that batch";
+      },
+      onSuccess: (_data, { id }) => {
+        qc.invalidateQueries({ queryKey: queryKeys.backgroundWork });
+        qc.invalidateQueries({ queryKey: queryKeys.queueDepth });
+        qc.invalidateQueries({ queryKey: queryKeys.metadataBatches });
+        qc.invalidateQueries({ queryKey: queryKeys.metadataBatch(id) });
       },
     },
   );

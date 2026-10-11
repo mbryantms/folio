@@ -126,6 +126,10 @@ pub enum QueueClearTarget {
     All,
     Scans,
     Thumbnails,
+    /// Provider metadata work: series / issue searches and applies, sidecar
+    /// rewrites and coverage analyses. Their pending runs close as
+    /// `cancelled` and their batches finish.
+    Metadata,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -140,6 +144,9 @@ pub struct QueueClearResp {
     /// `queued` scan runs closed as `cancelled` because their job was
     /// cleared (scan targets only).
     pub cancelled_scan_runs: u64,
+    /// Pending metadata runs (queued / searching / awaiting quota) closed
+    /// as `cancelled` (metadata targets only).
+    pub cancelled_metadata_runs: u64,
     pub before: QueueDepthView,
     pub after: QueueDepthView,
     /// Redis queue clearing is immediate, but a job already executing in a
@@ -262,6 +269,29 @@ pub async fn clear_queue(
             Err(e) => tracing::error!(error = %e, "clear_queue: closing queued scan runs failed"),
         }
     }
+    // The jobs that would have advanced the pending metadata runs are gone:
+    // close them (and their batches) so the review page and the Background
+    // work page don't show work that will never move.
+    let cancelled_metadata_runs = if matches!(
+        req.target,
+        QueueClearTarget::All | QueueClearTarget::Metadata
+    ) {
+        match crate::metadata::orchestrator::cancel_pending_runs(
+            &app.db,
+            crate::metadata::orchestrator::CancelScope::StartedBefore(clear_started_at),
+            "queue cleared by admin",
+        )
+        .await
+        {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::error!(error = %e, "clear_queue: cancelling pending metadata runs failed");
+                0
+            }
+        }
+    } else {
+        0
+    };
 
     let after = match queue_depth_counts(&app).await {
         Ok(view) => view,
@@ -286,6 +316,7 @@ pub async fn clear_queue(
                 "target": req.target,
                 "deleted_keys": deleted_keys,
                 "cancelled_scan_runs": cancelled_runs,
+                "cancelled_metadata_runs": cancelled_metadata_runs,
                 "before": before,
                 "after": after,
             }),
@@ -299,6 +330,7 @@ pub async fn clear_queue(
         target: req.target,
         deleted_keys,
         cancelled_scan_runs: cancelled_runs,
+        cancelled_metadata_runs,
         running_jobs_may_finish: before.total > after.total,
         before,
         after,
@@ -777,6 +809,20 @@ fn clear_patterns(target: QueueClearTarget) -> &'static [&'static str] {
             "*server::jobs::post_scan::SearchJob*",
             "*server::jobs::post_scan::DictionaryJob*",
             "scan:*",
+            "*server::jobs::metadata_search::SearchSeriesJob*",
+            "*server::jobs::metadata_search::SearchIssueJob*",
+            "*server::jobs::metadata_apply::ApplySeriesJob*",
+            "*server::jobs::metadata_apply::ApplyIssueJob*",
+            "*server::jobs::rewrite_sidecars::RewriteIssueSidecarsJob*",
+            "*server::jobs::provider_coverage::ProviderCoverageJob*",
+        ],
+        QueueClearTarget::Metadata => &[
+            "*server::jobs::metadata_search::SearchSeriesJob*",
+            "*server::jobs::metadata_search::SearchIssueJob*",
+            "*server::jobs::metadata_apply::ApplySeriesJob*",
+            "*server::jobs::metadata_apply::ApplyIssueJob*",
+            "*server::jobs::rewrite_sidecars::RewriteIssueSidecarsJob*",
+            "*server::jobs::provider_coverage::ProviderCoverageJob*",
         ],
         QueueClearTarget::Scans => &[
             "*server::jobs::scan::Job*",

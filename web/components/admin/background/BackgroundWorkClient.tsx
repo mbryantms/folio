@@ -1,11 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, CheckCircle2, Clock, Loader2 } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Clock,
+  Loader2,
+  XCircle,
+} from "lucide-react";
+import { useState } from "react";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { useCancelMetadataBatch } from "@/lib/api/mutations";
 import { useBackgroundWork } from "@/lib/api/queries";
 import {
   otherWork,
@@ -441,11 +460,14 @@ const BATCH_SCOPE: Record<string, string> = {
 
 function BatchRow({ batch }: { batch: MetadataBatchWorkView }) {
   const waiting = batch.status === "awaiting_quota";
+  const cancel = useCancelMetadataBatch();
+  const [confirm, setConfirm] = useState(false);
+  const remaining = Math.max(batch.items_total - batch.items_finished, 0);
   return (
-    <li>
+    <li className="flex items-start gap-1">
       <Link
         href="/admin/metadata?tab=review"
-        className="hover:bg-muted/40 focus-visible:ring-ring -mx-2 block space-y-1 rounded-md px-2 py-1.5 transition-colors focus-visible:ring-2 focus-visible:outline-none"
+        className="hover:bg-muted/40 focus-visible:ring-ring -mx-2 block min-w-0 flex-1 space-y-1 rounded-md px-2 py-1.5 transition-colors focus-visible:ring-2 focus-visible:outline-none"
       >
         <div className="flex items-baseline justify-between gap-2 text-xs">
           <span className="truncate text-sm">
@@ -469,6 +491,53 @@ function BatchRow({ batch }: { batch: MetadataBatchWorkView }) {
           aria-label="Metadata batch progress"
         />
       </Link>
+      {/* The only way to stop metadata work that is queued or parked on
+          quota: the pill's trash only knows scans and thumbnails. */}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="text-muted-foreground hover:text-destructive mt-0.5 h-7 w-7 shrink-0"
+        aria-label="Cancel this metadata batch"
+        title="Cancel this batch"
+        disabled={cancel.isPending}
+        onClick={() => setConfirm(true)}
+      >
+        <XCircle className="h-4 w-4" />
+      </Button>
+      <AlertDialog open={confirm} onOpenChange={setConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel this metadata batch?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {remaining.toLocaleString()} of{" "}
+              {batch.items_total.toLocaleString()}{" "}
+              {waiting
+                ? "runs are waiting on provider quota and will not resume."
+                : "runs have not finished and will be closed as cancelled."}{" "}
+              Results already in Review stay. A run a worker is on right now may
+              still finish.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cancel.isPending}>
+              Keep running
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={cancel.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() =>
+                cancel.mutate(
+                  { id: batch.id },
+                  { onSettled: () => setConfirm(false) },
+                )
+              }
+            >
+              {cancel.isPending ? "Cancelling…" : "Cancel batch"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </li>
   );
 }

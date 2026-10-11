@@ -219,6 +219,7 @@ export type TaskWorkView = Schemas["TaskWorkView"];
 export type QueueClearTarget = Schemas["QueueClearTarget"];
 export type QueueClearReq = Schemas["QueueClearReq"];
 export type QueueClearResp = Schemas["QueueClearResp"];
+export type CancelBatchResp = Schemas["CancelBatchResp"];
 export type DeadLetterCount = Schemas["DeadLetterCount"];
 export type DeadLetterView = Schemas["DeadLetterView"];
 export type DeadJob = Schemas["DeadJob"];

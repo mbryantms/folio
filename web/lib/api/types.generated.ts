@@ -347,6 +347,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/metadata/batches/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop a metadata batch: its pending runs close as `cancelled`, the batch
+         *     finishes, and the job handlers skip the runs' jobs when they come up
+         *     (the Redis queue itself is left alone — the jobs are cheap no-ops once
+         *     their run is cancelled). The Background work page's per-batch Cancel.
+         */
+        post: operations["admin_metadata_cancel_batch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/metadata/cover-variant-backfill": {
         parameters: {
             query?: never;
@@ -6348,6 +6370,16 @@ export interface components {
             issue_id: string;
             reason: string;
         };
+        CancelBatchResp: {
+            /** Format: uuid */
+            batch_id: string;
+            /**
+             * Format: int64
+             * @description Member runs closed as `cancelled` (queued, searching or awaiting
+             *     quota). Runs that had already finished are untouched.
+             */
+            cancelled_runs: number;
+        };
         /**
          * @description Where a candidate provider series came from.
          * @enum {string}
@@ -11049,6 +11081,12 @@ export interface components {
             before: components["schemas"]["QueueDepthView"];
             /**
              * Format: int64
+             * @description Pending metadata runs (queued / searching / awaiting quota) closed
+             *     as `cancelled` (metadata targets only).
+             */
+            cancelled_metadata_runs: number;
+            /**
+             * Format: int64
              * @description `queued` scan runs closed as `cancelled` because their job was
              *     cleared (scan targets only).
              */
@@ -11062,7 +11100,7 @@ export interface components {
             target: components["schemas"]["QueueClearTarget"];
         };
         /** @enum {string} */
-        QueueClearTarget: "all" | "scans" | "thumbnails";
+        QueueClearTarget: "all" | "scans" | "thumbnails" | "metadata";
         /** @description One queue's outstanding jobs, split by where they are held. */
         QueueDepthEntry: {
             /**
@@ -14869,6 +14907,41 @@ export interface operations {
             };
             /** @description admin only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_metadata_cancel_batch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CancelBatchResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description batch not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

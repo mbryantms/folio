@@ -41,7 +41,7 @@ use entity::{metadata_run, metadata_run_candidate};
 use redis::aio::ConnectionManager;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder, Set, TransactionTrait,
+    QueryOrder, QuerySelect, Set, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -55,6 +55,9 @@ pub mod status {
     pub const COMPLETED: &str = "completed";
     pub const FAILED: &str = "failed";
     pub const AWAITING_QUOTA: &str = "awaiting_quota";
+    /// Closed by an admin before (or while) its job ran: the queue was
+    /// cleared or the batch was cancelled. Terminal, like `failed`.
+    pub const CANCELLED: &str = "cancelled";
 }
 
 pub mod trigger_kind {
@@ -240,6 +243,95 @@ pub async fn fail_run<C: ConnectionTrait>(
     am.error_summary = Set(Some(error.to_owned()));
     am.update(db).await?;
     Ok(())
+}
+
+/// Is this run cancelled? Job handlers ask before doing any provider work,
+/// so a cleared queue or a cancelled batch stops work the Redis delete
+/// didn't reach (a job a worker had already fetched, a parked run the
+/// resume sweep would re-queue). A missing run counts as cancelled.
+pub async fn run_is_cancelled<C: ConnectionTrait>(db: &C, run_id: Uuid) -> bool {
+    match metadata_run::Entity::find_by_id(run_id)
+        .select_only()
+        .column(metadata_run::Column::Status)
+        .into_tuple::<String>()
+        .one(db)
+        .await
+    {
+        Ok(Some(status)) => status == status::CANCELLED,
+        Ok(None) => true,
+        Err(e) => {
+            tracing::warn!(error = %e, run_id = %run_id, "run cancellation check failed; continuing");
+            false
+        }
+    }
+}
+
+/// Which runs [`cancel_pending_runs`] closes.
+#[derive(Debug, Clone, Copy)]
+pub enum CancelScope {
+    /// Every non-terminal run that started before the instant (the queue
+    /// was cleared then; later runs still have their jobs).
+    StartedBefore(chrono::DateTime<chrono::FixedOffset>),
+    /// Every non-terminal run of one batch.
+    Batch(Uuid),
+}
+
+/// Close pending metadata runs as `cancelled` and finish their batches.
+/// `queued` and `searching` runs lose the job that would complete them;
+/// `awaiting_quota` runs lose their resume. A run a worker is executing
+/// right now may still finish and overwrite the status — that is the
+/// genuine outcome, not a bug. Returns how many runs were closed.
+pub async fn cancel_pending_runs(
+    db: &DatabaseConnection,
+    scope: CancelScope,
+    reason: &str,
+) -> Result<u64, sea_orm::DbErr> {
+    use sea_orm::FromQueryResult;
+    #[derive(FromQueryResult)]
+    struct Closed {
+        batch_id: Option<Uuid>,
+    }
+    let now = Utc::now().fixed_offset();
+    let (filter, params): (&str, Vec<sea_orm::Value>) = match scope {
+        CancelScope::StartedBefore(ts) => (
+            "started_at < $3",
+            vec![now.into(), reason.into(), ts.into()],
+        ),
+        CancelScope::Batch(id) => ("batch_id = $3", vec![now.into(), reason.into(), id.into()]),
+    };
+    let closed = Closed::find_by_statement(sea_orm::Statement::from_sql_and_values(
+        db.get_database_backend(),
+        format!(
+            "UPDATE metadata_run \
+                SET status = 'cancelled', finished_at = $1, error_summary = $2, resume_after = NULL \
+              WHERE status IN ('queued', 'searching', 'awaiting_quota') AND {filter} \
+          RETURNING batch_id"
+        ),
+        params,
+    ))
+    .all(db)
+    .await?;
+    let batches: std::collections::HashSet<Uuid> =
+        closed.iter().filter_map(|c| c.batch_id).collect();
+    for batch_id in batches {
+        // A batch with nothing left to run is over; `cancelled` when
+        // nothing in it completed, else the usual completed/partial read
+        // the review page derives from its runs.
+        db.execute_raw(sea_orm::Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "UPDATE metadata_batch b \
+                SET status = CASE WHEN EXISTS (SELECT 1 FROM metadata_run r WHERE r.batch_id = b.id \
+                                                 AND r.status IN ('completed', 'failed')) \
+                                  THEN 'completed' ELSE 'cancelled' END, \
+                    ended_at = $2 \
+              WHERE b.id = $1 \
+                AND NOT EXISTS (SELECT 1 FROM metadata_run r WHERE r.batch_id = b.id \
+                                   AND r.status NOT IN ('completed', 'failed', 'cancelled'))",
+            [batch_id.into(), now.into()],
+        ))
+        .await?;
+    }
+    Ok(closed.len() as u64)
 }
 
 /// A parked run re-queued by the resume sweep: back to `queued` (so the

@@ -137,6 +137,12 @@ pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Resul
         name = %facts.name,
         "metadata search: series job start"
     );
+    // Cleared queue / cancelled batch: the run is closed, do no provider work.
+    if orchestrator::run_is_cancelled(&state.db, run_id).await {
+        tracing::info!(run_id = %run_id, "metadata search: run cancelled; skipping");
+        release_series_slot(&state, series_id).await;
+        return Ok(());
+    }
     let providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
     if providers.is_empty() {
         if let Err(e) = orchestrator::fail_run(&state.db, run_id, "no providers configured").await {
@@ -261,6 +267,11 @@ pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<
         number = %facts.issue_number,
         "metadata search: issue job start"
     );
+    if orchestrator::run_is_cancelled(&state.db, run_id).await {
+        tracing::info!(run_id = %run_id, "metadata search: run cancelled; skipping");
+        release_issue_slot(&state, &issue_id).await;
+        return Ok(());
+    }
     let mut providers = orchestrator::build_providers(&state.cfg(), state.jobs.redis.clone());
     if let Some(only) = &direct_only {
         providers.retain(|p| only.contains(&p.id()));
