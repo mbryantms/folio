@@ -4,6 +4,7 @@
 //! keyset cursors.
 
 use axum::{
+    Extension,
     extract::{Path as AxPath, Query, State},
     response::Response,
 };
@@ -11,11 +12,13 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::entity_pages::{
-    self as ep, EntityDetailView, EntityKind, EntityListItem, EntityListQuery, EntityPageQuery,
+    self as ep, EntityDetailView, EntityInsightsView, EntityKind, EntityListItem, EntityListQuery,
+    EntityPageQuery,
 };
 use super::series::{IssueListView, SeriesListView};
 use super::series_relationships::ArcTieInView;
-use crate::auth::CurrentUser;
+use crate::auth::{CurrentUser, RequireAdmin};
+use crate::middleware::RequestContext;
 use crate::state::AppState;
 use server_macros::handler;
 use shared::pagination::CursorPage;
@@ -28,6 +31,8 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(get_one))
         .routes(routes!(series))
         .routes(routes!(issues))
+        .routes(routes!(refresh_profile))
+        .routes(routes!(insights))
         .routes(routes!(tie_ins))
 }
 
@@ -156,4 +161,48 @@ pub async fn tie_ins(
         q.limit,
     )
     .await
+}
+
+/// `POST /arcs/{slug}/profile/refresh` — queue a fresh provider fetch
+/// of the story arc's profile. Admin only (it spends provider budget).
+#[utoipa::path(
+    operation_id = "arcs_refresh_profile",    post,
+    path = "/arcs/{slug}/profile/refresh",
+    params(("slug" = String, Path,)),
+    responses(
+        (status = 202, description = "queued"),
+        (status = 403, description = "admin only"),
+        (status = 404,),
+        (status = 503, description = "no provider configured"),
+    )
+)]
+#[handler]
+pub async fn refresh_profile(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    AxPath(slug): AxPath<String>,
+) -> Response {
+    ep::refresh_profile_handler(&app, &actor, &ctx, KIND, &slug).await
+}
+
+/// `GET /arcs/{slug}/insights` — the story arc's "In your library"
+/// statistics (counts, decades, top series, co-appearances, creators,
+/// earliest owned issues), ACL-filtered like the grids.
+#[utoipa::path(
+    operation_id = "arcs_insights",    get,
+    path = "/arcs/{slug}/insights",
+    params(("slug" = String, Path,)),
+    responses(
+        (status = 200, body = EntityInsightsView),
+        (status = 404,),
+    )
+)]
+#[handler]
+pub async fn insights(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(slug): AxPath<String>,
+) -> Response {
+    ep::insights_handler(&app, &user, KIND, &slug).await
 }

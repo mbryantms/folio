@@ -94,14 +94,18 @@ pub enum ComicVineResource {
     Volume,
     /// `/issue/4000-{id}` — issue detail.
     Issue,
+    /// `/character/4005-{id}`, `/characters`, `/team/4060-{id}`, … —
+    /// entity records for the landing pages, pooled as one resource.
+    Entities,
 }
 
-pub const COMICVINE_RESOURCES: [ComicVineResource; 5] = [
+pub const COMICVINE_RESOURCES: [ComicVineResource; 6] = [
     ComicVineResource::Volumes,
     ComicVineResource::Search,
     ComicVineResource::Issues,
     ComicVineResource::Volume,
     ComicVineResource::Issue,
+    ComicVineResource::Entities,
 ];
 
 impl ComicVineResource {
@@ -119,6 +123,11 @@ impl ComicVineResource {
             "issues" => Self::Issues,
             "volume" => Self::Volume,
             "issue" => Self::Issue,
+            // Character / team / location / story-arc records (entity
+            // landing pages). Pooled so a page view never competes with
+            // the matcher's volume / issue budgets.
+            "character" | "characters" | "team" | "teams" | "location" | "locations"
+            | "story_arc" | "story_arcs" => Self::Entities,
             _ => Self::Search,
         }
     }
@@ -130,6 +139,7 @@ impl ComicVineResource {
             Self::Issues => "issues",
             Self::Volume => "volume",
             Self::Issue => "issue",
+            Self::Entities => "entities",
         }
     }
 }
@@ -144,6 +154,7 @@ pub const fn comicvine_hour(resource: ComicVineResource) -> BucketDef {
         ComicVineResource::Issues => "comicvine:hour:issues",
         ComicVineResource::Volume => "comicvine:hour:volume",
         ComicVineResource::Issue => "comicvine:hour:issue",
+        ComicVineResource::Entities => "comicvine:hour:entities",
     };
     BucketDef {
         key,
@@ -442,12 +453,12 @@ mod comicvine_resource_tests {
             ComicVineResource::from_path("/publishers"),
             ComicVineResource::Search
         );
-        // Five distinct hourly buckets, 200 each; one shared 1 req/s bucket.
+        // Six distinct hourly buckets, 200 each; one shared 1 req/s bucket.
         let keys: std::collections::HashSet<&str> = COMICVINE_RESOURCES
             .iter()
             .map(|r| comicvine_hour(*r).key)
             .collect();
-        assert_eq!(keys.len(), 5);
+        assert_eq!(keys.len(), 6);
         assert!(
             COMICVINE_RESOURCES
                 .iter()

@@ -1460,3 +1460,235 @@ mod tests {
         assert!(cleave.is_first_appearance);
     }
 }
+
+// ───────── entity records (character / team / location / story arc) ─────────
+//
+// The landing pages' "wiki" block. One detail request per entity (or a
+// name search + detail when no ComicVine id is known), counted against
+// the pooled `entities` resource bucket so a page view never competes
+// with the matcher's volume / issue budgets.
+
+/// The kinds ComicVine serves entity records for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CvEntityKind {
+    Character,
+    Team,
+    Location,
+    StoryArc,
+}
+
+impl CvEntityKind {
+    /// `(detail path prefix, list path, resource-id prefix)`.
+    fn paths(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Self::Character => ("character", "characters", "4005"),
+            Self::Team => ("team", "teams", "4060"),
+            Self::Location => ("location", "locations", "4020"),
+            Self::StoryArc => ("story_arc", "story_arcs", "4045"),
+        }
+    }
+}
+
+const ENTITY_DETAIL_FIELDS: &str = "id,name,real_name,aliases,deck,description,gender,birth,\
+    count_of_issue_appearances,count_of_isssue_appearances,first_appeared_in_issue,image,\
+    publisher,creators,teams,characters,powers,site_detail_url";
+const ENTITY_SEARCH_FIELDS: &str =
+    "id,name,publisher,count_of_issue_appearances,count_of_isssue_appearances,deck";
+
+/// One hit of an entity name search.
+#[derive(Clone, Debug)]
+pub struct CvEntityHit {
+    pub id: i64,
+    pub name: String,
+    pub publisher: Option<String>,
+    pub issue_appearances: Option<i64>,
+}
+
+/// A ComicVine entity record as the landing page consumes it. Fields
+/// a kind doesn't carry stay `None` / empty.
+#[derive(Clone, Debug, Default)]
+pub struct CvEntityRecord {
+    pub id: i64,
+    pub name: String,
+    pub real_name: Option<String>,
+    /// Newline-separated on the wire; split here.
+    pub aliases: Vec<String>,
+    pub deck: Option<String>,
+    /// Raw wiki HTML; `entity_profile::sections_from_html` splits it.
+    pub description_html: Option<String>,
+    pub gender: Option<String>,
+    pub birth: Option<String>,
+    pub issue_appearances: Option<i64>,
+    pub first_appearance: Option<CvFirstAppearance>,
+    pub image_url: Option<String>,
+    pub publisher: Option<String>,
+    pub creators: Vec<String>,
+    pub teams: Vec<String>,
+    /// Team members (teams only).
+    pub members: Vec<String>,
+    pub powers: Vec<String>,
+    pub site_detail_url: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CvFirstAppearance {
+    pub issue_id: Option<i64>,
+    pub name: Option<String>,
+    pub issue_number: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CvEntityDetail {
+    id: Option<i64>,
+    name: Option<String>,
+    real_name: Option<String>,
+    aliases: Option<String>,
+    deck: Option<String>,
+    description: Option<String>,
+    gender: Option<i32>,
+    birth: Option<String>,
+    // ComicVine's team + story-arc records misspell the field.
+    #[serde(alias = "count_of_isssue_appearances")]
+    count_of_issue_appearances: Option<i64>,
+    first_appeared_in_issue: Option<CvFirstIssue>,
+    image: Option<CvImage>,
+    publisher: Option<CvNamedRef>,
+    #[serde(default)]
+    creators: Option<Vec<CvNamedRef>>,
+    #[serde(default)]
+    teams: Option<Vec<CvNamedRef>>,
+    #[serde(default)]
+    characters: Option<Vec<CvNamedRef>>,
+    #[serde(default)]
+    powers: Option<Vec<CvNamedRef>>,
+    site_detail_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CvFirstIssue {
+    id: Option<i64>,
+    name: Option<String>,
+    issue_number: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CvEntityListRow {
+    id: Option<i64>,
+    name: Option<String>,
+    publisher: Option<CvNamedRef>,
+    #[serde(alias = "count_of_isssue_appearances")]
+    count_of_issue_appearances: Option<i64>,
+}
+
+fn cv_names(list: &Option<Vec<CvNamedRef>>) -> Vec<String> {
+    list.iter()
+        .flatten()
+        .filter_map(|n| n.name.as_deref().map(str::trim))
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn cv_entity_record(d: CvEntityDetail) -> Option<CvEntityRecord> {
+    let id = d.id?;
+    let name = d.name.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
+    let aliases = d
+        .aliases
+        .as_deref()
+        .map(|a| {
+            a.lines()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let gender = match d.gender {
+        Some(1) => Some("Male".to_owned()),
+        Some(2) => Some("Female".to_owned()),
+        _ => None,
+    };
+    let image_url = d.image.as_ref().and_then(|i| {
+        i.medium_url
+            .clone()
+            .or_else(|| i.screen_url.clone())
+            .or_else(|| i.original_url.clone())
+    });
+    Some(CvEntityRecord {
+        id,
+        name: name.to_owned(),
+        real_name: d.real_name.filter(|s| !s.trim().is_empty()),
+        aliases,
+        deck: d.deck.filter(|s| !s.trim().is_empty()),
+        description_html: d.description.filter(|s| !s.trim().is_empty()),
+        gender,
+        birth: d.birth.filter(|s| !s.trim().is_empty()),
+        issue_appearances: d.count_of_issue_appearances,
+        first_appearance: d.first_appeared_in_issue.map(|f| CvFirstAppearance {
+            issue_id: f.id,
+            name: f.name.filter(|s| !s.trim().is_empty()),
+            issue_number: f.issue_number.filter(|s| !s.trim().is_empty()),
+        }),
+        image_url,
+        publisher: d.publisher.and_then(|p| p.name),
+        creators: cv_names(&d.creators),
+        teams: cv_names(&d.teams),
+        members: cv_names(&d.characters),
+        powers: cv_names(&d.powers),
+        site_detail_url: d.site_detail_url,
+    })
+}
+
+impl ComicVineClient {
+    /// `GET /<kind>/<prefix>-{id}` — one entity record.
+    pub async fn fetch_entity(
+        &self,
+        kind: CvEntityKind,
+        external_id: &str,
+    ) -> ProviderResult<CvEntityRecord> {
+        let (detail, _, prefix) = kind.paths();
+        let envelope: CvEnvelope<CvEntityDetail> = self
+            .request(
+                &format!("/{detail}/{prefix}-{external_id}"),
+                &[("field_list", ENTITY_DETAIL_FIELDS.to_owned())],
+            )
+            .await?;
+        envelope
+            .results
+            .and_then(cv_entity_record)
+            .ok_or_else(|| ProviderError::NotFound(format!("{detail}/{external_id}")))
+    }
+
+    /// `GET /<kinds>/?filter=name:<name>` — name search, up to 20 hits.
+    pub async fn search_entities(
+        &self,
+        kind: CvEntityKind,
+        name: &str,
+    ) -> ProviderResult<Vec<CvEntityHit>> {
+        let (_, list, _) = kind.paths();
+        let filter = format!("name:{}", name.replace(',', " "));
+        let envelope: CvEnvelope<Vec<CvEntityListRow>> = self
+            .request(
+                &format!("/{list}/"),
+                &[
+                    ("filter", filter),
+                    ("limit", "20".to_owned()),
+                    ("field_list", ENTITY_SEARCH_FIELDS.to_owned()),
+                ],
+            )
+            .await?;
+        Ok(envelope
+            .results
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|r| {
+                Some(CvEntityHit {
+                    id: r.id?,
+                    name: r.name?.trim().to_owned(),
+                    publisher: r.publisher.and_then(|p| p.name),
+                    issue_appearances: r.count_of_issue_appearances,
+                })
+            })
+            .collect())
+    }
+}

@@ -3066,6 +3066,34 @@
         }
       }
     },
+    "/api/arcs/{slug}/insights": {
+      "get": {
+        "summary": "`GET /arcs/{slug}/insights` — the story arc's \"In your library\"\nstatistics (counts, decades, top series, co-appearances, creators,\nearliest owned issues), ACL-filtered like the grids.",
+        "operationId": "arcs_insights",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityInsightsView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
     "/api/arcs/{slug}/issues": {
       "get": {
         "summary": "`GET /arcs/{slug}/issues` — the story arc's visible issues,\ncursor-paginated in arc reading order. `total` on the first page only.",
@@ -3109,6 +3137,34 @@
             }
           },
           "404": {}
+        }
+      }
+    },
+    "/api/arcs/{slug}/profile/refresh": {
+      "post": {
+        "summary": "`POST /arcs/{slug}/profile/refresh` — queue a fresh provider fetch\nof the story arc's profile. Admin only (it spends provider budget).",
+        "operationId": "arcs_refresh_profile",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "queued"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {},
+          "503": {
+            "description": "no provider configured"
+          }
         }
       }
     },
@@ -3596,6 +3652,34 @@
         }
       }
     },
+    "/api/characters/{slug}/insights": {
+      "get": {
+        "summary": "`GET /characters/{slug}/insights` — the character's \"In your library\"\nstatistics (counts, decades, top series, co-appearances, creators,\nearliest owned issues), ACL-filtered like the grids.",
+        "operationId": "characters_insights",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityInsightsView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
     "/api/characters/{slug}/issues": {
       "get": {
         "summary": "`GET /characters/{slug}/issues` — the character's visible issues,\ncursor-paginated by publication year, series, number. `total` on the first page only.",
@@ -3639,6 +3723,34 @@
             }
           },
           "404": {}
+        }
+      }
+    },
+    "/api/characters/{slug}/profile/refresh": {
+      "post": {
+        "summary": "`POST /characters/{slug}/profile/refresh` — queue a fresh provider fetch\nof the character's profile. Admin only (it spends provider budget).",
+        "operationId": "characters_refresh_profile",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "queued"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {},
+          "503": {
+            "description": "no provider configured"
+          }
         }
       }
     },
@@ -5295,6 +5407,34 @@
         }
       }
     },
+    "/api/locations/{slug}/insights": {
+      "get": {
+        "summary": "`GET /locations/{slug}/insights` — the location's \"In your library\"\nstatistics (counts, decades, top series, co-appearances, creators,\nearliest owned issues), ACL-filtered like the grids.",
+        "operationId": "locations_insights",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityInsightsView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
     "/api/locations/{slug}/issues": {
       "get": {
         "summary": "`GET /locations/{slug}/issues` — the location's visible issues,\ncursor-paginated by publication year, series, number. `total` on the first page only.",
@@ -5338,6 +5478,34 @@
             }
           },
           "404": {}
+        }
+      }
+    },
+    "/api/locations/{slug}/profile/refresh": {
+      "post": {
+        "summary": "`POST /locations/{slug}/profile/refresh` — queue a fresh provider fetch\nof the location's profile. Admin only (it spends provider budget).",
+        "operationId": "locations_refresh_profile",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "queued"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {},
+          "503": {
+            "description": "no provider configured"
+          }
         }
       }
     },
@@ -12057,6 +12225,34 @@
         }
       }
     },
+    "/api/teams/{slug}/insights": {
+      "get": {
+        "summary": "`GET /teams/{slug}/insights` — the team's \"In your library\"\nstatistics (counts, decades, top series, co-appearances, creators,\nearliest owned issues), ACL-filtered like the grids.",
+        "operationId": "teams_insights",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityInsightsView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
     "/api/teams/{slug}/issues": {
       "get": {
         "summary": "`GET /teams/{slug}/issues` — the team's visible issues,\ncursor-paginated by publication year, series, number. `total` on the first page only.",
@@ -12100,6 +12296,34 @@
             }
           },
           "404": {}
+        }
+      }
+    },
+    "/api/teams/{slug}/profile/refresh": {
+      "post": {
+        "summary": "`POST /teams/{slug}/profile/refresh` — queue a fresh provider fetch\nof the team's profile. Admin only (it spends provider budget).",
+        "operationId": "teams_refresh_profile",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "queued"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {},
+          "503": {
+            "description": "no provider configured"
+          }
         }
       }
     },
@@ -16331,6 +16555,29 @@
           }
         }
       },
+      "CountedName": {
+        "type": "object",
+        "required": [
+          "name",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Landing-page slug when the name has an entity row."
+          }
+        }
+      },
       "CoverageAnalysisResp": {
         "type": "object",
         "required": [
@@ -17301,6 +17548,33 @@
             }
           }
         ]
+      },
+      "CreatorCount": {
+        "type": "object",
+        "required": [
+          "name",
+          "roles",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "roles": {
+            "type": "string",
+            "description": "Distinct credit roles, comma-separated."
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
       },
       "CreatorDetailView": {
         "type": "object",
@@ -18657,6 +18931,23 @@
           }
         }
       },
+      "DecadeCount": {
+        "type": "object",
+        "required": [
+          "decade",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "decade": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "DeepValidateResp": {
         "type": "object",
         "description": "Response for `POST /libraries/{slug}/validate-deeply`. Returns\nimmediately with `202 Accepted`; the deep-validate runs in a\n`tokio::spawn` task and emits per-page health-issues as it goes.",
@@ -19426,6 +19717,16 @@
           }
         }
       },
+      "EnrichmentStatus": {
+        "type": "string",
+        "description": "The lazy-fetch state of an entity's provider profile.",
+        "enum": [
+          "unavailable",
+          "pending",
+          "done",
+          "failed"
+        ]
+      },
       "EntityDetailView": {
         "type": "object",
         "description": "Header payload for an entity landing page. The series / issues grids\nare fetched separately through the cursor-paginated sub-routes.",
@@ -19436,7 +19737,8 @@
           "name",
           "aliases",
           "series_count",
-          "issue_count"
+          "issue_count",
+          "enrichment"
         ],
         "properties": {
           "aliases": {
@@ -19450,6 +19752,17 @@
               "string",
               "null"
             ]
+          },
+          "enrichment": {
+            "$ref": "#/components/schemas/EnrichmentStatus",
+            "description": "Where the profile fetch stands."
+          },
+          "enrichment_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last fetch failure (`enrichment = failed`)."
           },
           "founded_year": {
             "type": [
@@ -19476,8 +19789,26 @@
             "type": "string",
             "description": "`\"characters\"` | `\"teams\"` | `\"locations\"` | `\"arcs\"` | `\"publishers\"`."
           },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityLinkView"
+            },
+            "description": "Provider records the entity is linked to."
+          },
           "name": {
             "type": "string"
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EntityProfileView",
+                "description": "Provider-filled profile (the wiki block), once fetched."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "real_name": {
             "type": [
@@ -19492,6 +19823,135 @@
           },
           "slug": {
             "type": "string"
+          }
+        }
+      },
+      "EntityInsightsView": {
+        "type": "object",
+        "description": "\"In your library\" statistics of one entity (`GET /<kind>/{slug}/insights`),\nACL-filtered like the grids. Co-appearance lists exclude the entity\nitself.",
+        "required": [
+          "issues",
+          "series",
+          "read",
+          "publishers",
+          "decades",
+          "top_series",
+          "characters",
+          "teams",
+          "locations",
+          "arcs",
+          "creators",
+          "earliest"
+        ],
+        "properties": {
+          "arcs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CountedName"
+            }
+          },
+          "characters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CountedName"
+            }
+          },
+          "creators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CreatorCount"
+            }
+          },
+          "decades": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DecadeCount"
+            }
+          },
+          "earliest": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueSummaryView"
+            },
+            "description": "The first issues in the entity's reading order the caller owns\n(earliest publication year; arc position for story arcs)."
+          },
+          "first_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "issues": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "locations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CountedName"
+            }
+          },
+          "publishers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CountedName"
+            }
+          },
+          "read": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues the caller has finished."
+          },
+          "series": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CountedName"
+            }
+          },
+          "top_series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesCount"
+            }
+          }
+        }
+      },
+      "EntityLinkView": {
+        "type": "object",
+        "description": "One provider record the entity is linked to.",
+        "required": [
+          "source",
+          "label",
+          "external_id"
+        ],
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "`comicvine` | `metron` | `gcd` | …"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -19525,6 +19985,56 @@
           "slug": {
             "type": "string",
             "description": "`/<kind>/<slug>` target."
+          }
+        }
+      },
+      "EntityProfileView": {
+        "type": "object",
+        "description": "The wiki block of an entity landing page.",
+        "required": [
+          "sections",
+          "facts",
+          "provider_counts",
+          "sources",
+          "fetched_at"
+        ],
+        "properties": {
+          "facts": {
+            "$ref": "#/components/schemas/Facts"
+          },
+          "fetched_at": {
+            "type": "string"
+          },
+          "provider_counts": {
+            "type": "object",
+            "description": "`source → issues the provider lists for the entity`.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Section"
+            }
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Providers that answered (`metron`, `comicvine`)."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -20924,6 +21434,77 @@
           "gcd"
         ]
       },
+      "Facts": {
+        "type": "object",
+        "description": "Fact sheet. Fields a kind doesn't carry stay empty.",
+        "properties": {
+          "birthday": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "creators": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "first_appearance": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FirstAppearance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gender": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Team members (teams only)."
+          },
+          "powers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "real_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "universes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "FallbackReason": {
         "type": "string",
         "description": "Why a batch issue fell back from a direct lookup to a search.",
@@ -21196,6 +21777,26 @@
           },
           "match_mode": {
             "$ref": "#/components/schemas/MatchMode"
+          }
+        }
+      },
+      "FirstAppearance": {
+        "type": "object",
+        "description": "The issue an entity first appeared in, as the provider names it.",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "comicvine_issue_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ComicVine issue id, when known."
+          },
+          "label": {
+            "type": "string",
+            "description": "`\"Detective Comics #27\"` — the provider's label."
           }
         }
       },
@@ -26458,6 +27059,7 @@
           "hash_backfill",
           "relationship_suggest",
           "provider_coverage",
+          "entity_enrich",
           "total",
           "in_flight",
           "queues"
@@ -26472,6 +27074,11 @@
             "type": "integer",
             "format": "int64",
             "description": "Pending backfill drains (cover-phash / variant-cover; B17)."
+          },
+          "entity_enrich": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Entity profile fetches (character / team / location / arc pages)."
           },
           "hash_backfill": {
             "type": "integer",
@@ -29142,6 +29749,33 @@
           }
         }
       },
+      "Section": {
+        "type": "object",
+        "description": "One wiki section split out of ComicVine's description.",
+        "required": [
+          "heading",
+          "level",
+          "paragraphs"
+        ],
+        "properties": {
+          "heading": {
+            "type": "string",
+            "description": "Empty for the lead text before the first heading."
+          },
+          "level": {
+            "type": "integer",
+            "format": "int32",
+            "description": "`0` lead, `2` for `<h2>`, `3` for `<h3>`.",
+            "minimum": 0
+          },
+          "paragraphs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "SeriesArcRelationshipView": {
         "type": "object",
         "description": "A series → story-arc edge (\"this series is a tie-in to *arc*\").",
@@ -29251,6 +29885,47 @@
           },
           "series": {
             "$ref": "#/components/schemas/SeriesView"
+          }
+        }
+      },
+      "SeriesCount": {
+        "type": "object",
+        "required": [
+          "name",
+          "slug",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "first_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "last_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
           }
         }
       },

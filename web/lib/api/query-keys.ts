@@ -163,6 +163,13 @@ export const queryKeys = {
    *  infinite browse-index cache since the shapes differ. */
   entitySearch: (kind: EntityKindPath, filters: EntityListFilters) =>
     ["entities", kind, "search", filters] as const,
+  /** Entity landing-page header (`/<kind>/{slug}`); polled while the
+   *  provider profile is pending. */
+  entityDetail: (kind: EntityKindPath, slug: string) =>
+    ["entities", kind, slug, "detail"] as const,
+  /** "In your library" block (`/<kind>/{slug}/insights`). */
+  entityInsights: (kind: EntityKindPath, slug: string) =>
+    ["entities", kind, slug, "insights"] as const,
   /** Entity landing-page grids (`/<kind>/{slug}/series|issues`). */
   entityItems: (
     kind: EntityKindPath,

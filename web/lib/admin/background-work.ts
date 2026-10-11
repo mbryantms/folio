@@ -29,6 +29,7 @@ export const QUEUE_LABELS: Record<string, string> = {
   hash_backfill: "Content hashing",
   relationship_suggest: "Relationship suggestions",
   provider_coverage: "Provider coverage",
+  entity_enrich: "Entity profiles",
 };
 
 export function queueLabel(queue: string): string {
@@ -53,6 +54,7 @@ const PILL_NOUNS: Record<string, string> = {
   hash_backfill: "content hashing",
   relationship_suggest: "relationship suggestions",
   provider_coverage: "provider coverage",
+  entity_enrich: "entity profiles",
 };
 
 /** `16,204` → `16.2k`; small numbers stay exact. */
@@ -124,7 +126,9 @@ export function phaseLabel(phase: string | null | undefined): string {
 
 /** Where an "other work" queue's detail lives. */
 export function queueHref(queue: string): string {
-  return queue.startsWith("metadata_") || queue === "provider_coverage"
+  return queue.startsWith("metadata_") ||
+    queue === "provider_coverage" ||
+    queue === "entity_enrich"
     ? "/admin/metadata"
     : "/admin/queue";
 }

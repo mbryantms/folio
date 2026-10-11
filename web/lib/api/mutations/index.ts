@@ -13,7 +13,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { BACKGROUND_WORK_HREF } from "@/lib/admin/background-work";
 
 import { apiFetch } from "../auth-refresh";
-import { queryKeys } from "../queries";
+import { queryKeys, type EntityKindPath } from "../queries";
 import { getCsrfToken, useApiMutation } from "./_core";
 import { invalidateRails } from "./rails";
 
@@ -2667,6 +2667,23 @@ export function useCreateSeriesBatch(seriesSlug: string) {
 /** Mark a selection of a series' issues "metadata complete enough" (or
  *  revert): the per-issue acknowledgement, batched. Invalidates the
  *  Metadata tab's queries and the Collection report so the tiers move. */
+/** Queue a fresh provider fetch of an entity's profile (admin only). */
+export function useRefreshEntityProfile(kind: EntityKindPath, slug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<{ queued: boolean }, void>(
+    () => ({
+      path: `/${kind}/${encodeURIComponent(slug)}/profile/refresh`,
+      method: "POST",
+    }),
+    {
+      successMessage: "Fetching the latest profile from your providers…",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.entityDetail(kind, slug) });
+      },
+    },
+  );
+}
+
 export function useAcceptSeriesIssues(seriesSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<AcceptIssuesResp, AcceptIssuesReq>(

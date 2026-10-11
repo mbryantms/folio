@@ -1356,6 +1356,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/arcs/{slug}/insights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /arcs/{slug}/insights` — the story arc's "In your library"
+         *     statistics (counts, decades, top series, co-appearances, creators,
+         *     earliest owned issues), ACL-filtered like the grids.
+         */
+        get: operations["arcs_insights"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/arcs/{slug}/issues": {
         parameters: {
             query?: never;
@@ -1370,6 +1391,26 @@ export interface paths {
         get: operations["arcs_issues"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/arcs/{slug}/profile/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /arcs/{slug}/profile/refresh` — queue a fresh provider fetch
+         *     of the story arc's profile. Admin only (it spends provider budget).
+         */
+        post: operations["arcs_refresh_profile"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1707,6 +1748,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/characters/{slug}/insights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /characters/{slug}/insights` — the character's "In your library"
+         *     statistics (counts, decades, top series, co-appearances, creators,
+         *     earliest owned issues), ACL-filtered like the grids.
+         */
+        get: operations["characters_insights"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/characters/{slug}/issues": {
         parameters: {
             query?: never;
@@ -1721,6 +1783,26 @@ export interface paths {
         get: operations["characters_issues"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/characters/{slug}/profile/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /characters/{slug}/profile/refresh` — queue a fresh provider fetch
+         *     of the character's profile. Admin only (it spends provider budget).
+         */
+        post: operations["characters_refresh_profile"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2426,6 +2508,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/locations/{slug}/insights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /locations/{slug}/insights` — the location's "In your library"
+         *     statistics (counts, decades, top series, co-appearances, creators,
+         *     earliest owned issues), ACL-filtered like the grids.
+         */
+        get: operations["locations_insights"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/locations/{slug}/issues": {
         parameters: {
             query?: never;
@@ -2440,6 +2543,26 @@ export interface paths {
         get: operations["locations_issues"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/locations/{slug}/profile/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /locations/{slug}/profile/refresh` — queue a fresh provider fetch
+         *     of the location's profile. Admin only (it spends provider budget).
+         */
+        post: operations["locations_refresh_profile"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5183,6 +5306,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/teams/{slug}/insights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /teams/{slug}/insights` — the team's "In your library"
+         *     statistics (counts, decades, top series, co-appearances, creators,
+         *     earliest owned issues), ACL-filtered like the grids.
+         */
+        get: operations["teams_insights"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/teams/{slug}/issues": {
         parameters: {
             query?: never;
@@ -5197,6 +5341,26 @@ export interface paths {
         get: operations["teams_issues"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/teams/{slug}/profile/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /teams/{slug}/profile/refresh` — queue a fresh provider fetch
+         *     of the team's profile. Admin only (it spends provider budget).
+         */
+        post: operations["teams_refresh_profile"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7091,6 +7255,13 @@ export interface components {
         ContinueReadingView: {
             items: components["schemas"]["ContinueReadingCard"][];
         };
+        CountedName: {
+            /** Format: int64 */
+            count: number;
+            name: string;
+            /** @description Landing-page slug when the name has an entity row. */
+            slug?: string | null;
+        };
         CoverageAnalysisResp: {
             auto_accept: boolean;
             /** @description Proposals accepted automatically by this job. */
@@ -7437,6 +7608,14 @@ export interface components {
              *     changes it from their own account settings after first sign-in.
              */
             temp_password: string;
+        };
+        CreatorCount: {
+            /** Format: int64 */
+            count: number;
+            name: string;
+            /** @description Distinct credit roles, comma-separated. */
+            roles: string;
+            slug?: string | null;
         };
         CreatorDetailView: {
             /**
@@ -7942,6 +8121,12 @@ export interface components {
             publisher?: string | null;
             series_id: string;
         };
+        DecadeCount: {
+            /** Format: int64 */
+            count: number;
+            /** Format: int32 */
+            decade: number;
+        };
         /**
          * @description Response for `POST /libraries/{slug}/validate-deeply`. Returns
          *     immediately with `202 Accepted`; the deep-validate runs in a
@@ -8251,12 +8436,21 @@ export interface components {
             series: components["schemas"]["EngagementPoint"][];
         };
         /**
+         * @description The lazy-fetch state of an entity's provider profile.
+         * @enum {string}
+         */
+        EnrichmentStatus: "unavailable" | "pending" | "done" | "failed";
+        /**
          * @description Header payload for an entity landing page. The series / issues grids
          *     are fetched separately through the cursor-paginated sub-routes.
          */
         EntityDetailView: {
             aliases: string[];
             description?: string | null;
+            /** @description Where the profile fetch stands. */
+            enrichment: components["schemas"]["EnrichmentStatus"];
+            /** @description Last fetch failure (`enrichment = failed`). */
+            enrichment_error?: string | null;
             /**
              * Format: int32
              * @description Publishers only (provider data).
@@ -8268,12 +8462,56 @@ export interface components {
             issue_count: number;
             /** @description `"characters"` | `"teams"` | `"locations"` | `"arcs"` | `"publishers"`. */
             kind: string;
+            /** @description Provider records the entity is linked to. */
+            links?: components["schemas"]["EntityLinkView"][];
             name: string;
+            profile?: components["schemas"]["EntityProfileView"] | null;
             /** @description Characters only (provider data). */
             real_name?: string | null;
             /** Format: int64 */
             series_count: number;
             slug: string;
+        };
+        /**
+         * @description "In your library" statistics of one entity (`GET /<kind>/{slug}/insights`),
+         *     ACL-filtered like the grids. Co-appearance lists exclude the entity
+         *     itself.
+         */
+        EntityInsightsView: {
+            arcs: components["schemas"]["CountedName"][];
+            characters: components["schemas"]["CountedName"][];
+            creators: components["schemas"]["CreatorCount"][];
+            decades: components["schemas"]["DecadeCount"][];
+            /**
+             * @description The first issues in the entity's reading order the caller owns
+             *     (earliest publication year; arc position for story arcs).
+             */
+            earliest: components["schemas"]["IssueSummaryView"][];
+            /** Format: int32 */
+            first_year?: number | null;
+            /** Format: int64 */
+            issues: number;
+            /** Format: int32 */
+            last_year?: number | null;
+            locations: components["schemas"]["CountedName"][];
+            publishers: components["schemas"]["CountedName"][];
+            /**
+             * Format: int64
+             * @description Issues the caller has finished.
+             */
+            read: number;
+            /** Format: int64 */
+            series: number;
+            teams: components["schemas"]["CountedName"][];
+            top_series: components["schemas"]["SeriesCount"][];
+        };
+        /** @description One provider record the entity is linked to. */
+        EntityLinkView: {
+            external_id: string;
+            label: string;
+            /** @description `comicvine` | `metron` | `gcd` | … */
+            source: string;
+            url?: string | null;
         };
         /** @description One row of an entity browse index (`GET /characters` etc.). */
         EntityListItem: {
@@ -8292,6 +8530,19 @@ export interface components {
             series_count: number;
             /** @description `/<kind>/<slug>` target. */
             slug: string;
+        };
+        /** @description The wiki block of an entity landing page. */
+        EntityProfileView: {
+            facts: components["schemas"]["Facts"];
+            fetched_at: string;
+            /** @description `source → issues the provider lists for the entity`. */
+            provider_counts: {
+                [key: string]: number;
+            };
+            sections: components["schemas"]["Section"][];
+            /** @description Providers that answered (`metron`, `comicvine`). */
+            sources: string[];
+            summary?: string | null;
         };
         /** @description A named entity with its landing-page slug when the entity row exists. */
         EntityRefView: {
@@ -8755,6 +9006,20 @@ export interface components {
          * @enum {string}
          */
         ExternalSource: "metron" | "comicvine" | "gcd";
+        /** @description Fact sheet. Fields a kind doesn't carry stay empty. */
+        Facts: {
+            birthday?: string | null;
+            creators?: string[];
+            first_appearance?: components["schemas"]["FirstAppearance"] | null;
+            gender?: string | null;
+            /** @description Team members (teams only). */
+            members?: string[];
+            powers?: string[];
+            publisher?: string | null;
+            real_name?: string | null;
+            teams?: string[];
+            universes?: string[];
+        };
         /**
          * @description Why a batch issue fell back from a direct lookup to a search.
          * @enum {string}
@@ -8882,6 +9147,13 @@ export interface components {
         FilterDsl: {
             conditions: components["schemas"]["Condition"][];
             match_mode: components["schemas"]["MatchMode"];
+        };
+        /** @description The issue an entity first appeared in, as the provider names it. */
+        FirstAppearance: {
+            /** @description ComicVine issue id, when known. */
+            comicvine_issue_id?: string | null;
+            /** @description `"Detective Comics #27"` — the provider's label. */
+            label: string;
         };
         /**
          * @description `width` | `height` | `original` | `contain`. `contain` fits the whole
@@ -11221,6 +11493,11 @@ export interface components {
             backfill: number;
             /**
              * Format: int64
+             * @description Entity profile fetches (character / team / location / arc pages).
+             */
+            entity_enrich: number;
+            /**
+             * Format: int64
              * @description Pending first-import content-hash drains (one per library; WP-3.2).
              */
             hash_backfill: number;
@@ -12289,6 +12566,17 @@ export interface components {
             /** Format: uuid */
             run_id: string;
         };
+        /** @description One wiki section split out of ComicVine's description. */
+        Section: {
+            /** @description Empty for the lead text before the first heading. */
+            heading: string;
+            /**
+             * Format: int32
+             * @description `0` lead, `2` for `<h2>`, `3` for `<h3>`.
+             */
+            level: number;
+            paragraphs: string[];
+        };
         /** @description A series → story-arc edge ("this series is a tie-in to *arc*"). */
         SeriesArcRelationshipView: {
             arc: components["schemas"]["RelationshipArcRef"];
@@ -12333,6 +12621,18 @@ export interface components {
              */
             provider_splits: components["schemas"]["ChainSplitView"][];
             series: components["schemas"]["SeriesView"];
+        };
+        SeriesCount: {
+            /** Format: int64 */
+            count: number;
+            /** Format: int32 */
+            first_year?: number | null;
+            /** Format: int32 */
+            last_year?: number | null;
+            name: string;
+            slug: string;
+            /** Format: int32 */
+            year?: number | null;
         };
         /** @description How well one series candidate covers the local issues. */
         SeriesCoverageHint: {
@@ -17154,6 +17454,33 @@ export interface operations {
             };
         };
     };
+    arcs_insights: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityInsightsView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     arcs_issues: {
         parameters: {
             query?: {
@@ -17177,6 +17504,46 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    arcs_refresh_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no provider configured */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -17667,6 +18034,33 @@ export interface operations {
             };
         };
     };
+    characters_insights: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityInsightsView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     characters_issues: {
         parameters: {
             query?: {
@@ -17690,6 +18084,46 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    characters_refresh_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no provider configured */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -19130,6 +19564,33 @@ export interface operations {
             };
         };
     };
+    locations_insights: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityInsightsView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     locations_issues: {
         parameters: {
             query?: {
@@ -19153,6 +19614,46 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    locations_refresh_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no provider configured */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25232,6 +25733,33 @@ export interface operations {
             };
         };
     };
+    teams_insights: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityInsightsView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     teams_issues: {
         parameters: {
             query?: {
@@ -25255,6 +25783,46 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    teams_refresh_profile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no provider configured */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

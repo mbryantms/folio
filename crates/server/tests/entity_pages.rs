@@ -1106,3 +1106,357 @@ async fn opds_v2_arc_feed_is_a_reading_order_with_sequential_links() {
         "{feed}"
     );
 }
+
+// ───────── provider profiles + insights ─────────
+
+use server::metadata::entity_profile::ProfileKind;
+use wiremock::matchers::{method, path, query_param};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+async fn post(app: &TestApp, uri: &str, user: &Authed) -> (StatusCode, serde_json::Value) {
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                user.session, user.csrf
+            ),
+        )
+        .header("X-CSRF-Token", &user.csrf)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from("{}"))
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let v = if bytes.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+    };
+    (status, v)
+}
+
+fn json(body: serde_json::Value) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(body)
+}
+
+/// Metron + ComicVine wiremocks for the Batman record. Metron's detail
+/// names the ComicVine id, so the ComicVine step is a direct fetch.
+async fn mount_batman(metron: &MockServer, cv: &MockServer) {
+    Mock::given(method("GET"))
+        .and(path("/api/character/"))
+        .and(query_param("name", "Batman"))
+        .respond_with(json(serde_json::json!({
+            "count": 2, "next": null, "previous": null,
+            "results": [
+                {"id": 6100, "name": "Atomic Batman"},
+                {"id": 12, "name": "Batman"}
+            ]
+        })))
+        .mount(metron)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/character/12/"))
+        .respond_with(json(serde_json::json!({
+            "id": 12, "name": "Batman", "alias": [],
+            "desc": "Batman is a fictional superhero appearing in American comic books published by DC Comics.",
+            "image": "https://static.metron.cloud/media/character/2018/11/11/batman.jpg",
+            "creators": [{"id": 41, "name": "Bill Finger"}, {"id": 42, "name": "Bob Kane"}],
+            "teams": [{"id": 1756, "name": "Batman Family"}, {"id": 2, "name": "Justice League"}],
+            "universes": [{"id": 171, "name": "Prime Earth"}],
+            "cv_id": 1699, "gcd_id": 18,
+            "resource_url": "https://metron.cloud/character/batman/"
+        })))
+        .mount(metron)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/character/12/issue_list/"))
+        .respond_with(json(serde_json::json!({
+            "count": 9680, "next": null, "previous": null, "results": []
+        })))
+        .mount(metron)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/character/4005-1699"))
+        .respond_with(json(serde_json::json!({
+            "status_code": 1, "error": "OK",
+            "results": {
+                "id": 1699, "name": "Batman", "real_name": "Bruce Thomas Wayne",
+                "aliases": "Bruce Wayne\nThe Dark Knight",
+                "deck": "Bruce Wayne, who witnessed the murder of his parents, became the Batman.",
+                "description": "<p>Lead.</p><h2>Origin</h2><p>Park Row &amp; Crime Alley.</p><table><tr><td>x</td></tr></table><h2>Golden Age</h2><p>Bob Kane.</p>",
+                "gender": 1, "birth": "February 19, 1972",
+                "count_of_issue_appearances": 25186,
+                "first_appeared_in_issue": {"id": 109101, "name": "Detective Comics", "issue_number": "27"},
+                "image": {"medium_url": "https://comicvine.gamespot.com/a/uploads/scale_medium/0/9241/788966-001.jpg"},
+                "publisher": {"id": 10, "name": "DC Comics"},
+                "creators": [{"id": 1, "name": "Bob Kane"}, {"id": 2, "name": "Bill Finger"}],
+                "teams": [{"id": 3, "name": "Batman Family"}, {"id": 4, "name": "Justice League of America"}],
+                "powers": [{"id": 5, "name": "Intellect"}, {"id": 6, "name": "Stealth"}],
+                "site_detail_url": "https://comicvine.gamespot.com/batman/4005-1699/"
+            }
+        })))
+        .mount(cv)
+        .await;
+}
+
+#[tokio::test]
+async fn profile_fetch_merges_metron_and_comicvine() {
+    let cv = MockServer::start().await;
+    let metron = MockServer::start().await;
+    let gcd = MockServer::start().await;
+    let app = TestApp::spawn_with_all_providers(cv.uri(), metron.uri(), gcd.uri()).await;
+    let f = fixture(&app).await;
+    mount_batman(&metron, &cv).await;
+    let batman = add_entity(&f.db, "character", "batman", "Batman").await;
+    add_character(&f.db, &f.a_issues[0], "Batman", Some(batman)).await;
+
+    server::jobs::entity_enrich::process(&app.state(), ProfileKind::Character, batman)
+        .await
+        .unwrap();
+
+    let (s, body) = get_json(&app, "/api/characters/batman", &f.user).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["enrichment"], "done", "{body}");
+    // Entity row: ComicVine wins the short fields.
+    assert_eq!(body["real_name"], "Bruce Thomas Wayne");
+    assert_eq!(
+        body["aliases"],
+        serde_json::json!(["Bruce Wayne", "The Dark Knight"])
+    );
+    assert!(
+        body["image_url"]
+            .as_str()
+            .unwrap()
+            .contains("comicvine.gamespot.com")
+    );
+    assert!(
+        body["description"]
+            .as_str()
+            .unwrap()
+            .starts_with("Bruce Wayne, who")
+    );
+    // Profile: Metron's summary, ComicVine's sections + facts, both counts.
+    let p = &body["profile"];
+    assert!(
+        p["summary"]
+            .as_str()
+            .unwrap()
+            .starts_with("Batman is a fictional")
+    );
+    assert_eq!(p["sources"], serde_json::json!(["metron", "comicvine"]));
+    assert_eq!(p["provider_counts"]["metron"], 9680);
+    assert_eq!(p["provider_counts"]["comicvine"], 25186);
+    let sections = p["sections"].as_array().unwrap();
+    assert_eq!(sections.len(), 3, "{sections:?}");
+    assert_eq!(sections[0]["heading"], "");
+    assert_eq!(sections[1]["heading"], "Origin");
+    assert_eq!(sections[1]["paragraphs"][0], "Park Row & Crime Alley.");
+    assert_eq!(sections[2]["heading"], "Golden Age");
+    let facts = &p["facts"];
+    assert_eq!(facts["gender"], "Male");
+    assert_eq!(facts["birthday"], "February 19, 1972");
+    assert_eq!(facts["publisher"], "DC Comics");
+    assert_eq!(facts["first_appearance"]["label"], "Detective Comics #27");
+    assert_eq!(
+        facts["creators"],
+        serde_json::json!(["Bob Kane", "Bill Finger"])
+    );
+    assert_eq!(
+        facts["teams"],
+        serde_json::json!([
+            "Batman Family",
+            "Justice League",
+            "Justice League of America"
+        ])
+    );
+    assert_eq!(facts["universes"], serde_json::json!(["Prime Earth"]));
+    assert_eq!(facts["powers"], serde_json::json!(["Intellect", "Stealth"]));
+    // Links: Metron's record named the ComicVine + GCD ids.
+    let links: Vec<(&str, &str)> = body["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            (
+                l["source"].as_str().unwrap(),
+                l["external_id"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        links,
+        vec![("comicvine", "1699"), ("gcd", "18"), ("metron", "12")]
+    );
+    let n = scalar(
+        &f.db,
+        "SELECT count(*) AS n FROM external_ids WHERE entity_type = 'character' AND entity_id = $1",
+        vec![batman.to_string().into()],
+    )
+    .await;
+    assert_eq!(n, Some(3));
+}
+
+#[tokio::test]
+async fn profile_is_queued_on_first_view_and_refreshed_by_admin() {
+    let cv = MockServer::start().await;
+    let metron = MockServer::start().await;
+    let gcd = MockServer::start().await;
+    let app = TestApp::spawn_with_all_providers(cv.uri(), metron.uri(), gcd.uri()).await;
+    let f = fixture(&app).await;
+    // No exact-name record anywhere: the fetch records why.
+    Mock::given(method("GET"))
+        .and(path("/api/character/"))
+        .respond_with(json(serde_json::json!({"count": 0, "results": []})))
+        .mount(&metron)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/characters/"))
+        .respond_with(json(serde_json::json!({"status_code": 1, "results": []})))
+        .mount(&cv)
+        .await;
+    let joker = add_entity(&f.db, "character", "joker", "Joker").await;
+    add_character(&f.db, &f.a_issues[0], "Joker", Some(joker)).await;
+
+    // First view queues the fetch.
+    let (s, body) = get_json(&app, "/api/characters/joker", &f.user).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["enrichment"], "pending");
+    assert!(body.get("profile").is_none());
+    let requested = scalar(
+        &f.db,
+        "SELECT count(*) AS n FROM entity_profile WHERE entity_type = 'character' \
+           AND entity_id = $1 AND requested_at IS NOT NULL AND fetched_at IS NULL",
+        vec![joker.into()],
+    )
+    .await;
+    assert_eq!(requested, Some(1));
+
+    server::jobs::entity_enrich::process(&app.state(), ProfileKind::Character, joker)
+        .await
+        .unwrap();
+    let (_, body) = get_json(&app, "/api/characters/joker", &f.user).await;
+    assert_eq!(body["enrichment"], "failed", "{body}");
+    let err = body["enrichment_error"].as_str().unwrap();
+    assert!(
+        err.contains("Metron has no record") && err.contains("ComicVine has no record"),
+        "{err}"
+    );
+
+    // Refresh is admin-only, audited, and resets the state to pending.
+    let (s, _) = post(&app, "/api/characters/joker/profile/refresh", &f.user).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, body) = post(&app, "/api/characters/joker/profile/refresh", &f.admin).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{body}");
+    let (_, body) = get_json(&app, "/api/characters/joker", &f.admin).await;
+    assert_eq!(body["enrichment"], "pending", "{body}");
+    let audited = scalar(
+        &f.db,
+        "SELECT count(*) AS n FROM audit_log WHERE action = 'admin.entity.refresh_profile' \
+           AND target_id = $1",
+        vec![joker.to_string().into()],
+    )
+    .await;
+    assert_eq!(audited, Some(1));
+
+    // Without any provider the page says so and queues nothing.
+    let plain = TestApp::spawn().await;
+    let g = fixture(&plain).await;
+    let c = add_entity(&g.db, "character", "robin", "Robin").await;
+    add_character(&g.db, &g.a_issues[0], "Robin", Some(c)).await;
+    let (_, body) = get_json(&plain, "/api/characters/robin", &g.user).await;
+    assert_eq!(body["enrichment"], "unavailable");
+    let (s, _) = post(&plain, "/api/characters/robin/profile/refresh", &g.admin).await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn insights_report_library_stats_under_the_acl() {
+    let app = TestApp::spawn().await;
+    let f = fixture(&app).await;
+    let batman = add_entity(&f.db, "character", "batman", "Batman").await;
+    let joker = add_entity(&f.db, "character", "joker", "Joker").await;
+    add_entity(&f.db, "location", "gotham-city", "Gotham City").await;
+    // Batman in all three visible issues + the capped one + library B.
+    for id in &f.a_issues {
+        add_character(&f.db, id, "Batman", Some(batman)).await;
+    }
+    add_character(&f.db, &f.a_mature, "Batman", Some(batman)).await;
+    add_character(&f.db, &f.b_issues[0], "Batman", None).await;
+    // Joker with Batman twice (one of them capped), Gotham by name once.
+    add_character(&f.db, &f.a_issues[0], "Joker", Some(joker)).await;
+    add_character(&f.db, &f.a_mature, "Joker", Some(joker)).await;
+    exec(
+        &f.db,
+        "INSERT INTO issue_locations (issue_id, location) VALUES ($1, 'gotham city')",
+        vec![f.a_issues[1].as_str().into()],
+    )
+    .await;
+    exec(
+        &f.db,
+        "INSERT INTO issue_credits (issue_id, role, person) VALUES ($1, 'writer', 'Bill Finger'), ($2, 'writer', 'Bill Finger'), ($2, 'penciller', 'Bob Kane')",
+        vec![f.a_issues[0].as_str().into(), f.a_issues[1].as_str().into()],
+    )
+    .await;
+    for (id, year) in f.a_issues.iter().zip([1939, 1940, 1951]) {
+        exec(
+            &f.db,
+            "UPDATE issues SET year = $2 WHERE id = $1",
+            vec![id.as_str().into(), year.into()],
+        )
+        .await;
+    }
+    exec(
+        &f.db,
+        "INSERT INTO progress_records (user_id, issue_id, last_page, percent, finished, updated_at) \
+         VALUES ($1, $2, 10, 100, true, now())",
+        vec![f.user.user_id.into(), f.a_issues[0].as_str().into()],
+    )
+    .await;
+
+    let (s, body) = get_json(&app, "/api/characters/batman/insights", &f.user).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["issues"], 3, "capped + library-B issues excluded");
+    assert_eq!(body["series"], 1);
+    assert_eq!(body["first_year"], 1939);
+    assert_eq!(body["last_year"], 1951);
+    assert_eq!(body["read"], 1);
+    assert_eq!(body["publishers"][0]["name"], "DC Comics");
+    assert_eq!(body["publishers"][0]["count"], 3);
+    assert_eq!(
+        body["decades"],
+        serde_json::json!([{"decade": 1930, "count": 1}, {"decade": 1940, "count": 1}, {"decade": 1950, "count": 1}])
+    );
+    assert_eq!(body["top_series"][0]["name"], "Detective Comics");
+    assert_eq!(body["top_series"][0]["count"], 3);
+    assert_eq!(body["top_series"][0]["first_year"], 1939);
+    // Co-stars exclude Batman himself and the capped issue.
+    assert_eq!(body["characters"].as_array().unwrap().len(), 1);
+    assert_eq!(body["characters"][0]["name"], "Joker");
+    assert_eq!(body["characters"][0]["slug"], "joker");
+    assert_eq!(body["characters"][0]["count"], 1);
+    assert_eq!(
+        body["locations"][0]["name"], "Gotham City",
+        "name row resolves to the entity"
+    );
+    assert_eq!(body["locations"][0]["slug"], "gotham-city");
+    let creators = body["creators"].as_array().unwrap();
+    assert_eq!(creators[0]["name"], "Bill Finger");
+    assert_eq!(creators[0]["count"], 2);
+    assert_eq!(creators[0]["roles"], "writer");
+    assert_eq!(creators[1]["name"], "Bob Kane");
+    assert_eq!(creators[1]["roles"], "penciller");
+    let earliest = body["earliest"].as_array().unwrap();
+    assert_eq!(earliest.len(), 3);
+    assert_eq!(earliest[0]["id"], f.a_issues[0], "1939 first");
+
+    // The admin sees the capped issue too.
+    let (_, body) = get_json(&app, "/api/characters/batman/insights", &f.admin).await;
+    assert_eq!(body["issues"], 5);
+    assert_eq!(body["characters"][0]["count"], 2);
+    let (s, _) = get_json(&app, "/api/characters/nobody/insights", &f.user).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}

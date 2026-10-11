@@ -92,6 +92,7 @@ const QUEUE_LABELS: { key: string; label: string }[] = [
   { key: "hash_backfill", label: "Content hashing" },
   { key: "relationship_suggest", label: "Relationship suggestions" },
   { key: "provider_coverage", label: "Provider coverage" },
+  { key: "entity_enrich", label: "Entity profiles" },
 ];
 
 function queueLabel(key: string): string {
