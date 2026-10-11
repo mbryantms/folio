@@ -92,7 +92,7 @@ export function IssueMetadataTab({
       {/* ── At-a-glance status: the three short sections sit side-by-side as
            cards so they use the full width instead of each stranding its
            right half on desktop. The detail tables stay full-width below. ── */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {c && (
           <MetaCard
             title="Completeness"

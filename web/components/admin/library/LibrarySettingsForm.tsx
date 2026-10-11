@@ -561,7 +561,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                 );
               }}
             />
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <FormField
                 control={form.control}
                 name="archive_backup_retain_count"
@@ -867,7 +867,7 @@ function ThumbnailSettingsCard({
           <div
             role="group"
             aria-label="Thumbnail image format"
-            className="grid gap-2 sm:grid-cols-3"
+            className="grid grid-cols-1 gap-2 sm:grid-cols-3"
           >
             {THUMBNAIL_FORMATS.map((option) => {
               const active = format === option.value;
@@ -900,7 +900,7 @@ function ThumbnailSettingsCard({
           </div>
         </div>
 
-        <div className="grid gap-5 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <ThumbnailQualitySlider
             label="Cover quality"
             description="Controls generated cover thumbnail quality for WebP/JPEG."

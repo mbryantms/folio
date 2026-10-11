@@ -469,7 +469,7 @@ export default async function SeriesPage({
               />
             </DetailSummaryGrid>
 
-            <div className="grid gap-4 xl:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
               <DetailSection
                 title="Publication"
                 description="Series identity, release range, and reading defaults."

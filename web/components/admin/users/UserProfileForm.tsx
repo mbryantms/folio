@@ -51,7 +51,7 @@ export function UserProfileForm({ user }: { user: AdminUserDetailView }) {
   return (
     <div className="space-y-6">
       <section className="space-y-3">
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="space-y-1">
             <Label htmlFor="display-name">Display name</Label>
             <Input

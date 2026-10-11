@@ -817,7 +817,7 @@ function ThumbnailWorkPanel({
           </Button>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div
             className={cn(
               "flex min-h-32 flex-col justify-between rounded-md border p-4",

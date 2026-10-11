@@ -58,7 +58,7 @@ export function DashboardTab() {
       : 0;
   return (
     <div className="space-y-4">
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard
           label="Series matched"
           value={`${d.series_matched.toLocaleString()} / ${d.series_total.toLocaleString()}`}
@@ -371,7 +371,7 @@ function MatchQualityCard() {
             collecting baseline telemetry.
           </p>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <MatchQualityWindowView
               title="Last 7 days"
               total={total_7d}

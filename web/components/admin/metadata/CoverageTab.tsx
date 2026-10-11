@@ -112,7 +112,7 @@ export function CoverageTab() {
 
       <IdentifierCoverageCard d={d} />
       <CompletenessCard d={d} />
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <LibraryGapsCard d={d} />
         <TopSeriesCard d={d} />
       </div>
@@ -282,7 +282,7 @@ function CompletenessCard({ d }: { d: MetadataCoverageResp }) {
             Open the needs-metadata worklist →
           </Link>
         </div>
-        <div className="grid gap-6 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <FieldBars
             title={`Core fields missing, among the ${incomplete.toLocaleString()} incomplete`}
             rows={d.missing_core}
@@ -660,7 +660,7 @@ function ToolsCard({ d }: { d: MetadataCoverageResp }) {
         </p>
       </CardHeader>
       <CardContent className="space-y-5">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <ToolTile
             label="Weekly refresh"
             value={t.weekly_refresh_enabled ? "On" : "Off"}
