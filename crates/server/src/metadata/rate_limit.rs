@@ -453,12 +453,12 @@ mod comicvine_resource_tests {
             ComicVineResource::from_path("/publishers"),
             ComicVineResource::Search
         );
-        // Five distinct hourly buckets, 200 each; one shared 1 req/s bucket.
+        // Six distinct hourly buckets, 200 each; one shared 1 req/s bucket.
         let keys: std::collections::HashSet<&str> = COMICVINE_RESOURCES
             .iter()
             .map(|r| comicvine_hour(*r).key)
             .collect();
-        assert_eq!(keys.len(), 5);
+        assert_eq!(keys.len(), 6);
         assert!(
             COMICVINE_RESOURCES
                 .iter()

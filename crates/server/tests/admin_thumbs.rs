@@ -1161,7 +1161,7 @@ async fn background_work_joins_scans_thumbnails_and_queues() {
         .find(|q| q["queue"] == "post_scan_thumbs")
         .expect("thumbs queue");
     assert_eq!(thumbs["waiting"], 1);
-    assert_eq!(body["queues"].as_array().unwrap().len(), 15);
+    assert_eq!(body["queues"].as_array().unwrap().len(), 16);
 }
 
 #[tokio::test]

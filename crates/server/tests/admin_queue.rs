@@ -503,7 +503,7 @@ async fn queue_depth_counts_jobs_held_by_a_worker_and_retry_delayed() {
     assert_eq!(body["total"], 6);
     assert_eq!(body["in_flight"], 3);
     let queues = body["queues"].as_array().expect("queues array");
-    assert_eq!(queues.len(), 15, "one entry per queue");
+    assert_eq!(queues.len(), 16, "one entry per queue");
     let thumbs = queues
         .iter()
         .find(|q| q["queue"] == "post_scan_thumbs")
