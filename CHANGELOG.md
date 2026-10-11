@@ -13,6 +13,20 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.54.1](https://github.com/mbryantms/folio/compare/v0.54.0...v0.54.1) (2026-10-11)
+
+
+### Fixed
+
+* **ui:** card grids overflow the phone viewport around long names (Settings › Views › Reading lists) ([#1136](https://github.com/mbryantms/folio/issues/1136)) ([63bda2f](https://github.com/mbryantms/folio/commit/63bda2f2dba25c8319006423b0cb78090ff09070))
+
+
+### Dependencies
+
+* update actions/setup-node digest to 949feb2 ([#1132](https://github.com/mbryantms/folio/issues/1132)) ([48c8c81](https://github.com/mbryantms/folio/commit/48c8c81cff7d22986468d5dd197a2965b2b73adf))
+* update dependency cronstrue to v3.31.0 ([#1135](https://github.com/mbryantms/folio/issues/1135)) ([cbef0f6](https://github.com/mbryantms/folio/commit/cbef0f6f1a580262d59d26694c5cd3f08ac136f8))
+* update dependency lucide-react to v1.53.0 ([#1134](https://github.com/mbryantms/folio/issues/1134)) ([6f9f1b9](https://github.com/mbryantms/folio/commit/6f9f1b96dc98dda7f29f2655b34ad68344f9deaa))
+
 ## [0.54.0](https://github.com/mbryantms/folio/compare/v0.53.1...v0.54.0) (2026-10-11)
 
 
