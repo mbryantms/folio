@@ -2,8 +2,8 @@ import type { EntityKindPath } from "@/lib/api/queries";
 import type { EntitySlugs } from "@/lib/api/types";
 
 /** Per-kind copy + capabilities for the WP-5.5 entity landing pages
- *  (`/characters`, `/teams`, `/arcs`, `/publishers`). One table so the
- *  index page, detail page and chip links can't disagree. */
+ *  (`/characters`, `/teams`, `/locations`, `/arcs`, `/publishers`). One
+ *  table so the index page, detail page and chip links can't disagree. */
 export const ENTITY_KINDS: Record<
   EntityKindPath,
   {
@@ -29,6 +29,12 @@ export const ENTITY_KINDS: Record<
     hasIssues: true,
     issuesLabel: "Appearances",
   },
+  locations: {
+    plural: "Locations",
+    noun: "location",
+    hasIssues: true,
+    issuesLabel: "Appearances",
+  },
   arcs: {
     plural: "Story arcs",
     noun: "story arc",
@@ -50,7 +56,7 @@ export function entityUrl(kind: EntityKindPath, slug: string): string {
 
 /** Chip field (as `ChipList` names it) → the entity kind + the slug map
  *  a detail endpoint returned for it. `null` for fields without a
- *  landing page (locations, genres, tags, …). */
+ *  landing page (genres, tags, …). */
 export function entityChipTarget(
   field: string,
   slugs: EntitySlugs | null | undefined,
@@ -61,6 +67,8 @@ export function entityChipTarget(
       return { kind: "characters", map: slugs.characters ?? {} };
     case "teams":
       return { kind: "teams", map: slugs.teams ?? {} };
+    case "locations":
+      return { kind: "locations", map: slugs.locations ?? {} };
     case "story_arc":
     case "arcs":
       return { kind: "arcs", map: slugs.arcs ?? {} };

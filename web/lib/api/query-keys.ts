@@ -154,10 +154,15 @@ export const queryKeys = {
   /** Alphabetical creator browse index (`/creators`). Audit A11. */
   creatorsList: (filters: CreatorsListFilters) =>
     ["creators", "list", filters] as const,
-  /** Entity browse index (`/characters`, `/teams`, `/arcs`,
-   *  `/publishers`). WP-5.5. */
+  /** Entity browse index (`/characters`, `/teams`, `/locations`,
+   *  `/arcs`, `/publishers`). WP-5.5. */
   entityList: (kind: EntityKindPath, filters: EntityListFilters) =>
     ["entities", kind, "list", filters] as const,
+  /** Global-search entity categories (characters / teams / locations /
+   *  story arcs): one `GET /<kind>?q=` page, kept apart from the
+   *  infinite browse-index cache since the shapes differ. */
+  entitySearch: (kind: EntityKindPath, filters: EntityListFilters) =>
+    ["entities", kind, "search", filters] as const,
   /** Entity landing-page grids (`/<kind>/{slug}/series|issues`). */
   entityItems: (
     kind: EntityKindPath,

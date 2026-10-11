@@ -3568,11 +3568,18 @@ pub async fn get_one(
     v.characters = aggregate_csv(agg_rows.iter().map(|r| r.characters.as_deref()));
     v.teams = aggregate_csv(agg_rows.iter().map(|r| r.teams.as_deref()));
     v.locations = aggregate_csv(agg_rows.iter().map(|r| r.locations.as_deref()));
-    // WP-5.5: chip → landing-page slugs for the cast + publisher.
+    // WP-5.5: chip → landing-page slugs for the cast, settings + publisher.
     let publishers: Vec<String> = v.publisher.iter().cloned().collect();
     v.entity_slugs = Some(
-        crate::api::entity_pages::entity_slugs(&app, &v.characters, &v.teams, &[], &publishers)
-            .await,
+        crate::api::entity_pages::entity_slugs(
+            &app,
+            &v.characters,
+            &v.teams,
+            &v.locations,
+            &[],
+            &publishers,
+        )
+        .await,
     );
     v.total_page_count = (!agg_rows.is_empty()).then_some(total_pages);
     v.last_issue_added_at = last_added.map(|t| t.to_rfc3339());

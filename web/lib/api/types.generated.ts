@@ -2364,6 +2364,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/locations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /locations` — alphabetical, cursor-paginated browse of every
+         *     location with at least one appearance visible to the caller.
+         */
+        get: operations["locations_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/locations/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /locations/{slug}` — landing-page header. 404 when the slug is
+         *     unknown or the location has no appearance the caller can see.
+         */
+        get: operations["locations_get_one"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/locations/{slug}/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /locations/{slug}/issues` — the location's visible issues,
+         *     cursor-paginated by publication year, series, number. `total` on the first page only.
+         */
+        get: operations["locations_issues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/locations/{slug}/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /locations/{slug}/series` — the location's visible series,
+         *     alphabetical, cursor-paginated; `total` on the first page only.
+         */
+        get: operations["locations_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/account": {
         parameters: {
             query?: never;
@@ -8154,7 +8234,7 @@ export interface components {
             image_url?: string | null;
             /** Format: int64 */
             issue_count: number;
-            /** @description `"characters"` | `"teams"` | `"arcs"` | `"publishers"`. */
+            /** @description `"characters"` | `"teams"` | `"locations"` | `"arcs"` | `"publishers"`. */
             kind: string;
             name: string;
             /** @description Characters only (provider data). */
@@ -8198,6 +8278,9 @@ export interface components {
                 [key: string]: string;
             };
             characters?: {
+                [key: string]: string;
+            };
+            locations?: {
                 [key: string]: string;
             };
             publishers?: {
@@ -18915,6 +18998,117 @@ export interface operations {
                 content?: never;
             };
             /** @description library not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    locations_list: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+                starts_with?: string;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_EntityListItem"];
+                };
+            };
+        };
+    };
+    locations_get_one: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityDetailView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    locations_issues: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueListView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    locations_series: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesListView"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;

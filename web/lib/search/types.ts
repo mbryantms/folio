@@ -17,6 +17,10 @@ export type SearchCategory =
   | "issues"
   | "markers"
   | "people"
+  | "characters"
+  | "teams"
+  | "locations"
+  | "arcs"
   | "views"
   | "collections"
   | "pages";
@@ -40,6 +44,12 @@ export const SEARCH_CATEGORIES: readonly SearchCategoryDef[] = [
   // user's saved annotations, then the people facet.
   { key: "markers", label: "Bookmark", labelPlural: "bookmarks" },
   { key: "people", label: "Person", labelPlural: "people" },
+  // Comic-content entities: each is the first page of its browse index
+  // (`GET /<kind>?q=`), so a hit lands on the entity's landing page.
+  { key: "characters", label: "Character", labelPlural: "characters" },
+  { key: "teams", label: "Team", labelPlural: "teams" },
+  { key: "locations", label: "Location", labelPlural: "locations" },
+  { key: "arcs", label: "Story arc", labelPlural: "story arcs" },
   // Saved-content surfaces (A4) — matched client-side by name over the
   // already-cached lists, so `Mod+K` finds a view / collection / page the
   // way it finds a series.
@@ -75,6 +85,10 @@ export const EMPTY_SEARCH_GROUPS: SearchGroups = {
   issues: [],
   markers: [],
   people: [],
+  characters: [],
+  teams: [],
+  locations: [],
+  arcs: [],
   views: [],
   collections: [],
   pages: [],

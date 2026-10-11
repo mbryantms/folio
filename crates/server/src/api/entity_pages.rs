@@ -62,6 +62,7 @@ pub(crate) const LIST_MAX_LIMIT: u64 = 100;
 pub(crate) enum EntityKind {
     Character,
     Team,
+    Location,
     Arc,
     Publisher,
 }
@@ -71,6 +72,7 @@ impl EntityKind {
         match self {
             Self::Character => "character",
             Self::Team => "team",
+            Self::Location => "location",
             Self::Arc => "story_arc",
             Self::Publisher => "publisher",
         }
@@ -81,6 +83,7 @@ impl EntityKind {
         match self {
             Self::Character => "characters",
             Self::Team => "teams",
+            Self::Location => "locations",
             Self::Arc => "arcs",
             Self::Publisher => "publishers",
         }
@@ -90,6 +93,7 @@ impl EntityKind {
         match self {
             Self::Character => "character",
             Self::Team => "team",
+            Self::Location => "location",
             Self::Arc => "story arc",
             Self::Publisher => "publisher",
         }
@@ -99,6 +103,7 @@ impl EntityKind {
         match self {
             Self::Character => "Characters",
             Self::Team => "Teams",
+            Self::Location => "Locations",
             Self::Arc => "Story arcs",
             Self::Publisher => "Publishers",
         }
@@ -125,7 +130,7 @@ pub struct EntityListItem {
 /// are fetched separately through the cursor-paginated sub-routes.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct EntityDetailView {
-    /// `"characters"` | `"teams"` | `"arcs"` | `"publishers"`.
+    /// `"characters"` | `"teams"` | `"locations"` | `"arcs"` | `"publishers"`.
     pub kind: String,
     pub id: String,
     pub slug: String,
@@ -332,7 +337,7 @@ pub(crate) async fn visible_arc_ids(
 fn issue_hits_one(kind: EntityKind, e: usize, n: usize, acl: &AclSql) -> String {
     let vis = issue_visible(acl);
     match kind {
-        EntityKind::Character | EntityKind::Team => {
+        EntityKind::Character | EntityKind::Team | EntityKind::Location => {
             let (junction, fk, name) = junction_cols(kind);
             format!(
                 "SELECT i.id AS issue_id, i.series_id AS series_id \
@@ -374,7 +379,18 @@ fn junction_cols(kind: EntityKind) -> (&'static str, &'static str, &'static str)
     match kind {
         EntityKind::Character => ("issue_characters", "character_id", "character"),
         EntityKind::Team => ("issue_teams", "team_id", "team"),
-        _ => unreachable!("junction_cols: character/team only"),
+        EntityKind::Location => ("issue_locations", "location_id", "location"),
+        _ => unreachable!("junction_cols: character/team/location only"),
+    }
+}
+
+/// Series-level membership junction of a name-keyed kind.
+fn series_junction(kind: EntityKind) -> &'static str {
+    match kind {
+        EntityKind::Character => "series_characters",
+        EntityKind::Team => "series_teams",
+        EntityKind::Location => "series_locations",
+        _ => unreachable!("series_junction: character/team/location only"),
     }
 }
 
@@ -393,6 +409,11 @@ fn series_members_one(kind: EntityKind, e: usize, n: usize, acl: &AclSql) -> Str
             "SELECT sj.series_id FROM series_teams sj \
               WHERE sj.team_id = ${e} \
                  OR (sj.team_id IS NULL AND btrim(lower(sj.team)) = ${n})"
+        )),
+        EntityKind::Location => Some(format!(
+            "SELECT sj.series_id FROM series_locations sj \
+              WHERE sj.location_id = ${e} \
+                 OR (sj.location_id IS NULL AND btrim(lower(sj.location)) = ${n})"
         )),
         EntityKind::Arc => Some(format!(
             "SELECT sa.series_id FROM series_arcs sa WHERE sa.arc_id = ${e}"
@@ -416,13 +437,9 @@ fn hits_all(kind: EntityKind, acl: &AclSql) -> String {
     let svis = series_visible(acl);
     let table = kind.table();
     match kind {
-        EntityKind::Character | EntityKind::Team => {
+        EntityKind::Character | EntityKind::Team | EntityKind::Location => {
             let (junction, fk, name) = junction_cols(kind);
-            let series_junction = if kind == EntityKind::Character {
-                "series_characters"
-            } else {
-                "series_teams"
-            };
+            let series_junction = series_junction(kind);
             format!(
                 "SELECT COALESCE(j.{fk}, e.id) AS eid, i.id AS issue_id, i.series_id AS series_id \
                    FROM {junction} j \
@@ -1159,6 +1176,8 @@ pub struct EntitySlugs {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub teams: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub locations: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub arcs: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub publishers: HashMap<String, String>,
@@ -1207,18 +1226,21 @@ pub(crate) async fn entity_slugs(
     app: &AppState,
     characters: &[String],
     teams: &[String],
+    locations: &[String],
     arcs: &[String],
     publishers: &[String],
 ) -> EntitySlugs {
-    let (characters, teams, arcs, publishers) = tokio::join!(
+    let (characters, teams, locations, arcs, publishers) = tokio::join!(
         slug_map(app, EntityKind::Character, characters),
         slug_map(app, EntityKind::Team, teams),
+        slug_map(app, EntityKind::Location, locations),
         slug_map(app, EntityKind::Arc, arcs),
         slug_map(app, EntityKind::Publisher, publishers),
     );
     EntitySlugs {
         characters,
         teams,
+        locations,
         arcs,
         publishers,
     }

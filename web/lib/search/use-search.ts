@@ -2,28 +2,35 @@
 
 import {
   Bookmark,
+  Drama,
   Folder,
   Highlighter,
   LayoutDashboard,
   ListChecks,
+  MapPin,
+  Milestone,
   Star,
   StickyNote,
   User,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 import { useMemo } from "react";
 
 import {
   useCollections,
+  useEntitySearch,
   useIssueSearch,
   useMarkerSearch,
   useMePages,
   usePeopleSearch,
   useSavedViews,
   useSeriesList,
+  type EntityKindPath,
   type SeriesListFilters,
 } from "@/lib/api/queries";
 import type {
+  EntityListItem,
   IssueSearchHit,
   MarkerKind,
   MarkerSearchHit,
@@ -31,6 +38,7 @@ import type {
   SavedViewView,
   SeriesView,
 } from "@/lib/api/types";
+import { entityUrl } from "@/lib/entities";
 import { issueUrl, pageBytesUrl, seriesUrl, readerUrl } from "@/lib/urls";
 
 import {
@@ -66,7 +74,40 @@ const BACKEND_MAX = {
   issues: 50,
   markers: 50,
   people: 100,
+  // `LIST_MAX_LIMIT` in `crates/server/src/api/entity_pages.rs`.
+  entities: 100,
 } as const;
+
+/** The comic-content categories backed by an entity browse index. */
+export type EntitySearchCategory =
+  "characters" | "teams" | "locations" | "arcs";
+
+const ENTITY_ICON: Record<EntitySearchCategory, LucideIcon> = {
+  characters: Drama,
+  teams: Users,
+  locations: MapPin,
+  arcs: Milestone,
+};
+
+/** Map one browse-index row into the generic hit the modal and the
+ *  `/search` rails render. The subtitle carries the visible appearance
+ *  counts so a hit reads like its entity card ("12 issues · 3 series").
+ *  Pure + exported for the unit tests. */
+export function entityToSearchHit(
+  kind: EntitySearchCategory,
+  item: EntityListItem,
+): SearchHit {
+  const issues = `${item.issue_count} ${item.issue_count === 1 ? "issue" : "issues"}`;
+  const series = `${item.series_count} series`;
+  return {
+    kind,
+    id: item.id,
+    title: item.name,
+    subtitle: item.issue_count > 0 ? `${issues} · ${series}` : series,
+    href: entityUrl(kind satisfies EntityKindPath, item.slug),
+    icon: ENTITY_ICON[kind],
+  };
+}
 
 /** Soft cap for the client-filtered saved-content categories (views,
  *  collections, pages). Unlike the backend categories these have no
@@ -202,6 +243,10 @@ const EMPTY_TOTALS: GlobalSearchTotals = {
   issues: 0,
   markers: 0,
   people: 0,
+  characters: 0,
+  teams: 0,
+  locations: 0,
+  arcs: 0,
   views: 0,
   collections: 0,
   pages: 0,
@@ -295,9 +340,10 @@ function markerToSearchHit(m: MarkerSearchHit): SearchHit {
 }
 
 /**
- * Fan-out search hook. Series, issues, markers, and people each have
- * their own backend query; views / collections / pages (A4) are matched
- * client-side over already-cached lists (`buildSavedContentHits`). The
+ * Fan-out search hook. Series, issues, markers, people and the four
+ * entity categories (characters / teams / locations / story arcs) each
+ * have their own backend query; views / collections / pages (A4) are
+ * matched client-side over already-cached lists (`buildSavedContentHits`). The
  * hook merges them all into `SearchHit` groups plus the raw payload
  * arrays used by the rails on `/search`. When a new category lands, plug
  * another source in here and map its rows into `SearchHit`s with the
@@ -332,6 +378,14 @@ export function useGlobalSearch(
   const people = usePeopleSearch(
     enabled ? { q: query, limit: peopleLimit } : {},
   );
+  // Entity categories: the browse indexes' `q` substring filter, first
+  // page only (a hit is one entity; the rail links to the full index).
+  const entityLimit = opts.perCategory ?? BACKEND_MAX.entities;
+  const entityFilters = enabled ? { q: query, limit: entityLimit } : {};
+  const characters = useEntitySearch("characters", entityFilters);
+  const teams = useEntitySearch("teams", entityFilters);
+  const locations = useEntitySearch("locations", entityFilters);
+  const arcs = useEntitySearch("arcs", entityFilters);
 
   // Saved-content sources (A4). These hooks read already-cached,
   // per-user-bounded lists (`/me/saved-views`, `/me/collections`,
@@ -409,12 +463,18 @@ export function useGlobalSearch(
       href: hrefForPerson(p),
       icon: User,
     }));
+    const entityHits = (kind: EntitySearchCategory, items?: EntityListItem[]) =>
+      (items ?? []).map((item) => entityToSearchHit(kind, item));
     return {
       ...EMPTY_SEARCH_GROUPS,
       series: seriesHits,
       issues: issueHits,
       markers: markerHits,
       people: peopleHits,
+      characters: entityHits("characters", characters.data?.items),
+      teams: entityHits("teams", teams.data?.items),
+      locations: entityHits("locations", locations.data?.items),
+      arcs: entityHits("arcs", arcs.data?.items),
       views: savedContent.views.slice(0, savedContentLimit),
       collections: savedContent.collections.slice(0, savedContentLimit),
       pages: savedContent.pages.slice(0, savedContentLimit),
@@ -425,6 +485,10 @@ export function useGlobalSearch(
     issueItems,
     markers.data,
     people.data,
+    characters.data,
+    teams.data,
+    locations.data,
+    arcs.data,
     savedContent,
     savedContentLimit,
   ]);
@@ -441,6 +505,12 @@ export function useGlobalSearch(
       issues: issueItems.length,
       markers: markers.data?.items.length ?? 0,
       people: people.data?.items.length ?? 0,
+      // `total` is the index's full match count (first page only), so
+      // the rail's "view all" count is honest past the per-page cap.
+      characters: characters.data?.total ?? characters.data?.items.length ?? 0,
+      teams: teams.data?.total ?? teams.data?.items.length ?? 0,
+      locations: locations.data?.total ?? locations.data?.items.length ?? 0,
+      arcs: arcs.data?.total ?? arcs.data?.items.length ?? 0,
       views: savedContent.views.length,
       collections: savedContent.collections.length,
       pages: savedContent.pages.length,
@@ -452,6 +522,10 @@ export function useGlobalSearch(
     issueItems.length,
     markers.data?.items.length,
     people.data?.items.length,
+    characters.data,
+    teams.data,
+    locations.data,
+    arcs.data,
     savedContent,
   ]);
 
@@ -462,7 +536,11 @@ export function useGlobalSearch(
     (series.isFetching ||
       issues.isFetching ||
       markers.isFetching ||
-      people.isFetching);
+      people.isFetching ||
+      characters.isFetching ||
+      teams.isFetching ||
+      locations.isFetching ||
+      arcs.isFetching);
 
   const total = Object.values(categoryTotals).reduce((sum, n) => sum + n, 0);
 

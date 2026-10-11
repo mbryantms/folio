@@ -190,6 +190,7 @@ pub async fn get_one(
                 &app,
                 &split_csv(view.characters.as_deref()),
                 &split_csv(view.teams.as_deref()),
+                &split_csv(view.locations.as_deref()),
                 &split_csv(view.story_arc.as_deref()),
                 &publishers,
             )

@@ -5180,6 +5180,179 @@
         }
       }
     },
+    "/api/locations": {
+      "get": {
+        "summary": "`GET /locations` — alphabetical, cursor-paginated browse of every\nlocation with at least one appearance visible to the caller.",
+        "operationId": "locations_list",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "starts_with",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_EntityListItem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/locations/{slug}": {
+      "get": {
+        "summary": "`GET /locations/{slug}` — landing-page header. 404 when the slug is\nunknown or the location has no appearance the caller can see.",
+        "operationId": "locations_get_one",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityDetailView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
+    "/api/locations/{slug}/issues": {
+      "get": {
+        "summary": "`GET /locations/{slug}/issues` — the location's visible issues,\ncursor-paginated by publication year, series, number. `total` on the first page only.",
+        "operationId": "locations_issues",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueListView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
+    "/api/locations/{slug}/series": {
+      "get": {
+        "summary": "`GET /locations/{slug}/series` — the location's visible series,\nalphabetical, cursor-paginated; `total` on the first page only.",
+        "operationId": "locations_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesListView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
     "/api/me/account": {
       "patch": {
         "operationId": "account_update",
@@ -19248,7 +19421,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`\"characters\"` | `\"teams\"` | `\"arcs\"` | `\"publishers\"`."
+            "description": "`\"characters\"` | `\"teams\"` | `\"locations\"` | `\"arcs\"` | `\"publishers\"`."
           },
           "name": {
             "type": "string"
@@ -19334,6 +19507,15 @@
             }
           },
           "characters": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "locations": {
             "type": "object",
             "additionalProperties": {
               "type": "string"

@@ -125,6 +125,7 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(api::creators::routes())
         .merge(api::characters::routes())
         .merge(api::teams::routes())
+        .merge(api::locations::routes())
         .merge(api::arcs::routes())
         .merge(api::publishers::routes())
         .merge(api::progress::routes())
