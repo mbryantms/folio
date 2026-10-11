@@ -110,7 +110,7 @@ export function EntityInsights({
         </div>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {data.decades.length > 0 ? (
           <div className="bg-card border-border space-y-3 rounded-lg border p-4">
             <h3 className="text-sm font-semibold">Issues by decade</h3>
@@ -136,7 +136,7 @@ export function EntityInsights({
         ) : null}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {data.top_series.length > 0 ? (
           <CountList
             title="Top series"
