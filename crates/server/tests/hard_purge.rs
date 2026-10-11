@@ -618,6 +618,9 @@ async fn fk_references_all_cascade_or_set_null() {
 async fn unconstrained_id_columns_are_accounted_for() {
     /// History / provider-id columns that must NOT be touched by a purge.
     const INTENTIONALLY_KEPT: &[&str] = &[
+        // Keyed on entity rows (character / team / location / story_arc),
+        // never an issue or series; those rows outlive any purge.
+        "entity_profile.entity_id",
         // Append-only history: keeps the id of what it described.
         "audit_log.target_id",
         "library_events.entity_id",

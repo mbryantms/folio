@@ -46,6 +46,7 @@ pub mod archive_transforms;
 pub mod backfill;
 pub mod backup_prune;
 pub mod close_dangling_sessions;
+pub mod entity_enrich;
 pub mod hard_purge;
 pub mod hash_backfill;
 pub mod metadata_apply;
@@ -83,6 +84,7 @@ pub struct JobRuntime {
     pub hash_backfill_storage: RedisStorage<hash_backfill::HashBackfillJob>,
     pub relationship_suggest_storage: RedisStorage<relationship_suggest::RelationshipSuggestJob>,
     pub provider_coverage_storage: RedisStorage<provider_coverage::ProviderCoverageJob>,
+    pub entity_enrich_storage: RedisStorage<entity_enrich::EntityEnrichJob>,
     pub redis: ConnectionManager,
 }
 
@@ -111,6 +113,7 @@ impl JobRuntime {
             storage::<relationship_suggest::RelationshipSuggestJob>(conn.clone());
         let provider_coverage_storage =
             storage::<provider_coverage::ProviderCoverageJob>(conn.clone());
+        let entity_enrich_storage = storage::<entity_enrich::EntityEnrichJob>(conn.clone());
         Ok(Self {
             db,
             scan_storage,
@@ -128,6 +131,7 @@ impl JobRuntime {
             hash_backfill_storage,
             relationship_suggest_storage,
             provider_coverage_storage,
+            entity_enrich_storage,
             redis: conn,
         })
     }
@@ -510,6 +514,13 @@ impl JobRuntime {
             .layer(metrics_layer::JobMetricsLayer::new("provider_coverage"))
             .backend(self.provider_coverage_storage.clone())
             .build_fn(provider_coverage::handle);
+        // Entity profile fetches — concurrency=1 for the same reason.
+        let entity_enrich_worker = WorkerBuilder::new("entity_enrich")
+            .concurrency(1)
+            .data(state.clone())
+            .layer(metrics_layer::JobMetricsLayer::new("entity_enrich"))
+            .backend(self.entity_enrich_storage.clone())
+            .build_fn(entity_enrich::handle);
 
         let shutdown_fut = {
             let token = shutdown.clone();
@@ -534,6 +545,7 @@ impl JobRuntime {
             .register(hash_backfill_worker)
             .register(relationship_suggest_worker)
             .register(provider_coverage_worker)
+            .register(entity_enrich_worker)
             // Bound the graceful drain (OPS-3, JOBS-3): without this the monitor
             // waits indefinitely for an in-flight job, so a SIGTERM during a
             // 30-minute scan wouldn't return until the scan finished — past the
@@ -883,6 +895,7 @@ impl JobRuntime {
                 "provider_coverage",
                 self.provider_coverage_storage.get_config(),
             ),
+            ("entity_enrich", self.entity_enrich_storage.get_config()),
         ]
     }
 
@@ -998,7 +1011,7 @@ impl JobRuntime {
 }
 
 /// Number of apalis queues [`JobRuntime`] owns.
-pub const QUEUE_COUNT: usize = 15;
+pub const QUEUE_COUNT: usize = 16;
 
 /// One queue's outstanding jobs — see [`JobRuntime::queue_counts`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

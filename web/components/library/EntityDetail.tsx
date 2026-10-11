@@ -3,15 +3,21 @@
 import * as React from "react";
 
 import { PageHeader } from "@/components/admin/PageHeader";
+import { EntityInsights } from "@/components/library/EntityInsights";
+import {
+  EntityProfile,
+  EntitySections,
+} from "@/components/library/EntityProfile";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
-import { ProviderCoverImage } from "@/components/library/ProviderCoverImage";
 import { SeriesCard } from "@/components/library/SeriesCard";
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useRefreshEntityProfile } from "@/lib/api/mutations";
 import {
   useArcTieInsInfinite,
+  useEntityDetail,
   useEntityIssuesInfinite,
   useEntitySeriesInfinite,
+  useMe,
   type EntityKindPath,
 } from "@/lib/api/queries";
 import type { ArcTieInView, EntityDetailView } from "@/lib/api/types";
@@ -31,12 +37,19 @@ const GRID_STYLE: React.CSSProperties = {
  *  with an IntersectionObserver sentinel, so nothing truncates. */
 export function EntityDetail({
   kind,
-  detail,
+  detail: initial,
 }: {
   kind: EntityKindPath;
   detail: EntityDetailView;
 }) {
   const meta = ENTITY_KINDS[kind];
+  // Live copy of the header payload: polled while the provider profile
+  // is being fetched so the wiki block fills in without a reload.
+  const live = useEntityDetail(kind, initial.slug, initial);
+  const detail = live.data ?? initial;
+  const me = useMe();
+  const isAdmin = me.data?.role === "admin";
+  const refresh = useRefreshEntityProfile(kind, detail.slug);
   const parts: string[] = [];
   if (meta.hasIssues) {
     parts.push(
@@ -46,6 +59,9 @@ export function EntityDetail({
   parts.push(`${detail.series_count} series`);
   if (detail.real_name) parts.push(`Real name: ${detail.real_name}`);
   if (detail.founded_year) parts.push(`Founded ${detail.founded_year}`);
+  const firstAppearance = detail.profile?.facts.first_appearance?.label;
+  if (firstAppearance) parts.push(`First appeared in ${firstAppearance}`);
+  const sections = detail.profile?.sections ?? [];
 
   return (
     <div className="space-y-6">
@@ -54,40 +70,21 @@ export function EntityDetail({
         description={parts.join(" · ")}
         breadcrumbs={[{ label: meta.plural, href: `/${kind}` }]}
       />
-      {detail.image_url || detail.description || detail.aliases.length ? (
-        <section className="flex flex-col gap-4 sm:flex-row">
-          {detail.image_url ? (
-            // Provider-hosted image; not routed through next/image so the
-            // CSP img-src policy (not a loader allowlist) governs it. A
-            // CDN that refuses the hotlink collapses to nothing.
-            <ProviderCoverImage
-              src={detail.image_url}
-              alt=""
-              className="bg-muted h-40 w-auto self-start rounded-md object-cover"
-              placeholderClassName="hidden"
-            />
-          ) : null}
-          <div className="min-w-0 space-y-3">
-            {detail.description ? (
-              <p className="text-muted-foreground max-w-prose text-sm whitespace-pre-line">
-                {detail.description}
-              </p>
-            ) : null}
-            {detail.aliases.length ? (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
-                  Also known as
-                </span>
-                {detail.aliases.map((a) => (
-                  <Badge key={a} variant="secondary" className="font-normal">
-                    {a}
-                  </Badge>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
+      {kind === "publishers" ? (
+        <PublisherBlurb detail={detail} />
+      ) : (
+        <>
+          <EntityProfile
+            kind={kind}
+            detail={detail}
+            isAdmin={isAdmin}
+            onRefresh={() => refresh.mutate()}
+            refreshing={refresh.isPending}
+          />
+          {sections.length > 0 ? <EntitySections sections={sections} /> : null}
+          <EntityInsights kind={kind} slug={detail.slug} />
+        </>
+      )}
 
       {meta.hasIssues ? (
         <EntityTabs
@@ -99,6 +96,25 @@ export function EntityDetail({
         <SeriesGrid kind={kind} slug={detail.slug} />
       )}
     </div>
+  );
+}
+
+/** Publishers have no provider profile: the short fields only. */
+function PublisherBlurb({ detail }: { detail: EntityDetailView }) {
+  if (!detail.description && !detail.aliases.length) return null;
+  return (
+    <section className="min-w-0 space-y-3">
+      {detail.description ? (
+        <p className="text-muted-foreground max-w-prose text-sm whitespace-pre-line">
+          {detail.description}
+        </p>
+      ) : null}
+      {detail.aliases.length ? (
+        <p className="text-muted-foreground text-xs">
+          Also known as {detail.aliases.join(", ")}
+        </p>
+      ) : null}
+    </section>
   );
 }
 

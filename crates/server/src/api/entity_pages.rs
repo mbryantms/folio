@@ -50,6 +50,7 @@ use super::series::{
 };
 use crate::auth::CurrentUser;
 use crate::library::access::{self, VisibleLibraries};
+use crate::metadata::entity_profile::{self, Facts, ProfileKind, Section};
 use crate::state::AppState;
 use entity::{issue, series};
 use shared::pagination::{CursorPage, decode_cursor, encode_cursor};
@@ -146,6 +147,118 @@ pub struct EntityDetailView {
     pub founded_year: Option<i32>,
     pub series_count: i64,
     pub issue_count: i64,
+    /// Provider-filled profile (the wiki block), once fetched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<EntityProfileView>,
+    /// Provider records the entity is linked to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<EntityLinkView>,
+    /// Where the profile fetch stands.
+    pub enrichment: EnrichmentStatus,
+    /// Last fetch failure (`enrichment = failed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enrichment_error: Option<String>,
+}
+
+/// The lazy-fetch state of an entity's provider profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EnrichmentStatus {
+    /// No provider is configured, or this kind has no provider records.
+    Unavailable,
+    /// Queued (by this page view or earlier) and not fetched yet.
+    Pending,
+    Done,
+    Failed,
+}
+
+/// The wiki block of an entity landing page.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct EntityProfileView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    pub sections: Vec<Section>,
+    pub facts: Facts,
+    /// `source → issues the provider lists for the entity`.
+    pub provider_counts: HashMap<String, u64>,
+    /// Providers that answered (`metron`, `comicvine`).
+    pub sources: Vec<String>,
+    pub fetched_at: String,
+}
+
+/// One provider record the entity is linked to.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct EntityLinkView {
+    /// `comicvine` | `metron` | `gcd` | …
+    pub source: String,
+    pub label: String,
+    pub external_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// "In your library" statistics of one entity (`GET /<kind>/{slug}/insights`),
+/// ACL-filtered like the grids. Co-appearance lists exclude the entity
+/// itself.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct EntityInsightsView {
+    pub issues: i64,
+    pub series: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_year: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_year: Option<i32>,
+    /// Issues the caller has finished.
+    pub read: i64,
+    pub publishers: Vec<CountedName>,
+    pub decades: Vec<DecadeCount>,
+    pub top_series: Vec<SeriesCount>,
+    pub characters: Vec<CountedName>,
+    pub teams: Vec<CountedName>,
+    pub locations: Vec<CountedName>,
+    pub arcs: Vec<CountedName>,
+    pub creators: Vec<CreatorCount>,
+    /// The first issues in the entity's reading order the caller owns
+    /// (earliest publication year; arc position for story arcs).
+    pub earliest: Vec<IssueSummaryView>,
+}
+
+#[derive(Debug, Clone, Serialize, FromQueryResult, utoipa::ToSchema)]
+pub struct CountedName {
+    pub name: String,
+    /// Landing-page slug when the name has an entity row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, FromQueryResult, utoipa::ToSchema)]
+pub struct DecadeCount {
+    pub decade: i32,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, FromQueryResult, utoipa::ToSchema)]
+pub struct SeriesCount {
+    pub name: String,
+    pub slug: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    pub count: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_year: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_year: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, FromQueryResult, utoipa::ToSchema)]
+pub struct CreatorCount {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    /// Distinct credit roles, comma-separated.
+    pub roles: String,
+    pub count: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1033,6 +1146,8 @@ pub(crate) async fn detail_handler(
                 .collect()
         })
         .unwrap_or_default();
+    let (profile, enrichment, enrichment_error) = profile_state(app, kind, row.id).await;
+    let links = entity_links(app, kind, row.id).await;
     Json(EntityDetailView {
         kind: kind.path().to_owned(),
         id: row.id.to_string(),
@@ -1045,8 +1160,404 @@ pub(crate) async fn detail_handler(
         founded_year: row.founded_year,
         series_count,
         issue_count,
+        profile,
+        links,
+        enrichment,
+        enrichment_error,
     })
     .into_response()
+}
+
+/// The entity table a landing-page kind fetches profiles for.
+fn profile_kind(kind: EntityKind) -> Option<ProfileKind> {
+    match kind {
+        EntityKind::Character => Some(ProfileKind::Character),
+        EntityKind::Team => Some(ProfileKind::Team),
+        EntityKind::Location => Some(ProfileKind::Location),
+        EntityKind::Arc => Some(ProfileKind::StoryArc),
+        EntityKind::Publisher => None,
+    }
+}
+
+/// Read the profile row and queue a fetch when the page is seen for the
+/// first time (or an earlier request never completed). The queueing is
+/// best effort: a Redis hiccup leaves the page reporting "pending" and
+/// the next view tries again.
+async fn profile_state(
+    app: &AppState,
+    kind: EntityKind,
+    entity_id: Uuid,
+) -> (Option<EntityProfileView>, EnrichmentStatus, Option<String>) {
+    let Some(pk) = profile_kind(kind) else {
+        return (None, EnrichmentStatus::Unavailable, None);
+    };
+    if !entity_profile::providers_configured(&app.cfg()) {
+        return (None, EnrichmentStatus::Unavailable, None);
+    }
+    let row = entity::entity_profile::Entity::find_by_id((pk.entity_type().to_owned(), entity_id))
+        .one(&app.db)
+        .await
+        .ok()
+        .flatten();
+    let view = row.as_ref().and_then(profile_view);
+    let fetched = row.as_ref().is_some_and(|r| r.fetched_at.is_some());
+    let error = row.as_ref().and_then(|r| r.error.clone());
+    let stale_request = row.as_ref().is_none_or(|r| {
+        r.requested_at.is_none_or(|t| {
+            (chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_seconds()
+                > crate::jobs::entity_enrich::RETRY_AFTER_SECS
+        })
+    });
+    if !fetched && stale_request {
+        if let Err(e) = crate::jobs::entity_enrich::enqueue(app, pk, entity_id, false).await {
+            tracing::warn!(entity_id = %entity_id, error = %e, "entity profile: enqueue failed");
+        }
+        return (None, EnrichmentStatus::Pending, None);
+    }
+    if !fetched {
+        return (None, EnrichmentStatus::Pending, None);
+    }
+    // A fetch that found nothing records the reason with no content;
+    // one that found a record may still carry a note about the other
+    // provider (surfaced as the error text next to a done profile).
+    match (view, error) {
+        (Some(v), e) => (Some(v), EnrichmentStatus::Done, e),
+        (None, e) => (None, EnrichmentStatus::Failed, e),
+    }
+}
+
+fn profile_view(row: &entity::entity_profile::Model) -> Option<EntityProfileView> {
+    let fetched_at = row.fetched_at?;
+    let sections: Vec<Section> = row
+        .sections
+        .clone()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let facts: Facts = row
+        .facts
+        .clone()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let provider_counts: HashMap<String, u64> = row
+        .provider_counts
+        .clone()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let sources: Vec<String> = row
+        .sources
+        .clone()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    if sources.is_empty() {
+        return None;
+    }
+    Some(EntityProfileView {
+        summary: row.summary.clone(),
+        sections,
+        facts,
+        provider_counts,
+        sources,
+        fetched_at: fetched_at.to_rfc3339(),
+    })
+}
+
+async fn entity_links(app: &AppState, kind: EntityKind, entity_id: Uuid) -> Vec<EntityLinkView> {
+    use std::str::FromStr;
+    let Some(pk) = profile_kind(kind) else {
+        return Vec::new();
+    };
+    let rows = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq(pk.entity_type()))
+        .filter(entity::external_id::Column::EntityId.eq(entity_id.to_string()))
+        .all(&app.db)
+        .await
+        .unwrap_or_default();
+    let mut links: Vec<EntityLinkView> = rows
+        .into_iter()
+        .map(|r| {
+            let label = crate::metadata::identifier::Source::from_str(&r.source)
+                .map(|s| s.label().to_owned())
+                .unwrap_or_else(|_| r.source.clone());
+            EntityLinkView {
+                source: r.source,
+                label,
+                external_id: r.external_id,
+                url: r.external_url,
+            }
+        })
+        .collect();
+    links.sort_by(|a, b| a.label.cmp(&b.label));
+    links
+}
+
+/// `POST /<kind>/{slug}/profile/refresh` — queue a fresh provider fetch.
+/// Admin only: it spends provider budget. Audited by the caller-facing
+/// wrappers' shared body here.
+pub(crate) async fn refresh_profile_handler(
+    app: &AppState,
+    actor: &CurrentUser,
+    ctx: &crate::middleware::RequestContext,
+    kind: EntityKind,
+    slug: &str,
+) -> Response {
+    let Some(pk) = profile_kind(kind) else {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "this kind has no provider profile",
+        );
+    };
+    if !entity_profile::providers_configured(&app.cfg()) {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "metadata.no_provider",
+            "no metadata provider is configured",
+        );
+    }
+    let row = match find_by_slug(app, kind, slug).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return error(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                &format!("{} not found", kind.noun()),
+            );
+        }
+        Err(e) => return internal(e, "lookup"),
+    };
+    if let Err(e) = crate::jobs::entity_enrich::enqueue(app, pk, row.id, true).await {
+        tracing::error!(entity_id = %row.id, error = %e, "entity profile: refresh enqueue failed");
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "metadata.enqueue_failed",
+            "couldn't queue the profile fetch",
+        );
+    }
+    crate::record_admin_action!(
+        db = &app.db,
+        ctx = ctx,
+        actor = actor.id,
+        action = "admin.entity.refresh_profile",
+        target = (pk.entity_type(), row.id.to_string()),
+        payload = serde_json::json!({ "slug": slug, "kind": kind.path() }),
+    );
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "queued": true })),
+    )
+        .into_response()
+}
+
+/// `GET /<kind>/{slug}/insights` — the "In your library" block.
+pub(crate) async fn insights_handler(
+    app: &AppState,
+    user: &CurrentUser,
+    kind: EntityKind,
+    slug: &str,
+) -> Response {
+    let (row, visible, series_count, issue_count) =
+        match resolve_visible_for_user(app, user, kind, slug).await {
+            Ok(v) => v,
+            Err(r) => return r,
+        };
+    match insights(
+        app,
+        kind,
+        &row,
+        &visible,
+        user.id,
+        series_count,
+        issue_count,
+    )
+    .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => internal(e, "insights"),
+    }
+}
+
+/// One `WITH hits AS (…)` prefix per statement: the entity's visible
+/// `(issue_id, series_id)` pairs, bound as `$1` = id, `$2` = normalized
+/// name plus the ACL values.
+fn hits_cte(kind: EntityKind, acl: &AclSql) -> String {
+    format!("WITH hits AS ({})", issue_hits_one(kind, 1, 2, acl))
+}
+
+async fn insights(
+    app: &AppState,
+    kind: EntityKind,
+    row: &EntityRow,
+    visible: &VisibleLibraries,
+    user_id: Uuid,
+    series_count: i64,
+    issue_count: i64,
+) -> Result<EntityInsightsView, sea_orm::DbErr> {
+    let mut params: Vec<Value> = vec![row.id.into(), row.normalized_name.clone().into()];
+    let Some(acl) = acl_sql(visible, &mut params) else {
+        return Ok(EntityInsightsView {
+            issues: 0,
+            series: 0,
+            first_year: None,
+            last_year: None,
+            read: 0,
+            publishers: Vec::new(),
+            decades: Vec::new(),
+            top_series: Vec::new(),
+            characters: Vec::new(),
+            teams: Vec::new(),
+            locations: Vec::new(),
+            arcs: Vec::new(),
+            creators: Vec::new(),
+            earliest: Vec::new(),
+        });
+    };
+    let cte = hits_cte(kind, &acl);
+    let backend = app.db.get_database_backend();
+    let query = |sql: String, extra: Vec<Value>| {
+        let mut p = params.clone();
+        p.extend(extra);
+        Statement::from_sql_and_values(backend, sql, p)
+    };
+    let n = params.len();
+
+    #[derive(FromQueryResult)]
+    struct Totals {
+        first_year: Option<i32>,
+        last_year: Option<i32>,
+        read: i64,
+    }
+    let totals = Totals::find_by_statement(query(
+        format!(
+            "{cte} SELECT min(i.year)::int4 AS first_year, max(i.year)::int4 AS last_year,                     (SELECT count(DISTINCT p.issue_id) FROM progress_records p                       WHERE p.user_id = ${u} AND p.finished                         AND p.issue_id IN (SELECT issue_id FROM hits))::bigint AS read                FROM issues i WHERE i.id IN (SELECT issue_id FROM hits)",
+            u = n + 1
+        ),
+        vec![user_id.into()],
+    ))
+    .one(&app.db)
+    .await?;
+
+    let publishers = CountedName::find_by_statement(query(
+        format!(
+            "{cte} SELECT COALESCE(s.publisher, 'Unknown') AS name, NULL::text AS slug,                     count(DISTINCT h.issue_id)::bigint AS count                FROM hits h JOIN series s ON s.id = h.series_id               GROUP BY 1 ORDER BY count DESC, name LIMIT 5"
+        ),
+        vec![],
+    ))
+    .all(&app.db)
+    .await?;
+
+    let decades = DecadeCount::find_by_statement(query(
+        format!(
+            "{cte} SELECT ((i.year / 10) * 10)::int4 AS decade, count(*)::bigint AS count                FROM issues i WHERE i.id IN (SELECT issue_id FROM hits) AND i.year IS NOT NULL               GROUP BY 1 ORDER BY 1"
+        ),
+        vec![],
+    ))
+    .all(&app.db)
+    .await?;
+
+    let top_series = SeriesCount::find_by_statement(query(
+        format!(
+            "{cte} SELECT s.name AS name, s.slug AS slug, s.year AS year,                     count(DISTINCT h.issue_id)::bigint AS count,                     min(i.year)::int4 AS first_year, max(i.year)::int4 AS last_year                FROM hits h JOIN series s ON s.id = h.series_id JOIN issues i ON i.id = h.issue_id               GROUP BY s.id, s.name, s.slug, s.year               ORDER BY count DESC, s.name LIMIT 12"
+        ),
+        vec![],
+    ))
+    .all(&app.db)
+    .await?;
+
+    // Co-appearances: the junction's FK when set, else the entity row the
+    // scanner's name resolves to; the entity itself is excluded.
+    let co = |junction: &str, fk: &str, name_col: &str, table: &str, exclude_self: bool| {
+        let not_self = if exclude_self {
+            " AND COALESCE(e.id, '00000000-0000-0000-0000-000000000000'::uuid) <> $1::uuid"
+        } else {
+            ""
+        };
+        format!(
+            "{cte} SELECT COALESCE(e.name, j.{name_col}) AS name, e.slug AS slug,                     count(DISTINCT j.issue_id)::bigint AS count                FROM {junction} j JOIN hits h ON h.issue_id = j.issue_id                LEFT JOIN {table} e ON e.id = COALESCE(j.{fk},                     (SELECT c.id FROM {table} c WHERE c.normalized_name = btrim(lower(j.{name_col}))))               WHERE btrim(j.{name_col}) <> ''{not_self}               GROUP BY 1, 2 ORDER BY count DESC, name LIMIT 14"
+        )
+    };
+    let characters = CountedName::find_by_statement(query(
+        co(
+            "issue_characters",
+            "character_id",
+            "character",
+            "character",
+            kind == EntityKind::Character,
+        ),
+        vec![],
+    ))
+    .all(&app.db)
+    .await?;
+    let teams = CountedName::find_by_statement(query(
+        co(
+            "issue_teams",
+            "team_id",
+            "team",
+            "team",
+            kind == EntityKind::Team,
+        ),
+        vec![],
+    ))
+    .all(&app.db)
+    .await?;
+    let locations = CountedName::find_by_statement(query(
+        co(
+            "issue_locations",
+            "location_id",
+            "location",
+            "location",
+            kind == EntityKind::Location,
+        ),
+        vec![],
+    ))
+    .all(&app.db)
+    .await?;
+    let arcs = CountedName::find_by_statement(query(
+        format!(
+            "{cte} SELECT a.name AS name, a.slug AS slug, count(DISTINCT ia.issue_id)::bigint AS count                FROM issue_arcs ia JOIN hits h ON h.issue_id = ia.issue_id                JOIN story_arc a ON a.id = ia.arc_id               WHERE {not_self}               GROUP BY a.id, a.name, a.slug ORDER BY count DESC, name LIMIT 10",
+            not_self = if kind == EntityKind::Arc {
+                "a.id <> $1::uuid"
+            } else {
+                "TRUE"
+            }
+        ),
+        vec![],
+    ))
+    .all(&app.db)
+    .await?;
+    let creators = CreatorCount::find_by_statement(query(
+        format!(
+            "{cte} SELECT COALESCE(p.name, c.person) AS name, p.slug AS slug,                     string_agg(DISTINCT c.role, ', ' ORDER BY c.role) AS roles,                     count(DISTINCT c.issue_id)::bigint AS count                FROM issue_credits c JOIN hits h ON h.issue_id = c.issue_id                LEFT JOIN person p ON p.id = COALESCE(c.person_id,                     (SELECT q.id FROM person q WHERE q.normalized_name = btrim(lower(c.person))))               WHERE c.role IN ('writer', 'penciller', 'artist', 'cover_artist')                 AND btrim(c.person) <> ''               GROUP BY 1, 2 ORDER BY count DESC, name LIMIT 10"
+        ),
+        vec![],
+    ))
+    .all(&app.db)
+    .await?;
+
+    let paging = Paging {
+        after: None,
+        offset: 0,
+        limit: 10,
+    };
+    let (keys, _) = issue_page(app, kind, row, visible, &paging).await?;
+    let ids: Vec<String> = keys.into_iter().map(|(id, _)| id).collect();
+    let earliest = issue_cards(app, &ids).await?;
+
+    Ok(EntityInsightsView {
+        issues: issue_count,
+        series: series_count,
+        first_year: totals.as_ref().and_then(|t| t.first_year),
+        last_year: totals.as_ref().and_then(|t| t.last_year),
+        read: totals.as_ref().map_or(0, |t| t.read),
+        publishers,
+        decades,
+        top_series,
+        characters,
+        teams,
+        locations,
+        arcs,
+        creators,
+        earliest,
+    })
 }
 
 /// `GET /<kind>/{slug}/series` — cursor-paginated member series.

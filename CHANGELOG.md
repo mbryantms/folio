@@ -13,6 +13,26 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.54.0](https://github.com/mbryantms/folio/compare/v0.53.1...v0.54.0) (2026-10-11)
+
+
+### Added
+
+* **admin:** cancel metadata work — queue clear target, per-batch cancel, handlers skip cancelled runs ([#1126](https://github.com/mbryantms/folio/issues/1126)) ([dee4e81](https://github.com/mbryantms/folio/commit/dee4e81a798011ba36c5dc1789779fdcaf995632))
+* **entities:** provider-filled profiles + library insights on character/team/location/arc pages ([#1131](https://github.com/mbryantms/folio/issues/1131)) ([363b59f](https://github.com/mbryantms/folio/commit/363b59fb220b88b34d7ff9c1d7f05ea007cff72c))
+* **search:** characters, teams, locations and story arcs in global search; /locations landing pages ([#1130](https://github.com/mbryantms/folio/issues/1130)) ([e588dc2](https://github.com/mbryantms/folio/commit/e588dc2f14dd822cc26ac300010444dd2aabac74))
+
+
+### Fixed
+
+* **ui:** overlay sweep — CBL view menu off-screen on iPad, scrolling sheets and capped dialogs, themed scrollbars ([#1128](https://github.com/mbryantms/folio/issues/1128)) ([5d9c4b5](https://github.com/mbryantms/folio/commit/5d9c4b570609e1dc2e0da32394b921f10ab49d41))
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.79 ([#1125](https://github.com/mbryantms/folio/issues/1125)) ([af968fc](https://github.com/mbryantms/folio/commit/af968fc115dbf960a381b3a3b138a8dd0968a58a))
+* update docker/dockerfile docker tag to v1.28 ([#1129](https://github.com/mbryantms/folio/issues/1129)) ([4eac16d](https://github.com/mbryantms/folio/commit/4eac16dc10a9481b13753d92c9b0d363d2c97457))
+
 ## [0.53.1](https://github.com/mbryantms/folio/compare/v0.53.0...v0.53.1) (2026-10-10)
 
 

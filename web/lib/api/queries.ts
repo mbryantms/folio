@@ -80,6 +80,8 @@ import type {
   IssueSort,
   PeopleListView,
   CreatorListView,
+  EntityDetailView,
+  EntityInsightsView,
   EntityListView,
   LibraryView,
   FsListResp,
@@ -1657,6 +1659,37 @@ export function useEntitySearch(
     queryFn: () => jsonFetch<EntityListView>(`/${kind}${buildQuery(filters)}`),
     enabled,
     placeholderData: keepPreviousData,
+  });
+}
+
+/** Entity landing-page header. Seeded from the server-rendered payload
+ *  and polled every few seconds while the provider profile fetch is
+ *  pending, so the wiki block fills in without a reload. */
+export function useEntityDetail(
+  kind: EntityKindPath,
+  slug: string,
+  initialData: EntityDetailView,
+) {
+  return useQuery({
+    queryKey: queryKeys.entityDetail(kind, slug),
+    queryFn: () =>
+      jsonFetch<EntityDetailView>(`/${kind}/${encodeURIComponent(slug)}`),
+    initialData,
+    staleTime: 30_000,
+    refetchInterval: (q) =>
+      q.state.data?.enrichment === "pending" ? 4_000 : false,
+  });
+}
+
+/** "In your library" statistics of an entity. */
+export function useEntityInsights(kind: EntityKindPath, slug: string) {
+  return useQuery({
+    queryKey: queryKeys.entityInsights(kind, slug),
+    queryFn: () =>
+      jsonFetch<EntityInsightsView>(
+        `/${kind}/${encodeURIComponent(slug)}/insights`,
+      ),
+    staleTime: 5 * 60_000,
   });
 }
 

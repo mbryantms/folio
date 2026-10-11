@@ -3126,3 +3126,67 @@ pub async fn rebuild_series_issue_csv_cache<C: ConnectionTrait>(
     );
     Ok(db.execute_raw(stmt).await?.rows_affected())
 }
+
+// ─────────────────────────────────────────────────────────────────
+// update_entity_display — entity landing-page profiles.
+// ─────────────────────────────────────────────────────────────────
+
+/// The short display fields a provider profile fills on an entity row
+/// (`character` / `team` / `location` / `story_arc`). `None` leaves the
+/// column as it is — a provider that has no value never blanks one.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct EntityDisplay<'a> {
+    pub description: Option<&'a str>,
+    pub image_url: Option<&'a str>,
+    pub aliases: Option<&'a [String]>,
+    /// Characters only; ignored for the other tables.
+    pub real_name: Option<&'a str>,
+}
+
+/// Write [`EntityDisplay`] onto the entity row. The only writer of these
+/// columns besides the upsert that mints the row, so the landing pages
+/// and the chips read one consistent value.
+pub async fn update_entity_display<C: ConnectionTrait>(
+    db: &C,
+    entity_type: &str,
+    entity_id: Uuid,
+    fields: EntityDisplay<'_>,
+) -> Result<(), DbErr> {
+    let table = match entity_type {
+        "character" | "team" | "location" | "story_arc" | "person" | "publisher" => entity_type,
+        other => {
+            return Err(DbErr::Custom(format!(
+                "update_entity_display: unknown entity type {other}"
+            )));
+        }
+    };
+    let aliases: Option<serde_json::Value> = fields.aliases.map(|a| serde_json::json!(a));
+    let real_name_sql = if entity_type == "character" {
+        ", real_name = COALESCE($5, real_name)"
+    } else {
+        ""
+    };
+    let mut values: Vec<sea_orm::Value> = vec![
+        entity_id.into(),
+        fields.description.map(str::to_owned).into(),
+        fields.image_url.map(str::to_owned).into(),
+        aliases.into(),
+    ];
+    if entity_type == "character" {
+        values.push(fields.real_name.map(str::to_owned).into());
+    }
+    db.execute_raw(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        format!(
+            "UPDATE {table} \
+                SET description = COALESCE($2, description), \
+                    image_url = COALESCE($3, image_url), \
+                    aliases = COALESCE($4::jsonb, aliases), \
+                    updated_at = now(){real_name_sql} \
+              WHERE id = $1"
+        ),
+        values,
+    ))
+    .await?;
+    Ok(())
+}
