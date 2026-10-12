@@ -3187,7 +3187,24 @@ export function useDeleteExternalIdIssue(
 
 // ───────── M6 admin mutations ─────────
 
-import type { TestProviderResp } from "../types";
+import type { LocalDbTestResp, TestProviderResp } from "../types";
+
+/** Probe a provider's local SQLite file past the cache (admin only). */
+export function useTestLocalDb() {
+  const qc = useQueryClient();
+  return useApiMutation<LocalDbTestResp, { id: string }>(
+    (input) => ({
+      path: `/admin/metadata/providers/${encodeURIComponent(input.id)}/local/test`,
+      method: "POST",
+    }),
+    {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ["admin", "metadata", "providers"] });
+        qc.invalidateQueries({ queryKey: ["admin", "metadata", "dashboard"] });
+      },
+    },
+  );
+}
 
 export function useTestMetadataProvider() {
   const qc = useQueryClient();

@@ -25,6 +25,7 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
 import { useUpdateSettings } from "@/lib/api/mutations";
 import { useAdminSettings } from "@/lib/api/queries";
@@ -35,12 +36,42 @@ import { statusToneText } from "@/lib/ui/status-tone";
  *  (the plaintext is never sent to the client). */
 const SECRET_SET = "<set>";
 
+/** Local-file settings (local-metadata-databases-1.0 M1): the operator's
+ *  own SQLite copy of the provider's catalogue and how the provider uses
+ *  it. ComicVine + GCD only; Metron has no dump. */
+export interface LocalFileFields {
+  path: string;
+  mode: "off" | "prefer_local" | "local_only";
+}
+
+export const LOCAL_MODE_OPTIONS: Array<{
+  value: LocalFileFields["mode"];
+  label: string;
+}> = [
+  { value: "off", label: "Off — use the API only" },
+  { value: "prefer_local", label: "Prefer local — file first, API for gaps" },
+  { value: "local_only", label: "Local only — never call the API" },
+];
+
+function readLocal(
+  values: Record<string, unknown>,
+  provider: "comicvine" | "gcd",
+): LocalFileFields {
+  const path = values[`metadata.${provider}.local_path`];
+  const mode = values[`metadata.${provider}.local_mode`];
+  return {
+    path: typeof path === "string" ? path : "",
+    mode: mode === "prefer_local" || mode === "local_only" ? mode : "off",
+  };
+}
+
 type CredentialFields =
   | {
       kind: "comicvine";
       apiKey: string;
       apiKeyAlreadySet: boolean;
       enabled: boolean;
+      local: LocalFileFields;
     }
   | {
       kind: "metron";
@@ -57,6 +88,7 @@ type CredentialFields =
       password: string;
       passwordAlreadySet: boolean;
       enabled: boolean;
+      local: LocalFileFields;
     };
 
 export type ConfigurableProvider = "comicvine" | "metron" | "gcd";
@@ -106,10 +138,10 @@ export function ProviderConfigForm({
   // bit so toggling enabled-from-elsewhere also re-syncs.
   const formKey =
     initial.kind === "comicvine"
-      ? `cv-${initial.apiKeyAlreadySet ? "1" : "0"}-${initial.enabled ? "1" : "0"}`
+      ? `cv-${initial.apiKeyAlreadySet ? "1" : "0"}-${initial.enabled ? "1" : "0"}-${initial.local.path}-${initial.local.mode}`
       : initial.kind === "metron"
         ? `metron-${initial.username}-${initial.apiTokenAlreadySet ? "1" : "0"}-${initial.passwordAlreadySet ? "1" : "0"}-${initial.enabled ? "1" : "0"}`
-        : `gcd-${initial.username}-${initial.passwordAlreadySet ? "1" : "0"}-${initial.enabled ? "1" : "0"}`;
+        : `gcd-${initial.username}-${initial.passwordAlreadySet ? "1" : "0"}-${initial.enabled ? "1" : "0"}-${initial.local.path}-${initial.local.mode}`;
 
   return (
     <ProviderForm
@@ -147,6 +179,7 @@ function readInitial(
       apiKey: raw === SECRET_SET ? "" : raw,
       apiKeyAlreadySet: raw === SECRET_SET,
       enabled: bool("metadata.comicvine.enabled"),
+      local: readLocal(values, "comicvine"),
     };
   }
   if (provider === "gcd") {
@@ -157,6 +190,7 @@ function readInitial(
       password: gcdPass === SECRET_SET ? "" : gcdPass,
       passwordAlreadySet: gcdPass === SECRET_SET,
       enabled: bool("metadata.gcd.enabled"),
+      local: readLocal(values, "gcd"),
     };
   }
   const passRaw = str("metadata.metron.password");
@@ -201,6 +235,29 @@ function ProviderForm({
     initial.kind === "metron" || initial.kind === "gcd" ? initial.password : "",
   );
   const [enabled, setEnabled] = React.useState(initial.enabled);
+  const initialLocal: LocalFileFields | null =
+    initial.kind === "comicvine" || initial.kind === "gcd"
+      ? initial.local
+      : null;
+  const [localPath, setLocalPath] = React.useState(initialLocal?.path ?? "");
+  const [localMode, setLocalMode] = React.useState<LocalFileFields["mode"]>(
+    initialLocal?.mode ?? "off",
+  );
+
+  function localPatch(
+    p: "comicvine" | "gcd",
+    was: LocalFileFields,
+  ): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    const trimmed = localPath.trim();
+    if (trimmed !== was.path) {
+      out[`metadata.${p}.local_path`] = trimmed === "" ? null : trimmed;
+    }
+    if (localMode !== was.mode) {
+      out[`metadata.${p}.local_mode`] = localMode;
+    }
+    return out;
+  }
 
   const handle = (e: React.FormEvent) => {
     e.preventDefault();
@@ -215,6 +272,7 @@ function ProviderForm({
       if (enabled !== initial.enabled) {
         patch["metadata.comicvine.enabled"] = enabled;
       }
+      Object.assign(patch, localPatch("comicvine", initial.local));
     } else if (initial.kind === "gcd") {
       const trimmedUser = username.trim();
       const trimmedPass = password.trim();
@@ -228,6 +286,7 @@ function ProviderForm({
       if (enabled !== initial.enabled) {
         patch["metadata.gcd.enabled"] = enabled;
       }
+      Object.assign(patch, localPatch("gcd", initial.local));
     } else {
       const trimmedToken = apiToken.trim();
       if (trimmedToken !== "" && trimmedToken !== initial.apiToken) {
@@ -249,13 +308,17 @@ function ProviderForm({
     void onSubmit(patch);
   };
 
-  const dirty = isDirty(provider, initial, {
-    apiKey,
-    apiToken,
-    username,
-    password,
-    enabled,
-  });
+  const dirty =
+    isDirty(provider, initial, {
+      apiKey,
+      apiToken,
+      username,
+      password,
+      enabled,
+    }) ||
+    (initialLocal != null &&
+      (localPath.trim() !== initialLocal.path ||
+        localMode !== initialLocal.mode));
   useUnsavedChangesGuard(dirty);
 
   return (
@@ -361,6 +424,44 @@ function ProviderForm({
           </div>
         </>
       )}
+
+      {initialLocal != null ? (
+        <fieldset className="border-border space-y-3 rounded border p-3">
+          <legend className="px-1 text-xs font-medium">
+            Local file ({provider === "gcd" ? "Local GCD" : "Local ComicVine"})
+          </legend>
+          <div className="grid gap-1.5">
+            <Label htmlFor={`${provider}-local-path`}>SQLite file path</Label>
+            <Input
+              id={`${provider}-local-path`}
+              autoComplete="off"
+              value={localPath}
+              onChange={(e) => setLocalPath(e.target.value)}
+              placeholder={
+                provider === "gcd"
+                  ? "/data/local/gcd.db"
+                  : "/data/local/localcv.db"
+              }
+            />
+            <p className="text-muted-foreground text-xs">
+              {provider === "gcd"
+                ? "The SQLite variant of the comics.org dump (Download › Private Use), placed on the server's own disk. Folio reads it read-only and never downloads it."
+                : "An operator-supplied SQLite copy of ComicVine's catalogue, placed on the server's own disk. Folio reads it read-only and never downloads, links to or updates it."}
+            </p>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor={`${provider}-local-mode`}>How to use it</Label>
+            <NativeSelect
+              id={`${provider}-local-mode`}
+              value={localMode}
+              onChange={(value) =>
+                setLocalMode(value as LocalFileFields["mode"])
+              }
+              options={LOCAL_MODE_OPTIONS}
+            />
+          </div>
+        </fieldset>
+      ) : null}
 
       <div className="flex items-center justify-between gap-2">
         <Label

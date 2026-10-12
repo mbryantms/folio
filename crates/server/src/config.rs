@@ -348,6 +348,23 @@ pub struct Config {
     #[serde(default)]
     pub gcd_base_url: Option<String>,
 
+    // Local metadata databases (local-metadata-databases-1.0 M1)
+    /// Path to the operator's SQLite copy of the GCD dump
+    /// (`metadata.gcd.local_path`; env bootstrap `COMIC_GCD_LOCAL_PATH`).
+    #[serde(default)]
+    pub gcd_local_path: Option<String>,
+    /// How the GCD provider uses that file (`metadata.gcd.local_mode`).
+    #[serde(default)]
+    pub gcd_local_mode: crate::metadata::local_db::LocalDbMode,
+    /// Path to an operator-supplied "Local ComicVine" SQLite file
+    /// (`metadata.comicvine.local_path`).
+    #[serde(default)]
+    pub comicvine_local_path: Option<String>,
+    /// How the ComicVine provider uses that file
+    /// (`metadata.comicvine.local_mode`).
+    #[serde(default)]
+    pub comicvine_local_mode: crate::metadata::local_db::LocalDbMode,
+
     // Weekly metadata refresh (metadata-providers-1.0 M7)
     /// Master toggle for the weekly metadata-refresh cron. **Off by
     /// default** — auto-fetching has API-quota implications, so the
@@ -556,6 +573,10 @@ impl std::fmt::Debug for Config {
             .field("gcd_password", &redact_opt(&self.gcd_password))
             .field("gcd_enabled", &self.gcd_enabled)
             .field("gcd_base_url", &self.gcd_base_url)
+            .field("gcd_local_path", &self.gcd_local_path)
+            .field("gcd_local_mode", &self.gcd_local_mode)
+            .field("comicvine_local_path", &self.comicvine_local_path)
+            .field("comicvine_local_mode", &self.comicvine_local_mode)
             .field("password_hash_cost", &self.password_hash_cost)
             .finish()
     }
@@ -953,6 +974,25 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             );
         }
     }
+    /// Trimmed string setting, `None` when blank.
+    fn non_empty(s: &str) -> Option<String> {
+        let t = s.trim();
+        (!t.is_empty()).then(|| t.to_owned())
+    }
+
+    /// A local-database mode string from `app_setting`; a value the enum
+    /// does not know logs and degrades to `Off` (the file is never read on
+    /// a typo).
+    fn parse_local_mode(key: &str, raw: &str) -> crate::metadata::local_db::LocalDbMode {
+        match raw.parse() {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(key, value = raw, error = %e, "settings: invalid local database mode; using off");
+                crate::metadata::local_db::LocalDbMode::Off
+            }
+        }
+    }
+
     fn bad_type(key: &str, expected: &str, value: &Value) {
         tracing::warn!(
             key = %key,
@@ -1371,6 +1411,23 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(b) => cfg.gcd_enabled = b,
             None => bad_type(&row.key, "bool", &row.value),
         },
+        // ──── local-metadata-databases-1.0 M1 ────
+        "metadata.gcd.local_path" => match row.value.as_str() {
+            Some(s) => cfg.gcd_local_path = non_empty(s),
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "metadata.gcd.local_mode" => match row.value.as_str() {
+            Some(s) => cfg.gcd_local_mode = parse_local_mode(&row.key, s),
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "metadata.comicvine.local_path" => match row.value.as_str() {
+            Some(s) => cfg.comicvine_local_path = non_empty(s),
+            None => bad_type(&row.key, "string", &row.value),
+        },
+        "metadata.comicvine.local_mode" => match row.value.as_str() {
+            Some(s) => cfg.comicvine_local_mode = parse_local_mode(&row.key, s),
+            None => bad_type(&row.key, "string", &row.value),
+        },
         // ──── metadata-providers-1.0 M7 ────
         "metadata.weekly_refresh_enabled" => match row.value.as_bool() {
             Some(b) => cfg.metadata_weekly_refresh_enabled = b,
@@ -1634,6 +1691,10 @@ mod tests {
             gcd_password: None,
             gcd_enabled: false,
             gcd_base_url: None,
+            gcd_local_path: None,
+            gcd_local_mode: Default::default(),
+            comicvine_local_path: None,
+            comicvine_local_mode: Default::default(),
             metadata_weekly_refresh_enabled: false,
             metadata_weekly_refresh_cron: default_weekly_refresh_cron(),
             metadata_weekly_refresh_window_days: default_weekly_refresh_window_days(),

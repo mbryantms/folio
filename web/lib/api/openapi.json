@@ -1155,6 +1155,46 @@
         }
       }
     },
+    "/api/admin/metadata/providers/{id}/local/test": {
+      "post": {
+        "summary": "`POST /admin/metadata/providers/{id}/local/test` — probe the\nprovider's local file past the cache: header, required tables, row\ncounts, dump date. Audited as `admin.metadata.local_db.test`.",
+        "operationId": "admin_metadata_local_db_test",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Provider id (`comicvine` | `gcd`)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalDbTestResp"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "no local file path configured"
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "provider has no local file support"
+          },
+          "422": {
+            "description": "the file is missing, not SQLite, or lacks the required tables"
+          }
+        }
+      }
+    },
     "/api/admin/metadata/providers/{id}/test": {
       "post": {
         "operationId": "admin_metadata_providers_test",
@@ -23768,6 +23808,162 @@
           }
         }
       },
+      "LocalDbKind": {
+        "type": "string",
+        "description": "Which provider a local file stands in for.",
+        "enum": [
+          "gcd",
+          "comic_vine"
+        ]
+      },
+      "LocalDbMode": {
+        "type": "string",
+        "description": "How a provider uses its local file (decision 2: a global default\nper provider, overridable per library from M2 on).",
+        "enum": [
+          "off",
+          "prefer_local",
+          "local_only"
+        ]
+      },
+      "LocalDbProbe": {
+        "type": "object",
+        "description": "What a probe learned about a file. Serialised onto the admin card.",
+        "required": [
+          "kind",
+          "path",
+          "size_bytes",
+          "stale",
+          "counts",
+          "probed_at"
+        ],
+        "properties": {
+          "counts": {
+            "type": "object",
+            "description": "Row counts per labelled table (`issues`, `series` / `volumes`, …).",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "dump_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Newest record date the file carries (`YYYY-MM-DD`): ComicVine's\n`cv_sync_metadata.last_sync_date`, GCD's newest `gcd_issue.modified`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LocalDbKind"
+          },
+          "missing_optional": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional tables the file does not have."
+          },
+          "path": {
+            "type": "string"
+          },
+          "probed_at": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "`dump_date` older than [`STALE_AFTER_DAYS`]."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "LocalDbStatus": {
+        "type": "string",
+        "description": "Where a provider's local file stands (admin card).",
+        "enum": [
+          "unconfigured",
+          "ok",
+          "missing",
+          "invalid"
+        ]
+      },
+      "LocalDbTestResp": {
+        "type": "object",
+        "required": [
+          "ok",
+          "local",
+          "duration_ms"
+        ],
+        "properties": {
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "local": {
+            "$ref": "#/components/schemas/LocalDbView"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        }
+      },
+      "LocalDbView": {
+        "type": "object",
+        "required": [
+          "label",
+          "mode",
+          "status"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the file is unusable when `status` is `missing` / `invalid`."
+          },
+          "label": {
+            "type": "string",
+            "description": "`\"Local GCD\"` | `\"Local ComicVine\"`."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/LocalDbMode"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "probe": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LocalDbProbe",
+                "description": "What the probe found when `status` is `ok`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/LocalDbStatus"
+          }
+        }
+      },
       "LogEntryView": {
         "type": "object",
         "required": [
@@ -26863,6 +27059,17 @@
               {
                 "$ref": "#/components/schemas/ProviderLastError",
                 "description": "Most recent provider error, cleared on the next successful call."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "local": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LocalDbView",
+                "description": "The provider's local file (local-metadata-databases-1.0 M1):\npresent for ComicVine and GCD, `None` for providers without one."
               },
               {
                 "type": "null"

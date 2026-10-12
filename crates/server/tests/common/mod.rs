@@ -988,6 +988,10 @@ impl TestApp {
             gcd_password: opts.gcd_password.clone(),
             gcd_enabled: opts.gcd_enabled,
             gcd_base_url: opts.gcd_base_url.clone(),
+            gcd_local_path: None,
+            gcd_local_mode: Default::default(),
+            comicvine_local_path: None,
+            comicvine_local_mode: Default::default(),
             // metadata-providers-1.0 M7: weekly refresh defaults. Off
             // in tests by default — the cron isn't relevant to most
             // suites, and the scope-resolver tests pass explicit

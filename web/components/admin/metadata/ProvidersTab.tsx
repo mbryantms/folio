@@ -24,9 +24,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { useTestMetadataProvider } from "@/lib/api/mutations";
+import { useTestLocalDb, useTestMetadataProvider } from "@/lib/api/mutations";
 import { useAdminMetadataProviders } from "@/lib/api/queries";
-import type { RequestBudget, ProviderView } from "@/lib/api/types";
+import type { LocalDbView, RequestBudget, ProviderView } from "@/lib/api/types";
 import {
   LOW_BUDGET_FRACTION,
   budgetFraction,
@@ -106,6 +106,123 @@ function formatLastErrorAge(at: string, nowMs: number): string {
   const seconds = Math.max(0, Math.round((nowMs - then) / 1000));
   if (seconds < 60) return "just now";
   return `${formatCountdown(seconds)} ago`;
+}
+
+/** One line per fact about a provider's local file: where it stands,
+ *  the dump date (with the stale warning), counts, and a Test button
+ *  that re-probes past the cache. Nothing here downloads anything. */
+function LocalFileStatus({
+  providerId,
+  local,
+}: {
+  providerId: string;
+  local: LocalDbView;
+}) {
+  const test = useTestLocalDb();
+  const probe = local.probe ?? null;
+  const counts = probe
+    ? Object.entries(probe.counts)
+        .map(([k, v]) => `${Number(v).toLocaleString()} ${k}`)
+        .join(" · ")
+    : null;
+  return (
+    <div
+      className="border-border space-y-1 rounded border p-2 text-xs"
+      data-testid="provider-local-file"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-2 font-medium">
+          {local.label}
+          {local.status === "ok" ? (
+            <Badge variant="default" className="text-[10px]">
+              {local.mode === "off"
+                ? "FILE OK · MODE OFF"
+                : local.mode.toUpperCase().replace("_", " ")}
+            </Badge>
+          ) : local.status === "unconfigured" ? (
+            <Badge variant="secondary" className="text-[10px]">
+              NO FILE
+            </Badge>
+          ) : (
+            <Badge variant="destructive" className="text-[10px]">
+              {local.status.toUpperCase()}
+            </Badge>
+          )}
+        </span>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7"
+          onClick={() => test.mutate({ id: providerId })}
+          disabled={test.isPending || local.status === "unconfigured"}
+        >
+          {test.isPending ? (
+            <>
+              <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Testing
+            </>
+          ) : (
+            "Test file"
+          )}
+        </Button>
+      </div>
+      {local.path ? (
+        <p
+          className="text-muted-foreground truncate font-mono"
+          title={local.path}
+        >
+          {local.path}
+        </p>
+      ) : (
+        <p className="text-muted-foreground">
+          Set a file path below to read this provider from disk.
+        </p>
+      )}
+      {probe ? (
+        <p className="text-muted-foreground">
+          {probe.dump_date
+            ? `Dump date ${probe.dump_date}`
+            : "Dump date unknown"}
+          {counts ? ` · ${counts}` : ""}
+        </p>
+      ) : null}
+      {probe?.stale ? (
+        <p className={`flex items-start gap-1 ${statusToneText("warning")}`}>
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+          <span>
+            This file is more than 60 days old; releases newer than its dump
+            date are not in it.
+          </span>
+        </p>
+      ) : null}
+      {probe?.missing_optional?.length ? (
+        <p className="text-muted-foreground">
+          Missing optional tables: {probe.missing_optional.join(", ")}
+        </p>
+      ) : null}
+      {local.error ? (
+        <p className="text-destructive flex items-start gap-1">
+          <XCircle className="mt-0.5 h-3 w-3 shrink-0" /> {local.error}
+        </p>
+      ) : null}
+      {test.error ? (
+        <p className="text-destructive flex items-start gap-1">
+          <XCircle className="mt-0.5 h-3 w-3 shrink-0" /> {test.error.message}
+        </p>
+      ) : null}
+      {!test.error && test.data?.ok ? (
+        <p className={statusToneText("success")}>
+          <CheckCircle2 className="mr-1 inline h-3 w-3" /> File readable —{" "}
+          {test.data.duration_ms}ms.
+        </p>
+      ) : null}
+      {providerId === "gcd" && local.status === "ok" ? (
+        <p className="text-muted-foreground">
+          Data from the Grand Comics Database, CC BY-SA 4.0. Pages that show it
+          carry a credit line.
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function ProviderCard({ provider }: { provider: ProviderView }) {
@@ -196,6 +313,9 @@ function ProviderCard({ provider }: { provider: ProviderView }) {
             {test.data?.duration_ms}ms round-trip.
           </div>
         )}
+        {provider.local ? (
+          <LocalFileStatus providerId={provider.id} local={provider.local} />
+        ) : null}
         {PROVIDER_DOCS[provider.id] && (
           <a
             href={PROVIDER_DOCS[provider.id]}

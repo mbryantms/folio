@@ -497,6 +497,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/metadata/providers/{id}/local/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /admin/metadata/providers/{id}/local/test` — probe the
+         *     provider's local file past the cache: header, required tables, row
+         *     counts, dump date. Audited as `admin.metadata.local_db.test`.
+         */
+        post: operations["admin_metadata_local_db_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/metadata/providers/{id}/test": {
         parameters: {
             query?: never;
@@ -10039,6 +10060,60 @@ export interface components {
              */
             smtp_configured: boolean;
         };
+        /**
+         * @description Which provider a local file stands in for.
+         * @enum {string}
+         */
+        LocalDbKind: "gcd" | "comic_vine";
+        /**
+         * @description How a provider uses its local file (decision 2: a global default
+         *     per provider, overridable per library from M2 on).
+         * @enum {string}
+         */
+        LocalDbMode: "off" | "prefer_local" | "local_only";
+        /** @description What a probe learned about a file. Serialised onto the admin card. */
+        LocalDbProbe: {
+            /** @description Row counts per labelled table (`issues`, `series` / `volumes`, …). */
+            counts: {
+                [key: string]: number;
+            };
+            /**
+             * @description Newest record date the file carries (`YYYY-MM-DD`): ComicVine's
+             *     `cv_sync_metadata.last_sync_date`, GCD's newest `gcd_issue.modified`.
+             */
+            dump_date?: string | null;
+            kind: components["schemas"]["LocalDbKind"];
+            /** @description Optional tables the file does not have. */
+            missing_optional?: string[];
+            path: string;
+            probed_at: string;
+            /** Format: int64 */
+            size_bytes: number;
+            /** @description `dump_date` older than [`STALE_AFTER_DAYS`]. */
+            stale: boolean;
+            warnings?: string[];
+        };
+        /**
+         * @description Where a provider's local file stands (admin card).
+         * @enum {string}
+         */
+        LocalDbStatus: "unconfigured" | "ok" | "missing" | "invalid";
+        LocalDbTestResp: {
+            /** Format: int64 */
+            duration_ms: number;
+            local: components["schemas"]["LocalDbView"];
+            ok: boolean;
+        };
+        LocalDbView: {
+            /** @description Why the file is unusable when `status` is `missing` / `invalid`. */
+            error?: string | null;
+            /** @description `"Local GCD"` | `"Local ComicVine"`. */
+            label: string;
+            mode: components["schemas"]["LocalDbMode"];
+            path?: string | null;
+            probe?: components["schemas"]["LocalDbProbe"] | null;
+            status: components["schemas"]["LocalDbStatus"];
+        };
         LogEntryView: {
             /** @description `server` | `library` — which observability stream this entry belongs to. */
             domain: string;
@@ -11388,6 +11463,7 @@ export interface components {
             id: string;
             label: string;
             last_error?: components["schemas"]["ProviderLastError"] | null;
+            local?: components["schemas"]["LocalDbView"] | null;
             quota?: components["schemas"]["QuotaView"] | null;
         };
         ProvidersListResp: {
@@ -15540,6 +15616,56 @@ export interface operations {
             };
             /** @description admin only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_metadata_local_db_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Provider id (`comicvine` | `gcd`) */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalDbTestResp"];
+                };
+            };
+            /** @description no local file path configured */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description provider has no local file support */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the file is missing, not SQLite, or lacks the required tables */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
