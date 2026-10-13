@@ -1,12 +1,31 @@
 "use client";
 
 import { useTheme } from "next-themes";
+import * as React from "react";
 import { Toaster as Sonner } from "sonner";
+
+/** Below `sm` (phones) dialogs are bottom sheets and the tab bar owns the
+ *  bottom edge, so a bottom-anchored toast lands on exactly the buttons
+ *  the person is about to tap. Toasts move to the top there. SSR and the
+ *  first paint assume desktop; the listener corrects before any toast
+ *  can be shown. */
+function useIsPhone(): boolean {
+  const [phone, setPhone] = React.useState(false);
+  React.useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    const update = () => setPhone(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return phone;
+}
 
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 
 const Toaster = ({ ...props }: ToasterProps) => {
   const { theme = "dark" } = useTheme();
+  const phone = useIsPhone();
   // Sonner's union is light|dark|system; the app also ships an
   // "amber" theme (light-surfaced). Casting it through made Sonner's
   // internal defaults (icons, close button) fall back unpredictably —
@@ -25,7 +44,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
       // give product a single one-line edit when they want to retune.
       // Notifications cleanup M0 finalization.
       hotkey={["altKey", "KeyT"]}
-      position="bottom-right"
+      position={phone ? "top-center" : "bottom-right"}
       // Push the toast stack inside the iOS home-indicator + landscape
       // notch in PWA standalone mode. Sonner positions its container
       // via these CSS custom properties — overriding here keeps the
@@ -33,9 +52,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
       style={
         {
           "--offset-bottom": "var(--overlay-bottom)",
+          "--offset-top": "max(16px, var(--safe-top, 0px))",
           "--offset-right": "max(16px, var(--safe-right))",
           "--offset-left": "max(16px, var(--safe-left))",
           "--mobile-offset-bottom": "var(--overlay-bottom)",
+          "--mobile-offset-top": "max(16px, var(--safe-top, 0px))",
           "--mobile-offset-right": "max(16px, var(--safe-right))",
           "--mobile-offset-left": "max(16px, var(--safe-left))",
         } as React.CSSProperties
