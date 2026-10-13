@@ -20,7 +20,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{method, path, query_param},
+    matchers::{method, path, path_regex, query_param},
 };
 
 // ───────── synthetic provider data ─────────
@@ -1060,4 +1060,224 @@ async fn analysis_lifecycle_errors() {
     )
     .await;
     assert_eq!(st, StatusCode::CONFLICT);
+}
+
+// ───────── split parts (52/WW III) ─────────
+
+/// Metron's four one-issue series for the 2007 "World War III" tie-in,
+/// each numbered 1: `(series id, name, issue id)`, Part One first.
+const WW3_PARTS: [(u32, &str, u32); 4] = [
+    (
+        13159,
+        "52 / World War III Part One: A Call to Arms (2007)",
+        152811,
+    ),
+    (
+        13158,
+        "52 / World War III Part Two: The Valiant (2007)",
+        152812,
+    ),
+    (
+        13157,
+        "52 / World War III Part Three: Hell Is for Heroes (2007)",
+        152813,
+    ),
+    (
+        13156,
+        "52 / World War III Part Four: United We Stand (2007)",
+        152814,
+    ),
+];
+
+async fn mount_ww3(cv: &MockServer, metron: &MockServer, gcd: &MockServer) {
+    let june = || "2007-06-01".to_owned();
+    // ComicVine: the one volume the folder is linked to, #1–4.
+    let issues: Issues = (1..=4).map(|n| (n.to_string(), june())).collect();
+    Mock::given(method("GET"))
+        .and(path("/volumes"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(cv_env(
+            json!([{"id": 18485, "name": "52/WW III", "start_year": "2007",
+                    "publisher": {"id": 10, "name": "DC Comics"}, "count_of_issues": 4}]),
+            1,
+        )))
+        .mount(cv)
+        .await;
+    mount_cv_volume(cv, 18485, &issues, 108559, 1).await;
+    // Metron: only Part Four carries the ComicVine id; the local name finds
+    // nothing; the provider's own base name finds all four parts.
+    let part = |(id, name, _): &(u32, &str, u32), cv_id: Option<u32>| {
+        json!({"id": id, "series": name, "year_began": 2007, "issue_count": 1,
+               "cv_id": cv_id, "gcd_id": 23380 + (id - 13155)})
+    };
+    Mock::given(method("GET"))
+        .and(path("/api/series/"))
+        .and(query_param("cv_id", "18485"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(paged(json!([part(&WW3_PARTS[3], Some(18485))]))),
+        )
+        .mount(metron)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/series/"))
+        .and(query_param("name", "52/WW III"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(paged(json!([]))))
+        .mount(metron)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/series/"))
+        .and(query_param("name", "52 / World War III"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(paged(json!([
+            part(&WW3_PARTS[3], Some(18485)),
+            part(&WW3_PARTS[0], None),
+            part(&WW3_PARTS[2], None),
+            part(&WW3_PARTS[1], None),
+        ]))))
+        .expect(1)
+        .mount(metron)
+        .await;
+    // Issue rows carry their series, as Metron's do: that is how a bridged
+    // candidate learns its name before any search.
+    for (sid, name, iid) in WW3_PARTS {
+        Mock::given(method("GET"))
+            .and(path("/api/issue/"))
+            .and(query_param("series_id", sid.to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(paged(json!([
+                {"id": iid, "number": "1", "cover_date": june(),
+                 "series": {"id": sid, "name": name.trim_end_matches(" (2007)"),
+                            "volume": 1, "year_began": 2007}}
+            ]))))
+            .mount(metron)
+            .await;
+    }
+    // GCD answers every request with an empty page: its bridged Part Four
+    // has nothing to list here, and no name search finds anything. The
+    // Metron side is what this test is about.
+    Mock::given(method("GET"))
+        .and(path_regex("^/api/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(paged(json!([]))))
+        .mount(gcd)
+        .await;
+}
+
+/// A folder "52/WW III" (ComicVine's name, four issues) that Metron files
+/// as four one-issue "Part N" series. The local name finds none of them;
+/// the ComicVine link bridges to Part Four, whose base name finds the
+/// siblings; each part is re-keyed to its ordinal so local #N maps to
+/// Part N; Accept writes a range per non-main part AND the per-issue ids
+/// an apply needs, since a range's number is never the provider's "#1".
+#[tokio::test]
+async fn one_issue_parts_are_found_by_the_providers_name_and_linked_per_issue() {
+    let cv = MockServer::start().await;
+    let metron = MockServer::start().await;
+    let gcd = MockServer::start().await;
+    mount_ww3(&cv, &metron, &gcd).await;
+    let app = TestApp::spawn_with_all_providers(cv.uri(), metron.uri(), gcd.uri()).await;
+    let db = app.state().db.clone();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = seed_library(&db, tmp.path()).await;
+    let mut seed = SeriesSeed::new(lib, "52/WW III");
+    seed.year = Some(2007);
+    seed.publisher = Some("DC Comics".into());
+    let series_id = seed.insert(&db).await;
+    seed_issues(
+        &app,
+        lib,
+        series_id,
+        tmp.path(),
+        &[
+            (1.0, 2007, 6),
+            (2.0, 2007, 6),
+            (3.0, 2007, 6),
+            (4.0, 2007, 6),
+        ],
+    )
+    .await;
+    set_external_id(
+        &db,
+        "series",
+        &series_id.to_string(),
+        &Identifier::with_canonical_url(Source::ComicVine, "18485", "series"),
+        SetBy::Provider(Source::ComicVine),
+    )
+    .await
+    .unwrap();
+    let slug = slug_of(&app, series_id).await;
+    let cookie = register_admin(&app).await;
+
+    let body = analyze(&app, &cookie, &slug, false).await;
+    let m = provider(&body, "metron");
+    assert_eq!(m["status"], "analyzed", "{m}");
+    let cands = m["candidates"].as_array().unwrap();
+    assert_eq!(cands.len(), 4, "{m}");
+    for (sid, _, _) in WW3_PARTS {
+        assert!(
+            cands
+                .iter()
+                .any(|c| c["provider_series_id"] == sid.to_string().as_str()),
+            "part {sid} missing: {m}"
+        );
+    }
+    assert_eq!(m["uncovered"], json!([]), "{m}");
+    // Local #N is Part N, keyed by the part's own issue id.
+    for (n, (sid, _, iid)) in WW3_PARTS.iter().enumerate() {
+        let c = cell(m, &(n + 1).to_string());
+        assert_eq!(c["provider_series_id"], sid.to_string(), "#{}: {c}", n + 1);
+        assert_eq!(c["provider_issue_id"], iid.to_string(), "#{}: {c}", n + 1);
+        assert_eq!(c["date_match"], "confirmed");
+    }
+    // One part is the main, the other three are one-issue ranges.
+    let proposed = m["proposed_ranges"].as_array().unwrap();
+    assert_eq!(proposed.len(), 3, "{m}");
+    for r in proposed {
+        assert_eq!(r["low"], r["high"], "{r}");
+        assert_eq!(r["status"], "new");
+    }
+    // ComicVine lists the folder directly.
+    let c = provider(&body, "comicvine");
+    assert_eq!(c["main_series_id"], "18485");
+    assert_eq!(cell(c, "4")["provider_issue_id"], "108562");
+
+    // Accept Metron: ranges + the per-issue ids.
+    let out = accept(&app, &cookie, &slug, json!({"source": "metron"})).await;
+    assert_eq!(out["main_written"], true, "{out}");
+    assert_eq!(out["ranges_created"].as_array().unwrap().len(), 3, "{out}");
+    assert_eq!(out["issue_ids_written"], 4, "{out}");
+    assert_eq!(out["issue_ids_skipped"], 0, "{out}");
+    assert_eq!(ranges(&app, series_id).await.len(), 3);
+    let issue_ids: Vec<(String, String)> = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq("issue"))
+        .filter(entity::external_id::Column::Source.eq("metron"))
+        .all(&db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| (e.external_id, e.set_by))
+        .collect();
+    let mut got: Vec<&str> = issue_ids.iter().map(|(id, _)| id.as_str()).collect();
+    got.sort();
+    assert_eq!(got, ["152811", "152812", "152813", "152814"]);
+    assert!(
+        issue_ids.iter().all(|(_, by)| by == "cross_reference"),
+        "{issue_ids:?}"
+    );
+
+    // Accept ComicVine too: no ranges (one volume), four issue ids.
+    let out = accept(&app, &cookie, &slug, json!({"source": "comicvine"})).await;
+    assert_eq!(out["issue_ids_written"], 4, "{out}");
+    assert_eq!(out["ranges_created"], json!([]));
+
+    // A second accept finds every id in place: nothing written, nothing lost.
+    let out = accept(&app, &cookie, &slug, json!({"source": "metron"})).await;
+    assert_eq!(out["issue_ids_written"], 4, "refreshed in place: {out}");
+    assert_eq!(out["issue_ids_skipped"], 0);
+    assert_eq!(
+        entity::external_id::Entity::find()
+            .filter(entity::external_id::Column::EntityType.eq("issue"))
+            .all(&db)
+            .await
+            .unwrap()
+            .len(),
+        8
+    );
 }

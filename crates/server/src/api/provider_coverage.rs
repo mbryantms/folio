@@ -364,6 +364,8 @@ pub async fn accept(
                 .collect::<Vec<_>>(),
             "ranges_skipped": outcome.ranges_skipped.len(),
             "stale_ranges_removed": coverage::removed_ranges_audit(&outcome),
+            "issue_ids_written": outcome.issue_ids_written,
+            "issue_ids_skipped": outcome.issue_ids_skipped,
         }),
     );
     Json(outcome).into_response()

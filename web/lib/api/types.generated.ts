@@ -5542,6 +5542,18 @@ export interface components {
              *     provider series has issues this folder lacks (Related tab).
              */
             external_links?: number;
+            /**
+             * Format: int32
+             * @description Cells whose id was not written: a user-set id, an id another issue
+             *     already holds, or a duplicate local number.
+             */
+            issue_ids_skipped?: number;
+            /**
+             * Format: int32
+             * @description Per-issue provider ids written from the proposal's cells (the
+             *     provider issue each local issue was assigned to).
+             */
+            issue_ids_written?: number;
             /** @description Why the main id wasn't written, if it wasn't. */
             main_note?: string | null;
             main_series_id?: string | null;
