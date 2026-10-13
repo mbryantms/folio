@@ -447,17 +447,23 @@ async fn skipped_archive_entries_emits_health_issue() {
     );
 }
 
-/// Write a CBZ with a poisoned Info-ZIP Unicode-Path extra (`0x7075`)
-/// in the CDFH of the first entry. The publisher's tool computed the
-/// CRC32 over the UTF-8 filename bytes; the zip crate computes it
-/// over the raw CP437 `file_name` field; they never match, so opening
-/// fails with `CRC32 checksum failed on Unicode extra field`. The
-/// archive crate's recovery branch strips the bad extras and the
-/// scanner emits a `RecoveredArchive` health-issue.
+/// Write a CBZ whose central directory points at the wrong place for
+/// entry 1: 128 bytes of garbage are spliced in between entry 0's data
+/// and entry 1's local header, and the EOCD's central-directory offset
+/// is patched so the CD is still found, while every CDFH
+/// `local_header_offset` is left stale. The bare zip crate reads the CD
+/// but fails on entry 1 ("invalid local file header"); the archive
+/// crate's `cdfh-offset-rebuild` recovery scans the data area forward,
+/// matches each LFH by name and rewrites the offsets, and the scanner
+/// emits a `RecoveredArchive` health-issue.
 ///
-/// Pattern mirrors `cbz::tests::opens_cbz_with_corrupt_unicode_path_crc`
-/// — kept inline here so the integration test stays self-contained.
-fn write_cbz_with_poisoned_unicode_extra(path: &Path) {
+/// (Until zip 9 this test used a poisoned Info-ZIP Unicode-Path extra;
+/// zip 9 tolerates that itself, so it no longer needs recovery.)
+///
+/// Pattern mirrors `cbz::tests::build_drifting_offset_cbz` — kept
+/// inline here so the integration test stays self-contained.
+fn write_cbz_with_drifting_cd_offset(path: &Path) {
+    const DRIFT: usize = 128;
     let plain_path = tempfile::NamedTempFile::new().unwrap();
     {
         let mut zw = zip::ZipWriter::new(plain_path.reopen().unwrap());
@@ -465,41 +471,37 @@ fn write_cbz_with_poisoned_unicode_extra(path: &Path) {
             .compression_method(zip::CompressionMethod::Stored);
         let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
         png.extend(std::iter::repeat_n(0u8, 64));
-        zw.start_file("page.png", opts).unwrap();
-        zw.write_all(&png).unwrap();
+        for name in ["page1.png", "page2.png", "page3.png"] {
+            zw.start_file(name, opts).unwrap();
+            zw.write_all(&png).unwrap();
+        }
         zw.finish().unwrap();
     }
     let bytes = std::fs::read(plain_path.path()).unwrap();
-    let eocd_off = bytes
+    assert_eq!(&bytes[0..4], b"PK\x03\x04", "file starts with LFH#0");
+    let csize0 = u32::from_le_bytes(bytes[18..22].try_into().unwrap()) as usize;
+    let fname_len0 = u16::from_le_bytes(bytes[26..28].try_into().unwrap()) as usize;
+    let extra_len0 = u16::from_le_bytes(bytes[28..30].try_into().unwrap()) as usize;
+    let lfh1_off = 30 + fname_len0 + extra_len0 + csize0;
+    assert_eq!(
+        &bytes[lfh1_off..lfh1_off + 4],
+        b"PK\x03\x04",
+        "LFH#1 should immediately follow entry 0's data"
+    );
+    let mut out = Vec::with_capacity(bytes.len() + DRIFT);
+    out.extend_from_slice(&bytes[..lfh1_off]);
+    out.extend(std::iter::repeat_n(0xCDu8, DRIFT));
+    out.extend_from_slice(&bytes[lfh1_off..]);
+    // Patch the EOCD's CD offset so the CD is still found; the CDFH
+    // `local_header_offset` fields stay stale — that is the corruption.
+    let eocd_off = out
         .windows(4)
         .rposition(|w| w == [0x50, 0x4b, 0x05, 0x06])
         .expect("EOCD");
-    let cd_size =
-        u32::from_le_bytes(bytes[eocd_off + 12..eocd_off + 16].try_into().unwrap()) as usize;
-    let cd_offset =
-        u32::from_le_bytes(bytes[eocd_off + 16..eocd_off + 20].try_into().unwrap()) as usize;
-    let fname_len =
-        u16::from_le_bytes(bytes[cd_offset + 28..cd_offset + 30].try_into().unwrap()) as usize;
-    let extra_len =
-        u16::from_le_bytes(bytes[cd_offset + 30..cd_offset + 32].try_into().unwrap()) as usize;
-    let poison: Vec<u8> = vec![
-        0x75, 0x70, // tag = 0x7075 (LE)
-        0x09, 0x00, // payload length = 9
-        0x01, // version
-        0xDE, 0xAD, 0xBE, 0xEF, // CRC32 that won't match the filename
-        b'p', b'a', b'g', b'e',
-    ];
-    let inject_at = cd_offset + 46 + fname_len + extra_len;
-    let mut poisoned = Vec::with_capacity(bytes.len() + poison.len());
-    poisoned.extend_from_slice(&bytes[..inject_at]);
-    poisoned.extend_from_slice(&poison);
-    poisoned.extend_from_slice(&bytes[inject_at..]);
-    let new_extra_len = (extra_len + poison.len()) as u16;
-    poisoned[cd_offset + 30..cd_offset + 32].copy_from_slice(&new_extra_len.to_le_bytes());
-    let new_eocd_off = eocd_off + poison.len();
-    let new_cd_size = (cd_size + poison.len()) as u32;
-    poisoned[new_eocd_off + 12..new_eocd_off + 16].copy_from_slice(&new_cd_size.to_le_bytes());
-    std::fs::write(path, &poisoned).unwrap();
+    let old_cd_offset = u32::from_le_bytes(out[eocd_off + 16..eocd_off + 20].try_into().unwrap());
+    let new_cd_offset = old_cd_offset + DRIFT as u32;
+    out[eocd_off + 16..eocd_off + 20].copy_from_slice(&new_cd_offset.to_le_bytes());
+    std::fs::write(path, &out).unwrap();
 }
 
 /// Recovery-visibility Tranche A:
@@ -515,7 +517,7 @@ async fn recovered_archive_emits_health_issue() {
 
     let folder = tmp.path().join("Series Recover (2024)");
     std::fs::create_dir_all(&folder).unwrap();
-    write_cbz_with_poisoned_unicode_extra(&folder.join("Recover 001.cbz"));
+    write_cbz_with_drifting_cd_offset(&folder.join("Recover 001.cbz"));
 
     let lib_id = create_library(&app, tmp.path(), false).await;
     let state = app.state();
@@ -527,10 +529,7 @@ async fn recovered_archive_emits_health_issue() {
         .find(|i| i.kind == "RecoveredArchive")
         .expect("RecoveredArchive row should land in library_health_issues");
     let data = &recovered.payload["data"];
-    assert_eq!(
-        data["technique"].as_str().unwrap(),
-        "unicode-path-crc-strip"
-    );
+    assert_eq!(data["technique"].as_str().unwrap(), "cdfh-offset-rebuild");
     assert_eq!(recovered.severity, "info");
 }
 

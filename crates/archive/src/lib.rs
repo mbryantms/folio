@@ -199,6 +199,10 @@ pub mod recovery {
     /// The Info-ZIP Unicode-Path extra (`0x7075`) had a stored CRC32
     /// that didn't match the CDFH filename's CP437 bytes — pre-2026
     /// publisher tool bug. Recovery stripped every `0x7075` extra.
+    /// zip ≥ 9 tolerates the bad extra itself (it falls back to the
+    /// raw name), so this branch no longer fires for that file; it is
+    /// kept for the error shape it matches, should the crate ever
+    /// reject such an extra again.
     pub const UNICODE_PATH_CRC_STRIP: &str = "unicode-path-crc-strip";
     /// One or more CDFH `local_header_offset` fields pointed at
     /// garbage. Recovery scanned the data area forward, matched each
