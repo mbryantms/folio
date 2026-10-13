@@ -692,8 +692,11 @@ function HistoryTab({ listId, list }: { listId: string; list: CblDetailView }) {
   const items = log.data?.items ?? [];
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <p className="text-muted-foreground text-sm">
+      {/* `shrink-0` + `whitespace-nowrap`: the explanatory paragraph used
+          to squeeze the button at phone width until its label wrapped
+          inside the pill ("Refresh" over "now"). */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-muted-foreground min-w-0 flex-1 basis-56 text-sm">
           Refresh runs persist a structural diff. Manual matches survive across
           refreshes.
         </p>
@@ -701,6 +704,7 @@ function HistoryTab({ listId, list }: { listId: string; list: CblDetailView }) {
           <Button
             type="button"
             size="sm"
+            className="shrink-0 whitespace-nowrap"
             onClick={() => refresh.mutate({})}
             disabled={refresh.isPending}
           >
