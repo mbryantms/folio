@@ -489,7 +489,7 @@ mod tests {
         let mut out = BTreeMap::new();
         for i in 0..a.len() {
             let mut zf = a.by_index(i).unwrap();
-            let name = zf.name().to_string();
+            let name = zf.name().unwrap().into_owned();
             let mut bytes = Vec::new();
             zf.read_to_end(&mut bytes).unwrap();
             out.insert(name, bytes);
@@ -508,7 +508,7 @@ mod tests {
         let mut out = BTreeMap::new();
         for i in 0..a.len() {
             let raw = a.by_index_raw(i).unwrap();
-            out.insert(raw.name().to_string(), raw.compressed_size());
+            out.insert(raw.name().unwrap().into_owned(), raw.compressed_size());
         }
         out
     }
