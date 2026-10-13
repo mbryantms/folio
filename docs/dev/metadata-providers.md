@@ -1586,3 +1586,31 @@ carry its value — the provenance row is newer than the issue's
 DB-direct fallback for a refused CBR/CB7, or an apply from before the
 library enabled writeback). User pins protect in both models. See
 [metadata-sidecar-writeback.md](metadata-sidecar-writeback.md#rescan-ingest-of-provider-values).
+
+## Coverage: split parts and per-issue ids (2026-10-13)
+
+Metron and GCD file some minis as one-issue series per part ("52 /
+World War III Part One: A Call to Arms" … "Part Four: United We
+Stand", each numbered 1) where ComicVine has one volume with #1–4.
+Three rules in `metadata::coverage` handle that shape:
+
+1. **Known ids are listed before the name searches.** A linked or
+   bridged candidate whose name scores under `NAME_FLOOR` against every
+   local name contributes its base name (the name with a `Part N: …`
+   suffix removed, `split_part_name`) to the series searches, up to
+   `MAX_PROVIDER_NAME_SEARCHES`. Hits from such a search are judged
+   against that base name, so the siblings pass the floor.
+2. **Part remap.** A listed candidate whose name carries an ordinal
+   (`Part` / `Book` / `Chapter` + number, roman numeral or number word)
+   and whose only listed number is 1 is re-keyed to the ordinal
+   (`apply_part_remap`, `Candidate.part`). Local #4 is then covered by
+   Part Four, never by Part Four's "#1". The cover makes one part the
+   main and the others one-issue ranges.
+3. **Accept writes issue ids.** Every cell with a provider issue id is
+   written to `external_ids` (`entity_type = issue`, `set_by =
+   cross_reference`, user rows kept, one id per local number) for every
+   provider, ComicVine included. `AcceptOutcome.issue_ids_written /
+   issue_ids_skipped` report it. This is what an apply or refresh uses
+   for a part: a range maps the number, but the provider's number is 1.
+
+Regression: `crates/server/tests/provider_coverage.rs::one_issue_parts_are_found_by_the_providers_name_and_linked_per_issue`.

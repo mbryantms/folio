@@ -575,6 +575,17 @@ Default admin (first registered user becomes admin):
     [`metadata::auto_split`](crates/server/src/metadata/auto_split.rs)
     remains as the shared range/run library (and the server-side detect
     endpoint); it no longer runs automatically after applies.
+    **Split parts (2026-10-13):** a provider may file a mini as one-issue
+    series ("52 / World War III Part Four: United We Stand", each "#1").
+    `coverage::split_part_name` reads the ordinal; `apply_part_remap`
+    re-keys such a listing to it, so local #N maps to Part N. Known /
+    bridged candidates are listed *before* the name searches, and a
+    candidate the provider names differently from every local name adds
+    its base name to the searches (`MAX_PROVIDER_NAME_SEARCHES`), which
+    is how the sibling parts are found. **Accept writes per-issue ids**
+    (`write_issue_ids`, `set_by = cross_reference`) from the proposal's
+    cells for every provider — a range's number is never a part's "#1",
+    so the issue id is the only link an apply can use there.
   - **Year gate**: the issue-search gate uses the mapped sub-series'
     `declared_year` when a range applies (so a 2012 relaunch isn't
     dropped against a 2001 parent), and the *broad/unmapped* path is

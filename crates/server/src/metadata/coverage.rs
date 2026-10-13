@@ -476,7 +476,10 @@ pub fn hint_from_list(
             })
             .collect(),
         partial: !list.complete,
+        part: None,
     };
+    let mut cand = cand;
+    apply_part_remap(&mut cand);
     let listed_keys: HashSet<&str> = cand.listed.iter().map(|i| i.number.as_str()).collect();
     let cover = compute_cover(local, std::slice::from_ref(&cand), Some(0));
     let covered = cover.assignment.iter().flatten().count() as u32;
@@ -863,6 +866,12 @@ pub struct Candidate {
     pub listed: Vec<ProviderIssue>,
     /// The listing stopped early (page cap / budget).
     pub partial: bool,
+    /// The provider files this as one part of a numbered split — "52 /
+    /// World War III Part Four: United We Stand", a one-issue series whose
+    /// only number is 1 — and the listing was re-keyed to that ordinal
+    /// ([`apply_part_remap`]), so local #4 is what it covers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<u32>,
 }
 
 // ───────── cover (pure) ─────────
@@ -1364,6 +1373,112 @@ pub fn search_names(
 /// Distinct ComicInfo `<Series>` values across the series' active
 /// main-run issues, most frequent first. Specials are left out: an annual
 /// under `Annuals/` legitimately says `<Series>Batman Annual</Series>`.
+/// Provider-name searches per provider (`analyze_provider` step 1b): the
+/// names a provider gives the series the folder is already linked to,
+/// when those differ from every local name. "52/WW III" is ComicVine's
+/// name; Metron and GCD file the same book as four one-issue series
+/// called "52 / World War III Part N: …", which no local-name search
+/// finds. Searching the provider's own base name does.
+pub const MAX_PROVIDER_NAME_SEARCHES: usize = 2;
+
+/// `"52 / World War III Part Four: United We Stand"` → `("52 / World War
+/// III", 4)`: a series name that is one numbered part of a split, and the
+/// base name shared by its siblings. Recognises `Part` / `Book` /
+/// `Chapter` followed by a number, a roman numeral or a number word
+/// (one…twelve), as a whole word; what follows (a colon, a dash, "of 4",
+/// a subtitle) is ignored. `None` for names without such a marker.
+pub fn split_part_name(name: &str) -> Option<(String, u32)> {
+    const WORDS: [&str; 12] = [
+        "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+        "twelve",
+    ];
+    fn roman(t: &str) -> Option<u32> {
+        let mut total = 0u32;
+        let mut prev = 0u32;
+        for ch in t.chars().rev() {
+            let v = match ch.to_ascii_uppercase() {
+                'I' => 1,
+                'V' => 5,
+                'X' => 10,
+                _ => return None,
+            };
+            if v < prev {
+                total = total.checked_sub(v)?;
+            } else {
+                total += v;
+                prev = v;
+            }
+        }
+        (total > 0 && total <= 40).then_some(total)
+    }
+    let lower = name.to_lowercase();
+    let mut best: Option<(usize, u32)> = None;
+    for marker in ["part", "book", "chapter"] {
+        let mut from = 0;
+        while let Some(pos) = lower[from..].find(marker) {
+            let at = from + pos;
+            from = at + marker.len();
+            // Whole word: preceded by start / non-alphanumeric, followed by
+            // whitespace.
+            let before_ok = at == 0
+                || !lower[..at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_alphanumeric());
+            let rest = &lower[at + marker.len()..];
+            if !before_ok || !rest.starts_with(char::is_whitespace) {
+                continue;
+            }
+            let token: String = rest
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_alphanumeric())
+                .collect();
+            if token.is_empty() {
+                continue;
+            }
+            let n = token
+                .parse::<u32>()
+                .ok()
+                .or_else(|| WORDS.iter().position(|w| *w == token).map(|i| i as u32 + 1))
+                .or_else(|| roman(&token));
+            if let Some(n) = n.filter(|n| *n > 0) {
+                // The first marker wins ("Part One: Book of Secrets").
+                if best.is_none_or(|(b, _)| at < b) {
+                    best = Some((at, n));
+                }
+            }
+        }
+    }
+    let (at, n) = best?;
+    let base = name[..at]
+        .trim_end()
+        .trim_end_matches([':', '-', '–', '—', ','])
+        .trim_end()
+        .to_owned();
+    (!base.is_empty()).then_some((base, n))
+}
+
+/// A one-issue series that is "Part N" of a split covers local issue N,
+/// not local #1: re-key its listing to the ordinal and remember it. Only
+/// fires when every listed number is the same single number (the part's
+/// own "#1"); a part series with several issues keeps its numbers.
+pub fn apply_part_remap(cand: &mut Candidate) {
+    let Some((_, n)) = cand.name.as_deref().and_then(split_part_name) else {
+        return;
+    };
+    let mut keys = cand.listed.iter().map(|i| i.number.as_str());
+    let Some(first) = keys.next() else { return };
+    if keys.any(|k| k != first) || first != issue_number_compare_key("1") {
+        return;
+    }
+    let key = issue_number_compare_key(&n.to_string());
+    for i in &mut cand.listed {
+        i.number = key.clone();
+    }
+    cand.part = Some(n);
+}
+
 async fn file_series_names<C: ConnectionTrait>(
     db: &C,
     series_id: Uuid,
@@ -1636,6 +1751,7 @@ pub async fn analyze_provider<C: ConnectionTrait>(
         listed_count: 0,
         listed: Vec::new(),
         partial: false,
+        part: None,
     };
 
     // 1. Known ids.
@@ -1701,7 +1817,11 @@ pub async fn analyze_provider<C: ConnectionTrait>(
     let seeded = seed_for(&facts.seeds, source).is_some();
     let mut listed: Vec<Candidate> = Vec::new();
     let mut covered_by_known = false;
-    if seeded && out.status == CoverageStatus::Analyzed {
+    // The known ids are listed first in every case (they are listed
+    // anyway): seeded, so the gap searches can skip what the seed
+    // covers; unseeded, so the names the provider gives those series
+    // can seed the searches below.
+    if !pending.is_empty() && out.status == CoverageStatus::Analyzed {
         let known = std::mem::take(&mut pending);
         list_candidates(
             redis,
@@ -1714,13 +1834,43 @@ pub async fn analyze_provider<C: ConnectionTrait>(
             &mut out,
         )
         .await;
-        covered_by_known = !listed.is_empty()
+        covered_by_known = seeded
+            && !listed.is_empty()
             && compute_cover(&facts.local, &listed, None)
                 .uncovered
                 .is_empty();
     }
 
-    // 2. Series searches (name + aliases, no year filter).
+    // 1b. Provider-name searches: a linked / bridged series the provider
+    // names differently from every local name ("52 / World War III Part
+    // Four: United We Stand" for the folder "52/WW III") says what to
+    // search for — its base name finds the sibling parts and renamed
+    // continuations the local names never would.
+    let mut provider_names: Vec<String> = Vec::new();
+    for c in &listed {
+        if provider_names.len() >= MAX_PROVIDER_NAME_SEARCHES {
+            break;
+        }
+        let Some(n) = c.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else {
+            continue;
+        };
+        if c.name_score >= NAME_FLOOR {
+            continue;
+        }
+        let base = split_part_name(n)
+            .map(|(b, _)| b)
+            .unwrap_or_else(|| n.to_owned());
+        let known_name = facts
+            .names
+            .iter()
+            .chain(provider_names.iter())
+            .any(|k| matcher::name_similarity(k, &base) >= 0.999);
+        if !known_name {
+            provider_names.push(base);
+        }
+    }
+
+    // 2. Series searches (name + aliases + provider names, no year filter).
     let (_, max_year) = facts.year_bounds();
     let query_facts = facts.query_facts();
     let gate_facts = SeriesQueryFacts {
@@ -1728,7 +1878,12 @@ pub async fn analyze_provider<C: ConnectionTrait>(
         ..query_facts.clone()
     };
     let mut hits: Vec<(SeriesCandidate, f32, f32, bool)> = Vec::new();
-    for name in &facts.names {
+    let searches = facts
+        .names
+        .iter()
+        .map(|n| (n, false))
+        .chain(provider_names.iter().map(|n| (n, true)));
+    for (name, provider_name) in searches {
         if seeded
             || out.status != CoverageStatus::Analyzed
             || pending.len() + listed.len() >= MAX_CANDIDATES
@@ -1758,7 +1913,16 @@ pub async fn analyze_provider<C: ConnectionTrait>(
             }
         };
         for c in pre_filter_series(raw, &gate_facts, &facts.pre_filter) {
-            let (ns, strict) = facts.identity(&c);
+            let (mut ns, strict) = facts.identity(&c);
+            if provider_name {
+                // Identity against the provider's own base name: "52 /
+                // World War III Part One: A Call to Arms" is the sibling
+                // of the bridged Part Four whatever the local name says.
+                let hit_base = split_part_name(&c.name)
+                    .map(|(b, _)| b)
+                    .unwrap_or_else(|| c.name.clone());
+                ns = ns.max(matcher::name_similarity(name, &hit_base));
+            }
             if ns < NAME_FLOOR {
                 continue;
             }
@@ -1804,6 +1968,7 @@ pub async fn analyze_provider<C: ConnectionTrait>(
             listed_count: 0,
             listed: Vec::new(),
             partial: false,
+            part: None,
         });
     }
     pending.truncate(MAX_CANDIDATES.saturating_sub(listed.len()));
@@ -2034,6 +2199,7 @@ async fn list_candidates<C: ConnectionTrait>(
                         .is_some_and(|(v, (lo, hi))| v >= lo && v <= hi)
             })
             .collect();
+        apply_part_remap(&mut cand);
         if cand
             .listed
             .iter()
@@ -2478,6 +2644,14 @@ pub struct AcceptOutcome {
     /// provider series has issues this folder lacks (Related tab).
     #[serde(default)]
     pub external_links: usize,
+    /// Per-issue provider ids written from the proposal's cells (the
+    /// provider issue each local issue was assigned to).
+    #[serde(default)]
+    pub issue_ids_written: u32,
+    /// Cells whose id was not written: a user-set id, an id another issue
+    /// already holds, or a duplicate local number.
+    #[serde(default)]
+    pub issue_ids_skipped: u32,
 }
 
 /// Accept one provider's proposal: write the main id (unless the user
@@ -2666,6 +2840,16 @@ pub async fn accept_provider(
         }
     }
     out.stale_ranges = view.stale_ranges;
+
+    // Per-issue ids: the cell says which provider issue each local issue
+    // is, so an apply or refresh can fetch it by id — the only link that
+    // works when the provider files the book as one-issue parts, where a
+    // range's number is never the provider's number. Written as a
+    // cross-reference (never `user`): a later provider apply may refresh
+    // them, and a user-set id is kept by the writer.
+    let (written, skipped) = write_issue_ids(db, series_id, source, &local, &view.cells).await?;
+    out.issue_ids_written = written;
+    out.issue_ids_skipped = skipped;
     // Ranges whose provider series also has issues this folder lacks become
     // "not in your library" links on the Related tab (a deleted range's
     // link goes with it). Soft-fails: the accept itself already succeeded.
@@ -2681,6 +2865,73 @@ pub async fn accept_provider(
         }
     }
     Ok(out)
+}
+
+/// Write the per-issue provider ids a proposal's cells carry. Each local
+/// number is matched to its active issue rows (by comparison key); the
+/// first row takes the id, later rows with the same number (duplicates,
+/// variants) are skipped so the `(source, external_id)` uniqueness holds.
+async fn write_issue_ids<C: ConnectionTrait>(
+    db: &C,
+    series_id: Uuid,
+    source: Source,
+    local: &[LocalCovIssue],
+    cells: &[CoverageCell],
+) -> Result<(u32, u32), sea_orm::DbErr> {
+    let rows: Vec<(String, Option<String>)> = issue::Entity::find()
+        .filter(issue::Column::SeriesId.eq(series_id))
+        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::SpecialType.is_null())
+        .order_by_asc(issue::Column::SortNumber)
+        .select_only()
+        .column(issue::Column::Id)
+        .column(issue::Column::NumberRaw)
+        .into_tuple()
+        .all(db)
+        .await?;
+    let mut by_key: HashMap<String, Vec<String>> = HashMap::new();
+    for (id, raw) in rows {
+        let Some(raw) = raw.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        by_key
+            .entry(LocalCovIssue::new(raw, None, None).key)
+            .or_default()
+            .push(id);
+    }
+    let mut written = 0u32;
+    let mut skipped = 0u32;
+    for (li, cell) in local.iter().zip(cells) {
+        let Some(pid) = cell.provider_issue_id.as_deref().filter(|p| !p.is_empty()) else {
+            continue;
+        };
+        let Some(ids) = by_key.get(&li.key) else {
+            continue;
+        };
+        let mut first = true;
+        for issue_id in ids {
+            if !first {
+                skipped += 1;
+                continue;
+            }
+            first = false;
+            let identifier = Identifier::with_canonical_url(source, pid.to_owned(), "issue");
+            match writers::set_external_id(
+                db,
+                "issue",
+                issue_id,
+                &identifier,
+                SetBy::CrossReference,
+            )
+            .await?
+            {
+                SetExternalIdOutcome::Set | SetExternalIdOutcome::Reclaimed { .. } => written += 1,
+                _ => skipped += 1,
+            }
+        }
+    }
+    Ok((written, skipped))
 }
 
 /// The `stale_ranges_removed` entry of a coverage-accept audit row: every
@@ -2919,6 +3170,7 @@ mod tests {
                 })
                 .collect(),
             partial: false,
+            part: None,
         }
     }
 
@@ -3197,6 +3449,110 @@ mod tests {
         assert_eq!(h.listed_count, 4);
         assert!(!h.partial);
         assert_eq!(h.requests, 2);
+    }
+
+    // ───────── split parts ─────────
+
+    #[test]
+    fn split_part_name_reads_part_book_chapter_markers() {
+        assert_eq!(
+            split_part_name("52 / World War III Part Four: United We Stand"),
+            Some(("52 / World War III".to_owned(), 4))
+        );
+        assert_eq!(
+            split_part_name("52 / World War III Part One: A Call to Arms"),
+            Some(("52 / World War III".to_owned(), 1))
+        );
+        assert_eq!(
+            split_part_name("Crisis on Infinite Earths Book 2"),
+            Some(("Crisis on Infinite Earths".to_owned(), 2))
+        );
+        assert_eq!(
+            split_part_name("The Saga Part III - The Reckoning"),
+            Some(("The Saga".to_owned(), 3))
+        );
+        assert_eq!(
+            split_part_name("Tales: Chapter twelve of twelve"),
+            Some(("Tales".to_owned(), 12))
+        );
+        // No marker, a marker that is part of a word, or no base name.
+        assert_eq!(split_part_name("Daredevil"), None);
+        assert_eq!(split_part_name("Departure 2"), None);
+        assert_eq!(split_part_name("Partners 3"), None);
+        assert_eq!(split_part_name("Part Two"), None);
+        // The first marker wins.
+        assert_eq!(
+            split_part_name("Saga Part One: Book Two"),
+            Some(("Saga".to_owned(), 1))
+        );
+    }
+
+    #[test]
+    fn part_remap_rekeys_a_one_issue_part_only() {
+        let mut four = cand("13156", &[("1", d(2007, 6))]);
+        four.name = Some("52 / World War III Part Four: United We Stand".into());
+        apply_part_remap(&mut four);
+        assert_eq!(four.part, Some(4));
+        assert_eq!(four.listed[0].number, "4");
+
+        // A part series with several issues keeps its own numbering.
+        let mut multi = cand("9", &[("1", d(2007, 6)), ("2", d(2007, 7))]);
+        multi.name = Some("Saga Part Two".into());
+        apply_part_remap(&mut multi);
+        assert_eq!(multi.part, None);
+        assert_eq!(multi.listed[0].number, "1");
+
+        // No marker: untouched.
+        let mut plain = cand("1", &[("1", d(2007, 6))]);
+        apply_part_remap(&mut plain);
+        assert_eq!(plain.part, None);
+    }
+
+    #[test]
+    fn four_one_issue_parts_cover_a_four_issue_folder() {
+        // 52/WW III: local #1–4, all June 2007; Metron files four
+        // one-issue series "Part One…Four", each numbered 1.
+        let local = vec![
+            li("1", 2007, 6),
+            li("2", 2007, 6),
+            li("3", 2007, 6),
+            li("4", 2007, 6),
+        ];
+        let names = [
+            "52 / World War III Part One: A Call to Arms",
+            "52 / World War III Part Two: The Valiant",
+            "52 / World War III Part Three: Hell Is for Heroes",
+            "52 / World War III Part Four: United We Stand",
+        ];
+        let mut cands: Vec<Candidate> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let mut c = cand(&format!("1315{}", 9 - i), &[("1", d(2007, 6))]);
+                c.name = Some((*n).into());
+                c.name_score = 0.35;
+                c
+            })
+            .collect();
+        for c in &mut cands {
+            apply_part_remap(c);
+        }
+        let cover = compute_cover(&local, &cands, None);
+        assert!(cover.uncovered.is_empty(), "{cover:?}");
+        // Local #N is assigned to Part N, never to Part Four's "#1".
+        for (i, a) in cover.assignment.iter().enumerate() {
+            let (ci, _) = a.expect("assigned");
+            assert_eq!(cands[ci].part, Some(i as u32 + 1), "local #{}", i + 1);
+        }
+        // One part is the main; the other three become one-issue ranges.
+        let main = cover.main.unwrap();
+        assert_eq!(cover.ranges.len(), 3);
+        for r in &cover.ranges {
+            assert_ne!(r.candidate, main);
+            assert_eq!(r.low, r.high);
+            assert_eq!(r.issues.len(), 1);
+        }
+        assert!(cover.unranged.is_empty());
     }
 }
 

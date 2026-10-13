@@ -12652,6 +12652,18 @@
             "description": "\"Not in your library\" links written or refreshed: ranges whose\nprovider series has issues this folder lacks (Related tab).",
             "minimum": 0
           },
+          "issue_ids_skipped": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Cells whose id was not written: a user-set id, an id another issue\nalready holds, or a duplicate local number.",
+            "minimum": 0
+          },
+          "issue_ids_written": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Per-issue provider ids written from the proposal's cells (the\nprovider issue each local issue was assigned to).",
+            "minimum": 0
+          },
           "main_note": {
             "type": [
               "string",
