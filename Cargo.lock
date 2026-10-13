@@ -270,7 +270,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "unrar",
- "zip 8.6.0",
+ "zip 9.0.2",
 ]
 
 [[package]]
@@ -6734,7 +6734,7 @@ dependencies = [
  "webp",
  "wiremock",
  "zeroize",
- "zip 8.6.0",
+ "zip 9.0.2",
 ]
 
 [[package]]
@@ -9051,6 +9051,21 @@ dependencies = [
  "flate2",
  "indexmap 2.14.2",
  "memchr",
+ "typed-path",
+ "zopfli",
+]
+
+[[package]]
+name = "zip"
+version = "9.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e2fc56a6707efb066c40aead2409ebb1224e6dde24a074e9fbc78ced500507b"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "indexmap 2.14.2",
+ "memchr",
+ "nix",
  "typed-path",
  "zopfli",
 ]

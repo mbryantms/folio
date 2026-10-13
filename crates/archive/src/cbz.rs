@@ -227,16 +227,8 @@ impl Cbz {
     /// replace.
     pub(crate) fn raw_entry_name(&mut self, ordinal: usize) -> Result<String, ArchiveError> {
         match &mut self.archive {
-            OpenedZip::File(a) => Ok(a
-                .by_index_raw(ordinal)
-                .map_err(map_zip_err)?
-                .name()
-                .to_string()),
-            OpenedZip::Mem(a) => Ok(a
-                .by_index_raw(ordinal)
-                .map_err(map_zip_err)?
-                .name()
-                .to_string()),
+            OpenedZip::File(a) => Ok(entry_name(&a.by_index_raw(ordinal).map_err(map_zip_err)?)),
+            OpenedZip::Mem(a) => Ok(entry_name(&a.by_index_raw(ordinal).map_err(map_zip_err)?)),
         }
     }
 
@@ -267,7 +259,7 @@ impl Cbz {
             OpenedZip::File(a) => {
                 let zf = a.by_index_raw(ordinal).map_err(map_zip_err)?;
                 let info = RawEntryInfo {
-                    name: zf.name().to_string(),
+                    name: entry_name(&zf),
                     uncompressed_size: zf.size(),
                 };
                 dst.raw_copy_file(zf).map_err(map_zip_err)?;
@@ -276,7 +268,7 @@ impl Cbz {
             OpenedZip::Mem(a) => {
                 let zf = a.by_index_raw(ordinal).map_err(map_zip_err)?;
                 let info = RawEntryInfo {
-                    name: zf.name().to_string(),
+                    name: entry_name(&zf),
                     uncompressed_size: zf.size(),
                 };
                 dst.raw_copy_file(zf).map_err(map_zip_err)?;
@@ -364,7 +356,7 @@ impl Cbz {
                     let raw = a.by_index_raw(i).map_err(map_zip_err)?;
                     (
                         raw.encrypted(),
-                        raw.name().to_string(),
+                        entry_name(&raw),
                         raw.size(),
                         raw.compressed_size(),
                         raw.is_dir(),
@@ -376,7 +368,7 @@ impl Cbz {
                     let raw = a.by_index_raw(i).map_err(map_zip_err)?;
                     (
                         raw.encrypted(),
-                        raw.name().to_string(),
+                        entry_name(&raw),
                         raw.size(),
                         raw.compressed_size(),
                         raw.is_dir(),
@@ -1253,6 +1245,18 @@ fn strip_extras(extra: &[u8], drop_tag: u16) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// The entry's stored name. zip 9 makes `ZipFile::name()` fallible (an
+/// Info-ZIP Unicode Path extra whose CRC does not match, or bytes that
+/// are not UTF-8 under the UTF-8 flag); one odd entry must not fail the
+/// whole archive, so the raw bytes are decoded lossily instead — the
+/// same name the pre-9 crate handed back for such entries.
+fn entry_name<R: std::io::Read>(zf: &zip::read::ZipFile<'_, R>) -> String {
+    match zf.name() {
+        Ok(name) => name.into_owned(),
+        Err(_) => String::from_utf8_lossy(zf.name_raw()).into_owned(),
+    }
+}
+
 fn map_zip_err(e: zip::result::ZipError) -> ArchiveError {
     use zip::result::ZipError as Z;
     match e {
@@ -2051,13 +2055,11 @@ mod tests {
         let new_cd_size = (cd_size + poison.len()) as u32;
         poisoned[new_eocd_off + 12..new_eocd_off + 16].copy_from_slice(&new_cd_size.to_le_bytes());
 
-        // Sanity: the standalone zip crate should now reject this file —
-        // that's the symptom we're recovering from.
-        let bare = zip::ZipArchive::new(Cursor::new(poisoned.clone()));
-        assert!(
-            bare.is_err(),
-            "test setup is broken: poisoned CBZ still opens cleanly via zip crate",
-        );
+        // zip < 9 rejected this file outright (the symptom the recovery
+        // path was built for); zip 9 ignores the bad Unicode Path extra
+        // and falls back to the raw name. Either way Folio must open it
+        // and see the entry under its plain name.
+        let _bare_opens = zip::ZipArchive::new(Cursor::new(poisoned.clone())).is_ok();
 
         // Recovery path opens it successfully.
         let tmp = tempfile::Builder::new()
