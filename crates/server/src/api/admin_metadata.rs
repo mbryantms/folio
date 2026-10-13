@@ -36,6 +36,7 @@ use crate::metadata::budget::{self, ProviderLastError, RequestBudget};
 use crate::metadata::comicvine::ComicVineClient;
 use crate::metadata::gcd::GcdClient;
 use crate::metadata::identifier::Source;
+use crate::metadata::local_db::{self, LocalDbKind, LocalDbMode, LocalDbProbe};
 use crate::metadata::metron::MetronClient;
 use crate::metadata::provider::{MetadataProvider, ProviderError};
 use crate::middleware::RequestContext;
@@ -46,6 +47,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_providers))
         .routes(routes!(test_provider))
+        .routes(routes!(test_local_db))
         .routes(routes!(dashboard))
         .routes(routes!(match_quality))
         .routes(routes!(list_runs))
@@ -76,6 +78,10 @@ pub struct ProviderView {
     /// its last response (Metron's daily window) or, for ComicVine, the
     /// local hourly bucket. `None` when unconfigured or unknown.
     pub budget: Option<RequestBudget>,
+    /// The provider's local file (local-metadata-databases-1.0 M1):
+    /// present for ComicVine and GCD, `None` for providers without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local: Option<LocalDbView>,
     /// Most recent provider error, cleared on the next successful call.
     pub last_error: Option<ProviderLastError>,
 }
@@ -85,6 +91,80 @@ pub struct QuotaView {
     pub remaining_hour: Option<u32>,
     pub remaining_day: Option<u32>,
     pub seconds_until_reset: Option<u64>,
+}
+
+/// Where a provider's local file stands (admin card).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalDbStatus {
+    /// No path configured.
+    Unconfigured,
+    /// The file opened and has the required tables.
+    Ok,
+    /// Nothing at the path, or not a SQLite file.
+    Missing,
+    /// A SQLite file without the required tables, or a query failed.
+    Invalid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct LocalDbView {
+    /// `"Local GCD"` | `"Local ComicVine"`.
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    pub mode: LocalDbMode,
+    pub status: LocalDbStatus,
+    /// What the probe found when `status` is `ok`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<LocalDbProbe>,
+    /// Why the file is unusable when `status` is `missing` / `invalid`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct LocalDbTestResp {
+    pub ok: bool,
+    pub local: LocalDbView,
+    pub duration_ms: u64,
+}
+
+/// The card's view of a provider's local file. `force` re-probes past
+/// the cache (the *Test* button); the list uses the cache.
+async fn local_db_view(app: &AppState, kind: LocalDbKind, force: bool) -> LocalDbView {
+    let cfg = app.cfg();
+    let (path, mode) = match kind {
+        LocalDbKind::Gcd => (cfg.gcd_local_path.clone(), cfg.gcd_local_mode),
+        LocalDbKind::ComicVine => (cfg.comicvine_local_path.clone(), cfg.comicvine_local_mode),
+    };
+    let Some(path) = path else {
+        return LocalDbView {
+            label: kind.label().to_owned(),
+            path: None,
+            mode,
+            status: LocalDbStatus::Unconfigured,
+            probe: None,
+            error: None,
+        };
+    };
+    let result =
+        local_db::probe_cached(&app.jobs.redis, kind, std::path::Path::new(&path), force).await;
+    let (status, probe, err) = match result {
+        Ok(p) => (LocalDbStatus::Ok, Some(p), None),
+        Err(e @ (local_db::LocalDbError::Missing(_) | local_db::LocalDbError::NotSqlite(_))) => {
+            (LocalDbStatus::Missing, None, Some(e.to_string()))
+        }
+        Err(e) => (LocalDbStatus::Invalid, None, Some(e.to_string())),
+    };
+    LocalDbView {
+        label: kind.label().to_owned(),
+        path: Some(path),
+        mode,
+        status,
+        probe,
+        error: err,
+    }
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -146,6 +226,7 @@ pub(crate) async fn provider_views(app: &AppState) -> Vec<ProviderView> {
         quota: cv_quota,
         budget: cv_budget,
         last_error: cv_last_error,
+        local: Some(local_db_view(app, LocalDbKind::ComicVine, false).await),
     });
 
     let metron = metron_client(app);
@@ -166,6 +247,7 @@ pub(crate) async fn provider_views(app: &AppState) -> Vec<ProviderView> {
         quota: metron_quota,
         budget: metron_budget,
         last_error: metron_last_error,
+        local: None,
     });
 
     let gcd = gcd_client(app);
@@ -186,9 +268,91 @@ pub(crate) async fn provider_views(app: &AppState) -> Vec<ProviderView> {
         quota: gcd_quota,
         budget: gcd_budget,
         last_error: gcd_last_error,
+        local: Some(local_db_view(app, LocalDbKind::Gcd, false).await),
     });
 
     providers
+}
+
+/// `POST /admin/metadata/providers/{id}/local/test` — probe the
+/// provider's local file past the cache: header, required tables, row
+/// counts, dump date. Audited as `admin.metadata.local_db.test`.
+#[utoipa::path(
+    operation_id = "admin_metadata_local_db_test",    post,
+    path = "/admin/metadata/providers/{id}/local/test",
+    params(
+        ("id" = String, Path, description = "Provider id (`comicvine` | `gcd`)"),
+    ),
+    responses(
+        (status = 200, body = LocalDbTestResp),
+        (status = 400, description = "no local file path configured"),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "provider has no local file support"),
+        (status = 422, description = "the file is missing, not SQLite, or lacks the required tables"),
+    )
+)]
+#[handler]
+pub async fn test_local_db(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    Path(id): Path<String>,
+) -> Response {
+    let Some(kind) = id.parse::<Source>().ok().and_then(LocalDbKind::from_source) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "metadata.local_db.unsupported",
+            "this provider has no local file support",
+        );
+    };
+    let started = std::time::Instant::now();
+    let view = local_db_view(&app, kind, true).await;
+    let duration_ms = started.elapsed().as_millis() as u64;
+    let (status, response) = match view.status {
+        LocalDbStatus::Unconfigured => (
+            StatusCode::BAD_REQUEST,
+            error(
+                StatusCode::BAD_REQUEST,
+                "metadata.local_db.unconfigured",
+                &format!("set the {} file path before testing", kind.label()),
+            ),
+        ),
+        LocalDbStatus::Ok => (
+            StatusCode::OK,
+            Json(LocalDbTestResp {
+                ok: true,
+                local: view.clone(),
+                duration_ms,
+            })
+            .into_response(),
+        ),
+        LocalDbStatus::Missing | LocalDbStatus::Invalid => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "metadata.local_db.invalid",
+                view.error
+                    .as_deref()
+                    .unwrap_or("the file could not be used"),
+            ),
+        ),
+    };
+    crate::record_admin_action!(
+        db = &app.db,
+        ctx = ctx,
+        actor = actor.id,
+        action = "admin.metadata.local_db.test",
+        target = ("metadata_provider", kind.source().as_str().to_owned()),
+        payload = serde_json::json!({
+            "ok": status == StatusCode::OK,
+            "status": view.status,
+            "path": view.path,
+            "dump_date": view.probe.as_ref().and_then(|p| p.dump_date.clone()),
+            "error": view.error,
+            "duration_ms": duration_ms,
+        }),
+    );
+    response
 }
 
 #[utoipa::path(

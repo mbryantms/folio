@@ -285,6 +285,31 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Bool,
         is_secret: false,
     },
+    // ───────── Local metadata databases (local-metadata-databases-1.0 M1) ─────────
+    SettingDef {
+        // Path to the operator's SQLite copy of the GCD dump. Folio reads
+        // it read-only; it never downloads one.
+        key: "metadata.gcd.local_path",
+        kind: SettingKind::String,
+        is_secret: false,
+    },
+    SettingDef {
+        // `off` | `prefer_local` | `local_only` (`metadata::local_db::LocalDbMode`).
+        key: "metadata.gcd.local_mode",
+        kind: SettingKind::String,
+        is_secret: false,
+    },
+    SettingDef {
+        // Path to an operator-supplied "Local ComicVine" SQLite file.
+        key: "metadata.comicvine.local_path",
+        kind: SettingKind::String,
+        is_secret: false,
+    },
+    SettingDef {
+        key: "metadata.comicvine.local_mode",
+        kind: SettingKind::String,
+        is_secret: false,
+    },
     // ───────── Weekly refresh + staleness (metadata-providers-1.0 M7) ─────────
     SettingDef {
         // Master toggle for the weekly metadata-refresh cron. OFF by

@@ -158,3 +158,37 @@ describe("<ProviderConfigForm>", () => {
     expect(html).toContain("Paste your Metron API token");
   });
 });
+
+describe("<ProviderConfigForm> local file fields", () => {
+  it("offers a path and a mode for GCD and ComicVine, not Metron", () => {
+    settingsState = {
+      data: {
+        values: [
+          {
+            key: "metadata.gcd.local_path",
+            value: "/data/local/gcd.db",
+            is_secret: false,
+          },
+          {
+            key: "metadata.gcd.local_mode",
+            value: "local_only",
+            is_secret: false,
+          },
+        ],
+      },
+      isLoading: false,
+    };
+    const gcd = renderToStaticMarkup(
+      createElement(ProviderConfigForm, { provider: "gcd" }),
+    );
+    expect(gcd).toContain('id="gcd-local-path"');
+    expect(gcd).toContain('value="/data/local/gcd.db"');
+    expect(gcd).toContain('id="gcd-local-mode"');
+    expect(gcd).toContain("Local only");
+    expect(gcd).toContain("never downloads");
+    const metron = renderToStaticMarkup(
+      createElement(ProviderConfigForm, { provider: "metron" }),
+    );
+    expect(metron).not.toContain("local-path");
+  });
+});
