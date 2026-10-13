@@ -586,6 +586,13 @@ Default admin (first registered user becomes admin):
     (`write_issue_ids`, `set_by = cross_reference`) from the proposal's
     cells for every provider — a range's number is never a part's "#1",
     so the issue id is the only link an apply can use there.
+    **Undated issues (2026-10-13):** a local issue with no cover date
+    takes the series' known start year (earliest dated sibling, else
+    the folder year) as a *floor* (`LocalCovIssue::fallback_year`,
+    `FALLBACK_YEAR_SLACK` = 3): a provider issue dated earlier than
+    that is a conflict, never a confirmation. Without it the undated
+    52/WW III folder let "World War III" (1952) #1–2 out-cover the
+    one-issue parts by number alone.
   - **Year gate**: the issue-search gate uses the mapped sub-series'
     `declared_year` when a range applies (so a 2012 relaunch isn't
     dropped against a 2001 parent), and the *broad/unmapped* path is

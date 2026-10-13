@@ -642,7 +642,19 @@ pub struct LocalCovIssue {
     pub value: Option<f64>,
     pub year: Option<i32>,
     pub month: Option<i32>,
+    /// For an issue with no cover date: the year the series is known to
+    /// start (the earliest dated sibling, else the folder year). Only a
+    /// floor — a provider issue dated more than [`FALLBACK_YEAR_SLACK`]
+    /// years before it is a [`DateMatch::Conflict`]; it never confirms a
+    /// match. Without it an undated folder matched by number alone, and
+    /// "World War III" (1952) #1–2 out-covered the 2007 one-issue parts.
+    pub fallback_year: Option<i32>,
 }
+
+/// How far before the series' known start year a provider cover date may
+/// fall before an undated local issue refuses it. Three years absorbs a
+/// folder named for a relaunch whose first issues predate it.
+pub const FALLBACK_YEAR_SLACK: i32 = 3;
 
 impl LocalCovIssue {
     pub fn new(raw: &str, year: Option<i32>, month: Option<i32>) -> Self {
@@ -654,7 +666,19 @@ impl LocalCovIssue {
             value,
             year,
             month: month.filter(|m| (1..=12).contains(m)),
+            fallback_year: None,
         }
+    }
+
+    /// [`date_match`] for this issue, with the year floor for undated ones.
+    pub fn date_match(&self, provider: Option<NaiveDate>) -> DateMatch {
+        if self.year.is_none()
+            && let (Some(floor), Some(d)) = (self.fallback_year, provider)
+            && d.year() < floor - FALLBACK_YEAR_SLACK
+        {
+            return DateMatch::Conflict;
+        }
+        date_match(self.year, self.month, provider)
     }
 }
 
@@ -737,6 +761,20 @@ pub async fn load_local_with_specials<C: ConnectionTrait>(
         }
     }
     sort_local(&mut out);
+    // Undated issues take the series' known start as a year floor.
+    let dated_min = out.iter().filter_map(|l| l.year).min();
+    let folder_year: Option<i32> = series::Entity::find_by_id(series_id)
+        .select_only()
+        .column(series::Column::Year)
+        .into_tuple::<Option<i32>>()
+        .one(db)
+        .await?
+        .flatten();
+    if let Some(floor) = dated_min.or(folder_year) {
+        for l in out.iter_mut().filter(|l| l.year.is_none()) {
+            l.fallback_year = Some(floor);
+        }
+    }
     Ok((out, excluded))
 }
 
@@ -939,7 +977,7 @@ pub fn compute_cover(
                 };
                 let best = dates
                     .iter()
-                    .map(|d| date_match(li.year, li.month, *d))
+                    .map(|d| li.date_match(*d))
                     .max_by_key(|m| m.rank())
                     .unwrap_or(DateMatch::Unknown);
                 if best != DateMatch::Conflict {
@@ -2383,7 +2421,7 @@ pub fn build_view(
                     .listed
                     .iter()
                     .filter(|p| p.number == li.key)
-                    .max_by_key(|p| date_match(li.year, li.month, p.cover_date).rank());
+                    .max_by_key(|p| li.date_match(p.cover_date).rank());
                 CoverageCell {
                     number: li.canonical.clone(),
                     provider_series_id: Some(c.provider_series_id.clone()),
@@ -2523,8 +2561,7 @@ pub fn build_view(
                 .iter()
                 .filter(|li| {
                     c.listed.iter().any(|p| {
-                        p.number == li.key
-                            && date_match(li.year, li.month, p.cover_date) != DateMatch::Conflict
+                        p.number == li.key && li.date_match(p.cover_date) != DateMatch::Conflict
                     })
                 })
                 .count() as u32;
@@ -3506,6 +3543,51 @@ mod tests {
         let mut plain = cand("1", &[("1", d(2007, 6))]);
         apply_part_remap(&mut plain);
         assert_eq!(plain.part, None);
+    }
+
+    #[test]
+    fn undated_issues_refuse_a_series_decades_before_the_folder_year() {
+        // 52/WW III on prod: the files carry no cover date, the folder says
+        // 2007. GCD's name search also returns "World War III" (1952) #1–2;
+        // by number alone it out-covers two one-issue parts.
+        let mut local: Vec<LocalCovIssue> = (1..=4)
+            .map(|n| LocalCovIssue::new(&n.to_string(), None, None))
+            .collect();
+        for l in &mut local {
+            l.fallback_year = Some(2007);
+        }
+        let mut cands: Vec<Candidate> = (1..=4)
+            .map(|n| {
+                let mut c = cand(&format!("part{n}"), &[("1", d(2007, 6))]);
+                c.name = Some(format!("52 / World War III Part {n}"));
+                apply_part_remap(&mut c);
+                c
+            })
+            .collect();
+        let mut decoy = cand("18868", &[("1", d(1952, 3)), ("2", d(1953, 5))]);
+        decoy.name = Some("World War III".into());
+        cands.push(decoy);
+
+        let cover = compute_cover(&local, &cands, None);
+        assert!(cover.uncovered.is_empty(), "{cover:?}");
+        for (i, a) in cover.assignment.iter().enumerate() {
+            let (ci, dm) = a.expect("assigned");
+            assert_eq!(cands[ci].part, Some(i as u32 + 1), "local #{}", i + 1);
+            assert_eq!(dm, DateMatch::Unknown, "no local date to confirm");
+        }
+        assert!(
+            cover.ranges.iter().all(|r| r.candidate != 4),
+            "decoy unused"
+        );
+
+        // Within the slack the floor is silent: a 2005 issue is not refused.
+        let li = &local[0];
+        assert_eq!(li.date_match(d(2005, 1)), DateMatch::Unknown);
+        assert_eq!(li.date_match(d(2003, 12)), DateMatch::Conflict);
+        assert_eq!(li.date_match(None), DateMatch::Unknown);
+        // A dated issue ignores the floor entirely.
+        let dated = LocalCovIssue::new("1", Some(1998), Some(1));
+        assert_eq!(dated.date_match(d(1998, 1)), DateMatch::Confirmed);
     }
 
     #[test]

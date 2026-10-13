@@ -1089,7 +1089,10 @@ const WW3_PARTS: [(u32, &str, u32); 4] = [
     ),
 ];
 
-async fn mount_ww3(cv: &MockServer, metron: &MockServer, gcd: &MockServer) {
+/// `decoy`: Metron's base-name search also returns "World War III" (1952),
+/// a two-issue series that out-covers two one-issue parts by number
+/// alone — what GCD returned on prod for an undated folder.
+async fn mount_ww3(cv: &MockServer, metron: &MockServer, gcd: &MockServer, decoy: bool) {
     let june = || "2007-06-01".to_owned();
     // ComicVine: the one volume the folder is linked to, #1–4.
     let issues: Issues = (1..=4).map(|n| (n.to_string(), june())).collect();
@@ -1124,15 +1127,33 @@ async fn mount_ww3(cv: &MockServer, metron: &MockServer, gcd: &MockServer) {
         .respond_with(ResponseTemplate::new(200).set_body_json(paged(json!([]))))
         .mount(metron)
         .await;
+    let mut hits = vec![
+        part(&WW3_PARTS[3], Some(18485)),
+        part(&WW3_PARTS[0], None),
+        part(&WW3_PARTS[2], None),
+        part(&WW3_PARTS[1], None),
+    ];
+    if decoy {
+        hits.push(
+            json!({"id": 18868, "series": "World War III (1952)", "year_began": 1952,
+                         "issue_count": 2, "cv_id": null, "gcd_id": null}),
+        );
+        Mock::given(method("GET"))
+            .and(path("/api/issue/"))
+            .and(query_param("series_id", "18868"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(paged(json!([
+                {"id": 900001, "number": "1", "cover_date": "1952-03-01",
+                 "series": {"id": 18868, "name": "World War III", "volume": 1, "year_began": 1952}},
+                {"id": 900002, "number": "2", "cover_date": "1953-05-01",
+                 "series": {"id": 18868, "name": "World War III", "volume": 1, "year_began": 1952}}
+            ]))))
+            .mount(metron)
+            .await;
+    }
     Mock::given(method("GET"))
         .and(path("/api/series/"))
         .and(query_param("name", "52 / World War III"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(paged(json!([
-            part(&WW3_PARTS[3], Some(18485)),
-            part(&WW3_PARTS[0], None),
-            part(&WW3_PARTS[2], None),
-            part(&WW3_PARTS[1], None),
-        ]))))
+        .respond_with(ResponseTemplate::new(200).set_body_json(paged(Value::Array(hits))))
         .expect(1)
         .mount(metron)
         .await;
@@ -1171,7 +1192,7 @@ async fn one_issue_parts_are_found_by_the_providers_name_and_linked_per_issue() 
     let cv = MockServer::start().await;
     let metron = MockServer::start().await;
     let gcd = MockServer::start().await;
-    mount_ww3(&cv, &metron, &gcd).await;
+    mount_ww3(&cv, &metron, &gcd, false).await;
     let app = TestApp::spawn_with_all_providers(cv.uri(), metron.uri(), gcd.uri()).await;
     let db = app.state().db.clone();
     let tmp = tempfile::tempdir().unwrap();
@@ -1279,5 +1300,78 @@ async fn one_issue_parts_are_found_by_the_providers_name_and_linked_per_issue() 
             .unwrap()
             .len(),
         8
+    );
+}
+
+/// The same folder with files that carry no cover date (52/WW III on
+/// prod): number-only matching let a two-issue "World War III" (1952)
+/// out-cover the one-issue parts. Undated issues now take the series'
+/// start year as a floor, so a 1952 cover date is a conflict and the parts
+/// win; the floor confirms nothing, so the match stays "unknown".
+#[tokio::test]
+async fn undated_folder_is_not_claimed_by_a_series_decades_earlier() {
+    let cv = MockServer::start().await;
+    let metron = MockServer::start().await;
+    let gcd = MockServer::start().await;
+    mount_ww3(&cv, &metron, &gcd, true).await;
+    let app = TestApp::spawn_with_all_providers(cv.uri(), metron.uri(), gcd.uri()).await;
+    let db = app.state().db.clone();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = seed_library(&db, tmp.path()).await;
+    let mut seed = SeriesSeed::new(lib, "52/WW III");
+    seed.year = Some(2007);
+    seed.publisher = Some("DC Comics".into());
+    let series_id = seed.insert(&db).await;
+    for n in 1..=4u32 {
+        let p = tmp.path().join(format!("{series_id}-{n}.cbz"));
+        IssueSeed::new(
+            lib,
+            series_id,
+            &p,
+            format!("{series_id} {n}").as_bytes(),
+            n as f64,
+        )
+        .insert(&db)
+        .await;
+    }
+    set_external_id(
+        &db,
+        "series",
+        &series_id.to_string(),
+        &Identifier::with_canonical_url(Source::ComicVine, "18485", "series"),
+        SetBy::Provider(Source::ComicVine),
+    )
+    .await
+    .unwrap();
+    let slug = slug_of(&app, series_id).await;
+    let cookie = register_admin(&app).await;
+
+    let body = analyze(&app, &cookie, &slug, false).await;
+    let m = provider(&body, "metron");
+    assert_eq!(m["status"], "analyzed", "{m}");
+    let cands = m["candidates"].as_array().unwrap();
+    assert_eq!(cands.len(), 5, "four parts + the decoy: {m}");
+    let decoy = cands
+        .iter()
+        .find(|c| c["provider_series_id"] == "18868")
+        .expect("decoy listed");
+    assert_eq!(decoy["assigned"], 0, "{decoy}");
+    assert_eq!(
+        decoy["local_matches"], 0,
+        "1952 / 1953 conflict with a 2007 floor"
+    );
+    assert_eq!(m["uncovered"], json!([]), "{m}");
+    for (n, (sid, _, _)) in WW3_PARTS.iter().enumerate() {
+        let c = cell(m, &(n + 1).to_string());
+        assert_eq!(c["provider_series_id"], sid.to_string(), "#{}: {c}", n + 1);
+        assert_eq!(c["date_match"], "unknown", "no local date to confirm: {c}");
+    }
+    assert_eq!(m["proposed_ranges"].as_array().unwrap().len(), 3, "{m}");
+    assert!(
+        m["confidence_reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r.as_str().unwrap().contains("matched by number only"))
     );
 }
