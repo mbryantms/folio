@@ -604,10 +604,15 @@ body {
  * instead of the UA's grey. (`color-scheme` on each theme block already
  * picks the UA's light/dark variant; this replaces its colours.)
  * Containers that hide their scrollbar on purpose (`[scrollbar-width:none]`
- * on the home rails and the tab strips) keep doing so — those utilities
- * sit on the element and win over this universal rule. iOS/iPadOS
- * overlay scrollbars are not styleable and stay native. */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: hsl(var(--border)) transparent;
+ * on the home rails and the tab strips) keep doing so — but only because
+ * this rule sits in `@layer base`: unlayered author CSS beats every
+ * cascade layer, so an unlayered `*` rule overrode those utilities and
+ * drew a scrollbar under the CBL sheet's tab strip (2026-10-13). Keep it
+ * layered. iOS/iPadOS overlay scrollbars are not styleable and stay
+ * native. */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
 }
