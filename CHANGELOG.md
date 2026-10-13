@@ -13,6 +13,35 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.55.0](https://github.com/mbryantms/folio/compare/v0.54.1...v0.55.0) (2026-10-13)
+
+
+### Added
+
+* **metadata:** local database plumbing — operator-supplied GCD / Local ComicVine SQLite files, modes, probe and admin card (M1) ([#1147](https://github.com/mbryantms/folio/issues/1147)) ([023cc25](https://github.com/mbryantms/folio/commit/023cc25c44d2bdbfe26a12e5796e16ef7c0f9146))
+
+
+### Fixed
+
+* **ui:** toasts move to the top on phones; CBL history Refresh button no longer squished ([#1152](https://github.com/mbryantms/folio/issues/1152)) ([d928710](https://github.com/mbryantms/folio/commit/d928710ea411cc27cde769d08259188ecbfaffcb))
+
+
+### Dependencies
+
+* lock file maintenance ([#1140](https://github.com/mbryantms/folio/issues/1140)) ([13f4122](https://github.com/mbryantms/folio/commit/13f41229f0704ebc46fb662f4f33521924a842d3))
+* lock file maintenance ([#1141](https://github.com/mbryantms/folio/issues/1141)) ([8deb0a7](https://github.com/mbryantms/folio/commit/8deb0a7c895e29dd8fd62de332c57c99eb01cc8d))
+* lock file maintenance ([#1143](https://github.com/mbryantms/folio/issues/1143)) ([5286cd3](https://github.com/mbryantms/folio/commit/5286cd3bd823628818d5dc32e0409d2f6b4e71f7))
+* lock file maintenance ([#1145](https://github.com/mbryantms/folio/issues/1145)) ([0b3e3ae](https://github.com/mbryantms/folio/commit/0b3e3ae48cb9272f97c3d6b914af90a41bd9cf4b))
+* update dependency @tanstack/react-table to v9.2.8 ([#1137](https://github.com/mbryantms/folio/issues/1137)) ([789f6bc](https://github.com/mbryantms/folio/commit/789f6bcaa8eafc53af37c523b001715fb6be96f5))
+* update dependency @types/node to v24.19.2 ([#1150](https://github.com/mbryantms/folio/issues/1150)) ([82f11bb](https://github.com/mbryantms/folio/commit/82f11bbf1ddc2220c22dab86698dea03b7319e26))
+* update dependency lucide-react to v1.54.0 ([#1144](https://github.com/mbryantms/folio/issues/1144)) ([dd3e452](https://github.com/mbryantms/folio/commit/dd3e4524e71a47ef7c82ab53f2bd07d54303c6c0))
+* update dependency lucide-react to v1.55.0 ([#1151](https://github.com/mbryantms/folio/issues/1151)) ([2020836](https://github.com/mbryantms/folio/commit/202083666011e96e8ac26f0b6faabd958beec280))
+* update dependency pnpm to v12.11.0 ([#1146](https://github.com/mbryantms/folio/issues/1146)) ([82767f0](https://github.com/mbryantms/folio/commit/82767f051f9d682a53be61cc0a3d34e127c151a9))
+* update dependency pnpm to v12.11.1 ([#1148](https://github.com/mbryantms/folio/issues/1148)) ([8731450](https://github.com/mbryantms/folio/commit/873145030cb611314b27b6557fd8a1b85163b41f))
+* update dependency pnpm to v12.11.2 ([#1149](https://github.com/mbryantms/folio/issues/1149)) ([ccefab6](https://github.com/mbryantms/folio/commit/ccefab6a95f87af79ba4ad30671f2a5d9b95b7ac))
+* update web-dev-tooling (weekly) ([#1139](https://github.com/mbryantms/folio/issues/1139)) ([74a8fc9](https://github.com/mbryantms/folio/commit/74a8fc99268ef4ad2036ab4bfa9b9d3cd785c6bc))
+* zip 8 → 9 (replaces [#1142](https://github.com/mbryantms/folio/issues/1142)) ([#1153](https://github.com/mbryantms/folio/issues/1153)) ([22301af](https://github.com/mbryantms/folio/commit/22301af9ae48efb7db0bab4a7d5785af5a2df754))
+
 ## [0.54.1](https://github.com/mbryantms/folio/compare/v0.54.0...v0.54.1) (2026-10-11)
 
 
