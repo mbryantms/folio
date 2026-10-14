@@ -171,7 +171,7 @@ tar = "0.4"
 # cover the other common methods. `bzip2` is off: its `libbz2-rs-sys`
 # backend is licensed `bzip2-1.0.6`, which deny.toml does not allow, and
 # BZip2-coded 7z comics are vanishingly rare (they fail as Malformed).
-sevenz-rust2 = { version = "0.23", default-features = false, features = ["ppmd", "deflate"] }
+sevenz-rust2 = { version = "0.24", default-features = false, features = ["ppmd", "deflate"] }
 
 # OCR / text detection (text-detection-1.0 plan, Phase 1).
 # License: GPL-3.0-only on the koharu crates — compatible with
