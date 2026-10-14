@@ -19,6 +19,7 @@
 
 import { Loader2, RefreshCw } from "lucide-react";
 import * as React from "react";
+import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -67,7 +68,10 @@ import {
   MatchOutcomeBanner,
 } from "@/components/library/MetadataMatchCandidates";
 import { MetadataQueryTools } from "@/components/library/MetadataQueryTools";
-import { useMetadataApplyWait } from "@/components/library/useMetadataApplyWait";
+import {
+  type ApplyTarget,
+  useMetadataApplyWait,
+} from "@/components/library/useMetadataApplyWait";
 import { useMetadataCandidateSearch } from "@/components/library/useMetadataCandidateSearch";
 import {
   AUTO_HINT_COUNT,
@@ -90,6 +94,7 @@ export function MetadataMatchDialog({
   onOpenChange,
   scope,
   onApplied,
+  onApplyPending,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
@@ -100,6 +105,9 @@ export function MetadataMatchDialog({
    *  next series instead of dismissing. Omit for the standalone dialog,
    *  which just closes. */
   onApplied?: () => void;
+  /** The user closed the dialog while an apply was still in flight
+   *  (post-audit T1.6): the item is pending, not applied. */
+  onApplyPending?: () => void;
 }) {
   // The compare view renders a wide per-candidate table; widen the
   // dialog while it's active so columns aren't crushed. The inner form
@@ -117,6 +125,7 @@ export function MetadataMatchDialog({
           scope={scope}
           onClose={() => onOpenChange(false)}
           onApplied={onApplied}
+          onApplyPending={onApplyPending}
           open={open}
           onCompareModeChange={setWide}
         />
@@ -133,6 +142,7 @@ export function MetadataMatchForm({
   scope,
   onClose,
   onApplied,
+  onApplyPending,
   open,
   onCompareModeChange,
   embedded = false,
@@ -146,6 +156,9 @@ export function MetadataMatchForm({
   /** Fired after a successful apply re-hydrates. When set, the dialog
    *  defers to it instead of self-closing (worklist auto-advance). */
   onApplied?: () => void;
+  /** Fired when the user closes while an apply is still in flight
+   *  (post-audit T1.6) so the caller counts it as pending, not applied. */
+  onApplyPending?: () => void;
   /** Used to gate the auto-kickoff effect so the search only fires
    *  once when the dialog opens. */
   open: boolean;
@@ -502,20 +515,53 @@ export function MetadataMatchForm({
   };
 
   // Either apply path (single-candidate or composite) drives the same
-  // post-apply waiting / close machinery below.
-  const applyDidSucceed = apply.isSuccess || compositeApply.isSuccess;
+  // post-apply waiting / close machinery below. The response says what to
+  // wait for (post-audit T1.6): the run id, the scoped entity, and —
+  // for a composite apply — whether it already landed synchronously.
   const applyIsPending = apply.isPending || compositeApply.isPending;
+  const applyTarget = React.useMemo<ApplyTarget | null>(() => {
+    const a = apply.data;
+    if (a) {
+      return {
+        runId: a.run_id,
+        seriesId: a.series_id,
+        issueId: a.issue_id ?? null,
+        settled: false,
+      };
+    }
+    const c = compositeApply.data;
+    if (c) {
+      return {
+        runId: c.run_id,
+        seriesId: c.series_id,
+        issueId: c.issue_id ?? null,
+        settled: !c.enqueued_rewrite,
+      };
+    }
+    return null;
+  }, [apply.data, compositeApply.data]);
 
-  // Post-apply waiting (202 → rescan/metadata.applied → rehydrate → resolve)
-  // lives in its own hook; see useMetadataApplyWait for the full rationale.
-  const { waitingForRescan, seriesProgress } = useMetadataApplyWait({
-    applyDidSucceed,
+  // Post-apply waiting (202 → matching rescan/metadata.applied → rehydrate →
+  // resolve) lives in its own hook; see useMetadataApplyWait.
+  const {
+    waitingForRescan,
+    overdue: applyOverdue,
+    failure: applyFailure,
+    seriesProgress,
+  } = useMetadataApplyWait({
+    target: applyTarget,
     libraryId: scope.libraryId,
     isSeriesScope: scope.kind === "series",
     rehydrate,
     onApplied,
     onClose,
   });
+  // Closing while the apply is still in flight: the caller (worklist)
+  // counts it as pending, not applied (D5a).
+  const closeDialog = () => {
+    if (waitingForRescan && onApplyPending) onApplyPending();
+    onClose();
+  };
 
   const resetPicks = () => {
     setExtraHintOrdinals([]);
@@ -541,25 +587,29 @@ export function MetadataMatchForm({
   // WP-2.8 provenance of the current run (what was actually searched).
   const runQuery = candidates.data?.query;
 
-  const description = waitingForRescan
-    ? scope.kind === "series"
-      ? seriesProgress
-        ? `Writing sidecars + scanning ${seriesProgress.done}/${seriesProgress.total}…`
-        : "Writing sidecars + scanning series…"
-      : "Writing sidecar + refreshing…"
-    : isPolling
-      ? "Searching providers…"
-      : runStatus === "awaiting_quota"
-        ? `${
-            owedProviders.length > 0
-              ? `Waiting for ${owedProviders.join(", ")} quota`
-              : "Providers are out of quota"
-          } — ${retryEta ? `resumes in ${retryEta}` : "resumes on its own"}; any provider that already answered isn't asked again.`
-        : runStatus === "failed"
-          ? "Search failed — see Error below."
-          : `${candidates.data?.candidates.length ?? 0} match${
-              (candidates.data?.candidates.length ?? 0) === 1 ? "" : "es"
-            } from ${candidates.data?.providers.join(", ") ?? "providers"}.`;
+  const description = applyFailure
+    ? "Apply failed — see below."
+    : waitingForRescan
+      ? applyOverdue
+        ? "Still applying — this is taking longer than usual."
+        : scope.kind === "series"
+          ? seriesProgress
+            ? `Writing sidecars + scanning ${seriesProgress.done}/${seriesProgress.total}…`
+            : "Writing sidecars + scanning series…"
+          : "Writing sidecar + refreshing…"
+      : isPolling
+        ? "Searching providers…"
+        : runStatus === "awaiting_quota"
+          ? `${
+              owedProviders.length > 0
+                ? `Waiting for ${owedProviders.join(", ")} quota`
+                : "Providers are out of quota"
+            } — ${retryEta ? `resumes in ${retryEta}` : "resumes on its own"}; any provider that already answered isn't asked again.`
+          : runStatus === "failed"
+            ? "Search failed — see Error below."
+            : `${candidates.data?.candidates.length ?? 0} match${
+                (candidates.data?.candidates.length ?? 0) === 1 ? "" : "es"
+              } from ${candidates.data?.providers.join(", ") ?? "providers"}.`;
 
   return (
     <>
@@ -574,10 +624,34 @@ export function MetadataMatchForm({
         </DialogHeader>
       )}
 
+      {applyFailure && (
+        <div
+          role="alert"
+          className="text-destructive border-destructive/40 bg-destructive/5 rounded-md border px-3 py-2 text-sm"
+        >
+          <span className="font-medium">The apply failed.</span>{" "}
+          <span className="break-words">{applyFailure}</span>
+        </div>
+      )}
       {waitingForRescan && (
-        <div className="text-muted-foreground flex items-center gap-2 py-2 text-sm">
+        <div
+          className="text-muted-foreground flex flex-wrap items-center gap-2 py-2 text-sm"
+          role="status"
+        >
           <Loader2 className="h-4 w-4 animate-spin" />
-          {scope.kind === "series" && seriesProgress ? (
+          {applyOverdue ? (
+            <span>
+              Still applying — the job hasn&apos;t reported back yet. You can
+              keep waiting, or follow it under{" "}
+              <Link
+                href="/admin/background-work"
+                className="text-foreground font-medium underline-offset-4 hover:underline"
+              >
+                Background work
+              </Link>
+              .
+            </span>
+          ) : scope.kind === "series" && seriesProgress ? (
             <span>
               Rescanning series ({seriesProgress.done} of {seriesProgress.total}
               )
@@ -883,7 +957,7 @@ export function MetadataMatchForm({
           <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Re-search
         </Button>
         {!embedded && (
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={closeDialog}>
             Close
           </Button>
         )}

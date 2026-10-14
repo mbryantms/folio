@@ -70,6 +70,14 @@ export function invalidationsForEvent(
         // Prefix-match every limit of the recent-applies summary (B14).
         ["admin", "metadata", "recent-applies"],
       ];
+    case "metadata.failed":
+      // The run's row flips to failed; the dashboards + the pill that
+      // counts in-flight metadata work need to notice.
+      return [
+        queryKeys.adminMetadataDashboard,
+        queryKeys.backgroundWork,
+        ["admin", "metadata", "recent-applies"],
+      ];
     case "backfill.completed":
       // A background backfill drain finished — refresh the queue depth pill
       // and the metadata dashboard (which hosts the backfill cards). B17.

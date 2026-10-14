@@ -634,6 +634,10 @@ async fn apply_series_returns_202_when_run_and_candidate_exist() {
     assert_eq!(body["run_id"], run_id.to_string());
     assert_eq!(body["ordinal"], ordinal);
     assert_eq!(body["status"], "queued");
+    // Post-audit T1.6: the client correlates the completion event to this
+    // apply by the scoped entity (+ run id on `metadata.applied`).
+    assert_eq!(body["series_id"], series_id.to_string());
+    assert!(body.get("issue_id").is_none(), "{body}");
 }
 
 #[tokio::test]

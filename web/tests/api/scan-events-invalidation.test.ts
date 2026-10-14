@@ -105,6 +105,20 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
     ],
   },
   {
+    evt: {
+      type: "metadata.failed",
+      library_id: LIB,
+      run_id: "run-1",
+      series_id: "ser-1",
+      error: "boom",
+    },
+    expected: [
+      queryKeys.adminMetadataDashboard,
+      queryKeys.backgroundWork,
+      ["admin", "metadata", "recent-applies"],
+    ],
+  },
+  {
     // Live progress is consumed from the events buffer — no invalidation.
     evt: {
       type: "scan.progress",

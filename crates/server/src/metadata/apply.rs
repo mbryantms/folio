@@ -462,6 +462,7 @@ async fn apply_series_impl(state: &AppState, args: ApplyArgs) -> Result<ApplyOut
             library_id: row.library_id,
             series_id: row.id,
             issue_id: None,
+            run_id: Some(run_id),
         });
     Ok(outcome)
 }
@@ -1370,8 +1371,74 @@ async fn apply_issue_impl(state: &AppState, args: ApplyArgs) -> Result<ApplyOutc
             library_id: row.library_id,
             series_id: row.series_id,
             issue_id: Some(row.id.clone()),
+            run_id: Some(run_id),
         });
     Ok(outcome)
+}
+
+/// `(library_id, series_id, issue_id)` of the entity a metadata run is
+/// scoped to, for the completion / failure events (post-audit T1.6).
+/// `None` when the run or its entity is gone.
+pub(crate) async fn run_targets(
+    state: &AppState,
+    run_id: Uuid,
+) -> Option<(Uuid, Uuid, Option<String>)> {
+    use sea_orm::QuerySelect;
+    let run = crate::metadata::orchestrator::fetch_run(&state.db, run_id)
+        .await
+        .ok()??;
+    let entity_id = run.scope_entity_id?;
+    if run.scope == crate::metadata::orchestrator::scope::ISSUE {
+        let (library_id, series_id): (Uuid, Uuid) = issue::Entity::find_by_id(entity_id.clone())
+            .select_only()
+            .columns([issue::Column::LibraryId, issue::Column::SeriesId])
+            .into_tuple()
+            .one(&state.db)
+            .await
+            .ok()??;
+        return Some((library_id, series_id, Some(entity_id)));
+    }
+    let series_id = Uuid::parse_str(&entity_id).ok()?;
+    let library_id: Uuid = series::Entity::find_by_id(series_id)
+        .select_only()
+        .column(series::Column::LibraryId)
+        .into_tuple()
+        .one(&state.db)
+        .await
+        .ok()??;
+    Some((library_id, series_id, None))
+}
+
+/// Signal that run `run_id`'s DB-direct apply landed, for callers that
+/// write through `write_*_fields` directly (the composite path) and so
+/// skip the per-candidate emit above.
+pub(crate) async fn emit_applied_for_run(state: &AppState, run_id: Uuid) {
+    if let Some((library_id, series_id, issue_id)) = run_targets(state, run_id).await {
+        state
+            .events
+            .emit(crate::library::events::ScanEvent::MetadataApplied {
+                library_id,
+                series_id,
+                issue_id,
+                run_id: Some(run_id),
+            });
+    }
+}
+
+/// Signal that run `run_id`'s apply failed, so a waiting client stops
+/// waiting instead of timing out into a false success.
+pub(crate) async fn emit_failed_for_run(state: &AppState, run_id: Uuid, error: &str) {
+    if let Some((library_id, series_id, issue_id)) = run_targets(state, run_id).await {
+        state
+            .events
+            .emit(crate::library::events::ScanEvent::MetadataFailed {
+                library_id,
+                run_id,
+                series_id,
+                issue_id,
+                error: error.to_owned(),
+            });
+    }
 }
 
 /// Write every issue scalar + junction + cover + external-ids + per-field

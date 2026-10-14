@@ -646,6 +646,10 @@ export type ScanEvent =
       removed: number;
       duration_ms: number;
       batch_id?: string;
+      /** Scope of a narrow scan (post-audit T1.6): absent on library-wide
+       *  scans; `issue_id` only on issue-scoped runs. */
+      series_id?: string;
+      issue_id?: string;
     }
   | {
       type: "scan.failed";
@@ -682,6 +686,18 @@ export type ScanEvent =
       library_id: string;
       series_id: string;
       issue_id?: string;
+      /** The run whose apply landed (post-audit T1.6). */
+      run_id?: string;
+    }
+  | {
+      // A metadata apply job failed (post-audit T1.6) — the waiting dialog
+      // stops instead of timing out into a false success.
+      type: "metadata.failed";
+      library_id: string;
+      run_id: string;
+      series_id: string;
+      issue_id?: string;
+      error: string;
     }
   | {
       // A background backfill drain finished (audit B17). `kind` is

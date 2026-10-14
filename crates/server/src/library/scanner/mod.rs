@@ -705,6 +705,9 @@ async fn finalize_run(
         .await?
         .expect("scan run row");
     let run_batch_id = run_row.batch_id;
+    // Narrow-scan scope for the completion event (post-audit T1.6).
+    let run_series_id = run_row.series_id;
+    let run_issue_id = run_row.issue_id.clone();
     let mut close: ScanRunAM = run_row.into();
     close.state = Set(final_state);
     close.ended_at = Set(Some(Utc::now().fixed_offset()));
@@ -730,6 +733,8 @@ async fn finalize_run(
                 removed: stats.issues_removed,
                 duration_ms: stats.elapsed_ms,
                 batch_id: run_batch_id,
+                series_id: run_series_id,
+                issue_id: run_issue_id,
             }),
             Err(e) => state.events.emit(ScanEvent::Failed {
                 library_id,

@@ -658,6 +658,25 @@ async fn series_scan_progress_totals_are_scoped_to_one_series() {
     .expect("series scan");
 
     let events = drain_scan_events(&mut rx);
+
+    // Post-audit T1.6: a narrow scan's completion names its scope so a
+    // client waiting on *this* series' rescan can tell it from a
+    // neighbour's.
+    let completed = events
+        .iter()
+        .find(|e| matches!(e, ScanEvent::Completed { .. }))
+        .expect("completed event");
+    match completed {
+        ScanEvent::Completed {
+            series_id,
+            issue_id,
+            ..
+        } => {
+            assert_eq!(*series_id, Some(alpha.id), "{completed:?}");
+            assert!(issue_id.is_none(), "{completed:?}");
+        }
+        other => panic!("{other:?}"),
+    }
     let scoped = events
         .iter()
         .find_map(|e| match e {

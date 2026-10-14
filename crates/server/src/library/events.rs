@@ -109,6 +109,15 @@ pub enum ScanEvent {
         duration_ms: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         batch_id: Option<Uuid>,
+        /// Scope of a narrow scan (post-audit T1.6): the series a
+        /// series/issue-scoped run covered, and the issue for an
+        /// issue-scoped run. Absent on library-wide scans. Lets a client
+        /// waiting on *its* rescan (the metadata apply dialog) ignore
+        /// unrelated completions in the same library.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        series_id: Option<Uuid>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        issue_id: Option<String>,
     },
     #[serde(rename = "scan.failed")]
     Failed {
@@ -159,6 +168,23 @@ pub enum ScanEvent {
         series_id: Uuid,
         #[serde(skip_serializing_if = "Option::is_none")]
         issue_id: Option<String>,
+        /// The metadata run whose apply landed (post-audit T1.6). Clients
+        /// that applied a run match on it instead of "any apply in this
+        /// library".
+        #[serde(skip_serializing_if = "Option::is_none")]
+        run_id: Option<Uuid>,
+    },
+    /// A metadata apply job failed (post-audit T1.6). Without it a failed
+    /// apply was indistinguishable from a slow one: the dialog waited out
+    /// its timeout and then claimed success.
+    #[serde(rename = "metadata.failed")]
+    MetadataFailed {
+        library_id: Uuid,
+        run_id: Uuid,
+        series_id: Uuid,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        issue_id: Option<String>,
+        error: String,
     },
     /// A background backfill drain finished (audit B17). `kind` is
     /// `cover_phash` | `variant_cover`; `processed` is the count that landed
@@ -185,7 +211,8 @@ impl ScanEvent {
             | Self::ThumbsStarted { library_id, .. }
             | Self::ThumbsCompleted { library_id, .. }
             | Self::ThumbsFailed { library_id, .. }
-            | Self::MetadataApplied { library_id, .. } => *library_id,
+            | Self::MetadataApplied { library_id, .. }
+            | Self::MetadataFailed { library_id, .. } => *library_id,
             // Library-agnostic; only reached via the SeriesUpdated-guarded
             // throttle, so this arm is never hit at runtime.
             Self::BackfillCompleted { .. } => Uuid::nil(),

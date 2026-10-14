@@ -13425,9 +13425,16 @@
         "required": [
           "run_id",
           "ordinal",
+          "series_id",
           "status"
         ],
         "properties": {
+          "issue_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "ordinal": {
             "type": "integer",
             "format": "int32"
@@ -13435,6 +13442,11 @@
           "run_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "series_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The series the apply targets (the issue's parent for an issue\napply). With `issue_id`, lets the client match the completion\nevent for *this* apply — `metadata.applied` / `metadata.failed`\ncarry `run_id`, the writeback rescan's `scan.completed` carries\nthe scoped `series_id` / `issue_id` (post-audit T1.6)."
           },
           "status": {
             "type": "string",
@@ -16306,7 +16318,9 @@
           "run_id",
           "status",
           "applied_fields",
-          "variants_written"
+          "variants_written",
+          "enqueued_rewrite",
+          "series_id"
         ],
         "properties": {
           "applied_fields": {
@@ -16315,12 +16329,26 @@
               "type": "string"
             }
           },
+          "enqueued_rewrite": {
+            "type": "boolean"
+          },
+          "issue_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "run_id": {
             "type": "string",
             "format": "uuid"
           },
+          "series_id": {
+            "type": "string",
+            "format": "uuid"
+          },
           "status": {
-            "type": "string"
+            "type": "string",
+            "description": "`applied` — the composite apply ran inline. When `enqueued_rewrite`\nis false the rows are current as of this response; when true the\nXML rewrite + scoped rescan are still in flight and the client\nwaits for the matching `scan.completed` (post-audit T1.6)."
           },
           "variants_written": {
             "type": "integer",
