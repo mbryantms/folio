@@ -32,6 +32,14 @@ async fn exec_sqlite(path: &Path, statements: &[&str]) {
     db.close().await.unwrap();
 }
 
+/// Move a file's mtime two seconds into the future so any size/mtime
+/// stamp sees a different file, whatever the filesystem's resolution.
+fn bump_mtime(path: &Path) {
+    let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+    f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(2))
+        .unwrap();
+}
+
 /// A small "Local ComicVine" file: three volumes, five issues, a sync row.
 async fn comicvine_fixture(dir: &Path) -> PathBuf {
     let p = dir.join("localcv.db");
@@ -398,12 +406,17 @@ async fn settings_drive_the_card_and_the_test_endpoint_is_audited() {
     );
 
     // The swapped-file case: replace the file, the cached probe is
-    // re-done because the stamp changed.
+    // re-done because the stamp changed. The stamp is size + mtime, and a
+    // one-row insert can reuse a page (same size) and land within the
+    // previous probe's mtime tick on a coarse filesystem, so move the
+    // mtime forward explicitly — the test is about the swap, not about
+    // the filesystem's timestamp resolution.
     exec_sqlite(
         &cv,
         &["INSERT INTO cv_issue (id, volume_id, issue_number) VALUES (6, 1, '3')"],
     )
     .await;
+    bump_mtime(&cv);
     let (_, list) = call(
         &app,
         &admin,

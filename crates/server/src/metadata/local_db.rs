@@ -369,13 +369,18 @@ pub async fn probe(kind: LocalDbKind, path: &Path) -> Result<LocalDbProbe, Local
 
 /// File identity for the probe cache: size + mtime, so a replaced file
 /// re-probes.
+/// `size:mtime_ns` of the file — the cache's "same file?" check. Nanosecond
+/// mtime, not whole seconds: an in-place SQLite update (a rows insert that
+/// reuses a page) can leave the size unchanged and land in the same second
+/// as the previous probe, and the stale probe was then served (CI flake in
+/// `local_metadata_db::settings_drive_the_card_and_the_test_endpoint_is_audited`).
 fn file_stamp(path: &Path) -> Option<String> {
     let meta = std::fs::metadata(path).ok()?;
     let mtime = meta
         .modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
+        .map(|d| d.as_nanos())
         .unwrap_or(0);
     Some(format!("{}:{}", meta.len(), mtime))
 }
