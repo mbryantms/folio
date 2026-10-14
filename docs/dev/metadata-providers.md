@@ -1614,3 +1614,12 @@ Three rules in `metadata::coverage` handle that shape:
    for a part: a range maps the number, but the provider's number is 1.
 
 Regression: `crates/server/tests/provider_coverage.rs::one_issue_parts_are_found_by_the_providers_name_and_linked_per_issue`.
+
+**Undated local issues.** When a file carries no cover date, number-only
+matching would let any provider series that lists the number claim it.
+`load_local` gives such an issue a `fallback_year` (the earliest dated
+sibling, else the folder year) and `LocalCovIssue::date_match` treats a
+provider cover date more than `FALLBACK_YEAR_SLACK` (3) years before it
+as a conflict. The floor never confirms a match, so the proposal still
+reads "matched by number only". Regression:
+`provider_coverage::undated_folder_is_not_claimed_by_a_series_decades_earlier`.
