@@ -1623,3 +1623,18 @@ provider cover date more than `FALLBACK_YEAR_SLACK` (3) years before it
 as a conflict. The floor never confirms a match, so the proposal still
 reads "matched by number only". Regression:
 `provider_coverage::undated_folder_is_not_claimed_by_a_series_decades_earlier`.
+
+**Bridging from the linked Metron rows (2026-10-14).** The Metron
+cross-reference lookup (`?cv_id=` / `?gcd_id=`) only runs while no
+Metron id is known, so once Metron was accepted on 52/WW III nothing
+read its `gcd_id` any more and GCD came back `no_candidates`.
+`analyze_sources` now also bridges the other way: for every wanted
+provider with no id of its own it reads the linked Metron rows — the
+main, then each `series_provider_range` in number order, at most
+`MAX_METRON_ROW_BRIDGES` (4) — through the metadata cache
+(`cache::get_or_revalidate`, seven days) and takes their `cv_id` /
+`gcd_id` as bridged candidates. A provider can now carry several
+bridged ids (`analyze_provider` takes a `Vec`), so a four-part split
+reaches GCD as four candidates before any GCD search; the cached rows
+make the next analysis and `series_link::cache_bridge` free. Regression:
+`provider_coverage::gcd_is_bridged_from_the_accepted_metron_rows`.

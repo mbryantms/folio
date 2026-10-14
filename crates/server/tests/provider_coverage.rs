@@ -1092,7 +1092,15 @@ const WW3_PARTS: [(u32, &str, u32); 4] = [
 /// `decoy`: Metron's base-name search also returns "World War III" (1952),
 /// a two-issue series that out-covers two one-issue parts by number
 /// alone — what GCD returned on prod for an undated folder.
-async fn mount_ww3(cv: &MockServer, metron: &MockServer, gcd: &MockServer, decoy: bool) {
+/// `analyses`: how many analyses the test runs — each searches Metron's
+/// base name once, and the mock insists on exactly that many.
+async fn mount_ww3(
+    cv: &MockServer,
+    metron: &MockServer,
+    gcd: &MockServer,
+    decoy: bool,
+    analyses: u64,
+) {
     let june = || "2007-06-01".to_owned();
     // ComicVine: the one volume the folder is linked to, #1–4.
     let issues: Issues = (1..=4).map(|n| (n.to_string(), june())).collect();
@@ -1154,7 +1162,7 @@ async fn mount_ww3(cv: &MockServer, metron: &MockServer, gcd: &MockServer, decoy
         .and(path("/api/series/"))
         .and(query_param("name", "52 / World War III"))
         .respond_with(ResponseTemplate::new(200).set_body_json(paged(Value::Array(hits))))
-        .expect(1)
+        .expect(analyses)
         .mount(metron)
         .await;
     // Issue rows carry their series, as Metron's do: that is how a bridged
@@ -1181,6 +1189,168 @@ async fn mount_ww3(cv: &MockServer, metron: &MockServer, gcd: &MockServer, decoy
         .await;
 }
 
+/// The GCD id of a WW3 part in these mocks, keyed by its Metron id.
+fn ww3_gcd_id(metron_id: u32) -> u32 {
+    23380 + (metron_id - 13155)
+}
+
+/// GCD mocks for the four parts: a series row (index + name) and one
+/// overview page each, plus the base-name search that returns all four.
+/// Mounted before `mount_ww3`, whose GCD catch-all would otherwise win.
+async fn mount_gcd_ww3(gcd: &MockServer) {
+    let part = |(mid, name, _): &(u32, &str, u32)| {
+        let gid = ww3_gcd_id(*mid);
+        json!({
+            "api_url": format!("https://www.comics.org/api/series/{gid}/?format=json"),
+            "name": name.trim_end_matches(" (2007)"),
+            "year_began": 2007,
+            "publishing_format": "limited series",
+            "active_issues": [format!("https://www.comics.org/api/issue/{}/?format=json", 70_000 + gid)],
+            "issue_descriptors": ["1"],
+        })
+    };
+    for p in &WW3_PARTS {
+        let gid = ww3_gcd_id(p.0);
+        Mock::given(method("GET"))
+            .and(path(format!("/api/series/{gid}/")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(part(p)))
+            .mount(gcd)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/api/series/{gid}/overview/")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(gcd_overview(
+                &vec![("1".to_owned(), "2007-06-01".to_owned())],
+                70_000 + gid,
+            )))
+            .mount(gcd)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path_regex("^/api/series/name/"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(paged(Value::Array(WW3_PARTS.iter().map(part).collect()))),
+        )
+        .mount(gcd)
+        .await;
+}
+
+/// Prod regression (52/WW III, 2026-10-14): once Metron was accepted (a
+/// user-linked main plus three one-issue ranges) GCD came back with no
+/// candidates at all. The Metron cross-reference only ran while Metron
+/// was unknown, so nothing read the `gcd_id` off Metron's rows any more.
+/// Now the linked Metron rows — the main, then each range — bridge every
+/// part to GCD before a single GCD search, and the rows are fetched once
+/// (the metadata cache answers the second analysis).
+#[tokio::test]
+async fn gcd_is_bridged_from_the_accepted_metron_rows() {
+    let cv = MockServer::start().await;
+    let metron = MockServer::start().await;
+    let gcd = MockServer::start().await;
+    mount_gcd_ww3(&gcd).await;
+    mount_ww3(&cv, &metron, &gcd, false, 2).await;
+    for (mid, name, _) in &WW3_PARTS {
+        let cv_id = (*mid == 13156).then_some(18485);
+        Mock::given(method("GET"))
+            .and(path(format!("/api/series/{mid}/")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": mid, "name": name.trim_end_matches(" (2007)"),
+                "sort_name": name, "year_began": 2007, "issue_count": 1,
+                "cv_id": cv_id, "gcd_id": ww3_gcd_id(*mid),
+            })))
+            .expect(1)
+            .mount(&metron)
+            .await;
+    }
+    let app = TestApp::spawn_with_all_providers(cv.uri(), metron.uri(), gcd.uri()).await;
+    let db = app.state().db.clone();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = seed_library(&db, tmp.path()).await;
+    let mut seed = SeriesSeed::new(lib, "52/WW III");
+    seed.year = Some(2007);
+    seed.publisher = Some("DC Comics".into());
+    let series_id = seed.insert(&db).await;
+    seed_issues(
+        &app,
+        lib,
+        series_id,
+        tmp.path(),
+        &[
+            (1.0, 2007, 6),
+            (2.0, 2007, 6),
+            (3.0, 2007, 6),
+            (4.0, 2007, 6),
+        ],
+    )
+    .await;
+    set_external_id(
+        &db,
+        "series",
+        &series_id.to_string(),
+        &Identifier::with_canonical_url(Source::ComicVine, "18485", "series"),
+        SetBy::Provider(Source::ComicVine),
+    )
+    .await
+    .unwrap();
+    // Metron as the owner left it: Part Four is the user-linked main,
+    // Parts One–Three are cross-reference ranges.
+    set_external_id(
+        &db,
+        "series",
+        &series_id.to_string(),
+        &Identifier::with_canonical_url(Source::Metron, "13156", "series"),
+        SetBy::User,
+    )
+    .await
+    .unwrap();
+    for (n, (mid, name, _)) in WW3_PARTS.iter().take(3).enumerate() {
+        db.execute_unprepared(&format!(
+            "INSERT INTO series_provider_range (id, series_id, source, provider_series_id, provider_series_name, range_low, range_high, declared_year, set_by, first_set_at, last_synced_at) \
+             VALUES ('{}', '{series_id}', 'metron', '{mid}', '{}', '{n}', '{n}', 2007, 'cross_reference', now(), now())",
+            Uuid::new_v4(),
+            name.trim_end_matches(" (2007)").replace('\'', "''"),
+            n = n + 1,
+        ))
+        .await
+        .unwrap();
+    }
+    let slug = slug_of(&app, series_id).await;
+    let cookie = register_admin(&app).await;
+
+    for pass in 1..=2 {
+        let body = analyze(&app, &cookie, &slug, false).await;
+        let g = provider(&body, "gcd");
+        assert_eq!(g["status"], "analyzed", "pass {pass}: {g}");
+        let cands = g["candidates"].as_array().unwrap();
+        assert_eq!(cands.len(), 4, "pass {pass}: {g}");
+        for (mid, _, _) in WW3_PARTS {
+            let gid = ww3_gcd_id(mid).to_string();
+            let c = cands
+                .iter()
+                .find(|c| c["provider_series_id"] == gid.as_str())
+                .unwrap_or_else(|| panic!("pass {pass}: GCD {gid} missing: {g}"));
+            assert_eq!(c["origin"], "bridge", "pass {pass}: {c}");
+        }
+        assert_eq!(g["uncovered"], json!([]), "pass {pass}: {g}");
+        for (n, (mid, _, _)) in WW3_PARTS.iter().enumerate() {
+            let c = cell(g, &(n + 1).to_string());
+            assert_eq!(
+                c["provider_series_id"],
+                ww3_gcd_id(*mid).to_string(),
+                "pass {pass} #{}: {c}",
+                n + 1
+            );
+            assert_eq!(c["date_match"], "confirmed");
+        }
+        assert_eq!(g["proposed_ranges"].as_array().unwrap().len(), 3, "{g}");
+        // Metron itself is unchanged by the bridge.
+        let m = provider(&body, "metron");
+        assert_eq!(m["status"], "analyzed", "{m}");
+        assert_eq!(m["main_series_id"], "13156", "{m}");
+        assert_eq!(m["uncovered"], json!([]), "{m}");
+    }
+}
+
 /// A folder "52/WW III" (ComicVine's name, four issues) that Metron files
 /// as four one-issue "Part N" series. The local name finds none of them;
 /// the ComicVine link bridges to Part Four, whose base name finds the
@@ -1192,7 +1362,7 @@ async fn one_issue_parts_are_found_by_the_providers_name_and_linked_per_issue() 
     let cv = MockServer::start().await;
     let metron = MockServer::start().await;
     let gcd = MockServer::start().await;
-    mount_ww3(&cv, &metron, &gcd, false).await;
+    mount_ww3(&cv, &metron, &gcd, false, 1).await;
     let app = TestApp::spawn_with_all_providers(cv.uri(), metron.uri(), gcd.uri()).await;
     let db = app.state().db.clone();
     let tmp = tempfile::tempdir().unwrap();
@@ -1313,7 +1483,7 @@ async fn undated_folder_is_not_claimed_by_a_series_decades_earlier() {
     let cv = MockServer::start().await;
     let metron = MockServer::start().await;
     let gcd = MockServer::start().await;
-    mount_ww3(&cv, &metron, &gcd, true).await;
+    mount_ww3(&cv, &metron, &gcd, true, 1).await;
     let app = TestApp::spawn_with_all_providers(cv.uri(), metron.uri(), gcd.uri()).await;
     let db = app.state().db.clone();
     let tmp = tempfile::tempdir().unwrap();
