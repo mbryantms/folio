@@ -354,6 +354,9 @@ series-issues        Limit -> Sort (sort_number IS NULL, sort_number, id)
                        -> Index Scan using issues_series_slug_uniq  Index Cond: series_id = $1            [0.04 ms]
 continue-reading     Nested Loop: Bitmap Index Scan progress_records_user_updated_idx (user_id)
                        → issues via pkey / issues_active_id_series_idx → series_pkey; top-N 24               [1.5–3 ms]
+                     post-audit T3.5: the library ACL + age cap now sit inside this query (before the
+                     LIMIT), and `progress_records_unfinished_idx` (user_id, updated_at DESC) WHERE
+                     finished = false AND last_page > 0 holds exactly the rows it can return
 cbl-entries          Index Scan using cbl_entries_list_position_uniq (cbl_list_id)
                        + hydrate: Bitmap Index Scan on issues_pkey (id = ANY) [50 rows]                    [0.3 ms]
 ```

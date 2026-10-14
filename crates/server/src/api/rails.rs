@@ -151,6 +151,30 @@ pub struct CreateDismissalReq {
 
 // ───── Handlers ─────
 
+/// Library-ACL clause for a raw rail query. Pushes the allowed-library
+/// list onto `params` and binds it as `$<params.len()>` — the same
+/// convention `VisibleLibraries::raw_cap_clause` uses, so the two can be
+/// chained on one parameter vector that already holds the fixed binds.
+/// `None` when the caller can see no library at all (the rail is empty;
+/// skip the query). Unrestricted callers get an empty clause.
+/// Post-audit T3.5: the clause runs inside the query so the LIMIT applies
+/// to rows the caller can actually see.
+fn rail_acl_clause(
+    acl: &access::VisibleLibraries,
+    library_expr: &str,
+    params: &mut Vec<sea_orm::Value>,
+) -> Option<String> {
+    if acl.unrestricted {
+        return Some(String::new());
+    }
+    if acl.allowed.is_empty() {
+        return None;
+    }
+    let allowed: Vec<Uuid> = acl.allowed.iter().copied().collect();
+    params.push(allowed.into());
+    Some(format!(" AND {library_expr} = ANY(${})", params.len()))
+}
+
 /// In-progress issues for the calling user, ordered by most recent
 /// activity. Excludes finished issues, issues that haven't actually been
 /// opened (`last_page = 0`), removed/encrypted issues, issues the user
@@ -181,11 +205,21 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
     }
 
     // We pull the columns we need to render `IssueSummaryView` + the
-    // progress overlay + the parent series slug in one query. The
-    // `library_id` round-trips so we can apply the ACL filter in Rust
-    // (the same pattern the rest of the API uses for non-admin users).
-    let rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
+    // progress overlay + the parent series slug in one query. Library
+    // ACL + age cap run *inside* the query, before the LIMIT (post-audit
+    // T3.5): filtering the 24 rows afterwards in Rust let a user with
+    // many records in libraries they cannot see end up with an empty
+    // rail while their visible in-progress issues sat past the cut.
+    let mut params: Vec<sea_orm::Value> = vec![user.id.into()];
+    let Some(acl_clause) = rail_acl_clause(&acl, "i.library_id", &mut params) else {
+        return Json(ContinueReadingView { items: Vec::new() }).into_response();
+    };
+    let cap_clause = acl.raw_cap_clause(
+        "i.library_id",
+        "COALESCE(i.age_rating, s.age_rating)",
+        &mut params,
+    );
+    let sql = format!(
         r#"
             SELECT
                 p.issue_id            AS issue_id,
@@ -207,11 +241,16 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
               AND p.last_page > 0
               AND i.state     = 'active'
               AND i.removed_at IS NULL
+              {acl_clause}{cap_clause}
               AND (d.dismissed_at IS NULL OR p.updated_at > d.dismissed_at)
             ORDER BY p.updated_at DESC
             LIMIT 24
-        "#,
-        [user.id.into()],
+        "#
+    );
+    let rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        sql,
+        params,
     ))
     .all(&app.db)
     .await
@@ -524,10 +563,16 @@ pub(crate) async fn compute_on_deck(
         library_id: Uuid,
         series_age_rating: Option<String>,
     }
-    let series_candidates: Vec<SeriesRow> =
-        match SeriesRow::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r#"
+    // ACL + age cap before the LIMIT (post-audit T3.5) — see
+    // `continue_reading`. The `series_ok` re-check below stays as a
+    // belt-and-braces guard; it no longer decides which rows survive.
+    let mut series_params: Vec<sea_orm::Value> = vec![user_id.into()];
+    let Some(acl_clause) = rail_acl_clause(acl, "s.library_id", &mut series_params) else {
+        return Ok(Vec::new());
+    };
+    let cap_clause = acl.raw_cap_clause("s.library_id", "s.age_rating", &mut series_params);
+    let series_sql = format!(
+        r#"
                 WITH started AS (
                     SELECT i.series_id, MAX(p.updated_at) AS last_activity
                     FROM progress_records p
@@ -560,25 +605,28 @@ pub(crate) async fn compute_on_deck(
                  AND d.target_kind = 'series'
                  AND d.target_id = s.id::text
                 WHERE started.series_id NOT IN (SELECT series_id FROM in_progress)
+                  {acl_clause}{cap_clause}
                   AND (d.dismissed_at IS NULL OR started.last_activity > d.dismissed_at)
                 ORDER BY started.last_activity DESC
                 LIMIT 40
-            "#,
-            [user_id.into()],
-        ))
-        .all(&app.db)
-        .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::error!(error = %e, "rails: on-deck series query failed");
-                return Err(error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    "internal",
-                ));
-            }
-        };
+            "#
+    );
+    let series_candidates: Vec<SeriesRow> = match SeriesRow::find_by_statement(
+        Statement::from_sql_and_values(DbBackend::Postgres, series_sql, series_params),
+    )
+    .all(&app.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "rails: on-deck series query failed");
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
+        }
+    };
 
     // Resolve every visible series candidate's next-up pick in a constant
     // number of round-trips: bulk-hydrate all candidates' issues + the
@@ -653,6 +701,11 @@ pub(crate) async fn compute_on_deck(
         cbl_list_name: String,
         dismissed_at: Option<chrono::DateTime<chrono::FixedOffset>>,
     }
+    // Deliberately NOT ACL-filtered here (post-audit T3.5 left this one
+    // alone): a finished prefix entry in a library the user can no longer
+    // see still counts toward candidacy and frontier activity — the ACL
+    // applies to the *pick* (`hydrate_cbl_picks`), consistent with
+    // `on_deck_cbl_acl_invisible_finished_prefix_still_counts`.
     let cbl_candidates: Vec<CblCandidate> =
         match CblCandidate::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
