@@ -475,6 +475,14 @@ impl From<ApplyCoverPolicy> for crate::jobs::metadata_apply::CoverPolicy {
 pub struct ApplyAcceptedResp {
     pub run_id: Uuid,
     pub ordinal: i32,
+    /// The series the apply targets (the issue's parent for an issue
+    /// apply). With `issue_id`, lets the client match the completion
+    /// event for *this* apply — `metadata.applied` / `metadata.failed`
+    /// carry `run_id`, the writeback rescan's `scan.completed` carries
+    /// the scoped `series_id` / `issue_id` (post-audit T1.6).
+    pub series_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue_id: Option<String>,
     /// `queued` — the apply job is in flight; the candidate row's
     /// `applied_at` flips once it completes. The Runs / Review-Queue
     /// surfaces (M6) reflect the new state via the same polling
@@ -1960,6 +1968,8 @@ pub async fn apply_series(
         Json(ApplyAcceptedResp {
             run_id: req.run_id,
             ordinal: req.ordinal,
+            series_id: s.id,
+            issue_id: None,
             status: "queued".into(),
         }),
     )
@@ -2294,6 +2304,8 @@ pub async fn apply_issue(
         Json(ApplyAcceptedResp {
             run_id: req.run_id,
             ordinal: req.ordinal,
+            series_id: i.series_id,
+            issue_id: Some(i.id.clone()),
             status: "queued".into(),
         }),
     )
@@ -2454,9 +2466,17 @@ impl OverridesUserEdits for CompositeApplyRequest {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CompositeApplyResp {
     pub run_id: Uuid,
+    /// `applied` — the composite apply ran inline. When `enqueued_rewrite`
+    /// is false the rows are current as of this response; when true the
+    /// XML rewrite + scoped rescan are still in flight and the client
+    /// waits for the matching `scan.completed` (post-audit T1.6).
     pub status: String,
     pub applied_fields: Vec<String>,
     pub variants_written: u32,
+    pub enqueued_rewrite: bool,
+    pub series_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue_id: Option<String>,
 }
 
 fn cover_policy_to_writers(p: ApplyCoverPolicy) -> crate::metadata::writers::CoverOverwritePolicy {
@@ -2610,6 +2630,9 @@ pub async fn composite_apply_series(
                 status: "applied".into(),
                 applied_fields: outcome.applied_fields,
                 variants_written: outcome.variants_written,
+                enqueued_rewrite: outcome.enqueued_rewrite,
+                series_id: s.id,
+                issue_id: None,
             })
             .into_response()
         }
@@ -2681,6 +2704,9 @@ pub async fn composite_apply_issue(
                 status: "applied".into(),
                 applied_fields: outcome.applied_fields,
                 variants_written: outcome.variants_written,
+                enqueued_rewrite: outcome.enqueued_rewrite,
+                series_id: i.series_id,
+                issue_id: Some(i.id.clone()),
             })
             .into_response()
         }

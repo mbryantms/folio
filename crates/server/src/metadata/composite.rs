@@ -722,6 +722,12 @@ pub async fn apply_composite(
     if let Ok(o) = &outcome {
         state.similarity.invalidate_all();
         crate::metadata::apply::queue_relationship_suggest(state, run_id, o).await;
+        // DB-direct composite writes go through `write_*_fields`, which
+        // never emit; the writeback path signals via the rescan instead
+        // (post-audit T1.6 — before this the dialog waited out its timeout).
+        if !o.enqueued_rewrite {
+            crate::metadata::apply::emit_applied_for_run(state, run_id).await;
+        }
     }
     outcome
 }

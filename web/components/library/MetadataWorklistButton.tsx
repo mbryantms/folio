@@ -56,6 +56,25 @@ export function nextWorklistIndex(
  * Admin-only: the apply mutation is admin-gated, so non-admins never see
  * the button (they can still browse the filtered worklist).
  */
+/** Closing toast copy: confirmed applies, and applies still in flight when
+ *  the worklist was closed. `null` when there is nothing to say. Exported
+ *  for unit tests. */
+export function worklistSummary(
+  applied: number,
+  pending: number,
+): string | null {
+  const parts: string[] = [];
+  if (applied > 0) {
+    parts.push(`Updated ${applied} series in the worklist`);
+  }
+  if (pending > 0) {
+    parts.push(
+      `${pending} ${pending === 1 ? "apply is" : "applies are"} still running — see Background work`,
+    );
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 export function MetadataWorklistButton({
   series,
 }: {
@@ -65,13 +84,17 @@ export function MetadataWorklistButton({
   const isAdmin = me.data?.role === "admin";
   const [queue, setQueue] = React.useState<WorklistSeries[] | null>(null);
   const [index, setIndex] = React.useState(0);
+  // Applies the user walked away from while still in flight (post-audit
+  // T1.6, D5a). They are never counted as applied.
+  const pendingRef = React.useRef(0);
 
   const finish = React.useCallback((appliedCount: number) => {
     setQueue(null);
     setIndex(0);
-    if (appliedCount > 0) {
-      toast.success(`Updated ${appliedCount} series in the worklist`);
-    }
+    const pending = pendingRef.current;
+    pendingRef.current = 0;
+    const summary = worklistSummary(appliedCount, pending);
+    if (summary) toast.message(summary);
   }, []);
 
   // Fired once an apply lands. Move to the next series, or wrap up when the
@@ -113,8 +136,12 @@ export function MetadataWorklistButton({
           key={current.seriesSlug}
           open
           onOpenChange={(next) => {
-            // Dismissing mid-worklist stops it; surface what landed so far.
+            // Dismissing mid-worklist stops it; surface what landed so far —
+            // only confirmed completions advance `index`, so it is honest.
             if (!next) finish(index);
+          }}
+          onApplyPending={() => {
+            pendingRef.current += 1;
           }}
           scope={{
             kind: "series",

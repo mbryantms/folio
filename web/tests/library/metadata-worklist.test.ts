@@ -6,7 +6,10 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { nextWorklistIndex } from "@/components/library/MetadataWorklistButton";
+import {
+  nextWorklistIndex,
+  worklistSummary,
+} from "@/components/library/MetadataWorklistButton";
 
 describe("nextWorklistIndex", () => {
   it("advances to the next item mid-queue", () => {
@@ -20,5 +23,18 @@ describe("nextWorklistIndex", () => {
 
   it("a single-item queue finishes after one apply", () => {
     expect(nextWorklistIndex(1, 0)).toEqual({ index: 0, done: true });
+  });
+});
+
+describe("worklistSummary (post-audit T1.6)", () => {
+  it("reports confirmed applies and still-running ones separately", () => {
+    expect(worklistSummary(3, 0)).toBe("Updated 3 series in the worklist");
+    expect(worklistSummary(0, 1)).toBe(
+      "1 apply is still running — see Background work",
+    );
+    expect(worklistSummary(2, 2)).toBe(
+      "Updated 2 series in the worklist · 2 applies are still running — see Background work",
+    );
+    expect(worklistSummary(0, 0)).toBeNull();
   });
 });

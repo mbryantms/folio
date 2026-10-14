@@ -242,6 +242,9 @@ pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result
     .await;
     release_series_mutex(&state, series_id).await;
 
+    if let Err(e) = &outcome {
+        apply::emit_failed_for_run(&state, run_id, &e.to_string()).await;
+    }
     if outcome.is_ok() {
         // Persist the matched provider series ids onto the series'
         // external_ids. The DB-direct apply writes these inline; the
@@ -440,6 +443,9 @@ pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(
     )
     .await;
     release_issue_mutex(&state, &issue_id).await;
+    if let Err(e) = &outcome {
+        apply::emit_failed_for_run(&state, run_id, &e.to_string()).await;
+    }
     Ok(())
 }
 

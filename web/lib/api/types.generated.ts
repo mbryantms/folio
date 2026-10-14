@@ -5850,10 +5850,20 @@ export interface components {
             reading_lists: components["schemas"]["AppearanceView"][];
         };
         ApplyAcceptedResp: {
+            issue_id?: string | null;
             /** Format: int32 */
             ordinal: number;
             /** Format: uuid */
             run_id: string;
+            /**
+             * Format: uuid
+             * @description The series the apply targets (the issue's parent for an issue
+             *     apply). With `issue_id`, lets the client match the completion
+             *     event for *this* apply — `metadata.applied` / `metadata.failed`
+             *     carry `run_id`, the writeback rescan's `scan.completed` carries
+             *     the scoped `series_id` / `issue_id` (post-audit T1.6).
+             */
+            series_id: string;
             /**
              * @description `queued` — the apply job is in flight; the candidate row's
              *     `applied_at` flips once it completes. The Runs / Review-Queue
@@ -7179,8 +7189,18 @@ export interface components {
         };
         CompositeApplyResp: {
             applied_fields: string[];
+            enqueued_rewrite: boolean;
+            issue_id?: string | null;
             /** Format: uuid */
             run_id: string;
+            /** Format: uuid */
+            series_id: string;
+            /**
+             * @description `applied` — the composite apply ran inline. When `enqueued_rewrite`
+             *     is false the rows are current as of this response; when true the
+             *     XML rewrite + scoped rescan are still in flight and the client
+             *     waits for the matching `scan.completed` (post-audit T1.6).
+             */
             status: string;
             /** Format: int32 */
             variants_written: number;
