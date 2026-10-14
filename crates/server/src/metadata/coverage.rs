@@ -1645,7 +1645,9 @@ impl SeriesFacts {
 
 /// Analyse every coverage provider for a series. Providers run
 /// concurrently (separate rate buckets); Metron's curated cross-reference
-/// runs first so its `cv_id` / `gcd_id` seed the other two.
+/// runs first so its `cv_id` / `gcd_id` seed the other two — looked up
+/// by a known ComicVine / GCD id while no Metron id is known, read off
+/// the linked Metron rows (main + ranges) once one is.
 pub async fn analyze(state: &AppState, facts: &SeriesFacts) -> Vec<ProviderAnalysis> {
     analyze_sources(state, facts, &COVERAGE_SOURCES).await
 }
@@ -1658,7 +1660,7 @@ pub async fn analyze_sources(
     sources: &[Source],
 ) -> Vec<ProviderAnalysis> {
     let started = Instant::now();
-    let mut bridged: HashMap<Source, String> = HashMap::new();
+    let mut bridged: HashMap<Source, Vec<String>> = HashMap::new();
     // Free cache bridge for every target.
     let known_pairs: Vec<(Source, String)> = facts
         .ext_ids
@@ -1686,14 +1688,15 @@ pub async fn analyze_sources(
         if let Some((id, _)) =
             crate::metadata::series_link::cache_bridge(&state.db, target, &known_pairs).await
         {
-            bridged.insert(target, id);
+            push_bridge(&mut bridged, target, &id);
         }
     }
     // Metron cross-reference (≤ 2 requests): the row carries the CV and
     // GCD ids Metron's editors curated.
     let mut metron_prespent = 0u32;
+    let metron = crate::metadata::apply::build_provider(state, Source::Metron);
     if wanted.contains(&Source::Metron)
-        && let Some(metron) = crate::metadata::apply::build_provider(state, Source::Metron)
+        && let Some(metron) = &metron
         && !known_pairs.iter().any(|(s, _)| *s == Source::Metron)
         && !bridged.contains_key(&Source::Metron)
     {
@@ -1706,10 +1709,10 @@ pub async fn analyze_sources(
             match metron.find_series_by_cross_ref(*src, id).await {
                 Ok(hits) => {
                     if let [hit] = hits.as_slice() {
-                        bridged.insert(Source::Metron, hit.external_id.clone());
+                        push_bridge(&mut bridged, Source::Metron, &hit.external_id);
                         for ident in &hit.identifiers {
-                            if ident.source != *src && !ident.id.is_empty() {
-                                bridged.entry(ident.source).or_insert(ident.id.clone());
+                            if ident.source != *src {
+                                push_bridge(&mut bridged, ident.source, &ident.id);
                             }
                         }
                         break;
@@ -1718,6 +1721,102 @@ pub async fn analyze_sources(
                 Err(e) => {
                     tracing::debug!(error = %e, "coverage: Metron cross-reference failed");
                     break;
+                }
+            }
+        }
+    }
+    // The other way round: a Metron id is known (linked, a range, or just
+    // bridged) but a target still has none. Accepting Metron first used
+    // to starve GCD here — the cross-reference above only runs while
+    // Metron is unknown, so nothing read Metron's `gcd_id` any more. The
+    // linked Metron rows say which GCD / ComicVine series they are, the
+    // main first and then each range, which hands GCD every part of a
+    // split without a search. Rows go through the metadata cache (seven
+    // days), so the next analysis and the series-link resolver bridge
+    // from the cache for free. A target the cache or the cross-reference
+    // already bridged still gets the ranges' siblings from here.
+    let unbridged: Vec<Source> = wanted
+        .iter()
+        .copied()
+        .filter(|t| *t != Source::Metron && !known_pairs.iter().any(|(s, _)| s == t))
+        .collect();
+    if !unbridged.is_empty()
+        && let Some(metron) = &metron
+    {
+        let mut metron_ids: Vec<String> = known_pairs
+            .iter()
+            .filter(|(s, _)| *s == Source::Metron)
+            .map(|(_, id)| id.clone())
+            .chain(bridged.get(&Source::Metron).cloned().unwrap_or_default())
+            .collect();
+        let mut ranges: Vec<&series_provider_range::Model> = facts
+            .ranges
+            .iter()
+            .filter(|r| Source::from_str(&r.source).ok() == Some(Source::Metron))
+            .collect();
+        ranges.sort_by(|a, b| {
+            let low = |r: &series_provider_range::Model| {
+                r.range_low
+                    .as_deref()
+                    .and_then(numeric_value)
+                    .unwrap_or(f64::MAX)
+            };
+            low(a)
+                .partial_cmp(&low(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        metron_ids.extend(ranges.iter().map(|r| r.provider_series_id.clone()));
+        let mut seen: HashSet<String> = HashSet::new();
+        metron_ids.retain(|id| !id.trim().is_empty() && seen.insert(id.clone()));
+        let ttl = crate::metadata::cache::CacheEntity::Series.default_ttl();
+        for id in metron_ids.iter().take(MAX_METRON_ROW_BRIDGES) {
+            let cached = crate::metadata::cache::get(
+                &state.db,
+                Source::Metron,
+                crate::metadata::cache::CacheEntity::Series,
+                id,
+                ttl,
+            )
+            .await
+            .ok()
+            .flatten();
+            let row = match cached {
+                Some(row) => row,
+                None => {
+                    metron_prespent += 1;
+                    let fetched = crate::metadata::cache::get_or_revalidate(
+                        &state.db,
+                        Source::Metron,
+                        crate::metadata::cache::CacheEntity::Series,
+                        id,
+                        ttl,
+                        |validators| {
+                            let metron = metron.clone();
+                            let id = id.clone();
+                            async move {
+                                metron
+                                    .fetch_series_conditional(&id, validators.as_ref())
+                                    .await
+                            }
+                        },
+                    )
+                    .await;
+                    match fetched {
+                        Ok(row) => row,
+                        Err(e) => {
+                            tracing::debug!(
+                                error = %e,
+                                metron_id = %id,
+                                "coverage: Metron series row unavailable for bridging"
+                            );
+                            break;
+                        }
+                    }
+                }
+            };
+            for ident in &row.identifiers {
+                if unbridged.contains(&ident.source) {
+                    push_bridge(&mut bridged, ident.source, &ident.id);
                 }
             }
         }
@@ -1747,13 +1846,31 @@ pub async fn analyze_sources(
                 &state.db,
                 facts,
                 &*provider,
-                bridged.get(source).cloned(),
+                bridged.get(source).cloned().unwrap_or_default(),
                 budget,
             )
             .await
         }
     });
     futures::future::join_all(futs).await
+}
+
+/// How many linked Metron rows (the main, then the ranges in number
+/// order) are read for their `cv_id` / `gcd_id` when a target provider
+/// has no id of its own. Four covers every split seen so far (52/WW III
+/// is four one-issue parts); each row is one Metron request, then cached.
+pub const MAX_METRON_ROW_BRIDGES: usize = 4;
+
+/// Record a bridged provider series id; blank and repeated ids are dropped.
+fn push_bridge(bridged: &mut HashMap<Source, Vec<String>>, source: Source, id: &str) {
+    let id = id.trim();
+    if id.is_empty() {
+        return;
+    }
+    let ids = bridged.entry(source).or_default();
+    if !ids.iter().any(|x| x == id) {
+        ids.push(id.to_owned());
+    }
 }
 
 /// Analyse one provider. Public so tests drive it with a wiremock-backed
@@ -1763,7 +1880,7 @@ pub async fn analyze_provider<C: ConnectionTrait>(
     db: &C,
     facts: &SeriesFacts,
     provider: &dyn MetadataProvider,
-    bridged_id: Option<String>,
+    bridged_ids: Vec<String>,
     mut budget: Budget,
 ) -> ProviderAnalysis {
     let source = provider.id();
@@ -1820,8 +1937,8 @@ pub async fn analyze_provider<C: ConnectionTrait>(
             push(&mut pending, c);
         }
     }
-    if let Some(id) = bridged_id {
-        push(&mut pending, blank(&id, CandidateOrigin::Bridge));
+    for id in &bridged_ids {
+        push(&mut pending, blank(id, CandidateOrigin::Bridge));
     }
     // The series match just applied: its identity facts make it strict
     // (or not) without a name search.

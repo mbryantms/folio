@@ -593,6 +593,12 @@ Default admin (first registered user becomes admin):
     that is a conflict, never a confirmation. Without it the undated
     52/WW III folder let "World War III" (1952) #1–2 out-cover the
     one-issue parts by number alone.
+    **Bridge from linked Metron rows (2026-10-14):** a provider with no
+    id of its own is bridged from the linked Metron rows' `cv_id` /
+    `gcd_id` (main, then ranges; `MAX_METRON_ROW_BRIDGES` = 4; rows go
+    through the metadata cache). The `?cv_id=` cross-reference only
+    runs while Metron is unknown, so without this accepting Metron
+    first left GCD with no candidates at all.
   - **Year gate**: the issue-search gate uses the mapped sub-series'
     `declared_year` when a range applies (so a 2012 relaunch isn't
     dropped against a 2001 parent), and the *broad/unmapped* path is
