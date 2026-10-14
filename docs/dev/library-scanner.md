@@ -395,6 +395,19 @@ Two reconciles run after all folders complete:
   - [`mark_empty_series_removed`](../../crates/server/src/library/reconcile.rs#L310-L338)
     flips the series row to removed when the last active issue is
     gone.
+  - **Only successfully enumerated scopes authorise absence**
+    (post-audit T1.1). A folder the walk could not read (permission
+    denied, dead mount, I/O error) is *unknown*, not absent: it lands
+    in `EnumerationResult::unreadable` / `ArchiveWalk::unreadable`
+    instead of being classified as empty or dropped, every series at
+    or under it is skipped by the "folder missing" sweep
+    (`unreadable_folders` argument), a series folder whose own walk
+    hit an unreadable subfolder is processed but left out of
+    `scanned_folder_paths` (so its unseen files are not removed), and
+    an `UnreadableFolder` health row is raised per path. Only
+    `NotFound` counts as "gone"; the per-issue scan applies the same
+    rule (`UnreadableFile` instead of a removal). The root itself
+    being unreadable still aborts the scan.
 - **Status reconcile**:
   [`reconcile_series_status_many`](../../crates/server/src/library/scanner/reconcile_status.rs#L66)
   ([called from mod.rs:1316](../../crates/server/src/library/scanner/mod.rs#L1316)).
@@ -670,7 +683,8 @@ opaque JSON so adding variants doesn't need a migration.
 | `OrphanedSeriesJson` | warning | A folder with no archives still holds a `series.json` — the sidecar outlived its archives. Reported *instead of* `EmptyFolder` for that folder (root children and folders under a publisher container). | [enumerate Phase 2 → mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ folder }` | Restore the archives, or delete the folder. |
 | `FolderNameMismatch` | warning | The series folder's name disagrees with the dominant ComicInfo `<Series>` of its non-special archives (spec §7.1 — ComicInfo still wins for the series name). See "Folder consistency checks" below for the normalization that keeps this quiet on healthy libraries. | [folder_checks.rs](../../crates/server/src/library/scanner/folder_checks.rs), called from `process_planned_folder` after ingest | `{ folder, series_id, comic_info_series, files }` | Rename the folder, or re-tag the archives if the folder is right. |
 | `MixedSeriesInFolder` | warning | Non-special archives in one series folder carry more than one distinct `<Series>` (spec §7.2). All files stay attributed to the folder's series. | [folder_checks.rs](../../crates/server/src/library/scanner/folder_checks.rs) | `{ folder, series_id, series_values: [{ series, files, example }], distinct_values }` — values sorted most-files-first, capped at `MIXED_SERIES_VALUES_LIMIT` = 10; `example` is one file (relative to the folder) carrying the value. | Move the stray archives into their own series folder. |
-| `UnreadableFile` | error | Per-issue scan target is masked by the library's ignore globs. | [run_issue_phase mod.rs:995](../../crates/server/src/library/scanner/mod.rs#L995) | `{ path, error }` | Adjust `library.ignore_globs`, or move the file out of the ignored path. |
+| `UnreadableFolder` | error | A folder the enumeration or a series folder's archive walk could not read (permission denied, dead mount, I/O error). Its subtree is unknown: nothing at or under it is marked removed while the row is open (§4.5). Resolves on the next full scan that reads it, or on a narrow scan whose scope covers it (`HealthCollector::clear_unreadable_under`); deliberately **not** kept alive by the folder fast-path touch, since `chmod` does not move mtime. | [enumerate.rs](../../crates/server/src/library/scanner/enumerate.rs) → Phase 2 / `process_planned_folder` in [mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ path, error }` | Fix permissions or the mount; rescan. |
+| `UnreadableFile` | error | Per-issue scan target is masked by the library's ignore globs, or its metadata could not be read for a reason other than "not found" (the file is then left as is, not removed). | [run_issue_phase mod.rs:995](../../crates/server/src/library/scanner/mod.rs#L995) | `{ path, error }` | Adjust `library.ignore_globs`, or move the file out of the ignored path. |
 | `UnreadableArchive` | error | OS / archive-layer I/O error opening the archive. | [process.rs:244](../../crates/server/src/library/scanner/process.rs#L244) | `{ path, error }` | Check perms, replace the file. |
 | `MissingComicInfo` | info | Archive has no `ComicInfo.xml`. **Gated** on `library.report_missing_comicinfo=true` — loose libraries don't get spammed by default. | [process.rs:222](../../crates/server/src/library/scanner/process.rs#L222) | `{ path }` | Tag with ComicTagger / Mylar, or flip the per-library setting off. |
 | `MalformedComicInfo` | error | `ComicInfo.xml` exists but XML parse failed. | [process.rs:235](../../crates/server/src/library/scanner/process.rs#L235) | `{ path, error }` | Re-tag. |

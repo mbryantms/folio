@@ -144,6 +144,11 @@ pub async fn reconcile_library_seen(
     // judged against `present_folders`; everything else was simply not
     // looked at and is left alone. `None` = full scan, whole library.
     missing_scope: Option<&[std::path::PathBuf]>,
+    // Folders the enumeration could not read (post-audit T1.1). A series
+    // whose folder is at or under one of these is *unknown*, not gone:
+    // it is never judged against `present_folders`. Only successfully
+    // enumerated scopes authorise absence.
+    unreadable_folders: &HashSet<String>,
     stats: &mut ScanStats,
     events: &mut EventCollector,
 ) -> anyhow::Result<()> {
@@ -197,6 +202,14 @@ pub async fn reconcile_library_seen(
         if let Some(scope) = missing_scope
             && !scope.iter().any(|top| Path::new(folder).starts_with(top))
         {
+            continue;
+        }
+        if path_under_any(folder, unreadable_folders) {
+            tracing::warn!(
+                series_id = %srow.id,
+                folder,
+                "reconcile: series folder is under an unreadable path — not marking removed"
+            );
             continue;
         }
         let series_label = srow.name.clone();
