@@ -151,15 +151,6 @@ pub struct CreateDismissalReq {
 
 // ───── Handlers ─────
 
-/// In-progress issues for the calling user, ordered by most recent
-/// activity. Excludes finished issues, issues that haven't actually been
-/// opened (`last_page = 0`), removed/encrypted issues, issues the user
-/// can't see (library ACL), and issues whose dismissal is still current
-/// (no newer progress write past the dismissal timestamp).
-///
-/// Implementation note: dismissals require comparing `progress_records.
-/// updated_at` against `rail_dismissals.dismissed_at`, so we let Postgres
-/// do that in one SQL pass rather than re-filtering rows in Rust.
 /// Library-ACL clause for a raw rail query. Pushes the allowed-library
 /// list onto `params` and binds it as `$<params.len()>` — the same
 /// convention `VisibleLibraries::raw_cap_clause` uses, so the two can be
@@ -184,6 +175,15 @@ fn rail_acl_clause(
     Some(format!(" AND {library_expr} = ANY(${})", params.len()))
 }
 
+/// In-progress issues for the calling user, ordered by most recent
+/// activity. Excludes finished issues, issues that haven't actually been
+/// opened (`last_page = 0`), removed/encrypted issues, issues the user
+/// can't see (library ACL), and issues whose dismissal is still current
+/// (no newer progress write past the dismissal timestamp).
+///
+/// Implementation note: dismissals require comparing `progress_records.
+/// updated_at` against `rail_dismissals.dismissed_at`, so we let Postgres
+/// do that in one SQL pass rather than re-filtering rows in Rust.
 #[utoipa::path(
     operation_id = "rails_continue_reading",    get,
     path = "/me/continue-reading",
