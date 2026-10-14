@@ -2069,3 +2069,148 @@ async fn recent_issues_respects_library_acl() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["id"], b1);
 }
+
+// ───── Post-audit T3.5: ACL runs before the LIMIT ─────
+//
+// Before: the rail queries took the newest 24 / 40 rows of the user's
+// progress and filtered by library ACL in Rust afterwards, so a user with
+// many records in libraries they could not see (a revoked grant, a shared
+// account) got an empty rail while their visible in-progress issues sat
+// past the cut.
+
+#[tokio::test]
+async fn continue_reading_acl_filters_before_the_limit() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-acl-limit@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    // 30 in-progress records in a library the user cannot see, all newer
+    // than the visible ones — enough to fill the rail's LIMIT 24 on
+    // their own.
+    let (hidden_lib, hidden_series, hidden_first) = seed_one_issue(&app, "acl-hidden").await;
+    let mut hidden_ids = vec![hidden_first];
+    for n in 2..=30 {
+        hidden_ids.push(
+            seed_extra_issue(
+                &app,
+                hidden_lib,
+                hidden_series,
+                n as f64,
+                &format!("acl-hidden-{n}"),
+            )
+            .await,
+        );
+    }
+    // 3 visible in-progress records, older.
+    let (visible_lib, visible_series, visible_first) = seed_one_issue(&app, "acl-visible").await;
+    grant_access(&app, user.user_id, visible_lib).await;
+    let visible_ids = [
+        visible_first,
+        seed_extra_issue(&app, visible_lib, visible_series, 2.0, "acl-visible-2").await,
+        seed_extra_issue(&app, visible_lib, visible_series, 3.0, "acl-visible-3").await,
+    ];
+    let old = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    for (n, id) in visible_ids.iter().enumerate() {
+        write_progress(
+            &app,
+            user.user_id,
+            id,
+            3,
+            false,
+            old + chrono::Duration::minutes(n as i64),
+        )
+        .await;
+    }
+    let newer = chrono::DateTime::parse_from_rfc3339("2030-02-01T00:00:00Z").unwrap();
+    for (n, id) in hidden_ids.iter().enumerate() {
+        write_progress(
+            &app,
+            user.user_id,
+            id,
+            3,
+            false,
+            newer + chrono::Duration::minutes(n as i64),
+        )
+        .await;
+    }
+
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().unwrap();
+    let mut got: Vec<&str> = items
+        .iter()
+        .map(|c| c["issue"]["id"].as_str().unwrap())
+        .collect();
+    got.sort();
+    let mut want: Vec<&str> = visible_ids.iter().map(String::as_str).collect();
+    want.sort();
+    assert_eq!(
+        got, want,
+        "every visible in-progress issue, none of the hidden ones"
+    );
+}
+
+#[tokio::test]
+async fn on_deck_acl_filters_before_the_limit() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-od-acl-limit@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+
+    let t0 = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z").unwrap();
+    // 3 visible series with a finished #1 and an unread #2, older activity.
+    let mut visible_next = Vec::new();
+    for n in 0..3 {
+        let (lib, series, first) = seed_one_issue(&app, &format!("od-acl-vis-{n}")).await;
+        grant_access(&app, user.user_id, lib).await;
+        let second = seed_extra_issue(&app, lib, series, 2.0, &format!("od-acl-vis-{n}-2")).await;
+        write_progress(
+            &app,
+            user.user_id,
+            &first,
+            19,
+            true,
+            t0 + chrono::Duration::minutes(n),
+        )
+        .await;
+        visible_next.push(second);
+    }
+    // 45 hidden series started more recently — more than the query's
+    // LIMIT 40 window on their own.
+    let t1 = chrono::DateTime::parse_from_rfc3339("2030-02-01T00:00:00Z").unwrap();
+    for n in 0..45 {
+        let (lib, series, first) = seed_one_issue(&app, &format!("od-acl-hid-{n}")).await;
+        seed_extra_issue(&app, lib, series, 2.0, &format!("od-acl-hid-{n}-2")).await;
+        write_progress(
+            &app,
+            user.user_id,
+            &first,
+            19,
+            true,
+            t1 + chrono::Duration::minutes(n),
+        )
+        .await;
+    }
+
+    let (status, body) = http(&app, Method::GET, "/api/me/on-deck", Some(&user), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().unwrap();
+    let mut got: Vec<&str> = items
+        .iter()
+        .filter(|c| c["kind"] == "series_next")
+        .map(|c| c["issue"]["id"].as_str().unwrap())
+        .collect();
+    got.sort();
+    let mut want: Vec<&str> = visible_next.iter().map(String::as_str).collect();
+    want.sort();
+    assert_eq!(
+        got, want,
+        "every visible series' next issue, none of the hidden ones"
+    );
+}

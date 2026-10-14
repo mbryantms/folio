@@ -130,6 +130,7 @@ mod m20270609_000001_series_named_specials_by_folder;
 mod m20270610_000001_mylar_cvdb_genre_marker;
 mod m20270611_000001_tagger_notes_ids;
 mod m20270612_000001_entity_profile;
+mod m20270613_000001_progress_unfinished_idx;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -268,6 +269,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270610_000001_mylar_cvdb_genre_marker::Migration),
             Box::new(m20270611_000001_tagger_notes_ids::Migration),
             Box::new(m20270612_000001_entity_profile::Migration),
+            Box::new(m20270613_000001_progress_unfinished_idx::Migration),
         ]
     }
 }
