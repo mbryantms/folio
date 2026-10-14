@@ -224,6 +224,10 @@ impl ScanKind {
 struct PlannedFolder {
     path: PathBuf,
     archives: Vec<PathBuf>,
+    /// Subfolders the archive walk could not read (post-audit T1.1). When
+    /// non-empty the folder's walk is *incomplete*: it is processed, its
+    /// files are seen, but it never authorises removal of the unseen ones.
+    unreadable: Vec<enumerate::UnreadableFolder>,
     known_series_id: Option<Uuid>,
     skipped_unchanged: bool,
     /// Set when the series was discovered beneath a publisher container
@@ -1100,11 +1104,11 @@ async fn known_series_by_folder(
 async fn list_archives_for_plan(
     folder: &std::path::Path,
     ignore: &crate::library::ignore::IgnoreRules,
-) -> anyhow::Result<Vec<PathBuf>> {
+) -> anyhow::Result<enumerate::ArchiveWalk> {
     let folder_for_walk = folder.to_path_buf();
     let ignore_for_walk = ignore.clone();
     tokio::task::spawn_blocking(move || {
-        enumerate::list_archives_with(&folder_for_walk, &ignore_for_walk)
+        enumerate::walk_archives_with(&folder_for_walk, &ignore_for_walk)
     })
     .await
     .map_err(|e| anyhow::anyhow!("archive walk task failed: {e}"))
@@ -1139,7 +1143,7 @@ async fn build_library_scan_plan(
             async move {
                 let mut known_series_id = known_entry.map(|(id, _)| id);
                 let mut skipped_unchanged = false;
-                let archives = if !force {
+                let walk = if !force {
                     if let Some((_id, Some(last))) = known_entry {
                         let folder_for_walk = folder.clone();
                         let ignore_for_walk = Arc::clone(&ignore);
@@ -1154,20 +1158,21 @@ async fn build_library_scan_plan(
                         .await
                         .map_err(|e| anyhow::anyhow!("archive walk task failed: {e}"))?;
                         skipped_unchanged = !walk.changed_since;
-                        walk.archives
+                        walk
                     } else {
-                        let archives = list_archives_for_plan(&folder, &ignore).await?;
+                        let walk = list_archives_for_plan(&folder, &ignore).await?;
                         if let Some((id, _)) = known_entry {
                             known_series_id = Some(id);
                         }
-                        archives
+                        walk
                     }
                 } else {
                     list_archives_for_plan(&folder, &ignore).await?
                 };
                 Ok::<_, anyhow::Error>(PlannedFolder {
                     path: folder,
-                    archives,
+                    archives: walk.archives,
+                    unreadable: walk.unreadable,
                     known_series_id,
                     skipped_unchanged,
                     publisher_hint,
@@ -1193,12 +1198,13 @@ async fn build_series_scan_plan(
     series_id: Uuid,
     ignore: &crate::library::ignore::IgnoreRules,
 ) -> anyhow::Result<ScanPlan> {
-    let archives = list_archives_for_plan(folder, ignore).await?;
-    let total_archives = archives.len() as u64;
+    let walk = list_archives_for_plan(folder, ignore).await?;
+    let total_archives = walk.archives.len() as u64;
     Ok(ScanPlan {
         folders: vec![PlannedFolder {
             path: folder.to_path_buf(),
-            archives,
+            archives: walk.archives,
+            unreadable: walk.unreadable,
             known_series_id: Some(series_id),
             skipped_unchanged: false,
             publisher_hint: None,
@@ -1245,6 +1251,9 @@ async fn run_series_phases(
 
     let plan_started = Instant::now();
     let plan = build_series_scan_plan(folder, series_id, &ignore).await?;
+    // The folder itself was read; a previously unreadable subfolder that
+    // was not re-reported this run has cleared (post-audit T1.1).
+    health.clear_unreadable_under(folder);
     stats.record_phase("plan", plan_started.elapsed());
     progress = ProgressState::new(ScanKind::Series, plan.total_work(), 1, plan.total_archives);
     emit_progress(
@@ -1299,7 +1308,9 @@ async fn run_series_phases(
     // Per-series scan walks exactly one folder. Pass it as the
     // singleton folder set so the reconcile pass only soft-deletes
     // issues actually located under it.
-    let scanned_folder_paths: HashSet<String> = if outcome.processed {
+    // … and only when the walk was complete: an unreadable subfolder
+    // leaves its files unseen, not absent (post-audit T1.1).
+    let scanned_folder_paths: HashSet<String> = if outcome.processed && outcome.complete {
         std::iter::once(folder_path_str).collect()
     } else {
         HashSet::new()
@@ -1414,6 +1425,30 @@ async fn run_issue_phase(
     )
     .await;
     let path = PathBuf::from(&row.file_path);
+    // Post-audit T1.1: only `NotFound` is "the file is gone". A permission
+    // or mount error leaves the file unknown — report it, don't remove it.
+    if let Err(e) = std::fs::metadata(&path)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        health.emit(crate::library::health::IssueKind::UnreadableFile {
+            path,
+            error: e.to_string(),
+        });
+        progress.completed = 1;
+        progress.health_issues = health.count() as u64;
+        emit_progress(
+            state,
+            lib.id,
+            scan_id,
+            &progress,
+            "complete",
+            "file",
+            Some(row.file_path.clone()),
+            stats,
+        )
+        .await;
+        return Ok(());
+    }
     if !path.exists() {
         if row.removed_at.is_none() {
             let now = Utc::now().fixed_offset();
@@ -1675,6 +1710,14 @@ async fn run_phases(
         (layout, present, None)
     };
     stats.record_phase("enumerate", enumerate_started.elapsed());
+    // Narrow scans never run the library-wide auto-resolve; tell the
+    // collector which tops were read so a cleared `UnreadableFolder`
+    // under them resolves (post-audit T1.1).
+    if let Some(tops) = reconcile_scope.as_deref() {
+        for top in tops {
+            health.clear_unreadable_under(top);
+        }
+    }
 
     for f in &layout.files_at_root {
         health.emit(IssueKind::FileAtRoot { path: f.clone() });
@@ -1694,6 +1737,23 @@ async fn run_phases(
             skipped_archives: ambiguous.skipped_archives.clone(),
             skipped_archive_count: ambiguous.skipped_archive_count,
         });
+    }
+    // Post-audit T1.1: an unreadable scope is unknown, not absent. Raise a
+    // health row per folder and keep every series at or under it out of
+    // the "folder missing" sweep below.
+    let mut unreadable_folders: HashSet<String> = HashSet::new();
+    for u in &layout.unreadable {
+        tracing::warn!(
+            library_id = %lib.id,
+            path = %u.path.display(),
+            error = %u.error,
+            "scanner: folder unreadable — its subtree is excluded from removal"
+        );
+        health.emit(IssueKind::UnreadableFolder {
+            path: u.path.clone(),
+            error: u.error.clone(),
+        });
+        unreadable_folders.insert(u.path.to_string_lossy().into_owned());
     }
 
     let plan_started = Instant::now();
@@ -1793,6 +1853,7 @@ async fn run_phases(
                     Ok(ProcessFolderOutcome {
                         series_id: None,
                         processed: false,
+                        complete: false,
                         series_json: None,
                         seen_paths: Vec::new(),
                     })
@@ -1852,7 +1913,11 @@ async fn run_phases(
                     if outcome.processed {
                         scanned_series.insert(series_id);
                         seen_paths.extend(outcome.seen_paths);
-                        scanned_folder_paths.insert(folder_path_str);
+                        // Only a *complete* walk authorises removal of the
+                        // files it did not see (post-audit T1.1).
+                        if outcome.complete {
+                            scanned_folder_paths.insert(folder_path_str);
+                        }
                     }
                 }
             }
@@ -1955,6 +2020,7 @@ async fn run_phases(
         &scanned_folder_paths,
         &present_folders,
         reconcile_scope.as_deref(),
+        &unreadable_folders,
         stats,
         events,
     )
@@ -2096,6 +2162,21 @@ async fn process_planned_folder(
     let known_series_id = planned.known_series_id;
     let archives = planned.archives;
     let publisher_hint = planned.publisher_hint;
+    // Post-audit T1.1: surface every subfolder the walk could not read and
+    // remember that the folder's file set is incomplete.
+    let walk_complete = planned.unreadable.is_empty();
+    for u in planned.unreadable {
+        tracing::warn!(
+            folder = %folder.display(),
+            path = %u.path.display(),
+            error = %u.error,
+            "scanner: subfolder unreadable — files under it are not marked removed"
+        );
+        health.emit(crate::library::health::IssueKind::UnreadableFolder {
+            path: u.path,
+            error: u.error,
+        });
+    }
 
     // Read series.json up-front so the early-skip branches can still
     // surface it to the caller. The sidecar is the authoritative
@@ -2119,6 +2200,7 @@ async fn process_planned_folder(
         return Ok(ProcessFolderOutcome {
             series_id: known_series_id,
             processed: false,
+            complete: false,
             series_json,
             seen_paths: Vec::new(),
         });
@@ -2128,6 +2210,7 @@ async fn process_planned_folder(
         return Ok(ProcessFolderOutcome {
             series_id: known_series_id,
             processed: false,
+            complete: false,
             series_json,
             seen_paths: Vec::new(),
         });
@@ -2486,6 +2569,7 @@ async fn process_planned_folder(
     Ok(ProcessFolderOutcome {
         series_id: Some(series_id),
         processed: true,
+        complete: walk_complete,
         series_json,
         seen_paths: archives
             .into_iter()
@@ -2498,6 +2582,10 @@ async fn process_planned_folder(
 struct ProcessFolderOutcome {
     series_id: Option<Uuid>,
     processed: bool,
+    /// The folder's archive walk read every subfolder. `false` when a
+    /// subfolder was unreadable: the folder was processed, but it must not
+    /// authorise removal of the files it could not see (post-audit T1.1).
+    complete: bool,
     series_json: Option<parsers::series_json::SeriesMetadata>,
     seen_paths: Vec<String>,
 }

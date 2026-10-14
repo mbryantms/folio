@@ -40,6 +40,10 @@ const KIND_COPY: Record<string, KindCopy> = {
     hint: "Reshape the folder to Series/archives or Publisher/Series/archives; its archives are not imported until then.",
   },
   UnreadableFile: { label: "Unreadable file" },
+  UnreadableFolder: {
+    label: "Unreadable folder",
+    hint: "Check permissions or the mount. Nothing under it is marked removed until a scan can read it again.",
+  },
   UnreadableArchive: {
     label: "Unreadable archive",
     hint: "Check permissions or replace the file.",

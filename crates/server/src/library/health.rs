@@ -36,6 +36,14 @@ pub enum IssueKind {
         path: PathBuf,
         error: String,
     },
+    /// A folder the scan could not read (permission denied, dead mount,
+    /// I/O error). Nothing at or under it is marked removed while the row
+    /// is open: the subtree is unknown, not absent. Resolves on the next
+    /// full scan that reads the folder (post-audit T1.1).
+    UnreadableFolder {
+        path: PathBuf,
+        error: String,
+    },
     UnreadableArchive {
         path: PathBuf,
         error: String,
@@ -197,6 +205,7 @@ impl IssueKind {
             Self::FileAtRoot { .. } => "FileAtRoot",
             Self::EmptyFolder { .. } => "EmptyFolder",
             Self::UnreadableFile { .. } => "UnreadableFile",
+            Self::UnreadableFolder { .. } => "UnreadableFolder",
             Self::UnreadableArchive { .. } => "UnreadableArchive",
             Self::MissingComicInfo { .. } => "MissingComicInfo",
             Self::MalformedComicInfo { .. } => "MalformedComicInfo",
@@ -218,6 +227,7 @@ impl IssueKind {
     pub fn severity(&self) -> Severity {
         match self {
             Self::UnreadableFile { .. }
+            | Self::UnreadableFolder { .. }
             | Self::UnreadableArchive { .. }
             | Self::MalformedComicInfo { .. }
             | Self::MalformedArchive { .. } => Severity::Error,
@@ -247,6 +257,7 @@ impl IssueKind {
             Self::FileAtRoot { path } => format!("FileAtRoot:{}", path.display()),
             Self::EmptyFolder { path } => format!("EmptyFolder:{}", path.display()),
             Self::UnreadableFile { path, .. } => format!("UnreadableFile:{}", path.display()),
+            Self::UnreadableFolder { path, .. } => format!("UnreadableFolder:{}", path.display()),
             Self::UnreadableArchive { path, .. } => format!("UnreadableArchive:{}", path.display()),
             Self::MissingComicInfo { path } => format!("MissingComicInfo:{}", path.display()),
             Self::MalformedComicInfo { path, .. } => {
@@ -336,6 +347,7 @@ impl IssueKind {
             Self::FileAtRoot { path }
             | Self::EmptyFolder { path }
             | Self::UnreadableFile { path, .. }
+            | Self::UnreadableFolder { path, .. }
             | Self::UnreadableArchive { path, .. }
             | Self::MissingComicInfo { path }
             | Self::MalformedComicInfo { path, .. }
@@ -423,6 +435,11 @@ pub struct HealthCollector {
     /// max mtime ≤ last_scanned_at). Open issues whose payload references a
     /// path under one of these folders are kept alive on the same principle.
     touched_folders: Vec<String>,
+    /// Scopes this run enumerated *successfully* (post-audit T1.1). An
+    /// open `UnreadableFolder` row at or under one of them that was not
+    /// re-emitted this run is resolved at finalize — on narrow scans too,
+    /// which never run the library-wide auto-resolve sweep.
+    cleared_unreadable_scopes: Vec<String>,
     auto_resolve: bool,
     events: Option<Broadcaster>,
 }
@@ -436,6 +453,7 @@ impl HealthCollector {
             issues: Vec::new(),
             touched_files: Vec::new(),
             touched_folders: Vec::new(),
+            cleared_unreadable_scopes: Vec::new(),
             auto_resolve: true,
             events: None,
         }
@@ -446,6 +464,7 @@ impl HealthCollector {
     /// scope and therefore not re-emitted.
     pub fn new_scoped(library_id: Uuid, scan_id: Uuid, started_at: DateTime<FixedOffset>) -> Self {
         Self {
+            cleared_unreadable_scopes: Vec::new(),
             auto_resolve: false,
             ..Self::new(library_id, scan_id, started_at)
         }
@@ -491,6 +510,14 @@ impl HealthCollector {
             .push(folder.to_string_lossy().into_owned());
     }
 
+    /// Record that `scope` was read successfully this run, so an open
+    /// `UnreadableFolder` row at or under it (not re-emitted) resolves at
+    /// finalize (post-audit T1.1).
+    pub fn clear_unreadable_under(&mut self, scope: &Path) {
+        self.cleared_unreadable_scopes
+            .push(scope.to_string_lossy().into_owned());
+    }
+
     pub fn count(&self) -> usize {
         self.issues.len()
     }
@@ -499,6 +526,8 @@ impl HealthCollector {
         self.issues.append(&mut other.issues);
         self.touched_files.append(&mut other.touched_files);
         self.touched_folders.append(&mut other.touched_folders);
+        self.cleared_unreadable_scopes
+            .append(&mut other.cleared_unreadable_scopes);
         self.auto_resolve = self.auto_resolve && other.auto_resolve;
         if self.events.is_none() {
             self.events = other.events;
@@ -556,10 +585,16 @@ impl HealthCollector {
         // this library and inspect each row's payload in Rust — open-issue
         // cardinality is bounded so the per-scan cost is negligible.
         if !self.touched_files.is_empty() || !self.touched_folders.is_empty() {
+            // `UnreadableFolder` is excluded on purpose: a folder that was
+            // fast-path skipped on mtime is one the walk *could* read now
+            // (chmod does not move mtime), so keeping its row alive would
+            // pin the error forever. It resolves via the sweep below or
+            // `cleared_unreadable_scopes` instead (post-audit T1.1).
             let open: Vec<library_health_issue::Model> = library_health_issue::Entity::find()
                 .filter(library_health_issue::Column::LibraryId.eq(self.library_id))
                 .filter(library_health_issue::Column::ResolvedAt.is_null())
                 .filter(library_health_issue::Column::Kind.ne("PageCountMismatch"))
+                .filter(library_health_issue::Column::Kind.ne("UnreadableFolder"))
                 .all(db)
                 .await?;
             let touched_files: HashSet<&str> =
@@ -590,6 +625,48 @@ impl HealthCollector {
                 library_health_issue::Entity::update_many()
                     .col_expr(library_health_issue::Column::LastSeenAt, Expr::value(now))
                     .filter(library_health_issue::Column::Id.is_in(to_touch))
+                    .exec(db)
+                    .await?;
+            }
+        }
+
+        // Narrow scans: an `UnreadableFolder` row under a scope this run
+        // read successfully, and did not re-emit, has cleared.
+        if !self.cleared_unreadable_scopes.is_empty() {
+            let emitted: HashSet<String> = self
+                .issues
+                .iter()
+                .filter(|i| matches!(i, IssueKind::UnreadableFolder { .. }))
+                .map(IssueKind::fingerprint)
+                .collect();
+            let open: Vec<library_health_issue::Model> = library_health_issue::Entity::find()
+                .filter(library_health_issue::Column::LibraryId.eq(self.library_id))
+                .filter(library_health_issue::Column::ResolvedAt.is_null())
+                .filter(library_health_issue::Column::Kind.eq("UnreadableFolder"))
+                .all(db)
+                .await?;
+            let under_scope = |p: &str| {
+                self.cleared_unreadable_scopes.iter().any(|scope| {
+                    p == scope
+                        || (p.len() > scope.len()
+                            && p.starts_with(scope.as_str())
+                            && p.as_bytes()[scope.len()] == b'/')
+                })
+            };
+            let to_resolve: Vec<Uuid> = open
+                .into_iter()
+                .filter(|row| !emitted.contains(&row.fingerprint))
+                .filter(|row| {
+                    paths_in_payload(&row.payload)
+                        .iter()
+                        .any(|p| under_scope(p))
+                })
+                .map(|r| r.id)
+                .collect();
+            if !to_resolve.is_empty() {
+                library_health_issue::Entity::update_many()
+                    .col_expr(library_health_issue::Column::ResolvedAt, Expr::value(now))
+                    .filter(library_health_issue::Column::Id.is_in(to_resolve))
                     .exec(db)
                     .await?;
             }

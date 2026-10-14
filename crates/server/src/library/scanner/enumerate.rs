@@ -38,11 +38,39 @@ pub struct SeriesCandidate {
     pub publisher_hint: Option<String>,
 }
 
+/// A folder the walk could not read (permission denied, dead mount,
+/// I/O error). Post-audit T1.1: its subtree is *unknown*, not absent — the
+/// scanner never authorises removal under it and raises
+/// [`crate::library::health::IssueKind::UnreadableFolder`] instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnreadableFolder {
+    pub path: PathBuf,
+    pub error: String,
+}
+
+impl UnreadableFolder {
+    fn new(path: impl Into<PathBuf>, error: &std::io::Error) -> Self {
+        Self {
+            path: path.into(),
+            error: error.to_string(),
+        }
+    }
+}
+
+/// `NotFound` means the entry is genuinely gone (a removal the reconcile
+/// should see); every other error leaves its subtree unknown.
+fn is_unreadable(e: &std::io::Error) -> bool {
+    e.kind() != std::io::ErrorKind::NotFound
+}
+
 #[derive(Debug, Default)]
 pub struct EnumerationResult {
     pub series_folders: Vec<SeriesCandidate>,
     pub files_at_root: Vec<PathBuf>,
     pub empty_folders: Vec<PathBuf>,
+    /// Folders whose read failed. A known series at or under one of these
+    /// paths is excluded from the "folder missing" sweep (post-audit T1.1).
+    pub unreadable: Vec<UnreadableFolder>,
     /// Folders that violate the two-layouts contract. M2 surfaces these
     /// via [`crate::library::health::IssueKind::AmbiguousFolder`].
     pub ambiguous_folders: Vec<AmbiguousFolder>,
@@ -122,6 +150,17 @@ fn has_series_json(folder: &Path) -> bool {
 pub struct ArchiveWalk {
     pub archives: Vec<PathBuf>,
     pub changed_since: bool,
+    /// Directories inside the folder the walk could not descend into. A
+    /// non-empty list makes the walk *incomplete*: files under those
+    /// directories were not seen, so the folder must not authorise their
+    /// removal (post-audit T1.1).
+    pub unreadable: Vec<UnreadableFolder>,
+}
+
+impl ArchiveWalk {
+    pub fn is_complete(&self) -> bool {
+        self.unreadable.is_empty()
+    }
 }
 
 /// Case-insensitive series-subfolder allowlist. A folder with one of
@@ -265,7 +304,12 @@ pub fn enumerate_with(root: &Path, ignore: &IgnoreRules) -> std::io::Result<Enum
 fn classify_root_child(child: PathBuf, ignore: &IgnoreRules, result: &mut EnumerationResult) {
     let ft = match std::fs::metadata(&child) {
         Ok(m) => m.file_type(),
-        Err(_) => return,
+        Err(e) => {
+            if is_unreadable(&e) {
+                result.unreadable.push(UnreadableFolder::new(child, &e));
+            }
+            return;
+        }
     };
     if ft.is_file() {
         // Spec §2.2: no archive files at the library root.
@@ -293,6 +337,9 @@ fn classify_root_child(child: PathBuf, ignore: &IgnoreRules, result: &mut Enumer
                 .ambiguous_folders
                 .push(AmbiguousFolder::new(child, reason, ignore));
         }
+        FolderShape::Unreadable(error) => result
+            .unreadable
+            .push(UnreadableFolder { path: child, error }),
     }
 }
 
@@ -359,8 +406,14 @@ pub fn enumerate_scoped(
             .filter_map(|s| top_of(s).flatten())
             .collect();
         for child in read_dir_filtered(root, ignore)? {
-            let Ok(meta) = std::fs::metadata(&child) else {
-                continue;
+            let meta = match std::fs::metadata(&child) {
+                Ok(m) => m,
+                Err(e) => {
+                    if is_unreadable(&e) {
+                        result.unreadable.push(UnreadableFolder::new(child, &e));
+                    }
+                    continue;
+                }
             };
             if meta.is_file() {
                 result.files_at_root.push(child);
@@ -369,8 +422,14 @@ pub fn enumerate_scoped(
             }
         }
         for known_top in known_tops {
-            if !known_top.exists() {
-                tops.insert(known_top);
+            match std::fs::metadata(&known_top) {
+                Ok(_) => {}
+                // Gone for real: in scope, so its series reconcile away.
+                Err(e) if !is_unreadable(&e) => {
+                    tops.insert(known_top);
+                }
+                // Unknown: out of scope, nothing under it is touched.
+                Err(e) => result.unreadable.push(UnreadableFolder::new(known_top, &e)),
             }
         }
     }
@@ -407,12 +466,21 @@ fn classify_publisher_children(
         .map(|n| n.to_string_lossy().into_owned());
     let children = match read_dir_filtered(publisher, ignore) {
         Ok(v) => v,
-        Err(_) => return,
+        Err(e) => {
+            // Every series under this publisher is unknown, not gone.
+            result.unreadable.push(UnreadableFolder::new(publisher, &e));
+            return;
+        }
     };
     for sub in children {
         let ft = match std::fs::metadata(&sub) {
             Ok(m) => m.file_type(),
-            Err(_) => continue,
+            Err(e) => {
+                if is_unreadable(&e) {
+                    result.unreadable.push(UnreadableFolder::new(sub, &e));
+                }
+                continue;
+            }
         };
         if !ft.is_dir() {
             // Stray files inside a publisher folder violate the contract.
@@ -461,6 +529,11 @@ fn classify_publisher_children(
                     .ambiguous_folders
                     .push(AmbiguousFolder::new(sub, reason, ignore));
             }
+            FolderShape::Unreadable(error) => {
+                result
+                    .unreadable
+                    .push(UnreadableFolder { path: sub, error });
+            }
         }
     }
 }
@@ -471,6 +544,10 @@ enum FolderShape {
     PublisherContainer,
     Empty,
     Ambiguous(String),
+    /// The folder (or, when it has no archives of its own, one of its
+    /// subfolders) could not be read. Never "empty": its contents are
+    /// unknown (post-audit T1.1).
+    Unreadable(String),
 }
 
 /// Classify a directory per the two-layouts contract.
@@ -490,10 +567,11 @@ fn classify_folder(folder: &Path, ignore: &IgnoreRules) -> FolderShape {
     let mut nonallowlist_subdirs_with_archives = Vec::<PathBuf>::new();
     let mut allowlist_subdirs_with_archives = Vec::<PathBuf>::new();
     let mut any_subdir_present = false;
+    let mut subdir_error: Option<String> = None;
 
     let entries = match std::fs::read_dir(folder) {
         Ok(it) => it,
-        Err(_) => return FolderShape::Empty,
+        Err(e) => return FolderShape::Unreadable(e.to_string()),
     };
 
     for entry in entries.flatten() {
@@ -533,11 +611,17 @@ fn classify_folder(folder: &Path, ignore: &IgnoreRules) -> FolderShape {
 
         if ft.is_dir() {
             any_subdir_present = true;
-            if subdir_has_archive(&path, ignore) {
-                if is_series_subfolder_name(&name_str) {
-                    allowlist_subdirs_with_archives.push(path);
-                } else {
-                    nonallowlist_subdirs_with_archives.push(path);
+            match subdir_has_archive(&path, ignore) {
+                Ok(true) => {
+                    if is_series_subfolder_name(&name_str) {
+                        allowlist_subdirs_with_archives.push(path);
+                    } else {
+                        nonallowlist_subdirs_with_archives.push(path);
+                    }
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    subdir_error.get_or_insert_with(|| format!("{}: {e}", path.display()));
                 }
             }
         }
@@ -569,6 +653,12 @@ fn classify_folder(folder: &Path, ignore: &IgnoreRules) -> FolderShape {
         );
     }
 
+    if let Some(error) = subdir_error {
+        // No readable archives anywhere, but a subfolder could not be
+        // walked — the folder is unknown, not empty.
+        return FolderShape::Unreadable(error);
+    }
+
     if any_subdir_present {
         // Folder has subdirs but none contain archives. Treat as empty
         // for health-issue purposes (existing EmptyFolder behavior).
@@ -578,23 +668,41 @@ fn classify_folder(folder: &Path, ignore: &IgnoreRules) -> FolderShape {
     FolderShape::Empty
 }
 
-fn subdir_has_archive(folder: &Path, ignore: &IgnoreRules) -> bool {
+/// Does `folder` (recursively) contain a recognised archive? `Err` when a
+/// directory in the walk could not be read *and* no archive was found
+/// before it — an archive seen anywhere makes the answer `Ok(true)`
+/// regardless.
+fn subdir_has_archive(folder: &Path, ignore: &IgnoreRules) -> Result<bool, walkdir::Error> {
     use crate::library::ignore::is_recognized_archive_ext;
     use walkdir::WalkDir;
-    WalkDir::new(folder)
+    let mut first_error = None;
+    for entry in WalkDir::new(folder)
         .follow_links(false)
         .into_iter()
         .filter_entry(|e| !ignore.should_skip(e.path()))
-        .filter_map(Result::ok)
-        .any(|e| {
-            e.file_type().is_file()
-                && e.path()
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .map(str::to_ascii_lowercase)
-                    .as_deref()
-                    .is_some_and(is_recognized_archive_ext)
-        })
+    {
+        let e = match entry {
+            Ok(e) => e,
+            Err(err) => {
+                first_error.get_or_insert(err);
+                continue;
+            }
+        };
+        if e.file_type().is_file()
+            && e.path()
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+                .is_some_and(is_recognized_archive_ext)
+        {
+            return Ok(true);
+        }
+    }
+    match first_error {
+        Some(err) => Err(err),
+        None => Ok(false),
+    }
 }
 
 fn read_dir_filtered(root: &Path, ignore: &IgnoreRules) -> std::io::Result<Vec<PathBuf>> {
@@ -634,16 +742,31 @@ pub fn list_archives(folder: &Path) -> Vec<PathBuf> {
 }
 
 /// Same as [`list_archives`], but additionally honors user ignore globs.
+/// Callers that must know whether the walk was complete use
+/// [`walk_archives_with`]; this drops that signal.
 pub fn list_archives_with(folder: &Path, ignore: &IgnoreRules) -> Vec<PathBuf> {
+    walk_archives_with(folder, ignore).archives
+}
+
+/// [`list_archives_with`] that also reports the directories it could not
+/// descend into (`ArchiveWalk::unreadable`), so the scanner can tell an
+/// absent file from an unseen one (post-audit T1.1).
+pub fn walk_archives_with(folder: &Path, ignore: &IgnoreRules) -> ArchiveWalk {
     use crate::library::ignore::is_recognized_archive_ext;
     use walkdir::WalkDir;
-    let mut out = Vec::new();
+    let mut out = ArchiveWalk::default();
     for entry in WalkDir::new(folder)
         .follow_links(false)
         .into_iter()
         .filter_entry(|e| !ignore.should_skip(e.path()))
-        .filter_map(Result::ok)
     {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(err) => {
+                record_walk_error(&mut out.unreadable, folder, err);
+                continue;
+            }
+        };
         if !entry.file_type().is_file() {
             continue;
         }
@@ -655,10 +778,28 @@ pub fn list_archives_with(folder: &Path, ignore: &IgnoreRules) -> Vec<PathBuf> {
         if let Some(ext) = ext
             && is_recognized_archive_ext(&ext)
         {
-            out.push(path.to_path_buf());
+            out.archives.push(path.to_path_buf());
         }
     }
     out
+}
+
+/// Record a walkdir error as an unreadable directory. `NotFound` is not
+/// an error for this purpose (the entry vanished mid-walk; the reconcile
+/// should see it as gone); any other error leaves its subtree unknown.
+fn record_walk_error(out: &mut Vec<UnreadableFolder>, folder: &Path, err: walkdir::Error) {
+    let path = err
+        .path()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| folder.to_path_buf());
+    match err.io_error() {
+        Some(io) if !is_unreadable(io) => {}
+        Some(io) => out.push(UnreadableFolder::new(path, io)),
+        None => out.push(UnreadableFolder {
+            path,
+            error: err.to_string(),
+        }),
+    }
 }
 
 pub fn list_archives_changed_since(
@@ -673,8 +814,18 @@ pub fn list_archives_changed_since(
         .follow_links(false)
         .into_iter()
         .filter_entry(|e| !ignore.should_skip(e.path()))
-        .filter_map(Result::ok)
     {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(err) => {
+                // An unreadable subfolder counts as a change too: the
+                // folder must not be fast-path skipped on the strength of
+                // an mtime the walk could not fully observe.
+                record_walk_error(&mut out.unreadable, folder, err);
+                out.changed_since = true;
+                continue;
+            }
+        };
         if let Ok(meta) = entry.metadata()
             && let Ok(m) = meta.modified()
         {
