@@ -21,21 +21,27 @@ import {
 } from "@/lib/api/mutations";
 
 /**
- * Continue Reading rail card. Shows the issue cover with a thin progress
- * bar at the bottom, the parent series name + issue number above the
- * title, and the shared kebab + play affordances on hover.
+ * Continue Reading card. Shows the issue cover with a thin progress bar
+ * at the bottom, the parent series name + issue number above the title,
+ * and the shared kebab + play affordances on hover.
  *
- * The card's main click target is the reader (the issue auto-resumes at
- * `last_page` server-side). The kebab menu offers mark-read / mark-unread
- * / hide-from-rail, matching the cross-card affordance contract from
- * `CoverMenuButton`.
+ * `primaryAction` decides where the card's main tap goes. The Continue
+ * Reading *rail* resumes the issue in the reader (the issue auto-resumes
+ * at `last_page` server-side) and offers "Issue details" as a secondary
+ * link + sheet action (post-audit T2.1, D1); the rail's "View all" page
+ * and any other surface keep the issue detail page as the primary
+ * target, like every other cover-bearing card. The kebab menu offers
+ * mark-read / mark-unread / hide-from-rail, matching the cross-card
+ * affordance contract from `CoverMenuButton`.
  */
 export function ProgressIssueCard({
   card,
   className,
+  primaryAction = "details",
 }: {
   card: ContinueReadingCard;
   className?: string;
+  primaryAction?: "reader" | "details";
 }) {
   const dismiss = useDismissRailItem();
   const upsertProgress = useUpsertIssueProgress();
@@ -54,7 +60,18 @@ export function ProgressIssueCard({
     ref_id: issue.id,
     label: `${headerTitle} ${numberLabel}`,
   });
+  const resumeHref = readerUrl(issue);
+  const detailsHref = issueUrl(issue);
+  const resumesOnTap = primaryAction === "reader";
   const menuActions: CoverMenuAction[] = [
+    ...(resumesOnTap
+      ? [
+          {
+            label: "Issue details",
+            onSelect: () => router.push(detailsHref),
+          },
+        ]
+      : []),
     {
       label: "Mark as read",
       onSelect: () =>
@@ -86,27 +103,32 @@ export function ProgressIssueCard({
   const longPress = useCoverLongPressActions({
     primary: {
       label: `Continue reading ${headerTitle}`,
-      onSelect: () => router.push(readerUrl(issue)),
+      onSelect: () => router.push(resumeHref),
     },
     actions: menuActions,
     label: `${card.series_name} · ${numberLabel}`,
   });
 
-  // Cover/title click → issue detail page (matches every other cover-
-  // bearing card). The yellow play overlay is the ONLY surface that
-  // routes straight to the reader.
+  // Cover/title click → the primary target: the reader on the Continue
+  // Reading rail (a touch user had no way to resume except the long-
+  // press sheet — the play overlay is hover-only), the issue detail page
+  // everywhere else. The yellow play overlay always routes to the reader.
   //
   // Collection-actions dialog renders as a sibling of <Link>, not a
   // child — React synthetic events bubble through the React tree even
   // across portals, so a click inside the dialog would otherwise
   // propagate to the Link and route away.
   return (
-    <>
+    <div className={cn("flex flex-col", className)}>
       <Link
-        href={issueUrl(issue)}
+        href={resumesOnTap ? resumeHref : detailsHref}
+        aria-label={
+          resumesOnTap
+            ? `Continue reading ${headerTitle}`
+            : `${headerTitle} details`
+        }
         className={cn(
           "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
-          className,
         )}
       >
         <div className="relative" {...longPress.wrapperProps}>
@@ -133,7 +155,7 @@ export function ProgressIssueCard({
             actions={menuActions}
           />
           <QuickReadOverlay
-            readerHref={readerUrl(issue)}
+            readerHref={resumeHref}
             label={`Continue reading ${headerTitle}`}
           />
         </div>
@@ -154,9 +176,17 @@ export function ProgressIssueCard({
           </div>
         </div>
       </Link>
+      {resumesOnTap ? (
+        <Link
+          href={detailsHref}
+          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring mx-1 w-fit rounded-sm px-1 text-[11px] underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:outline-none"
+        >
+          Details
+        </Link>
+      ) : null}
       {collectionActions.dialog}
       {longPress.sheet}
-    </>
+    </div>
   );
 }
 

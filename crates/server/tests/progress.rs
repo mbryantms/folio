@@ -1499,3 +1499,165 @@ async fn run_tagged_restart_without_a_record_is_idempotent() {
     assert_eq!(json["run"].as_i64(), Some(1));
     assert_eq!(json["page"].as_i64(), Some(3));
 }
+
+// ───────── Post-audit T1.3: the merge is one atomic statement ─────────
+//
+// `upsert_for_run` used to read the row, decide in Rust, do archive I/O
+// for the page hash, then write. Two writers could lose the furthest
+// page, a stale in-flight write could drag a fresh restart back to the
+// old run, and two first writes raced into a PK violation (500). The
+// tests below hammer the handler concurrently through the router.
+
+async fn post_progress_concurrently(
+    app: &TestApp,
+    auth: &Authed,
+    bodies: Vec<serde_json::Value>,
+) -> Vec<(StatusCode, serde_json::Value)> {
+    let mut handles = Vec::with_capacity(bodies.len());
+    for body in bodies {
+        let router = app.router.clone();
+        let session = auth.session.clone();
+        let csrf = auth.csrf.clone();
+        handles.push(tokio::spawn(async move {
+            let req = Request::builder()
+                .method(Method::POST)
+                .uri("/api/progress")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={session}; __Host-comic_csrf={csrf}"),
+                )
+                .header("X-CSRF-Token", &csrf)
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            let resp = router.oneshot(req).await.unwrap();
+            let status = resp.status();
+            (status, body_json(resp.into_body()).await)
+        }));
+    }
+    let mut out = Vec::with_capacity(handles.len());
+    for h in handles {
+        out.push(h.await.unwrap());
+    }
+    out
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_first_writes_all_succeed_and_keep_the_furthest_page() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "race@example.com").await;
+    let issue_id = seed_issue(&app).await;
+
+    // No row exists yet: every writer takes the INSERT path at once.
+    let bodies: Vec<_> = (0..50)
+        .map(|p| serde_json::json!({ "issue_id": issue_id, "page": p }))
+        .collect();
+    let results = post_progress_concurrently(&app, &auth, bodies).await;
+    for (status, json) in &results {
+        assert_eq!(*status, StatusCode::OK, "{json}");
+    }
+
+    let (status, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({ "issue_id": issue_id, "page": 0 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["page"], 49, "implicit writes never regress: {json}");
+    assert_eq!(json["run"], 0);
+    assert_eq!(json["finished"], false);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn restart_racing_an_old_run_write_stays_restarted() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "restart@example.com").await;
+    let issue_id = seed_issue(&app).await;
+
+    // Finished once in run 0.
+    let (status, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({ "issue_id": issue_id, "page": 19, "finished": true, "run": 0 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+
+    // Device A restarts (opens run 1 at page 0) while device B, still on
+    // run 0, keeps sending page 19 — interleaved many times.
+    let mut bodies = Vec::new();
+    for _ in 0..20 {
+        bodies.push(serde_json::json!({
+            "issue_id": issue_id, "page": 0, "run": 0, "restart": true
+        }));
+        bodies.push(serde_json::json!({ "issue_id": issue_id, "page": 19, "run": 0 }));
+    }
+    for (status, json) in post_progress_concurrently(&app, &auth, bodies).await {
+        assert_eq!(status, StatusCode::OK, "{json}");
+    }
+
+    let (status, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({ "issue_id": issue_id, "page": 2, "run": 1 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    // Exactly one restart happened (idempotent on the run tag), and the
+    // old-run page-19 writes never touched the new run.
+    assert_eq!(json["run"], 1, "{json}");
+    assert_eq!(json["page"], 2, "{json}");
+    assert_eq!(json["finished"], false, "{json}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_writes_into_one_run_keep_the_furthest_page() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "furthest@example.com").await;
+    let issue_id = seed_issue(&app).await;
+    post_progress(
+        &app,
+        &auth,
+        serde_json::json!({ "issue_id": issue_id, "page": 1 }),
+    )
+    .await;
+
+    // Two devices flip pages at once: whatever interleaving the pool
+    // produces, the furthest page survives (no lost update).
+    let bodies: Vec<_> = (0..40)
+        .map(|i| serde_json::json!({ "issue_id": issue_id, "page": (i * 7) % 19, "run": 0 }))
+        .collect();
+    for (status, json) in post_progress_concurrently(&app, &auth, bodies).await {
+        assert_eq!(status, StatusCode::OK, "{json}");
+    }
+    let (_, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({ "issue_id": issue_id, "page": 0, "run": 0 }),
+    )
+    .await;
+    assert_eq!(json["page"], 18, "{json}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn older_run_write_is_ignored_and_returns_the_stored_row() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "older@example.com").await;
+    let issue_id = seed_issue(&app).await;
+    post_progress(
+        &app,
+        &auth,
+        serde_json::json!({ "issue_id": issue_id, "page": 5, "run": 0, "restart": true }),
+    )
+    .await;
+    let (status, json) = post_progress(
+        &app,
+        &auth,
+        serde_json::json!({ "issue_id": issue_id, "page": 15, "run": 0 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["run"], 1, "{json}");
+    assert_eq!(json["page"], 5, "stale run must not move the page: {json}");
+}

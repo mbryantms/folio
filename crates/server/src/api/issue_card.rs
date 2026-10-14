@@ -22,8 +22,9 @@ use uuid::Uuid;
 
 use crate::api::series::IssueSummaryView;
 
-/// The 14 columns an issue card (and the ACL / next-up walks that pick
-/// which cards to show) reads.
+/// The 16 columns an issue card (and the ACL / next-up walks that pick
+/// which cards to show) reads. `month` / `day` ride along for the
+/// release-date sort cursor (post-audit T2.3).
 #[derive(Clone, Debug, DerivePartialModel)]
 #[sea_orm(entity = "issue::Entity")]
 pub(crate) struct IssueCardRow {
@@ -35,6 +36,8 @@ pub(crate) struct IssueCardRow {
     pub number_raw: Option<String>,
     pub sort_number: Option<f64>,
     pub year: Option<i32>,
+    pub month: Option<i32>,
+    pub day: Option<i32>,
     pub page_count: Option<i32>,
     pub state: String,
     pub special_type: Option<String>,
@@ -55,6 +58,8 @@ impl From<issue::Model> for IssueCardRow {
             number_raw: m.number_raw,
             sort_number: m.sort_number,
             year: m.year,
+            month: m.month,
+            day: m.day,
             page_count: m.page_count,
             state: m.state,
             special_type: m.special_type,

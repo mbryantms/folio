@@ -2845,17 +2845,23 @@ where
     V: Clone + Into<sea_orm::Value>,
 {
     match c_value {
+        // NULLs sort last in both directions, so every page after a
+        // non-NULL boundary must still admit the NULL bucket — without
+        // the `IS NULL` arm the bucket was unreachable once the boundary
+        // row was the last non-NULL value (post-audit T2.3).
         Some(v) => {
             if asc {
                 select.filter(
                     Condition::any()
                         .add(sort_col.gt(v))
+                        .add(sort_col.is_null())
                         .add(Condition::all().add(sort_col.eq(v)).add(id_col.gt(c_id))),
                 )
             } else {
                 select.filter(
                     Condition::any()
                         .add(sort_col.lt(v))
+                        .add(sort_col.is_null())
                         .add(Condition::all().add(sort_col.eq(v)).add(id_col.lt(c_id))),
                 )
             }
@@ -2890,17 +2896,20 @@ where
     V: Clone + Into<sea_orm::Value>,
 {
     match c_value {
+        // See `apply_f64_cursor`: the NULL bucket stays reachable.
         Some(v) => {
             if asc {
                 select.filter(
                     Condition::any()
                         .add(sort_col.gt(v))
+                        .add(sort_col.is_null())
                         .add(Condition::all().add(sort_col.eq(v)).add(id_col.gt(c_id))),
                 )
             } else {
                 select.filter(
                     Condition::any()
                         .add(sort_col.lt(v))
+                        .add(sort_col.is_null())
                         .add(Condition::all().add(sort_col.eq(v)).add(id_col.lt(c_id))),
                 )
             }

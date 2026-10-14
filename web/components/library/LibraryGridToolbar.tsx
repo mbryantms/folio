@@ -25,15 +25,17 @@ const SERIES_SORT_LABELS: Record<Exclude<SeriesSort, "random">, string> = {
   name: "Name",
   created_at: "Recently added",
   updated_at: "Recently updated",
-  year: "Release date",
+  // Series only carry a year — say so (post-audit T2.3).
+  year: "Year",
 };
 
 const ISSUE_SORT_LABELS: Record<IssueSort, string> = {
   number: "Issue number",
   created_at: "Recently added",
   updated_at: "Recently updated",
+  // Issues order by (year, month, day) server-side, so the label holds.
   year: "Release date",
-  page_count: "Time to read",
+  page_count: "Page count",
   user_rating: "My rating",
 };
 

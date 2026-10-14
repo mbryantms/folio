@@ -97,6 +97,16 @@ export function useReaderProgressWrite(opts: {
    *  into `initialRun`. */
   restartRun?: boolean;
   totalPages: number;
+  /**
+   * Furthest page currently on screen. In double-page view the resume
+   * anchor (`currentPage`) is the first page of the spread group, so a
+   * final pair `[n-2, n-1]` never had `currentPage === n-1` and the
+   * issue never finished (post-audit T1.4). The caller passes the
+   * group's last page here; `finished` keys on it while the persisted
+   * resume page stays the anchor (so resuming lands on the spread).
+   * Defaults to `currentPage`.
+   */
+  furthestPage?: number;
   incognito: boolean;
   /**
    * Webtoon-only (audit risk #5): persist a monotonic high-water page so
@@ -114,9 +124,11 @@ export function useReaderProgressWrite(opts: {
     initialRun = 0,
     restartRun = false,
     totalPages,
+    furthestPage,
     incognito,
     monotonic = false,
   } = opts;
+  const lastVisiblePage = Math.max(currentPage, furthestPage ?? currentPage);
   const qc = useQueryClient();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const writer = useMemo(
@@ -161,9 +173,10 @@ export function useReaderProgressWrite(opts: {
     if (!issueId) return;
     if (incognito) return;
     if (timer.current) clearTimeout(timer.current);
-    const onLastPage = currentPage >= totalPages - 1;
-    // `finished` stays keyed on the REAL current page — only assert it
-    // when genuinely on the last page, never off the high-water mark.
+    const onLastPage = lastVisiblePage >= totalPages - 1;
+    // `finished` stays keyed on the REAL pages on screen — only assert
+    // it when the last page is genuinely visible, never off the
+    // high-water mark.
     const page = monotonic
       ? nextPersistedProgressPage(highWater.current, currentPage)
       : currentPage;
@@ -180,7 +193,15 @@ export function useReaderProgressWrite(opts: {
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [currentPage, incognito, issueId, monotonic, writer, totalPages]);
+  }, [
+    currentPage,
+    lastVisiblePage,
+    incognito,
+    issueId,
+    monotonic,
+    writer,
+    totalPages,
+  ]);
 
   useEffect(() => {
     if (incognito) {

@@ -8,7 +8,7 @@ import {
   Loader2,
   XCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   AlertDialog,
@@ -45,6 +45,37 @@ import type {
 
 const n = (v: number) => v.toLocaleString("en-US");
 
+function StaleSnapshotNotice({
+  updatedAt,
+  onRetry,
+}: {
+  updatedAt: number;
+  onRetry: () => void;
+}) {
+  // Ticks once a second so the age keeps counting while the poll
+  // keeps failing (`Date.now()` is impure, so it lives in an effect).
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, []);
+  const ageSec = Math.max(0, Math.round((now - updatedAt) / 1000));
+  return (
+    <div
+      role="status"
+      className="border-border bg-muted/40 text-muted-foreground flex flex-wrap items-center gap-3 rounded-md border px-3 py-2 text-sm"
+    >
+      <span>
+        Couldn&apos;t refresh. Showing the snapshot from {ageSec}s ago ·
+        retrying…
+      </span>
+      <Button size="sm" variant="outline" onClick={onRetry}>
+        Retry now
+      </Button>
+    </div>
+  );
+}
+
 /**
  * The one place that shows everything in flight: per-library scan +
  * thumbnail + hashing state, every other queue, and unfinished metadata
@@ -52,7 +83,8 @@ const n = (v: number) => v.toLocaleString("en-US");
  * that owns the detail (a library's Live scan page, the queue page, …).
  */
 export function BackgroundWorkClient() {
-  const { data, isLoading } = useBackgroundWork();
+  const { data, isLoading, isError, dataUpdatedAt, refetch } =
+    useBackgroundWork();
 
   if (isLoading) {
     return (
@@ -61,17 +93,30 @@ export function BackgroundWorkClient() {
       </div>
     );
   }
-  // Keep showing the last good snapshot through a failed poll.
   if (!data) {
     return (
-      <p className="text-destructive text-sm">
-        Failed to load background work.
-      </p>
+      <div className="flex flex-wrap items-center gap-3 py-8">
+        <p className="text-destructive text-sm">
+          Failed to load background work.
+        </p>
+        <Button size="sm" variant="outline" onClick={() => void refetch()}>
+          Retry
+        </Button>
+      </div>
     );
   }
 
   return (
     <div className="space-y-6">
+      {/* Keep showing the last good snapshot through a failed poll, but
+          say that it is stale (post-audit T2.4) — the page used to keep
+          counting down from a dead snapshot without any sign. */}
+      {isError ? (
+        <StaleSnapshotNotice
+          updatedAt={dataUpdatedAt}
+          onRetry={() => void refetch()}
+        />
+      ) : null}
       <Summary view={data} />
       <LibrariesCard libraries={sortLibraries(data.libraries)} />
       <OtherWorkCard view={data} />

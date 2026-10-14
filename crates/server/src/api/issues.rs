@@ -2324,14 +2324,14 @@ fn apply_issue_cursor(
             c_id,
             asc,
         ),
-        IssueSort::Year => apply_i32_cursor(
-            select,
-            issue::Column::Year,
-            issue::Column::Id,
-            parse_i32()?,
-            c_id,
-            asc,
-        ),
+        IssueSort::Year => {
+            // Release date (post-audit T2.3): `y.m.d`, each part empty for
+            // NULL; a bare empty value (pre-change cursor) is a NULL year.
+            let (y, m, d) = parse_release_date_cursor(&c_value)?;
+            select.filter(crate::views::compile::release_date_keyset(
+                y, m, d, &c_id, asc,
+            ))
+        }
         IssueSort::PageCount => apply_i32_cursor(
             select,
             issue::Column::PageCount,
@@ -2368,6 +2368,39 @@ fn apply_issue_cursor(
     })
 }
 
+/// `(year, month, day)` of a release-date cursor boundary, each `None`
+/// for NULL.
+type ReleaseDateParts = (Option<i32>, Option<i32>, Option<i32>);
+
+/// Decode the release-date cursor value: `year.month.day`, each part
+/// empty for NULL. An empty whole value (cursors minted before the sort
+/// became date-aware) is a NULL-year boundary.
+fn parse_release_date_cursor(value: &str) -> Result<ReleaseDateParts, &'static str> {
+    if value.is_empty() {
+        return Ok((None, None, None));
+    }
+    let mut parts = value.split('.');
+    let mut next = || -> Result<Option<i32>, &'static str> {
+        match parts.next() {
+            None | Some("") => Ok(None),
+            Some(p) => p.parse::<i32>().map(Some).map_err(|_| "invalid cursor"),
+        }
+    };
+    let y = next()?;
+    let m = next()?;
+    let d = next()?;
+    if parts.next().is_some() {
+        return Err("invalid cursor");
+    }
+    Ok((y, m, d))
+}
+
+/// Encode the release-date cursor value — see [`parse_release_date_cursor`].
+fn encode_release_date_cursor(y: Option<i32>, m: Option<i32>, d: Option<i32>) -> String {
+    let part = |v: Option<i32>| v.map(|n| n.to_string()).unwrap_or_default();
+    format!("{}.{}.{}", part(y), part(m), part(d))
+}
+
 /// Final `ORDER BY` chain. Each sort mode keeps `(NULLs LAST, value,
 /// id)` ordering so cursor pagination tiebreaks cleanly.
 fn apply_issue_sort_ordering(
@@ -2390,15 +2423,21 @@ fn apply_issue_sort_ordering(
             }
         }
         IssueSort::Year => {
-            let nulls_last = Expr::cust("year IS NULL");
-            let s = select.order_by_asc(nulls_last);
-            if asc {
-                s.order_by_asc(issue::Column::Year)
-                    .order_by_asc(issue::Column::Id)
-            } else {
-                s.order_by_desc(issue::Column::Year)
-                    .order_by_desc(issue::Column::Id)
+            // Release date: (year, month, day, id), NULLS LAST per tier in
+            // both directions (post-audit T2.3). Mirrors the saved-view
+            // compiler's `RELEASE_DATE_KEYS`.
+            let mut s = select;
+            for (col, asc) in crate::views::compile::release_date_order_sql(asc) {
+                if col != "issues.id" {
+                    s = s.order_by_asc(Expr::cust(format!("{col} IS NULL")));
+                }
+                s = if asc {
+                    s.order_by_asc(Expr::cust(col))
+                } else {
+                    s.order_by_desc(Expr::cust(col))
+                };
             }
+            s
         }
         IssueSort::PageCount => {
             let nulls_last = Expr::cust("page_count IS NULL");
@@ -2475,7 +2514,7 @@ async fn compute_next_issue_cursor(
     let r = rows.get(limit as usize - 1)?;
     let value = match sort {
         IssueSort::Number => r.sort_number.map(|n| n.to_string()).unwrap_or_default(),
-        IssueSort::Year => r.year.map(|y| y.to_string()).unwrap_or_default(),
+        IssueSort::Year => encode_release_date_cursor(r.year, r.month, r.day),
         IssueSort::PageCount => r.page_count.map(|p| p.to_string()).unwrap_or_default(),
         IssueSort::CreatedAt => r.created_at.to_rfc3339(),
         IssueSort::UpdatedAt => r.updated_at.to_rfc3339(),
@@ -2678,10 +2717,14 @@ fn apply_user_rating_cursor(
                          AND ur.target_id = issues.id)";
     match c_value {
         Some(v) => {
-            // Two-arm OR: strictly past the boundary value, OR equal value with id past boundary.
+            // Three-arm OR: strictly past the boundary value, OR unrated
+            // (NULLs sort last in both directions, so they must stay
+            // reachable after a rated boundary — post-audit T2.3), OR
+            // equal value with id past boundary.
             let cmp = if asc { ">" } else { "<" };
-            let sql =
-                format!("({rating_sq} {cmp} $2 OR ({rating_sq} = $2 AND issues.id {cmp} $3))",);
+            let sql = format!(
+                "({rating_sq} {cmp} $2 OR {rating_sq} IS NULL                   OR ({rating_sq} = $2 AND issues.id {cmp} $3))",
+            );
             select.filter(Expr::cust_with_values(
                 sql,
                 [Value::from(user_id), Value::from(v), Value::from(c_id)],

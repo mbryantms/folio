@@ -200,12 +200,18 @@ impl IssueCursor {
         series_name: &str,
         sort_number: Option<f64>,
         year: Option<i32>,
+        month: Option<i32>,
+        day: Option<i32>,
         created_at: &chrono::DateTime<chrono::FixedOffset>,
         updated_at: &chrono::DateTime<chrono::FixedOffset>,
     ) -> Self {
         let keys = match sort {
             SortField::Name => vec![Value::from(series_name), serde_json::json!(sort_number)],
-            SortField::Year => vec![serde_json::json!(year)],
+            SortField::Year => vec![
+                serde_json::json!(year),
+                serde_json::json!(month),
+                serde_json::json!(day),
+            ],
             SortField::CreatedAt => vec![Value::from(created_at.to_rfc3339())],
             SortField::UpdatedAt => vec![Value::from(updated_at.to_rfc3339())],
             SortField::LastRead | SortField::ReadProgress => Vec::new(),
@@ -234,6 +240,65 @@ struct IssueSortKey {
     nullable: bool,
 }
 
+/// "Release date" of an issue: `(year, month, day)`, each nullable and
+/// NULLS LAST, so the label is true for issues (post-audit T2.3). Shared
+/// with the cross-library `GET /issues?sort=year` list.
+const RELEASE_DATE_KEYS: &[IssueSortKey] = &[
+    IssueSortKey {
+        sql: "issues.year",
+        ty: KeyType::Int,
+        nullable: true,
+    },
+    IssueSortKey {
+        sql: "issues.month",
+        ty: KeyType::Int,
+        nullable: true,
+    },
+    IssueSortKey {
+        sql: "issues.day",
+        ty: KeyType::Int,
+        nullable: true,
+    },
+];
+
+/// Keyset predicate "strictly after `(year, month, day, id)`" for the
+/// release-date sort, for callers outside the view compiler (the
+/// cross-library issue list). `asc` is the list direction; NULLs sort
+/// last either way, matching [`release_date_order_sql`].
+pub fn release_date_keyset(
+    year: Option<i32>,
+    month: Option<i32>,
+    day: Option<i32>,
+    id: &str,
+    asc: bool,
+) -> SimpleExpr {
+    let cursor = IssueCursor {
+        keys: vec![
+            serde_json::json!(year),
+            serde_json::json!(month),
+            serde_json::json!(day),
+        ],
+        id: id.to_owned(),
+    };
+    let order = if asc { SortOrder::Asc } else { SortOrder::Desc };
+    // Key count and types are fixed here, so the only error paths
+    // (`InvalidCursor`) are unreachable.
+    issue_keyset_predicate(RELEASE_DATE_KEYS, &cursor, order).unwrap_or_else(|_| Expr::val(false))
+}
+
+/// `ORDER BY` terms for the release-date sort, NULLS LAST on every tier,
+/// ending with the `issues.id` tiebreaker. Expressed as `(expr, asc)`
+/// pairs so a sea-orm `Select` caller can chain `order_by`.
+pub fn release_date_order_sql(asc: bool) -> Vec<(&'static str, bool)> {
+    let mut out = Vec::with_capacity(RELEASE_DATE_KEYS.len() * 2 + 1);
+    for k in RELEASE_DATE_KEYS {
+        // `x IS NULL` ascending puts NULLs last regardless of direction.
+        out.push((k.sql, asc));
+    }
+    out.push(("issues.id", asc));
+    out
+}
+
 /// Sort keys (before the `issues.id` tiebreaker) for each issue-view sort.
 fn issue_sort_keys(sort: SortField) -> Result<&'static [IssueSortKey], CompileError> {
     const NAME: &[IssueSortKey] = &[
@@ -248,11 +313,7 @@ fn issue_sort_keys(sort: SortField) -> Result<&'static [IssueSortKey], CompileEr
             nullable: true,
         },
     ];
-    const YEAR: &[IssueSortKey] = &[IssueSortKey {
-        sql: "issues.year",
-        ty: KeyType::Int,
-        nullable: true,
-    }];
+    const YEAR: &[IssueSortKey] = RELEASE_DATE_KEYS;
     const CREATED: &[IssueSortKey] = &[IssueSortKey {
         sql: "issues.created_at",
         ty: KeyType::Timestamp,
@@ -371,6 +432,8 @@ const ISSUE_CARD_COLUMNS: &[issue::Column] = &[
     issue::Column::NumberRaw,
     issue::Column::SortNumber,
     issue::Column::Year,
+    issue::Column::Month,
+    issue::Column::Day,
     issue::Column::PageCount,
     issue::Column::State,
     issue::Column::SpecialType,
@@ -1861,6 +1924,51 @@ mod tests {
     }
 
     #[test]
+    fn year_keyset_is_lexicographic_over_year_month_day_id() {
+        // Post-audit T2.3: "Release date" orders by (year, month, day).
+        let sql = keyset_sql(
+            SortField::Year,
+            SortOrder::Asc,
+            IssueCursor {
+                keys: vec![json!(2020), json!(3), json!(null)],
+                id: "abc".into(),
+            },
+        );
+        assert!(
+            sql.contains("(issues.year > 2020 OR issues.year IS NULL)"),
+            "SQL: {sql}"
+        );
+        assert!(
+            sql.contains("issues.year = 2020 AND (issues.month > 3 OR issues.month IS NULL)"),
+            "SQL: {sql}"
+        );
+        // A NULL day boundary only advances by id within the NULL-day tail.
+        assert!(
+            sql.contains("issues.year = 2020 AND issues.month = 3 AND issues.day IS NULL AND issues.id > 'abc'"),
+            "SQL: {sql}"
+        );
+        assert!(!sql.contains("issues.day >"), "SQL: {sql}");
+        assert!(
+            sql.contains("\"issues\".\"month\""),
+            "month must be in ORDER BY / SELECT: {sql}"
+        );
+    }
+
+    #[test]
+    fn release_date_keyset_helper_matches_the_view_compiler() {
+        let expr = release_date_keyset(Some(2020), None, None, "abc", false);
+        let sql = Query::select().expr(expr).to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains("(issues.year < 2020 OR issues.year IS NULL)"),
+            "SQL: {sql}"
+        );
+        assert!(
+            sql.contains("issues.year = 2020 AND issues.month IS NULL AND issues.day IS NULL AND issues.id < 'abc'"),
+            "SQL: {sql}"
+        );
+    }
+
+    #[test]
     fn null_cursor_key_only_advances_within_the_null_tail() {
         // Year DESC NULLS LAST: after a NULL year only later NULL-year ids
         // remain — never a non-NULL year again.
@@ -1868,12 +1976,14 @@ mod tests {
             SortField::Year,
             SortOrder::Desc,
             IssueCursor {
-                keys: vec![json!(null)],
+                keys: vec![json!(null), json!(null), json!(null)],
                 id: "abc".into(),
             },
         );
         assert!(
-            sql.contains("(issues.year IS NULL AND issues.id < 'abc')"),
+            sql.contains(
+                "(issues.year IS NULL AND issues.month IS NULL AND issues.day IS NULL AND issues.id < 'abc')"
+            ),
             "SQL: {sql}"
         );
         assert!(!sql.contains("issues.year <"), "SQL: {sql}");
@@ -1923,7 +2033,7 @@ mod tests {
             CompileError::InvalidCursor
         );
         input.cursor = Some(IssueCursor {
-            keys: vec![json!(12), json!(1.0)],
+            keys: vec![json!(12), json!(1.0), json!(null)],
             id: "abc".into(),
         });
         assert_eq!(
@@ -1935,7 +2045,17 @@ mod tests {
     #[test]
     fn issue_cursor_round_trips_opaquely() {
         let ts = chrono::DateTime::parse_from_rfc3339("2026-05-08T22:42:18.758666+00:00").unwrap();
-        let c = IssueCursor::for_row(SortField::Name, "id1", "Batman", Some(1.5), None, &ts, &ts);
+        let c = IssueCursor::for_row(
+            SortField::Name,
+            "id1",
+            "Batman",
+            Some(1.5),
+            None,
+            None,
+            None,
+            &ts,
+            &ts,
+        );
         let token = c.encode();
         assert!(!token.contains("Batman"));
         assert_eq!(IssueCursor::decode(&token), Some(c));
