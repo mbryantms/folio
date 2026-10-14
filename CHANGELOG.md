@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.56.1](https://github.com/mbryantms/folio/compare/v0.56.0...v0.56.1) (2026-10-14)
+
+
+### Fixed
+
+* **coverage:** an undated local issue refuses a provider date decades before the series' start ([#1156](https://github.com/mbryantms/folio/issues/1156)) ([fc4ece9](https://github.com/mbryantms/folio/commit/fc4ece987b2c75c4d25fab77633fae16b8c63118))
+
 ## [0.56.0](https://github.com/mbryantms/folio/compare/v0.55.0...v0.56.0) (2026-10-13)
 
 
