@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.56.2](https://github.com/mbryantms/folio/compare/v0.56.1...v0.56.2) (2026-10-14)
+
+
+### Fixed
+
+* **coverage:** bridge GCD / ComicVine from the linked Metron rows once Metron is accepted ([#1158](https://github.com/mbryantms/folio/issues/1158)) ([59c682b](https://github.com/mbryantms/folio/commit/59c682be3c8f7de5644ea723fbc3f4d20dfe8e56))
+
 ## [0.56.1](https://github.com/mbryantms/folio/compare/v0.56.0...v0.56.1) (2026-10-14)
 
 
