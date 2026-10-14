@@ -269,6 +269,39 @@ pub(crate) async fn upsert_for(
 ///   stored record returned unchanged;
 /// - implicit write (`finished == None`): `last_page = max(prev, page)`;
 /// - explicit write: `last_page = page`.
+///
+/// **Atomic (post-audit T1.3).** The whole rule is one
+/// `INSERT … ON CONFLICT DO UPDATE … RETURNING` statement, so the
+/// decision is made against the row *as locked by this statement*, not
+/// a row read moments earlier: two devices writing at once can no
+/// longer lose the furthest page, a restart can no longer be overwritten
+/// back to the old run by a stale in-flight write, and two first writes
+/// for the same issue no longer race into a primary-key violation. The
+/// page hash is captured before the statement (archive I/O never sits
+/// between read and write).
+///
+/// Truth table, `prev` = stored row, `r` = client `run` tag (may be
+/// absent), `R` = `restart`:
+///
+/// | prev row | R | r                 | effect                                      |
+/// |----------|---|-------------------|---------------------------------------------|
+/// | none     | * | absent            | insert, run 0                               |
+/// | none     | T | r                 | insert, run `max(r + 1, 0)`                 |
+/// | none     | F | r                 | insert, run 0                               |
+/// | some     | F | absent            | write into `prev.run`                       |
+/// | some     | F | r < prev.run      | ignored                                     |
+/// | some     | F | r ≥ prev.run      | write into `prev.run`                       |
+/// | some     | T | absent            | restart: run `prev.run + 1`                 |
+/// | some     | T | r ≥ prev.run      | restart: run `prev.run + 1`                 |
+/// | some     | T | r = prev.run − 1  | already restarted: write into `prev.run`    |
+/// | some     | T | r < prev.run − 1  | ignored                                     |
+///
+/// "write into run": implicit (`finished` absent) keeps
+/// `max(prev.last_page, page)` and the stored `finished`; explicit sets
+/// both as given. `finished_at` follows [`resolve_finished_at`]. The
+/// stored page hash is kept when the resulting page is unchanged;
+/// otherwise the hash captured for `page` is stored when `page` is the
+/// resulting page, else NULL (ordinal fallback).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn upsert_for_run(
     app: &AppState,
@@ -280,105 +313,129 @@ pub(crate) async fn upsert_for_run(
     run: Option<i32>,
     restart: bool,
 ) -> Result<progress_record::Model, sea_orm::DbErr> {
-    let percent_of = |p: i32| match issue_row.page_count.unwrap_or(0) {
-        n if n > 0 => (p as f64 / n as f64).clamp(0.0, 1.0),
-        _ => 0.0,
-    };
+    use sea_orm::{DbBackend, Statement};
+
     let now = Utc::now().fixed_offset();
-    let existing = ProgressEntity::find_by_id((user_id, issue_row.id.clone()))
+    // Captured up front so no archive I/O sits between the row read and
+    // the row write — the statement below is the only DB round-trip.
+    let page_hash = crate::reading::page_hash::capture(app, issue_row, page).await;
+    let page_count = issue_row.page_count.unwrap_or(0);
+
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        PROGRESS_UPSERT_SQL.as_str(),
+        [
+            user_id.into(),
+            issue_row.id.clone().into(),
+            page.into(),
+            finished.into(),
+            now.into(),
+            device.into(),
+            restart.into(),
+            run.into(),
+            page_hash.into(),
+            page_count.into(),
+        ],
+    );
+    let row = ProgressEntity::find()
+        .from_raw_sql(stmt)
         .one(&app.db)
-        .await?;
-    match existing {
-        Some(prev) => {
-            // Idempotent restart (WP-4.5). A run-tagged restart means "open
-            // the run after `r`". When the stored run is already `r + 1`
-            // the restart landed before — a replay from the offline outbox
-            // whose first delivery's reply was lost, or another device
-            // restarted too — so it degrades to an ordinary write into
-            // that run (never a second bump). Further ahead than `r + 1`,
-            // this device is on a stale read: ignored like any older run.
-            let (restart, run) = match (restart, run) {
-                (true, Some(r)) if prev.run == r + 1 => (false, Some(prev.run)),
-                (true, Some(r)) if prev.run > r + 1 => (false, Some(r)),
-                other => other,
-            };
-            if !restart && run.is_some_and(|r| r < prev.run) {
-                tracing::debug!(
-                    issue_id = %issue_row.id,
-                    client_run = run,
-                    server_run = prev.run,
-                    "progress write ignored: client is on an older reading run"
-                );
-                return Ok(prev);
-            }
-            let (next_run, next_page, next_finished) = if restart {
-                (prev.run + 1, page, finished.unwrap_or(false))
-            } else {
-                // `finished` is sticky on per-page writes: when the caller
-                // omits it, we keep whatever was there. Mark-as-read /
-                // mark-as-unread / last-page-auto-finish all send an
-                // explicit value, so user-intended toggles still flow
-                // through — and those explicit writes also set the page
-                // as given, while implicit ones only move forward.
-                let next_page = if finished.is_none() {
-                    prev.last_page.max(page)
-                } else {
-                    page
-                };
-                (prev.run, next_page, finished.unwrap_or(prev.finished))
-            };
-            let next_finished_at =
-                resolve_finished_at(prev.finished, next_finished, prev.finished_at, now);
-            // Same page as stored: keep its hash instead of re-reading it.
-            let page_hash = match (&prev.page_hash, next_page == prev.last_page) {
-                (Some(h), true) => Some(h.clone()),
-                _ => crate::reading::page_hash::capture(app, issue_row, next_page).await,
-            };
-            let am = ProgressAM {
-                user_id: Unchanged(user_id),
-                issue_id: Unchanged(issue_row.id.clone()),
-                last_page: Set(next_page),
-                percent: Set(percent_of(next_page)),
-                finished: Set(next_finished),
-                finished_at: Set(next_finished_at),
-                updated_at: Set(now),
-                device: Set(device),
-                // Per-issue reader writes are always active reading
-                // — clear any previously-set backfill flag.
-                is_backfill: Set(false),
-                run: Set(next_run),
-                page_hash: Set(page_hash),
-            };
-            am.update(&app.db).await
-        }
-        None => {
-            let next_finished = finished.unwrap_or(false);
-            // A run-tagged restart with no record yet lands on the run it
-            // asked for (`r + 1`), so a replay of the same write is
-            // recognised as already applied instead of bumping again.
-            // Untagged (legacy) restarts and ordinary writes start run 0.
-            let first_run = match (restart, run) {
-                (true, Some(r)) => r.saturating_add(1).max(0),
-                _ => 0,
-            };
-            let page_hash = crate::reading::page_hash::capture(app, issue_row, page).await;
-            let am = ProgressAM {
-                user_id: Set(user_id),
-                issue_id: Set(issue_row.id.clone()),
-                last_page: Set(page),
-                percent: Set(percent_of(page)),
-                finished: Set(next_finished),
-                finished_at: Set(if next_finished { Some(now) } else { None }),
-                updated_at: Set(now),
-                device: Set(device),
-                is_backfill: Set(false),
-                run: Set(first_run),
-                page_hash: Set(page_hash),
-            };
-            am.insert(&app.db).await
-        }
+        .await?
+        .ok_or_else(|| {
+            sea_orm::DbErr::RecordNotFound("progress upsert returned no row".to_owned())
+        })?;
+    if let Some(r) = run
+        && row.run > r + i32::from(restart)
+    {
+        tracing::debug!(
+            issue_id = %issue_row.id,
+            client_run = r,
+            server_run = row.run,
+            "progress write ignored: client is on an older reading run"
+        );
     }
+    Ok(row)
 }
+
+/// The single-statement reading-run merge (see [`upsert_for_run`] for
+/// the truth table). Parameters:
+///
+/// `$1` user_id · `$2` issue_id · `$3` page · `$4` finished (nullable) ·
+/// `$5` now · `$6` device (nullable) · `$7` restart · `$8` run tag
+/// (nullable) · `$9` page hash for `$3` (nullable) · `$10` page count.
+///
+/// In the `DO UPDATE` arm `progress_records.*` is the locked existing
+/// row. Every column is written through a `CASE` on the "ignored"
+/// predicate so an ignored write leaves the row byte-identical
+/// (`updated_at` included) and still `RETURNING`s it.
+const PROGRESS_UPSERT_SQL_TEMPLATE: &str = r#"
+INSERT INTO progress_records
+    (user_id, issue_id, last_page, percent, finished, finished_at,
+     updated_at, device, is_backfill, run, page_hash)
+VALUES (
+    $1::uuid, $2::text, $3::int4,
+    CASE WHEN $10::int4 > 0
+         THEN LEAST(1.0::float8, GREATEST(0.0::float8, $3::int4::float8 / $10::int4::float8))
+         ELSE 0.0::float8 END,
+    COALESCE($4::bool, false),
+    CASE WHEN COALESCE($4::bool, false) THEN $5::timestamptz ELSE NULL END,
+    $5::timestamptz, $6::text, false,
+    CASE WHEN $7::bool AND $8::int4 IS NOT NULL THEN GREATEST($8::int4 + 1, 0) ELSE 0 END,
+    $9::text
+)
+ON CONFLICT (user_id, issue_id) DO UPDATE SET
+    last_page = CASE WHEN __IGNORED__ THEN progress_records.last_page ELSE __NEXT_PAGE__ END,
+    percent = CASE WHEN __IGNORED__ THEN progress_records.percent
+                   WHEN $10::int4 > 0
+                   THEN LEAST(1.0::float8, GREATEST(0.0::float8, (__NEXT_PAGE__)::float8 / $10::int4::float8))
+                   ELSE 0.0::float8 END,
+    finished = CASE WHEN __IGNORED__ THEN progress_records.finished ELSE __NEXT_FINISHED__ END,
+    finished_at = CASE WHEN __IGNORED__ THEN progress_records.finished_at
+                       WHEN NOT progress_records.finished AND __NEXT_FINISHED__ THEN $5::timestamptz
+                       WHEN progress_records.finished AND __NEXT_FINISHED__
+                            THEN COALESCE(progress_records.finished_at, $5::timestamptz)
+                       ELSE NULL END,
+    updated_at = CASE WHEN __IGNORED__ THEN progress_records.updated_at ELSE $5::timestamptz END,
+    device = CASE WHEN __IGNORED__ THEN progress_records.device ELSE $6::text END,
+    is_backfill = CASE WHEN __IGNORED__ THEN progress_records.is_backfill ELSE false END,
+    run = CASE WHEN __IGNORED__ THEN progress_records.run
+               WHEN __RESTARTS__ THEN progress_records.run + 1
+               ELSE progress_records.run END,
+    page_hash = CASE WHEN __IGNORED__ THEN progress_records.page_hash
+                     WHEN (__NEXT_PAGE__) = progress_records.last_page
+                          AND progress_records.page_hash IS NOT NULL
+                          THEN progress_records.page_hash
+                     WHEN (__NEXT_PAGE__) = $3::int4 THEN $9::text
+                     ELSE NULL END
+RETURNING *
+"#;
+
+/// A write is ignored when the client's run tag is behind the stored
+/// run — behind by more than one when restarting (a restart of run `r`
+/// targets `r + 1`, so a stored `r + 1` is "already restarted", not
+/// "older").
+const IGNORED: &str = "($8::int4 IS NOT NULL AND progress_records.run > $8::int4 + \
+                       (CASE WHEN $7::bool THEN 1 ELSE 0 END))";
+/// A restart opens the next run unless a tag says it already happened
+/// (`progress_records.run > r`).
+const RESTARTS: &str = "($7::bool AND ($8::int4 IS NULL OR progress_records.run <= $8::int4))";
+/// Restart → `page`; implicit write → furthest; explicit → `page`.
+const NEXT_PAGE: &str = "(CASE WHEN __RESTARTS__ THEN $3::int4 \
+                          WHEN $4::bool IS NULL THEN GREATEST(progress_records.last_page, $3::int4) \
+                          ELSE $3::int4 END)";
+/// Restart → explicit value or `false`; otherwise sticky unless explicit.
+const NEXT_FINISHED: &str = "(CASE WHEN __RESTARTS__ THEN COALESCE($4::bool, false) \
+                              ELSE COALESCE($4::bool, progress_records.finished) END)";
+
+static PROGRESS_UPSERT_SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let next_page = NEXT_PAGE.replace("__RESTARTS__", RESTARTS);
+    let next_finished = NEXT_FINISHED.replace("__RESTARTS__", RESTARTS);
+    PROGRESS_UPSERT_SQL_TEMPLATE
+        .replace("__NEXT_PAGE__", &next_page)
+        .replace("__NEXT_FINISHED__", &next_finished)
+        .replace("__RESTARTS__", RESTARTS)
+        .replace("__IGNORED__", IGNORED)
+});
 
 #[handler]
 pub async fn list(

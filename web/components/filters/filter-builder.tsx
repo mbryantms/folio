@@ -85,7 +85,7 @@ const DEFAULT_STATE: FilterBuilderState = {
 // need a server-side enum + cursor change; tracked as a follow-up.
 const SORT_FIELDS: { value: SavedViewSortField; label: string }[] = [
   { value: "name", label: "Name" },
-  { value: "year", label: "Release date" },
+  { value: "year", label: "Year" },
   { value: "created_at", label: "Recently added" },
   { value: "updated_at", label: "Recently updated" },
   { value: "last_read", label: "Last read" },

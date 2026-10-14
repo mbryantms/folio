@@ -117,9 +117,22 @@ export default async function ReadPage({
   // record yet"). Skipped entirely when the user asked to start fresh
   // (`?from=start`) or deep-linked a page (`?page=`). Awaited together with the
   // already-in-flight `mePromise` (kicked off before the issue fetch above).
+  // Post-audit T2.2: only this issue's record (`?issue_id=`), and a
+  // *failed* fetch is distinguished from "no record" so the reader can
+  // say so instead of silently opening at page 0.
+  let progressUnavailable = false;
   const progressPromise =
     explicitPage === null && !startFresh
-      ? apiGet<ProgressDelta>(`/progress`).catch(() => null)
+      ? apiGet<ProgressDelta>(
+          `/progress?issue_id=${encodeURIComponent(issue.id)}`,
+        ).catch((e: unknown) => {
+          // A 4xx means "no record" territory (or a stale session the
+          // layout is already bouncing); anything else is an outage.
+          if (!(e instanceof ApiError) || e.status >= 500) {
+            progressUnavailable = true;
+          }
+          return null;
+        })
       : null;
   // WP-4.3: the user's manual spread controls, prefetched so the first
   // double-page paint already pairs with them. Fails soft to automatic.
@@ -273,6 +286,7 @@ export default async function ReadPage({
         activityTrackingEnabled={activityTrackingEnabled && !isIncognito}
         incognito={isIncognito}
         initialPeek={initialPeek}
+        progressUnavailable={progressUnavailable}
         readingMinActiveMs={readingMinActiveMs}
         readingMinPages={readingMinPages}
         readingIdleMs={readingIdleMs}

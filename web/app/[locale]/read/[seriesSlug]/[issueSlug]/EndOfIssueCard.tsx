@@ -27,6 +27,8 @@ export function EndOfIssueCard({
   open,
   data,
   isLoading,
+  isError = false,
+  onRetry,
   direction,
   exitUrl,
   onContinue,
@@ -38,6 +40,12 @@ export function EndOfIssueCard({
    *  straight on the last page doesn't show a flicker. */
   data: NextUpView | undefined;
   isLoading: boolean;
+  /** The resolver request failed and there is no data to show. Renders
+   *  "Couldn't load what's next" + Retry instead of claiming the user
+   *  is caught up (post-audit T2.6). */
+  isError?: boolean;
+  /** Re-runs the resolver query. */
+  onRetry?: () => void;
   /** Reading direction — controls which edge the card slides in from
    *  so the gesture matches the user's "forward" intent. */
   direction: Direction;
@@ -53,6 +61,9 @@ export function EndOfIssueCard({
 }) {
   const target = data?.target;
   const source = data?.source ?? "none";
+  // A failed fetch with nothing cached is its own state — never "caught
+  // up", which is only true for a confirmed empty resolver result.
+  const failed = isError && !data;
   const cblSubtitle =
     source === "cbl" &&
     data?.cbl_position &&
@@ -90,14 +101,14 @@ export function EndOfIssueCard({
         ? document.activeElement
         : null;
     const id = requestAnimationFrame(() => {
-      if (source !== "none" && target) {
+      if ((source !== "none" && target) || failed) {
         primaryButtonRef.current?.focus();
       } else {
         primaryLinkRef.current?.focus();
       }
     });
     return () => cancelAnimationFrame(id);
-  }, [open, source, target]);
+  }, [open, source, target, failed]);
 
   const slideFromRight = direction !== "rtl";
 
@@ -133,11 +144,19 @@ export function EndOfIssueCard({
       <div className="flex items-start justify-between gap-3 p-4 pb-2">
         <div className="min-w-0 flex-1">
           <p className="text-muted-foreground text-xs font-medium">
-            {source === "none" ? "End of the line" : "Next up:"}
+            {failed
+              ? "End of issue"
+              : source === "none"
+                ? "End of the line"
+                : "Next up:"}
           </p>
           {source !== "none" && target ? (
             <h2 className="mt-0.5 text-base leading-snug font-semibold">
               {heading}
+            </h2>
+          ) : failed ? (
+            <h2 className="mt-0.5 text-base leading-snug font-semibold">
+              Couldn&apos;t load what&apos;s next
             </h2>
           ) : isLoading && !data ? (
             <div className="bg-muted mt-1 h-5 w-40 animate-pulse rounded" />
@@ -178,6 +197,12 @@ export function EndOfIssueCard({
               ) : null}
             </div>
           )}
+        </div>
+      ) : failed ? (
+        <div className="px-4 pb-3">
+          <p className="text-muted-foreground text-sm" role="alert">
+            The next-issue lookup failed. Your progress is saved.
+          </p>
         </div>
       ) : isLoading && !data ? (
         <div className="px-4 pb-3">
@@ -244,6 +269,27 @@ export function EndOfIssueCard({
                 </Link>
               </Button>
             </div>
+          </>
+        ) : failed ? (
+          <>
+            <Button
+              ref={primaryButtonRef}
+              onClick={onRetry}
+              className="w-full"
+              disabled={!onRetry}
+            >
+              Retry
+            </Button>
+            <Button asChild variant="outline" className="w-full">
+              <Link
+                href={exitUrl}
+                onClick={() => {
+                  onDismiss();
+                }}
+              >
+                Exit reader
+              </Link>
+            </Button>
           </>
         ) : (
           <>

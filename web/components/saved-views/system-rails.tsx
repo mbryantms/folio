@@ -13,6 +13,7 @@ import {
 } from "@/components/library/ProgressIssueCard";
 import { SeriesCardSkeleton } from "@/components/library/SeriesCard";
 import { SimilarSeriesCard } from "@/components/library/SimilarSeriesCard";
+import { RailError } from "@/components/saved-views/RailError";
 import type { OnDeckCard as OnDeckCardData } from "@/lib/api/types";
 import {
   useContinueReading,
@@ -45,6 +46,10 @@ export function ContinueReadingRailBody({
       </>
     );
   }
+  // A failed fetch is not "nothing in progress" (post-audit T2.4).
+  if (q.isError && !q.data) {
+    return <RailError onRetry={() => void q.refetch()} />;
+  }
   const items = q.data?.items ?? [];
   if (items.length === 0) {
     // Parent suppresses the whole rail when there's nothing to show —
@@ -55,7 +60,8 @@ export function ContinueReadingRailBody({
     <>
       {items.map((card) => (
         <div key={card.issue.id} style={itemStyle} className="shrink-0">
-          <ProgressIssueCard card={card} />
+          {/* The rail's tap resumes reading (post-audit T2.1, D1). */}
+          <ProgressIssueCard card={card} primaryAction="reader" />
         </div>
       ))}
     </>
@@ -83,6 +89,9 @@ export function OnDeckRailBody({
         ))}
       </>
     );
+  }
+  if (q.isError && !q.data) {
+    return <RailError onRetry={() => void q.refetch()} />;
   }
   const items = q.data?.items ?? [];
   if (items.length === 0) return null;
@@ -121,6 +130,9 @@ export function RecentIssuesRailBody({
       </>
     );
   }
+  if (q.isError && !q.data) {
+    return <RailError onRetry={() => void q.refetch()} />;
+  }
   const items = q.data?.items ?? [];
   if (items.length === 0) return null;
   return (
@@ -156,6 +168,9 @@ export function SimilarSeriesRailBody({
         ))}
       </>
     );
+  }
+  if (q.isError && !q.data) {
+    return <RailError onRetry={() => void q.refetch()} />;
   }
   const items = q.data?.pages[0]?.items ?? [];
   if (items.length === 0) return null;
@@ -212,17 +227,23 @@ export function useSystemRailIsEmpty(systemKey: string): boolean {
   const sim = useSimilarRailInfinite({
     enabled: systemKey === "similar_series",
   });
+  // An errored query with nothing cached is NOT empty — the rail stays
+  // mounted so its body can show the retry state (post-audit T2.4).
   if (systemKey === "continue_reading") {
-    return !cr.isLoading && (cr.data?.items.length ?? 0) === 0;
+    return !cr.isLoading && !cr.isError && (cr.data?.items.length ?? 0) === 0;
   }
   if (systemKey === "on_deck") {
-    return !od.isLoading && (od.data?.items.length ?? 0) === 0;
+    return !od.isLoading && !od.isError && (od.data?.items.length ?? 0) === 0;
   }
   if (systemKey === "new_issues") {
-    return !ri.isLoading && (ri.data?.items.length ?? 0) === 0;
+    return !ri.isLoading && !ri.isError && (ri.data?.items.length ?? 0) === 0;
   }
   if (systemKey === "similar_series") {
-    return !sim.isLoading && (sim.data?.pages[0]?.items.length ?? 0) === 0;
+    return (
+      !sim.isLoading &&
+      !sim.isError &&
+      (sim.data?.pages[0]?.items.length ?? 0) === 0
+    );
   }
   return false;
 }

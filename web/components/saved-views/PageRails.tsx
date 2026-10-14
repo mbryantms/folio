@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { RailError } from "@/components/saved-views/RailError";
 import { FolderPlus, LibraryBig } from "lucide-react";
 
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
@@ -95,6 +96,13 @@ export function PageRails({
         <div className="text-muted-foreground py-12 text-sm">
           Loading views…
         </div>
+      ) : pinnedQ.isError && !pinnedQ.data ? (
+        // A failed fetch is not "nothing pinned" (post-audit T2.4).
+        <RailError
+          message="Couldn't load your pinned views."
+          onRetry={() => void pinnedQ.refetch()}
+          className="py-12"
+        />
       ) : items.length === 0 ? (
         <EmptyPinnedState isSystem={isSystem} />
       ) : (

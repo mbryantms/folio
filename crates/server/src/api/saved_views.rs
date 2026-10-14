@@ -2041,6 +2041,8 @@ struct IssueViewRow {
     number_raw: Option<String>,
     sort_number: Option<f64>,
     year: Option<i32>,
+    month: Option<i32>,
+    day: Option<i32>,
     page_count: Option<i32>,
     state: String,
     special_type: Option<String>,
@@ -2152,6 +2154,8 @@ async fn run_issue_filter_query(
                 &r.series_name,
                 r.sort_number,
                 r.year,
+                r.month,
+                r.day,
                 &r.created_at,
                 &r.updated_at,
             )

@@ -251,16 +251,79 @@ export function resolveKeybinds(
  * are caught even when `e.target` isn't the input element itself.
  */
 export function shouldSkipHotkey(e: KeyboardEvent): boolean {
+  // Another handler (a dialog, a menu, an input's own keydown) already
+  // claimed the stroke — a window-level dispatcher must not double-act
+  // (post-audit T2.5).
+  if (e.defaultPrevented) return true;
+  // Mid-IME composition: the key is part of a character being composed.
+  if (e.isComposing) return true;
   // Defensive: `HTMLElement` is undefined in the SSR / test (node) env;
   // there are no key events there anyway, so "don't skip" is the safe
   // default and lets node-env vitests exercise the function.
   if (typeof HTMLElement === "undefined") return false;
   const t = e.target;
   if (!(t instanceof HTMLElement)) return false;
-  return !!t.closest(
-    'input, textarea, select, [contenteditable="true"], [contenteditable=""]',
-  );
+  if (
+    t.closest(
+      'input, textarea, select, [contenteditable="true"], [contenteditable=""]',
+    )
+  ) {
+    return true;
+  }
+  // A focused control owns its activation keys: Space / Enter on a
+  // button, link, menu item, slider or disclosure activate *it*, they
+  // never also turn a page or fire a global shortcut. Arrow / Home / End
+  // keys stay global (page turns still work with a toolbar button
+  // focused) except inside widgets that navigate with them.
+  if (ACTIVATION_KEYS.has(e.key)) {
+    return !!t.closest(FOCUSED_CONTROL_SELECTOR);
+  }
+  if (NAVIGATION_KEYS.has(e.key)) {
+    return !!t.closest(ARROW_OWNING_WIDGET_SELECTOR);
+  }
+  return false;
 }
+
+const ACTIVATION_KEYS: ReadonlySet<string> = new Set([" ", "Enter"]);
+const NAVIGATION_KEYS: ReadonlySet<string> = new Set([
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+  "Home",
+  "End",
+]);
+/** Elements whose Space / Enter is theirs. `tabindex="-1"` elements are
+ *  excluded on purpose: the reader's tap zones and chrome buttons carry
+ *  it precisely so focus never lands on them. */
+export const FOCUSED_CONTROL_SELECTOR = [
+  "button",
+  "a[href]",
+  "summary",
+  '[role="button"]',
+  '[role="link"]',
+  '[role="menuitem"]',
+  '[role="menuitemcheckbox"]',
+  '[role="menuitemradio"]',
+  '[role="option"]',
+  '[role="tab"]',
+  '[role="switch"]',
+  '[role="checkbox"]',
+  '[role="radio"]',
+  '[role="slider"]',
+  '[tabindex]:not([tabindex="-1"])',
+].join(", ");
+/** Widgets that move their own selection with arrow keys. */
+export const ARROW_OWNING_WIDGET_SELECTOR = [
+  '[role="slider"]',
+  '[role="menu"]',
+  '[role="menubar"]',
+  '[role="listbox"]',
+  '[role="tablist"]',
+  '[role="radiogroup"]',
+  '[role="tree"]',
+  '[role="grid"]',
+].join(", ");
 
 // ─────────────────────────── chord parsing ──────────────────────────
 

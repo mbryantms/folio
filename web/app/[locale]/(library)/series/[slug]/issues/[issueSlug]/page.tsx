@@ -127,7 +127,11 @@ export default async function IssuePage({
     hasNotes,
   ] = await Promise.all([
     apiGet<SeriesView>(`/series/${seriesSlug}`).catch(() => null),
-    apiGet<{ records: ProgressLike[] }>(`/progress`)
+    // Only this issue's record (post-audit T2.2) — the unfiltered list
+    // walked the user's whole history to `.find()` one row.
+    apiGet<{ records: ProgressLike[] }>(
+      `/progress?issue_id=${encodeURIComponent(issue.id)}`,
+    )
       .then(
         (delta) => delta.records.find((r) => r.issue_id === issue.id) ?? null,
       )

@@ -95,6 +95,23 @@ describe("<EndOfIssueCard>", () => {
     expect(html).toMatch(/Read/);
   });
 
+  it("renders a retry state when the resolver failed with no data (T2.6)", () => {
+    const html = render({ isError: true, onRetry: noop });
+    expect(html).toMatch(/Couldn(&#x27;|')t load what(&#x27;|')s next/);
+    expect(html).toMatch(/Retry/);
+    expect(html).toMatch(/Exit reader/);
+    // A failure is never reported as "caught up" / "Browse the library".
+    expect(html).not.toMatch(/caught up/i);
+    expect(html).not.toMatch(/Browse the library/);
+  });
+
+  it("keeps the cached result when a refetch fails (isError with data)", () => {
+    const data: NextUpView = { source: "series", target: issue() };
+    const html = render({ data, isError: true, onRetry: noop });
+    expect(html).toMatch(/Eight Is Enough/);
+    expect(html).not.toMatch(/Couldn/);
+  });
+
   it("renders the caught-up body when source = none", () => {
     const data: NextUpView = { source: "none" };
     const html = render({ data });

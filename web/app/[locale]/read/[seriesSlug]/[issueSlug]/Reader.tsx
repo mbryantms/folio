@@ -36,6 +36,8 @@ import {
 } from "@/lib/reader/spreads";
 import { useSpreadOverrides } from "@/lib/reader/use-spread-overrides";
 import { useReaderProgressWrite } from "@/lib/reader/use-progress-write";
+
+import { ProgressUnavailableBanner } from "./ProgressUnavailableBanner";
 import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
 import { pageBytesSrcSet, withContentVersion } from "@/lib/urls";
 import { EDGE_GUARD_ATTR, useReaderGestures } from "@/lib/reader/use-swipe";
@@ -111,6 +113,7 @@ export function Reader({
   activityTrackingEnabled,
   incognito = false,
   initialPeek = false,
+  progressUnavailable = false,
   readingMinActiveMs,
   readingMinPages,
   readingIdleMs,
@@ -168,6 +171,10 @@ export function Reader({
    *  navigation (`?peek=1`) so glancing at a marker doesn't generate
    *  activity. No timeout; the user controls when peek ends. */
   initialPeek?: boolean;
+  /** The SSR fetch of the saved position failed (not "no record"), so
+   *  `initialPage` is a guess. Shows a banner with Retry (post-audit
+   *  T2.2). */
+  progressUnavailable?: boolean;
   readingMinActiveMs: number;
   readingMinPages: number;
   readingIdleMs: number;
@@ -251,6 +258,11 @@ export function Reader({
   // round-trip. The hook handles the CBL > series > none resolution
   // server-side; the client just consumes the result.
   const nextUp = useNextUp(issueId, cblSavedViewId);
+  // Post-audit T2.6: the end card / webtoon footer show a Retry when the
+  // resolver failed instead of claiming "You're caught up".
+  const retryNextUp = useCallback(() => {
+    void nextUp.refetch();
+  }, [nextUp]);
   // CBL self-healing: when the server tells us `?cbl=<id>` pointed at a
   // CBL the current issue isn't in (entry deleted, shared link from a
   // sibling list, etc.), strip the dead param from the URL so a refresh
@@ -315,19 +327,11 @@ export function Reader({
   // Auto-dismiss when the page state moves back below the last page so
   // a `goPrev` after the panel opens closes it cleanly. No once-per-
   // mount gate is needed: the trigger is user-initiated, not implicit.
+  // The guard itself lives below, once the spread groups are known —
+  // in double-page view the state page is the group's *first* page, so
+  // a final pair `[n-2, n-1]` must be judged by its last page.
   const [showEndCard, setShowEndCard] = useState(false);
-  if (showEndCard && currentPage < totalPages - 1) {
-    setShowEndCard(false);
-  }
-  // The card is a lazy chunk (`./lazy`). Mount it — closed — once the
-  // reader is within two pages of the end (or it is asked to open), and
-  // keep it mounted, so its chunk is loaded and the slide-in animation
-  // plays from the closed state when the user pages past the end.
-  const nearEnd = currentPage >= totalPages - 2;
   const [endCardArmed, setEndCardArmed] = useState(false);
-  if (!endCardArmed && (nearEnd || showEndCard)) {
-    setEndCardArmed(true);
-  }
   const dismissEndCard = useCallback(() => setShowEndCard(false), []);
   const continueFromEndCard = useCallback(() => {
     setShowEndCard(false);
@@ -488,6 +492,25 @@ export function Reader({
     () => groups[currentGroupIdx] ?? [currentPage],
     [groups, currentGroupIdx, currentPage],
   );
+  // Furthest page on screen (post-audit T1.4). Only double-page view
+  // shows more than the state page; single/webtoon render `currentPage`
+  // alone even though `groups` is always derived.
+  const furthestVisiblePage =
+    viewMode === "double" && visiblePages.length > 0
+      ? Math.max(currentPage, ...visiblePages)
+      : currentPage;
+  const onLastVisiblePage = furthestVisiblePage >= totalPages - 1;
+  if (showEndCard && !onLastVisiblePage) {
+    setShowEndCard(false);
+  }
+  // The card is a lazy chunk (`./lazy`). Mount it — closed — once the
+  // reader is within two pages of the end (or it is asked to open), and
+  // keep it mounted, so its chunk is loaded and the slide-in animation
+  // plays from the closed state when the user pages past the end.
+  const nearEnd = furthestVisiblePage >= totalPages - 2;
+  if (!endCardArmed && (nearEnd || showEndCard)) {
+    setEndCardArmed(true);
+  }
 
   // v0.3.44 / v0.3.45 page-turn animation. Webtoon mode skips
   // entirely (continuous scroll is its own animation). The hook
@@ -806,6 +829,9 @@ export function Reader({
     initialRun,
     restartRun,
     totalPages,
+    // A final spread pair finishes the issue even though the resume
+    // anchor stays on its first page (post-audit T1.4).
+    furthestPage: furthestVisiblePage,
     incognito: suppressWrites,
     // Webtoon scroll-tracking drives `currentPage` both ways; persist a
     // monotonic high-water page so a scroll-up can't regress progress
@@ -1026,6 +1052,8 @@ export function Reader({
         className="pointer-events-none fixed inset-x-0 top-0 z-20 h-(--reader-top) bg-black"
       />
 
+      {progressUnavailable && !peekActive && <ProgressUnavailableBanner />}
+
       {peekActive && (
         // Peek-mode banner. Fixed at the top, below the safe-area
         // inset so it clears the iPhone notch / Dynamic Island. z-30
@@ -1079,6 +1107,8 @@ export function Reader({
             onChromeZone={toggleChrome}
             nextUpData={nextUp.data}
             nextUpLoading={nextUp.isLoading}
+            nextUpError={nextUp.isError}
+            onRetryNextUp={retryNextUp}
             onReadNext={continueFromEndCard}
             exitUrl={exitUrl}
           />
@@ -1166,6 +1196,8 @@ export function Reader({
           open={showEndCard}
           data={nextUp.data}
           isLoading={nextUp.isLoading}
+          isError={nextUp.isError}
+          onRetry={retryNextUp}
           direction={direction}
           exitUrl={exitUrl}
           onContinue={continueFromEndCard}
@@ -1646,6 +1678,8 @@ function WebtoonView({
   onChromeZone,
   nextUpData,
   nextUpLoading,
+  nextUpError,
+  onRetryNextUp,
   onReadNext,
   exitUrl,
 }: {
@@ -1667,6 +1701,8 @@ function WebtoonView({
   /** Next-up resolver data for the inline end-of-chapter footer (C2). */
   nextUpData: NextUpView | undefined;
   nextUpLoading: boolean;
+  nextUpError: boolean;
+  onRetryNextUp: () => void;
   onReadNext: () => void;
   exitUrl: string;
 }) {
@@ -1798,6 +1834,8 @@ function WebtoonView({
       <WebtoonEndFooter
         data={nextUpData}
         isLoading={nextUpLoading}
+        isError={nextUpError}
+        onRetry={onRetryNextUp}
         onReadNext={onReadNext}
         exitUrl={exitUrl}
       />

@@ -4,6 +4,7 @@ import { LibraryGridView } from "@/components/library/LibraryGridView";
 import { parseLibraryGridFilters } from "@/components/library/library-grid-filters";
 import { ScrollToTopOnMount } from "@/components/ScrollToTopOnMount";
 import { PageRails } from "@/components/saved-views/PageRails";
+import { RailError } from "@/components/saved-views/RailError";
 import { apiGet } from "@/lib/api/fetch";
 import type { LibraryView, PageListView } from "@/lib/api/types";
 
@@ -81,9 +82,11 @@ export default async function HomePage({
   const system = pages.items.find((p) => p.is_system);
   if (!system) {
     return (
-      <div className="text-muted-foreground py-12 text-sm">
-        Couldn&apos;t load your home page. Reload to try again.
-      </div>
+      <RailError
+        message="Couldn't load your home page."
+        retryLabel="Reload"
+        className="py-12"
+      />
     );
   }
   return (

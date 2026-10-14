@@ -22,16 +22,22 @@ import type { NextUpView } from "@/lib/api/types";
 export function WebtoonEndFooter({
   data,
   isLoading,
+  isError = false,
+  onRetry,
   onReadNext,
   exitUrl,
 }: {
   data: NextUpView | undefined;
   isLoading: boolean;
+  /** Resolver failed with nothing cached — see `EndOfIssueCard`. */
+  isError?: boolean;
+  onRetry?: () => void;
   onReadNext: () => void;
   exitUrl: string;
 }) {
   const target = data?.target;
   const source = data?.source ?? "none";
+  const failed = isError && !data;
   const heading =
     target?.title ??
     (target?.series_name && target?.number
@@ -70,6 +76,21 @@ export function WebtoonEndFooter({
           </Button>
           <Button asChild variant="outline" className="mt-2 w-full">
             <Link href={exitUrl}>Back to issue</Link>
+          </Button>
+        </>
+      ) : failed ? (
+        <>
+          <p className="text-base leading-snug font-semibold" role="alert">
+            Couldn&apos;t load what&apos;s next
+          </p>
+          <p className="text-muted-foreground mt-1 text-sm">
+            The next-issue lookup failed. Your progress is saved.
+          </p>
+          <Button onClick={onRetry} className="mt-4 w-full" disabled={!onRetry}>
+            Retry
+          </Button>
+          <Button asChild variant="outline" className="mt-2 w-full">
+            <Link href={exitUrl}>Exit reader</Link>
           </Button>
         </>
       ) : isLoading && !data ? (
