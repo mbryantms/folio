@@ -22,6 +22,7 @@ import { useSpreadOverrides } from "@/lib/reader/use-spread-overrides";
 import {
   useResetIssuePageOverrides,
   useSetIssuePageOverrides,
+  useResetSeriesReaderPrefs,
 } from "@/lib/api/mutations";
 
 const VIEW_OPTIONS: ReadonlyArray<{ value: ViewMode; label: string }> = [
@@ -324,6 +325,9 @@ function IssueSpreadOverrides() {
 
 function SeriesOverridesRow({ seriesId }: { seriesId: string | null }) {
   const [hasOverrides, setHasOverrides] = useState(false);
+  // Post-audit T4.4: the overrides also live on the account; a reset
+  // clears both or the next open would mirror them straight back.
+  const resetServer = useResetSeriesReaderPrefs(seriesId ?? "");
 
   useEffect(() => {
     if (!seriesId || typeof window === "undefined") return;
@@ -339,6 +343,7 @@ function SeriesOverridesRow({ seriesId }: { seriesId: string | null }) {
     if (!seriesId || typeof window === "undefined") return;
     clearSeriesOverrides(window.localStorage, seriesId);
     setHasOverrides(false);
+    resetServer.mutate(undefined);
     // Don't mutate the active store — the reset takes effect on next mount,
     // matching the behavior of the standalone settings page.
   }

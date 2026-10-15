@@ -74,6 +74,7 @@ pub mod scan_runs;
 pub mod series;
 pub mod series_external_relationships;
 pub mod series_metadata_tab;
+pub mod series_reader_prefs;
 pub mod series_refresh;
 pub mod series_relationships;
 pub mod series_same_universe;

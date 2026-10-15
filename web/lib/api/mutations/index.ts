@@ -1045,6 +1045,21 @@ export function useSetSeriesCover(seriesSlug: string) {
 }
 
 /**
+ * `DELETE /me/series/{series_id}/reader-prefs` — drop the account's
+ * per-series reader overrides (post-audit T4.4). The caller clears the
+ * local cache itself (`clearSeriesOverrides`).
+ */
+export function useResetSeriesReaderPrefs(seriesId: string) {
+  return useApiMutation<null, void>(
+    () => ({
+      path: `/me/series/${encodeURIComponent(seriesId)}/reader-prefs`,
+      method: "DELETE",
+    }),
+    { successMessage: "Series reader settings reset" },
+  );
+}
+
+/**
  * `DELETE /series/{series_slug}/issues/{issue_slug}/field-provenance/{field}`
  * — clear a user pin on a single field. Used by the MetadataMatchDialog
  * preview pane's per-row "Revert pin" button (M5.3): on success the diff

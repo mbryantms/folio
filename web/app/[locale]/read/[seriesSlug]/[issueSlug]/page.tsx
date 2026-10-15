@@ -8,6 +8,7 @@ import type {
   MeView,
   PageInfo,
   PageOverridesView,
+  SeriesReaderPrefsView,
 } from "@/lib/api/types";
 import { detectInitialViewMode } from "@/lib/reader/detect";
 import type { Direction, SeriesDirection, ViewMode } from "@/lib/reader/detect";
@@ -145,10 +146,16 @@ export default async function ReadPage({
   const overridesPromise = apiGet<PageOverridesView>(
     `/me/issues/${issue.id}/page-overrides`,
   ).catch(() => null);
-  const [delta, me, pageOverrides] = await Promise.all([
+  // Post-audit T4.4: the account's per-series reader overrides. `null`
+  // when the fetch fails so the reader keeps its local cache.
+  const seriesPrefsPromise = apiGet<SeriesReaderPrefsView>(
+    `/me/series/${issue.series_id}/reader-prefs`,
+  ).catch(() => null);
+  const [delta, me, pageOverrides, serverSeriesPrefs] = await Promise.all([
     progressPromise,
     mePromise,
     overridesPromise,
+    seriesPrefsPromise,
   ]);
 
   // page_count from ComicInfo isn't always trustworthy; if the reader walks
@@ -273,6 +280,7 @@ export default async function ReadPage({
         seriesId={issue.series_id}
         cblSavedViewId={cblSavedViewId}
         collectionId={collectionId}
+        serverSeriesPrefs={serverSeriesPrefs}
         exitUrl={`/series/${seriesSlug}/issues/${issueSlug}`}
         totalPages={totalPages}
         initialPage={initialPage}

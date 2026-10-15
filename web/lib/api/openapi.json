@@ -8519,6 +8519,102 @@
         }
       }
     },
+    "/api/me/series/{series_id}/reader-prefs": {
+      "get": {
+        "summary": "The caller's reader overrides for a series (empty object when none).",
+        "operationId": "series_reader_prefs_get",
+        "parameters": [
+          {
+            "name": "series_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesReaderPrefsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "not authenticated"
+          }
+        }
+      },
+      "put": {
+        "summary": "Set or clear the caller's reader overrides for a series (PATCH\nsemantics per field). Clearing every slice removes the row.",
+        "operationId": "series_reader_prefs_put",
+        "parameters": [
+          {
+            "name": "series_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeriesReaderPrefsPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesReaderPrefsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "404": {
+            "description": "series not found"
+          },
+          "422": {
+            "description": "unknown preference token"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove every override for the series (\"Reset this series to defaults\").",
+        "operationId": "series_reader_prefs_delete",
+        "parameters": [
+          {
+            "name": "series_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "cleared (also when nothing was stored)"
+          },
+          "401": {
+            "description": "not authenticated"
+          }
+        }
+      }
+    },
     "/api/me/sessions": {
       "get": {
         "operationId": "sessions_list",
@@ -31081,6 +31177,90 @@
           },
           "source": {
             "type": "string"
+          }
+        }
+      },
+      "SeriesReaderPrefsPatch": {
+        "type": "object",
+        "description": "PATCH semantics: an absent field leaves the slice alone, `null`\nclears it, a value sets it.",
+        "properties": {
+          "cover_solo": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "fit_mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FitMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reading_direction": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReadingDirection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "view_mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ViewMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SeriesReaderPrefsView": {
+        "type": "object",
+        "description": "The caller's overrides for one series. A missing field is \"no\noverride\" — the reader falls through to the account default.",
+        "properties": {
+          "cover_solo": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "fit_mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FitMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reading_direction": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReadingDirection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "view_mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ViewMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
