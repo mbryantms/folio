@@ -425,6 +425,20 @@ async fn serve_variant(
         }
     };
     let budget = app.cfg().page_variant_cache_bytes;
+    // Post-audit T3.4: a variant miss decodes + re-encodes a full page.
+    // Gate it like inline thumbnail generation so a burst of cold variant
+    // requests (a strip of 40 pages at a new width) cannot saturate the
+    // blocking pool and the CPU; `thumb_inline_parallel` is the cap.
+    let _permit = match app.thumb_inline_semaphore.clone().acquire_owned().await {
+        Ok(p) => p,
+        Err(_) => {
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "unavailable",
+                "variant renderer is shutting down",
+            );
+        }
+    };
     let result =
         tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, &'static str), PageError> {
             let mut cbz = arc.lock().expect("cbz mutex");
