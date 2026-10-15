@@ -251,7 +251,7 @@ export function EditMetadataForm({
           return (
             <div
               key={i}
-              className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+              className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
               data-testid="emd-row"
             >
               <div className="grid gap-1.5">
