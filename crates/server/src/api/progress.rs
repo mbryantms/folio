@@ -52,12 +52,9 @@ use axum::{
 use chrono::Utc;
 use entity::{
     issue,
-    progress_record::{self, ActiveModel as ProgressAM, Entity as ProgressEntity},
+    progress_record::{self, Entity as ProgressEntity},
 };
-use sea_orm::{
-    ActiveModelTrait, ActiveValue::NotSet, ColumnTrait, Condition, EntityTrait, QueryFilter,
-    QueryOrder, Set, Unchanged,
-};
+use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder};
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -145,29 +142,35 @@ impl From<progress_record::Model> for ProgressView {
     }
 }
 
-/// Resolve the new `finished_at` value for an upsert. Centralized so
-/// the four write paths (`upsert_for`, `upsert_series`, `upsert_bulk`,
-/// `upsert_series_bulk`) can't drift on the flip semantics.
-///
-///   - false → true:  stamp `now`
-///   - true  → false: clear to `None`
-///   - true  → true:  keep the previous timestamp (backfilled rows
-///     may have inherited their `updated_at`; respect that)
-///   - false → false: stay `None`
-pub(crate) fn resolve_finished_at(
-    prev_finished: bool,
-    next_finished: bool,
-    prev_finished_at: Option<chrono::DateTime<chrono::FixedOffset>>,
-    now: chrono::DateTime<chrono::FixedOffset>,
-) -> Option<chrono::DateTime<chrono::FixedOffset>> {
-    match (prev_finished, next_finished) {
-        (false, true) => Some(now),
-        (true, false) => None,
-        (true, true) => prev_finished_at.or(Some(now)),
-        (false, false) => None,
+/// Post-audit T3.7: partial failures return 200 with `failed` counted;
+/// only a request where *every* attempted write failed is a 500, carrying
+/// the first error so the client can say why.
+fn all_writes_failed(
+    updated: u32,
+    skipped: u32,
+    failed: u32,
+    first_error: Option<&str>,
+) -> Option<Response> {
+    if failed > 0 && updated == 0 && skipped == 0 {
+        return Some(error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &format!(
+                "every progress write failed: {}",
+                first_error.unwrap_or("unknown error")
+            ),
+        ));
     }
+    None
 }
 
+/// The `finished_at` flip rule (encoded in [`PROGRESS_UPSERT_SQL_TEMPLATE`]):
+///   - false → true:  stamp `now`
+///   - true  → false: clear to `None`
+///   - true  → true:  keep the previous timestamp (backfilled rows may
+///     have inherited their `updated_at`; respect that)
+///   - false → false: stay `None`
+///
 /// Resolve the `is_backfill` value for a write. The flag means "this
 /// finish came from a catalog/sync write, not active reading"; it's
 /// `true` only when (a) the new state is finished and (b) the caller
@@ -298,7 +301,7 @@ pub(crate) async fn upsert_for(
 ///
 /// "write into run": implicit (`finished` absent) keeps
 /// `max(prev.last_page, page)` and the stored `finished`; explicit sets
-/// both as given. `finished_at` follows [`resolve_finished_at`]. The
+/// both as given. `finished_at` follows the flip rule documented above. The
 /// stored page hash is kept when the resulting page is unchanged;
 /// otherwise the hash captured for `page` is stored when `page` is the
 /// resulting page, else NULL (ordinal fallback).
@@ -335,6 +338,10 @@ pub(crate) async fn upsert_for_run(
             run.into(),
             page_hash.into(),
             page_count.into(),
+            // Per-issue reader writes are active reading, never backfill,
+            // and take the computed percent.
+            false.into(),
+            Option::<f64>::None.into(),
         ],
     );
     let row = ProgressEntity::find()
@@ -357,12 +364,62 @@ pub(crate) async fn upsert_for_run(
     Ok(row)
 }
 
+/// Explicit bulk write (mark read / unread) through the same atomic
+/// statement as [`upsert_for_run`] (post-audit T3.7): no run tag, no
+/// restart, no page hash (bulk marks anchor "first / last page", which
+/// the ordinal fallback preserves — and capturing would open hundreds of
+/// archives), the request's `is_backfill` flag, and an exact `percent`
+/// (1.0 / 0.0) instead of `page / page_count`. Concurrent reader writes
+/// can no longer be lost to a bulk mark's read-then-write.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn upsert_explicit(
+    app: &AppState,
+    user_id: uuid::Uuid,
+    issue_id: &str,
+    page_count: Option<i32>,
+    page: i32,
+    percent: f64,
+    finished: bool,
+    device: Option<String>,
+    is_backfill: bool,
+) -> Result<progress_record::Model, sea_orm::DbErr> {
+    use sea_orm::{DbBackend, Statement};
+    let now = Utc::now().fixed_offset();
+    let page_count = page_count.unwrap_or(0);
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        PROGRESS_UPSERT_SQL.as_str(),
+        [
+            user_id.into(),
+            issue_id.to_owned().into(),
+            page.into(),
+            Some(finished).into(),
+            now.into(),
+            device.into(),
+            false.into(),
+            Option::<i32>::None.into(),
+            Option::<String>::None.into(),
+            page_count.into(),
+            is_backfill.into(),
+            Some(percent).into(),
+        ],
+    );
+    ProgressEntity::find()
+        .from_raw_sql(stmt)
+        .one(&app.db)
+        .await?
+        .ok_or_else(|| sea_orm::DbErr::RecordNotFound("progress upsert returned no row".to_owned()))
+}
+
 /// The single-statement reading-run merge (see [`upsert_for_run`] for
 /// the truth table). Parameters:
 ///
 /// `$1` user_id · `$2` issue_id · `$3` page · `$4` finished (nullable) ·
 /// `$5` now · `$6` device (nullable) · `$7` restart · `$8` run tag
-/// (nullable) · `$9` page hash for `$3` (nullable) · `$10` page count.
+/// (nullable) · `$9` page hash for `$3` (nullable) · `$10` page count ·
+/// `$11` is_backfill (the reader passes `false`; bulk marks pass the
+/// request's flag) · `$12` explicit percent (nullable — bulk marks store
+/// exactly 1.0 / 0.0 instead of `page / page_count`).
 ///
 /// In the `DO UPDATE` arm `progress_records.*` is the locked existing
 /// row. Every column is written through a `CASE` on the "ignored"
@@ -374,18 +431,22 @@ INSERT INTO progress_records
      updated_at, device, is_backfill, run, page_hash)
 VALUES (
     $1::uuid, $2::text, $3::int4,
-    CASE WHEN $10::int4 > 0
-         THEN LEAST(1.0::float8, GREATEST(0.0::float8, $3::int4::float8 / $10::int4::float8))
-         ELSE 0.0::float8 END,
+    COALESCE(
+        $12::float8,
+        CASE WHEN $10::int4 > 0
+             THEN LEAST(1.0::float8, GREATEST(0.0::float8, $3::int4::float8 / $10::int4::float8))
+             ELSE 0.0::float8 END
+    ),
     COALESCE($4::bool, false),
     CASE WHEN COALESCE($4::bool, false) THEN $5::timestamptz ELSE NULL END,
-    $5::timestamptz, $6::text, false,
+    $5::timestamptz, $6::text, $11::bool,
     CASE WHEN $7::bool AND $8::int4 IS NOT NULL THEN GREATEST($8::int4 + 1, 0) ELSE 0 END,
     $9::text
 )
 ON CONFLICT (user_id, issue_id) DO UPDATE SET
     last_page = CASE WHEN __IGNORED__ THEN progress_records.last_page ELSE __NEXT_PAGE__ END,
     percent = CASE WHEN __IGNORED__ THEN progress_records.percent
+                   WHEN $12::float8 IS NOT NULL THEN $12::float8
                    WHEN $10::int4 > 0
                    THEN LEAST(1.0::float8, GREATEST(0.0::float8, (__NEXT_PAGE__)::float8 / $10::int4::float8))
                    ELSE 0.0::float8 END,
@@ -397,7 +458,7 @@ ON CONFLICT (user_id, issue_id) DO UPDATE SET
                        ELSE NULL END,
     updated_at = CASE WHEN __IGNORED__ THEN progress_records.updated_at ELSE $5::timestamptz END,
     device = CASE WHEN __IGNORED__ THEN progress_records.device ELSE $6::text END,
-    is_backfill = CASE WHEN __IGNORED__ THEN progress_records.is_backfill ELSE false END,
+    is_backfill = CASE WHEN __IGNORED__ THEN progress_records.is_backfill ELSE $11::bool END,
     run = CASE WHEN __IGNORED__ THEN progress_records.run
                WHEN __RESTARTS__ THEN progress_records.run + 1
                ELSE progress_records.run END,
@@ -508,6 +569,15 @@ pub struct UpsertSeriesResp {
     /// Issues skipped because the user already has a matching `finished`
     /// state. Avoids unnecessary write traffic on idle re-clicks.
     pub skipped: u32,
+    /// Issues whose write (or pre-write lookup) failed. Post-audit T3.7:
+    /// these used to vanish into a log line, so "mark all read" could
+    /// report success while rows were left untouched. `first_error` is
+    /// the first failure's message; the handler answers 500 only when
+    /// *every* attempted write failed.
+    #[serde(default)]
+    pub failed: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_error: Option<String>,
 }
 
 #[utoipa::path(
@@ -555,9 +625,10 @@ pub async fn upsert_series(
         }
     };
 
-    let now = Utc::now().fixed_offset();
     let mut updated: u32 = 0;
     let mut skipped: u32 = 0;
+    let mut failed: u32 = 0;
+    let mut first_error: Option<String> = None;
 
     for iss in issues {
         let target_page = if req.finished {
@@ -585,52 +656,48 @@ pub async fn upsert_series(
                 skipped += 1;
                 continue;
             }
-            Some(prev) => {
-                let next_finished_at =
-                    resolve_finished_at(prev.finished, req.finished, prev.finished_at, now);
-                let am = ProgressAM {
-                    user_id: Unchanged(user.id),
-                    issue_id: Unchanged(iss.id.clone()),
-                    last_page: Set(target_page),
-                    percent: Set(target_percent),
-                    finished: Set(req.finished),
-                    finished_at: Set(next_finished_at),
-                    updated_at: Set(now),
-                    device: Set(req.device.clone()),
-                    is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
-                    run: NotSet,
-                    page_hash: Set(None),
-                };
-                if let Err(e) = am.update(&app.db).await {
-                    tracing::warn!(error = %e, issue_id = %iss.id, "series-progress update failed");
-                    continue;
+            Some(_) | None => {
+                // Post-audit T3.7: one atomic statement (see `upsert_explicit`)
+                // instead of read-then-update/insert, and a failure is counted
+                // instead of vanishing into the log.
+                let is_backfill = resolve_is_backfill(req.finished, req.backfill);
+                match upsert_explicit(
+                    &app,
+                    user.id,
+                    &iss.id,
+                    iss.page_count,
+                    target_page,
+                    target_percent,
+                    req.finished,
+                    req.device.clone(),
+                    is_backfill,
+                )
+                .await
+                {
+                    Ok(_) => updated += 1,
+                    Err(e) => {
+                        tracing::warn!(error = %e, issue_id = %iss.id, "series-progress write failed");
+                        failed += 1;
+                        first_error.get_or_insert_with(|| e.to_string());
+                    }
                 }
-                updated += 1;
-            }
-            None => {
-                let am = ProgressAM {
-                    user_id: Set(user.id),
-                    issue_id: Set(iss.id.clone()),
-                    last_page: Set(target_page),
-                    percent: Set(target_percent),
-                    finished: Set(req.finished),
-                    finished_at: Set(if req.finished { Some(now) } else { None }),
-                    updated_at: Set(now),
-                    device: Set(req.device.clone()),
-                    is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
-                    run: Set(0),
-                    page_hash: Set(None),
-                };
-                if let Err(e) = am.insert(&app.db).await {
-                    tracing::warn!(error = %e, issue_id = %iss.id, "series-progress insert failed");
-                    continue;
-                }
-                updated += 1;
             }
         }
     }
 
-    (StatusCode::OK, Json(UpsertSeriesResp { updated, skipped })).into_response()
+    if let Some(resp) = all_writes_failed(updated, skipped, failed, first_error.as_deref()) {
+        return resp;
+    }
+    (
+        StatusCode::OK,
+        Json(UpsertSeriesResp {
+            updated,
+            skipped,
+            failed,
+            first_error,
+        }),
+    )
+        .into_response()
 }
 
 /// Body for `POST /series/{slug}/progress-matching` — bulk read/unread for
@@ -705,9 +772,10 @@ pub async fn upsert_series_matching(
         }
     };
 
-    let now = Utc::now().fixed_offset();
     let mut updated: u32 = 0;
     let mut skipped: u32 = 0;
+    let mut failed: u32 = 0;
+    let mut first_error: Option<String> = None;
 
     for iss in issues {
         let target_page = if req.finished {
@@ -723,6 +791,8 @@ pub async fn upsert_series_matching(
             Ok(opt) => opt,
             Err(e) => {
                 tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress lookup failed");
+                failed += 1;
+                first_error.get_or_insert_with(|| e.to_string());
                 continue;
             }
         };
@@ -731,51 +801,38 @@ pub async fn upsert_series_matching(
             Some(row) if row.finished == req.finished && row.last_page == target_page => {
                 skipped += 1;
             }
-            Some(prev) => {
-                let next_finished_at =
-                    resolve_finished_at(prev.finished, req.finished, prev.finished_at, now);
-                let am = ProgressAM {
-                    user_id: Unchanged(user.id),
-                    issue_id: Unchanged(iss.id.clone()),
-                    last_page: Set(target_page),
-                    percent: Set(target_percent),
-                    finished: Set(req.finished),
-                    finished_at: Set(next_finished_at),
-                    updated_at: Set(now),
-                    device: Set(req.device.clone()),
-                    is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
-                    run: NotSet,
-                    page_hash: Set(None),
-                };
-                if let Err(e) = am.update(&app.db).await {
-                    tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress update failed");
-                    continue;
+            Some(_) | None => {
+                // Post-audit T3.7: one atomic statement (see `upsert_explicit`)
+                // instead of read-then-update/insert, and a failure is counted
+                // instead of vanishing into the log.
+                let is_backfill = resolve_is_backfill(req.finished, req.backfill);
+                match upsert_explicit(
+                    &app,
+                    user.id,
+                    &iss.id,
+                    iss.page_count,
+                    target_page,
+                    target_percent,
+                    req.finished,
+                    req.device.clone(),
+                    is_backfill,
+                )
+                .await
+                {
+                    Ok(_) => updated += 1,
+                    Err(e) => {
+                        tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress write failed");
+                        failed += 1;
+                        first_error.get_or_insert_with(|| e.to_string());
+                    }
                 }
-                updated += 1;
-            }
-            None => {
-                let am = ProgressAM {
-                    user_id: Set(user.id),
-                    issue_id: Set(iss.id.clone()),
-                    last_page: Set(target_page),
-                    percent: Set(target_percent),
-                    finished: Set(req.finished),
-                    finished_at: Set(if req.finished { Some(now) } else { None }),
-                    updated_at: Set(now),
-                    device: Set(req.device.clone()),
-                    is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
-                    run: Set(0),
-                    page_hash: Set(None),
-                };
-                if let Err(e) = am.insert(&app.db).await {
-                    tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress insert failed");
-                    continue;
-                }
-                updated += 1;
             }
         }
     }
 
+    if let Some(resp) = all_writes_failed(updated, skipped, failed, first_error.as_deref()) {
+        return resp;
+    }
     (
         StatusCode::OK,
         Json(UpsertBulkResp {
@@ -783,6 +840,8 @@ pub async fn upsert_series_matching(
             skipped,
             forbidden: 0,
             not_found: 0,
+            failed,
+            first_error,
         }),
     )
         .into_response()
@@ -829,6 +888,12 @@ pub struct UpsertBulkResp {
     /// doesn't get to distinguish a missing row from one they're
     /// not allowed to see.
     pub not_found: u32,
+    /// Issues whose write failed (post-audit T3.7); see
+    /// [`UpsertSeriesResp::failed`].
+    #[serde(default)]
+    pub failed: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_error: Option<String>,
 }
 
 #[utoipa::path(
@@ -868,6 +933,8 @@ pub async fn upsert_bulk(
                 skipped: 0,
                 forbidden: 0,
                 not_found: 0,
+                failed: 0,
+                first_error: None,
             }),
         )
             .into_response();
@@ -908,9 +975,10 @@ pub async fn upsert_bulk(
     // rather than a SELECT per row.
     let acl = access::for_user(&app, &user).await;
 
-    let now = Utc::now().fixed_offset();
     let mut updated: u32 = 0;
     let mut skipped: u32 = 0;
+    let mut failed: u32 = 0;
+    let mut first_error: Option<String> = None;
     let mut forbidden: u32 = 0;
 
     for iss in rows {
@@ -932,6 +1000,8 @@ pub async fn upsert_bulk(
             Ok(opt) => opt,
             Err(e) => {
                 tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress lookup failed");
+                failed += 1;
+                first_error.get_or_insert_with(|| e.to_string());
                 continue;
             }
         };
@@ -940,51 +1010,38 @@ pub async fn upsert_bulk(
             Some(row) if row.finished == req.finished && row.last_page == target_page => {
                 skipped += 1;
             }
-            Some(prev) => {
-                let next_finished_at =
-                    resolve_finished_at(prev.finished, req.finished, prev.finished_at, now);
-                let am = ProgressAM {
-                    user_id: Unchanged(user.id),
-                    issue_id: Unchanged(iss.id.clone()),
-                    last_page: Set(target_page),
-                    percent: Set(target_percent),
-                    finished: Set(req.finished),
-                    finished_at: Set(next_finished_at),
-                    updated_at: Set(now),
-                    device: Set(req.device.clone()),
-                    is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
-                    run: NotSet,
-                    page_hash: Set(None),
-                };
-                if let Err(e) = am.update(&app.db).await {
-                    tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress update failed");
-                    continue;
+            Some(_) | None => {
+                // Post-audit T3.7: one atomic statement (see `upsert_explicit`)
+                // instead of read-then-update/insert, and a failure is counted
+                // instead of vanishing into the log.
+                let is_backfill = resolve_is_backfill(req.finished, req.backfill);
+                match upsert_explicit(
+                    &app,
+                    user.id,
+                    &iss.id,
+                    iss.page_count,
+                    target_page,
+                    target_percent,
+                    req.finished,
+                    req.device.clone(),
+                    is_backfill,
+                )
+                .await
+                {
+                    Ok(_) => updated += 1,
+                    Err(e) => {
+                        tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress write failed");
+                        failed += 1;
+                        first_error.get_or_insert_with(|| e.to_string());
+                    }
                 }
-                updated += 1;
-            }
-            None => {
-                let am = ProgressAM {
-                    user_id: Set(user.id),
-                    issue_id: Set(iss.id.clone()),
-                    last_page: Set(target_page),
-                    percent: Set(target_percent),
-                    finished: Set(req.finished),
-                    finished_at: Set(if req.finished { Some(now) } else { None }),
-                    updated_at: Set(now),
-                    device: Set(req.device.clone()),
-                    is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
-                    run: Set(0),
-                    page_hash: Set(None),
-                };
-                if let Err(e) = am.insert(&app.db).await {
-                    tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress insert failed");
-                    continue;
-                }
-                updated += 1;
             }
         }
     }
 
+    if let Some(resp) = all_writes_failed(updated, skipped, failed, first_error.as_deref()) {
+        return resp;
+    }
     (
         StatusCode::OK,
         Json(UpsertBulkResp {
@@ -992,6 +1049,8 @@ pub async fn upsert_bulk(
             skipped,
             forbidden,
             not_found,
+            failed,
+            first_error,
         }),
     )
         .into_response()
@@ -1031,6 +1090,12 @@ pub struct UpsertSeriesBulkResp {
     pub forbidden_series: u32,
     /// Series whose id didn't resolve.
     pub not_found_series: u32,
+    /// Issues whose write failed (post-audit T3.7); see
+    /// [`UpsertSeriesResp::failed`].
+    #[serde(default)]
+    pub failed: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_error: Option<String>,
 }
 
 #[utoipa::path(
@@ -1067,6 +1132,8 @@ pub async fn upsert_series_bulk(
                 skipped: 0,
                 forbidden_series: 0,
                 not_found_series: 0,
+                failed: 0,
+                first_error: None,
             }),
         )
             .into_response();
@@ -1101,9 +1168,10 @@ pub async fn upsert_series_bulk(
     // Pre-fetch the library-access set (membership + WP-2.7 caps).
     let acl = access::for_user(&app, &user).await;
 
-    let now = chrono::Utc::now().fixed_offset();
     let mut updated: u32 = 0;
     let mut skipped: u32 = 0;
+    let mut failed: u32 = 0;
+    let mut first_error: Option<String> = None;
     let mut forbidden_series: u32 = 0;
 
     for srow in series_rows {
@@ -1142,6 +1210,8 @@ pub async fn upsert_series_bulk(
                 Ok(opt) => opt,
                 Err(e) => {
                     tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk lookup failed");
+                    failed += 1;
+                    first_error.get_or_insert_with(|| e.to_string());
                     continue;
                 }
             };
@@ -1149,52 +1219,39 @@ pub async fn upsert_series_bulk(
                 Some(row) if row.finished == req.finished && row.last_page == target_page => {
                     skipped += 1;
                 }
-                Some(prev) => {
-                    let next_finished_at =
-                        resolve_finished_at(prev.finished, req.finished, prev.finished_at, now);
-                    let am = ProgressAM {
-                        user_id: Unchanged(user.id),
-                        issue_id: Unchanged(iss.id.clone()),
-                        last_page: Set(target_page),
-                        percent: Set(target_percent),
-                        finished: Set(req.finished),
-                        finished_at: Set(next_finished_at),
-                        updated_at: Set(now),
-                        device: Set(req.device.clone()),
-                        is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
-                        run: NotSet,
-                        page_hash: Set(None),
-                    };
-                    if let Err(e) = am.update(&app.db).await {
-                        tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk update failed");
-                        continue;
+                Some(_) | None => {
+                    // Post-audit T3.7: one atomic statement (see `upsert_explicit`)
+                    // instead of read-then-update/insert, and a failure is counted
+                    // instead of vanishing into the log.
+                    let is_backfill = resolve_is_backfill(req.finished, req.backfill);
+                    match upsert_explicit(
+                        &app,
+                        user.id,
+                        &iss.id,
+                        iss.page_count,
+                        target_page,
+                        target_percent,
+                        req.finished,
+                        req.device.clone(),
+                        is_backfill,
+                    )
+                    .await
+                    {
+                        Ok(_) => updated += 1,
+                        Err(e) => {
+                            tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk write failed");
+                            failed += 1;
+                            first_error.get_or_insert_with(|| e.to_string());
+                        }
                     }
-                    updated += 1;
-                }
-                None => {
-                    let am = ProgressAM {
-                        user_id: Set(user.id),
-                        issue_id: Set(iss.id.clone()),
-                        last_page: Set(target_page),
-                        percent: Set(target_percent),
-                        finished: Set(req.finished),
-                        finished_at: Set(if req.finished { Some(now) } else { None }),
-                        updated_at: Set(now),
-                        device: Set(req.device.clone()),
-                        is_backfill: Set(resolve_is_backfill(req.finished, req.backfill)),
-                        run: Set(0),
-                        page_hash: Set(None),
-                    };
-                    if let Err(e) = am.insert(&app.db).await {
-                        tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk insert failed");
-                        continue;
-                    }
-                    updated += 1;
                 }
             }
         }
     }
 
+    if let Some(resp) = all_writes_failed(updated, skipped, failed, first_error.as_deref()) {
+        return resp;
+    }
     (
         StatusCode::OK,
         Json(UpsertSeriesBulkResp {
@@ -1202,6 +1259,8 @@ pub async fn upsert_series_bulk(
             skipped,
             forbidden_series,
             not_found_series,
+            failed,
+            first_error,
         }),
     )
         .into_response()

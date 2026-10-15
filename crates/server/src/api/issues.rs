@@ -1726,6 +1726,13 @@ pub struct BulkMetadataResp {
     pub forbidden: u32,
     /// Issues whose id didn't resolve to an active row.
     pub not_found: u32,
+    /// Issues whose row update failed (post-audit T3.7). Used to be
+    /// folded into `forbidden`, so a DB failure looked like an ACL
+    /// filter; `first_error` carries the first failure's message.
+    #[serde(default)]
+    pub failed: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_error: Option<String>,
 }
 
 /// Bulk-update a per-field patch across a list of issue ids.
@@ -1785,6 +1792,8 @@ pub async fn bulk_metadata(
             skipped: 0,
             forbidden: 0,
             not_found: 0,
+            failed: 0,
+            first_error: None,
         })
         .into_response();
     }
@@ -1816,6 +1825,8 @@ pub async fn bulk_metadata(
     let mut updated: u32 = 0;
     let mut skipped: u32 = 0;
     let mut forbidden: u32 = 0;
+    let mut failed: u32 = 0;
+    let mut first_error: Option<String> = None;
     let mut sidecar_rewrites: u32 = 0;
     let mode_skip_if_set = matches!(req.mode, BulkMode::SkipIfSet);
 
@@ -1876,10 +1887,10 @@ pub async fn bulk_metadata(
             }
             Err(e) => {
                 tracing::warn!(error = %e, issue_id = %row.id, "bulk-metadata update failed");
-                // Surface as not_found in the response — caller's
-                // perspective is "didn't apply". The error log lets
-                // operators investigate.
-                forbidden += 1;
+                // Post-audit T3.7: a failed write is reported as such, not
+                // disguised as an ACL filter.
+                failed += 1;
+                first_error.get_or_insert_with(|| e.to_string());
             }
         }
     }
@@ -1920,6 +1931,8 @@ pub async fn bulk_metadata(
         skipped,
         forbidden,
         not_found,
+        failed,
+        first_error,
     })
     .into_response()
 }

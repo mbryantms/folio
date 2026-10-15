@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  summarizeBulkMetadata,
   summarizeBulkProgress,
   summarizeBulkSeriesProgress,
 } from "@/lib/api/mutations";
@@ -122,5 +123,67 @@ describe("summarizeBulkSeriesProgress", () => {
 
   it("falls back to a verb-only message when data is missing", () => {
     expect(summarizeBulkSeriesProgress(undefined, true)).toBe("Marked read");
+  });
+});
+
+describe("failed writes are never hidden (post-audit T3.7)", () => {
+  it("appends `M failed` to the bulk progress summary", () => {
+    expect(
+      summarizeBulkProgress(
+        { updated: 2, skipped: 0, forbidden: 0, not_found: 0, failed: 1 },
+        true,
+      ),
+    ).toBe("2 marked read; 1 failed");
+    // Older servers omit the field: no change in wording.
+    expect(
+      summarizeBulkProgress(
+        { updated: 2, skipped: 0, forbidden: 0, not_found: 0 },
+        true,
+      ),
+    ).toBe("2 marked read");
+  });
+
+  it("appends `M failed` to the series summary", () => {
+    expect(
+      summarizeBulkSeriesProgress(
+        {
+          updated: 0,
+          skipped: 0,
+          forbidden_series: 0,
+          not_found_series: 0,
+          failed: 3,
+        },
+        false,
+      ),
+    ).toBe("3 failed");
+  });
+
+  it("reports `N updated · M failed` for bulk metadata", () => {
+    expect(
+      summarizeBulkMetadata({
+        updated: 4,
+        skipped: 1,
+        forbidden: 0,
+        not_found: 0,
+        failed: 2,
+      }),
+    ).toBe("4 updated · 1 skipped · 2 failed");
+    expect(
+      summarizeBulkMetadata({
+        updated: 0,
+        skipped: 0,
+        forbidden: 0,
+        not_found: 0,
+        failed: 2,
+      }),
+    ).toBe("0 updated · 2 failed");
+    expect(
+      summarizeBulkMetadata({
+        updated: 0,
+        skipped: 0,
+        forbidden: 0,
+        not_found: 0,
+      }),
+    ).toBe("No issues changed");
   });
 });

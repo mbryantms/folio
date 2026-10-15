@@ -443,6 +443,10 @@ async fn bulk_mark_read_updates_each_id_and_counts_skipped() {
     .await;
     assert_eq!(status, StatusCode::OK, "json: {json:#?}");
     assert_eq!(json["updated"].as_u64(), Some(2));
+    // Post-audit T3.7: honest failure counts ride on every bulk response —
+    // zero on a clean run, and no `first_error` key at all.
+    assert_eq!(json["failed"], 0, "{json}");
+    assert!(json.get("first_error").is_none(), "{json}");
     assert_eq!(json["skipped"].as_u64(), Some(1));
     assert_eq!(json["forbidden"].as_u64(), Some(0));
     assert_eq!(json["not_found"].as_u64(), Some(0));
