@@ -3950,6 +3950,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/series/{series_id}/reader-prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's reader overrides for a series (empty object when none). */
+        get: operations["series_reader_prefs_get"];
+        /**
+         * Set or clear the caller's reader overrides for a series (PATCH
+         *     semantics per field). Clearing every slice removes the row.
+         */
+        put: operations["series_reader_prefs_put"];
+        post?: never;
+        /** Remove every override for the series ("Reset this series to defaults"). */
+        delete: operations["series_reader_prefs_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/sessions": {
         parameters: {
             query?: never;
@@ -13127,6 +13149,26 @@ export interface components {
             /** @description `user` | `provider:<source>` | … (`external_ids.set_by`). */
             set_by: string;
             source: string;
+        };
+        /**
+         * @description PATCH semantics: an absent field leaves the slice alone, `null`
+         *     clears it, a value sets it.
+         */
+        SeriesReaderPrefsPatch: {
+            cover_solo?: boolean | null;
+            fit_mode?: components["schemas"]["FitMode"] | null;
+            reading_direction?: components["schemas"]["ReadingDirection"] | null;
+            view_mode?: components["schemas"]["ViewMode"] | null;
+        };
+        /**
+         * @description The caller's overrides for one series. A missing field is "no
+         *     override" — the reader falls through to the account default.
+         */
+        SeriesReaderPrefsView: {
+            cover_solo?: boolean | null;
+            fit_mode?: components["schemas"]["FitMode"] | null;
+            reading_direction?: components["schemas"]["ReadingDirection"] | null;
+            view_mode?: components["schemas"]["ViewMode"] | null;
         };
         /** @description Portable identity for a series. */
         SeriesRef: {
@@ -22611,6 +22653,107 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PinView"];
                 };
+            };
+        };
+    };
+    series_reader_prefs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesReaderPrefsView"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_reader_prefs_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeriesReaderPrefsPatch"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesReaderPrefsView"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown preference token */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_reader_prefs_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description cleared (also when nothing was stored) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -1,10 +1,16 @@
 /**
  * Helpers for inspecting and clearing per-series reader overrides stored
- * in localStorage (key shape: `reader:<slice>:<seriesId>`). Pulled into a
- * pure module so it can be unit-tested without a DOM and reused by both
- * `/settings/reading` and the in-reader settings popover.
+ * in localStorage (key shapes: the legacy `reader:<slice>:<seriesId>` and
+ * the versioned `reader.v<N>:<slice>:<seriesId>` from `prefs-storage`).
+ * Pulled into a pure module so it can be unit-tested without a DOM and
+ * reused by the in-reader settings popover. The account copy of the same
+ * overrides is cleared separately (`useResetSeriesReaderPrefs`).
  */
 export const SERIES_OVERRIDE_PREFIX = "reader:";
+const VERSIONED_PREFIX = "reader.v";
+
+const isReaderKey = (k: string) =>
+  k.startsWith(SERIES_OVERRIDE_PREFIX) || k.startsWith(VERSIONED_PREFIX);
 
 export interface KVStore {
   readonly length: number;
@@ -19,7 +25,7 @@ export function seriesOverrideKeys(store: KVStore, seriesId: string): string[] {
   const suffix = `:${seriesId}`;
   for (let i = 0; i < store.length; i += 1) {
     const k = store.key(i);
-    if (k && k.startsWith(SERIES_OVERRIDE_PREFIX) && k.endsWith(suffix)) {
+    if (k && isReaderKey(k) && k.endsWith(suffix)) {
       out.push(k);
     }
   }

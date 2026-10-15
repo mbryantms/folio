@@ -49,9 +49,20 @@ neither are lazy `next/dynamic` chunks.
 | -------------------------------------- | -------------------- | ------ | ------- | ------ |
 | 2026-09-30, `main` before WP-4.4       | 191.20 KB            | 20     | 195 KB  | 150 KB |
 | 2026-09-30, WP-4.4 (reader code-split) | 117.45 KB            | 13     | 130 KB  | 120 KB |
+| 2026-10-15, post-audit T4.4 (account per-series prefs) | 130.13 KB | 14 | 145 KB | 120 KB |
 
-The ceiling is measured + 10% (117.45 × 1.1 = 129.2 → 130 KB). Going over the
-ceiling fails CI; going over the target only warns. Re-measure after each
+The ceiling is measured + 10% (117.45 × 1.1 = 129.2 → 130 KB; 130.13 × 1.1 =
+143.1 → 145 KB). Going over the ceiling fails CI; going over the target only
+warns. The 2026-10-15 row: `main` had crept to 129.37 KB through the
+post-audit reader fixes (paired-final-page finish, next-up error states,
+collection context + toast, focused-control hotkeys) before T4.4 added the
+per-series prefs sync (~0.8 KB: `series-prefs-sync` + the store's mirror /
+adopt / push calls). Lazy-loading the API client inside the sync transport
+was measured and rejected — the dynamic-import stub costs more than the
+import it hides, since `mutations/_core` is already in the reader chunk.
+The target is unchanged; the route is 10 KB over it and the next reader
+feature should be code-split per `lazy.tsx` rather than lift the ceiling
+again. Re-measure after each
 reader-feature WP (4.2 zoom/fit, 4.3 spreads/strip, 4.8 page-text panel) and
 record the new row here; raise the ceiling only with a justification in this
 table.

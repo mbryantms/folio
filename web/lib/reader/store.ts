@@ -1,10 +1,13 @@
 /**
- * Reader-local state. Cross-device sync arrives in Phase 4 (Automerge);
- * the network drain is a separate concern from this store.
+ * Reader-local state.
  *
- * Per-series prefs (`fitMode`, `viewMode`, `direction`) are persisted in
- * `localStorage` so the choice survives across issues in the same series.
- * Other state is per-issue and is reset each time the reader mounts.
+ * Per-series prefs (`fitMode`, `viewMode`, `direction`, `coverSolo`) are
+ * persisted in `localStorage` so the choice survives across issues in the
+ * same series, and follow the account through
+ * `/me/series/{id}/reader-prefs` (post-audit T4.4, see
+ * `series-prefs-sync`): `init` mirrors the server row into the local
+ * cache first, and every per-series write is pushed back. Other state is
+ * per-issue and is reset each time the reader mounts.
  */
 import { create } from "zustand";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
@@ -13,10 +16,18 @@ import {
   readerPrefGet,
   readerPrefSet,
 } from "@/lib/reader/prefs-storage";
+import {
+  mirrorServerPrefs,
+  pendingAdoption,
+  pushSeriesPref,
+  pushSeriesPrefs,
+  type SeriesPrefSlice,
+} from "@/lib/reader/series-prefs-sync";
 import type {
   MarkerKind,
   MarkerRegion,
   MarkerSelection,
+  SeriesReaderPrefsView,
 } from "@/lib/api/types";
 
 /** `contain` = fit the whole page on screen (both axes, up- or down-scaled;
@@ -86,8 +97,14 @@ function load<T>(
   return guard(raw) ? raw : null;
 }
 
+const isSeriesSlice = (s: PersistedSlice): s is SeriesPrefSlice =>
+  s === "fitMode" || s === "viewMode" || s === "direction" || s === "coverSolo";
+
 function save(slice: PersistedSlice, seriesId: string | null, value: string) {
   readerPrefSet(slice, scopeOf(seriesId), value);
+  // Per-series slices also follow the account (coalesced PUT; no-op
+  // until the Reader installs the transport).
+  if (seriesId && isSeriesSlice(slice)) pushSeriesPref(seriesId, slice, value);
 }
 
 export const loadFitMode = (seriesId: string | null): FitMode =>
@@ -224,6 +241,11 @@ export interface ReaderState {
     /** Per-user default for cover-solo in double-page view. Per-series
      * localStorage still wins; built-in fallback is `true`. */
     initialCoverSolo?: boolean;
+    /** The account's per-series overrides (`/me/series/{id}/reader-prefs`),
+     *  mirrored into the local cache before resolution so they beat a
+     *  stale local value. `null` = the fetch failed (offline): the local
+     *  cache stands. Omit in tests that want pure local resolution. */
+    serverSeriesPrefs?: SeriesReaderPrefsView | null;
   }) => void;
 }
 
@@ -356,10 +378,19 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     initialFitMode,
     initialPageStripVisible,
     initialCoverSolo,
+    serverSeriesPrefs,
   }) => {
+    // Account overrides first (post-audit T4.4): the server row overwrites
+    // the local cache, and local overrides the server has never seen are
+    // adopted once so they follow the account from here on.
+    if (seriesId && serverSeriesPrefs) {
+      mirrorServerPrefs(seriesId, serverSeriesPrefs);
+      const adopt = pendingAdoption(seriesId, serverSeriesPrefs);
+      if (adopt) pushSeriesPrefs(seriesId, adopt);
+    }
     // Stored per-series choice always wins over the auto-detected default and
     // over the user's global preference. Resolution order:
-    //   localStorage(per-series) > user default > built-in fallback.
+    //   server(per-series) > localStorage(per-series) > user default > built-in.
     const stored = load("fitMode", seriesId, isFitMode);
     const fit: FitMode = stored ?? initialFitMode ?? "width";
     set({

@@ -87,6 +87,12 @@ import {
 import { ReaderSkipLinks } from "./ReaderSkipLinks";
 import { usePageTextPanel } from "@/lib/reader/page-text";
 import { useMarkerDrawer } from "@/lib/reader/marker-drawer";
+import {
+  flushSeriesPrefs,
+  setSeriesPrefTransport,
+} from "@/lib/reader/series-prefs-sync";
+import { apiMutate } from "@/lib/api/mutations/_core";
+import type { SeriesReaderPrefsView } from "@/lib/api/types";
 import { PageImage } from "./PageImage";
 
 export function Reader({
@@ -94,6 +100,7 @@ export function Reader({
   seriesId,
   cblSavedViewId,
   collectionId = null,
+  serverSeriesPrefs = null,
   exitUrl,
   totalPages,
   initialPage,
@@ -131,6 +138,9 @@ export function Reader({
    *  (`?collection=`). Wins over `cblSavedViewId` server-side; forwarded
    *  onto the next-issue URL when source === "collection". */
   collectionId?: string | null;
+  /** The account's per-series reader overrides (post-audit T4.4), or
+   *  `null` when the page could not fetch them. See `store.init`. */
+  serverSeriesPrefs?: SeriesReaderPrefsView | null;
   /** URL to exit the reader to (the issue detail page). Computed by the
    * page wrapper from the slug params. */
   exitUrl: string;
@@ -468,6 +478,23 @@ export function Reader({
     [userDefaultFitMode],
   );
 
+  // Per-series overrides follow the account (post-audit T4.4): install the
+  // network sender before `init` can queue an adoption push, and send
+  // whatever is still batched when the reader unmounts.
+  useEffect(() => {
+    setSeriesPrefTransport((sid, patch) =>
+      apiMutate<SeriesReaderPrefsView>({
+        path: `/me/series/${encodeURIComponent(sid)}/reader-prefs`,
+        method: "PUT",
+        body: patch,
+      }),
+    );
+    return () => {
+      flushSeriesPrefs();
+      setSeriesPrefTransport(null);
+    };
+  }, []);
+
   // Initial mount: hydrate the store from props.
   useEffect(() => {
     init({
@@ -480,6 +507,7 @@ export function Reader({
       initialFitMode,
       initialPageStripVisible: userDefaultPageStrip,
       initialCoverSolo: userDefaultCoverSolo,
+      serverSeriesPrefs,
     });
   }, [
     init,
@@ -492,6 +520,7 @@ export function Reader({
     initialFitMode,
     userDefaultPageStrip,
     userDefaultCoverSolo,
+    serverSeriesPrefs,
   ]);
 
   // Resolve user → defaults at mount; pinned in a ref so the listener below

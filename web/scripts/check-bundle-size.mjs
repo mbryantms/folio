@@ -68,9 +68,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = resolve(__dirname, "..");
 const ROUTE_DIR = "[locale]/read/[seriesSlug]/[issueSlug]";
 const ROUTE_LABEL = "/[locale]/read/[seriesSlug]/[issueSlug]";
-/** Gate ceiling — regressions above this fail CI. WP-4.4: measured
- *  117.5 KB + 10% (see header). */
-const BUDGET_KB = 130;
+/** Gate ceiling — regressions above this fail CI. Measured + 10%,
+ *  re-based on 2026-10-15 (post-audit T4.4: 130.13 KB → 145 KB); the
+ *  measurement table lives in docs/dev/pwa-performance.md. */
+const BUDGET_KB = 145;
 /** WP-4.4 target. Exceeding it (while still under the ceiling) prints a
  *  warning so creep stays visible in every build log. */
 const BUDGET_TARGET_KB = 120;
