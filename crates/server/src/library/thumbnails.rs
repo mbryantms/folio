@@ -1413,14 +1413,10 @@ pub fn generate_all_with_quality(
     }
 
     // Pages 1..N: serial archive reads (handle isn't Sync), then fan out
-    // decode + resize + encode + write across rayon's worker pool.
-    let pending = collect_pending_strip_bytes(
-        archive,
-        &pages,
-        |n| variant_path(data_dir, issue_id, Variant::Strip, n, format),
-        1,
-    );
-    let failed = parallel_encode_strips(data_dir, issue_id, format, quality, pending);
+    // decode + resize + encode + write across rayon's worker pool — in
+    // batches of `THUMB_STRIP_BATCH` pages so the bytes held in memory
+    // are bounded (post-audit T3.4).
+    let failed = encode_strips_in_batches(archive, &pages, data_dir, issue_id, format, quality, 1);
 
     Ok(GenerateAllOutcome {
         total_pages,
@@ -1466,13 +1462,7 @@ pub fn generate_strips_with_quality(
     }
 
     let total_pages = pages.len();
-    let pending = collect_pending_strip_bytes(
-        archive,
-        &pages,
-        |n| variant_path(data_dir, issue_id, Variant::Strip, n, format),
-        0,
-    );
-    let failed = parallel_encode_strips(data_dir, issue_id, format, quality, pending);
+    let failed = encode_strips_in_batches(archive, &pages, data_dir, issue_id, format, quality, 0);
 
     Ok(GenerateAllOutcome {
         total_pages,
@@ -1480,42 +1470,84 @@ pub fn generate_strips_with_quality(
     })
 }
 
-/// Phase 1 of the parallel strip pipeline: serially read every page that
-/// needs encoding into memory, skipping pages whose target file already
-/// exists. Returns the (page_index, bytes) pairs the parallel encoder
-/// should process. Read errors are swallowed with a warn-level trace and
-/// the page is dropped — the catchup sweep can pick it up next time.
+/// Pages per read-then-encode batch of the strip pipeline (post-audit
+/// T3.4). The old pipeline read *every* pending page's bytes into memory
+/// before the first decode — the whole issue, 30–80 MB typically and far
+/// more for high-resolution scans, per concurrently thumbnailed issue.
+/// Batching bounds the retained bytes to `batch × max page size` while
+/// still giving rayon a full batch to decode in parallel.
+pub const THUMB_STRIP_BATCH: usize = 8;
+
+/// Indices of the pages (from `start`) whose strip is missing, in
+/// batches of at most [`THUMB_STRIP_BATCH`]. Pure, so the bound is
+/// testable without an archive.
+fn pending_strip_batches<E>(
+    pages_len: usize,
+    start: usize,
+    exists: E,
+    batch: usize,
+) -> Vec<Vec<usize>>
+where
+    E: Fn(usize) -> bool,
+{
+    let batch = batch.max(1);
+    let mut out: Vec<Vec<usize>> = Vec::new();
+    for n in start..pages_len {
+        if exists(n) {
+            continue;
+        }
+        match out.last_mut() {
+            Some(cur) if cur.len() < batch => cur.push(n),
+            _ => out.push(vec![n]),
+        }
+    }
+    out
+}
+
+/// Strip pipeline: for each batch of pending pages, serially read the
+/// batch's bytes (the archive handle isn't `Sync`), then decode + resize +
+/// encode + write the batch across rayon's pool, then drop the bytes.
+/// Read errors are swallowed with a warn-level trace and the page is
+/// dropped — the catchup sweep can pick it up next time. Returns the
+/// per-page encode failures.
 ///
 /// `start` lets `generate_all` skip page 0 (which it already encoded
 /// inline via the cover/strip-0 shared decode path).
-///
-/// Memory cost is bounded by the archive's total page bytes for one
-/// issue (typically 30-80 MB). The post-scan worker semaphore already
-/// gates concurrent issues, so total memory across the worker pool stays
-/// reasonable without an explicit bounded channel.
-fn collect_pending_strip_bytes<F>(
+fn encode_strips_in_batches(
     archive: &mut dyn ComicArchive,
     pages: &[ArchiveEntry],
-    out_path_for: F,
+    data_dir: &Path,
+    issue_id: &str,
+    format: ThumbFormat,
+    quality: ThumbnailQuality,
     start: usize,
-) -> Vec<(usize, Vec<u8>)>
-where
-    F: Fn(usize) -> PathBuf,
-{
-    let _span = tracing::trace_span!("thumb.read_pages", count = pages.len() - start).entered();
-    let mut pending = Vec::with_capacity(pages.len().saturating_sub(start));
-    for (n, entry) in pages.iter().enumerate().skip(start) {
-        if out_path_for(n).exists() {
-            continue;
-        }
-        match archive.read_entry_bytes(&entry.name) {
-            Ok(bytes) => pending.push((n, bytes)),
-            Err(e) => {
-                tracing::warn!(page = n, error = %e, "strip read failed");
+) -> Vec<(usize, String)> {
+    let batches = pending_strip_batches(
+        pages.len(),
+        start,
+        |n| variant_path(data_dir, issue_id, Variant::Strip, n, format).exists(),
+        THUMB_STRIP_BATCH,
+    );
+    let mut failed = Vec::new();
+    for batch in batches {
+        let pending = {
+            let _span = tracing::trace_span!("thumb.read_pages", count = batch.len()).entered();
+            let mut pending = Vec::with_capacity(batch.len());
+            for n in batch {
+                match archive.read_entry_bytes(&pages[n].name) {
+                    Ok(bytes) => pending.push((n, bytes)),
+                    Err(e) => {
+                        tracing::warn!(page = n, error = %e, "strip read failed");
+                    }
+                }
             }
-        }
+            pending
+        };
+        failed.extend(parallel_encode_strips(
+            data_dir, issue_id, format, quality, pending,
+        ));
     }
-    pending
+    failed
 }
 
 /// Phase 2: rayon-parallel decode + resize + encode + atomic write. Each
@@ -1864,5 +1896,38 @@ mod tests {
         // 4. Left-to-right fallback.
         assert_eq!(FrontCoverSide::resolve(None, None, None), Right);
         assert_eq!(FrontCoverSide::default(), Right);
+    }
+}
+
+#[cfg(test)]
+mod strip_batch_tests {
+    use super::*;
+
+    #[test]
+    fn pending_pages_are_chunked_to_the_batch_size_and_skip_existing() {
+        // 20 pages, strips for 3, 4 and 11 already on disk, start at 1.
+        let exists = |n: usize| matches!(n, 3 | 4 | 11);
+        let batches = pending_strip_batches(20, 1, exists, THUMB_STRIP_BATCH);
+        let flat: Vec<usize> = batches.iter().flatten().copied().collect();
+        assert_eq!(
+            flat,
+            (1..20).filter(|n| !exists(*n)).collect::<Vec<_>>(),
+            "every missing page exactly once, in order"
+        );
+        assert!(
+            batches
+                .iter()
+                .all(|b| !b.is_empty() && b.len() <= THUMB_STRIP_BATCH),
+            "{batches:?}"
+        );
+        // 16 missing pages → two full batches of 8: at most 8 pages' bytes
+        // are ever held at once.
+        assert_eq!(batches.len(), 2);
+    }
+
+    #[test]
+    fn nothing_pending_means_no_batches() {
+        assert!(pending_strip_batches(5, 0, |_| true, THUMB_STRIP_BATCH).is_empty());
+        assert!(pending_strip_batches(0, 0, |_| false, THUMB_STRIP_BATCH).is_empty());
     }
 }
