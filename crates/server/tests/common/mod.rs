@@ -566,6 +566,12 @@ async fn acquire_redis_db(redis: &'static SharedRedis) -> (String, RedisLease) {
 /// long boolean parameter list.
 #[derive(Default, Clone)]
 pub struct SpawnOpts {
+    /// Pool size for this test's own sea-orm connection (default 6). Post-audit
+    /// T1.2 pressure tests set it to 2 to prove scans do not pin connections
+    /// through archive work.
+    pub db_max_connections: Option<u32>,
+    /// Series folders processed concurrently per scan (default 2).
+    pub scan_folder_concurrency: Option<usize>,
     pub smtp_on: bool,
     /// When `Some`, configures the OIDC issuer + dummy client credentials
     /// and sets `auth_mode = Both` so the OIDC handlers respond. Used by
@@ -673,6 +679,22 @@ impl TestApp {
     /// Spawn with an explicit library-root path. Use for tests that
     /// exercise filesystem-touching handlers (`/admin/fs/list`, the
     /// scanner) against a real on-disk fixture tree.
+    /// Post-audit T1.2: a tiny pool + wide folder fan-out, to prove a scan
+    /// never holds a connection while it hashes / parses archives.
+    pub async fn spawn_with_pool(
+        root: PathBuf,
+        db_max_connections: u32,
+        scan_folder_concurrency: usize,
+    ) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            library_root: Some(root),
+            db_max_connections: Some(db_max_connections),
+            scan_folder_concurrency: Some(scan_folder_concurrency),
+            ..Default::default()
+        })
+        .await
+    }
+
     pub async fn spawn_with_library_root(root: PathBuf) -> Self {
         Self::spawn_inner(SpawnOpts {
             library_root: Some(root),
@@ -869,7 +891,9 @@ impl TestApp {
         // 100-connection Postgres service headroom at 12-way nextest
         // oversubscription (12 × 6 = 72); the realistic peak is ~2 conns/test.
         let mut db_opts = ConnectOptions::new(db_url.clone());
-        db_opts.max_connections(6).sqlx_logging(opts.sqlx_logging);
+        db_opts
+            .max_connections(opts.db_max_connections.unwrap_or(6))
+            .sqlx_logging(opts.sqlx_logging);
         let db = Database::connect(db_opts).await.expect("connect test db");
 
         // Redis (apalis backend) — required since Library Scanner v1. One
@@ -963,6 +987,8 @@ impl TestApp {
             opds_panels_mode: "off".into(),
             zip_lru_capacity: 16,
             scan_worker_count: 2,
+            scan_folder_concurrency: opts.scan_folder_concurrency.unwrap_or(2),
+            db_max_connections: opts.db_max_connections.unwrap_or(6),
             post_scan_worker_count: 1,
             scan_batch_size: 100,
             scan_hash_buffer_kb: 64,

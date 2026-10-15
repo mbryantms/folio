@@ -266,6 +266,15 @@ without per-library configuration.
        `files_unchanged++`, `health.touch_file`, skip;
      - else add to `candidates`.
 
+     Each batch runs in two phases (post-audit T1.2): `prepare_ingest`
+     for every file first — fingerprint, CBR/CB7 conversion, full-file
+     hash, archive parse and page probes, under `archive_work_semaphore`
+     and with at most one short read against the pool — and only then
+     `BEGIN` + `persist_prepared` per file, so no connection is pinned
+     while archives are read. Folders in flight per scan are
+     `scan_folder_concurrency` (default 2, `/admin/server` → Workers),
+     separate from the `scan_worker_count` queue concurrency; the pool
+     size itself is `COMIC_DB_MAX_CONNECTIONS` (default 30).
      Process candidates in chunks of `scan_batch_size` per transaction
      ([mod.rs:1564–1616](../../crates/server/src/library/scanner/mod.rs#L1564-L1616)):
      a single ingest failure rolls back that batch only, the next
@@ -770,7 +779,7 @@ and are expected to refresh manually. The schema lives in
 | Event | Where emitted | Payload | Notes |
 |---|---|---|---|
 | `scan.started` | [mod.rs:76](../../crates/server/src/library/scanner/mod.rs#L76), [343](../../crates/server/src/library/scanner/mod.rs#L343), [408](../../crates/server/src/library/scanner/mod.rs#L408) | `{ library_id, scan_id, at }` | Once per scan. UI clears prior progress, switches to "running". |
-| `scan.progress` | [emit_progress mod.rs:609–662](../../crates/server/src/library/scanner/mod.rs#L609-L662); also writes a `scan_runs.stats` snapshot | `{ library_id, scan_id, kind, phase, unit, completed, total, current_label, files_seen, files_added, files_updated, files_unchanged, files_skipped, files_duplicate, issues_removed, health_issues, series_scanned, series_total, series_skipped_unchanged, files_total, root_files, empty_folders, elapsed_ms?, phase_elapsed_ms?, files_per_sec?, bytes_per_sec?, active_workers?, dirty_folders?, skipped_folders?, eta_ms? }` | Cumulative counters plus optional live throughput/timing fields. Phase strings: `planning`, `planning_complete`, `scanning`, `reconciling`, `reconciled`, `enqueueing_thumbnails`, `complete`. Unit strings: `planning`, `work`, `file`. Heartbeat at 750 ms during the scanning phase only when counters changed ([mod.rs:1216–1287](../../crates/server/src/library/scanner/mod.rs#L1216-L1287)). |
+| `scan.progress` | [emit_progress mod.rs:609–662](../../crates/server/src/library/scanner/mod.rs#L609-L662); also writes a `scan_runs.stats` snapshot. During phase 3 the snapshot write (and the cancel poll) run as **spawned, coalesced tasks** — the `select!` loop that drives the per-folder futures must never await the DB inline, or the folders holding pool connections stop being polled (post-audit T1.2; a self-deadlock on small pools) | `{ library_id, scan_id, kind, phase, unit, completed, total, current_label, files_seen, files_added, files_updated, files_unchanged, files_skipped, files_duplicate, issues_removed, health_issues, series_scanned, series_total, series_skipped_unchanged, files_total, root_files, empty_folders, elapsed_ms?, phase_elapsed_ms?, files_per_sec?, bytes_per_sec?, active_workers?, dirty_folders?, skipped_folders?, eta_ms? }` | Cumulative counters plus optional live throughput/timing fields. Phase strings: `planning`, `planning_complete`, `scanning`, `reconciling`, `reconciled`, `enqueueing_thumbnails`, `complete`. Unit strings: `planning`, `work`, `file`. Heartbeat at 750 ms during the scanning phase only when counters changed ([mod.rs:1216–1287](../../crates/server/src/library/scanner/mod.rs#L1216-L1287)). |
 | `scan.series_updated` | [mod.rs:1522](../../crates/server/src/library/scanner/mod.rs#L1522) | `{ library_id, series_id, name }` | Fires once per series-folder enter. **Throttled** to ≤10/sec/library by the broadcaster ([events.rs:29, 158–170](../../crates/server/src/library/events.rs#L29-L170)). UI tail shows ~8 most recent. |
 | `scan.health_issue` | [health.rs:280–288](../../crates/server/src/library/health.rs#L280-L288) | `{ library_id, scan_id, kind, severity, path? }` | Fires on every emitted issue (not throttled — issue volume is bounded by file count). UI toasts only `error` severity by default. |
 | `scan.completed` | [mod.rs:515](../../crates/server/src/library/scanner/mod.rs#L515) | `{ library_id, scan_id, added, updated, removed, duration_ms, series_id?, issue_id? }` | Once per successful scan. UI invalidates queries (scan_runs, health, series, removed-issues). `series_id` / `issue_id` carry a narrow scan's scope (post-audit T1.6) so the metadata apply dialog waits for *its* rescan, not any completion in the library. |

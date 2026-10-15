@@ -252,6 +252,13 @@ pub async fn seed_operational_from_env(
     .await?;
     insert_plain(
         db,
+        "workers.scan_folder_concurrency",
+        serde_json::json!(cfg.scan_folder_concurrency),
+        now,
+    )
+    .await?;
+    insert_plain(
+        db,
         "workers.post_scan_count",
         serde_json::json!(cfg.post_scan_worker_count),
         now,

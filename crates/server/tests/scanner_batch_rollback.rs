@@ -9,8 +9,10 @@
 //! row, and the folder is not treated as scanned by the reconcile.
 //!
 //! The failure is injected by making one archive unreadable (mode 000): the
-//! full-file hash then errors inside `ingest_one`, which is the batch-level
-//! failure path. Skipped when the process can read mode-000 files (root).
+//! full-file hash then errors in the prepare phase (post-audit T1.2), which
+//! skips that file alone while the readable files persist — the folder still
+//! stays dirty and the health row still names the file. Skipped when the
+//! process can read mode-000 files (root).
 
 mod common;
 
@@ -90,15 +92,16 @@ async fn rolled_back_batch_keeps_the_folder_dirty_and_reports_the_failure() {
         return;
     }
 
-    // Scan 1: the single batch holds all three files; the unreadable one
-    // fails the hash, the batch rolls back.
+    // Scan 1: the unreadable file fails its hash in the prepare phase
+    // (post-audit T1.2), before any transaction opens, so it alone is
+    // skipped; the two readable files persist. The folder still stays dirty.
     let stats = scanner::scan_library(&app.state(), lib_id).await.unwrap();
     assert_eq!(
-        stats.files_added, 0,
-        "a rolled-back batch adds nothing: {stats:?}"
+        stats.files_added, 2,
+        "only the unreadable file is skipped: {stats:?}"
     );
     assert_eq!(stats.files_seen, 3, "{stats:?}");
-    assert_eq!(active_issues(&app, lib_id).await, 0);
+    assert_eq!(active_issues(&app, lib_id).await, 2);
     let srow = series_row(&app, lib_id)
         .await
         .expect("series row from folder");
@@ -122,21 +125,22 @@ async fn rolled_back_batch_keeps_the_folder_dirty_and_reports_the_failure() {
         rows[0].payload["data"]["error"]
             .as_str()
             .unwrap()
-            .contains("rolled back"),
+            .contains("could not read the file"),
         "{rows:?}"
     );
 
     // Scan 2 (plain, nothing touched on disk): the folder is re-walked, not
-    // mtime-skipped, and fails the same way.
+    // mtime-skipped; the two good files are unchanged, the bad one fails again.
     let stats = scanner::scan_library(&app.state(), lib_id).await.unwrap();
     assert_eq!(stats.series_skipped_unchanged, 0, "{stats:?}");
     assert_eq!(stats.files_seen, 3, "{stats:?}");
     assert_eq!(stats.files_added, 0);
+    assert_eq!(stats.files_unchanged, 2, "{stats:?}");
 
-    // Fixed: everything ingests, the health row resolves, the stamp lands.
+    // Fixed: the last file ingests, the health row resolves, the stamp lands.
     chmod(&bad, 0o644);
     let stats = scanner::scan_library(&app.state(), lib_id).await.unwrap();
-    assert_eq!(stats.files_added, 3, "{stats:?}");
+    assert_eq!(stats.files_added, 1, "{stats:?}");
     assert_eq!(active_issues(&app, lib_id).await, 3);
     assert!(
         series_row(&app, lib_id)

@@ -30,7 +30,7 @@ use sea_orm::{
     QueryOrder, QuerySelect, Set, Statement, sea_query::Expr,
 };
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -659,6 +659,10 @@ async fn dedupe_by_content_hash<C: ConnectionTrait>(
     }
 }
 
+/// One archive, end to end: [`prepare_ingest`] then [`persist_prepared`]
+/// on the same connection. The library scanner calls the two halves
+/// itself so a batch transaction opens only after every file in the
+/// batch is prepared (post-audit T1.2); narrow callers use this.
 pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     ctx: &IngestCtx<'_>,
     db: &C,
@@ -668,6 +672,46 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     mtime: chrono::DateTime<chrono::Utc>,
     outputs: &mut IngestOutputs<'_>,
 ) -> anyhow::Result<()> {
+    match prepare_ingest(ctx, db, path, size, mtime, outputs).await? {
+        Some(prepared) => persist_prepared(ctx, db, prepared, slug_set, outputs).await,
+        None => Ok(()),
+    }
+}
+
+/// Everything [`ingest_one_with_fingerprint`] knows about an archive
+/// before it writes a row: the slow, DB-free half (fingerprint fast path,
+/// CBR/CB7 conversion, full-file hash, archive parse, page probes) has
+/// run. Opaque to callers; hand it to [`persist_prepared`].
+pub struct PreparedIngest {
+    path: PathBuf,
+    path_str: String,
+    size: i64,
+    mtime: chrono::DateTime<chrono::Utc>,
+    existing: Option<issue::Model>,
+    hash: String,
+    hash_pending: bool,
+    parsed: ParsedArchive,
+}
+
+impl PreparedIngest {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// First half of [`ingest_one_with_fingerprint`]: returns `None` when the
+/// file needs no row write this scan (size+mtime fast path, skipped /
+/// unsupported / unreadable archive — all already counted and reported
+/// on `outputs`). `db` is only read (the existing-row lookup when the
+/// manifest cannot answer); the caller may pass the pool.
+pub async fn prepare_ingest<C: ConnectionTrait>(
+    ctx: &IngestCtx<'_>,
+    db: &C,
+    path: &Path,
+    size: i64,
+    mtime: chrono::DateTime<chrono::Utc>,
+    outputs: &mut IngestOutputs<'_>,
+) -> anyhow::Result<Option<PreparedIngest>> {
     let IngestCtx {
         state,
         lib,
@@ -700,9 +744,9 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         // re-emitted by the rest of `process_file`. Tell the collector so the
         // auto-resolve sweep at scan end leaves it alone.
         health.touch_file(path);
-        return Ok(());
+        return Ok(None);
     }
-    let mut existing = if let Some(manifest) = manifest
+    let existing = if let Some(manifest) = manifest
         && !manifest.contains(&path_str)
     {
         // Manifest says no row exists — skip the pointless point query.
@@ -720,7 +764,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
         // No-manifest fallback fast path (single-file scans).
         stats.files_unchanged += 1;
         health.touch_file(path);
-        return Ok(());
+        return Ok(None);
     }
 
     // Spec §10.1 UnsupportedArchiveFormat — a container we can't ingest
@@ -790,16 +834,13 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
                         stamp_cbr_confirmed(state, lib).await;
                     }
                     let (size, mtime) = file_fingerprint(&dst)?;
-                    return Box::pin(ingest_one_with_fingerprint(
-                        ctx, db, &dst, slug_set, size, mtime, outputs,
-                    ))
-                    .await;
+                    return Box::pin(prepare_ingest(ctx, db, &dst, size, mtime, outputs)).await;
                 }
                 // A `.cbz` twin already exists — leave it to the normal
                 // path; skip the source quietly (likely a duplicate).
                 CbrIngestAction::SkipDuplicate => {
                     stats.files_skipped += 1;
-                    return Ok(());
+                    return Ok(None);
                 }
                 // Conversion failed (malformed, encrypted, cap exceeded, IO):
                 // fall through to the same skip + health issue as when
@@ -812,7 +853,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
             path: path.to_path_buf(),
             ext: format.ext().to_owned(),
         });
-        return Ok(());
+        return Ok(None);
     }
 
     // The file's bytes changed under an existing row (page edit, external
@@ -832,16 +873,7 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     // hash so `content_hash` stays truthful for them.
     let defer_hash = existing.is_none() && lazy_hash_eligible(lib);
 
-    let Some(ParsedArchive {
-        hash,
-        info,
-        actual_pages,
-        parse_state,
-        metron_ids,
-        metroninfo_present,
-        metron_fields,
-        metron_info_raw,
-    }) = parse_archive_for_ingest(
+    let Some(parsed) = parse_archive_for_ingest(
         state,
         lib,
         path,
@@ -853,20 +885,81 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     )
     .await?
     else {
-        return Ok(());
+        return Ok(None);
     };
     // Pending rows carry a size+mtime fingerprint of the path as both id
     // and `content_hash` placeholder (`hash_algorithm = 0`); the backfill
     // job swaps in the real BLAKE3 and re-runs the dedupe check. The id
     // stays pinned forever after, exactly like a retagged row's.
-    let (hash, hash_pending) = match hash {
+    let (hash, hash_pending) = match parsed.hash.clone() {
         Some(h) => (h, false),
         None => (lazy_fingerprint(&path_str, size, mtime), true),
     };
+    // `series_id` / `series_folder` are persist-phase inputs.
+    let _ = (series_id, series_folder);
+    Ok(Some(PreparedIngest {
+        path: path.to_path_buf(),
+        path_str,
+        size,
+        mtime,
+        existing,
+        hash,
+        hash_pending,
+        parsed,
+    }))
+}
 
-    // Filename inference fills gaps. M7: honor per-library
-    // ComicTagger-style toggles for leading-number stripping and
-    // assume-issue-one.
+// Filename inference fills gaps. M7: honor per-library
+// ComicTagger-style toggles for leading-number stripping and
+// assume-issue-one.
+
+/// Second half of [`ingest_one_with_fingerprint`]: the DB writes for a
+/// [`PreparedIngest`]. Short — every slow step already happened in
+/// [`prepare_ingest`] — so the caller can run it inside a batch
+/// transaction opened *after* the whole batch was prepared (post-audit
+/// T1.2).
+pub async fn persist_prepared<C: ConnectionTrait>(
+    ctx: &IngestCtx<'_>,
+    db: &C,
+    prepared: PreparedIngest,
+    slug_set: Option<&mut std::collections::HashSet<String>>,
+    outputs: &mut IngestOutputs<'_>,
+) -> anyhow::Result<()> {
+    let IngestCtx {
+        state,
+        lib,
+        series_id,
+        series_folder,
+        manifest: _,
+        force,
+    } = *ctx;
+    let stats: &mut ScanStats = &mut *outputs.stats;
+    let health: &mut HealthCollector = &mut *outputs.health;
+    let events: &mut EventCollector = &mut *outputs.events;
+    let PreparedIngest {
+        path,
+        path_str,
+        size,
+        mtime,
+        existing,
+        hash,
+        hash_pending,
+        parsed:
+            ParsedArchive {
+                hash: _,
+                info,
+                actual_pages,
+                parse_state,
+                metron_ids,
+                metroninfo_present,
+                metron_fields,
+                metron_info_raw,
+            },
+    } = prepared;
+    let path: &Path = &path;
+    let mut existing = existing;
+    let _ = force;
+
     let leaf = path
         .file_name()
         .and_then(|s| s.to_str())

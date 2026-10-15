@@ -200,6 +200,19 @@ pub struct Config {
     /// Per-queue worker concurrency for scan jobs (spec §3.2, §11).
     #[serde(default = "default_scan_worker_count")]
     pub scan_worker_count: usize,
+    /// Series folders one library scan processes concurrently (post-audit
+    /// T1.2). Separate from `scan_worker_count` (how many scan *jobs* run
+    /// at once) so the two no longer multiply into up to `n²` open
+    /// transactions against the DB pool. Env
+    /// `COMIC_SCAN_FOLDER_CONCURRENCY`, DB `workers.scan_folder_concurrency`
+    /// (applies on next restart).
+    #[serde(default = "default_scan_folder_concurrency")]
+    pub scan_folder_concurrency: usize,
+    /// sea-orm / sqlx pool size for the main Postgres connection (post-audit
+    /// T1.2). Env-only: `COMIC_DB_MAX_CONNECTIONS`, default 30. Size it below
+    /// the server's `max_connections` minus the migrator / backup headroom.
+    #[serde(default = "default_db_max_connections")]
+    pub db_max_connections: u32,
     /// Worker concurrency for post-scan jobs (thumbs / search / dictionary).
     #[serde(default = "default_post_scan_worker_count")]
     pub post_scan_worker_count: usize,
@@ -540,6 +553,8 @@ impl std::fmt::Debug for Config {
             .field("zip_lru_capacity", &self.zip_lru_capacity)
             .field("thumbs_budget_mb", &self.thumbs_budget_mb)
             .field("scan_worker_count", &self.scan_worker_count)
+            .field("scan_folder_concurrency", &self.scan_folder_concurrency)
+            .field("db_max_connections", &self.db_max_connections)
             .field("post_scan_worker_count", &self.post_scan_worker_count)
             .field("scan_batch_size", &self.scan_batch_size)
             .field("scan_hash_buffer_kb", &self.scan_hash_buffer_kb)
@@ -637,6 +652,15 @@ fn default_scan_worker_count() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get().min(8))
         .unwrap_or(2)
+}
+fn default_scan_folder_concurrency() -> usize {
+    // Two folders in flight per scan job keeps the archive pipeline busy
+    // (hash + parse overlap with the previous folder's short write
+    // transaction) without the old `scan_worker_count²` fan-out.
+    2
+}
+fn default_db_max_connections() -> u32 {
+    30
 }
 fn default_post_scan_worker_count() -> usize {
     // Match the shape of `default_scan_worker_count`. Half of available
@@ -883,6 +907,18 @@ impl Config {
         }
         check_range("zip_lru_capacity", self.zip_lru_capacity, 1, 4096)?;
         check_range("scan_worker_count", self.scan_worker_count, 1, 64)?;
+        check_range(
+            "scan_folder_concurrency",
+            self.scan_folder_concurrency,
+            1,
+            64,
+        )?;
+        check_range(
+            "db_max_connections",
+            self.db_max_connections as usize,
+            1,
+            1000,
+        )?;
         check_range("post_scan_worker_count", self.post_scan_worker_count, 1, 64)?;
         check_range("scan_batch_size", self.scan_batch_size, 1, 10_000)?;
         check_range("scan_hash_buffer_kb", self.scan_hash_buffer_kb, 64, 65_536)?;
@@ -1274,6 +1310,10 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(n) => cfg.scan_worker_count = n as usize,
             None => bad_type(&row.key, "uint", &row.value),
         },
+        "workers.scan_folder_concurrency" => match row.value.as_u64() {
+            Some(n) => cfg.scan_folder_concurrency = n as usize,
+            None => bad_type(&row.key, "uint", &row.value),
+        },
         "workers.post_scan_count" => match row.value.as_u64() {
             Some(n) => cfg.post_scan_worker_count = n as usize,
             None => bad_type(&row.key, "uint", &row.value),
@@ -1540,6 +1580,7 @@ pub fn restart_setting_value(cfg: &Config, key: &str) -> Option<serde_json::Valu
     Some(match key {
         "cache.zip_lru_capacity" => json!(cfg.zip_lru_capacity),
         "workers.scan_count" => json!(cfg.scan_worker_count),
+        "workers.scan_folder_concurrency" => json!(cfg.scan_folder_concurrency),
         "workers.post_scan_count" => json!(cfg.post_scan_worker_count),
         "workers.scan_batch_size" => json!(cfg.scan_batch_size),
         "workers.scan_hash_buffer_kb" => json!(cfg.scan_hash_buffer_kb),
@@ -1656,6 +1697,8 @@ mod tests {
             auto_migrate: false,
             zip_lru_capacity: 16,
             scan_worker_count: 1,
+            scan_folder_concurrency: 1,
+            db_max_connections: 30,
             post_scan_worker_count: 1,
             scan_batch_size: 100,
             scan_hash_buffer_kb: 64,

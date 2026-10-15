@@ -156,6 +156,11 @@ pub const REGISTRY: &[SettingDef] = &[
         is_secret: false,
     },
     SettingDef {
+        key: "workers.scan_folder_concurrency",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
+    SettingDef {
         key: "workers.post_scan_count",
         kind: SettingKind::Uint,
         is_secret: false,
@@ -489,6 +494,7 @@ pub fn affects_log_level(key: &str) -> bool {
 pub const RESTART_REQUIRED_KEYS: &[&str] = &[
     "cache.zip_lru_capacity",
     "workers.scan_count",
+    "workers.scan_folder_concurrency",
     "workers.post_scan_count",
     "workers.scan_batch_size",
     "workers.scan_hash_buffer_kb",
