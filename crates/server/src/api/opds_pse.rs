@@ -133,6 +133,7 @@ pub async fn stream(
     let (arc, pread) = match app
         .zip_lru
         .get_or_open_indexed_tracked(&issue_row.id, std::path::Path::new(&issue_row.file_path))
+        .await
     {
         Ok((pair, opened)) => {
             if opened {

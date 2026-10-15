@@ -96,6 +96,7 @@ pub async fn capture(state: &AppState, row: &issue::Model, page: i32) -> Option<
     let arc = match state
         .zip_lru
         .get_or_open(&row.id, Path::new(&row.file_path))
+        .await
     {
         Ok(a) => a,
         Err(e) => {

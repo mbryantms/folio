@@ -134,6 +134,7 @@ pub async fn backfill_issue(
     let Ok(arc) = state
         .zip_lru
         .get_or_open(&row.id, Path::new(&row.file_path))
+        .await
     else {
         return Ok(outcome);
     };
