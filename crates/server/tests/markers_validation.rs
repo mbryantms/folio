@@ -330,16 +330,35 @@ async fn marker_writes_share_a_rate_limit_bucket() {
     assert!(allowed >= 60, "tripped after only {allowed} writes");
     assert_eq!(body["error"]["code"], "rate_limited");
 
-    // The bucket is shared by every write route…
-    let (s, _) = http(
-        &app,
-        Method::PATCH,
-        &format!("/api/me/markers/{}", uuid::Uuid::now_v7()),
-        &auth,
-        Some(json!({"color": "red"})),
-    )
-    .await;
-    assert_eq!(s, StatusCode::TOO_MANY_REQUESTS);
+    // The bucket is shared by every write route… The bucket refills at
+    // 10/s, so on a slow shard a token can appear between the trip above
+    // and this request (the PATCH then reaches the handler and 404s on
+    // the random id). Spend whatever refilled with a short tight loop:
+    // the shared bucket has to answer 429 within a few immediate writes.
+    let mut shared_limited = false;
+    for _ in 0..20 {
+        let (s, _) = http(
+            &app,
+            Method::PATCH,
+            &format!("/api/me/markers/{}", uuid::Uuid::now_v7()),
+            &auth,
+            Some(json!({"color": "red"})),
+        )
+        .await;
+        if s == StatusCode::TOO_MANY_REQUESTS {
+            shared_limited = true;
+            break;
+        }
+        assert_eq!(
+            s,
+            StatusCode::NOT_FOUND,
+            "a refilled token reaches the handler"
+        );
+    }
+    assert!(
+        shared_limited,
+        "PATCH never hit the shared marker_write bucket"
+    );
     // …and does not throttle reads.
     let (s, _) = http(&app, Method::GET, "/api/me/markers", &auth, None).await;
     assert_eq!(s, StatusCode::OK);
