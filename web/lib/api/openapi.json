@@ -14892,6 +14892,18 @@
           "not_found"
         ],
         "properties": {
+          "failed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues whose row update failed (post-audit T3.7). Used to be\nfolded into `forbidden`, so a DB failure looked like an ACL\nfilter; `first_error` carries the first failure's message.",
+            "minimum": 0
+          },
+          "first_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "forbidden": {
             "type": "integer",
             "format": "int32",
@@ -33729,6 +33741,18 @@
           "not_found"
         ],
         "properties": {
+          "failed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues whose write failed (post-audit T3.7); see\n[`UpsertSeriesResp::failed`].",
+            "minimum": 0
+          },
+          "first_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "forbidden": {
             "type": "integer",
             "format": "int32",
@@ -33861,6 +33885,18 @@
           "not_found_series"
         ],
         "properties": {
+          "failed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues whose write failed (post-audit T3.7); see\n[`UpsertSeriesResp::failed`].",
+            "minimum": 0
+          },
+          "first_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "forbidden_series": {
             "type": "integer",
             "format": "int32",
@@ -33944,6 +33980,18 @@
           "skipped"
         ],
         "properties": {
+          "failed": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Issues whose write (or pre-write lookup) failed. Post-audit T3.7:\nthese used to vanish into a log line, so \"mark all read\" could\nreport success while rows were left untouched. `first_error` is\nthe first failure's message; the handler answers 500 only when\n*every* attempted write failed.",
+            "minimum": 0
+          },
+          "first_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "skipped": {
             "type": "integer",
             "format": "int32",

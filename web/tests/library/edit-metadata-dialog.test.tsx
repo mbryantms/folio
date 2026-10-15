@@ -80,7 +80,10 @@ vi.mock("@/components/ui/radio-group", () => ({
     }),
 }));
 
-import { EditMetadataForm } from "@/components/library/EditMetadataDialog";
+import {
+  EditMetadataForm,
+  buildBulkPatch,
+} from "@/components/library/EditMetadataDialog";
 
 const noop = () => undefined;
 
@@ -140,6 +143,13 @@ describe("<EditMetadataForm>", () => {
     expect(html).toMatch(/role="radio"[^>]*data-value="replace"/);
   });
 
+  it("offers several fields per apply (post-audit T3.7)", () => {
+    const html = render(["a"]);
+    expect(html).toContain("one or more fields");
+    expect(html).toContain("Add another field");
+    expect(html).toMatch(/data-testid="emd-row"/);
+  });
+
   it("describes the credit-field exclusion in the dialog body", () => {
     const html = render(["a"]);
     expect(html).toContain("Credit fields");
@@ -150,5 +160,23 @@ describe("<EditMetadataForm>", () => {
     const html = render([]);
     expect(html).toMatch(/Apply to 0 issues[^<]*<\/button>/s);
     expect(html).toMatch(/disabled[^>]*>\s*Apply to 0/);
+  });
+});
+
+describe("buildBulkPatch", () => {
+  it("folds rows into one patch, sending null for a cleared field", () => {
+    expect(
+      buildBulkPatch([
+        { field: "publisher", value: " Image " },
+        { field: "language_code", value: "en" },
+        { field: "imprint", value: "" },
+      ]),
+    ).toEqual({ publisher: "Image", language_code: "en", imprint: null });
+  });
+
+  it("leaves untouched fields absent", () => {
+    expect(
+      Object.keys(buildBulkPatch([{ field: "manga", value: "Yes" }])),
+    ).toEqual(["manga"]);
   });
 });

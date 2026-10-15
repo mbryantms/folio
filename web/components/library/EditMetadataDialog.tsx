@@ -43,7 +43,7 @@ import {
  * accurate per-issue data.
  */
 
-type FieldId =
+export type FieldId =
   | "language_code"
   | "manga"
   | "publisher"
@@ -158,6 +158,25 @@ export function EditMetadataDialog({
   );
 }
 
+/** One field + new value in the multi-field editor (post-audit T3.7). */
+export type FieldRow = { field: FieldId; value: string };
+
+/** Fold the editor rows into one `BulkMetadataPatch`. Empty string in a
+ *  field = clear: sent as `null` so the server distinguishes "leave
+ *  alone" (key absent) from "clear". Later rows win on a duplicate field
+ *  (the UI prevents duplicates; this keeps the function total). Exported
+ *  for tests. */
+export function buildBulkPatch(
+  rows: ReadonlyArray<FieldRow>,
+): BulkMetadataPatch {
+  const patch: BulkMetadataPatch = {};
+  for (const row of rows) {
+    const trimmed = row.value.trim();
+    patch[row.field] = trimmed === "" ? null : trimmed;
+  }
+  return patch;
+}
+
 /**
  * The dialog's inner form. Exported separately so vitest can render
  * it without going through Radix's portal layer
@@ -173,14 +192,29 @@ export function EditMetadataForm({
   onClose: () => void;
 }) {
   const update = useBulkUpdateMetadata();
-  const [field, setField] = React.useState<FieldId>("language_code");
-  const [value, setValue] = React.useState("");
+  // Post-audit T3.7: several fields per apply. Each row is one field +
+  // its new value (empty = clear); the rows build one PATCH, so the
+  // server applies them in one pass with one audit row and one summary.
+  const [rows, setRows] = React.useState<FieldRow[]>([
+    { field: "language_code", value: "" },
+  ]);
   const [mode, setMode] = React.useState<"skip_if_set" | "replace">(
     "skip_if_set",
   );
-
-  const def = FIELD_BY_ID.get(field)!;
   const count = issueIds.length;
+  const usedFields = new Set(rows.map((r) => r.field));
+  const canAddRow = rows.length < FIELDS.length;
+
+  const setRow = (i: number, next: FieldRow) =>
+    setRows((prev) => prev.map((r, j) => (j === i ? next : r)));
+  const removeRow = (i: number) =>
+    setRows((prev) =>
+      prev.length > 1 ? prev.filter((_, j) => j !== i) : prev,
+    );
+  const addRow = () => {
+    const free = FIELDS.find((f) => !usedFields.has(f.id));
+    if (free) setRows((prev) => [...prev, { field: free.id, value: "" }]);
+  };
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -188,14 +222,8 @@ export function EditMetadataForm({
       onClose();
       return;
     }
-    // Empty string in text fields = clear. Send `null` so the server
-    // distinguishes "leave alone" from "clear".
-    const patchValue = value.trim() === "" ? null : value.trim();
-    const patch: BulkMetadataPatch = {};
-    patch[field] = patchValue;
-
     update.mutate(
-      { issue_ids: issueIds, patch, mode },
+      { issue_ids: issueIds, patch: buildBulkPatch(rows), mode },
       {
         onSuccess: () => onClose(),
       },
@@ -209,67 +237,112 @@ export function EditMetadataForm({
           Edit {count} issue{count === 1 ? "" : "s"}
         </DialogTitle>
         <DialogDescription>
-          Sets a single field across the selection. Credit fields (writer,
-          penciller, …) stay per-issue; edit those one at a time.
+          Sets one or more fields across the selection in a single apply. Credit
+          fields (writer, penciller, …) stay per-issue; edit those one at a
+          time.
         </DialogDescription>
       </DialogHeader>
 
       <div className="grid gap-4 py-4">
-        <div className="grid gap-1.5">
-          <Label htmlFor="emd-field">Field</Label>
-          <Select
-            value={field}
-            onValueChange={(next) => {
-              setField(next as FieldId);
-              setValue("");
-            }}
-          >
-            <SelectTrigger id="emd-field">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {FIELDS.map((f) => (
-                <SelectItem key={f.id} value={f.id}>
-                  {f.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="grid gap-1.5">
-          <Label htmlFor="emd-value">New value</Label>
-          {def.kind === "enum" ? (
-            // Radix Select can't model an empty-string value (it's
-            // reserved for "no selection"), so the clear sentinel is
-            // mapped to `__clear__` in the trigger and back to `""`
-            // in state.
-            <Select
-              value={value === "" ? "__clear__" : value}
-              onValueChange={(next) =>
-                setValue(next === "__clear__" ? "" : next)
-              }
+        {rows.map((row, i) => {
+          const def = FIELD_BY_ID.get(row.field)!;
+          const fieldId = `emd-field-${i}`;
+          const valueId = `emd-value-${i}`;
+          return (
+            <div
+              key={i}
+              className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+              data-testid="emd-row"
             >
-              <SelectTrigger id="emd-value">
-                <SelectValue placeholder="— Clear —" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__clear__">— Clear —</SelectItem>
-                {def.options.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <Input
-              id="emd-value"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              placeholder="Leave blank to clear"
-            />
-          )}
+              <div className="grid gap-1.5">
+                <Label htmlFor={fieldId}>Field</Label>
+                <Select
+                  value={row.field}
+                  onValueChange={(next) =>
+                    setRow(i, { field: next as FieldId, value: "" })
+                  }
+                >
+                  <SelectTrigger id={fieldId}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FIELDS.map((f) => (
+                      <SelectItem
+                        key={f.id}
+                        value={f.id}
+                        // A field appears in one row at most.
+                        disabled={f.id !== row.field && usedFields.has(f.id)}
+                      >
+                        {f.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid gap-1.5">
+                <Label htmlFor={valueId}>New value</Label>
+                {def.kind === "enum" ? (
+                  // Radix Select can't model an empty-string value (it's
+                  // reserved for "no selection"), so the clear sentinel is
+                  // mapped to `__clear__` in the trigger and back to `""`
+                  // in state.
+                  <Select
+                    value={row.value === "" ? "__clear__" : row.value}
+                    onValueChange={(next) =>
+                      setRow(i, {
+                        ...row,
+                        value: next === "__clear__" ? "" : next,
+                      })
+                    }
+                  >
+                    <SelectTrigger id={valueId}>
+                      <SelectValue placeholder="— Clear —" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__clear__">— Clear —</SelectItem>
+                      {def.options.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    id={valueId}
+                    value={row.value}
+                    onChange={(e) =>
+                      setRow(i, { ...row, value: e.target.value })
+                    }
+                    placeholder="Leave blank to clear"
+                  />
+                )}
+              </div>
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => removeRow(i)}
+                disabled={rows.length === 1}
+                aria-label={`Remove ${def.label}`}
+              >
+                Remove
+              </Button>
+            </div>
+          );
+        })}
+        <div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={addRow}
+            disabled={!canAddRow}
+          >
+            Add another field
+          </Button>
         </div>
 
         <fieldset className="grid gap-2">

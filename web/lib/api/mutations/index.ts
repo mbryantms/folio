@@ -303,6 +303,9 @@ export type BulkProgressResp = {
   skipped: number;
   forbidden: number;
   not_found: number;
+  /** Writes that failed (post-audit T3.7). Optional: older servers omit it. */
+  failed?: number;
+  first_error?: string | null;
 };
 
 /** Response shape of `POST /me/progress/series-bulk`. `updated` /
@@ -314,6 +317,8 @@ export type BulkSeriesProgressResp = {
   skipped: number;
   forbidden_series: number;
   not_found_series: number;
+  failed?: number;
+  first_error?: string | null;
 };
 
 /** Pure summary builder for `useBulkMarkProgress` toasts. Extracted
@@ -324,7 +329,7 @@ export function summarizeBulkProgress(
   finished: boolean,
 ): string {
   if (!data) return finished ? "Marked read" : "Marked unread";
-  const { updated, skipped, forbidden, not_found } = data;
+  const { updated, skipped, forbidden, not_found, failed = 0 } = data;
   const verb = finished ? "marked read" : "marked unread";
   const parts: string[] = [];
   if (updated > 0) parts.push(`${updated} ${verb}`);
@@ -333,6 +338,9 @@ export function summarizeBulkProgress(
   }
   const lost = forbidden + not_found;
   if (lost > 0) parts.push(`${lost} skipped`);
+  // Post-audit T3.7: a write that failed is said, not folded into
+  // "skipped" or silently dropped from the count.
+  if (failed > 0) parts.push(`${failed} failed`);
   return parts.length > 0 ? parts.join("; ") : "No changes";
 }
 
@@ -344,7 +352,13 @@ export function summarizeBulkSeriesProgress(
   finished: boolean,
 ): string {
   if (!data) return finished ? "Marked read" : "Marked unread";
-  const { updated, skipped, forbidden_series, not_found_series } = data;
+  const {
+    updated,
+    skipped,
+    forbidden_series,
+    not_found_series,
+    failed = 0,
+  } = data;
   const verb = finished ? "marked read" : "marked unread";
   const parts: string[] = [];
   if (updated > 0) parts.push(`${updated} ${verb}`);
@@ -353,6 +367,7 @@ export function summarizeBulkSeriesProgress(
   }
   const lost = forbidden_series + not_found_series;
   if (lost > 0) parts.push(`${lost} series skipped`);
+  if (failed > 0) parts.push(`${failed} failed`);
   return parts.length > 0 ? parts.join("; ") : "No changes";
 }
 
@@ -601,18 +616,25 @@ export type BulkMetadataResp = {
   skipped: number;
   forbidden: number;
   not_found: number;
+  /** Row updates that failed (post-audit T3.7). Optional: older servers omit it. */
+  failed?: number;
+  first_error?: string | null;
 };
 
-function summarizeBulkMetadata(
+/** Pure summary builder for `useBulkUpdateMetadata` toasts. Exported for
+ *  tests. "N updated · M failed" — a failed write is never hidden. */
+export function summarizeBulkMetadata(
   data: BulkMetadataResp | null | undefined,
 ): string {
   const d = data ?? { updated: 0, skipped: 0, forbidden: 0, not_found: 0 };
-  if (d.updated === 0 && d.skipped === 0) {
+  const failed = d.failed ?? 0;
+  if (d.updated === 0 && d.skipped === 0 && failed === 0) {
     return "No issues changed";
   }
   const parts: string[] = [];
   parts.push(`${d.updated} updated`);
   if (d.skipped > 0) parts.push(`${d.skipped} skipped`);
+  if (failed > 0) parts.push(`${failed} failed`);
   if (d.forbidden > 0 || d.not_found > 0) {
     parts.push(`${d.forbidden + d.not_found} unavailable`);
   }

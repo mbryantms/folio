@@ -6558,6 +6558,14 @@ export interface components {
         BulkMetadataResp: {
             /**
              * Format: int32
+             * @description Issues whose row update failed (post-audit T3.7). Used to be
+             *     folded into `forbidden`, so a DB failure looked like an ACL
+             *     filter; `first_error` carries the first failure's message.
+             */
+            failed?: number;
+            first_error?: string | null;
+            /**
+             * Format: int32
              * @description Issues the caller doesn't have library access to. Filtered
              *     silently; surfaced in the response for admin debugging.
              */
@@ -14300,6 +14308,13 @@ export interface components {
         UpsertBulkResp: {
             /**
              * Format: int32
+             * @description Issues whose write failed (post-audit T3.7); see
+             *     [`UpsertSeriesResp::failed`].
+             */
+            failed?: number;
+            first_error?: string | null;
+            /**
+             * Format: int32
              * @description Issues the caller doesn't have library access to read. Silent
              *     from the user's perspective; surfaced here so an admin
              *     debugging a "mark read did nothing" report can see the
@@ -14376,6 +14391,13 @@ export interface components {
         UpsertSeriesBulkResp: {
             /**
              * Format: int32
+             * @description Issues whose write failed (post-audit T3.7); see
+             *     [`UpsertSeriesResp::failed`].
+             */
+            failed?: number;
+            first_error?: string | null;
+            /**
+             * Format: int32
              * @description Series the caller can't see (library access denied).
              */
             forbidden_series: number;
@@ -14436,6 +14458,16 @@ export interface components {
             finished: boolean;
         };
         UpsertSeriesResp: {
+            /**
+             * Format: int32
+             * @description Issues whose write (or pre-write lookup) failed. Post-audit T3.7:
+             *     these used to vanish into a log line, so "mark all read" could
+             *     report success while rows were left untouched. `first_error` is
+             *     the first failure's message; the handler answers 500 only when
+             *     *every* attempted write failed.
+             */
+            failed?: number;
+            first_error?: string | null;
             /**
              * Format: int32
              * @description Issues skipped because the user already has a matching `finished`
