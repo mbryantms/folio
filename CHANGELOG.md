@@ -13,6 +13,39 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.56.3](https://github.com/mbryantms/folio/compare/v0.56.2...v0.56.3) (2026-10-15)
+
+
+### Fixed
+
+* **bulk:** honest failure counts, atomic bulk progress writes, multi-field bulk edit (post-audit T3.7) ([#1178](https://github.com/mbryantms/folio/issues/1178)) ([1aba94a](https://github.com/mbryantms/folio/commit/1aba94ac3e445e630270c95ec45aa665e491c07c))
+* **metadata:** correlate the apply dialog's wait to its own run, never claim success on timeout ([#1169](https://github.com/mbryantms/folio/issues/1169)) ([60bbec2](https://github.com/mbryantms/folio/commit/60bbec213fe143639dbfd8b1e4a536c1537ca8b3))
+* **metadata:** stamp the local-DB probe cache with nanosecond mtime; make the swap test deterministic ([#1171](https://github.com/mbryantms/folio/issues/1171)) ([a5043cb](https://github.com/mbryantms/folio/commit/a5043cb285fa118e7e627c09e6216000530a2e90))
+* post-audit roadmap Phase 1 — reader finish/progress/error states, atomic progress merge, release-date sort ([#1165](https://github.com/mbryantms/folio/issues/1165)) ([fb7d35c](https://github.com/mbryantms/folio/commit/fb7d35c01269fe7642e3758b6a65d9c32330466d))
+* **refresh:** Review step waits for its batch applies, blocks re-clicks, and reports the result ([#1173](https://github.com/mbryantms/folio/issues/1173)) ([c943d7d](https://github.com/mbryantms/folio/commit/c943d7d609f088beb288e92a65ece34d7aa1c480))
+* **scanner:** a rolled-back ingest batch leaves the folder dirty and reports the failure ([#1168](https://github.com/mbryantms/folio/issues/1168)) ([d578207](https://github.com/mbryantms/folio/commit/d5782071051d435384d55c742326ebd8d8843eb2))
+* **scanner:** an unreadable folder is unknown, not absent — never authorises removal ([#1167](https://github.com/mbryantms/folio/issues/1167)) ([f99ec1c](https://github.com/mbryantms/folio/commit/f99ec1c8fcf4979d0a6425cca4e29e4083c590d0))
+
+
+### Changed
+
+* **archive:** cold zip_lru opens run on the blocking pool, single-flight per issue ([#1175](https://github.com/mbryantms/folio/issues/1175)) ([2a153e7](https://github.com/mbryantms/folio/commit/2a153e72308d8098fb59f70fb61c51c01601702c))
+* **db:** reverse-FK indexes for collection_entries, progress_records, user_ratings, issues.superseded_by, character.first_appearance ([#1174](https://github.com/mbryantms/folio/issues/1174)) ([983578e](https://github.com/mbryantms/folio/commit/983578e7a1039dad617d7aca7850eb79575dfe2e))
+* **rails:** ACL before LIMIT in Continue Reading / On Deck + unfinished-progress index (post-audit T3.5) ([#1170](https://github.com/mbryantms/folio/issues/1170)) ([18bd753](https://github.com/mbryantms/folio/commit/18bd7538a6a2661248bc1e9a25f65e2e391e4b91))
+* **reader:** prefetch keeps the warms still inside the window on a page turn ([#1176](https://github.com/mbryantms/folio/issues/1176)) ([c10efdd](https://github.com/mbryantms/folio/commit/c10efddf13e0dfb4a163476372dfd4ac87e8d878))
+* **scanner:** open batch transactions after archive work; stop the phase-3 loop from stalling its folders ([#1172](https://github.com/mbryantms/folio/issues/1172)) ([74fa623](https://github.com/mbryantms/folio/commit/74fa62370b13176dc8ff7d744b20b7ce7e000589))
+* **thumbs:** encode page strips in bounded batches; gate variant renders like inline thumbs ([#1177](https://github.com/mbryantms/folio/issues/1177)) ([41e5a10](https://github.com/mbryantms/folio/commit/41e5a10d3f5a26dbac263e7c2d6997d974af5785))
+
+
+### Dependencies
+
+* update dependency @tanstack/react-query to v5.104.2 ([#1166](https://github.com/mbryantms/folio/issues/1166)) ([a29f915](https://github.com/mbryantms/folio/commit/a29f915b5363c70499df908556083f7eb477aa14))
+* update dependency @tanstack/react-virtual to v3.14.15 ([#1162](https://github.com/mbryantms/folio/issues/1162)) ([705ac6b](https://github.com/mbryantms/folio/commit/705ac6b7ca4c8582dc33f665d4b4ed40bd92fe5b))
+* update dependency react-hook-form to v7.90.0 ([#1161](https://github.com/mbryantms/folio/issues/1161)) ([9525e77](https://github.com/mbryantms/folio/commit/9525e773606a6d0c71a35f34480bcba63b1dc156))
+* update dependency zod to v4.6.6 ([#1164](https://github.com/mbryantms/folio/issues/1164)) ([6cfeee5](https://github.com/mbryantms/folio/commit/6cfeee59075e1704b6de596da45c971e5010dcaa))
+* update radix-ui ([#1179](https://github.com/mbryantms/folio/issues/1179)) ([3e32681](https://github.com/mbryantms/folio/commit/3e326817f293fabf7aa5d87c9e9c72dcd1adf3b1))
+* update rust crate sevenz-rust2 to 0.24 ([#1160](https://github.com/mbryantms/folio/issues/1160)) ([cd37d29](https://github.com/mbryantms/folio/commit/cd37d29d2fc11fd7f2038ae8e6607f3cdc89f1ff))
+
 ## [0.56.2](https://github.com/mbryantms/folio/compare/v0.56.1...v0.56.2) (2026-10-14)
 
 
