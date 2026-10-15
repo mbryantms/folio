@@ -2345,6 +2345,10 @@ pub async fn clear_user_pin<C: ConnectionTrait>(
 /// [`MetadataField::key`]: crate::metadata::MetadataField::key
 pub const ISSUE_COLUMN_PIN_KEYS: &[&str] = &[
     "title",
+    // Cover page pick (post-audit T4.2): the scanner keeps the chosen
+    // `cover_page_index` on rescan instead of re-reading ComicInfo's
+    // `<Page Type="FrontCover"/>` marker.
+    "cover_page_index",
     "number_raw",
     "sort_number",
     "volume",

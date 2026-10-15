@@ -1173,7 +1173,7 @@ pub async fn force_recreate_issue_page_map(
 
 // ───────── helpers ─────────
 
-async fn clear_thumb_state(app: &AppState, row: &issue::Model) {
+pub(crate) async fn clear_thumb_state(app: &AppState, row: &issue::Model) {
     let mut am: issue::ActiveModel = row.clone().into();
     am.thumbnails_generated_at = Set(None);
     am.thumbnail_version = Set(0);

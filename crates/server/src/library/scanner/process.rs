@@ -1219,9 +1219,13 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         // a fresh thumbnail extraction (handled by the
         // content_changed branch below — `thumbnail_version = 0`
         // re-enqueues the post-scan thumb job which re-reads this
-        // column for the page index).
-        am.cover_page_index =
-            Set(parsers::comicinfo::front_cover_page_index(&info.pages).unwrap_or(0));
+        // column for the page index). A user cover pick
+        // (`PATCH …/cover`, post-audit T4.2) pins the column; the
+        // file's marker then never moves it.
+        if !user_pinned("cover_page_index") {
+            am.cover_page_index =
+                Set(parsers::comicinfo::front_cover_page_index(&info.pages).unwrap_or(0));
+        }
         am.pages = Set(pages_json);
         am.comic_info_raw = Set(comic_info_raw);
         if !user_pinned("alternate_series") {

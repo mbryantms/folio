@@ -2347,9 +2347,9 @@ pub(crate) async fn fetch_cover_issues(
                  sort_number ASC NULLS LAST,
                  file_path ASC
         "#,
-        [ids.into()],
+        [ids.clone().into()],
     );
-    match Row::find_by_statement(stmt).all(db).await {
+    let mut map: HashMap<Uuid, String> = match Row::find_by_statement(stmt).all(db).await {
         Ok(rows) => rows.into_iter().map(|r| (r.series_id, r.id)).collect(),
         Err(e) => {
             tracing::warn!(
@@ -2358,7 +2358,10 @@ pub(crate) async fn fetch_cover_issues(
             );
             HashMap::new()
         }
-    }
+    };
+    // An explicit series cover pick (post-audit T4.2) beats the heuristic.
+    map.extend(crate::api::cover_pick::user_cover_picks(db, &ids).await);
+    map
 }
 
 /// Bulk-load the caller's `progress_record` rows for every issue id in

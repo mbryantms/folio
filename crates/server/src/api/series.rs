@@ -2441,7 +2441,7 @@ pub(crate) async fn hydrate_series(
     // in front of real numbered issues. M5/series-cover-issue-1
     // (2026-05-23 ask); specials + preludes excluded 2026-10-05.
     let cover_rows = issue::Entity::find()
-        .filter(issue::Column::SeriesId.is_in(series_ids))
+        .filter(issue::Column::SeriesId.is_in(series_ids.clone()))
         .filter(issue::Column::State.eq("active"))
         .filter(issue::Column::RemovedAt.is_null())
         .select_only()
@@ -2460,6 +2460,8 @@ pub(crate) async fn hydrate_series(
     for row in cover_rows {
         covers.entry(row.series_id).or_insert(row.id);
     }
+    // An explicit series cover pick (post-audit T4.2) beats the heuristic.
+    covers.extend(crate::api::cover_pick::user_cover_picks(&app.db, &series_ids).await);
 
     // Batch-fetch external IDs once for the whole page so the
     // per-row enrichment doesn't N+1.
@@ -3476,19 +3478,29 @@ pub async fn get_one(
     // sort_number ascending. Keeps the detail-page hero cover consistent with what
     // the grid card on /library and home rails shows. See
     // `hydrate_series` for the full rationale.
-    let cover_issue = issue::Entity::find()
-        .filter(issue::Column::SeriesId.eq(row.id))
-        .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null())
-        .order_by_asc(Expr::cust("special_type IS NOT NULL"))
-        .order_by_asc(Expr::cust("CASE WHEN sort_number >= 1 THEN 0 ELSE 1 END"))
-        .order_by_asc(Expr::cust("sort_number IS NULL"))
-        .order_by_asc(issue::Column::SortNumber)
-        .order_by_asc(issue::Column::FilePath)
-        .one(&app.db)
+    // An explicit series cover pick (post-audit T4.2) beats the heuristic.
+    let picked_cover_id = crate::api::cover_pick::user_cover_picks(&app.db, &[row.id])
         .await
-        .ok()
-        .flatten();
+        .remove(&row.id);
+    let cover_issue_id: Option<String> = match picked_cover_id {
+        Some(id) => Some(id),
+        None => issue::Entity::find()
+            .filter(issue::Column::SeriesId.eq(row.id))
+            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::RemovedAt.is_null())
+            .order_by_asc(Expr::cust("special_type IS NOT NULL"))
+            .order_by_asc(Expr::cust("CASE WHEN sort_number >= 1 THEN 0 ELSE 1 END"))
+            .order_by_asc(Expr::cust("sort_number IS NULL"))
+            .order_by_asc(issue::Column::SortNumber)
+            .order_by_asc(issue::Column::FilePath)
+            .select_only()
+            .column(issue::Column::Id)
+            .into_tuple::<String>()
+            .one(&app.db)
+            .await
+            .ok()
+            .flatten(),
+    };
     // Pull the per-issue stats columns + the still-CSV-shaped fields
     // (characters / teams / locations) we don't yet normalize. Capped at 500
     // to bound the work for absurdly long series. Genres / tags / credits
@@ -3564,7 +3576,7 @@ pub async fn get_one(
     if let Some(c) = counts {
         c.apply_to(&mut v);
     }
-    v.cover_url = cover_issue.map(|i| format!("/issues/{}/pages/0/thumb", i.id));
+    v.cover_url = cover_issue_id.map(|id| format!("/issues/{id}/pages/0/thumb"));
     v.writers = metadata_facets.credits_for("writer");
     v.pencillers = metadata_facets.credits_for("penciller");
     v.inkers = metadata_facets.credits_for("inker");

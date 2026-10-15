@@ -2994,7 +2994,7 @@ async fn update_issue_with_user_pins(
 /// when the library is in writeback mode. Never fails the request — the
 /// database already holds the edit; a failed enqueue is logged and the
 /// outcome is recorded on the audit row.
-async fn manual_rewrite_after_edit(
+pub(crate) async fn manual_rewrite_after_edit(
     app: &AppState,
     issue_id: &str,
     user: &CurrentUser,

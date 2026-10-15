@@ -105,6 +105,10 @@ import type {
   UpsertProgressReq,
   UpsertSeriesProgressReq,
   UpsertSeriesProgressResp,
+  IssueCoverPickReq,
+  IssueCoverPickResp,
+  SeriesCoverPickReq,
+  SeriesCoverPickResp,
 } from "../types";
 
 // ---------- Library Scanner v1 mutations ----------
@@ -985,6 +989,58 @@ export function useUpdateIssue(seriesSlug: string, issueSlug: string) {
       body,
     }),
     { successMessage: "Issue updated" },
+  );
+}
+
+/**
+ * `PATCH /series/{series_slug}/issues/{issue_slug}/cover` — choose which
+ * archive page is the issue's cover (post-audit T4.2, admin). The server
+ * pins the page against rescans, rewrites the sidecar on writeback
+ * libraries and queues a cover-thumbnail rebuild, so the new image shows
+ * up once that job runs.
+ */
+export function useSetIssueCoverPage(seriesSlug: string, issueSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<IssueCoverPickResp, IssueCoverPickReq>(
+    (body) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/cover`,
+      method: "PATCH",
+      body,
+    }),
+    {
+      successMessage: (data) =>
+        data?.thumbnail_enqueued
+          ? "Cover page set — the thumbnail is being rebuilt"
+          : "Cover page set",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ["series"], exact: false });
+        qc.invalidateQueries({ queryKey: queryKeys.queueDepth });
+      },
+    },
+  );
+}
+
+/**
+ * `PATCH /series/{series_slug}/cover` — pick the issue whose cover
+ * represents the series (`issue_id: null` clears the pick and the first
+ * issue of the main run applies again). Admin only.
+ */
+export function useSetSeriesCover(seriesSlug: string) {
+  const qc = useQueryClient();
+  return useApiMutation<SeriesCoverPickResp, SeriesCoverPickReq>(
+    (body) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/cover`,
+      method: "PATCH",
+      body,
+    }),
+    {
+      successMessage: (_data, input) =>
+        input.issue_id ? "Series cover updated" : "Series cover reset",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ["series"], exact: false });
+        qc.invalidateQueries({ queryKey: ["rails"], exact: false });
+      },
+    },
   );
 }
 

@@ -33,6 +33,7 @@ import {
   useRestoreArchiveMutation,
   useUpdateIssue,
   useUpdateSeries,
+  useSetIssueCoverPage,
 } from "@/lib/api/mutations";
 import { formatRelativeDate } from "@/lib/format";
 import type {
@@ -45,6 +46,7 @@ import type {
 import { useIssueShortcuts } from "@/lib/keyboard/use-issue-shortcuts";
 import type { ReadState } from "@/lib/reading-state";
 
+import { CoverPagePickerDialog } from "@/components/library/CoverPagePickerDialog";
 import { IssueSettingsMenu } from "./IssueSettingsMenu";
 
 type FormLink = { label: string; url: string };
@@ -133,6 +135,11 @@ export function IssueActions({
   const [archiveEditStamp, setArchiveEditStamp] = useState(0);
   if (archiveEditOpen && !pageEditorMounted) setPageEditorMounted(true);
   const [confirmRestore, setConfirmRestore] = useState(false);
+  // Post-audit T4.2: cover page picker. The RSC re-renders with the new
+  // `cover_page_index` on refresh; the thumbnail itself follows once the
+  // cover job has run.
+  const [coverPickerOpen, setCoverPickerOpen] = useState(false);
+  const setCoverPage = useSetIssueCoverPage(issue.series_slug, issue.slug);
   const forceRecreatePageMap = useForceRecreateIssuePageMap(
     issue.series_slug,
     issue.slug,
@@ -164,6 +171,26 @@ export function IssueActions({
           setArchiveEditOpen(true);
         }}
         onRestoreArchive={() => setConfirmRestore(true)}
+        onChooseCoverPage={() => setCoverPickerOpen(true)}
+      />
+      <CoverPagePickerDialog
+        open={coverPickerOpen}
+        onOpenChange={setCoverPickerOpen}
+        issueId={issue.id}
+        pageCount={issue.page_count ?? 0}
+        currentPageIndex={issue.cover_page_index ?? 0}
+        isPending={setCoverPage.isPending}
+        onPick={(pageIndex) =>
+          setCoverPage.mutate(
+            { page_index: pageIndex },
+            {
+              onSuccess: () => {
+                setCoverPickerOpen(false);
+                router.refresh();
+              },
+            },
+          )
+        }
       />
       <EditSheet
         issue={issue}
