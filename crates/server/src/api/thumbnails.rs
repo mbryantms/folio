@@ -93,7 +93,14 @@ pub async fn thumb(
         variant
     };
 
-    let page_index = n as usize;
+    // The cover variants render the issue's cover page — ComicInfo's
+    // FrontCover marker or an admin's pick (`cover_page_index`) — not
+    // page 0, so the inline path and the post-scan worker agree.
+    let page_index = if matches!(variant, Variant::Cover | Variant::CoverSmall) {
+        usize::try_from(row.cover_page_index.max(0)).unwrap_or(0)
+    } else {
+        n as usize
+    };
     let cache_key = thumb_cache_key(&row.id, variant, page_index);
 
     // Hot path: any file on disk (in any known format) → stream it. The

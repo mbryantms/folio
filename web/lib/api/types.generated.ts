@@ -4235,6 +4235,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{series_slug}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Choose which issue's cover represents the series (or clear the pick). */
+        patch: operations["cover_pick_set_series_cover"];
+        trace?: never;
+    };
     "/api/series/{series_slug}/issues/{issue_slug}": {
         parameters: {
             query?: never;
@@ -4281,6 +4298,23 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/series/{series_slug}/issues/{issue_slug}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Choose which archive page is the issue's cover. */
+        patch: operations["cover_pick_set_issue_cover"];
         trace?: never;
     };
     "/api/series/{series_slug}/issues/{issue_slug}/duplicate-decision": {
@@ -9442,6 +9476,27 @@ export interface components {
             story_arcs: components["schemas"]["EntityRefView"][];
             teams: components["schemas"]["EntityRefView"][];
         };
+        IssueCoverPickReq: {
+            /**
+             * Format: int32
+             * @description 0-based index of the archive page to use as the cover.
+             */
+            page_index: number;
+        };
+        IssueCoverPickResp: {
+            /** Format: int32 */
+            cover_page_index: number;
+            /**
+             * @description Outcome of the sidecar rewrite enqueue: `enqueued`,
+             *     `not_writeback`, or `refused: <reason>`.
+             */
+            sidecar: string;
+            /**
+             * @description `true` when a cover-thumbnail regeneration job was queued (the
+             *     library has thumbnails enabled and no identical job was pending).
+             */
+            thumbnail_enqueued: boolean;
+        };
         IssueCoverRow: {
             fetched_at: string;
             /** Format: int32 */
@@ -12818,6 +12873,19 @@ export interface components {
             slug: string;
             /** Format: int32 */
             year?: number | null;
+        };
+        SeriesCoverPickReq: {
+            /**
+             * @description Issue whose cover represents the series. `null` clears the pick
+             *     and the heuristic (first issue of the main run) applies again.
+             */
+            issue_id?: string | null;
+        };
+        SeriesCoverPickResp: {
+            /** @description Cover URL of the picked issue, for an immediate UI refresh. */
+            cover_url?: string | null;
+            /** @description The pick now in force (`None` after a clear). */
+            issue_id?: string | null;
         };
         /** @description How well one series candidate covers the local issues. */
         SeriesCoverageHint: {
@@ -23003,6 +23071,52 @@ export interface operations {
             };
         };
     };
+    cover_pick_set_series_cover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeriesCoverPickReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesCoverPickResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue_id is not an active issue of this series */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     issues_get_one: {
         parameters: {
             query?: never;
@@ -23134,6 +23248,53 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cover_pick_set_issue_cover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IssueCoverPickReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueCoverPickResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description page_index outside the archive */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

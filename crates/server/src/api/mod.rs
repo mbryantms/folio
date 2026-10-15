@@ -23,6 +23,7 @@ pub mod cbl_lists;
 pub mod characters;
 pub mod collection_sequence;
 pub mod collections;
+pub mod cover_pick;
 pub mod covers;
 pub mod creators;
 pub mod csp;

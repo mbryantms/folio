@@ -595,6 +595,16 @@ async fn gather_events(
                 })
                 .or_insert_with(|| (i.sort_number, url));
         }
+        // An explicit series cover pick (post-audit T4.2) beats the
+        // lowest-sort_number heuristic.
+        for (sid, iid) in crate::api::cover_pick::user_cover_picks(
+            &app.db,
+            &series_ids.iter().copied().collect::<Vec<_>>(),
+        )
+        .await
+        {
+            by_series.insert(sid, (None, format!("/issues/{iid}/pages/0/thumb")));
+        }
         by_series
             .into_iter()
             .map(|(k, (_, url))| (k, url))

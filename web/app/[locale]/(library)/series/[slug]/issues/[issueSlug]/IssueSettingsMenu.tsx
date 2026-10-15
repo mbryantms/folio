@@ -20,6 +20,7 @@ import {
   RotateCcw,
   Settings,
   Sparkles,
+  Star,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -51,6 +52,7 @@ import {
   useRestoreMarkers,
   useScanIssue,
   useUpsertIssueProgress,
+  useSetSeriesCover,
 } from "@/lib/api/mutations";
 import { useCollections, useIssueMarkers, useMe } from "@/lib/api/queries";
 import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
@@ -105,6 +107,7 @@ export function IssueSettingsMenu({
   onForceRecreatePageMap,
   onEditArchive,
   onRestoreArchive,
+  onChooseCoverPage,
 }: {
   issue: IssueDetailView;
   /** Parent series name, for the offline download's label. */
@@ -127,6 +130,9 @@ export function IssueSettingsMenu({
   /** Called when the user picks "Restore from backup" — parent owns the
    *  confirm dialog. */
   onRestoreArchive?: () => void;
+  /** Called when the admin picks "Choose cover page…" — the parent owns
+   *  the picker dialog (post-audit T4.2). */
+  onChooseCoverPage?: () => void;
 }) {
   const me = useMe();
   const share = useShareLink();
@@ -145,6 +151,8 @@ export function IssueSettingsMenu({
     issue.slug,
     issue.library_id,
   );
+  // Post-audit T4.2: this issue's cover becomes the series cover.
+  const setSeriesCover = useSetSeriesCover(issue.series_slug);
 
   // Bookmark = page-0 marker with kind='bookmark'. If one already exists,
   // the menu item toggles it off; otherwise it creates one.
@@ -454,6 +462,24 @@ export function IssueSettingsMenu({
                     Edit issue
                   </DropdownMenuItem>
                 )}
+                {onChooseCoverPage && (
+                  <DropdownMenuItem onSelect={onChooseCoverPage}>
+                    <ImageIcon className="mr-2 h-4 w-4" />
+                    Choose cover page…
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem
+                  onSelect={() =>
+                    setSeriesCover.mutate(
+                      { issue_id: issue.id },
+                      { onSuccess: () => router.refresh() },
+                    )
+                  }
+                  disabled={setSeriesCover.isPending}
+                >
+                  <Star className="mr-2 h-4 w-4" />
+                  Use as series cover
+                </DropdownMenuItem>
                 {issue.allow_archive_writeback && onEditArchive && canRead && (
                   <DropdownMenuItem onSelect={onEditArchive}>
                     <Layers className="mr-2 h-4 w-4" />

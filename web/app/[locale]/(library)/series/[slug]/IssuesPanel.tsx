@@ -48,6 +48,7 @@ import {
   useBulkMarkProgress,
   useBulkMarkSeriesMatchingProgress,
   useCreateSeriesSelectionBatch,
+  useSetSeriesCover,
 } from "@/lib/api/mutations";
 import {
   type IssueListFilters,
@@ -293,6 +294,21 @@ export function IssuesPanel({
   // so it returns a `batch_id` the completion toast can deep-link to the
   // Review queue — B5: bulk fetch is no longer a dead end.
   const selectionBatch = useCreateSeriesSelectionBatch(seriesSlug);
+  // Post-audit T4.2: admins pick the series cover from any card's menu.
+  const setSeriesCover = useSetSeriesCover(seriesSlug);
+  const seriesCoverAction = (issueId: string) =>
+    isAdmin
+      ? [
+          {
+            label: "Use as series cover",
+            onSelect: () =>
+              setSeriesCover.mutate(
+                { issue_id: issueId },
+                { onSuccess: () => router.refresh() },
+              ),
+          },
+        ]
+      : undefined;
   const runBulkMetadataFetch = () => {
     const ids = Array.from(selection.selected);
     if (ids.length === 0) return;
@@ -390,6 +406,7 @@ export function IssuesPanel({
   const renderIssueCard = (iss: (typeof mainRunItems)[number]) => (
     <IssueCard
       issue={iss}
+      extraActions={seriesCoverAction(iss.id)}
       selectMode={
         selection.selectMode
           ? {
