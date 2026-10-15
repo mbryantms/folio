@@ -80,15 +80,33 @@ export function useReaderPrefetch(opts: {
     retained.current.clear();
   }, [issueId]);
 
+  // Post-audit T3.6: the warm queue + in-flight loads live in a ref that
+  // survives re-runs. The old effect tore everything down on every page
+  // change, so turning from 3 to 4 cancelled the half-loaded page 5 it was
+  // about to show and started it over; now a page change only cancels
+  // loads that fell *outside* the new window and keeps the rest.
+  const warm = useRef<{
+    inflight: Map<string, HTMLImageElement>;
+    queue: string[];
+    active: number;
+    generation: number;
+    /** The latest effect run's pump — a load that finishes after a page
+     *  turn must refill from the *new* window, not its own stale one. */
+    pump: () => void;
+  }>({
+    inflight: new Map(),
+    queue: [],
+    active: 0,
+    generation: 0,
+    pump: () => {},
+  });
+
   useEffect(() => {
     // Webtoon relies on the browser lazy-loading its mounted page window
     // (audit C12) — prefetching here just double-decodes. Call the hook
     // unconditionally (rules of hooks); skip the work inside the effect.
     if (viewMode === "webtoon") return;
-    const inflight = new Set<string>();
-    const images = new Set<HTMLImageElement>();
-    let queue: string[] = [];
-    let active = 0;
+    const w = warm.current;
     // FEP-1: mirror the <img> srcSet pick — `sizes` is 100vw (single) /
     // 50vw (double), so the browser targets slot-css-px × dpr and takes
     // the smallest candidate ≥ that. Same formula here keeps warmed URLs
@@ -107,20 +125,67 @@ export function useReaderPrefetch(opts: {
       return tier == null ? bare : pageVariantUrl(bare, tier);
     };
 
-    let cancelled = false;
+    const want: number[] = [];
+    if (viewMode === "double" && groups.length > 0) {
+      for (let g = -BEHIND; g <= AHEAD; g += 1) {
+        if (g === 0) continue;
+        const grp = groups[currentGroupIdx + g];
+        if (grp) want.push(...grp);
+      }
+    } else {
+      // single + webtoon: window of page indices around the current one.
+      for (let i = -BEHIND; i <= AHEAD; i += 1) {
+        if (i === 0) continue;
+        const p = currentPage + i;
+        if (p >= 0 && p < totalPages) want.push(p);
+      }
+    }
+    // Order forward-first so the most-likely next page warms before the
+    // behind pages.
+    want.sort(
+      (a, b) =>
+        Math.sign(b - currentPage) - Math.sign(a - currentPage) ||
+        Math.abs(a - currentPage) - Math.abs(b - currentPage),
+    );
+    const wanted = new Set(want.map(url));
+    // The page(s) now on screen are not warmed (the real <img> loads them)
+    // but a warm already in flight for them is exactly what we want to
+    // finish — turning onto page 4 must not cancel page 4's decode.
+    const keep = new Set(wanted);
+    if (viewMode === "double" && groups.length > 0) {
+      for (const p of groups[currentGroupIdx] ?? []) keep.add(url(p));
+    } else {
+      keep.add(url(currentPage));
+    }
+
+    // Cancel only the in-flight loads that fell out of the window.
+    for (const [u, img] of w.inflight) {
+      if (!keep.has(u)) {
+        img.src = "";
+        w.inflight.delete(u);
+        w.active -= 1;
+      }
+    }
+    // Rebuild the pending queue from the new window, skipping what is
+    // already decoded or already loading.
+    w.queue = [...wanted].filter(
+      (u) => !retained.current.has(u) && !w.inflight.has(u),
+    );
+    w.generation += 1;
+    const generation = w.generation;
+
     const pump = () => {
       while (
-        !cancelled &&
+        w.generation === generation &&
         !document.hidden &&
-        active < MAX_CONCURRENT &&
-        queue.length > 0
+        w.active < MAX_CONCURRENT &&
+        w.queue.length > 0
       ) {
-        const u = queue.shift()!;
-        if (retained.current.has(u) || inflight.has(u)) continue;
-        inflight.add(u);
-        active += 1;
+        const u = w.queue.shift()!;
+        if (retained.current.has(u) || w.inflight.has(u)) continue;
         const img = new Image();
-        images.add(img);
+        w.inflight.set(u, img);
+        w.active += 1;
         // Hint the browser these are background loads behind the visible page.
         img.fetchPriority = "low";
         img.src = u;
@@ -129,7 +194,9 @@ export function useReaderPrefetch(opts: {
         img
           .decode()
           .then(() => {
-            if (cancelled) return;
+            // A load that was cancelled (src cleared) or superseded no
+            // longer counts; only a still-tracked image is retained.
+            if (w.inflight.get(u) !== img) return;
             retained.current.set(u, img);
             // Evict oldest beyond the cap (Map preserves insertion order).
             while (
@@ -149,46 +216,18 @@ export function useReaderPrefetch(opts: {
                the page will simply load normally when displayed. */
           })
           .finally(() => {
-            images.delete(img);
-            inflight.delete(u);
-            active -= 1;
-            pump();
+            if (w.inflight.get(u) === img) {
+              w.inflight.delete(u);
+              w.active -= 1;
+            }
+            w.pump();
           });
       }
     };
-
-    const want: number[] = [];
-    if (viewMode === "double" && groups.length > 0) {
-      for (let g = -BEHIND; g <= AHEAD; g += 1) {
-        if (g === 0) continue;
-        const grp = groups[currentGroupIdx + g];
-        if (grp) want.push(...grp);
-      }
-    } else {
-      // single + webtoon: window of page indices around the current one.
-      for (let i = -BEHIND; i <= AHEAD; i += 1) {
-        if (i === 0) continue;
-        const p = currentPage + i;
-        if (p >= 0 && p < totalPages) want.push(p);
-      }
-    }
-
-    // Order forward-first so the most-likely next page warms before the
-    // behind pages.
-    want.sort(
-      (a, b) =>
-        Math.sign(b - currentPage) - Math.sign(a - currentPage) ||
-        Math.abs(a - currentPage) - Math.abs(b - currentPage),
-    );
-    queue = want.map(url);
+    w.pump = pump;
     pump();
     document.addEventListener("visibilitychange", pump);
     return () => {
-      cancelled = true;
-      queue = [];
-      images.forEach((image) => {
-        image.src = "";
-      });
       document.removeEventListener("visibilitychange", pump);
     };
   }, [
@@ -198,9 +237,25 @@ export function useReaderPrefetch(opts: {
     issueId,
     totalPages,
     viewMode,
-    urlVersion,
+    width,
     pageWidths,
     variantsEnabled,
-    width,
+    urlVersion,
   ]);
+
+  // Unmount / issue change: drop everything (the retained map is reset by
+  // the issue effect above; in-flight loads are cancelled here).
+  useEffect(() => {
+    const w = warm.current;
+    return () => {
+      w.generation += 1;
+      w.pump = () => {};
+      w.queue = [];
+      w.inflight.forEach((img) => {
+        img.src = "";
+      });
+      w.inflight.clear();
+      w.active = 0;
+    };
+  }, [issueId]);
 }
