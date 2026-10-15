@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.57.1](https://github.com/mbryantms/folio/compare/v0.57.0...v0.57.1) (2026-10-15)
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.80 ([#1194](https://github.com/mbryantms/folio/issues/1194)) ([ef973a5](https://github.com/mbryantms/folio/commit/ef973a5ef3b05c79b4d1982eb74c81deeb2849a9))
+* update dependency @tanstack/react-table to v9.3.1 ([#1195](https://github.com/mbryantms/folio/issues/1195)) ([c4bb7e7](https://github.com/mbryantms/folio/commit/c4bb7e7e61f59af2011d552542ffdd260c40f3d4))
+* update dependency postcss@&lt;8.5.10 to v8.5.30 ([#1197](https://github.com/mbryantms/folio/issues/1197)) ([3252409](https://github.com/mbryantms/folio/commit/32524091928636527aec368a43114d82a91f7889))
+* update dependency zod to v4.6.7 ([#1193](https://github.com/mbryantms/folio/issues/1193)) ([71ee935](https://github.com/mbryantms/folio/commit/71ee93579aa1fe3183f8c769bc3c1ce47ef554a1))
+* update radix-ui ([#1198](https://github.com/mbryantms/folio/issues/1198)) ([4b09eb6](https://github.com/mbryantms/folio/commit/4b09eb69fa286e57a1240214160a972c16514d42))
+* update rust crate sha2 to v0.11.1 ([#1196](https://github.com/mbryantms/folio/issues/1196)) ([a4c7157](https://github.com/mbryantms/folio/commit/a4c715743bcff537ffe377a23f6f5b021f1ff95a))
+* update rust crate syn to v3.0.9 ([#1191](https://github.com/mbryantms/folio/issues/1191)) ([c12641e](https://github.com/mbryantms/folio/commit/c12641ed1b31b299d2315b248a8875719294b81d))
+
 ## [0.57.0](https://github.com/mbryantms/folio/compare/v0.56.3...v0.57.0) (2026-10-15)
 
 
