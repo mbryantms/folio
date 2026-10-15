@@ -288,6 +288,7 @@ export type CatalogEntriesView = Schemas["CatalogEntriesView"];
 export type CreateCatalogSourceReq = Schemas["CreateCatalogSourceReq"];
 export type UpdateCatalogSourceReq = Schemas["UpdateCatalogSourceReq"];
 export type CollectionEntryView = Schemas["CollectionEntryView"];
+export type CollectionNextUpView = Schemas["CollectionNextUpView"];
 export type CollectionEntriesView = Schemas["CollectionEntriesView"];
 export type AppearanceView = Schemas["AppearanceView"];
 export type AppearancesView = Schemas["AppearancesView"];

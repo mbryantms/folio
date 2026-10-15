@@ -3099,6 +3099,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/collections/{id}/next-up": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["collections_next_up"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/continue-reading": {
         parameters: {
             query?: never;
@@ -7075,6 +7091,30 @@ export interface components {
             title?: string | null;
         };
         /**
+         * @description Where "Continue" / "Start reading" on a collection page should go:
+         *     the first issue in the collection's reading order (series entries
+         *     expanded, see `collection_sequence`) the caller can open and has not
+         *     finished.
+         */
+        CollectionNextUpView: {
+            /**
+             * Format: int32
+             * @description 1-based position of `target` in the reading order.
+             */
+            position?: number | null;
+            /**
+             * @description `true` once the caller has progress on any issue in the order —
+             *     the page labels the button "Continue" instead of "Start reading".
+             */
+            started: boolean;
+            target?: components["schemas"]["IssueSummaryView"] | null;
+            /**
+             * Format: int32
+             * @description Number of issues in the reading order.
+             */
+            total: number;
+        };
+        /**
          * @description Collection-completeness report for a series: how many issues are owned
          *     versus expected, and **which** main-run issue numbers are missing.
          *
@@ -10673,7 +10713,7 @@ export interface components {
             items: components["schemas"]["IssueSummaryView"][];
         };
         /** @enum {string} */
-        NextUpSource: "cbl" | "series" | "none";
+        NextUpSource: "collection" | "cbl" | "series" | "none";
         NextUpView: {
             /**
              * @description Set when `source == "cbl"`. The id of the CBL list (NOT the
@@ -10705,6 +10745,35 @@ export interface components {
              * @description Set when `source == "cbl"`. Total matched entries in the CBL.
              */
             cbl_total?: number | null;
+            /**
+             * @description Set when `source == "collection"`. The collection's saved-view id
+             *     (the same id the caller sent), for deep links to the collection.
+             */
+            collection_id?: string | null;
+            /**
+             * @description Set when `source == "collection"`. The collection's name, for the
+             *     end card's "in {collection}" sub-label.
+             */
+            collection_name?: string | null;
+            /**
+             * @description `true` when the caller passed `?collection=<id>` for one of their
+             *     collections but the current issue is no longer in it (the
+             *     collection was edited mid-read). The resolver fell back to series
+             *     order; the web layer drops the param and says so (D7).
+             */
+            collection_param_was_stale?: boolean;
+            /**
+             * Format: int32
+             * @description Set when `source == "collection"`. 1-based position of the
+             *     *target* issue in the collection's flattened reading order.
+             */
+            collection_position?: number | null;
+            /**
+             * Format: int32
+             * @description Set when `source == "collection"`. Number of issues in the
+             *     collection's reading order (series entries expanded).
+             */
+            collection_total?: number | null;
             fallback_suggestion?: components["schemas"]["OnDeckCard"] | null;
             source: components["schemas"]["NextUpSource"];
             target?: components["schemas"]["IssueSummaryView"] | null;
@@ -18841,6 +18910,8 @@ export interface operations {
             query?: {
                 /** @description Saved-view id (kind='cbl') the caller is reading through */
                 cbl?: string;
+                /** @description Saved-view id (kind='collection') the caller is reading through; wins over `cbl` */
+                collection?: string;
             };
             header?: never;
             path: {
@@ -18873,6 +18944,8 @@ export interface operations {
             query?: {
                 /** @description Saved-view id (kind='cbl') the caller is reading through */
                 cbl?: string;
+                /** @description Saved-view id (kind='collection') the caller is reading through; wins over `cbl` */
+                collection?: string;
             };
             header?: never;
             path: {
@@ -20766,6 +20839,41 @@ export interface operations {
                 };
             };
             /** @description not owner */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description collection not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    collections_next_up: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CollectionNextUpView"];
+                };
+            };
+            /** @description not the caller's collection */
             403: {
                 headers: {
                     [name: string]: unknown;

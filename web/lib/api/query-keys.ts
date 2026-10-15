@@ -10,6 +10,7 @@
  * imported type-only here — the import is erased at runtime, so there is
  * no module cycle. New hooks: add a key factory here, then reference it.
  */
+import type { IssueUrlOpts } from "@/lib/urls";
 import type { ReadingLogFilters, ReadingStatsRange } from "./types";
 import type {
   AdminActivityFilters,
@@ -492,6 +493,10 @@ export const queryKeys = {
    *  consumers stay in sync. */
   collectionEntriesInfinite: (id: string) =>
     ["collections", "entries-infinite", id] as const,
+  /** Where the collection page's Continue / Start reading button goes
+   *  (`/me/collections/{id}/next-up`). Under the `collections` prefix
+   *  so membership + progress invalidations refresh it. */
+  collectionNextUp: (id: string) => ["collections", "next-up", id] as const,
   /** Markers + Collections M5 — global feed for `/bookmarks` index. */
   markers: (filters: MarkerListFilters = {}) =>
     ["markers", "list", filters] as const,
@@ -538,13 +543,25 @@ export const queryKeys = {
    *  (`/issues/{id}/next-up`). Separate cache entry per (issue, cbl)
    *  pairing so a CBL-context read and a series-context read don't
    *  trample each other's results. */
-  nextUp: (issueId: string, cblSavedViewId?: string | null) =>
-    ["reader", "next-up", issueId, cblSavedViewId ?? ""] as const,
+  nextUp: (issueId: string, ctx?: IssueUrlOpts | null) =>
+    [
+      "reader",
+      "next-up",
+      issueId,
+      ctx?.cbl ?? "",
+      ctx?.collection ?? "",
+    ] as const,
   /** Reader's single-issue "what came before?" resolver
    *  (`/issues/{id}/prev-up`). Symmetric with nextUp; pure sequence
    *  nav, doesn't filter by finished state. */
-  prevUp: (issueId: string, cblSavedViewId?: string | null) =>
-    ["reader", "prev-up", issueId, cblSavedViewId ?? ""] as const,
+  prevUp: (issueId: string, ctx?: IssueUrlOpts | null) =>
+    [
+      "reader",
+      "prev-up",
+      issueId,
+      ctx?.cbl ?? "",
+      ctx?.collection ?? "",
+    ] as const,
   /** Catalog source list (admin-managed, public read). */
   catalogSources: ["catalog", "sources"] as const,
   /** Cached `.cbl` listing inside a configured catalog source. */

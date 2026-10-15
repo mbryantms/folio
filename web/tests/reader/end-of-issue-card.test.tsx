@@ -95,6 +95,19 @@ describe("<EndOfIssueCard>", () => {
     expect(html).toMatch(/Read/);
   });
 
+  it("renders the collection subtitle when source = collection", () => {
+    const data: NextUpView = {
+      source: "collection",
+      target: issue(),
+      collection_id: "00000000-0000-0000-0000-000000000bbb",
+      collection_name: "Summer pile",
+      collection_position: 2,
+      collection_total: 9,
+    };
+    const html = render({ data });
+    expect(html).toMatch(/Issue 2 of 9 in Summer pile/);
+  });
+
   it("renders a retry state when the resolver failed with no data (T2.6)", () => {
     const html = render({ isError: true, onRetry: noop });
     expect(html).toMatch(/Couldn(&#x27;|')t load what(&#x27;|')s next/);

@@ -21,6 +21,7 @@ pub mod auth_config;
 pub mod background_work;
 pub mod cbl_lists;
 pub mod characters;
+pub mod collection_sequence;
 pub mod collections;
 pub mod covers;
 pub mod creators;

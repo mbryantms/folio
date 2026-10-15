@@ -47,6 +47,10 @@ export default async function ReadPage({
      *  surface. Forwarded to the next-up resolver so "next" picks the
      *  next list entry rather than the next series issue. */
     cbl?: string;
+    /** Saved-view id (kind=`collection`) when the reader was entered from
+     *  a collection page. Same contract as `cbl`: next-up follows the
+     *  collection's reading order (post-audit T4.1). */
+    collection?: string;
     /** `?peek=1` puts the reader in peek mode — both progress writes
      *  and session tracking are suppressed until the user explicitly
      *  clicks "Continue from here" in the peek banner. Set by
@@ -58,11 +62,13 @@ export default async function ReadPage({
   }>;
 }) {
   const { seriesSlug, issueSlug } = await params;
-  const { from, incognito, page, cbl, peek } = await searchParams;
-  // Trust the URL contract: a malformed `?cbl=` just falls through to
-  // series-next on the server. No client-side validation needed — the
-  // resolver fails soft.
+  const { from, incognito, page, cbl, collection, peek } = await searchParams;
+  // Trust the URL contract: a malformed `?cbl=` / `?collection=` just
+  // falls through to series-next on the server. No client-side
+  // validation needed — the resolver fails soft.
   const cblSavedViewId = typeof cbl === "string" && cbl.length > 0 ? cbl : null;
+  const collectionId =
+    typeof collection === "string" && collection.length > 0 ? collection : null;
   // `?from=start` is the "Read from beginning" entry point: skip the
   // saved-progress prefetch so the reader opens at page 0 even when the
   // user has prior progress on this issue. The reader's normal save-on-
@@ -266,6 +272,7 @@ export default async function ReadPage({
         issueId={issue.id}
         seriesId={issue.series_id}
         cblSavedViewId={cblSavedViewId}
+        collectionId={collectionId}
         exitUrl={`/series/${seriesSlug}/issues/${issueSlug}`}
         totalPages={totalPages}
         initialPage={initialPage}

@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
@@ -27,6 +28,7 @@ import {
   FileCog,
   FolderPlus,
   GripVertical,
+  Play,
   Trash2,
 } from "lucide-react";
 
@@ -63,7 +65,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { useCardSize } from "@/components/library/use-card-size";
-import { useCollectionEntriesInfinite, useMe } from "@/lib/api/queries";
+import {
+  useCollectionEntriesInfinite,
+  useCollectionNextUp,
+  useMe,
+} from "@/lib/api/queries";
 import {
   useBulkMarkProgress,
   useBulkRemoveFromCollection,
@@ -78,6 +84,7 @@ import { useCollectionDeleteUndo } from "@/lib/collections/use-collection-undo";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import { TOAST } from "@/lib/api/toast-strings";
+import { readerUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 import type { CollectionEntryView, SavedViewView } from "@/lib/api/types";
 
@@ -335,6 +342,7 @@ export function CollectionViewDetail({
         }
         extraActions={
           <>
+            <CollectionContinueButton collectionId={savedView.id} />
             <Badge variant="secondary">
               {total} item{total === 1 ? "" : "s"}
             </Badge>
@@ -577,6 +585,33 @@ export function CollectionViewDetail({
         />
       )}
     </div>
+  );
+}
+
+/** "Start reading" / "Continue" — opens the reader on the first
+ *  unfinished issue in the collection's reading order (series entries
+ *  expanded server-side) with `?collection=` so next-up keeps following
+ *  the collection (post-audit T4.1). Hidden while loading, when the
+ *  collection is empty, and once everything is finished. */
+export function CollectionContinueButton({
+  collectionId,
+}: {
+  collectionId: string;
+}) {
+  const q = useCollectionNextUp(collectionId);
+  const target = q.data?.target;
+  if (!target) return null;
+  const label = q.data?.started ? "Continue" : "Start reading";
+  return (
+    <Button asChild size="sm">
+      <Link
+        href={readerUrl(target, { collection: collectionId })}
+        aria-label={`${label}: ${target.title ?? `${target.series_name ?? ""} #${target.number ?? ""}`}`}
+      >
+        <Play className="mr-1 h-4 w-4" aria-hidden="true" />
+        {label}
+      </Link>
+    </Button>
   );
 }
 
