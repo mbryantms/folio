@@ -13,6 +13,29 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.57.0](https://github.com/mbryantms/folio/compare/v0.56.3...v0.57.0) (2026-10-15)
+
+
+### Added
+
+* **covers:** admin cover picks — issue cover page + series cover issue (post-audit T4.2) ([#1181](https://github.com/mbryantms/folio/issues/1181)) ([ada7059](https://github.com/mbryantms/folio/commit/ada70592254df446d853582e8c35d6d8ec9f9849))
+* **reader:** collection order drives next-up / prev-up; Continue on collection pages (post-audit T4.1) ([#1180](https://github.com/mbryantms/folio/issues/1180)) ([23bcb47](https://github.com/mbryantms/folio/commit/23bcb47e2818b1c89404af4db5f4b8d72bc2c0d3))
+* **reader:** per-series reader overrides follow the account (post-audit T4.4) ([#1185](https://github.com/mbryantms/folio/issues/1185)) ([bd7918b](https://github.com/mbryantms/folio/commit/bd7918b07f083c351665a0144429aa6d3b778a17))
+
+
+### Fixed
+
+* **ci:** rustls 0.23.46 for the four 2026-10 advisories; unflake the shared marker_write bucket test ([#1186](https://github.com/mbryantms/folio/issues/1186)) ([e3e564d](https://github.com/mbryantms/folio/commit/e3e564d2c6466d6d95848275ffcb383be9823c52))
+
+
+### Dependencies
+
+* update dependency @tanstack/react-virtual to v3.14.16 ([#1188](https://github.com/mbryantms/folio/issues/1188)) ([416e817](https://github.com/mbryantms/folio/commit/416e8173f484f861e15499bb713beaafbabf75b1))
+* update dependency @tanstack/react-virtual to v3.14.17 ([#1190](https://github.com/mbryantms/folio/issues/1190)) ([5fcd71b](https://github.com/mbryantms/folio/commit/5fcd71b3b22646c08f8ea3154f5d5aa942b12667))
+* update dependency cronstrue to v3.32.0 ([#1189](https://github.com/mbryantms/folio/issues/1189)) ([dfdc36c](https://github.com/mbryantms/folio/commit/dfdc36c7cc0e0c300a428d03c808579f7a39a5ac))
+* update google/osv-scanner-action action to v2.7.0 ([#1182](https://github.com/mbryantms/folio/issues/1182)) ([ffab652](https://github.com/mbryantms/folio/commit/ffab652aa189e91135836df275f3bdf016bcde7d))
+* update taiki-e/install-action digest to 1168f68 ([#1184](https://github.com/mbryantms/folio/issues/1184)) ([fe93228](https://github.com/mbryantms/folio/commit/fe93228fc205798fe548e592c7d1141de70d58c7))
+
 ## [0.56.3](https://github.com/mbryantms/folio/compare/v0.56.2...v0.56.3) (2026-10-15)
 
 
