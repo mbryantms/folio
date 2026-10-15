@@ -262,7 +262,7 @@ jobs:
         with:
           shared-key: rust-test
       - name: install nextest
-        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
         with:
           tool: nextest
       # nextest schedules every binary's tests in one global pool (far better
@@ -406,7 +406,7 @@ jobs:
       # before any step can log in — and Docker Hub's anonymous pull limit on
       # the shared runner IPs failed the v0.50.0 release-please PR (429 Too
       # Many Requests, 2026-10-09). The binary comes from GitHub Releases.
-      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
         if: env.DEPS == 'true'
         with:
           tool: cargo-deny@0.20.2,cargo-audit
