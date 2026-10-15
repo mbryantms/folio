@@ -40,7 +40,7 @@ describe("<CoverPagePickerDialog>", () => {
     // Decorative thumbs (`alt=""`) carry no img role; read them off the DOM.
     const thumbs = document.querySelectorAll<HTMLImageElement>("li img");
     expect(thumbs).toHaveLength(4);
-    expect(thumbs[2].getAttribute("src")).toBe(
+    expect(thumbs[2]?.getAttribute("src")).toBe(
       "/issues/issue-1/pages/2/thumb?variant=strip",
     );
   });
