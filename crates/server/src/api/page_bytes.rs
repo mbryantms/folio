@@ -93,6 +93,7 @@ pub async fn serve(
     let (arc, pread) = match app
         .zip_lru
         .get_or_open_indexed_tracked(&row.id, std::path::Path::new(&row.file_path))
+        .await
     {
         Ok((pair, opened)) => {
             if opened {
@@ -406,6 +407,7 @@ async fn serve_variant(
     let (arc, _pread) = match app
         .zip_lru
         .get_or_open_indexed_tracked(&row.id, std::path::Path::new(&row.file_path))
+        .await
     {
         Ok((pair, opened)) => {
             if opened {

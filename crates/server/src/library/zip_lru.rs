@@ -21,8 +21,10 @@ use archive::cbt::Cbt;
 use archive::cbz::{Cbz, PreadIndex};
 use archive::{ArchiveEntry, ArchiveError, ArchiveLimits, ComicArchive, SkippedEntry};
 use lru::LruCache;
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// A cached open archive: the locked handle (decompression / compressed reads)
@@ -168,6 +170,15 @@ impl ComicArchive for CachedReader {
 
 pub struct ZipLru {
     inner: Mutex<LruCache<String, CachedArchive>>,
+    /// Post-audit T3.3: one gate per issue being opened. Concurrent misses
+    /// for the same issue (a page strip's N parallel requests, a thumb job
+    /// racing the reader) wait on the gate and reuse the winner's handle
+    /// instead of each opening + indexing the archive and discarding all
+    /// but one. Entries live only while an open is in flight.
+    in_flight: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Archives actually opened (cache misses that reached the disk).
+    /// Observable for tests; the `MISSES` counter is the metric.
+    opens: AtomicU64,
     /// Archive caps applied at open time. Captured at boot from
     /// `Config::archive_limits()` so a `COMIC_ARCHIVE_MAX_*` override
     /// flows through every cached open. `Copy`, ~64 bytes — cheap to
@@ -179,7 +190,12 @@ impl ZipLru {
     pub fn new(capacity: usize, limits: ArchiveLimits) -> Self {
         let cap = NonZeroUsize::new(capacity.max(1)).unwrap();
         let inner = Mutex::new(LruCache::new(cap));
-        let me = Self { inner, limits };
+        let me = Self {
+            inner,
+            in_flight: Mutex::new(HashMap::new()),
+            opens: AtomicU64::new(0),
+            limits,
+        };
         metrics::describe_gauge!(OPEN_FDS, "Open file descriptors held by the ZIP LRU");
         metrics::describe_counter!(HITS, "ZIP LRU cache hits");
         metrics::describe_counter!(MISSES, "ZIP LRU cache misses");
@@ -191,65 +207,122 @@ impl ZipLru {
     /// Acquire a handle to the issue's reader, opening (and inserting) on
     /// miss. The returned `Arc<Mutex<CachedReader>>` lives at least as long
     /// as the caller holds it, even if the LRU evicts it in the meantime.
-    pub fn get_or_open(
+    ///
+    /// Async since post-audit T3.3: a miss opens and indexes the archive
+    /// on the blocking pool (it reads the central directory and every
+    /// stored entry's local header — milliseconds to hundreds of ms on a
+    /// cold NAS), and concurrent misses for one issue open it once.
+    pub async fn get_or_open(
         &self,
         issue_id: &str,
         path: &Path,
     ) -> Result<Arc<Mutex<CachedReader>>, ArchiveError> {
-        Ok(self.get_or_open_entry(issue_id, path)?.0.0)
+        Ok(self.get_or_open_entry(issue_id, path).await?.0.0)
+    }
+
+    /// Archives opened from disk so far (not served from the cache).
+    pub fn opens(&self) -> u64 {
+        self.opens.load(Ordering::Relaxed)
     }
 
     /// Like [`Self::get_or_open`] but also returns the [`PreadIndex`] for the
     /// issue's stored entries, so the page server can read uncompressed pages
     /// lock-free (PERF-3). The index is computed once at open and cached.
-    pub fn get_or_open_indexed(
+    pub async fn get_or_open_indexed(
         &self,
         issue_id: &str,
         path: &Path,
     ) -> Result<CachedArchive, ArchiveError> {
-        Ok(self.get_or_open_entry(issue_id, path)?.0)
+        Ok(self.get_or_open_entry(issue_id, path).await?.0)
     }
 
     /// Like [`Self::get_or_open_indexed`], plus whether this call opened
     /// the archive (a cache miss). The page server uses the flag to kick
     /// off once-per-open work (the WP-8.4 page-hash backfill) without
     /// repeating it on every page request.
-    pub fn get_or_open_indexed_tracked(
+    pub async fn get_or_open_indexed_tracked(
         &self,
         issue_id: &str,
         path: &Path,
     ) -> Result<(CachedArchive, bool), ArchiveError> {
-        self.get_or_open_entry(issue_id, path)
+        self.get_or_open_entry(issue_id, path).await
     }
 
-    fn get_or_open_entry(
+    /// Cache fast path: a hit bumps the LRU and the `HITS` counter.
+    fn cached(&self, issue_id: &str) -> Option<CachedArchive> {
+        let mut cache = self.inner.lock().unwrap();
+        let hit = cache.get(issue_id).cloned();
+        if hit.is_some() {
+            metrics::counter!(HITS).increment(1);
+        }
+        hit
+    }
+
+    async fn get_or_open_entry(
         &self,
         issue_id: &str,
         path: &Path,
     ) -> Result<(CachedArchive, bool), ArchiveError> {
+        if let Some(existing) = self.cached(issue_id) {
+            return Ok((existing, false));
+        }
+
+        // Miss: single-flight per issue. The first caller through the gate
+        // opens; everyone else waits on the gate, re-checks, and reuses the
+        // winner's handle (the old loser-discard race opened the archive N
+        // times for N concurrent misses and threw away N-1 handles).
+        let gate = {
+            let mut in_flight = self.in_flight.lock().unwrap();
+            Arc::clone(
+                in_flight
+                    .entry(issue_id.to_owned())
+                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+            )
+        };
+        let result = {
+            let _held = gate.lock().await;
+            if let Some(existing) = self.cached(issue_id) {
+                Ok((existing, false))
+            } else {
+                self.open_and_insert(issue_id, path).await
+            }
+        };
+        // Drop the gate once no open is in flight for this issue. Another
+        // miss may have installed a fresh gate meanwhile; only remove ours.
         {
-            let mut cache = self.inner.lock().unwrap();
-            if let Some(existing) = cache.get(issue_id) {
-                metrics::counter!(HITS).increment(1);
-                return Ok((existing.clone(), false));
+            let mut in_flight = self.in_flight.lock().unwrap();
+            if in_flight
+                .get(issue_id)
+                .is_some_and(|g| Arc::ptr_eq(g, &gate))
+            {
+                in_flight.remove(issue_id);
             }
         }
+        result
+    }
 
-        // Miss: open outside the lock (CBZ open parses the central directory,
-        // CBT walks the tar headers; building the pread index reads each
-        // Stored entry's local header for CBZ and is free for CBT).
-        let reader = CachedReader::open(path, self.limits)?;
-        let pread = Arc::new(reader.build_pread_index());
-        let arc = Arc::new(Mutex::new(reader));
-        let entry: CachedArchive = (arc, pread);
+    /// Open + index on the blocking pool, then insert. Called with the
+    /// issue's gate held, so this is the only open for `issue_id` in flight.
+    async fn open_and_insert(
+        &self,
+        issue_id: &str,
+        path: &Path,
+    ) -> Result<(CachedArchive, bool), ArchiveError> {
+        let limits = self.limits;
+        let path = path.to_path_buf();
+        // CBZ open parses the central directory, CBT walks the tar headers;
+        // building the pread index reads each Stored entry's local header
+        // for CBZ. All synchronous file I/O — keep it off the async runtime.
+        let entry: CachedArchive = tokio::task::spawn_blocking(move || {
+            let reader = CachedReader::open(&path, limits)?;
+            let pread = Arc::new(reader.build_pread_index());
+            Ok::<_, ArchiveError>((Arc::new(Mutex::new(reader)), pread))
+        })
+        .await
+        .map_err(|e| ArchiveError::Io(format!("archive open task failed: {e}")))??;
+        self.opens.fetch_add(1, Ordering::Relaxed);
 
         let mut cache = self.inner.lock().unwrap();
-        // Another caller may have raced and inserted while we were opening.
-        // Honor the racing entry to keep a single live handle per issue.
-        if let Some(existing) = cache.get(issue_id) {
-            metrics::counter!(HITS).increment(1);
-            return Ok((existing.clone(), false));
-        }
         let evicted = cache.push(issue_id.to_owned(), entry.clone());
         if evicted.is_some() {
             metrics::counter!(EVICTIONS).increment(1);
@@ -269,5 +342,85 @@ impl ZipLru {
     fn update_gauge(&self) {
         let cache = self.inner.lock().unwrap();
         metrics::gauge!(OPEN_FDS).set(cache.len() as f64);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write_cbz(path: &Path, pages: u32) {
+        let f = std::fs::File::create(path).unwrap();
+        let mut zw = zip::ZipWriter::new(f);
+        let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for i in 0..pages {
+            let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+            png.extend_from_slice(&i.to_le_bytes());
+            png.extend(std::iter::repeat_n(0u8, 32));
+            zw.start_file(format!("p{i:03}.png"), opts).unwrap();
+            zw.write_all(&png).unwrap();
+        }
+        zw.finish().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_misses_open_the_archive_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.cbz");
+        write_cbz(&path, 3);
+        let lru = Arc::new(ZipLru::new(8, ArchiveLimits::default()));
+
+        let mut tasks = Vec::new();
+        for _ in 0..16 {
+            let lru = Arc::clone(&lru);
+            let path = path.clone();
+            tasks.push(tokio::spawn(async move {
+                lru.get_or_open_indexed_tracked("issue-a", &path).await
+            }));
+        }
+        let mut opened_flags = 0;
+        let mut handles: Vec<CachedArchive> = Vec::new();
+        for t in tasks {
+            let (entry, opened) = t.await.unwrap().expect("open");
+            if opened {
+                opened_flags += 1;
+            }
+            handles.push(entry);
+        }
+        assert_eq!(lru.opens(), 1, "16 concurrent misses must open once");
+        assert_eq!(opened_flags, 1, "exactly one caller reports the open");
+        // Everyone shares the one live handle.
+        assert!(handles.iter().all(|(h, _)| Arc::ptr_eq(h, &handles[0].0)));
+        // The gate is gone once the open finished.
+        assert!(lru.in_flight.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn distinct_issues_open_independently_and_invalidate_reopens() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.cbz");
+        let b = dir.path().join("b.cbz");
+        write_cbz(&a, 2);
+        write_cbz(&b, 2);
+        let lru = ZipLru::new(8, ArchiveLimits::default());
+        lru.get_or_open("a", &a).await.unwrap();
+        lru.get_or_open("b", &b).await.unwrap();
+        lru.get_or_open("a", &a).await.unwrap();
+        assert_eq!(lru.opens(), 2);
+        lru.invalidate("a");
+        lru.get_or_open("a", &a).await.unwrap();
+        assert_eq!(lru.opens(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_failed_open_releases_the_gate() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.cbz");
+        let lru = ZipLru::new(8, ArchiveLimits::default());
+        assert!(lru.get_or_open("x", &missing).await.is_err());
+        assert!(lru.in_flight.lock().unwrap().is_empty());
+        assert_eq!(lru.opens(), 0);
     }
 }

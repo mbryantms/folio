@@ -431,6 +431,7 @@ async fn load_page_image(
     let arc = match app
         .zip_lru
         .get_or_open(&row.id, std::path::Path::new(&row.file_path))
+        .await
     {
         Ok(a) => a,
         Err(e) => {
