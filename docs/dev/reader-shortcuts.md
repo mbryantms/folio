@@ -330,30 +330,46 @@ request via the same ZIP LRU as the cover thumbnail. Stored at
 
 `Shift+N`, the end-of-issue card (auto-shown on the last page), and
 `Shift+P` (back-navigation) all ask the same family of server
-resolvers. The endpoints are `GET /issues/{issue_id}/next-up?cbl=<saved_view_id>`
-and `GET /issues/{issue_id}/prev-up?cbl=<saved_view_id>`. Both share
-the response shape (`NextUpView`) and resolution order:
+resolvers. The endpoints are `GET /issues/{issue_id}/next-up` and
+`GET /issues/{issue_id}/prev-up`, each taking an optional list context:
+`?collection=<saved_view_id>` (a user collection) or
+`?cbl=<saved_view_id>` (a CBL reading list). Both share the response
+shape (`NextUpView`) and resolution order:
 
-1. **CBL** — if `?cbl=<saved_view_id>` resolves to a saved view the
+1. **Collection** — if `?collection=<saved_view_id>` is one of the
+   user's collections AND the current issue is in its reading order
+   (directly, or through a series entry), return the next-unfinished
+   issue after the current position. The reading order is built by
+   `api::collection_sequence`: issue entries as themselves, series
+   entries expanded to the series' active issues (main run first,
+   then the specials), duplicates kept at their first slot.
+2. **CBL** — if `?cbl=<saved_view_id>` resolves to a saved view the
    user can see with `kind='cbl'` AND the current issue is in that
    list, return the next-unfinished entry after the current position.
-2. **Series** — otherwise (or after a CBL fallthrough), walk the
+3. **Series** — otherwise (or after a list fallthrough), walk the
    current issue's series in sort order and return the first
    ACL-visible not-finished issue strictly after the current one.
-3. **None** — both branches dry: the response carries `source: "none"`
+4. **None** — every branch dry: the response carries `source: "none"`
    and the end-of-issue card renders the caught-up empty state.
 
-The CBL context is carried by the `?cbl=` query param on the reader
-URL — produced by every CBL → reader/issue link (`<CblIssueCard>`,
-`<CblWindowCard>`, the CBL detail page). When the resolver picks a CBL
-next, the next reader URL forwards the param; a series fallthrough
-strips it so the reader resets to series-only context.
+The list context is carried by the query param on the reader URL —
+`?cbl=` is produced by every CBL → reader/issue link (`<CblIssueCard>`,
+`<CblWindowCard>`, the CBL detail page); `?collection=` by the
+collection page's **Start reading / Continue** button, whose target
+comes from `GET /me/collections/{id}/next-up` (first unfinished issue
+in the same reading order). When the resolver picks the list's next,
+the next reader URL forwards the param; a series fallthrough strips it
+so the reader resets to series-only context. The end-of-issue card and
+the webtoon footer show "Issue N of M in {list}" for either context
+(`nextUpListSubtitle`).
 
-When the param is *stale* (CBL exists but the current issue isn't in
-it — e.g., the entry was deleted), the server returns
-`cbl_param_was_stale: true` and the web layer strips `?cbl=` from the
-current URL via `router.replace`, so a page refresh / shared link no
-longer carries the dead reference.
+When the param is *stale* (the list exists but the current issue isn't
+in it — e.g., the entry was deleted, or the collection was edited
+mid-read), the server returns `cbl_param_was_stale: true` /
+`collection_param_was_stale: true` and the web layer strips the param
+from the current URL via `router.replace`, so a page refresh / shared
+link no longer carries the dead reference. For a collection the reader
+also toasts that it is continuing in series order (post-audit D7).
 
 ### prev-up semantic differences
 

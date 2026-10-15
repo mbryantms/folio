@@ -93,6 +93,7 @@ export function Reader({
   issueId,
   seriesId,
   cblSavedViewId,
+  collectionId = null,
   exitUrl,
   totalPages,
   initialPage,
@@ -126,6 +127,10 @@ export function Reader({
    *  series. Forwarded onto the next-issue URL when source === "cbl"
    *  so the CBL session persists across issues. */
   cblSavedViewId: string | null;
+  /** Saved-view id of the collection the user is reading through
+   *  (`?collection=`). Wins over `cblSavedViewId` server-side; forwarded
+   *  onto the next-issue URL when source === "collection". */
+  collectionId?: string | null;
   /** URL to exit the reader to (the issue detail page). Computed by the
    * page wrapper from the slug params. */
   exitUrl: string;
@@ -257,7 +262,8 @@ export function Reader({
   // (and the M4 end-of-issue card) can navigate without waiting on a
   // round-trip. The hook handles the CBL > series > none resolution
   // server-side; the client just consumes the result.
-  const nextUp = useNextUp(issueId, cblSavedViewId);
+  const listContext = { cbl: cblSavedViewId, collection: collectionId };
+  const nextUp = useNextUp(issueId, listContext);
   // Post-audit T2.6: the end card / webtoon footer show a Retry when the
   // resolver failed instead of claiming "You're caught up".
   const retryNextUp = useCallback(() => {
@@ -283,6 +289,23 @@ export function Reader({
       router.replace(url.pathname + url.search);
     }
   }
+  // Collection self-healing (post-audit D7): the collection was edited
+  // mid-read and no longer contains this issue, so the resolver fell
+  // back to series order. Say so once, then drop the dead param the
+  // same way the CBL scrub does. Effect (not render-phase) because the
+  // toast is a side effect; the ref keeps strict-mode double-invocation
+  // and refetches from repeating it.
+  const collectionStale =
+    !!collectionId && nextUp.data?.collection_param_was_stale === true;
+  const collectionScrubbed = useRef(false);
+  useEffect(() => {
+    if (!collectionStale || collectionScrubbed.current) return;
+    collectionScrubbed.current = true;
+    toast.info("This collection changed — continuing in series order.");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("collection");
+    router.replace(url.pathname + url.search);
+  }, [collectionStale, router]);
   const goNextIssue = useCallback(() => {
     const data = nextUp.data;
     if (!data || !data.target) {
@@ -295,17 +318,21 @@ export function Reader({
       }
       return;
     }
-    // Forward the CBL context only when the resolver also picked CBL —
-    // a series fallback means the user is no longer following the list
+    // Forward the list context only when the resolver also picked that
+    // list — a series fallback means the user is no longer following it
     // and the next read should reset to series-only context.
-    const forwardCbl = data.source === "cbl" ? cblSavedViewId : null;
-    router.push(readerUrl(data.target, { cbl: forwardCbl }));
-  }, [cblSavedViewId, nextUp.data, router]);
+    router.push(
+      readerUrl(data.target, {
+        cbl: data.source === "cbl" ? cblSavedViewId : null,
+        collection: data.source === "collection" ? collectionId : null,
+      }),
+    );
+  }, [cblSavedViewId, collectionId, nextUp.data, router]);
 
   // Symmetric to useNextUp for the `Shift+P` keybind. Pure sequential
   // back-navigation (no finished-state filter); the resolver returns
   // source=none when the user is already at the first issue.
-  const prevUp = usePrevUp(issueId, cblSavedViewId);
+  const prevUp = usePrevUp(issueId, listContext);
   const goPrevIssue = useCallback(() => {
     const data = prevUp.data;
     if (!data || !data.target) {
@@ -314,9 +341,13 @@ export function Reader({
       }
       return;
     }
-    const forwardCbl = data.source === "cbl" ? cblSavedViewId : null;
-    router.push(readerUrl(data.target, { cbl: forwardCbl }));
-  }, [cblSavedViewId, prevUp.data, router]);
+    router.push(
+      readerUrl(data.target, {
+        cbl: data.source === "cbl" ? cblSavedViewId : null,
+        collection: data.source === "collection" ? collectionId : null,
+      }),
+    );
+  }, [cblSavedViewId, collectionId, prevUp.data, router]);
 
   // End-of-issue side panel. Opens only when the user *attempts to
   // advance past* the last page (e.g., right-arrow / spacebar / swipe

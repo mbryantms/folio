@@ -9,6 +9,7 @@
  * The shared `useMe` hook lives here so any client tree can read the current
  * user without re-fetching across components.
  */
+import type { IssueUrlOpts } from "@/lib/urls";
 import {
   useQuery,
   useQueries,
@@ -29,6 +30,7 @@ import type {
   ActivityListView,
   AppearancesView,
   CollectionEntriesView,
+  CollectionNextUpView,
   IssueMarkersView,
   PageOverridesView,
   MarkerKind,
@@ -2282,6 +2284,19 @@ export function useCollectionEntriesInfinite(id: string) {
   });
 }
 
+/** Where the collection page's Continue / Start reading button goes:
+ *  the first unfinished issue in the collection's reading order (series
+ *  entries expanded server-side). `target` is absent when everything is
+ *  finished or the collection is empty. */
+export function useCollectionNextUp(id: string) {
+  return useQuery({
+    queryKey: queryKeys.collectionNextUp(id),
+    enabled: !!id,
+    queryFn: () =>
+      jsonFetch<CollectionNextUpView>(`/me/collections/${id}/next-up`),
+  });
+}
+
 // ---------- Catalog (M6) ----------
 
 export function useCatalogSources() {
@@ -2395,9 +2410,10 @@ export function useSimilarRailInfinite(opts?: { enabled?: boolean }) {
 }
 
 /** Per-issue "what should I read next?" resolver — drives the reader's
- *  `Shift+N` keybind and the end-of-issue card (M4). Picks CBL > series
- *  > none. Pass the saved-view id of the CBL the user is reading through
- *  via `cblSavedViewId`; omit it for series-only resolution.
+ *  `Shift+N` keybind and the end-of-issue card (M4). Picks collection >
+ *  CBL > series > none. Pass the list the user is reading through via
+ *  `ctx` (`collection` = collection saved-view id, `cbl` = CBL saved-view
+ *  id); omit it for series-only resolution.
  *
  *  Cached for 5 minutes — progress flips that move the resolved target
  *  show up via the existing progress-mutation invalidation chain on the
@@ -2405,23 +2421,29 @@ export function useSimilarRailInfinite(opts?: { enabled?: boolean }) {
  *  read-only during a single session. */
 export function useNextUp(
   issueId: string,
-  cblSavedViewId?: string | null,
+  ctx?: IssueUrlOpts | null,
   opts?: { enabled?: boolean },
 ) {
   const enabled = (opts?.enabled ?? true) && issueId.length > 0;
   return useQuery({
-    queryKey: queryKeys.nextUp(issueId, cblSavedViewId),
-    queryFn: () => {
-      const qs = cblSavedViewId
-        ? `?cbl=${encodeURIComponent(cblSavedViewId)}`
-        : "";
-      return jsonFetch<NextUpView>(
-        `/issues/${encodeURIComponent(issueId)}/next-up${qs}`,
-      );
-    },
+    queryKey: queryKeys.nextUp(issueId, ctx),
+    queryFn: () =>
+      jsonFetch<NextUpView>(
+        `/issues/${encodeURIComponent(issueId)}/next-up${listContextQuery(ctx)}`,
+      ),
     enabled,
     staleTime: 5 * 60 * 1000,
   });
+}
+
+/** `?cbl=…&collection=…` for the next-up / prev-up resolvers; empty when
+ *  the reader has no list context. */
+function listContextQuery(ctx?: IssueUrlOpts | null): string {
+  const qs = buildQuery({
+    cbl: ctx?.cbl ?? undefined,
+    collection: ctx?.collection ?? undefined,
+  });
+  return qs;
 }
 
 /** Per-issue "what came before?" resolver — sibling to `useNextUp` for
@@ -2431,20 +2453,16 @@ export function useNextUp(
  *  unread issue). `fallback_suggestion` is never populated for prev. */
 export function usePrevUp(
   issueId: string,
-  cblSavedViewId?: string | null,
+  ctx?: IssueUrlOpts | null,
   opts?: { enabled?: boolean },
 ) {
   const enabled = (opts?.enabled ?? true) && issueId.length > 0;
   return useQuery({
-    queryKey: queryKeys.prevUp(issueId, cblSavedViewId),
-    queryFn: () => {
-      const qs = cblSavedViewId
-        ? `?cbl=${encodeURIComponent(cblSavedViewId)}`
-        : "";
-      return jsonFetch<NextUpView>(
-        `/issues/${encodeURIComponent(issueId)}/prev-up${qs}`,
-      );
-    },
+    queryKey: queryKeys.prevUp(issueId, ctx),
+    queryFn: () =>
+      jsonFetch<NextUpView>(
+        `/issues/${encodeURIComponent(issueId)}/prev-up${listContextQuery(ctx)}`,
+      ),
     enabled,
     staleTime: 5 * 60 * 1000,
   });

@@ -49,16 +49,21 @@ export function adminSeriesUrl(s: { slug: string } | string): string {
 /**
  * Optional URL options that thread reading-context through to the
  * reader / issue detail. `cbl` is the saved-view id (kind=`cbl`) the
- * user is reading through — the reader uses it to pick "next" out of
- * the list instead of the parent series. Omit when the user is not in
- * a CBL context.
+ * user is reading through; `collection` is the saved-view id
+ * (kind=`collection`) of the collection they are reading through. The
+ * reader uses either to pick "next" out of the list instead of the
+ * parent series. Omit both when the user is not in a list context.
  */
-export type IssueUrlOpts = { cbl?: string | null };
+export type IssueUrlOpts = { cbl?: string | null; collection?: string | null };
 
 function appendOpts(base: string, opts?: IssueUrlOpts): string {
-  if (!opts?.cbl) return base;
+  const params: string[] = [];
+  if (opts?.cbl) params.push(`cbl=${encodeURIComponent(opts.cbl)}`);
+  if (opts?.collection)
+    params.push(`collection=${encodeURIComponent(opts.collection)}`);
+  if (params.length === 0) return base;
   const sep = base.includes("?") ? "&" : "?";
-  return `${base}${sep}cbl=${encodeURIComponent(opts.cbl)}`;
+  return `${base}${sep}${params.join("&")}`;
 }
 
 /**

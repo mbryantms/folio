@@ -39,6 +39,21 @@ describe("readerUrl", () => {
     );
   });
 
+  it("appends ?collection=<id> for a collection context", () => {
+    expect(readerUrl(ISSUE, { collection: SV_ID })).toBe(
+      `/read/invincible/issue-1?collection=${SV_ID}`,
+    );
+    expect(readerUrl(ISSUE, { collection: null })).toBe(
+      "/read/invincible/issue-1",
+    );
+  });
+
+  it("carries both contexts when both are passed", () => {
+    expect(readerUrl(ISSUE, { cbl: SV_ID, collection: "c-1" })).toBe(
+      `/read/invincible/issue-1?cbl=${SV_ID}&collection=c-1`,
+    );
+  });
+
   it("URL-encodes saved-view ids with special characters", () => {
     // Defense-in-depth — saved-view ids are UUIDs in practice, but the
     // helper should not break if a caller forwards a value with an

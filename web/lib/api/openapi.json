@@ -4508,6 +4508,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "collection",
+            "in": "query",
+            "description": "Saved-view id (kind='collection') the caller is reading through; wins over `cbl`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4544,6 +4553,15 @@
             "name": "cbl",
             "in": "query",
             "description": "Saved-view id (kind='cbl') the caller is reading through",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "collection",
+            "in": "query",
+            "description": "Saved-view id (kind='collection') the caller is reading through; wins over `cbl`",
             "required": false,
             "schema": {
               "type": "string"
@@ -6631,6 +6649,38 @@
           },
           "403": {
             "description": "not owner"
+          },
+          "404": {
+            "description": "collection not found"
+          }
+        }
+      }
+    },
+    "/api/me/collections/{id}/next-up": {
+      "get": {
+        "operationId": "collections_next_up",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionNextUpView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the caller's collection"
           },
           "404": {
             "description": "collection not found"
@@ -16139,6 +16189,44 @@
           }
         }
       },
+      "CollectionNextUpView": {
+        "type": "object",
+        "description": "Where \"Continue\" / \"Start reading\" on a collection page should go:\nthe first issue in the collection's reading order (series entries\nexpanded, see `collection_sequence`) the caller can open and has not\nfinished.",
+        "required": [
+          "total",
+          "started"
+        ],
+        "properties": {
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "1-based position of `target` in the reading order."
+          },
+          "started": {
+            "type": "boolean",
+            "description": "`true` once the caller has progress on any issue in the order —\nthe page labels the button \"Continue\" instead of \"Start reading\"."
+          },
+          "target": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssueSummaryView",
+                "description": "`None` when every issue is finished (or the collection is empty)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of issues in the reading order."
+          }
+        }
+      },
       "CollectionReportView": {
         "type": "object",
         "description": "Collection-completeness report for a series: how many issues are owned\nversus expected, and **which** main-run issue numbers are missing.\n\nThe denominator (`total_expected`) comes from `series.total_issues`, which\nthe scanner resolves from a `series.json` sidecar or the max ComicInfo\n`<Count>`. series.json carries only the *count*, never a per-issue\nmanifest — so without provider data interior `missing` numbers are\n*inferred* by interpolating the integer run between the lowest and highest\nowned issue (`expected_source = \"series_total\"`). When the series has\naccepted provider coverage and those providers' issue lists are cached,\nthe expected set comes from them instead\n([`crate::metadata::issue_manifest`], `expected_source =\n\"provider_manifest\"`): `missing` is what every such provider lists and\nno local issue carries, `possibly_missing` what only some list.",
@@ -25204,6 +25292,7 @@
       "NextUpSource": {
         "type": "string",
         "enum": [
+          "collection",
           "cbl",
           "series",
           "none"
@@ -25248,6 +25337,40 @@
             ],
             "format": "int32",
             "description": "Set when `source == \"cbl\"`. Total matched entries in the CBL."
+          },
+          "collection_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when `source == \"collection\"`. The collection's saved-view id\n(the same id the caller sent), for deep links to the collection."
+          },
+          "collection_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when `source == \"collection\"`. The collection's name, for the\nend card's \"in {collection}\" sub-label."
+          },
+          "collection_param_was_stale": {
+            "type": "boolean",
+            "description": "`true` when the caller passed `?collection=<id>` for one of their\ncollections but the current issue is no longer in it (the\ncollection was edited mid-read). The resolver fell back to series\norder; the web layer drops the param and says so (D7)."
+          },
+          "collection_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Set when `source == \"collection\"`. 1-based position of the\n*target* issue in the collection's flattened reading order."
+          },
+          "collection_total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Set when `source == \"collection\"`. Number of issues in the\ncollection's reading order (series entries expanded)."
           },
           "fallback_suggestion": {
             "oneOf": [

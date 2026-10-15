@@ -20,6 +20,7 @@ import { Cover } from "@/components/Cover";
 import { Button } from "@/components/ui/button";
 import type { Direction } from "@/lib/reader/detect";
 import type { NextUpView, OnDeckCard } from "@/lib/api/types";
+import { nextUpListSubtitle } from "@/lib/reader/list-context";
 import { issueUrl, readerUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
@@ -64,13 +65,7 @@ export function EndOfIssueCard({
   // A failed fetch with nothing cached is its own state — never "caught
   // up", which is only true for a confirmed empty resolver result.
   const failed = isError && !data;
-  const cblSubtitle =
-    source === "cbl" &&
-    data?.cbl_position &&
-    data?.cbl_total &&
-    data?.cbl_list_name
-      ? `Issue ${data.cbl_position} of ${data.cbl_total} in ${data.cbl_list_name}`
-      : null;
+  const listSubtitle = nextUpListSubtitle(data);
   const heading =
     target?.title ??
     (target?.series_name && target?.number
@@ -185,14 +180,14 @@ export function EndOfIssueCard({
               fallback={heading}
             />
           </div>
-          {(subheading || cblSubtitle) && (
+          {(subheading || listSubtitle) && (
             <div className="mt-2">
               {subheading ? (
                 <p className="text-muted-foreground text-sm">{subheading}</p>
               ) : null}
-              {cblSubtitle ? (
+              {listSubtitle ? (
                 <p className="text-muted-foreground mt-1 text-xs">
-                  {cblSubtitle}
+                  {listSubtitle}
                 </p>
               ) : null}
             </div>

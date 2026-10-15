@@ -36,10 +36,12 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
 
+use crate::api::collection_sequence;
 use crate::api::issue_card::IssueCardRow;
 use crate::api::saved_views::{KIND_COLLECTION, SYSTEM_KEY_WANT_TO_READ, SavedViewView};
 use crate::api::series::{IssueSummaryView, SeriesView, hydrate_series};
 use crate::auth::CurrentUser;
+use crate::library::access;
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -62,6 +64,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(bulk_add_members))
         .routes(routes!(bulk_remove_members))
         .routes(routes!(export))
+        .routes(routes!(next_up))
 }
 
 // ───── wire types ─────
@@ -92,6 +95,25 @@ pub struct CollectionEntriesView {
     /// First-page total (entries belong to one collection, so this is a
     /// cheap COUNT). Useful for "N items" headers without re-fetching.
     pub total: Option<i64>,
+}
+
+/// Where "Continue" / "Start reading" on a collection page should go:
+/// the first issue in the collection's reading order (series entries
+/// expanded, see `collection_sequence`) the caller can open and has not
+/// finished.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CollectionNextUpView {
+    /// `None` when every issue is finished (or the collection is empty).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<IssueSummaryView>,
+    /// 1-based position of `target` in the reading order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<i32>,
+    /// Number of issues in the reading order.
+    pub total: i32,
+    /// `true` once the caller has progress on any issue in the order —
+    /// the page labels the button "Continue" instead of "Start reading".
+    pub started: bool,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -672,6 +694,56 @@ pub async fn list_entries(
         items,
         next_cursor,
         total,
+    })
+    .into_response()
+}
+
+#[utoipa::path(
+    operation_id = "collections_next_up",    get,
+    path = "/me/collections/{id}/next-up",
+    params(("id" = String, Path,)),
+    responses(
+        (status = 200, body = CollectionNextUpView),
+        (status = 404, description = "collection not found"),
+        (status = 403, description = "not the caller's collection")
+    )
+)]
+#[handler]
+pub async fn next_up(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(id): AxPath<Uuid>,
+) -> impl IntoResponse {
+    let view = match fetch_owned(&app.db, user.id, id).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let seq = match collection_sequence::load_for_view(&app, view).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    let progress = match collection_sequence::progress_map(&app, user.id, &seq).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let acl = access::for_user(&app, &user).await;
+    let started = progress.values().any(|p| p.finished || p.last_page > 0);
+    let pick = seq.first_unfinished_after(&acl, &progress, None);
+    let target = pick.map(|idx| {
+        let (slug, name) = seq
+            .series_of(idx)
+            .map(|s| (s.slug.clone(), s.name.clone()))
+            .unwrap_or_default();
+        seq.items[idx]
+            .clone()
+            .into_summary_view(&slug)
+            .with_series_name(name)
+    });
+    Json(CollectionNextUpView {
+        target,
+        position: pick.map(|idx| i32::try_from(idx + 1).unwrap_or(i32::MAX)),
+        total: seq.total(),
+        started,
     })
     .into_response()
 }

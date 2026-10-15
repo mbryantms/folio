@@ -3,23 +3,33 @@
 //! and end-of-issue card.
 //!
 //! Resolution order:
-//!   1. If the caller passes `?cbl=<saved_view_id>` and the saved view
+//!   1. If the caller passes `?collection=<saved_view_id>` and the saved
+//!      view is one of the user's collections that currently contains
+//!      the calling issue (directly or through a series entry), return
+//!      the next-unfinished issue after the current one in the
+//!      collection's reading order (`collection_sequence`). Fall through
+//!      on any miss (deleted view, someone else's, current issue not in
+//!      it, nothing unfinished left).
+//!   2. If the caller passes `?cbl=<saved_view_id>` and the saved view
 //!      resolves to a CBL the user can see + currently has the calling
 //!      issue in it, return the next-unfinished entry after the current
 //!      one in that list. Fall through on any CBL miss (deleted view,
 //!      stale param, current issue not in the list).
-//!   2. Otherwise (or after fallthrough), walk the current issue's
+//!   3. Otherwise (or after fallthrough), walk the current issue's
 //!      series in sort order and return the first ACL-visible
 //!      not-finished issue *strictly after* the current one.
-//!   3. If both branches yield nothing, the response is `source: "none"`
+//!   4. If every branch yields nothing, the response is `source: "none"`
 //!      with an optional `fallback_suggestion` (the top On Deck card).
-//!      The field is reserved in M1 and always populated `None`; M4/M5
-//!      wires it up when the end-of-issue card needs it.
 //!
-//! The CBL > series ordering is deliberate: when the user opened the
-//! reader from a CBL context, the list is their stated reading thread
-//! and "next in series" is incidental. The series fallback only fires
-//! when there's no CBL context or the CBL has nothing to say.
+//! The list > series ordering is deliberate: when the user opened the
+//! reader from a collection or CBL context, the list is their stated
+//! reading thread and "next in series" is incidental. The series
+//! fallback only fires when there's no list context or the list has
+//! nothing to say. A stale context param (the current issue is no
+//! longer in the list — the collection was edited mid-read) is reported
+//! on the response (`*_param_was_stale`) so the web layer can drop it
+//! from the URL and, for collections, tell the user it fell back to
+//! series order (post-audit D7).
 //!
 //! This module also owns the two shared `pick_next_in_*` helpers that
 //! `rails::on_deck` re-uses, so the "first unfinished" algorithm has a
@@ -42,6 +52,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
+use crate::api::collection_sequence;
 use crate::api::issue_card::IssueCardRow;
 use crate::api::rails::OnDeckCard;
 use crate::api::saved_views::KIND_CBL;
@@ -62,6 +73,9 @@ pub fn routes() -> OpenApiRouter<AppState> {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NextUpSource {
+    /// The next-unfinished issue after the current one in the reading
+    /// order of the collection the caller passed via `?collection=`.
+    Collection,
     /// The next-unfinished entry after the current issue in the CBL the
     /// caller passed via `?cbl=`.
     Cbl,
@@ -113,6 +127,29 @@ pub struct NextUpView {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     #[serde(default)]
     pub cbl_param_was_stale: bool,
+    /// Set when `source == "collection"`. The collection's saved-view id
+    /// (the same id the caller sent), for deep links to the collection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection_id: Option<String>,
+    /// Set when `source == "collection"`. The collection's name, for the
+    /// end card's "in {collection}" sub-label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection_name: Option<String>,
+    /// Set when `source == "collection"`. 1-based position of the
+    /// *target* issue in the collection's flattened reading order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection_position: Option<i32>,
+    /// Set when `source == "collection"`. Number of issues in the
+    /// collection's reading order (series entries expanded).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection_total: Option<i32>,
+    /// `true` when the caller passed `?collection=<id>` for one of their
+    /// collections but the current issue is no longer in it (the
+    /// collection was edited mid-read). The resolver fell back to series
+    /// order; the web layer drops the param and says so (D7).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default)]
+    pub collection_param_was_stale: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +157,10 @@ pub struct NextUpQuery {
     /// Saved-view id of a CBL the caller is reading through. Optional;
     /// when omitted or invalid, the resolver falls back to series-next.
     pub cbl: Option<Uuid>,
+    /// Saved-view id of a collection (kind `collection`) the caller is
+    /// reading through. Optional; takes precedence over `cbl` when both
+    /// are sent. Invalid or stale values fall through like `cbl`.
+    pub collection: Option<Uuid>,
 }
 
 // ───── Handler ─────
@@ -132,7 +173,8 @@ pub struct NextUpQuery {
     path = "/issues/{issue_id}/next-up",
     params(
         ("issue_id" = String, Path, description = "Current issue id"),
-        ("cbl" = Option<String>, Query, description = "Saved-view id (kind='cbl') the caller is reading through")
+        ("cbl" = Option<String>, Query, description = "Saved-view id (kind='cbl') the caller is reading through"),
+        ("collection" = Option<String>, Query, description = "Saved-view id (kind='collection') the caller is reading through; wins over `cbl`")
     ),
     responses(
         (status = 200, body = NextUpView),
@@ -169,6 +211,31 @@ pub async fn next_up(
     };
     if !access::issue_allowed(&app, &acl, &current).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    }
+
+    // ───── Collection branch ─────
+    let mut collection_param_was_stale = false;
+    if let Some(saved_view_id) = q.collection {
+        match resolve_collection_next(&app, user.id, saved_view_id, &current, &acl).await {
+            Ok(CblBranchOutcome::Resolved(view)) => {
+                record_resolved("collection");
+                return Json(view).into_response();
+            }
+            Ok(CblBranchOutcome::StaleParam) => {
+                tracing::debug!(
+                    user_id = %user.id, issue_id = %current.id, saved_view_id = %saved_view_id,
+                    "next_up: ?collection= param was stale, falling back"
+                );
+                collection_param_was_stale = true;
+            }
+            Ok(CblBranchOutcome::NoMatch) => {
+                tracing::debug!(
+                    user_id = %user.id, issue_id = %current.id, saved_view_id = %saved_view_id,
+                    "next_up: collection branch yielded nothing, falling back"
+                );
+            }
+            Err(resp) => return resp,
+        }
     }
 
     // ───── CBL branch ─────
@@ -220,7 +287,8 @@ pub async fn next_up(
                     // suggestion; the next-up resolver should fail
                     // simple here.
                     record_resolved("none");
-                    return Json(none_view(cbl_param_was_stale)).into_response();
+                    return Json(none_view(cbl_param_was_stale, collection_param_was_stale))
+                        .into_response();
                 }
             };
             let target = next
@@ -236,6 +304,11 @@ pub async fn next_up(
                 cbl_total: None,
                 fallback_suggestion: None,
                 cbl_param_was_stale,
+                collection_id: None,
+                collection_name: None,
+                collection_position: None,
+                collection_total: None,
+                collection_param_was_stale,
             })
             .into_response()
         }
@@ -244,9 +317,15 @@ pub async fn next_up(
             // top On Deck card (D-6) so the end-of-issue card has
             // something to render in its caught-up state.
             record_resolved("none");
-            let view =
-                none_view_with_fallback(&app, user.id, &acl, &current.id, cbl_param_was_stale)
-                    .await;
+            let view = none_view_with_fallback(
+                &app,
+                user.id,
+                &acl,
+                &current.id,
+                cbl_param_was_stale,
+                collection_param_was_stale,
+            )
+            .await;
             Json(view).into_response()
         }
         Err(resp) => resp,
@@ -254,7 +333,7 @@ pub async fn next_up(
 }
 
 /// Bumps the `folio_reader_next_up_resolved_total{source=…}` counter.
-/// Sampled label cardinality is bounded to {cbl, series, none}.
+/// Sampled label cardinality is bounded to {collection, cbl, series, none}.
 fn record_resolved(source: &'static str) {
     metrics::counter!("folio_reader_next_up_resolved_total", "source" => source).increment(1);
 }
@@ -284,7 +363,7 @@ impl Drop for LatencyTimer {
     }
 }
 
-fn none_view(cbl_param_was_stale: bool) -> NextUpView {
+fn none_view(cbl_param_was_stale: bool, collection_param_was_stale: bool) -> NextUpView {
     NextUpView {
         source: NextUpSource::None,
         target: None,
@@ -294,6 +373,11 @@ fn none_view(cbl_param_was_stale: bool) -> NextUpView {
         cbl_total: None,
         fallback_suggestion: None,
         cbl_param_was_stale,
+        collection_id: None,
+        collection_name: None,
+        collection_position: None,
+        collection_total: None,
+        collection_param_was_stale,
     }
 }
 
@@ -308,26 +392,22 @@ async fn none_view_with_fallback(
     acl: &access::VisibleLibraries,
     current_issue_id: &str,
     cbl_param_was_stale: bool,
+    collection_param_was_stale: bool,
 ) -> NextUpView {
     let fallback = crate::api::rails::top_on_deck_card(app, user_id, acl, Some(current_issue_id))
         .await
         .ok()
         .flatten();
     NextUpView {
-        source: NextUpSource::None,
-        target: None,
-        cbl_list_id: None,
-        cbl_list_name: None,
-        cbl_position: None,
-        cbl_total: None,
         fallback_suggestion: fallback,
-        cbl_param_was_stale,
+        ..none_view(cbl_param_was_stale, collection_param_was_stale)
     }
 }
 
-/// Outcomes for the CBL branch. Letting the caller distinguish the
-/// "current issue not in this list" case from other misses is what
-/// powers the self-healing `cbl_param_was_stale` hint on the response.
+/// Outcomes for the list branches (collection and CBL). Letting the
+/// caller distinguish the "current issue not in this list" case from
+/// other misses is what powers the self-healing `*_param_was_stale`
+/// hints on the response.
 ///
 /// `Resolved` carries the ~700-byte `NextUpView`; the other variants
 /// are unit. clippy flags the size delta but it's a transient
@@ -458,7 +538,88 @@ async fn resolve_cbl_next(
         cbl_total: Some(total),
         fallback_suggestion: None,
         cbl_param_was_stale: false,
+        collection_id: None,
+        collection_name: None,
+        collection_position: None,
+        collection_total: None,
+        collection_param_was_stale: false,
     }))
+}
+
+// ───── Collection branch ─────
+
+/// Collection branch of the next-up resolver: the next unfinished,
+/// openable issue after the current one in the collection's reading
+/// order (`collection_sequence`). `StaleParam` when the collection is
+/// the caller's but no longer contains the current issue; `NoMatch`
+/// for every other miss.
+async fn resolve_collection_next(
+    app: &AppState,
+    user_id: Uuid,
+    saved_view_id: Uuid,
+    current: &issue::Model,
+    acl: &access::VisibleLibraries,
+) -> Result<CblBranchOutcome, Response> {
+    let Some(seq) = collection_sequence::load(app, user_id, saved_view_id).await? else {
+        return Ok(CblBranchOutcome::NoMatch);
+    };
+    let Some(current_idx) = seq.index_of(&current.id) else {
+        return Ok(CblBranchOutcome::StaleParam);
+    };
+    let progress = collection_sequence::progress_map(app, user_id, &seq).await?;
+    let Some(idx) = seq.first_unfinished_after(acl, &progress, Some(current_idx)) else {
+        return Ok(CblBranchOutcome::NoMatch);
+    };
+    Ok(CblBranchOutcome::Resolved(collection_view(&seq, idx)))
+}
+
+/// Collection branch of the prev-up resolver: the closest openable issue
+/// before the current one in the collection's reading order. Pure
+/// sequential navigation — no finished filter.
+async fn resolve_collection_prev(
+    app: &AppState,
+    user_id: Uuid,
+    saved_view_id: Uuid,
+    current: &issue::Model,
+    acl: &access::VisibleLibraries,
+) -> Result<CblBranchOutcome, Response> {
+    let Some(seq) = collection_sequence::load(app, user_id, saved_view_id).await? else {
+        return Ok(CblBranchOutcome::NoMatch);
+    };
+    let Some(current_idx) = seq.index_of(&current.id) else {
+        return Ok(CblBranchOutcome::StaleParam);
+    };
+    let Some(idx) = seq.prev_visible_before(acl, current_idx) else {
+        return Ok(CblBranchOutcome::NoMatch);
+    };
+    Ok(CblBranchOutcome::Resolved(collection_view(&seq, idx)))
+}
+
+/// `source: "collection"` response for the item at `idx`. The walks only
+/// return indices whose parent series resolved, so the lookup cannot
+/// miss; the empty-string fallback is belt and braces.
+fn collection_view(seq: &collection_sequence::CollectionSequence, idx: usize) -> NextUpView {
+    let item = seq.items[idx].clone();
+    let (slug, name) = seq
+        .series_of(idx)
+        .map(|s| (s.slug.clone(), s.name.clone()))
+        .unwrap_or_default();
+    let target = item.into_summary_view(&slug).with_series_name(name);
+    NextUpView {
+        source: NextUpSource::Collection,
+        target: Some(target),
+        cbl_list_id: None,
+        cbl_list_name: None,
+        cbl_position: None,
+        cbl_total: None,
+        fallback_suggestion: None,
+        cbl_param_was_stale: false,
+        collection_id: Some(seq.view.id.to_string()),
+        collection_name: Some(seq.view.name.clone()),
+        collection_position: Some(i32::try_from(idx + 1).unwrap_or(i32::MAX)),
+        collection_total: Some(seq.total()),
+        collection_param_was_stale: false,
+    }
 }
 
 // ───── Shared helpers (also used by rails::on_deck) ─────
@@ -1034,7 +1195,8 @@ pub(crate) fn walk_cbl_pick<I: WalkIssue + Clone>(
     path = "/issues/{issue_id}/prev-up",
     params(
         ("issue_id" = String, Path, description = "Current issue id"),
-        ("cbl" = Option<String>, Query, description = "Saved-view id (kind='cbl') the caller is reading through")
+        ("cbl" = Option<String>, Query, description = "Saved-view id (kind='cbl') the caller is reading through"),
+        ("collection" = Option<String>, Query, description = "Saved-view id (kind='collection') the caller is reading through; wins over `cbl`")
     ),
     responses(
         (status = 200, body = NextUpView),
@@ -1065,6 +1227,31 @@ pub async fn prev_up(
     };
     if !access::issue_allowed(&app, &acl, &current).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    }
+
+    // ───── Collection branch ─────
+    let mut collection_param_was_stale = false;
+    if let Some(saved_view_id) = q.collection {
+        match resolve_collection_prev(&app, user.id, saved_view_id, &current, &acl).await {
+            Ok(CblBranchOutcome::Resolved(view)) => {
+                record_resolved_prev("collection");
+                return Json(view).into_response();
+            }
+            Ok(CblBranchOutcome::StaleParam) => {
+                tracing::debug!(
+                    user_id = %user.id, issue_id = %current.id, saved_view_id = %saved_view_id,
+                    "prev_up: ?collection= param was stale, falling back"
+                );
+                collection_param_was_stale = true;
+            }
+            Ok(CblBranchOutcome::NoMatch) => {
+                tracing::debug!(
+                    user_id = %user.id, issue_id = %current.id, saved_view_id = %saved_view_id,
+                    "prev_up: collection branch yielded nothing, falling back"
+                );
+            }
+            Err(resp) => return resp,
+        }
     }
 
     // ───── CBL branch ─────
@@ -1103,7 +1290,8 @@ pub async fn prev_up(
                 Ok(Some(s)) => s,
                 _ => {
                     record_resolved_prev("none");
-                    return Json(none_view(cbl_param_was_stale)).into_response();
+                    return Json(none_view(cbl_param_was_stale, collection_param_was_stale))
+                        .into_response();
                 }
             };
             let target = prev
@@ -1119,6 +1307,11 @@ pub async fn prev_up(
                 cbl_total: None,
                 fallback_suggestion: None,
                 cbl_param_was_stale,
+                collection_id: None,
+                collection_name: None,
+                collection_position: None,
+                collection_total: None,
+                collection_param_was_stale,
             })
             .into_response()
         }
@@ -1127,7 +1320,7 @@ pub async fn prev_up(
             // populate fallback_suggestion (per the design note at the
             // top of this section); just return a clean none.
             record_resolved_prev("none");
-            Json(none_view(cbl_param_was_stale)).into_response()
+            Json(none_view(cbl_param_was_stale, collection_param_was_stale)).into_response()
         }
         Err(resp) => resp,
     }
@@ -1235,6 +1428,11 @@ async fn resolve_cbl_prev(
         cbl_total: Some(total),
         fallback_suggestion: None,
         cbl_param_was_stale: false,
+        collection_id: None,
+        collection_name: None,
+        collection_position: None,
+        collection_total: None,
+        collection_param_was_stale: false,
     }))
 }
 

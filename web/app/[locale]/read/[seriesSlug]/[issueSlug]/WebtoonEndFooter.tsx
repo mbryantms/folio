@@ -18,6 +18,7 @@ import Link from "next/link";
 import { Cover } from "@/components/Cover";
 import { Button } from "@/components/ui/button";
 import type { NextUpView } from "@/lib/api/types";
+import { nextUpListSubtitle } from "@/lib/reader/list-context";
 
 export function WebtoonEndFooter({
   data,
@@ -43,13 +44,7 @@ export function WebtoonEndFooter({
     (target?.series_name && target?.number
       ? `${target.series_name} #${target.number}`
       : (target?.series_name ?? ""));
-  const cblSubtitle =
-    source === "cbl" &&
-    data?.cbl_position &&
-    data?.cbl_total &&
-    data?.cbl_list_name
-      ? `Issue ${data.cbl_position} of ${data.cbl_total} in ${data.cbl_list_name}`
-      : null;
+  const listSubtitle = nextUpListSubtitle(data);
 
   return (
     <footer className="relative z-20 mx-auto w-full max-w-sm px-6 py-16 text-center">
@@ -68,8 +63,8 @@ export function WebtoonEndFooter({
           <h2 className="mt-3 text-base leading-snug font-semibold">
             {heading}
           </h2>
-          {cblSubtitle ? (
-            <p className="text-muted-foreground mt-1 text-xs">{cblSubtitle}</p>
+          {listSubtitle ? (
+            <p className="text-muted-foreground mt-1 text-xs">{listSubtitle}</p>
           ) : null}
           <Button onClick={onReadNext} className="mt-4 w-full">
             Read next
