@@ -1241,6 +1241,78 @@ function ReviewStep({
 }) {
   const apply = useBatchApply(batchId);
   const createBatch = useCreateSeriesBatch(seriesSlug);
+  // The batch-apply endpoint answers 202: the applies run as background
+  // jobs and each child's `applied` flag flips only when its job finishes.
+  // Without waiting on that, the counts and buttons stayed exactly as they
+  // were after "Replace all", a second click re-enqueued the same work, and
+  // nothing ever said it had finished. `applying` tracks the expected
+  // `aggregate.applied` after the enqueue; the batch query polls while it
+  // is set (extra observer below), the actions are disabled, and reaching
+  // the target toasts the after-state.
+  const [applying, setApplying] = React.useState<{
+    target: number;
+    count: number;
+    done_verb: string;
+    remainder: number;
+  } | null>(null);
+  const [applyNote, setApplyNote] = React.useState<string | null>(null);
+  useMetadataBatch(batchId, { pollWhileApplying: applying !== null });
+  const appliedNow = batch?.aggregate.applied ?? 0;
+  React.useEffect(() => {
+    if (!applying || appliedNow < applying.target) return;
+    const n = applying.count;
+    const msg = `${applying.done_verb} ${n} issue${n === 1 ? "" : "s"}`;
+    toast.success(msg);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the poll reaching the target is the transition.
+    setApplyNote(
+      applying.remainder > 0
+        ? `${msg}. ${applying.remainder} more ${applying.remainder === 1 ? "was" : "were"} beyond this request's cap — run it again to finish.`
+        : `${msg}.`,
+    );
+    setApplying(null);
+  }, [appliedNow, applying]);
+  // Overdue guard: the jobs normally land within seconds; after 90 s say
+  // so instead of spinning forever (the work continues in the background).
+  React.useEffect(() => {
+    if (!applying) return;
+    const t = setTimeout(() => {
+      toast.info("Still applying — follow it under Background work.");
+      setApplyNote(
+        "Still applying in the background — the counts refresh when the jobs finish. Follow them under Background work.",
+      );
+      setApplying(null);
+    }, 90_000);
+    return () => clearTimeout(t);
+  }, [applying]);
+  /** Enqueue one or more batch applies, then wait for their jobs. */
+  const runApplies = async (
+    inputs: Array<{
+      filter: "all_strong" | "all_needs_review";
+      mode?: "fill_missing" | "replace_all";
+    }>,
+    done_verb: string,
+  ) => {
+    setApplyNote(null);
+    let enqueued = 0;
+    let remainder = 0;
+    for (const input of inputs) {
+      const resp = await apply.mutateAsync(input);
+      enqueued += resp?.enqueued ?? 0;
+      remainder += resp?.remainder ?? 0;
+    }
+    if (enqueued === 0) {
+      setApplyNote(
+        "Nothing left to apply — every match here is already applied.",
+      );
+      return;
+    }
+    setApplying({
+      target: appliedNow + enqueued,
+      count: enqueued,
+      done_verb,
+      remainder,
+    });
+  };
   const fetchRemaining = () =>
     createBatch.mutate(
       { scope: "all" },
@@ -1276,16 +1348,20 @@ function ReviewStep({
   // fields and the primary cover are overwritten.
   const replaceAll = async () => {
     setConfirmReplace(false);
+    const inputs: Array<{
+      filter: "all_strong" | "all_needs_review";
+      mode?: "fill_missing" | "replace_all";
+    }> = [];
     if (needsReview > 0) {
-      await apply.mutateAsync({
-        filter: "all_needs_review",
-        mode: "replace_all",
-      });
+      inputs.push({ filter: "all_needs_review", mode: "replace_all" });
     }
-    if (strong > 0) {
-      await apply.mutateAsync({ filter: "all_strong", mode: "replace_all" });
-    }
+    if (strong > 0) inputs.push({ filter: "all_strong", mode: "replace_all" });
+    await runApplies(inputs, "Replaced metadata on");
   };
+  const busy = apply.isPending || applying !== null;
+  const applyingDone = applying
+    ? Math.max(0, applying.count - (applying.target - appliedNow))
+    : 0;
   return (
     <div className="space-y-3 text-sm">
       {batchRunning(batch) && (
@@ -1316,34 +1392,53 @@ function ReviewStep({
       <BatchLookupSummary lookups={a.lookups} />
       <div className="flex flex-wrap gap-2">
         <Button
-          disabled={strong === 0 || apply.isPending}
-          onClick={() => apply.mutate({ filter: "all_strong" })}
+          disabled={strong === 0 || busy}
+          onClick={() =>
+            void runApplies(
+              [{ filter: "all_strong" }],
+              "Applied strong matches to",
+            )
+          }
         >
-          {apply.isPending && (
-            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-          )}
+          {busy && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
           Accept all strong ({strong})
         </Button>
         <Button
           variant="outline"
-          disabled={needsReview === 0 || apply.isPending}
+          disabled={needsReview === 0 || busy}
           onClick={() =>
-            apply.mutate({
-              filter: "all_needs_review",
-              mode: "fill_missing",
-            })
+            void runApplies(
+              [{ filter: "all_needs_review", mode: "fill_missing" }],
+              "Filled missing metadata on",
+            )
           }
         >
           Fill missing ({needsReview})
         </Button>
         <Button
           variant="outline"
-          disabled={replaceable === 0 || apply.isPending}
+          disabled={replaceable === 0 || busy}
           onClick={() => setConfirmReplace(true)}
         >
           Replace all ({replaceable})
         </Button>
       </div>
+      {applying && (
+        <p
+          className="text-muted-foreground flex items-center gap-2 text-xs"
+          role="status"
+          data-testid="review-applying"
+        >
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Applying… {applyingDone} of {applying.count} done. The counts above
+          update as each issue lands.
+        </p>
+      )}
+      {applyNote && !applying && (
+        <p className="text-xs" role="status" data-testid="review-apply-note">
+          {applyNote}
+        </p>
+      )}
       <p className="text-muted-foreground text-xs">
         <em>Fill missing</em> applies the most complete merge across providers
         to the needs-review issues without replacing what&rsquo;s there.{" "}

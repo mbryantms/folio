@@ -2803,7 +2803,16 @@ export function useSeriesCollection(seriesSlug: string) {
 
 /** Bulk-metadata batch status — polls every 2s while children are still in
  *  flight or parked, then settles. Powers the Review tab progress + queue. */
-export function useMetadataBatch(batchId: string | null) {
+export function useMetadataBatch(
+  batchId: string | null,
+  opts?: {
+    /** Keep polling a *completed* batch while applies it enqueued are
+     *  still running: the per-child `applied` flags only flip when the
+     *  apply jobs finish, so a caller waiting on them needs the refetch. */
+    pollWhileApplying?: boolean;
+  },
+) {
+  const pollWhileApplying = opts?.pollWhileApplying ?? false;
   return useQuery({
     queryKey: queryKeys.metadataBatch(batchId ?? ""),
     queryFn: () =>
@@ -2813,7 +2822,8 @@ export function useMetadataBatch(batchId: string | null) {
     enabled: !!batchId,
     refetchInterval: (q) => {
       const s = q.state.data?.status;
-      return s === "running" || s === "awaiting_quota" ? 2000 : false;
+      if (s === "running" || s === "awaiting_quota") return 2000;
+      return pollWhileApplying ? 1500 : false;
     },
   });
 }

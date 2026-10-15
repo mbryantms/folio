@@ -30,6 +30,7 @@ const srv = vi.hoisted(() => ({
   analysis: null as unknown,
   batch: null as unknown,
   onApply: null as null | (() => void),
+  onBatchApply: null as null | ((body: { filter: string }) => void),
   onAccept: null as null | ((source: string) => void),
 }));
 
@@ -39,6 +40,15 @@ function json(body: unknown, status = 200): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+const toastSpy = vi.hoisted(() => ({
+  success: vi.fn(),
+  info: vi.fn(),
+  error: vi.fn(),
+  message: vi.fn(),
+  loading: vi.fn(),
+}));
+vi.mock("sonner", () => ({ toast: toastSpy }));
 
 vi.mock("@/lib/api/auth-refresh", () => ({
   apiFetch: vi.fn(async (input: string, init?: RequestInit) => {
@@ -83,7 +93,13 @@ vi.mock("@/lib/api/auth-refresh", () => ({
       return json({ run_id: "run-1", ordinal: 0 }, 202);
     }
     if (url.includes("/metadata/batch/b1/apply")) {
-      return json({ enqueued: 3, skipped: 0, remainder: 0 });
+      srv.onBatchApply?.(body as { filter: string });
+      return json({
+        enqueued: (body as { filter: string }).filter === "all_strong" ? 3 : 2,
+        skipped_already_applied: 0,
+        skipped_not_eligible: 0,
+        remainder: 0,
+      });
     }
     if (url.includes("/metadata/batch/b1")) return json(srv.batch);
     if (url.includes("/metadata/batch")) {
@@ -886,6 +902,66 @@ describe("<SeriesRefreshFlow> review — Replace all", () => {
       { filter: "all_needs_review", mode: "replace_all" },
       { filter: "all_strong", mode: "replace_all" },
     ]);
+  });
+
+  it("waits for the apply jobs, blocks a second click, and reports the after-state", async () => {
+    srv.status = status({
+      resume_step: "review",
+      batch: {
+        batch_id: "b1",
+        created_at: T2,
+        items_total: 173,
+        unfinished: 0,
+      },
+    });
+    srv.batch = batch("completed");
+    // The jobs "finish" only after the second POST: until then the refetch
+    // keeps showing unapplied children, exactly like the real 202.
+    let posts = 0;
+    srv.onBatchApply = () => {
+      posts += 1;
+      if (posts === 2) {
+        const done = batch("completed");
+        done.aggregate.applied = 5;
+        done.children = done.children.map((c) =>
+          c.outcome_kind === "no_match" ? c : { ...c, applied: true },
+        );
+        srv.batch = done;
+      }
+    };
+    renderFlow();
+    await heading(/Step 4 of 4: Review/);
+    fireEvent.click(
+      await waitFor(() =>
+        screen.getByRole("button", { name: "Replace all (5)" }),
+      ),
+    );
+    fireEvent.click(
+      await waitFor(() => screen.getByRole("button", { name: "Replace all" })),
+    );
+    // While the jobs run: every action is disabled and progress is shown.
+    await waitFor(() =>
+      expect(screen.getByTestId("review-applying")).toBeTruthy(),
+    );
+    expect(
+      (screen.getByRole("button", { name: /Replace all/ }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    // Jobs land → completion toast + inline after-state, counts at 0.
+    await waitFor(() =>
+      expect(toastSpy.success).toHaveBeenCalledWith(
+        "Replaced metadata on 5 issues",
+      ),
+    );
+    expect(screen.getByTestId("review-apply-note").textContent).toMatch(
+      /Replaced metadata on 5 issues/,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Replace all (0)" }),
+      ).toBeTruthy(),
+    );
+    srv.onBatchApply = null;
   });
 });
 
