@@ -2435,7 +2435,16 @@ async fn process_planned_folder(
     let folder_mutated = !candidates.is_empty();
 
     let db_write_started = Instant::now();
+    // Post-audit T1.5: a rolled-back batch leaves the folder *dirty* — the
+    // series is not stamped `last_scanned_at` (so the next plain scan
+    // re-walks it instead of mtime-skipping it), the batch's counters and
+    // queued events are reverted (nothing persisted), the failing file
+    // gets a health row, and the folder is reported `processed = false`
+    // so the reconcile never treats its unseen rows as absent.
+    let mut any_batch_failed = false;
     for chunk in candidates.chunks(batch_size) {
+        let stats_before = stats.clone();
+        let events_before = events.len();
         let txn = state.db.begin().await?;
         // F-12: scan transactions can recover from a crash by re-running
         // (idempotent; `scan_runs.state` is the durable signal of completion).
@@ -2451,6 +2460,7 @@ async fn process_planned_folder(
             tracing::warn!(error = %e, "scanner: SET LOCAL synchronous_commit=OFF failed; continuing with default");
         }
         let mut chunk_ok = true;
+        let mut chunk_failure: Option<(PathBuf, String)> = None;
         let ctx = process::IngestCtx {
             state,
             lib,
@@ -2492,21 +2502,46 @@ async fn process_planned_folder(
                     "scan: ingest failed (batch will roll back)",
                 );
                 chunk_ok = false;
+                chunk_failure = Some((path.clone(), format!("{e:#}")));
                 break;
             }
         }
         if chunk_ok {
             txn.commit().await?;
-        } else if let Err(e) = txn.rollback().await {
-            tracing::warn!(error = %e, "scanner: transaction rollback failed");
+        } else {
+            if let Err(e) = txn.rollback().await {
+                tracing::warn!(error = %e, "scanner: transaction rollback failed");
+            }
+            any_batch_failed = true;
+            stats.revert_batch_counts(&stats_before);
+            events.truncate(events_before);
+            if let Some((path, error)) = chunk_failure {
+                let batch_files = chunk.len();
+                tracing::error!(
+                    folder = %folder.display(),
+                    path = %path.display(),
+                    error = %error,
+                    batch_files,
+                    "scanner: batch rolled back; folder stays dirty for the next scan"
+                );
+                health.emit(crate::library::health::IssueKind::UnreadableFile {
+                    path,
+                    error: format!(
+                        "ingest failed, batch of {batch_files} file(s) rolled back: {error}"
+                    ),
+                });
+            }
         }
     }
     stats.record_phase_parallel("db_write", db_write_started.elapsed());
 
-    // Stamp the series's last_scanned_at if we actually saw it.
-    if let Some(s) = entity::series::Entity::find_by_id(series_id)
-        .one(&state.db)
-        .await?
+    // Stamp the series's last_scanned_at if we actually saw it — and only
+    // when every batch committed. A stamped folder is mtime-skipped by the
+    // next plain scan, which would bury the rolled-back files for good.
+    if !any_batch_failed
+        && let Some(s) = entity::series::Entity::find_by_id(series_id)
+            .one(&state.db)
+            .await?
     {
         let mut am: series::ActiveModel = s.into();
         am.last_scanned_at = Set(Some(Utc::now().fixed_offset()));
@@ -2573,7 +2608,9 @@ async fn process_planned_folder(
 
     Ok(ProcessFolderOutcome {
         series_id: Some(series_id),
-        processed: true,
+        // A folder with a rolled-back batch did not finish: its unseen
+        // rows must not be reconciled away and it stays dirty.
+        processed: !any_batch_failed,
         complete: walk_complete,
         series_json,
         seen_paths: archives

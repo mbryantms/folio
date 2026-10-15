@@ -269,7 +269,17 @@ without per-library configuration.
      Process candidates in chunks of `scan_batch_size` per transaction
      ([mod.rs:1564–1616](../../crates/server/src/library/scanner/mod.rs#L1564-L1616)):
      a single ingest failure rolls back that batch only, the next
-     batch still commits. Per-archive ingest is
+     batch still commits. A rolled-back batch leaves the folder
+     **dirty** (post-audit T1.5): the batch's counters and queued
+     events are reverted (`ScanStats::revert_batch_counts`,
+     `EventCollector::truncate`), the failing file gets an
+     `UnreadableFile` health row naming the error, the series is *not*
+     stamped `last_scanned_at` (so the next plain scan re-walks the
+     folder instead of mtime-skipping it), and the folder reports
+     `processed = false` so the reconcile never treats its unseen rows
+     as absent. CBR/CB7 conversion that already happened inside the
+     batch is left in place (D4: the `.cbz` and its `.bak` are on disk;
+     the retry ingests them). Per-archive ingest is
      [`ingest_one_with_fingerprint`](../../crates/server/src/library/scanner/process.rs#L129),
      which handles:
      - container dispatch for RAR / 7z
@@ -560,7 +570,7 @@ the DB:
 | 2 | Per-file size+mtime fingerprint | [process.rs:164–175](../../crates/server/src/library/scanner/process.rs#L164-L175), [mod.rs:1543–1554](../../crates/server/src/library/scanner/mod.rs#L1543-L1554) | `force=false` ∧ existing row's `(file_size, file_mtime)` match disk ∧ no `comicinfo_count` backfill needed → `files_unchanged++`, `health.touch_file`, skip hash + parse. | Same `force=true` from any tier; default `true` for manual series/issue scans, `false` for scheduled / startup library scans. |
 | 3 | `comicinfo_count` backfill override | [process.rs:540–556](../../crates/server/src/library/scanner/process.rs#L540-L556) | When a row lacks both `comicinfo_count` and a raw `count` in `comic_info_raw`, treat the row as stale and force a re-ingest *even when* size+mtime match. | Inverts (1) — there is no bypass; the override fires automatically. |
 | 4 | Thumbnail invalidation skip | [process.rs:339, 411–428](../../crates/server/src/library/scanner/process.rs#L339) | On the update path, when `row_matches_file(row, size, mtime)` is true, skip clearing `thumbnails_generated_at` and skip wiping the strip dir. | None — this is always desired. |
-| 5 | Batch-rollback isolation | [mod.rs:1564–1616](../../crates/server/src/library/scanner/mod.rs#L1564-L1616) | One ingest failure rolls back its `scan_batch_size` chunk (default 100) and continues; the rest of the folder still commits. | None. |
+| 5 | Batch-rollback isolation | [mod.rs:1564–1616](../../crates/server/src/library/scanner/mod.rs#L1564-L1616) | One ingest failure rolls back its `scan_batch_size` chunk (default 100) and continues; the rest of the folder still commits. The folder then stays dirty — no `last_scanned_at` stamp, counters/events reverted, `UnreadableFile` row, `processed = false` (post-audit T1.5). | None. |
 | 6 | Deferred status reconcile (full scans) | [mod.rs:1316](../../crates/server/src/library/scanner/mod.rs#L1316), [reconcile_status.rs:66](../../crates/server/src/library/scanner/reconcile_status.rs#L66) | Library scans defer per-folder `reconcile_series_status` and run a single batch call after Phase 4 instead of N small ones. | Per-series scans run the helper inline ([mod.rs:1647](../../crates/server/src/library/scanner/mod.rs#L1647)). |
 | 7 | Health touch-on-skip | [mod.rs:1445](../../crates/server/src/library/scanner/mod.rs#L1445), [process.rs:173](../../crates/server/src/library/scanner/process.rs#L173) | Skipped files / folders call `health.touch_file` / `touch_folder` so the auto-resolve sweep does not close issues whose root cause is still on disk but wasn't re-emitted. | None. |
 | 8 | Per-scan series identity cache | [known_series_by_folder mod.rs:664–679](../../crates/server/src/library/scanner/mod.rs#L664-L679) | One `SELECT folder_path, id, last_scanned_at FROM series WHERE library_id = ?` at planning time; reused across every folder. Avoids N folder-by-folder lookups. | `force=true` still uses this cache; it only bypasses the mtime/content fast paths. |

@@ -87,6 +87,24 @@ impl ScanStats {
             > 0
     }
 
+    /// Undo the per-file outcome counters a rolled-back ingest batch
+    /// bumped (post-audit T1.5): nothing from that batch persisted, so the
+    /// "added / updated / …" it reported would be a lie on the completed
+    /// event. `files_seen` / `files_unchanged` (decided before the batch),
+    /// the phase timings and `bytes_hashed` (work that really happened)
+    /// are kept.
+    pub fn revert_batch_counts(&mut self, before: &ScanStats) {
+        self.files_skipped = before.files_skipped;
+        self.files_added = before.files_added;
+        self.files_updated = before.files_updated;
+        self.files_malformed = before.files_malformed;
+        self.files_encrypted = before.files_encrypted;
+        self.files_duplicate = before.files_duplicate;
+        self.files_converted = before.files_converted;
+        self.files_hash_deferred = before.files_hash_deferred;
+        self.series_created = before.series_created;
+    }
+
     /// Record time in a **serial** phase (single observer; wall-clock).
     pub fn record_phase(&mut self, phase: impl Into<String>, elapsed: Duration) {
         let ms = elapsed.as_millis() as u64;

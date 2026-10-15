@@ -391,6 +391,13 @@ impl EventCollector {
         self.events.len()
     }
 
+    /// Drop every event buffered after `len` — the events a rolled-back
+    /// ingest batch queued describe rows that never existed (post-audit
+    /// T1.5). Pair with [`Self::len`] taken before the batch.
+    pub fn truncate(&mut self, len: usize) {
+        self.events.truncate(len);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
