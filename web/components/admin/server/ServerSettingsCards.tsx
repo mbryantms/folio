@@ -58,6 +58,7 @@ export function ServerSettingsCards() {
   };
   const workers = {
     scan_count: asUint("workers.scan_count", 4),
+    scan_folder_concurrency: asUint("workers.scan_folder_concurrency", 2),
     post_scan_count: asUint("workers.post_scan_count", 2),
     scan_batch_size: asUint("workers.scan_batch_size", 100),
     scan_hash_buffer_kb: asUint("workers.scan_hash_buffer_kb", 1024),
@@ -515,6 +516,7 @@ function WorkersCard({
 }: {
   initial: {
     scan_count: number;
+    scan_folder_concurrency: number;
     post_scan_count: number;
     scan_batch_size: number;
     scan_hash_buffer_kb: number;
@@ -524,6 +526,7 @@ function WorkersCard({
 }) {
   const [state, setState] = useState({
     scan_count: String(initial.scan_count),
+    scan_folder_concurrency: String(initial.scan_folder_concurrency),
     post_scan_count: String(initial.post_scan_count),
     scan_batch_size: String(initial.scan_batch_size),
     scan_hash_buffer_kb: String(initial.scan_hash_buffer_kb),
@@ -540,6 +543,7 @@ function WorkersCard({
 
   const valid = {
     scan_count: checkRange(state.scan_count, 1, 64),
+    scan_folder_concurrency: checkRange(state.scan_folder_concurrency, 1, 64),
     post_scan_count: checkRange(state.post_scan_count, 1, 64),
     scan_batch_size: checkRange(state.scan_batch_size, 1, 10000),
     scan_hash_buffer_kb: checkRange(state.scan_hash_buffer_kb, 64, 65536),
@@ -549,6 +553,7 @@ function WorkersCard({
   const allValid = Object.values(valid).every(Boolean);
   const dirty =
     Number(state.scan_count) !== initial.scan_count ||
+    Number(state.scan_folder_concurrency) !== initial.scan_folder_concurrency ||
     Number(state.post_scan_count) !== initial.post_scan_count ||
     Number(state.scan_batch_size) !== initial.scan_batch_size ||
     Number(state.scan_hash_buffer_kb) !== initial.scan_hash_buffer_kb ||
@@ -559,6 +564,12 @@ function WorkersCard({
     const patch: Record<string, number> = {};
     if (Number(state.scan_count) !== initial.scan_count)
       patch["workers.scan_count"] = Number(state.scan_count);
+    if (
+      Number(state.scan_folder_concurrency) !== initial.scan_folder_concurrency
+    )
+      patch["workers.scan_folder_concurrency"] = Number(
+        state.scan_folder_concurrency,
+      );
     if (Number(state.post_scan_count) !== initial.post_scan_count)
       patch["workers.post_scan_count"] = Number(state.post_scan_count);
     if (Number(state.scan_batch_size) !== initial.scan_batch_size)
@@ -587,6 +598,12 @@ function WorkersCard({
       field: "scan_count",
       label: "Scan workers",
       hint: "Parallel library scan jobs.",
+      range: "[1, 64]",
+    },
+    {
+      field: "scan_folder_concurrency",
+      label: "Folders per scan",
+      hint: "Series folders one scan processes at once. Keep scan workers × this well under the DB pool.",
       range: "[1, 64]",
     },
     {

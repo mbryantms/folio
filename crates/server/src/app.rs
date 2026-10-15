@@ -228,7 +228,8 @@ pub fn openapi_spec() -> utoipa::openapi::OpenApi {
 pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Result<()> {
     let mut db_opts = ConnectOptions::new(cfg.database_url.clone());
     db_opts
-        .max_connections(30)
+        // Post-audit T1.2: `COMIC_DB_MAX_CONNECTIONS` (default 30).
+        .max_connections(cfg.db_max_connections)
         .min_connections(2)
         .acquire_timeout(Duration::from_secs(5))
         .idle_timeout(Duration::from_secs(60))
@@ -404,6 +405,7 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     }
     if std::env::var("COMIC_ZIP_LRU_CAPACITY").is_ok()
         || std::env::var("COMIC_SCAN_WORKER_COUNT").is_ok()
+        || std::env::var("COMIC_SCAN_FOLDER_CONCURRENCY").is_ok()
         || std::env::var("COMIC_POST_SCAN_WORKER_COUNT").is_ok()
         || std::env::var("COMIC_SCAN_BATCH_SIZE").is_ok()
         || std::env::var("COMIC_SCAN_HASH_BUFFER_KB").is_ok()
@@ -414,9 +416,9 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
             target: "comic.deprecation",
             since = "2026-Q3",
             replace_with = "/admin/server",
-            "COMIC_ZIP_LRU_CAPACITY / COMIC_*_WORKER_COUNT / COMIC_SCAN_BATCH_SIZE / \
-             COMIC_SCAN_HASH_BUFFER_KB / COMIC_ARCHIVE_WORK_PARALLEL / COMIC_THUMB_INLINE_PARALLEL \
-             env vars are deprecated; values apply on next restart"
+            "COMIC_ZIP_LRU_CAPACITY / COMIC_*_WORKER_COUNT / COMIC_SCAN_FOLDER_CONCURRENCY / \
+             COMIC_SCAN_BATCH_SIZE / COMIC_SCAN_HASH_BUFFER_KB / COMIC_ARCHIVE_WORK_PARALLEL / \
+             COMIC_THUMB_INLINE_PARALLEL env vars are deprecated; values apply on next restart"
         );
     }
 

@@ -1063,7 +1063,7 @@ async fn emit_progress(
         files_per_sec: stats.files_per_sec,
         bytes_per_sec: stats.bytes_per_sec,
         active_workers: (phase == "scanning")
-            .then_some(state.cfg().scan_worker_count.max(1) as u64),
+            .then_some(state.cfg().scan_folder_concurrency.max(1) as u64),
         dirty_folders: None,
         skipped_folders: Some(progress.series_skipped_unchanged),
         eta_ms: None,
@@ -1133,7 +1133,10 @@ async fn build_library_scan_plan(
     };
 
     let known = known_series_by_folder(state, lib).await?;
-    let concurrency = state.cfg().scan_worker_count.max(1);
+    // Post-audit T1.2: folders in flight per scan are their own knob —
+    // queue concurrency (`scan_worker_count`) × per-scan fan-out used to
+    // multiply into up to n² open transactions.
+    let concurrency = state.cfg().scan_folder_concurrency.max(1);
     // M1 of code-quality-cleanup: share IgnoreRules across the per-folder
     // fanout via Arc so the parallel-stream worker count doesn't multiply
     // the clone count. One owned clone here, then atomic refcount bumps
@@ -1817,7 +1820,10 @@ async fn run_phases(
         tracing::info!(scan_id = %scan_id, "scan: cancelled before processing — skipping per-folder work");
     }
 
-    let concurrency = state.cfg().scan_worker_count.max(1);
+    // Post-audit T1.2: folders in flight per scan are their own knob —
+    // queue concurrency (`scan_worker_count`) × per-scan fan-out used to
+    // multiply into up to n² open transactions.
+    let concurrency = state.cfg().scan_folder_concurrency.max(1);
     // Anchor the parallel-phase totals so doc readers can derive
     // wall ≈ summed/parallel_workers. Set once on the global stats;
     // per-worker local stats start at 0 and merge() takes max.
@@ -1893,6 +1899,42 @@ async fn run_phases(
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut last_live_completed = 0;
     let mut last_live_seen = 0;
+    // Post-audit T1.2: the folder futures live *inside* `folder_results`,
+    // so they are only driven while this loop polls the stream. Both
+    // arms below used to `.await` DB work inline (the progress snapshot
+    // write, the cancel poll); for that duration no folder made progress,
+    // and a folder holding a transaction could not release its connection
+    // — with a small pool the write's own acquire then waited on exactly
+    // those connections (a self-deadlock until the acquire timeout).
+    // Every DB-touching side effect of the loop is spawned instead, and
+    // coalesced: a snapshot write is skipped while the previous one is
+    // still in flight (the next tick carries the newer numbers; finalize
+    // writes the authoritative end state).
+    let mut progress_write: Option<tokio::task::JoinHandle<()>> = None;
+    let mut cancel_poll: Option<tokio::task::JoinHandle<()>> = None;
+    let spawn_progress = |slot: &mut Option<tokio::task::JoinHandle<()>>,
+                          progress: ProgressState,
+                          label: Option<String>,
+                          live_stats: ScanStats| {
+        if slot.as_ref().is_some_and(|h| !h.is_finished()) {
+            return;
+        }
+        let state = state.clone();
+        let library_id = lib.id;
+        *slot = Some(tokio::spawn(async move {
+            emit_progress(
+                &state,
+                library_id,
+                scan_id,
+                &progress,
+                "scanning",
+                "work",
+                label,
+                &live_stats,
+            )
+            .await;
+        }));
+    };
 
     loop {
         tokio::select! {
@@ -1941,57 +1983,59 @@ async fn run_phases(
         progress = live_tracker.progress_snapshot(&progress);
         progress.health_issues = health.count() as u64;
         let live_stats = live_tracker.stats_snapshot();
-        emit_progress(
-            state,
-            lib.id,
-            scan_id,
-            &progress,
-            "scanning",
-            "work",
-            Some(label),
-            &live_stats,
-        )
-        .await;
         last_live_completed = progress.completed;
         last_live_seen = live_stats.files_seen;
+        spawn_progress(&mut progress_write, progress.clone(), Some(label), live_stats);
             }
             _ = heartbeat.tick() => {
                 // Cooperative cancel poll (D8): the cancel endpoint flips the
                 // run to `state='cancelled'`; pick that up here and raise the
                 // shared flag so not-yet-started folders stop. A single-column
-                // PK read every heartbeat is negligible.
+                // PK read every heartbeat is negligible — but it runs in its
+                // own task (see `progress_write` above) so the folder stream
+                // keeps being polled while the read waits for a connection.
                 if !cancel.load(Ordering::Relaxed)
-                    && let Ok(Some(st)) = ScanRunEntity::find_by_id(scan_id)
-                        .select_only()
-                        .column(entity::scan_run::Column::State)
-                        .into_tuple::<String>()
-                        .one(&state.db)
-                        .await
-                    && st == "cancelled"
+                    && !cancel_poll.as_ref().is_some_and(|h| !h.is_finished())
                 {
-                    cancel.store(true, Ordering::Relaxed);
-                    tracing::info!(scan_id = %scan_id, "scan: cancellation requested — draining in-flight folders");
+                    let state = state.clone();
+                    let cancel = cancel.clone();
+                    cancel_poll = Some(tokio::spawn(async move {
+                        if let Ok(Some(st)) = ScanRunEntity::find_by_id(scan_id)
+                            .select_only()
+                            .column(entity::scan_run::Column::State)
+                            .into_tuple::<String>()
+                            .one(&state.db)
+                            .await
+                            && st == "cancelled"
+                        {
+                            cancel.store(true, Ordering::Relaxed);
+                            tracing::info!(scan_id = %scan_id, "scan: cancellation requested — draining in-flight folders");
+                        }
+                    }));
                 }
                 let mut live_progress = live_tracker.progress_snapshot(&progress);
                 live_progress.health_issues = progress.health_issues;
                 let live_stats = live_tracker.stats_snapshot();
                 if live_progress.completed != last_live_completed || live_stats.files_seen != last_live_seen {
-                    emit_progress(
-                        state,
-                        lib.id,
-                        scan_id,
-                        &live_progress,
-                        "scanning",
-                        "work",
-                        Some("Scanning files".to_owned()),
-                        &live_stats,
-                    )
-                    .await;
                     last_live_completed = live_progress.completed;
                     last_live_seen = live_stats.files_seen;
+                    spawn_progress(
+                        &mut progress_write,
+                        live_progress,
+                        Some("Scanning files".to_owned()),
+                        live_stats,
+                    );
                 }
             }
         }
+    }
+    // Let the last snapshot write / cancel poll land before finalize
+    // overwrites `scan_runs.stats` with the authoritative end state.
+    if let Some(h) = progress_write.take() {
+        let _ = h.await;
+    }
+    if let Some(h) = cancel_poll.take() {
+        let _ = h.await;
     }
     stats.record_phase("process", process_started.elapsed());
 
@@ -2435,14 +2479,83 @@ async fn process_planned_folder(
     let folder_mutated = !candidates.is_empty();
 
     let db_write_started = Instant::now();
-    // Post-audit T1.5: a rolled-back batch leaves the folder *dirty* — the
-    // series is not stamped `last_scanned_at` (so the next plain scan
-    // re-walks it instead of mtime-skipping it), the batch's counters and
-    // queued events are reverted (nothing persisted), the failing file
-    // gets a health row, and the folder is reported `processed = false`
-    // so the reconcile never treats its unseen rows as absent.
+    let ctx = process::IngestCtx {
+        state,
+        lib,
+        series_id,
+        series_folder: &folder,
+        manifest: Some(&manifest),
+        force,
+    };
+    // Post-audit T1.5 + T1.2: a batch runs in two phases and either kind of
+    // failure leaves the folder *dirty* — no `last_scanned_at` stamp (so the
+    // next plain scan re-walks it instead of mtime-skipping it) and
+    // `processed = false` (so the reconcile never treats its unseen rows as
+    // absent) — with a health row naming the file.
+    //
+    //  1. `prepare` does the slow, DB-free work for every file — fingerprint,
+    //     CBR/CB7 conversion, full-file hash, archive parse, page probes —
+    //     against the pool (one short read at most) and under
+    //     `archive_work_semaphore`. A file that cannot be read fails here,
+    //     alone: it is skipped this scan, the rest of the batch goes on.
+    //  2. Only then is the transaction opened, so no connection is pinned
+    //     while archives are being read; with `scan_worker_count` jobs ×
+    //     `scan_folder_concurrency` folders that used to exhaust the pool.
+    //     A persist failure rolls the batch back and reverts the batch's
+    //     counters and queued events (nothing persisted).
     let mut any_batch_failed = false;
     for chunk in candidates.chunks(batch_size) {
+        let mut prepared = Vec::with_capacity(chunk.len());
+        for (path, fingerprint) in chunk {
+            let before_stats = stats.clone();
+            let mut outputs = process::IngestOutputs {
+                stats: &mut *stats,
+                health: &mut *health,
+                events: &mut *events,
+            };
+            let fingerprint = match fingerprint {
+                Some(fp) => Ok(*fp),
+                None => process::file_fingerprint(path),
+            };
+            let result = match fingerprint {
+                Ok((size, mtime)) => {
+                    process::prepare_ingest(&ctx, &state.db, path, size, mtime, &mut outputs).await
+                }
+                Err(e) => Err(e),
+            };
+            match result {
+                Ok(Some(p)) => prepared.push(p),
+                // Fast path / skipped / reported by the prepare itself: the
+                // file counted already, nothing to persist.
+                Ok(None) => {
+                    if let Some(tracker) = &live_progress {
+                        tracker.record_file_done(&before_stats, stats);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %e,
+                        "scan: prepare failed; file skipped this scan, folder stays dirty",
+                    );
+                    any_batch_failed = true;
+                    health.emit(crate::library::health::IssueKind::UnreadableFile {
+                        path: path.clone(),
+                        error: format!("ingest could not read the file: {e:#}"),
+                    });
+                    if let Some(tracker) = &live_progress {
+                        tracker.record_file_done(&before_stats, stats);
+                    }
+                }
+            }
+        }
+        if prepared.is_empty() {
+            continue;
+        }
+
+        // Snapshot after prepare: what prepare counted (conversions,
+        // skips) really happened on disk and stays; only the persist
+        // phase's counters are undone by a rollback.
         let stats_before = stats.clone();
         let events_before = events.len();
         let txn = state.db.begin().await?;
@@ -2461,15 +2574,9 @@ async fn process_planned_folder(
         }
         let mut chunk_ok = true;
         let mut chunk_failure: Option<(PathBuf, String)> = None;
-        let ctx = process::IngestCtx {
-            state,
-            lib,
-            series_id,
-            series_folder: &folder,
-            manifest: Some(&manifest),
-            force,
-        };
-        for (path, fingerprint) in chunk {
+        let batch_files = prepared.len();
+        for p in prepared {
+            let path = p.path().to_path_buf();
             let before_stats = stats.clone();
             // Reborrow stats/health per iteration so `stats` outside the
             // call is still usable for the post-ingest tracker update.
@@ -2478,31 +2585,19 @@ async fn process_planned_folder(
                 health: &mut *health,
                 events: &mut *events,
             };
-            let ingest = if let Some((size, mtime)) = fingerprint {
-                process::ingest_one_with_fingerprint(
-                    &ctx,
-                    &txn,
-                    path,
-                    Some(&mut slug_set),
-                    *size,
-                    *mtime,
-                    &mut outputs,
-                )
-                .await
-            } else {
-                process::ingest_one(&ctx, &txn, path, Some(&mut slug_set), &mut outputs).await
-            };
+            let persisted =
+                process::persist_prepared(&ctx, &txn, p, Some(&mut slug_set), &mut outputs).await;
             if let Some(tracker) = &live_progress {
                 tracker.record_file_done(&before_stats, stats);
             }
-            if let Err(e) = ingest {
+            if let Err(e) = persisted {
                 tracing::warn!(
                     path = %path.display(),
                     error = %e,
                     "scan: ingest failed (batch will roll back)",
                 );
                 chunk_ok = false;
-                chunk_failure = Some((path.clone(), format!("{e:#}")));
+                chunk_failure = Some((path, format!("{e:#}")));
                 break;
             }
         }
@@ -2516,7 +2611,6 @@ async fn process_planned_folder(
             stats.revert_batch_counts(&stats_before);
             events.truncate(events_before);
             if let Some((path, error)) = chunk_failure {
-                let batch_files = chunk.len();
                 tracing::error!(
                     folder = %folder.display(),
                     path = %path.display(),

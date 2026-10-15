@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 const KEY_LABELS: Record<string, string> = {
   "cache.zip_lru_capacity": "ZIP LRU capacity",
   "workers.scan_count": "Scan workers",
+  "workers.scan_folder_concurrency": "Folders per scan",
   "workers.post_scan_count": "Post-scan workers",
   "workers.scan_batch_size": "Scan batch size",
   "workers.scan_hash_buffer_kb": "Hash buffer (KB)",
