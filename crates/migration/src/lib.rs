@@ -131,6 +131,7 @@ mod m20270610_000001_mylar_cvdb_genre_marker;
 mod m20270611_000001_tagger_notes_ids;
 mod m20270612_000001_entity_profile;
 mod m20270613_000001_progress_unfinished_idx;
+mod m20270614_000001_reverse_fk_indexes;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -270,6 +271,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270611_000001_tagger_notes_ids::Migration),
             Box::new(m20270612_000001_entity_profile::Migration),
             Box::new(m20270613_000001_progress_unfinished_idx::Migration),
+            Box::new(m20270614_000001_reverse_fk_indexes::Migration),
         ]
     }
 }
