@@ -116,6 +116,18 @@ pub struct SeriesFilesState {
     /// `.bak` backups in the folder; `None` when the folder can't be read.
     pub backups: Option<i64>,
     pub folder_path: Option<String>,
+    /// Issues per tagging tool ([`tag_tool`] keys), largest first.
+    pub tagged_by: Vec<TagToolCount>,
+    /// When the scanner last walked this series' folder.
+    pub last_scanned_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TagToolCount {
+    /// [`tag_tool`] key (`folio`, `comictagger_metron`, `untagged`, …).
+    pub tool: String,
+    pub label: String,
+    pub count: i64,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -253,6 +265,35 @@ pub async fn overview(
     })
     .collect();
 
+    #[derive(FromQueryResult)]
+    struct ToolRow {
+        tool: String,
+        count: i64,
+    }
+    let tagged_by = ToolRow::find_by_statement(Statement::from_sql_and_values(
+        app.db.get_database_backend(),
+        format!(
+            "SELECT {tool} AS tool, count(*)::bigint AS count \
+               FROM (SELECT COALESCE(comic_info_raw->>'notes', '') AS n, \
+                            COALESCE(comic_info_raw->>'genre', '') AS g, \
+                            COALESCE(comic_info_raw->>'web', '') AS w \
+                       FROM issues WHERE series_id = $1 AND removed_at IS NULL AND state = 'active') t \
+              GROUP BY 1 ORDER BY count DESC, tool ASC",
+            tool = tag_tool::sql_case("n", "g", "w"),
+        ),
+        [s.id.into()],
+    ))
+    .all(&app.db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r| TagToolCount {
+        label: tag_tool::label(&r.tool).to_owned(),
+        tool: r.tool,
+        count: r.count,
+    })
+    .collect();
+
     let (cvinfo_present, backups) = match s.folder_path.as_deref() {
         Some(folder) => inspect_folder(folder).await,
         None => (false, None),
@@ -267,6 +308,8 @@ pub async fn overview(
         cvinfo_present,
         backups,
         folder_path: s.folder_path.clone(),
+        tagged_by,
+        last_scanned_at: s.last_scanned_at.map(|t| t.to_rfc3339()),
     };
     let sync = SeriesSyncState {
         series_last_sync_at: s.last_metadata_sync_at.map(|t| t.to_rfc3339()),

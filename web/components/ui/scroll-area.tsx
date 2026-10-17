@@ -18,10 +18,21 @@ const ScrollArea = React.forwardRef<
       React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Viewport>,
       "className" | "children"
     >;
+    /** Also show a horizontal scrollbar — for content with a `min-w-*`
+     *  wider than a phone (a data table), which the viewport otherwise
+     *  pans only by touch. */
+    horizontal?: boolean;
   }
 >(
   (
-    { className, viewportClassName, viewportProps, children, ...props },
+    {
+      className,
+      viewportClassName,
+      viewportProps,
+      horizontal = false,
+      children,
+      ...props
+    },
     ref,
   ) => (
     <ScrollAreaPrimitive.Root
@@ -36,6 +47,7 @@ const ScrollArea = React.forwardRef<
         {children}
       </ScrollAreaPrimitive.Viewport>
       <ScrollBar />
+      {horizontal ? <ScrollBar orientation="horizontal" /> : null}
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   ),
