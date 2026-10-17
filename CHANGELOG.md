@@ -13,6 +13,30 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.58.0](https://github.com/mbryantms/folio/compare/v0.57.1...v0.58.0) (2026-10-17)
+
+
+### Added
+
+* **web:** rework the series Metadata tab layout ([#1214](https://github.com/mbryantms/folio/issues/1214)) ([6d4384e](https://github.com/mbryantms/folio/commit/6d4384e6ed0dc388f43d5d21d17fe3aca4f09aca))
+
+
+### Dependencies
+
+* update dependency @ai-sdk/provider-utils@&lt;4.0.34 to v4.0.58 ([#1203](https://github.com/mbryantms/folio/issues/1203)) ([ff857dd](https://github.com/mbryantms/folio/commit/ff857ddd45f6df175b2c327965fca00d25ce8b61))
+* update dependency @playwright/test to v1.64.1 ([#1209](https://github.com/mbryantms/folio/issues/1209)) ([688d276](https://github.com/mbryantms/folio/commit/688d276260ae0f0b020aef5ed11950a35d00b4fa))
+* update dependency @tanstack/react-virtual to v3.14.18 ([#1201](https://github.com/mbryantms/folio/issues/1201)) ([65c5452](https://github.com/mbryantms/folio/commit/65c545275ce3a44455d7b0f0a0eaec80f44e8f73))
+* update dependency @tanstack/react-virtual to v3.14.19 ([#1204](https://github.com/mbryantms/folio/issues/1204)) ([dbe032c](https://github.com/mbryantms/folio/commit/dbe032c945881dd4cad93106bee5fda147f205ab))
+* update dependency lucide-react to v1.56.0 ([#1199](https://github.com/mbryantms/folio/issues/1199)) ([807dea4](https://github.com/mbryantms/folio/commit/807dea4bee4febd745bdc409518e2710ab921c8c))
+* update dependency lucide-react to v1.57.0 ([#1207](https://github.com/mbryantms/folio/issues/1207)) ([1a372bc](https://github.com/mbryantms/folio/commit/1a372bcf110b2638572aff38cdbcc7a053ec9bf6))
+* update dependency next to v16.4.1 ([#1212](https://github.com/mbryantms/folio/issues/1212)) ([c212519](https://github.com/mbryantms/folio/commit/c212519166c09dbb4e01642618d61d588a5a1d85))
+* update dependency pnpm to v12.13.0 ([#1202](https://github.com/mbryantms/folio/issues/1202)) ([ca1f46d](https://github.com/mbryantms/folio/commit/ca1f46d476288586c0a4dd6000ed1dbd3e2fbdab))
+* update nextjs monorepo to v16.4.1 ([#1211](https://github.com/mbryantms/folio/issues/1211)) ([cbb77fc](https://github.com/mbryantms/folio/commit/cbb77fc59763a861e8f394a075503daeeefbf5b5))
+* update node.js to a5f4366 ([#1213](https://github.com/mbryantms/folio/issues/1213)) ([0e61764](https://github.com/mbryantms/folio/commit/0e61764b6e81d7876cb65d59afc607ad2d05408f))
+* update react to v19.3.1 ([#1210](https://github.com/mbryantms/folio/issues/1210)) ([83d9667](https://github.com/mbryantms/folio/commit/83d966785856a1f360b5766ce4b85c4a1072a774))
+* update rust crate tokio to v1.53.3 ([#1206](https://github.com/mbryantms/folio/issues/1206)) ([0f01d9e](https://github.com/mbryantms/folio/commit/0f01d9ec835bb0f92d0b07640b950a1916248766))
+* update rust crate zip to v9.0.3 ([#1205](https://github.com/mbryantms/folio/issues/1205)) ([25551cd](https://github.com/mbryantms/folio/commit/25551cdd76cc2987e01932a827ae5d5c3cc26813))
+
 ## [0.57.1](https://github.com/mbryantms/folio/compare/v0.57.0...v0.57.1) (2026-10-15)
 
 
