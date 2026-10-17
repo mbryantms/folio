@@ -10,6 +10,13 @@
  * User-added rows land with `set_by='user'` and are sacred against
  * future Apply jobs (the M4 layer's `should_apply` matrix checks
  * provenance before overwriting).
+ *
+ * The data + mutations + the two pieces of UI every surface needs (the
+ * inline add form and the unlink confirm) live in
+ * [`useExternalIdsEditor`], so a host that lays the ids out its own way
+ * — the series Metadata tab's provider-mapping card shows each
+ * provider's id in that provider's header — shares one editor with
+ * this card instead of a second add/unlink implementation.
  */
 
 import { Loader2, Plus, Trash2 } from "lucide-react";
@@ -60,10 +67,11 @@ const SOURCES: Array<{ value: string; label: string }> = [
   { value: "asin", label: "ASIN" },
 ];
 
-export type ExternalIdsCardProps = (
+export type ExternalIdsTarget =
   | { entityType: "series"; seriesSlug: string }
-  | { entityType: "issue"; seriesSlug: string; issueSlug: string }
-) & {
+  | { entityType: "issue"; seriesSlug: string; issueSlug: string };
+
+export type ExternalIdsCardProps = ExternalIdsTarget & {
   /**
    * `"card"` (default): wraps content in a [`<Card>`] with a "External IDs"
    * header — matches the series-page panel + legacy issue-page layout.
@@ -77,65 +85,185 @@ export type ExternalIdsCardProps = (
   chrome?: "card" | "bare";
 };
 
-export function ExternalIdsCard(props: ExternalIdsCardProps) {
+/**
+ * The external-ids editor for one entity: rows, the inline "+ Add ID"
+ * form and the unlink confirm dialog. The host decides where the rows
+ * and the add affordance go; it renders `addForm` where the form should
+ * appear while `adding`, and `confirmDialog` once anywhere in its tree.
+ *
+ * `idPrefix` keeps the form's input ids unique when two editors share a
+ * page (the series card and an issue card never do today, but the
+ * mapping card and a legacy `<ExternalIdsCard>` could).
+ */
+export function useExternalIdsEditor(
+  target: ExternalIdsTarget,
+  { idPrefix = "eic" }: { idPrefix?: string } = {},
+) {
   const seriesList = useExternalIdsSeries(
-    props.entityType === "series" ? props.seriesSlug : "",
+    target.entityType === "series" ? target.seriesSlug : "",
   );
   const issueList = useExternalIdsIssue(
-    props.entityType === "issue" ? props.seriesSlug : "",
-    props.entityType === "issue" ? props.issueSlug : "",
+    target.entityType === "issue" ? target.seriesSlug : "",
+    target.entityType === "issue" ? target.issueSlug : "",
   );
   const addSeries = useAddExternalIdSeries(
-    props.entityType === "series" ? props.seriesSlug : "",
+    target.entityType === "series" ? target.seriesSlug : "",
   );
   const deleteSeries = useDeleteExternalIdSeries(
-    props.entityType === "series" ? props.seriesSlug : "",
+    target.entityType === "series" ? target.seriesSlug : "",
   );
   const addIssue = useAddExternalIdIssue(
-    props.entityType === "issue" ? props.seriesSlug : "",
-    props.entityType === "issue" ? props.issueSlug : "",
+    target.entityType === "issue" ? target.seriesSlug : "",
+    target.entityType === "issue" ? target.issueSlug : "",
   );
   const deleteIssue = useDeleteExternalIdIssue(
-    props.entityType === "issue" ? props.seriesSlug : "",
-    props.entityType === "issue" ? props.issueSlug : "",
+    target.entityType === "issue" ? target.seriesSlug : "",
+    target.entityType === "issue" ? target.issueSlug : "",
   );
 
-  const query = props.entityType === "series" ? seriesList : issueList;
-  const add = props.entityType === "series" ? addSeries : addIssue;
-  const remove = props.entityType === "series" ? deleteSeries : deleteIssue;
+  const query = target.entityType === "series" ? seriesList : issueList;
+  const add = target.entityType === "series" ? addSeries : addIssue;
+  const remove = target.entityType === "series" ? deleteSeries : deleteIssue;
 
-  const rows = query.data?.rows ?? [];
+  const rows = React.useMemo(() => query.data?.rows ?? [], [query.data]);
   const [adding, setAdding] = React.useState(false);
   const [source, setSource] = React.useState("comicvine");
   const [extId, setExtId] = React.useState("");
   const [confirmRemove, setConfirmRemove] =
     React.useState<ExternalIdRow | null>(null);
 
+  const cancelAdding = () => {
+    setAdding(false);
+    setExtId("");
+  };
   const onAdd = (e: React.FormEvent) => {
     e.preventDefault();
     if (!extId.trim()) return;
     add.mutate(
       { source, external_id: extId.trim() },
-      {
-        onSuccess: () => {
-          setAdding(false);
-          setExtId("");
-        },
-      },
+      { onSuccess: () => cancelAdding() },
     );
   };
-
   const onConfirmRemove = () => {
     if (!confirmRemove) return;
     remove.mutate(
       { source: confirmRemove.source },
-      {
-        onSuccess: () => setConfirmRemove(null),
-      },
+      { onSuccess: () => setConfirmRemove(null) },
     );
   };
 
-  const chrome = props.chrome ?? "card";
+  const addForm = adding ? (
+    <form
+      onSubmit={onAdd}
+      className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:items-end"
+      data-testid="external-ids-add-form"
+    >
+      <div className="grid flex-1 gap-1.5">
+        <Label htmlFor={`${idPrefix}-source`} className="text-xs">
+          Source
+        </Label>
+        <Select value={source} onValueChange={setSource}>
+          <SelectTrigger id={`${idPrefix}-source`}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SOURCES.map((s) => (
+              <SelectItem key={s.value} value={s.value}>
+                {s.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="grid flex-[2] gap-1.5">
+        <Label htmlFor={`${idPrefix}-id`} className="text-xs">
+          ID
+        </Label>
+        <Input
+          id={`${idPrefix}-id`}
+          value={extId}
+          onChange={(e) => setExtId(e.target.value)}
+          placeholder="e.g. 12345"
+          autoFocus
+        />
+      </div>
+      <div className="flex gap-1">
+        <Button
+          type="submit"
+          size="sm"
+          disabled={add.isPending || !extId.trim()}
+        >
+          Add
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={cancelAdding}
+          disabled={add.isPending}
+        >
+          Cancel
+        </Button>
+      </div>
+    </form>
+  ) : null;
+
+  const confirmDialog = (
+    <AlertDialog
+      open={confirmRemove !== null}
+      onOpenChange={(o) => {
+        if (!o) setConfirmRemove(null);
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Unlink {confirmRemove?.source_label}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            Removes the link to <code>{confirmRemove?.external_id}</code>.
+            Subsequent metadata fetches won&apos;t auto-re-add it.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={remove.isPending}>
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            onClick={onConfirmRemove}
+            disabled={remove.isPending}
+          >
+            {remove.isPending ? (
+              <>
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Unlinking
+              </>
+            ) : (
+              "Unlink"
+            )}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+
+  return {
+    rows,
+    isLoading: query.isLoading,
+    adding,
+    startAdding: () => setAdding(true),
+    requestRemove: (row: ExternalIdRow) => setConfirmRemove(row),
+    addForm,
+    confirmDialog,
+  };
+}
+
+export function ExternalIdsCard(props: ExternalIdsCardProps) {
+  const { chrome: chromeProp, ...target } = props;
+  const editor = useExternalIdsEditor(target);
+  const { rows, adding, startAdding, requestRemove } = editor;
+
+  const chrome = chromeProp ?? "card";
+
   const header =
     chrome === "card" ? (
       <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -144,7 +272,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setAdding(true)}
+            onClick={startAdding}
             aria-label="Add identifier"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -157,7 +285,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
       // block), so it doesn't offset the content from the sibling tabs.
       !adding && (
         <div className="flex justify-end">
-          <Button variant="ghost" size="sm" onClick={() => setAdding(true)}>
+          <Button variant="ghost" size="sm" onClick={startAdding}>
             <Plus className="mr-1 h-3.5 w-3.5" /> Add ID
           </Button>
         </div>
@@ -169,7 +297,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
       // Card layout: the original divided-list rendering. Used by the
       // series-page panel + any other caller that wants the Card chrome.
       <>
-        {query.isLoading ? (
+        {editor.isLoading ? (
           <div className="text-muted-foreground flex items-center gap-2 py-3">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
@@ -206,7 +334,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setConfirmRemove(r)}
+                  onClick={() => requestRemove(r)}
                   aria-label={`Remove ${r.source_label} link`}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -215,19 +343,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
             ))}
           </ul>
         )}
-        {adding &&
-          renderAddForm(
-            source,
-            setSource,
-            extId,
-            setExtId,
-            onAdd,
-            add.isPending,
-            () => {
-              setAdding(false);
-              setExtId("");
-            },
-          )}
+        {editor.addForm}
       </>
     ) : (
       // Bare layout: ChipList-style grid matching the Credits / Cast
@@ -240,7 +356,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
       // less trustworthy than another. The precedence rule that keeps a
       // manually linked id from being replaced still applies server-side.
       <>
-        {query.isLoading ? (
+        {editor.isLoading ? (
           <div className="text-muted-foreground flex items-center gap-2 py-3">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
@@ -282,7 +398,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
                     variant="ghost"
                     size="icon"
                     className="text-muted-foreground/60 hover:text-foreground h-6 w-6"
-                    onClick={() => setConfirmRemove(r)}
+                    onClick={() => requestRemove(r)}
                     aria-label={`Remove ${r.source_label} link`}
                   >
                     <Trash2 className="h-3 w-3" />
@@ -292,19 +408,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
             ))}
           </div>
         )}
-        {adding &&
-          renderAddForm(
-            source,
-            setSource,
-            extId,
-            setExtId,
-            onAdd,
-            add.isPending,
-            () => {
-              setAdding(false);
-              setExtId("");
-            },
-          )}
+        {editor.addForm}
       </>
     );
 
@@ -326,108 +430,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
           {header}
         </div>
       )}
-
-      <AlertDialog
-        open={confirmRemove !== null}
-        onOpenChange={(o) => {
-          if (!o) setConfirmRemove(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Unlink {confirmRemove?.source_label}?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Removes the link to <code>{confirmRemove?.external_id}</code>.
-              Subsequent metadata fetches won&apos;t auto-re-add it.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={remove.isPending}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={onConfirmRemove}
-              disabled={remove.isPending}
-            >
-              {remove.isPending ? (
-                <>
-                  <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Unlinking
-                </>
-              ) : (
-                "Unlink"
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {editor.confirmDialog}
     </>
-  );
-}
-
-/**
- * Inline "+ Add ID" form. Same shape in both card + bare layouts so the
- * "Source / ID / Add / Cancel" UX is identical; only the outer chrome
- * differs.
- */
-function renderAddForm(
-  source: string,
-  setSource: (v: string) => void,
-  extId: string,
-  setExtId: (v: string) => void,
-  onAdd: (e: React.FormEvent) => void,
-  isPending: boolean,
-  onCancel: () => void,
-) {
-  return (
-    <form
-      onSubmit={onAdd}
-      className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:items-end"
-    >
-      <div className="grid flex-1 gap-1.5">
-        <Label htmlFor="eic-source" className="text-xs">
-          Source
-        </Label>
-        <Select value={source} onValueChange={setSource}>
-          <SelectTrigger id="eic-source">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {SOURCES.map((s) => (
-              <SelectItem key={s.value} value={s.value}>
-                {s.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="grid flex-[2] gap-1.5">
-        <Label htmlFor="eic-id" className="text-xs">
-          ID
-        </Label>
-        <Input
-          id="eic-id"
-          value={extId}
-          onChange={(e) => setExtId(e.target.value)}
-          placeholder="e.g. 12345"
-          autoFocus
-        />
-      </div>
-      <div className="flex gap-1">
-        <Button type="submit" size="sm" disabled={isPending || !extId.trim()}>
-          Add
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          onClick={onCancel}
-          disabled={isPending}
-        >
-          Cancel
-        </Button>
-      </div>
-    </form>
   );
 }

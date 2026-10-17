@@ -904,6 +904,7 @@ export type SeriesTierCounts = Schemas["SeriesTierCounts"];
 export type SeriesSyncState = Schemas["SeriesSyncState"];
 export type SeriesFilesState = Schemas["SeriesFilesState"];
 export type ExtensionCount = Schemas["ExtensionCount"];
+export type TagToolCount = Schemas["TagToolCount"];
 export type SeriesLastRun = Schemas["SeriesLastRun"];
 export type ProvenanceRow = Schemas["ProvenanceRow"];
 export type IssueProvenanceCounts = Schemas["IssueProvenanceCounts"];

@@ -13020,7 +13020,11 @@ export interface components {
             /** @description A Mylar `cvinfo` file sits in the folder. */
             cvinfo_present: boolean;
             folder_path?: string | null;
+            /** @description When the scanner last walked this series' folder. */
+            last_scanned_at?: string | null;
             series_json_present: boolean;
+            /** @description Issues per tagging tool ([`tag_tool`] keys), largest first. */
+            tagged_by: components["schemas"]["TagToolCount"][];
             /** Format: int64 */
             with_comicinfo: number;
             /** Format: int64 */
@@ -13774,6 +13778,13 @@ export interface components {
             with_gcd: number;
             /** Format: int64 */
             with_metron: number;
+        };
+        TagToolCount: {
+            /** Format: int64 */
+            count: number;
+            label: string;
+            /** @description [`tag_tool`] key (`folio`, `comictagger_metron`, `untagged`, …). */
+            tool: string;
         };
         /** @description A long-running task spawned outside the job queues. */
         TaskWorkView: {

@@ -44,6 +44,11 @@ const overview: SeriesMetadataOverview = {
     cvinfo_present: true,
     backups: 244,
     folder_path: "/library/media/comics/DC Comics/Wonder Woman (1987)",
+    tagged_by: [
+      { tool: "folio", label: "Folio", count: 200 },
+      { tool: "mylar", label: "Mylar", count: 40 },
+    ],
+    last_scanned_at: "2026-10-11T08:00:00Z",
   },
   last_run: {
     id: "r1",
@@ -158,6 +163,43 @@ const issues: SeriesMetadataIssuesResp = {
 vi.mock("@/lib/api/queries", () => ({
   useSeriesMetadataOverview: () => ({ data: overview, isLoading: false }),
   useSeriesMetadataIssues: () => ({ data: issues, isLoading: false }),
+  useMe: () => ({ data: { role: "admin" } }),
+  useProviderCoverageSeries: () => ({
+    data: {
+      providers: [
+        {
+          source: "metron",
+          source_label: "Metron",
+          segments: [
+            {
+              low: "1",
+              high: "100",
+              issue_count: 100,
+              provider_series_id: "1306",
+              provider_series_name: "Wonder Woman",
+              provider_series_url: null,
+              declared_year: 1987,
+              via_range: false,
+              range_id: null,
+            },
+            {
+              low: "600",
+              high: "614",
+              issue_count: 15,
+              provider_series_id: "1713",
+              provider_series_name: "Wonder Woman",
+              provider_series_url: null,
+              declared_year: 2010,
+              via_range: true,
+              range_id: "r-1",
+            },
+          ],
+        },
+      ],
+    },
+    isLoading: false,
+  }),
+  useProviderCoverageAnalysis: () => ({ data: null }),
 }));
 const mutate = vi.fn();
 vi.mock("@/lib/api/mutations", () => ({
@@ -173,9 +215,6 @@ vi.mock("next/dynamic", () => ({ default: () => () => null }));
 vi.mock("next/link", () => ({
   default: ({ href, children }: { href: string; children: React.ReactNode }) =>
     createElement("a", { href }, children),
-}));
-vi.mock("@/components/library/ExternalIdsCard", () => ({
-  ExternalIdsCard: () => createElement("div", null, "external-ids-card"),
 }));
 vi.mock("@/components/library/SeriesProviderRangesCard", () => ({
   SeriesProviderRangesCard: () =>
@@ -199,47 +238,59 @@ function render() {
 }
 
 describe("<SeriesMetadataTab>", () => {
-  it("renders the summary strip: series ids, completeness, issue ids, sync", () => {
+  it("renders the summary strip: completeness, issue ids, mapping, sync", () => {
     const html = render();
-    expect(html).toContain("Series identifiers");
-    expect(html).toContain("3824");
-    expect(html).toContain("none"); // Metron / GCD series ids
-    expect(html).toContain("45 complete · 28 partial · 167 need");
-    expect(html).toContain("ComicVine 73 · Metron 2 · GCD 2 of 240");
-    expect(html).toContain("Issues ever fetched: 3");
-    expect(html).toContain("sidecars rewritten: 240");
+    expect(html).toContain("Issue completeness");
+    expect(html).toContain("of 240 complete");
+    expect(html).toContain("Needs metadata 167");
+    expect(html).toContain("Issue identifiers");
+    expect(html).toContain("ComicVine: 73 of 240");
+    expect(html).toContain("All three: 2");
+    // Mapping: one of three providers has a series id; one range override.
+    expect(html).toContain("Provider mapping");
+    expect(html).toContain("of 3 providers mapped");
+    expect(html).toContain("1 range override · Metron");
+    expect(html).toContain("Coverage not analyzed yet");
+    expect(html).toContain("3 issues ever fetched");
+    expect(html).toContain("240 sidecars rewritten");
+    // The series ids are no longer a tile of their own: they live in the
+    // provider-mapping card.
+    expect(html).not.toContain("Series identifiers");
   });
 
-  it("hosts the fetch actions and the latest run, with no fill-all button", () => {
+  it("hosts the fetch actions as a split button plus match / refresh, and the latest run", () => {
     const html = render();
     expect(html).toContain("Refresh this series…");
     expect(html).toContain("Match this series…");
-    expect(html).toContain("only missing or partial (195)");
-    expect(html).toContain("Fetch metadata · all issues");
+    expect(html).toContain("Fetch metadata");
+    expect(html).toContain("(195)"); // partial + needs metadata
+    expect(html).toContain('aria-label="Fetch metadata options"');
     expect(html).toContain("Last run: issue · completed");
     expect(html).toContain("401 runs on this series");
     expect(html).not.toMatch(/Fill all|Start backfill/i);
   });
 
-  it("mounts the identifiers and provider-mapping cards moved from Details", () => {
+  it("mounts the provider-mapping card, which now carries the series ids", () => {
     const html = render();
-    expect(html).toContain("external-ids-card");
     expect(html).toContain("provider-ranges-card");
-    expect(html).toContain("Provider series mapping");
+    expect(html).not.toContain("external-ids-card");
   });
 
-  it("renders the audit table with tiers, missing fields, ids, tagger and runs", () => {
+  it("renders the audit table with tiers, missing fields, ids and runs", () => {
     const html = render();
     expect(html).toContain('data-testid="series-metadata-issues"');
     expect(html).toContain("Annual 1");
     expect(html).toContain("Vulnerability");
     expect(html).toContain("Needs metadata");
-    expect(html).toContain("ComicTagger · Metron");
-    expect(html).toContain("Mylar");
-    expect(html).toContain("No tags");
     expect(html).toContain("1 strong, not applied");
     expect(html).toContain("· applied");
     expect(html).toContain("never");
+    // Provider ids are labelled pips, not bare dots; the tagging tool moved
+    // to the Files card as a distribution.
+    const table = html.split('data-testid="series-metadata-issues"')[1] ?? "";
+    expect(table).toContain(">CV<");
+    expect(table).toContain(">GCD<");
+    expect(table).not.toContain("Tagged by");
     // An acknowledged issue shows as Accepted, not Partial.
     const acceptedRow =
       html.split('data-testid="issue-row-2"')[1]?.split("</tr>")[0] ?? "";
@@ -248,23 +299,36 @@ describe("<SeriesMetadataTab>", () => {
     expect(html).toContain("/series/wonder-woman-2006/issues/176?tab=metadata");
   });
 
-  it("offers the server-side filters with counts from the overview", () => {
+  it("opens on the issues that need attention, with the other server-side filters one tap away", () => {
     const html = render();
+    const needs =
+      html.split("Needs attention")[0]?.split("<button").pop() ?? "";
+    expect(needs).toContain('aria-pressed="true"');
     expect(html).toContain("No Metron id");
     expect(html).toContain("238"); // 240 - 2
     expect(html).toContain("Annuals &amp; specials");
     expect(html).toContain("4 of 240 shown");
+    // No selection → no bulk toolbar.
+    expect(html).not.toContain('data-testid="series-metadata-selection"');
   });
 
-  it("renders files and provenance", () => {
+  it("renders files and provenance as cards above the table", () => {
     const html = render();
     expect(html).toContain("Files and sidecars");
     expect(html).toContain("CBZ 240");
-    expect(html).toContain("244");
-    expect(html).toContain("cvinfo");
+    expect(html).toContain("Folio 200");
+    expect(html).toContain("Mylar 40");
+    expect(html).toContain("244 .bak");
+    expect(html).toContain(">cvinfo<");
+    expect(html).toContain('aria-label="Copy folder path"');
     expect(html).toContain("Field provenance");
-    expect(html).toContain("series_json");
-    expect(html).toContain("240 issues carry file-tier values");
+    expect(html).toContain("series.json");
+    expect(html).toContain(">Metron<");
+    expect(html).toContain("2 series fields");
+    expect(html).toContain("Issue fields: 240 file · 3 provider · 0");
+    expect(html.indexOf("Files and sidecars")).toBeLessThan(
+      html.indexOf('data-testid="series-metadata-issues"'),
+    );
   });
 });
 

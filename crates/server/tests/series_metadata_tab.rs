@@ -244,6 +244,20 @@ async fn overview_reports_ids_tiers_sync_files_and_provenance() {
     assert_eq!(body["files"]["by_extension"][0]["count"], 3);
     assert_eq!(body["files"]["cvinfo_present"], true);
     assert_eq!(body["files"]["backups"], 1);
+    // One issue per tool in the fixture: ties break on the key.
+    let tools: Vec<(&str, i64)> = body["files"]["tagged_by"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["tool"].as_str().unwrap(), r["count"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(
+        tools,
+        vec![("comictagger_metron", 1), ("folio", 1), ("untagged", 1)],
+        "{}",
+        body["files"]["tagged_by"]
+    );
+    assert_eq!(body["files"]["tagged_by"][1]["label"], "Folio");
     assert_eq!(body["runs_total"], 0);
     assert!(body["last_run"].is_null());
     assert_eq!(body["series_provenance"].as_array().map(Vec::len), Some(0));

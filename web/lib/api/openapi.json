@@ -30804,7 +30804,8 @@
           "with_comicinfo",
           "with_metroninfo",
           "series_json_present",
-          "cvinfo_present"
+          "cvinfo_present",
+          "tagged_by"
         ],
         "properties": {
           "archives": {
@@ -30836,8 +30837,22 @@
               "null"
             ]
           },
+          "last_scanned_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the scanner last walked this series' folder."
+          },
           "series_json_present": {
             "type": "boolean"
+          },
+          "tagged_by": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TagToolCount"
+            },
+            "description": "Issues per tagging tool ([`tag_tool`] keys), largest first."
           },
           "with_comicinfo": {
             "type": "integer",
@@ -32555,6 +32570,27 @@
           "with_metron": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "TagToolCount": {
+        "type": "object",
+        "required": [
+          "tool",
+          "label",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "label": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string",
+            "description": "[`tag_tool`] key (`folio`, `comictagger_metron`, `untagged`, …)."
           }
         }
       },
