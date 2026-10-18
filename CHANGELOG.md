@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.58.2](https://github.com/mbryantms/folio/compare/v0.58.1...v0.58.2) (2026-10-18)
+
+
+### Fixed
+
+* **reader:** never write the previous issue's page against a new issue ([#1221](https://github.com/mbryantms/folio/issues/1221)) ([6efd916](https://github.com/mbryantms/folio/commit/6efd916dc6fab9431dae6ea5b05a67878ff18cbc))
+
+
+### Dependencies
+
+* update dependency @ai-sdk/provider-utils@&lt;4.0.34 to v4.0.59 ([#1218](https://github.com/mbryantms/folio/issues/1218)) ([b20b61b](https://github.com/mbryantms/folio/commit/b20b61b10d3b4a412541d9dc70f915a228e498ff))
+* update dependency @tanstack/react-query to v5.104.3 ([#1220](https://github.com/mbryantms/folio/issues/1220)) ([834239d](https://github.com/mbryantms/folio/commit/834239d84df843f888a789faf18c0914ac0adab2))
+
 ## [0.58.1](https://github.com/mbryantms/folio/compare/v0.58.0...v0.58.1) (2026-10-18)
 
 
