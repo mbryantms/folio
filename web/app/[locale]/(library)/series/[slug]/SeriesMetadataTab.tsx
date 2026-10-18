@@ -553,48 +553,63 @@ function Actions({
       className="flex flex-wrap items-center gap-2"
       data-testid="series-metadata-actions"
     >
-      {/* Split button: the primary face runs the common scope (only what
-          is missing or partial); the chevron offers both scopes. */}
-      <div className="inline-flex" role="group" aria-label="Fetch metadata">
-        <Button
-          type="button"
-          size="sm"
-          className="rounded-r-none"
-          disabled={createBatch.isPending || incomplete === 0}
-          onClick={() => fetchMetadata("incomplete")}
-        >
-          <Sparkles className="mr-1.5 h-4 w-4" /> Fetch metadata
-          {incomplete != null && incomplete > 0 ? (
+      {/* Amber only when there is work: with issues missing or partial the
+          primary split runs that scope from its face and offers both from
+          the chevron. With nothing to fetch there is no primary action, so
+          a plain outline menu button replaces the split — never a dimmed
+          amber face beside a lit chevron. */}
+      {incomplete != null && incomplete > 0 ? (
+        <div className="inline-flex" role="group" aria-label="Fetch metadata">
+          <Button
+            type="button"
+            size="sm"
+            className="rounded-r-none"
+            disabled={createBatch.isPending}
+            onClick={() => fetchMetadata("incomplete")}
+          >
+            <Sparkles className="mr-1.5 h-4 w-4" /> Fetch metadata
             <span className="ml-1 tabular-nums opacity-80">({incomplete})</span>
-          ) : null}
-        </Button>
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                size="sm"
+                className="border-primary-foreground/20 rounded-l-none border-l px-2"
+                disabled={createBatch.isPending}
+                aria-label="Fetch metadata options"
+              >
+                <ChevronDown className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <FetchMenu
+              incomplete={incomplete}
+              total={overview?.issue_ids.total}
+              onFetch={fetchMetadata}
+            />
+          </DropdownMenu>
+        </div>
+      ) : (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               type="button"
+              variant="outline"
               size="sm"
-              className="border-primary-foreground/20 rounded-l-none border-l px-2"
               disabled={createBatch.isPending}
               aria-label="Fetch metadata options"
             >
-              <ChevronDown className="h-4 w-4" />
+              <Sparkles className="mr-1.5 h-4 w-4" /> Fetch metadata
+              <ChevronDown className="ml-1 h-4 w-4 opacity-70" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuItem
-              disabled={incomplete === 0}
-              onSelect={() => fetchMetadata("incomplete")}
-            >
-              Only missing or partial
-              {incomplete != null ? ` (${incomplete})` : ""}
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => fetchMetadata("all")}>
-              All issues
-              {overview ? ` (${overview.issue_ids.total})` : ""}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
+          <FetchMenu
+            incomplete={incomplete}
+            total={overview?.issue_ids.total}
+            onFetch={fetchMetadata}
+          />
         </DropdownMenu>
-      </div>
+      )}
       <Button
         type="button"
         variant="outline"
@@ -651,6 +666,31 @@ function Actions({
         />
       )}
     </section>
+  );
+}
+
+/** The two fetch scopes, shared by the split and the plain menu button. */
+function FetchMenu({
+  incomplete,
+  total,
+  onFetch,
+}: {
+  incomplete: number | null;
+  total: number | undefined;
+  onFetch: (scope: "all" | "incomplete") => void;
+}) {
+  return (
+    <DropdownMenuContent align="start">
+      <DropdownMenuItem
+        disabled={incomplete === 0}
+        onSelect={() => onFetch("incomplete")}
+      >
+        Only missing or partial{incomplete != null ? ` (${incomplete})` : ""}
+      </DropdownMenuItem>
+      <DropdownMenuItem onSelect={() => onFetch("all")}>
+        All issues{total != null ? ` (${total})` : ""}
+      </DropdownMenuItem>
+    </DropdownMenuContent>
   );
 }
 
