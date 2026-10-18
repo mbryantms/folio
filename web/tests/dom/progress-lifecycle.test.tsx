@@ -132,3 +132,47 @@ it("tags per-page writes with the saved run when not restarting", async () => {
   expect(body.restart).toBeUndefined();
   unmount();
 });
+
+it("queues nothing for a new issue until the store is hydrated for it", async () => {
+  // The reader store is a singleton seeded in an effect, so the first
+  // render of issue "b" still carries issue "a"'s last page (31). Writing
+  // it marked "b" finished — the writer keeps the furthest page and the
+  // server never lowers it — and the damage surfaced when the PWA reloaded.
+  vi.useFakeTimers();
+  api.send.mockResolvedValue(new Response(null, { status: 204 }));
+  const client = new QueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  const { rerender, unmount } = renderHook(
+    ({ page, ready }: { page: number; ready: boolean }) =>
+      useReaderProgressWrite({
+        issueId: "b",
+        currentPage: page,
+        initialPage: 0,
+        totalPages: 22,
+        incognito: false,
+        ready,
+      }),
+    { wrapper, initialProps: { page: 31, ready: false } },
+  );
+  await act(async () => {
+    vi.advanceTimersByTime(400);
+  });
+  expect(api.send).not.toHaveBeenCalled();
+  // A flush trigger while unhydrated finds nothing queued either.
+  await act(async () => {
+    window.dispatchEvent(new Event("pagehide"));
+  });
+  expect(api.send).not.toHaveBeenCalled();
+  // Hydrated at the resume page: only that page is written, not finished.
+  rerender({ page: 0, ready: true });
+  await act(async () => {
+    vi.advanceTimersByTime(400);
+  });
+  expect(api.send).toHaveBeenCalledTimes(1);
+  const body = JSON.parse(api.send.mock.calls[0]![1].body as string);
+  expect(body).toMatchObject({ issue_id: "b", page: 0 });
+  expect(body.finished).toBeUndefined();
+  unmount();
+});
