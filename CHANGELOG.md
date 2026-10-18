@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.58.1](https://github.com/mbryantms/folio/compare/v0.58.0...v0.58.1) (2026-10-18)
+
+
+### Fixed
+
+* **web:** amber Fetch metadata only when issues need fetching ([#1217](https://github.com/mbryantms/folio/issues/1217)) ([06b20d6](https://github.com/mbryantms/folio/commit/06b20d6bf9f3fd1c24d4c2209fe24a8fdb11333b))
+
+
+### Dependencies
+
+* update rust to v1.99.1 ([#1215](https://github.com/mbryantms/folio/issues/1215)) ([0b657df](https://github.com/mbryantms/folio/commit/0b657dfeb3e1edbe2445a71421c3d5e437cf93a0))
+
 ## [0.58.0](https://github.com/mbryantms/folio/compare/v0.57.1...v0.58.0) (2026-10-17)
 
 
