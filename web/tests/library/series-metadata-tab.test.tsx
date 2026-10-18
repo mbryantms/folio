@@ -160,8 +160,10 @@ const issues: SeriesMetadataIssuesResp = {
   ],
 };
 
+// Reassigned per test for the complete-series case; the mock reads it lazily.
+let overviewData: SeriesMetadataOverview = overview;
 vi.mock("@/lib/api/queries", () => ({
-  useSeriesMetadataOverview: () => ({ data: overview, isLoading: false }),
+  useSeriesMetadataOverview: () => ({ data: overviewData, isLoading: false }),
   useSeriesMetadataIssues: () => ({ data: issues, isLoading: false }),
   useMe: () => ({ data: { role: "admin" } }),
   useProviderCoverageSeries: () => ({
@@ -262,12 +264,30 @@ describe("<SeriesMetadataTab>", () => {
     const html = render();
     expect(html).toContain("Refresh this series…");
     expect(html).toContain("Match this series…");
+    // 195 incomplete → the amber split button with the count on its face.
     expect(html).toContain("Fetch metadata");
     expect(html).toContain("(195)"); // partial + needs metadata
+    expect(html).toContain('aria-label="Fetch metadata"');
     expect(html).toContain('aria-label="Fetch metadata options"');
     expect(html).toContain("Last run: issue · completed");
     expect(html).toContain("401 runs on this series");
     expect(html).not.toMatch(/Fill all|Start backfill/i);
+  });
+
+  it("shows a plain outline menu button, not a dimmed split, when nothing needs fetching", () => {
+    overviewData = {
+      ...overview,
+      tiers: { complete: 240, partial: 0, needs_metadata: 0, accepted: 0 },
+    };
+    let html: string;
+    try {
+      html = render();
+    } finally {
+      overviewData = overview;
+    }
+    expect(html).toContain('aria-label="Fetch metadata options"');
+    expect(html).not.toContain('role="group" aria-label="Fetch metadata"');
+    expect(html).not.toContain("(0)");
   });
 
   it("mounts the provider-mapping card, which now carries the series ids", () => {
