@@ -16,7 +16,7 @@ overrides:
   brace-expansion@>=2.0.0 <2.1.4: 2.1.7
   brace-expansion@>=5.0.0 <5.0.9: 5.0.12
   browserslist@<4.28.9: 4.29.3
-  undici@>=7.0.0 <7.29.2: 7.30.0
+  undici@>=7.0.0 <7.29.2: 7.30.1
 
 importers:
 
@@ -5375,8 +5375,8 @@ packages:
     resolution: {integrity: sha512-R+RODBqp6i2pPflGdq+xIOUkl+RNfGgHwoinecKu/JCuf2uO06cOKoDbI2P7Dn6KcswdKwrczbU6IYJ6K8X+wg==}
     engines: {node: '>=18.17'}
 
-  undici@7.30.0:
-    resolution: {integrity: sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ==}
+  undici@7.30.1:
+    resolution: {integrity: sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==}
     engines: {node: '>=20.18.1'}
 
   undici@8.11.2:
@@ -7598,7 +7598,7 @@ snapshots:
     dependencies:
       '@scalar/helpers': 0.16.3
       pathe: 2.0.3
-      undici: 7.30.0
+      undici: 7.30.1
       yaml: 2.9.1
 
   '@scalar/localization@0.2.7(typescript@6.0.3)':
@@ -11324,7 +11324,7 @@ snapshots:
 
   undici@6.29.0: {}
 
-  undici@7.30.0: {}
+  undici@7.30.1: {}
 
   undici@8.11.2: {}
 
