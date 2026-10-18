@@ -156,6 +156,11 @@ export const loadSepia = (): number | null => {
 
 export interface ReaderState {
   issueId: string;
+  /** Bumped by every `init`. `Reader` compares it with the value it saw
+   *  when its issue last changed to know the store has been seeded for
+   *  *that* issue — `issueId` alone can't tell a fresh seed from the
+   *  stale state of a previous visit to the same issue. */
+  initSeq: number;
   seriesId: string | null;
   currentPage: number; // 0-indexed
   totalPages: number;
@@ -251,6 +256,7 @@ export interface ReaderState {
 
 export const useReaderStore = create<ReaderState>((set, get) => ({
   issueId: "",
+  initSeq: 0,
   seriesId: null,
   currentPage: 0,
   totalPages: 0,
@@ -394,6 +400,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     const stored = load("fitMode", seriesId, isFitMode);
     const fit: FitMode = stored ?? initialFitMode ?? "width";
     set({
+      initSeq: get().initSeq + 1,
       issueId,
       seriesId,
       totalPages,

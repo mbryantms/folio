@@ -71,6 +71,13 @@ export type SessionTrackerOptions = {
   /** Optional device tag so a future "active devices" view can attribute
    *  sessions. The reader currently passes a literal string. */
   device?: string | null;
+  /** The reader store has been hydrated for `issueId`. Until then
+   *  `currentPage` is the previous issue's (see the same flag on
+   *  `useReaderProgressWrite`), and it must not seed the envelope or
+   *  count as a visited page — it used to land as `end_page` on the
+   *  new issue's session. The envelope re-seeds from the first hydrated
+   *  page, per issue. Defaults to true. */
+  ready?: boolean;
 };
 
 /**
@@ -91,6 +98,7 @@ export function useReadingSession(opts: SessionTrackerOptions): void {
     minPages = 3,
     idleMs = 180_000,
     device = "web",
+    ready = true,
   } = opts;
 
   // Mutable state lives in refs so the heartbeat / tick timers don't
@@ -110,6 +118,10 @@ export function useReadingSession(opts: SessionTrackerOptions): void {
   const lastVisitedPageRef = useRef<number>(currentPage);
   const flushedRef = useRef<boolean>(false);
   const startedRef = useRef<boolean>(false);
+  // The issue whose first hydrated page seeded the envelope refs above
+  // (they are initialised from whatever `currentPage` was at first
+  // render, which for a fresh mount after another issue is stale).
+  const envelopeSeededForRef = useRef<string | null>(null);
 
   const pathname = usePathname();
   const qc = useQueryClient();
@@ -133,7 +145,17 @@ export function useReadingSession(opts: SessionTrackerOptions): void {
   // Keep a noteworthy-page-set update on every page change.
   useEffect(() => {
     if (!trackingEnabled) return;
+    if (!ready) return;
     const now = performance.now();
+    if (envelopeSeededForRef.current !== issueId) {
+      // First hydrated page for this issue: the envelope starts here, not
+      // at the stale page the refs were initialised with.
+      envelopeSeededForRef.current = issueId;
+      startPageRef.current = currentPage;
+      endPageRef.current = currentPage;
+      lastVisitedPageRef.current = currentPage;
+      lastPageDwellStartRef.current = now;
+    }
     // Track input (page turn = activity).
     lastInputAtRef.current = now;
 
@@ -160,7 +182,7 @@ export function useReadingSession(opts: SessionTrackerOptions): void {
 
     lastVisitedPageRef.current = currentPage;
     lastPageDwellStartRef.current = now;
-  }, [currentPage, trackingEnabled, visiblePages]);
+  }, [currentPage, issueId, ready, trackingEnabled, visiblePages]);
 
   // Track input events that don't change `currentPage` (scroll, key,
   // pointer) so the active-time accumulator survives long dwells.

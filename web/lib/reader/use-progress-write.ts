@@ -116,6 +116,21 @@ export function useReaderProgressWrite(opts: {
    * an *intentional* resume change that should persist as-is.
    */
   monotonic?: boolean;
+  /**
+   * The reader store has been hydrated for `issueId`. The store is a
+   * module singleton that `Reader` seeds in an effect, so the first render
+   * of a newly opened issue — a fresh mount after another issue, or an
+   * in-place end-of-issue navigation — still carries the *previous*
+   * issue's `currentPage`. Writing that page here marked the new issue as
+   * read up to (or past) the old one's last page: the writer keeps the
+   * furthest page and the server never lowers it, so a later honest write
+   * could not undo it, and the damage only surfaced when the PWA reloaded
+   * and resumed from the server record. Until `ready` is true nothing is
+   * queued; the pending buffer and the flush listeners stay as they are,
+   * so a still-pending write for the previous issue is delivered.
+   * Defaults to true for callers that hydrate synchronously.
+   */
+  ready?: boolean;
 }): void {
   const {
     issueId,
@@ -127,6 +142,7 @@ export function useReaderProgressWrite(opts: {
     furthestPage,
     incognito,
     monotonic = false,
+    ready = true,
   } = opts;
   const lastVisiblePage = Math.max(currentPage, furthestPage ?? currentPage);
   const qc = useQueryClient();
@@ -172,6 +188,9 @@ export function useReaderProgressWrite(opts: {
   useEffect(() => {
     if (!issueId) return;
     if (incognito) return;
+    // Not hydrated for this issue yet: `currentPage` belongs to the
+    // previous one. Queue nothing — see `ready`.
+    if (!ready) return;
     if (timer.current) clearTimeout(timer.current);
     const onLastPage = lastVisiblePage >= totalPages - 1;
     // `finished` stays keyed on the REAL pages on screen — only assert
@@ -199,6 +218,7 @@ export function useReaderProgressWrite(opts: {
     incognito,
     issueId,
     monotonic,
+    ready,
     writer,
     totalPages,
   ]);

@@ -495,7 +495,24 @@ export function Reader({
     };
   }, []);
 
-  // Initial mount: hydrate the store from props.
+  // Initial mount: hydrate the store from props. The store is a module
+  // singleton and this runs in an effect, so the first render of a new
+  // issue — a fresh mount after reading another issue in the same app
+  // lifetime, or an in-place end-of-issue navigation — still shows the
+  // previous issue's `currentPage`. `storeReady` tells the two hooks that
+  // persist a page (progress write, reading session) to wait for this
+  // issue's seed; without it the old page was written against the new
+  // issue, and because both the writer and the server keep the furthest
+  // page it stuck until the PWA reloaded and "resumed" there.
+  //
+  // Readiness is "`init` has run since this instance last saw a new
+  // `issueId`": the store's `initSeq` must have moved past the value
+  // captured when the issue changed (adjust-state-during-render, so a
+  // re-render with a new issue starts unready in that same render).
+  const initSeq = useReaderStore((s) => s.initSeq);
+  const [seen, setSeen] = useState({ issueId, initSeq });
+  if (seen.issueId !== issueId) setSeen({ issueId, initSeq });
+  const storeReady = seen.issueId === issueId && initSeq > seen.initSeq;
   useEffect(() => {
     init({
       issueId,
@@ -897,6 +914,7 @@ export function Reader({
     // monotonic high-water page so a scroll-up can't regress progress
     // (audit risk #5). Single/double keep raw writes — jumps are intent.
     monotonic: viewMode === "webtoon",
+    ready: storeReady,
   });
 
   // M6a — capture the reading session (idempotent 30s heartbeat + final
@@ -914,6 +932,7 @@ export function Reader({
     minActiveMs: readingMinActiveMs,
     minPages: readingMinPages,
     idleMs: readingIdleMs,
+    ready: storeReady,
   });
 
   useReaderPrefetch({
