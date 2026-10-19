@@ -242,10 +242,17 @@ function PageJumpDisplay({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
 
-  const pairLabel =
-    visiblePages && visiblePages.length === 2
-      ? `Pages ${visiblePages[0]! + 1} to ${visiblePages[1]! + 1} of ${totalPages}; click to jump`
-      : null;
+  // One source for the visible text and the accessible name. axe-core
+  // 4.14 enables `label-content-name-mismatch` (WCAG 2.5.3 Label in
+  // Name) by default: every word shown inside the control must appear
+  // as a contiguous run in its name, so "Page 2 of 3" against a visible
+  // "Page 2 / 3" fails (the "of" splits the run). The name therefore
+  // repeats the on-screen form and appends the hint.
+  const isPair = visiblePages !== undefined && visiblePages.length === 2;
+  const visibleLabel = isPair
+    ? `Pages ${visiblePages![0]! + 1}–${visiblePages![1]! + 1} / ${totalPages}`
+    : `Page ${currentPage + 1} / ${totalPages}`;
+  const label = `${visibleLabel}; click to jump`;
 
   const beginEdit = () => {
     setDraft(String(currentPage + 1));
@@ -266,69 +273,78 @@ function PageJumpDisplay({
     onPin(false);
   };
 
+  // Beside the control, not inside the button: a visible "RTL" in the
+  // button's subtree would have to be part of its accessible name (same
+  // Label in Name rule as above). Also keeps the badge up while editing.
+  const rtlBadge =
+    direction === "rtl" ? (
+      <span className="ml-2 rounded border border-neutral-700 px-1 text-xs tracking-wider text-neutral-400 uppercase">
+        RTL
+      </span>
+    ) : null;
+
   if (editing) {
     return (
-      <span className="ml-1 flex shrink-0 items-center gap-1 whitespace-nowrap text-neutral-400">
-        Page
-        <input
-          type="number"
-          min={1}
-          max={totalPages}
-          step={1}
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              commit();
-            } else if (e.key === "Escape") {
-              e.preventDefault();
-              cancel();
-            } else {
-              // Don't bubble — the reader's keyboard handler would catch
-              // ArrowLeft/Right and move pages while you're typing.
-              e.stopPropagation();
-            }
-          }}
-          onFocus={(e) => e.currentTarget.select()}
-          className="focus:ring-ring w-14 [appearance:textfield] rounded border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-neutral-200 focus:ring-1 focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-          aria-label={`Jump to page (1–${totalPages})`}
-        />
-        <span className="text-neutral-400">/</span> {totalPages}
-      </span>
+      <>
+        <span className="ml-1 flex shrink-0 items-center gap-1 whitespace-nowrap text-neutral-400">
+          Page
+          <input
+            type="number"
+            min={1}
+            max={totalPages}
+            step={1}
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                cancel();
+              } else {
+                // Don't bubble — the reader's keyboard handler would catch
+                // ArrowLeft/Right and move pages while you're typing.
+                e.stopPropagation();
+              }
+            }}
+            onFocus={(e) => e.currentTarget.select()}
+            className="focus:ring-ring w-14 [appearance:textfield] rounded border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-neutral-200 focus:ring-1 focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            aria-label={`Jump to page (1–${totalPages})`}
+          />
+          <span className="text-neutral-400">/</span> {totalPages}
+        </span>
+        {rtlBadge}
+      </>
     );
   }
 
   return (
-    <button
-      type="button"
-      onClick={beginEdit}
-      className="focus-visible:ring-ring ml-1 shrink-0 cursor-text rounded px-1 whitespace-nowrap text-neutral-200 tabular-nums transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none"
-      aria-label={
-        pairLabel ?? `Page ${currentPage + 1} of ${totalPages}; click to jump`
-      }
-    >
-      {pairLabel ? (
-        <>
-          Pages {visiblePages![0]! + 1}
-          <span className="text-neutral-400">–</span>
-          {visiblePages![1]! + 1} <span className="text-neutral-400">/</span>{" "}
-          {totalPages}
-        </>
-      ) : (
-        <>
-          Page {currentPage + 1} <span className="text-neutral-400">/</span>{" "}
-          {totalPages}
-        </>
-      )}
-      {direction === "rtl" ? (
-        <span className="ml-2 rounded border border-neutral-700 px-1 text-xs tracking-wider text-neutral-400 uppercase">
-          RTL
-        </span>
-      ) : null}
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={beginEdit}
+        className="focus-visible:ring-ring ml-1 shrink-0 cursor-text rounded px-1 whitespace-nowrap text-neutral-200 tabular-nums transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none"
+        aria-label={label}
+      >
+        {isPair ? (
+          <>
+            Pages {visiblePages![0]! + 1}
+            <span className="text-neutral-400">–</span>
+            {visiblePages![1]! + 1} <span className="text-neutral-400">/</span>{" "}
+            {totalPages}
+          </>
+        ) : (
+          <>
+            Page {currentPage + 1} <span className="text-neutral-400">/</span>{" "}
+            {totalPages}
+          </>
+        )}
+      </button>
+      {rtlBadge}
+    </>
   );
 }
 
