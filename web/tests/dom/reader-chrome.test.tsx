@@ -106,7 +106,7 @@ describe("ReaderChrome (jsdom)", () => {
   it("page indicator: click → number input → Enter commits a clamped page to the store", async () => {
     renderChrome();
     const indicator = await screen.findByRole("button", {
-      name: "Page 1 of 20; click to jump",
+      name: "Page 1 / 20; click to jump",
     });
     fireEvent.click(indicator);
     const input = (await screen.findByLabelText(
@@ -122,7 +122,7 @@ describe("ReaderChrome (jsdom)", () => {
     // Escape cancels without touching the page.
     fireEvent.click(
       await screen.findByRole("button", {
-        name: "Page 7 of 20; click to jump",
+        name: "Page 7 / 20; click to jump",
       }),
     );
     const again = (await screen.findByLabelText(

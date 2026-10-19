@@ -120,7 +120,7 @@ test.describe("Reader flow", () => {
     await readerReady();
     await page.keyboard.press("t");
     await expect(
-      page.getByRole("button", { name: "Page 2 of 3; click to jump" }),
+      page.getByRole("button", { name: "Page 2 / 3; click to jump" }),
     ).toBeVisible();
 
     // 7b. Accessibility (WP-4.8): axe-clean with the chrome shown…
