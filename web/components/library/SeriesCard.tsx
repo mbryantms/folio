@@ -388,7 +388,11 @@ export function MetaNeedsBadge({
     );
   }
 
-  const label = "Find metadata — likely incomplete";
+  // Leads with the chip's visible word: axe-core 4.14 enforces WCAG 2.5.3
+  // Label in Name (`label-content-name-mismatch`), and "meta" is not a
+  // token of "metadata", so "Find metadata — …" failed against the
+  // visible "meta".
+  const label = "Meta likely incomplete — find metadata";
   const activate = () => router.push(`${seriesUrl(series)}?match=1`);
   return (
     <span

@@ -88,7 +88,7 @@ describe("MetaNeedsBadge", () => {
     };
     expect(props.role).toBe("button");
     expect(props.tabIndex).toBe(0);
-    expect(props["aria-label"]).toBe("Find metadata — likely incomplete");
+    expect(props["aria-label"]).toBe("Meta likely incomplete — find metadata");
 
     let stopped = false;
     let prevented = false;
