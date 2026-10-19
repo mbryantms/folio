@@ -133,6 +133,7 @@ mod m20270612_000001_entity_profile;
 mod m20270613_000001_progress_unfinished_idx;
 mod m20270614_000001_reverse_fk_indexes;
 mod m20270615_000001_user_series_reader_prefs;
+mod m20270616_000001_saved_view_groups;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -274,6 +275,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270613_000001_progress_unfinished_idx::Migration),
             Box::new(m20270614_000001_reverse_fk_indexes::Migration),
             Box::new(m20270615_000001_user_series_reader_prefs::Migration),
+            Box::new(m20270616_000001_saved_view_groups::Migration),
         ]
     }
 }

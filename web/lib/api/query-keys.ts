@@ -11,7 +11,11 @@
  * no module cycle. New hooks: add a key factory here, then reference it.
  */
 import type { IssueUrlOpts } from "@/lib/urls";
-import type { ReadingLogFilters, ReadingStatsRange } from "./types";
+import type {
+  ReadingLogFilters,
+  ReadingStatsRange,
+  ViewGroupScope,
+} from "./types";
 import type {
   AdminActivityFilters,
   AdminLogFilters,
@@ -442,6 +446,11 @@ export const queryKeys = {
     ["saved-views", "list", filters] as const,
   /** Multi-page rails: the user's full page list (system + custom). */
   mePages: ["me", "pages"] as const,
+  /** Views-index groups (Settings → Views buckets), one cache per tab
+   *  scope (`filter` / `cbl` / `collection`). Drag-and-drop writes go
+   *  through `useReplaceViewGroupLayout`, which patches this cache
+   *  optimistically. */
+  viewGroups: (scope: ViewGroupScope) => ["view-groups", scope] as const,
   savedView: (id: string) => ["saved-views", "detail", id] as const,
   savedViewResults: (id: string, cursor?: string) =>
     ["saved-views", "results", id, cursor ?? null] as const,

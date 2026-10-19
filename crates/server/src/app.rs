@@ -143,6 +143,7 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(api::cbl_lists::routes())
         .merge(api::collections::routes())
         .merge(api::pages::routes())
+        .merge(api::view_groups::routes())
         .merge(api::issue_ocr::routes())
         .merge(api::admin_ocr::routes())
         .merge(api::markers::routes())

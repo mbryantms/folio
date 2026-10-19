@@ -58,6 +58,8 @@ import type {
   CblListListView,
   CblWindowPageView,
   CblWindowView,
+  ViewGroupListView,
+  ViewGroupScope,
   ContinueReadingView,
   BackupStorageView,
   CrossLibHealthIssueView,
@@ -1756,6 +1758,19 @@ export function useSidebarLayout() {
   return useQuery({
     queryKey: queryKeys.sidebarLayout,
     queryFn: () => jsonFetch<SidebarLayoutView>("/me/sidebar-layout"),
+  });
+}
+
+// ---------- Views-index groups ----------
+
+/** Per-tab buckets on Settings → Views. One cache per scope; the board
+ *  overlays this on `useSavedViews()` / `useCollections()` to decide
+ *  which card renders under which group (`buildViewBoard`). */
+export function useViewGroups(scope: ViewGroupScope) {
+  return useQuery({
+    queryKey: queryKeys.viewGroups(scope),
+    queryFn: () =>
+      jsonFetch<ViewGroupListView>(`/me/view-groups${buildQuery({ scope })}`),
   });
 }
 

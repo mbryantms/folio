@@ -98,6 +98,12 @@ import type {
   UpdateIssueReq,
   UpdateLibraryReq,
   UpdateLayoutReq,
+  CreateViewGroupReq,
+  ReplaceLayoutReq,
+  UpdateViewGroupReq,
+  ViewGroupListView,
+  ViewGroupScope,
+  ViewGroupView,
   UpdateSavedViewReq,
   UpdateSeriesReq,
   SidebarLayoutView,
@@ -1500,6 +1506,125 @@ export function useRevokeAppPassword() {
   );
 }
 
+// ---------- Views-index groups ----------
+
+/** POST /me/view-groups — new bucket at the end of its scope. The board
+ *  re-reads the scope's layout on success; no toast (the new group
+ *  appearing is the signal). */
+export function useCreateViewGroup() {
+  const qc = useQueryClient();
+  return useApiMutation<ViewGroupView, CreateViewGroupReq>(
+    (body) => ({ path: "/me/view-groups", method: "POST", body }),
+    {
+      onSuccess: (_group, input) => {
+        qc.invalidateQueries({
+          queryKey: queryKeys.viewGroups(input.scope as ViewGroupScope),
+        });
+      },
+    },
+  );
+}
+
+/** PATCH /me/view-groups/{id} — rename and/or collapse. Collapsing is a
+ *  high-frequency UI toggle, so the cache is patched optimistically and
+ *  only rolled back on error; renames read back the server row. */
+export function useUpdateViewGroup(scope: ViewGroupScope) {
+  const qc = useQueryClient();
+  return useApiMutation<ViewGroupView, { id: string } & UpdateViewGroupReq>(
+    ({ id, ...body }) => ({
+      path: `/me/view-groups/${id}`,
+      method: "PATCH",
+      body,
+    }),
+    {
+      onMutate: async (input) => {
+        const key = queryKeys.viewGroups(scope);
+        await qc.cancelQueries({ queryKey: key });
+        const snapshot = qc.getQueryData<ViewGroupListView>(key);
+        if (snapshot) {
+          qc.setQueryData<ViewGroupListView>(key, {
+            ...snapshot,
+            groups: snapshot.groups.map((g) =>
+              g.id === input.id
+                ? {
+                    ...g,
+                    name: input.name?.trim() || g.name,
+                    collapsed: input.collapsed ?? g.collapsed,
+                  }
+                : g,
+            ),
+          });
+        }
+        return { snapshot };
+      },
+      onError: (_err, _input, ctx) => {
+        const c = ctx as { snapshot?: ViewGroupListView } | undefined;
+        if (c?.snapshot) {
+          qc.setQueryData(queryKeys.viewGroups(scope), c.snapshot);
+        }
+      },
+      onSettled: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.viewGroups(scope) });
+      },
+    },
+  );
+}
+
+/** DELETE /me/view-groups/{id} — the group's views fall back to the
+ *  ungrouped section (server cascade); nothing else is touched. */
+export function useDeleteViewGroup(scope: ViewGroupScope) {
+  const qc = useQueryClient();
+  return useApiMutation<unknown, string>(
+    (id) => ({ path: `/me/view-groups/${id}`, method: "DELETE" }),
+    {
+      successMessage: "Group removed — its views are ungrouped",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.viewGroups(scope) });
+      },
+    },
+  );
+}
+
+/** PUT /me/view-groups/layout — the drag-and-drop commit. One request
+ *  carries the whole scope (group order, every group's members, and the
+ *  ungrouped order), so a cross-group move is atomic. The cache is
+ *  replaced optimistically with the requested layout; on error it snaps
+ *  back and the shared error toast fires. */
+export function useReplaceViewGroupLayout(scope: ViewGroupScope) {
+  const qc = useQueryClient();
+  return useApiMutation<unknown, ReplaceLayoutReq>(
+    (body) => ({ path: "/me/view-groups/layout", method: "PUT", body }),
+    {
+      onMutate: async (input) => {
+        const key = queryKeys.viewGroups(scope);
+        await qc.cancelQueries({ queryKey: key });
+        const snapshot = qc.getQueryData<ViewGroupListView>(key);
+        if (snapshot) {
+          const byId = new Map(snapshot.groups.map((g) => [g.id, g]));
+          qc.setQueryData<ViewGroupListView>(key, {
+            ...snapshot,
+            groups: input.groups.flatMap((g, position) => {
+              const prev = byId.get(g.id);
+              return prev ? [{ ...prev, position, view_ids: g.view_ids }] : [];
+            }),
+            ungrouped_ids: input.ungrouped ?? snapshot.ungrouped_ids,
+          });
+        }
+        return { snapshot };
+      },
+      onError: (_err, _input, ctx) => {
+        const c = ctx as { snapshot?: ViewGroupListView } | undefined;
+        if (c?.snapshot) {
+          qc.setQueryData(queryKeys.viewGroups(scope), c.snapshot);
+        }
+      },
+      onSettled: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.viewGroups(scope) });
+      },
+    },
+  );
+}
+
 // ---------- CBL lists (saved-views M6) ----------
 
 /** POST /me/cbl-lists — create from JSON body (URL or catalog source).
@@ -1643,34 +1768,6 @@ export function useCheckAllCblLists() {
               ? "1 list has updates available"
               : `${changed} lists have updates available`;
         return failed > 0 ? `${base} · ${failed} couldn't be checked` : base;
-      },
-    },
-  );
-}
-
-/** Refresh (apply) every reading list at once. Used by the dashboard's
- *  "Update all" action; invalidates the list + per-list caches on settle. */
-export function useRefreshAllCblLists() {
-  const qc = useQueryClient();
-  return useApiMutation<CblBulkResultView, void>(
-    () => ({ path: `/me/cbl-lists/refresh-all`, method: "POST" }),
-    {
-      successMessage: (data) => {
-        if (!data) return "Updated";
-        const changed = data.changed_count;
-        const failed = data.failed_count;
-        const base =
-          changed === 0
-            ? "Everything was already up to date"
-            : changed === 1
-              ? "Updated 1 list"
-              : `Updated ${changed} lists`;
-        return failed > 0 ? `${base} · ${failed} failed` : base;
-      },
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: queryKeys.cblLists });
-        // Entries + per-list detail/log caches for every list may have moved.
-        qc.invalidateQueries({ queryKey: ["cbl-lists"], exact: false });
       },
     },
   );

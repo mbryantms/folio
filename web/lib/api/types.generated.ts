@@ -4053,6 +4053,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/view-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["view_groups_list"];
+        put?: never;
+        post: operations["view_groups_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/view-groups/layout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["view_groups_replace_layout"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/view-groups/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["view_groups_delete_one"];
+        options?: never;
+        head?: never;
+        patch: operations["view_groups_update"];
+        trace?: never;
+    };
     "/api/metadata/batch/saved-view": {
         parameters: {
             query?: never;
@@ -7766,6 +7814,15 @@ export interface components {
              */
             temp_password: string;
         };
+        CreateViewGroupReq: {
+            name: string;
+            scope: string;
+            /**
+             * @description Optional initial members. Each must be a view visible to the
+             *     caller; a view already in another group of the same scope is moved.
+             */
+            view_ids?: string[];
+        };
         CreatorCount: {
             /** Format: int64 */
             count: number;
@@ -9924,6 +9981,15 @@ export interface components {
             published_at: string;
             /** @description Release tag (e.g. `"v0.1.9"`). */
             tag: string;
+        };
+        LayoutGroupReq: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * @description Member view ids in display order. A view listed under no group is
+             *     ungrouped after the write.
+             */
+            view_ids: string[];
         };
         LibraryAccessGrantView: {
             /**
@@ -12322,6 +12388,16 @@ export interface components {
              */
             ids: string[];
         };
+        ReplaceLayoutReq: {
+            /** @description Every group in the scope, exactly once, in display order. */
+            groups: components["schemas"]["LayoutGroupReq"][];
+            scope: string;
+            /**
+             * @description Ungrouped views in display order. Optional and may be partial:
+             *     ungrouped views not listed simply have no pinned position.
+             */
+            ungrouped?: string[];
+        };
         /**
          * @description One window's budget: how many requests the provider allows, how many
          *     are left, and when the counter resets.
@@ -14466,6 +14542,10 @@ export interface components {
             role?: components["schemas"]["UserRole"] | null;
             state?: components["schemas"]["UserState"] | null;
         };
+        UpdateViewGroupReq: {
+            collapsed?: boolean | null;
+            name?: string | null;
+        };
         UploadView: {
             content_type: string;
             id: string;
@@ -14694,6 +14774,36 @@ export interface components {
         UserRole: "admin" | "user";
         /** @enum {string} */
         UserState: "pending_verification" | "active" | "disabled";
+        ViewGroupListView: {
+            groups: components["schemas"]["ViewGroupView"][];
+            scope: string;
+            /**
+             * @description Hand-arranged order of the ungrouped section. Ungrouped views
+             *     missing from this list have no pinned position and render after
+             *     these, in the client's sort order.
+             */
+            ungrouped_ids: string[];
+        };
+        ViewGroupView: {
+            /** @description Whether the index renders the group collapsed. */
+            collapsed: boolean;
+            created_at: string;
+            id: string;
+            name: string;
+            /**
+             * Format: int32
+             * @description Ordinal within the scope (dense 0..N after any layout write).
+             */
+            position: number;
+            /**
+             * @description `'filter'` | `'cbl'` | `'collection'` — the Views tab this group
+             *     belongs to.
+             */
+            scope: string;
+            updated_at: string;
+            /** @description Member saved-view ids in display order. */
+            view_ids: string[];
+        };
         /**
          * @description `single` | `double` | `webtoon`.
          * @enum {string}
@@ -22924,6 +23034,122 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    view_groups_list: {
+        parameters: {
+            query: {
+                scope: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ViewGroupListView"];
+                };
+            };
+        };
+    };
+    view_groups_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateViewGroupReq"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ViewGroupView"];
+                };
+            };
+        };
+    };
+    view_groups_replace_layout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplaceLayoutReq"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown scope, group set mismatch, or a view id that is duplicate, unknown, or placed twice */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    view_groups_delete_one: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    view_groups_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateViewGroupReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ViewGroupView"];
+                };
             };
         };
     };
