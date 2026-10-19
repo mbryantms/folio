@@ -13,6 +13,24 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.59.0](https://github.com/mbryantms/folio/compare/v0.58.2...v0.59.0) (2026-10-19)
+
+
+### Added
+
+* **views:** group the Views index and tuck reading-list updates into a menu ([#1234](https://github.com/mbryantms/folio/issues/1234)) ([f562a7a](https://github.com/mbryantms/folio/commit/f562a7aed1c22ad69b67312bf75d027c33248c1a))
+
+
+### Dependencies
+
+* update dependency @ai-sdk/provider-utils@&lt;4.0.34 to v4.0.60 ([#1226](https://github.com/mbryantms/folio/issues/1226)) ([9446fc4](https://github.com/mbryantms/folio/commit/9446fc4eff9d6a1765c21bdffe0611e45b5ed430))
+* update dependency @tanstack/react-virtual to v3.14.20 ([#1222](https://github.com/mbryantms/folio/issues/1222)) ([5df5b1c](https://github.com/mbryantms/folio/commit/5df5b1c900f1678f1faac9dffa6dab5469e2eb83))
+* update dependency @tanstack/react-virtual to v3.14.21 ([#1233](https://github.com/mbryantms/folio/issues/1233)) ([2ebaca6](https://github.com/mbryantms/folio/commit/2ebaca6aa7c1d8a49a547c6072884601827fbb18))
+* update dependency lucide-react to v1.58.0 ([#1231](https://github.com/mbryantms/folio/issues/1231)) ([1832e22](https://github.com/mbryantms/folio/commit/1832e22cce6857e583ad2e97dd5d5fb398dbca05))
+* update dependency undici@&gt;=7.0.0 &lt;7.29.2 to v7.30.1 ([#1225](https://github.com/mbryantms/folio/issues/1225)) ([576831f](https://github.com/mbryantms/folio/commit/576831f8679e0fb0efabcb5543f926e26a2bdab1))
+* update nextjs monorepo to v16.4.2 ([#1227](https://github.com/mbryantms/folio/issues/1227)) ([e738431](https://github.com/mbryantms/folio/commit/e7384312ce8eaf7c753a7afe942852de142e2f9c))
+* update rust:1-slim-bookworm docker digest to a24e292 ([#1228](https://github.com/mbryantms/folio/issues/1228)) ([c285bdd](https://github.com/mbryantms/folio/commit/c285bddf42e39c782be33f194a0e7cd1180fb109))
+
 ## [0.58.2](https://github.com/mbryantms/folio/compare/v0.58.1...v0.58.2) (2026-10-18)
 
 
