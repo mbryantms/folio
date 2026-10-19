@@ -13,6 +13,29 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.59.1](https://github.com/mbryantms/folio/compare/v0.59.0...v0.59.1) (2026-10-19)
+
+
+### Fixed
+
+* **web:** WCAG 2.5.3 Label in Name on the search trigger + reader page counter; axe-core 4.14 ([#1240](https://github.com/mbryantms/folio/issues/1240)) ([665ef6c](https://github.com/mbryantms/folio/commit/665ef6cd16d07ba150601234d40bab24086811cc))
+
+
+### Dependencies
+
+* update dependency @ai-sdk/provider-utils@&lt;4.0.34 to v4.0.61 ([#1241](https://github.com/mbryantms/folio/issues/1241)) ([9df5031](https://github.com/mbryantms/folio/commit/9df5031458038073365754db8e8b11f70da43692))
+* update dependency @scalar/api-reference-react to v0.9.81 ([#1235](https://github.com/mbryantms/folio/issues/1235)) ([8dc0b5b](https://github.com/mbryantms/folio/commit/8dc0b5b0c52773b146a3611adc04c59a7ff6081b))
+* update dependency eslint to v10.13.0 ([#1236](https://github.com/mbryantms/folio/issues/1236)) ([a7d1c0f](https://github.com/mbryantms/folio/commit/a7d1c0fcde2308375ffdb9066dc3d8e3859af47d))
+* update dependency pnpm to v12.14.0 ([#1223](https://github.com/mbryantms/folio/issues/1223)) ([796ad62](https://github.com/mbryantms/folio/commit/796ad62347fe4aed74e0555793838e298492925c))
+* update rust crate zip to v9.0.4 ([#1232](https://github.com/mbryantms/folio/issues/1232)) ([d4bff0f](https://github.com/mbryantms/folio/commit/d4bff0fd1099a4e564f70c3e40c843d979c11b26))
+* update taiki-e/install-action digest to 8cca091 ([#1238](https://github.com/mbryantms/folio/issues/1238)) ([451cca6](https://github.com/mbryantms/folio/commit/451cca64175ee2b6a44833dc8ce4f9ad33cc53ff))
+* update web-dev-tooling (weekly) ([#1229](https://github.com/mbryantms/folio/issues/1229)) ([d82d768](https://github.com/mbryantms/folio/commit/d82d76858637bcca64d65815e39a1d2b3b98c467))
+
+
+### Build & CI
+
+* **deny:** ignore zip &lt;9 extraction advisories stuck behind candle / tesseract-rs pins ([#1239](https://github.com/mbryantms/folio/issues/1239)) ([bfd6b10](https://github.com/mbryantms/folio/commit/bfd6b10f504bc5fa2fcdeca2aec5d0b81d5ac191))
+
 ## [0.59.0](https://github.com/mbryantms/folio/compare/v0.58.2...v0.59.0) (2026-10-19)
 
 
