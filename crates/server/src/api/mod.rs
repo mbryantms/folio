@@ -85,6 +85,7 @@ pub mod sessions;
 pub mod sidebar_layout;
 pub mod teams;
 pub mod thumbnails;
+pub mod view_groups;
 pub mod work_targets;
 pub mod ws_scan_events;
 

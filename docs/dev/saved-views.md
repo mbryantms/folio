@@ -137,6 +137,65 @@ read-status chips carry over as `rating between` / `read_status in`.
 Facets with no equivalent on the target entity (metadata completeness in
 issues mode) are reported as dropped and toasted.
 
+## Groups on the Views index
+
+Settings → Views renders each tab (Filter views / Reading lists /
+Collections) as a **grouped board**: the user drags cards into named
+buckets that are renamed, reordered, collapsed, and deleted
+independently of the views themselves. Groups are an organizational
+overlay only — membership never affects what a view is, where it is
+pinned, or whether it shows in the sidebar.
+
+Storage (`m20270616`): `saved_view_groups` (per user, `scope` ∈
+`filter` / `cbl` / `collection`, `position`, `collapsed`) and
+`saved_view_group_items` keyed by `(user_id, view_id)` so a view sits
+in at most one place per user, system views included. An item row with
+a `group_id` is group membership; a row with a NULL `group_id` pins the
+view's `position` inside the **ungrouped** remainder of its `scope`, so
+hand-arranged order persists there too. Views with no row are ungrouped
+with no pinned position. Items cascade with both the group (→ the view
+is ungrouped) and the view. The client overlays all of this on the view
+lists (`buildViewBoard` in `web/lib/saved-views/view-board.ts`): under
+the default "Custom order" the pinned ungrouped ids lead and the rest
+trail by name; the other sort keys re-sort the whole section, and a
+drag while one is active pins the visible order and switches back to
+Custom.
+
+API (`crates/server/src/api/view_groups.rs`, 50 groups per scope):
+
+| Method | Path                     | Notes                                                                       |
+| ------ | ------------------------ | --------------------------------------------------------------------------- |
+| GET    | `/me/view-groups?scope=` | groups + ordered `view_ids`, plus `ungrouped_ids`                           |
+| POST   | `/me/view-groups`        | `{scope, name, view_ids?}`; appends; moves listed views                     |
+| PATCH  | `/me/view-groups/{id}`   | `{name?, collapsed?}`                                                       |
+| DELETE | `/me/view-groups/{id}`   | members become ungrouped                                                    |
+| PUT    | `/me/view-groups/layout` | `{scope, groups: [{id, view_ids}], ungrouped?: [id]}` — whole-scope replace |
+
+The layout `PUT` is what drag-and-drop commits to: one request carries
+the group order, every group's members, and the ungrouped order, so a
+cross-group move is atomic. It must list every group in the scope
+exactly once and every view at most once across groups and `ungrouped`
+(422 otherwise); unknown or other-user view ids are 422. `ungrouped`
+may be omitted or partial — unlisted ungrouped views simply lose their
+pinned position. The web mutation patches the query cache
+optimistically and snaps back on error. Regression coverage:
+`crates/server/tests/view_groups.rs` and
+`web/tests/library/view-board.test.ts`.
+
+The reading-lists tab also hosts the **updates feature**
+(`CblRefreshDashboard.tsx`), kept out of the way until asked for: an
+"Updates" button in the board toolbar (`CblUpdatesMenu`) runs "Check for
+updates" (dry-run via `/me/cbl-lists/check-all`) or "Update all lists…",
+and either one reveals the updates panel (`CblUpdatesPanel`) between the
+toolbar and the board. The panel shows the review list with diff badges
+and checkboxes, and refreshes selected lists one at a time through the
+shared client-side runner (`useBatchRefresh`) with progress and per-list
+outcomes; the group menu's "Update these lists" feeds the same runner and
+opens the same panel. The button carries a count badge once a check has
+found changes and spins while anything runs, so the panel can stay
+hidden. State lives in `CblUpdatesProvider`, so hiding the panel keeps
+the results.
+
 ## OPDS
 
 Pinned or sidebar-visible filter views appear in the OPDS personal feeds

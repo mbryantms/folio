@@ -267,6 +267,15 @@ export type SidebarEntryView = Schemas["SidebarEntryView"];
 export type SidebarLayoutView = Schemas["SidebarLayoutView"];
 export type UpdateEntryReq = Schemas["UpdateEntryReq"];
 export type UpdateLayoutReq = Schemas["UpdateLayoutReq"];
+export type ViewGroupView = Schemas["ViewGroupView"];
+export type ViewGroupListView = Schemas["ViewGroupListView"];
+export type CreateViewGroupReq = Schemas["CreateViewGroupReq"];
+export type UpdateViewGroupReq = Schemas["UpdateViewGroupReq"];
+export type LayoutGroupReq = Schemas["LayoutGroupReq"];
+export type ReplaceLayoutReq = Schemas["ReplaceLayoutReq"];
+/** The Views-index tab a group belongs to. Mirrors the server's
+ *  `SCOPES` check constraint (`view_groups.rs`). */
+export type ViewGroupScope = "filter" | "cbl" | "collection";
 export type CblStatsView = Schemas["CblStatsView"];
 export type CblListView = Schemas["CblListView"];
 export type CblListListView = Schemas["CblListListView"];

@@ -8768,6 +8768,129 @@
         }
       }
     },
+    "/api/me/view-groups": {
+      "get": {
+        "operationId": "view_groups_list",
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewGroupListView"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "view_groups_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateViewGroupReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewGroupView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/view-groups/layout": {
+      "put": {
+        "operationId": "view_groups_replace_layout",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceLayoutReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "422": {
+            "description": "unknown scope, group set mismatch, or a view id that is duplicate, unknown, or placed twice"
+          }
+        }
+      }
+    },
+    "/api/me/view-groups/{id}": {
+      "delete": {
+        "operationId": "view_groups_delete_one",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {}
+        }
+      },
+      "patch": {
+        "operationId": "view_groups_update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateViewGroupReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewGroupView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/metadata/batch/saved-view": {
       "post": {
         "summary": "`POST /metadata/batch/saved-view` — fan out a metadata search over the\ntargets of a saved view: a filter/smart view searches each matching series;\na CBL reading list searches each issue. One `metadata_batch` groups them.",
@@ -17925,6 +18048,29 @@
           }
         ]
       },
+      "CreateViewGroupReq": {
+        "type": "object",
+        "required": [
+          "scope",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "view_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Optional initial members. Each must be a view visible to the\ncaller; a view already in another group of the same scope is moved."
+          }
+        }
+      },
       "CreatorCount": {
         "type": "object",
         "required": [
@@ -23628,6 +23774,27 @@
           }
         }
       },
+      "LayoutGroupReq": {
+        "type": "object",
+        "required": [
+          "id",
+          "view_ids"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "view_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Member view ids in display order. A view listed under no group is\nungrouped after the write."
+          }
+        }
+      },
       "LibraryAccessGrantView": {
         "type": "object",
         "required": [
@@ -29126,6 +29293,33 @@
           }
         }
       },
+      "ReplaceLayoutReq": {
+        "type": "object",
+        "required": [
+          "scope",
+          "groups"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LayoutGroupReq"
+            },
+            "description": "Every group in the scope, exactly once, in display order."
+          },
+          "scope": {
+            "type": "string"
+          },
+          "ungrouped": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Ungrouped views in display order. Optional and may be partial:\nungrouped views not listed simply have no pinned position."
+          }
+        }
+      },
       "RequestBudget": {
         "type": "object",
         "description": "One window's budget: how many requests the provider allows, how many\nare left, and when the counter resets.",
@@ -34193,6 +34387,23 @@
           }
         }
       },
+      "UpdateViewGroupReq": {
+        "type": "object",
+        "properties": {
+          "collapsed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "UploadView": {
         "type": "object",
         "required": [
@@ -34559,6 +34770,79 @@
           "active",
           "disabled"
         ]
+      },
+      "ViewGroupListView": {
+        "type": "object",
+        "required": [
+          "scope",
+          "groups",
+          "ungrouped_ids"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ViewGroupView"
+            }
+          },
+          "scope": {
+            "type": "string"
+          },
+          "ungrouped_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Hand-arranged order of the ungrouped section. Ungrouped views\nmissing from this list have no pinned position and render after\nthese, in the client's sort order."
+          }
+        }
+      },
+      "ViewGroupView": {
+        "type": "object",
+        "required": [
+          "id",
+          "scope",
+          "name",
+          "position",
+          "collapsed",
+          "view_ids",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "collapsed": {
+            "type": "boolean",
+            "description": "Whether the index renders the group collapsed."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Ordinal within the scope (dense 0..N after any layout write)."
+          },
+          "scope": {
+            "type": "string",
+            "description": "`'filter'` | `'cbl'` | `'collection'` — the Views tab this group\nbelongs to."
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "view_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Member saved-view ids in display order."
+          }
+        }
       },
       "ViewMode": {
         "type": "string",

@@ -4,6 +4,7 @@ import { BookCheck, Library } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { useCblList } from "@/lib/api/queries";
+import type { CblStatsView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -42,7 +43,29 @@ export function CblStatsPills({
 }) {
   const list = useCblList(cblListId);
   if (!list.data) return null;
-  const { matched, total, read_count } = list.data.stats;
+  return (
+    <CblStatsPillsStatic
+      stats={list.data.stats}
+      size={size}
+      className={className}
+    />
+  );
+}
+
+/** Same two pills, fed from a `stats` object the caller already has.
+ *  The Views index renders one card per list and gets every list's
+ *  stats from the single `useCblLists()` response, so it must not fan
+ *  out into N detail queries the way `CblStatsPills` does. */
+export function CblStatsPillsStatic({
+  stats,
+  size = "rail",
+  className,
+}: {
+  stats: CblStatsView;
+  size?: "rail" | "header";
+  className?: string;
+}) {
+  const { matched, total, read_count } = stats;
   const sizeClass =
     size === "header"
       ? // Toolbar-row convention: h-9 (36px) to line up with the

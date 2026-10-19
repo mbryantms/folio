@@ -60,6 +60,8 @@ pub mod publisher;
 pub mod rail_dismissal;
 pub mod reading_session;
 pub mod saved_view;
+pub mod saved_view_group;
+pub mod saved_view_group_item;
 pub mod scan_batch;
 pub mod scan_run;
 pub mod series;
@@ -137,6 +139,8 @@ pub mod prelude {
     pub use super::rail_dismissal::Entity as RailDismissal;
     pub use super::reading_session::Entity as ReadingSession;
     pub use super::saved_view::Entity as SavedView;
+    pub use super::saved_view_group::Entity as SavedViewGroup;
+    pub use super::saved_view_group_item::Entity as SavedViewGroupItem;
     pub use super::scan_batch::Entity as ScanBatch;
     pub use super::scan_run::Entity as ScanRun;
     pub use super::series::Entity as Series;

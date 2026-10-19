@@ -6,13 +6,17 @@ import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  Check,
   Folder,
+  FolderInput,
+  FolderPlus,
   List,
   Lock,
   MoreVertical,
   PanelLeft,
   Pin,
   Plus,
+  RefreshCw,
   Sparkles,
   Trash2,
   type LucideIcon,
@@ -39,11 +43,23 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { DropdownMenuResponsiveSub } from "@/components/ui/dropdown-menu-responsive-sub";
+import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CblImportDialog } from "@/components/cbl/cbl-import-dialog";
-import { CblRefreshDashboard } from "@/components/cbl/CblRefreshDashboard";
+import {
+  CblUpdatesMenu,
+  CblUpdatesPanel,
+  CblUpdatesProvider,
+  useCblUpdates,
+} from "@/components/cbl/CblRefreshDashboard";
+import { CblStatsPillsStatic } from "@/components/cbl/CblStatsPills";
 import { NewFilterViewDialog } from "@/components/saved-views/AddViewButton";
 import { NewCollectionDialog } from "@/components/collections/CollectionsIndex";
+import {
+  GroupedViewsBoard,
+  useViewBoardActions,
+} from "@/components/saved-views/GroupedViewsBoard";
 import { MultiPinDialog } from "@/components/saved-views/MultiPinDialog";
 import { QuickApplyPrefill } from "@/components/saved-views/QuickApplyPrefill";
 import {
@@ -58,8 +74,16 @@ import {
   type CollectionSnapshot,
 } from "@/lib/collections/recreate";
 import { useCollectionDeleteUndo } from "@/lib/collections/use-collection-undo";
-import { queryKeys, useCollections, useSavedViews } from "@/lib/api/queries";
-import type { SavedViewView } from "@/lib/api/types";
+import {
+  queryKeys,
+  useCblLists,
+  useCollections,
+  useSavedViews,
+} from "@/lib/api/queries";
+import type { CblListView, SavedViewView } from "@/lib/api/types";
+import { BatchRefreshProvider } from "@/lib/cbl/use-batch-refresh";
+import { formatRelativeDate } from "@/lib/format";
+import { UNGROUPED_ID, type BoardGroup } from "@/lib/saved-views/view-board";
 
 const WANT_TO_READ_KEY = "want_to_read";
 
@@ -89,24 +113,27 @@ export function splitSavedViews(items: SavedViewView[]): {
   };
 }
 
+/** CBL list rows keyed by list id, so each reading-list card can show
+ *  stats without its own detail query. `null` until loaded. */
+const CblListsContext = React.createContext<Map<string, CblListView> | null>(
+  null,
+);
+
 /**
  * Unified saved-content index — the one management home for Views (audit
- * A3). Lives at `/settings/views`; replaces the old arrangement-only
- * manager. Three tabs — Filter views, Reading lists (CBL), Collections —
- * each with in-page create/import, and each card carries its own
+ * A3). Lives at `/settings/views`. Three tabs — Filter views, Reading
+ * lists (CBL), Collections — each rendered as a grouped board
+ * (`GroupedViewsBoard`): the user drags cards into named, reorderable
+ * groups that persist per tab, and every card carries its own
  * arrangement controls (pin-to-pages + show-in-sidebar) so browse,
- * lifecycle, and arrangement live in one place.
- *
- * Tabs (vs the earlier stacked sections) keep a long Reading-lists library
- * from pushing Collections below the fold. The standalone `/collections`
- * page stays the day-to-day collections browse surface.
+ * lifecycle, organization, and arrangement live in one place.
  */
 export function ViewsIndex() {
   return (
     <div className="space-y-6">
       <PageHeader
         title="Views"
-        description="Filter views update themselves from rules · Reading lists track an imported CBL · Collections are hand-picked. Pin any of them to a page or the sidebar from its ⋯ menu."
+        description="Filter views update themselves from rules · Reading lists track an imported CBL · Collections are hand-picked. Drag cards into groups to organize them; pin any of them to a page or the sidebar from its ⋯ menu."
       />
       <Suspense
         fallback={
@@ -143,6 +170,7 @@ function ViewsTabs() {
 
   const viewsQ = useSavedViews();
   const collectionsQ = useCollections();
+  const cblListsQ = useCblLists();
   const { filterViews, readingLists } = React.useMemo(
     () => splitSavedViews(viewsQ.data?.items ?? []),
     [viewsQ.data],
@@ -151,10 +179,36 @@ function ViewsTabs() {
     () => collectionsQ.data ?? [],
     [collectionsQ.data],
   );
+  const cblListsById = React.useMemo(
+    () =>
+      cblListsQ.data
+        ? new Map(cblListsQ.data.items.map((l) => [l.id, l]))
+        : null,
+    [cblListsQ.data],
+  );
 
   const [newFilterOpen, setNewFilterOpen] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
   const [newCollectionOpen, setNewCollectionOpen] = React.useState(false);
+
+  const renderFilterCard = React.useCallback(
+    (view: SavedViewView) => (
+      <ViewCard view={view} Icon={Sparkles} isCollection={false} />
+    ),
+    [],
+  );
+  const renderCblCard = React.useCallback(
+    (view: SavedViewView) => (
+      <ViewCard view={view} Icon={List} isCollection={false} />
+    ),
+    [],
+  );
+  const renderCollectionCard = React.useCallback(
+    (view: SavedViewView) => (
+      <ViewCard view={view} Icon={Folder} isCollection />
+    ),
+    [],
+  );
 
   return (
     <Tabs value={tab} onValueChange={onTabChange} className="space-y-4">
@@ -171,48 +225,50 @@ function ViewsTabs() {
       </TabsList>
 
       <TabsContent value="filter-views">
-        <TabPanel
+        <GroupedViewsBoard
+          scope="filter"
+          views={filterViews}
+          loading={viewsQ.isLoading}
           blurb="Auto-update from a set of filters."
+          noun="view"
+          icon={Sparkles}
           action={
             <Button type="button" onClick={() => setNewFilterOpen(true)}>
               <Plus className="mr-1 h-4 w-4" /> New filter view
             </Button>
           }
-          loading={viewsQ.isLoading}
-          views={filterViews}
-          icon={Sparkles}
+          renderCard={renderFilterCard}
           empty="No filter views yet — create one to save a set of filters."
         />
       </TabsContent>
 
       <TabsContent value="reading-lists">
-        <CblRefreshDashboard count={readingLists.length} />
-        <TabPanel
-          blurb="Track an imported CBL reading order."
-          action={
-            <Button type="button" onClick={() => setImportOpen(true)}>
-              <Plus className="mr-1 h-4 w-4" /> Import CBL
-            </Button>
-          }
-          loading={viewsQ.isLoading}
-          views={readingLists}
-          icon={List}
-          empty="No reading lists yet — import a CBL to track a reading order."
-        />
+        <CblListsContext.Provider value={cblListsById}>
+          <BatchRefreshProvider>
+            <ReadingListsTab
+              views={readingLists}
+              loading={viewsQ.isLoading}
+              onImport={() => setImportOpen(true)}
+              renderCard={renderCblCard}
+            />
+          </BatchRefreshProvider>
+        </CblListsContext.Provider>
       </TabsContent>
 
       <TabsContent value="collections">
-        <TabPanel
+        <GroupedViewsBoard
+          scope="collection"
+          views={collections}
+          loading={collectionsQ.isLoading}
           blurb="Hand-picked series and issues."
+          noun="collection"
+          icon={Folder}
           action={
             <Button type="button" onClick={() => setNewCollectionOpen(true)}>
               <Plus className="mr-1 h-4 w-4" /> New collection
             </Button>
           }
-          loading={collectionsQ.isLoading}
-          views={collections}
-          icon={Folder}
-          isCollection
+          renderCard={renderCollectionCard}
           empty="No collections yet — group series and issues into a manual list."
         />
       </TabsContent>
@@ -230,6 +286,96 @@ function ViewsTabs() {
   );
 }
 
+/** Reading-lists tab: the grouped board with the updates feature tucked
+ *  into its toolbar. The "Updates" menu runs a check or a bulk update and
+ *  reveals the updates panel under the toolbar; the panel stays hidden
+ *  otherwise. Each group's ⋯ menu gets "Update these lists", which feeds
+ *  the same runner and opens the same panel. */
+function ReadingListsTab({
+  views,
+  loading,
+  onImport,
+  renderCard,
+}: {
+  views: SavedViewView[];
+  loading: boolean;
+  onImport: () => void;
+  renderCard: (view: SavedViewView) => React.ReactNode;
+}) {
+  const targets = React.useMemo(
+    () =>
+      views.flatMap((v) =>
+        v.cbl_list_id
+          ? [{ id: v.cbl_list_id, name: v.name, viewId: v.id }]
+          : [],
+      ),
+    [views],
+  );
+  return (
+    <CblUpdatesProvider lists={targets}>
+      <ReadingListsBoard
+        views={views}
+        loading={loading}
+        onImport={onImport}
+        renderCard={renderCard}
+      />
+    </CblUpdatesProvider>
+  );
+}
+
+function ReadingListsBoard({
+  views,
+  loading,
+  onImport,
+  renderCard,
+}: {
+  views: SavedViewView[];
+  loading: boolean;
+  onImport: () => void;
+  renderCard: (view: SavedViewView) => React.ReactNode;
+}) {
+  const { busy, startBatch } = useCblUpdates();
+  const groupMenuExtra = React.useCallback(
+    (group: BoardGroup) => {
+      const ids = group.views.flatMap((v) =>
+        v.cbl_list_id ? [{ id: v.cbl_list_id, name: v.name }] : [],
+      );
+      return (
+        <DropdownMenuItem
+          disabled={ids.length === 0 || busy}
+          onSelect={() => startBatch(ids)}
+        >
+          <RefreshCw className="h-4 w-4" /> Update{" "}
+          {ids.length === 1 ? "this list" : `these ${ids.length} lists`}
+        </DropdownMenuItem>
+      );
+    },
+    [busy, startBatch],
+  );
+  return (
+    <GroupedViewsBoard
+      scope="cbl"
+      views={views}
+      loading={loading}
+      blurb="Track an imported CBL reading order."
+      noun="list"
+      icon={List}
+      action={
+        <>
+          <CblUpdatesMenu />
+          <Button type="button" onClick={onImport}>
+            <Plus className="mr-1 h-4 w-4" /> Import CBL
+          </Button>
+        </>
+      }
+      panel={<CblUpdatesPanel />}
+      renderCard={renderCard}
+      groupMenuExtra={groupMenuExtra}
+      empty="No reading lists yet — import a CBL to track a reading order."
+    />
+  );
+}
+
 function TabCount({ n }: { n: number }) {
   return (
     <Badge
@@ -241,56 +387,13 @@ function TabCount({ n }: { n: number }) {
   );
 }
 
-function TabPanel({
-  blurb,
-  action,
-  loading,
-  views,
-  icon,
-  empty,
-  isCollection = false,
-}: {
-  blurb: string;
-  action: React.ReactNode;
-  loading: boolean;
-  views: SavedViewView[];
-  icon: LucideIcon;
-  empty: string;
-  isCollection?: boolean;
-}) {
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-muted-foreground text-sm">{blurb}</p>
-        {action}
-      </div>
-      {loading ? (
-        <div className="text-muted-foreground py-6 text-sm">Loading…</div>
-      ) : views.length === 0 ? (
-        <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-6 text-sm">
-          {empty}
-        </div>
-      ) : (
-        <ul
-          role="list"
-          className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-        >
-          {views.map((view) => (
-            <li key={view.id}>
-              <ViewCard view={view} Icon={icon} isCollection={isCollection} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
 /** A saved-content card (filter view / reading list / collection). The body
  *  links to the detail page (edit happens there); the ⋯ menu folds in the
- *  arrangement + lifecycle actions that used to live on `/settings/views`:
- *  pin-to-pages (the search + collapsible `MultiPinDialog`), show-in-sidebar,
- *  and Delete. Built-in rows (system rails + Want to Read) lock Delete. */
+ *  arrangement + lifecycle actions: pin-to-pages (the search + collapsible
+ *  `MultiPinDialog`), show-in-sidebar, Move to group (the keyboard / touch
+ *  path for what drag-and-drop does), and Delete. Built-in rows (system
+ *  rails + Want to Read) lock Delete. Reading-list cards also show the
+ *  list's collection + read-progress stats and when it was last updated. */
 function ViewCard({
   view,
   Icon,
@@ -311,6 +414,8 @@ function ViewCard({
   const delCollection = useDeleteCollection(view.id, { silent: true });
   const showDeleteUndo = useCollectionDeleteUndo();
   const sidebar = useSidebarSavedView();
+  const board = useViewBoardActions();
+  const cblLists = React.useContext(CblListsContext);
   const [pinOpen, setPinOpen] = React.useState(false);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
@@ -321,6 +426,11 @@ function ViewCard({
     ? `/views/${isWantToRead ? "want-to-read" : view.id}`
     : `/views/${view.id}`;
   const pinnedCount = (view.pinned_on_pages ?? []).length;
+  const cblList =
+    view.kind === "cbl" && view.cbl_list_id
+      ? (cblLists?.get(view.cbl_list_id) ?? null)
+      : null;
+  const currentGroup = board?.containerOf(view.id) ?? null;
 
   async function handleConfirmDelete() {
     if (!isCollection) {
@@ -367,7 +477,7 @@ function ViewCard({
   }
 
   return (
-    <div className="group hover:bg-accent/40 border-border/60 flex h-full flex-col gap-2 rounded-lg border p-4 transition-colors">
+    <div className="group hover:bg-accent/40 border-border/60 bg-card flex h-full flex-col gap-2 rounded-lg border p-4 transition-colors">
       <div className="flex items-start justify-between gap-2">
         <Icon
           className="text-muted-foreground h-5 w-5 shrink-0"
@@ -385,7 +495,7 @@ function ViewCard({
               <MoreVertical className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuItem onSelect={() => setPinOpen(true)}>
               <Pin className="h-4 w-4" /> Pin to pages…
             </DropdownMenuItem>
@@ -395,6 +505,49 @@ function ViewCard({
             >
               Show in sidebar
             </DropdownMenuCheckboxItem>
+            {board ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuResponsiveSub
+                  icon={<FolderInput className="h-4 w-4" />}
+                  label="Move to group"
+                >
+                  {board.groups.map((g) => (
+                    <DropdownMenuItem
+                      key={g.id}
+                      disabled={currentGroup === g.id}
+                      onSelect={() => board.moveToGroup(view.id, g.id)}
+                    >
+                      <span className="inline-flex w-4 justify-center">
+                        {currentGroup === g.id ? (
+                          <Check className="h-4 w-4" aria-hidden="true" />
+                        ) : null}
+                      </span>
+                      <span className="truncate">{g.name}</span>
+                    </DropdownMenuItem>
+                  ))}
+                  {board.groups.length > 0 ? (
+                    <DropdownMenuItem
+                      disabled={currentGroup === UNGROUPED_ID}
+                      onSelect={() => board.moveToGroup(view.id, null)}
+                    >
+                      <span className="inline-flex w-4 justify-center">
+                        {currentGroup === UNGROUPED_ID ? (
+                          <Check className="h-4 w-4" aria-hidden="true" />
+                        ) : null}
+                      </span>
+                      Ungrouped
+                    </DropdownMenuItem>
+                  ) : null}
+                  {board.groups.length > 0 ? <DropdownMenuSeparator /> : null}
+                  <DropdownMenuItem
+                    onSelect={() => board.newGroupWithView(view.id)}
+                  >
+                    <FolderPlus className="h-4 w-4" /> New group…
+                  </DropdownMenuItem>
+                </DropdownMenuResponsiveSub>
+              </>
+            ) : null}
             {isBuiltIn ? null : (
               <>
                 <DropdownMenuSeparator />
@@ -412,6 +565,7 @@ function ViewCard({
 
       <Link
         href={href}
+        draggable={false}
         className="focus-visible:ring-ring min-w-0 space-y-0.5 rounded focus-visible:ring-2 focus-visible:outline-none"
       >
         <div className="truncate font-medium" title={view.name}>
@@ -423,6 +577,8 @@ function ViewCard({
           </p>
         ) : null}
       </Link>
+
+      {cblList ? <CblCardStats list={cblList} /> : null}
 
       {isBuiltIn || pinnedCount > 0 || view.show_in_sidebar ? (
         <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-1">
@@ -476,6 +632,41 @@ function ViewCard({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+/** Reading-list card footer: the collection / read-progress pills, a thin
+ *  read-progress bar, and the last refresh time — enough to triage a
+ *  long list of lists without opening each one. */
+function CblCardStats({ list }: { list: CblListView }) {
+  const { matched, read_count } = list.stats;
+  const percent = matched > 0 ? Math.round((read_count / matched) * 100) : 0;
+  const when = formatRelativeDate(list.last_refreshed_at ?? list.imported_at);
+  return (
+    <div className="space-y-1.5 pt-0.5">
+      <div className="flex flex-wrap items-center justify-between gap-1.5">
+        <CblStatsPillsStatic stats={list.stats} />
+        {when ? (
+          <span
+            className="text-muted-foreground text-xs"
+            title={
+              list.last_refreshed_at
+                ? `Last refreshed ${new Date(list.last_refreshed_at).toLocaleString()}`
+                : `Imported ${new Date(list.imported_at).toLocaleString()}`
+            }
+          >
+            {list.last_refreshed_at ? "Updated" : "Imported"} {when}
+          </span>
+        ) : null}
+      </div>
+      {matched > 0 ? (
+        <Progress
+          value={percent}
+          className="h-1"
+          aria-label={`${percent}% read`}
+        />
+      ) : null}
     </div>
   );
 }
