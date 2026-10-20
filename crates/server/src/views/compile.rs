@@ -139,8 +139,18 @@ pub fn compile(input: &CompileInput<'_>) -> Result<SelectStatement, CompileError
     };
     apply_conditions(&mut q, input.dsl, &ctx)?;
 
-    let (sort_expr, order_sea) = sort_expression(input.sort_field, input.sort_order);
+    let (sort_expr, order_sea) =
+        sort_expression(input.sort_field, input.sort_order, input.user_id)?;
     apply_cursor(&mut q, input, sort_expr.clone(), order_sea.clone());
+    // The sort key rides along as text (`sort_value`) so the results
+    // endpoint can encode a real keyset cursor for every sort — including
+    // the per-user ones that aren't columns of `series`
+    // (filter-parity-and-builtin-views-1.0; previously those fell back to
+    // an id-only cursor and page 2 could skip rows).
+    q.expr_as(
+        sort_expr.clone().cast_as(Alias::new("text")),
+        Alias::new("sort_value"),
+    );
     q.order_by_expr(sort_expr, order_sea.clone());
     q.order_by((series::Entity, series::Column::Id), order_sea);
 
@@ -193,34 +203,60 @@ impl IssueCursor {
 
     /// The cursor for a result row, given the row's sort-key columns.
     /// Key order must match [`issue_sort_keys`].
-    #[allow(clippy::too_many_arguments)]
-    pub fn for_row(
-        sort: SortField,
-        id: &str,
-        series_name: &str,
-        sort_number: Option<f64>,
-        year: Option<i32>,
-        month: Option<i32>,
-        day: Option<i32>,
-        created_at: &chrono::DateTime<chrono::FixedOffset>,
-        updated_at: &chrono::DateTime<chrono::FixedOffset>,
-    ) -> Self {
+    pub fn for_row(sort: SortField, row: &IssueCursorRow<'_>) -> Self {
+        let ts = |t: &Option<chrono::DateTime<chrono::FixedOffset>>| {
+            serde_json::json!(t.as_ref().map(|t| t.to_rfc3339()))
+        };
         let keys = match sort {
-            SortField::Name => vec![Value::from(series_name), serde_json::json!(sort_number)],
-            SortField::Year => vec![
-                serde_json::json!(year),
-                serde_json::json!(month),
-                serde_json::json!(day),
+            SortField::Name => vec![
+                Value::from(row.series_name),
+                serde_json::json!(row.sort_number),
             ],
-            SortField::CreatedAt => vec![Value::from(created_at.to_rfc3339())],
-            SortField::UpdatedAt => vec![Value::from(updated_at.to_rfc3339())],
-            SortField::LastRead | SortField::ReadProgress => Vec::new(),
+            SortField::Year => vec![
+                serde_json::json!(row.year),
+                serde_json::json!(row.month),
+                serde_json::json!(row.day),
+            ],
+            SortField::CreatedAt => vec![Value::from(row.created_at.to_rfc3339())],
+            SortField::UpdatedAt => vec![Value::from(row.updated_at.to_rfc3339())],
+            // Per-user keys (filter-parity-and-builtin-views-1.0 M1) come
+            // from the caller's joined `progress_records` / `user_ratings`
+            // row; `null` when the caller never touched / rated the issue.
+            SortField::LastRead => vec![ts(&row.last_read)],
+            SortField::ReadProgress => vec![serde_json::json!(row.read_progress)],
+            SortField::FinishedAt => vec![ts(&row.finished_at)],
+            SortField::Rating => vec![serde_json::json!(row.rating)],
+            SortField::PageCount => vec![serde_json::json!(row.page_count)],
+            SortField::Number => vec![serde_json::json!(row.sort_number)],
         };
         Self {
             keys,
-            id: id.to_owned(),
+            id: row.id.to_owned(),
         }
     }
+}
+
+/// Every column an issue-view sort key can read, as the results endpoint
+/// projects them (see `ISSUE_CARD_COLUMNS` + the per-user sort joins).
+#[derive(Debug, Clone, Copy)]
+pub struct IssueCursorRow<'a> {
+    pub id: &'a str,
+    pub series_name: &'a str,
+    pub sort_number: Option<f64>,
+    pub year: Option<i32>,
+    pub month: Option<i32>,
+    pub day: Option<i32>,
+    pub page_count: Option<i32>,
+    pub created_at: &'a chrono::DateTime<chrono::FixedOffset>,
+    pub updated_at: &'a chrono::DateTime<chrono::FixedOffset>,
+    /// `sort_last_read` — the caller's `progress_records.updated_at`.
+    pub last_read: Option<chrono::DateTime<chrono::FixedOffset>>,
+    /// `sort_read_progress` — the caller's `progress_records.percent`.
+    pub read_progress: Option<f64>,
+    /// `sort_finished_at` — the caller's `progress_records.finished_at`.
+    pub finished_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    /// `sort_rating` — the caller's `user_ratings.rating`.
+    pub rating: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -324,16 +360,58 @@ fn issue_sort_keys(sort: SortField) -> Result<&'static [IssueSortKey], CompileEr
         ty: KeyType::Timestamp,
         nullable: false,
     }];
+    // Per-user keys read the LEFT JOINs `compile_issues` adds on the
+    // caller's `progress_records` (`pr`) / `user_ratings` (`ur`) rows.
+    const LAST_READ: &[IssueSortKey] = &[IssueSortKey {
+        sql: "pr.updated_at",
+        ty: KeyType::Timestamp,
+        nullable: true,
+    }];
+    const READ_PROGRESS: &[IssueSortKey] = &[IssueSortKey {
+        sql: "pr.percent",
+        ty: KeyType::Float,
+        nullable: true,
+    }];
+    const FINISHED_AT: &[IssueSortKey] = &[IssueSortKey {
+        sql: "pr.finished_at",
+        ty: KeyType::Timestamp,
+        nullable: true,
+    }];
+    const RATING: &[IssueSortKey] = &[IssueSortKey {
+        sql: "ur.rating",
+        ty: KeyType::Float,
+        nullable: true,
+    }];
+    const PAGE_COUNT: &[IssueSortKey] = &[IssueSortKey {
+        sql: "issues.page_count",
+        ty: KeyType::Int,
+        nullable: true,
+    }];
+    const NUMBER: &[IssueSortKey] = &[IssueSortKey {
+        sql: "issues.sort_number",
+        ty: KeyType::Float,
+        nullable: true,
+    }];
     match sort {
         SortField::Name => Ok(NAME),
         SortField::Year => Ok(YEAR),
         SortField::CreatedAt => Ok(CREATED),
         SortField::UpdatedAt => Ok(UPDATED),
-        SortField::LastRead | SortField::ReadProgress => Err(CompileError::SortNotAvailable {
-            sort,
-            entity: ViewEntity::Issue,
-        }),
+        SortField::LastRead => Ok(LAST_READ),
+        SortField::ReadProgress => Ok(READ_PROGRESS),
+        SortField::FinishedAt => Ok(FINISHED_AT),
+        SortField::Rating => Ok(RATING),
+        SortField::PageCount => Ok(PAGE_COUNT),
+        SortField::Number => Ok(NUMBER),
     }
+}
+
+/// Whether an issue-view sort reads the caller's `progress_records` row.
+fn issue_sort_needs_progress(sort: SortField) -> bool {
+    matches!(
+        sort,
+        SortField::LastRead | SortField::ReadProgress | SortField::FinishedAt
+    )
 }
 
 /// Bind a cursor key value with the column's type; `Ok(None)` = SQL NULL.
@@ -482,6 +560,49 @@ pub fn compile_issues(input: &IssueCompileInput<'_>) -> Result<SelectStatement, 
         Expr::col((series::Entity, series::Column::Name)),
         Alias::new("series_name"),
     );
+    // Per-user sort keys (filter-parity-and-builtin-views-1.0 M1): join
+    // the caller's own progress / rating row so the keyset can read it.
+    // Both are PK lookups per issue; joined only for the sorts that read
+    // them. The projected `sort_*` columns are always present (NULL when
+    // unjoined) so the row projection stays one shape.
+    if issue_sort_needs_progress(input.sort_field) {
+        q.join_as(
+            JoinType::LeftJoin,
+            entity::progress_record::Entity,
+            Alias::new("pr"),
+            Expr::cust_with_values(
+                "pr.user_id = $1 AND pr.issue_id = issues.id",
+                [input.user_id],
+            ),
+        );
+        q.expr_as(Expr::cust("pr.updated_at"), Alias::new("sort_last_read"));
+        q.expr_as(Expr::cust("pr.percent"), Alias::new("sort_read_progress"));
+        q.expr_as(Expr::cust("pr.finished_at"), Alias::new("sort_finished_at"));
+    } else {
+        q.expr_as(
+            Expr::cust("NULL::timestamptz"),
+            Alias::new("sort_last_read"),
+        );
+        q.expr_as(Expr::cust("NULL::float8"), Alias::new("sort_read_progress"));
+        q.expr_as(
+            Expr::cust("NULL::timestamptz"),
+            Alias::new("sort_finished_at"),
+        );
+    }
+    if input.sort_field == SortField::Rating {
+        q.join_as(
+            JoinType::LeftJoin,
+            entity::user_rating::Entity,
+            Alias::new("ur"),
+            Expr::cust_with_values(
+                "ur.user_id = $1 AND ur.target_type = 'issue' AND ur.target_id = issues.id",
+                [input.user_id],
+            ),
+        );
+        q.expr_as(Expr::cust("ur.rating"), Alias::new("sort_rating"));
+    } else {
+        q.expr_as(Expr::cust("NULL::float8"), Alias::new("sort_rating"));
+    }
     if let Some(c) = &input.cursor {
         q.and_where(issue_keyset_predicate(keys, c, input.sort_order)?);
     }
@@ -777,7 +898,107 @@ fn compile_condition(cond: &Condition, ctx: &Ctx) -> Result<SeaCondition, Compil
             role,
         } => junction_predicate(cond, table, value_col, role, ctx),
         Source::MarkerExists(kind) => marker_predicate(cond, kind, ctx),
+        Source::IssueReading(col) => issue_reading_predicate(cond, spec.kind, col, ctx),
+        Source::ReadingAgg(tag) => reading_agg_predicate(cond, spec.kind, tag, ctx),
+        Source::LookupJunctionExists {
+            table,
+            fk_col,
+            lookup,
+        } => lookup_junction_predicate(cond, table, fk_col, lookup, ctx),
+        Source::ProviderMatch => {
+            let lhs = provider_match_expr(ctx);
+            Ok(SeaCondition::all().add(scalar_predicate(cond, spec.kind, lhs)?))
+        }
+        Source::RawExpr(sql) => {
+            Ok(SeaCondition::all().add(scalar_predicate(cond, spec.kind, Expr::cust(sql))?))
+        }
     }
+}
+
+/// filter-parity-and-builtin-views-1.0 M1: the caller's own
+/// `progress_records` column for the issue, as a scalar subquery (one row
+/// per `(user_id, issue_id)`). Numbers COALESCE to 0 so an unopened issue
+/// compares false rather than NULL — "read progress < 50" keeps unread
+/// issues, matching the series-level rule. Dates stay NULL (`is_empty`).
+/// `read_count` is the completed-read count: `run` re-reads already
+/// finished plus the current run when it is finished.
+fn issue_reading_predicate(
+    cond: &Condition,
+    kind: FieldKind,
+    col: &'static str,
+    ctx: &Ctx,
+) -> Result<SeaCondition, CompileError> {
+    let value = match col {
+        "read_count" => "pr.run + CASE WHEN pr.finished THEN 1 ELSE 0 END",
+        // `progress_records.percent` is a 0.0–1.0 fraction; the series
+        // rollup (`user_series_progress.percent`) is 0–100, so scale to
+        // keep one vocabulary ("read progress ≥ 50") on both entities.
+        "percent" => "pr.percent * 100",
+        "updated_at" => "pr.updated_at",
+        "finished_at" => "pr.finished_at",
+        _ => {
+            return Err(CompileError::Internal(format!(
+                "unknown IssueReading column `{col}`"
+            )));
+        }
+    };
+    let sub = format!(
+        "(SELECT {value} FROM progress_records pr \
+         WHERE pr.user_id = $1 AND pr.issue_id = issues.id)"
+    );
+    let raw: SimpleExpr = Expr::cust_with_values(sub, [ctx.user_id]);
+    let lhs: SimpleExpr = match kind {
+        FieldKind::Number => Func::coalesce([raw, Expr::val(0_f64)]).into(),
+        FieldKind::Date => raw,
+        _ => {
+            return Err(CompileError::Internal(format!(
+                "issue reading source mapped to unsupported kind {kind:?}",
+            )));
+        }
+    };
+    Ok(SeaCondition::all().add(scalar_predicate(cond, kind, lhs)?))
+}
+
+/// Per-user aggregate over a series' active issues (series views). Tag
+/// `finished_at` is the caller's most recent finish in the series — NULL
+/// until any issue is finished, so `is_empty` means "never finished one".
+fn reading_agg_predicate(
+    cond: &Condition,
+    kind: FieldKind,
+    tag: &'static str,
+    ctx: &Ctx,
+) -> Result<SeaCondition, CompileError> {
+    let lhs: SimpleExpr = match tag {
+        "finished_at" => Expr::cust_with_values(
+            "(SELECT MAX(pr.finished_at) FROM progress_records pr \
+              JOIN issues pi ON pi.id = pr.issue_id \
+               AND pi.state = 'active' AND pi.removed_at IS NULL \
+              WHERE pr.user_id = $1 AND pi.series_id = series.id)",
+            [ctx.user_id],
+        ),
+        _ => {
+            return Err(CompileError::Internal(format!(
+                "unknown ReadingAgg tag `{tag}`"
+            )));
+        }
+    };
+    Ok(SeaCondition::all().add(scalar_predicate(cond, kind, lhs)?))
+}
+
+/// `matched` / `unmatched`: whether the row has a provider id in
+/// `external_ids` for its entity type, over the same source list the
+/// admin metadata dashboard and the grid's `provider_match` facet use.
+fn provider_match_expr(ctx: &Ctx) -> SimpleExpr {
+    let (entity_type, entity_id) = match ctx.entity {
+        ViewEntity::Series => ("series", "series.id::text"),
+        ViewEntity::Issue => ("issue", "issues.id"),
+    };
+    let sources = crate::api::series::PROVIDER_SERIES_ID_SOURCES_SQL;
+    Expr::cust(format!(
+        "(CASE WHEN EXISTS (SELECT 1 FROM external_ids e \
+            WHERE e.entity_type = '{entity_type}' AND e.entity_id = {entity_id} \
+              AND e.source IN ({sources})) THEN 'matched' ELSE 'unmatched' END)"
+    ))
 }
 
 /// WP-5.7: "has my notes / bookmarks / highlights". Markers are per-user,
@@ -873,6 +1094,15 @@ fn issue_computed_predicate(
               WHERE pr.user_id = $1 AND pr.issue_id = issues.id), 'unread')",
             [ctx.user_id],
         ),
+        // Per-issue the metadata tier is binary: the issue either meets
+        // the core criteria (or was accepted by an operator) or it
+        // doesn't. `partial` only exists as a series rollup, so an issue
+        // view filtering on it matches nothing — the web builder hides
+        // that value on issue views.
+        "metadata_completeness" => Expr::cust(format!(
+            "(CASE WHEN {} THEN 'complete' ELSE 'needs_metadata' END)",
+            crate::metadata::completeness::issue_metadata_satisfied_sql("issues")
+        )),
         _ => {
             return Err(CompileError::Internal(format!(
                 "unknown IssueComputed tag `{tag}`"
@@ -1067,6 +1297,16 @@ fn scalar_predicate(
             let cutoff = Expr::cust_with_values("NOW() - ($1 || ' days')::interval", [n]);
             Ok(lhs.gte(cutoff))
         }
+        Op::NotRelative => {
+            // "Older than N days". Strict `<` keeps three-valued semantics:
+            // a NULL date (never read) is excluded, like `not_equals`.
+            let n = v.as_i64().ok_or_else(|| bad("expected integer days"))?;
+            if n <= 0 {
+                return Err(bad("relative days must be positive"));
+            }
+            let cutoff = Expr::cust_with_values("NOW() - ($1 || ' days')::interval", [n]);
+            Ok(lhs.lt(cutoff))
+        }
         Op::IsTrue => Ok(lhs.eq(true)),
         Op::IsFalse => Ok(lhs.eq(false)),
         Op::IncludesAny | Op::IncludesAll | Op::Excludes => Err(bad(
@@ -1089,11 +1329,6 @@ fn junction_predicate(
     role: Option<&'static str>,
     ctx: &Ctx,
 ) -> Result<SeaCondition, CompileError> {
-    let bad = |reason: &str| CompileError::BadValue {
-        field: cond.field,
-        op: cond.op,
-        reason: reason.to_owned(),
-    };
     // Whole SQL fragment is built from compile-time-static identifiers
     // (table, column, role come from the registry, not user input). User
     // values are bound through `cust_with_values`.
@@ -1103,6 +1338,41 @@ fn junction_predicate(
         .map(|r| format!(" AND {table}.role = '{r}'"))
         .unwrap_or_default();
     let any_row = format!("SELECT 1 FROM {table} WHERE {table}.{key} = {root_id}{role_clause}");
+    multi_predicate(cond, &any_row, &format!("{table}.{value_col}"))
+}
+
+/// Junction whose values live in a lookup table (story arcs / universes /
+/// concepts / objects): the junction carries the lookup id, the lookup's
+/// `name` is what the user picks. Same ops and NULL rules as
+/// [`junction_predicate`].
+fn lookup_junction_predicate(
+    cond: &Condition,
+    table: &'static str,
+    fk_col: &'static str,
+    lookup: &'static str,
+    ctx: &Ctx,
+) -> Result<SeaCondition, CompileError> {
+    let root_id = ctx.root_id_sql();
+    let key = ctx.junction_key();
+    let any_row = format!(
+        "SELECT 1 FROM {table} j JOIN {lookup} l ON l.id = j.{fk_col} WHERE j.{key} = {root_id}"
+    );
+    multi_predicate(cond, &any_row, "l.name")
+}
+
+/// Shared body of the multi-set ops over an `EXISTS (any_row …)` probe:
+/// `is_empty` / `is_not_empty` need no value; `includes_any` / `excludes`
+/// bind the whole array; `includes_all` ANDs one EXISTS per value.
+fn multi_predicate(
+    cond: &Condition,
+    any_row: &str,
+    value_expr: &str,
+) -> Result<SeaCondition, CompileError> {
+    let bad = |reason: &str| CompileError::BadValue {
+        field: cond.field,
+        op: cond.op,
+        reason: reason.to_owned(),
+    };
     // WP-5.4: "has no genres" / "has any writer" — no value needed.
     match cond.op {
         Op::IsEmpty => {
@@ -1131,17 +1401,17 @@ fn junction_predicate(
 
     match cond.op {
         Op::IncludesAny => {
-            let sql = format!("EXISTS ({any_row} AND {table}.{value_col} = ANY($1))");
+            let sql = format!("EXISTS ({any_row} AND {value_expr} = ANY($1))");
             Ok(SeaCondition::all().add(Expr::cust_with_values(sql, [strs])))
         }
         Op::Excludes => {
-            let sql = format!("NOT EXISTS ({any_row} AND {table}.{value_col} = ANY($1))");
+            let sql = format!("NOT EXISTS ({any_row} AND {value_expr} = ANY($1))");
             Ok(SeaCondition::all().add(Expr::cust_with_values(sql, [strs])))
         }
         Op::IncludesAll => {
             let mut all = SeaCondition::all();
             for s in strs {
-                let sql = format!("EXISTS ({any_row} AND {table}.{value_col} = $1)");
+                let sql = format!("EXISTS ({any_row} AND {value_expr} = $1)");
                 all = all.add(Expr::cust_with_values(sql, [s]));
             }
             Ok(all)
@@ -1152,7 +1422,11 @@ fn junction_predicate(
     }
 }
 
-fn sort_expression(field: SortField, order: SortOrder) -> (SimpleExpr, Order) {
+fn sort_expression(
+    field: SortField,
+    order: SortOrder,
+    user_id: Uuid,
+) -> Result<(SimpleExpr, Order), CompileError> {
     let order_sea = match order {
         SortOrder::Asc => Order::Asc,
         SortOrder::Desc => Order::Desc,
@@ -1187,8 +1461,37 @@ fn sort_expression(field: SortField, order: SortOrder) -> (SimpleExpr, Order) {
             Expr::val(0_i64),
         ])
         .into(),
+        // filter-parity-and-builtin-views-1.0: per-user scalar subqueries,
+        // COALESCE'd like `last_read` so "nothing yet" sorts last on DESC.
+        SortField::FinishedAt => Func::coalesce([
+            Expr::cust_with_values(
+                "(SELECT MAX(pr.finished_at) FROM progress_records pr \
+                  JOIN issues pi ON pi.id = pr.issue_id \
+                   AND pi.state = 'active' AND pi.removed_at IS NULL \
+                  WHERE pr.user_id = $1 AND pi.series_id = series.id)",
+                [user_id],
+            ),
+            Expr::cust("TIMESTAMPTZ '1970-01-01'"),
+        ])
+        .into(),
+        SortField::Rating => Func::coalesce([
+            Expr::cust_with_values(
+                "(SELECT ur.rating FROM user_ratings ur \
+                  WHERE ur.user_id = $1 AND ur.target_type = 'series' \
+                    AND ur.target_id = series.id::text)",
+                [user_id],
+            ),
+            Expr::val(-1_f64),
+        ])
+        .into(),
+        SortField::PageCount | SortField::Number => {
+            return Err(CompileError::SortNotAvailable {
+                sort: field,
+                entity: ViewEntity::Series,
+            });
+        }
     };
-    (expr, order_sea)
+    Ok((expr, order_sea))
 }
 
 fn apply_cursor(
@@ -1246,9 +1549,15 @@ fn cursor_value_expr(field: SortField, raw: &str) -> SimpleExpr {
         SortField::CreatedAt | SortField::UpdatedAt => {
             Expr::val(raw.to_owned()).cast_as(Alias::new("timestamptz"))
         }
-        // sort_value is empty for these — `apply_cursor`'s empty-string
-        // branch handles them and never reaches this helper.
-        SortField::LastRead | SortField::ReadProgress => Expr::val(raw.to_owned()),
+        SortField::LastRead | SortField::FinishedAt => {
+            Expr::val(raw.to_owned()).cast_as(Alias::new("timestamptz"))
+        }
+        SortField::Rating | SortField::ReadProgress => raw
+            .parse::<f64>()
+            .map(Expr::val)
+            .unwrap_or_else(|_| Expr::val(raw.to_owned())),
+        // Issue-only sorts; `compile` rejects them before reaching here.
+        SortField::PageCount | SortField::Number => Expr::val(raw.to_owned()),
     }
 }
 
@@ -1262,7 +1571,10 @@ fn scalar_value(
     match kind {
         FieldKind::Text | FieldKind::Enum => Ok(Expr::val(as_text(v, bad)?)),
         FieldKind::Number => Ok(Expr::val(as_number(v, bad)?)),
-        FieldKind::Date => Ok(Expr::val(as_text(v, bad)?)),
+        // Bound as text, cast to timestamptz: a bare text parameter
+        // against a timestamptz / date column raises `operator does not
+        // exist` in Postgres (the same reason `cursor_value_expr` casts).
+        FieldKind::Date => Ok(Expr::val(as_text(v, bad)?).cast_as(Alias::new("timestamptz"))),
         FieldKind::Uuid => Ok(Expr::val(as_uuid(v, bad)?)),
         FieldKind::Multi => Err(bad("multi field requires array op")),
         FieldKind::Bool => Err(bad("boolean field takes is_true / is_false")),
@@ -1656,9 +1968,151 @@ mod tests {
     }
 
     #[test]
-    fn per_user_sort_rejected_on_issue_views() {
-        let err = issues_sql_sorted(vec![], SortField::ReadProgress).unwrap_err();
-        assert!(matches!(err, CompileError::SortNotAvailable { .. }));
+    fn issue_only_sort_rejected_on_series_views() {
+        let d = dsl_all(vec![]);
+        let mut input = make(d);
+        input.sort_field = SortField::PageCount;
+        assert!(matches!(
+            compile(&input).unwrap_err(),
+            CompileError::SortNotAvailable { .. }
+        ));
+    }
+
+    // filter-parity-and-builtin-views-1.0 M1: the per-user sorts now
+    // work on issue views through the caller's joined progress / rating
+    // row, projected as `sort_*` columns for the keyset cursor.
+    #[test]
+    fn per_user_issue_sorts_join_the_callers_rows() {
+        let sql = issues_sql_sorted(vec![], SortField::LastRead).unwrap();
+        assert!(
+            sql.contains("LEFT JOIN \"progress_records\" AS \"pr\""),
+            "SQL: {sql}"
+        );
+        assert!(sql.contains("\"sort_last_read\""), "SQL: {sql}");
+        assert!(sql.contains("ORDER BY pr.updated_at"), "SQL: {sql}");
+        let sql = issues_sql_sorted(vec![], SortField::Rating).unwrap();
+        assert!(
+            sql.contains("LEFT JOIN \"user_ratings\" AS \"ur\""),
+            "SQL: {sql}"
+        );
+        assert!(sql.contains("ORDER BY ur.rating"), "SQL: {sql}");
+        // Unjoined sorts still project the columns (NULL) so the row
+        // shape is constant.
+        let sql = issues_sql_sorted(vec![], SortField::Name).unwrap();
+        assert!(!sql.contains("progress_records"), "SQL: {sql}");
+        assert!(sql.contains("\"sort_rating\""), "SQL: {sql}");
+    }
+
+    #[test]
+    fn issue_reading_fields_read_the_callers_progress_row() {
+        let sql = issues_sql(vec![cond(Field::ReadProgress, Op::Gte, json!(50))]).unwrap();
+        assert!(
+            sql.contains("SELECT pr.percent * 100 FROM progress_records pr"),
+            "SQL: {sql}"
+        );
+        assert!(sql.contains("COALESCE("), "SQL: {sql}");
+        let sql = issues_sql(vec![cond(Field::ReadCount, Op::Gte, json!(2))]).unwrap();
+        assert!(sql.contains("pr.run + CASE WHEN pr.finished"), "SQL: {sql}");
+        let sql = issues_sql(vec![cond(Field::FinishedAt, Op::Relative, json!(7))]).unwrap();
+        assert!(
+            sql.contains("SELECT pr.finished_at FROM progress_records pr"),
+            "SQL: {sql}"
+        );
+        assert!(sql.contains("NOW() -"), "SQL: {sql}");
+        let sql = issues_sql(vec![cond(
+            Field::MetadataCompleteness,
+            Op::Is,
+            json!("needs_metadata"),
+        )])
+        .unwrap();
+        assert!(
+            sql.contains("THEN 'complete' ELSE 'needs_metadata' END"),
+            "SQL: {sql}"
+        );
+    }
+
+    #[test]
+    fn series_finished_at_aggregates_over_the_series() {
+        let d = dsl_all(vec![cond(Field::FinishedAt, Op::NotRelative, json!(30))]);
+        let sql = compile(&make(d)).unwrap().to_string(PostgresQueryBuilder);
+        assert!(sql.contains("SELECT MAX(pr.finished_at)"), "SQL: {sql}");
+        assert!(sql.contains("< (NOW() -"), "SQL: {sql}");
+    }
+
+    #[test]
+    fn lookup_junctions_join_the_name_table() {
+        let d = dsl_all(vec![cond(
+            Field::StoryArcs,
+            Op::IncludesAny,
+            json!(["Knightfall"]),
+        )]);
+        let sql = compile(&make(d)).unwrap().to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains("FROM series_arcs j JOIN story_arc l ON l.id = j.arc_id"),
+            "SQL: {sql}"
+        );
+        assert!(sql.contains("l.name = ANY("), "SQL: {sql}");
+        let sql = issues_sql(vec![cond(
+            Field::Universes,
+            Op::Excludes,
+            json!(["Earth-616"]),
+        )])
+        .unwrap();
+        assert!(
+            sql.contains("NOT EXISTS (SELECT 1 FROM issue_universes j"),
+            "SQL: {sql}"
+        );
+    }
+
+    #[test]
+    fn provider_match_and_release_date_compile_on_both_entities() {
+        let d = dsl_all(vec![
+            cond(Field::ProviderMatch, Op::Is, json!("unmatched")),
+            cond(Field::ReleaseDate, Op::After, json!("2020-01-01T00:00:00Z")),
+        ]);
+        let sql = compile(&make(d)).unwrap().to_string(PostgresQueryBuilder);
+        assert!(sql.contains("e.entity_type = 'series'"), "SQL: {sql}");
+        assert!(sql.contains("make_date(series.year, 1, 1)"), "SQL: {sql}");
+        let sql = issues_sql(vec![
+            cond(Field::ProviderMatch, Op::Is, json!("matched")),
+            cond(Field::ReleaseDate, Op::Relative, json!(30)),
+        ])
+        .unwrap();
+        assert!(sql.contains("e.entity_type = 'issue'"), "SQL: {sql}");
+        assert!(sql.contains("make_date(issues.year, 1, 1)"), "SQL: {sql}");
+    }
+
+    #[test]
+    fn date_values_bind_as_timestamptz() {
+        let d = dsl_all(vec![cond(
+            Field::CreatedAt,
+            Op::Before,
+            json!("2024-01-01T00:00:00Z"),
+        )]);
+        let sql = compile(&make(d)).unwrap().to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains("CAST('2024-01-01T00:00:00Z' AS timestamptz)"),
+            "SQL: {sql}"
+        );
+    }
+
+    #[test]
+    fn series_sort_value_is_projected_for_every_sort() {
+        for sort in [
+            SortField::Name,
+            SortField::LastRead,
+            SortField::Rating,
+            SortField::FinishedAt,
+        ] {
+            let d = dsl_all(vec![]);
+            let mut input = make(d);
+            input.sort_field = sort;
+            let sql = compile(&input).unwrap().to_string(PostgresQueryBuilder);
+            assert!(
+                sql.contains("AS text) AS \"sort_value\""),
+                "{sort:?}: {sql}"
+            );
+        }
     }
 
     #[test]
@@ -2047,14 +2501,21 @@ mod tests {
         let ts = chrono::DateTime::parse_from_rfc3339("2026-05-08T22:42:18.758666+00:00").unwrap();
         let c = IssueCursor::for_row(
             SortField::Name,
-            "id1",
-            "Batman",
-            Some(1.5),
-            None,
-            None,
-            None,
-            &ts,
-            &ts,
+            &IssueCursorRow {
+                id: "id1",
+                series_name: "Batman",
+                sort_number: Some(1.5),
+                year: None,
+                month: None,
+                day: None,
+                page_count: None,
+                created_at: &ts,
+                updated_at: &ts,
+                last_read: None,
+                read_progress: None,
+                finished_at: None,
+                rating: None,
+            },
         );
         let token = c.encode();
         assert!(!token.contains("Batman"));

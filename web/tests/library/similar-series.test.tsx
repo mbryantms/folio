@@ -13,6 +13,9 @@ vi.mock("@/lib/api/queries", () => ({
   useOnDeck: () => ({ isLoading: false, data: { items: [] } }),
   useRecentIssues: () => ({ isLoading: false, data: { items: [] } }),
   useSimilarRailInfinite: (...args: unknown[]) => mockUseSimilarRail(...args),
+  useRecentHistory: () => ({ isLoading: false, data: { items: [] } }),
+  useRandomPicks: () => ({ isLoading: false, data: { items: [] } }),
+  useOnThisDay: () => ({ isLoading: false, data: { items: [] } }),
 }));
 vi.mock("@/lib/api/mutations", () => ({
   useDismissRailItem: () => ({ mutate: vi.fn() }),

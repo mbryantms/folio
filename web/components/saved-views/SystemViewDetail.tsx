@@ -15,18 +15,26 @@ import {
 } from "@/components/library/ProgressIssueCard";
 import { useCardSize } from "@/components/library/use-card-size";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
-import { SeriesCardSkeleton } from "@/components/library/SeriesCard";
+import {
+  SeriesCard,
+  SeriesCardSkeleton,
+} from "@/components/library/SeriesCard";
 import { SimilarSeriesCard } from "@/components/library/SimilarSeriesCard";
 import {
   useContinueReading,
   useIssuesCrossListInfinite,
   useOnDeck,
+  useOnThisDay,
+  useRandomPicks,
+  useRecentHistory,
   useSimilarRailInfinite,
 } from "@/lib/api/queries";
 import type {
   ContinueReadingCard,
+  IssueSummaryView,
   OnDeckCard as OnDeckCardData,
   SavedViewView,
+  SeriesView,
 } from "@/lib/api/types";
 import { seriesUrl } from "@/lib/urls";
 
@@ -54,9 +62,15 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
   const isOnDeck = view.system_key === "on_deck";
   const isNewIssues = view.system_key === "new_issues";
   const isSimilar = view.system_key === "similar_series";
+  const isRecentHistory = view.system_key === "recent_history";
+  const isRandomPicks = view.system_key === "random_picks";
+  const isOnThisDay = view.system_key === "on_this_day";
 
   const cr = useContinueReading({ enabled: isContinueReading });
   const od = useOnDeck({ enabled: isOnDeck });
+  const rh = useRecentHistory({ enabled: isRecentHistory });
+  const rp = useRandomPicks({ enabled: isRandomPicks });
+  const otd = useOnThisDay({ enabled: isOnThisDay });
   // Same key as the grid below — one cache entry, two subscribers.
   const ni = useIssuesCrossListInfinite(NEW_ISSUES_FILTERS, {
     enabled: isNewIssues,
@@ -81,7 +95,13 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
           (ni.data?.pages[0]?.total ?? null)
         : isSimilar
           ? (sim.data?.pages[0]?.total ?? null)
-          : null;
+          : isRecentHistory
+            ? (rh.data?.items.length ?? null)
+            : isRandomPicks
+              ? (rp.data?.items.length ?? null)
+              : isOnThisDay
+                ? (otd.data?.items.length ?? null)
+                : null;
 
   return (
     <div className="space-y-6">
@@ -156,6 +176,17 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
           <NewIssuesGrid />
         ) : isSimilar ? (
           <SimilarSeriesGrid />
+        ) : isRecentHistory ? (
+          <ContinueReadingGrid
+            loading={rh.isLoading}
+            data={rh.data}
+            emptyMessage="Nothing read yet. Issues you open (or finish) show up here, most recent first."
+            primaryAction="details"
+          />
+        ) : isRandomPicks ? (
+          <RandomPicksGrid loading={rp.isLoading} data={rp.data} />
+        ) : isOnThisDay ? (
+          <OnThisDayGrid loading={otd.isLoading} data={otd.data} />
         ) : null}
       </div>
     </div>
@@ -279,12 +310,86 @@ function SimilarSeriesGrid() {
   );
 }
 
-function ContinueReadingGrid({
+function RandomPicksGrid({
   loading,
   data,
 }: {
   loading: boolean;
+  data: { items: SeriesView[] } | undefined;
+}) {
+  if (loading) {
+    return (
+      <>
+        {Array.from({ length: 12 }).map((_, i) => (
+          <SeriesCardSkeleton key={i} />
+        ))}
+      </>
+    );
+  }
+  const items = data?.items ?? [];
+  if (items.length === 0) {
+    return (
+      <p className="text-muted-foreground col-span-full text-sm">
+        Nothing left to pick from — every series in your library has been
+        started.
+      </p>
+    );
+  }
+  return (
+    <>
+      {items.map((series) => (
+        <SeriesCard key={series.id} series={series} size="md" />
+      ))}
+    </>
+  );
+}
+
+function OnThisDayGrid({
+  loading,
+  data,
+}: {
+  loading: boolean;
+  data: { items: IssueSummaryView[] } | undefined;
+}) {
+  if (loading) {
+    return (
+      <>
+        {Array.from({ length: 12 }).map((_, i) => (
+          <IssueCardSkeleton key={i} />
+        ))}
+      </>
+    );
+  }
+  const items = data?.items ?? [];
+  if (items.length === 0) {
+    return (
+      <p className="text-muted-foreground col-span-full text-sm">
+        No issues in your library were released on today&apos;s date. Only
+        issues with a full release date (month and day) qualify.
+      </p>
+    );
+  }
+  return (
+    <>
+      {items.map((issue) => (
+        <IssueCard key={issue.id} issue={issue} />
+      ))}
+    </>
+  );
+}
+
+function ContinueReadingGrid({
+  loading,
+  data,
+  emptyMessage,
+  primaryAction,
+}: {
+  loading: boolean;
   data: { items: ContinueReadingCard[] } | undefined;
+  emptyMessage?: string;
+  primaryAction?: React.ComponentProps<
+    typeof ProgressIssueCard
+  >["primaryAction"];
 }) {
   if (loading) {
     return (
@@ -299,15 +404,19 @@ function ContinueReadingGrid({
   if (items.length === 0) {
     return (
       <p className="text-muted-foreground col-span-full text-sm">
-        Nothing in progress right now. Issues you start (and don&apos;t finish)
-        will appear here automatically.
+        {emptyMessage ??
+          "Nothing in progress right now. Issues you start (and don't finish) will appear here automatically."}
       </p>
     );
   }
   return (
     <>
       {items.map((card) => (
-        <ProgressIssueCard key={card.issue.id} card={card} />
+        <ProgressIssueCard
+          key={card.issue.id}
+          card={card}
+          primaryAction={primaryAction}
+        />
       ))}
     </>
   );

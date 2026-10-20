@@ -16,6 +16,10 @@ vi.mock("@/lib/api/queries", () => ({
   useContinueReading: () => ({ isLoading: false, data: { items: [] } }),
   useOnDeck: () => ({ isLoading: false, data: { items: [] } }),
   useRecentIssues: () => ({ isLoading: false, data: { items: [] } }),
+  useSimilarRailInfinite: () => ({ isLoading: false, data: undefined }),
+  useRecentHistory: () => ({ isLoading: false, data: { items: [] } }),
+  useRandomPicks: () => ({ isLoading: false, data: { items: [] } }),
+  useOnThisDay: () => ({ isLoading: false, data: { items: [] } }),
 }));
 
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";

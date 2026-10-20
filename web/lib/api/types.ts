@@ -104,6 +104,9 @@ export type ContinueReadingView = Schemas["ContinueReadingView"];
 export type OnDeckCard = Schemas["OnDeckCard"];
 export type OnDeckView = Schemas["OnDeckView"];
 export type RecentIssuesView = Schemas["RecentIssuesView"];
+export type RecentHistoryView = Schemas["RecentHistoryView"];
+export type RandomPicksView = Schemas["RandomPicksView"];
+export type OnThisDayView = Schemas["OnThisDayView"];
 export type SimilarReason = Schemas["SimilarReason"];
 export type SimilarReasonKind = Schemas["SimilarReasonKind"];
 export type SimilarSeriesItem = Schemas["SimilarSeriesItem"];
@@ -736,7 +739,11 @@ export type SavedViewSortField =
   | "created_at"
   | "updated_at"
   | "last_read"
-  | "read_progress";
+  | "read_progress"
+  | "finished_at"
+  | "rating"
+  | "page_count"
+  | "number";
 
 export type SavedViewKind =
   | "filter_series"

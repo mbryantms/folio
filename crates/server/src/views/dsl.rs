@@ -129,6 +129,47 @@ pub enum Field {
     /// a `favorite` marker or any marker with `is_favorite` set — the
     /// same union the /bookmarks "Favorites" chip shows.
     HasFavorites,
+    // ───── filter-parity-and-builtin-views-1.0 M1: finish timestamps ─────
+    /// When the caller finished the row: the issue's own
+    /// `progress_records.finished_at` on issue views, the most recent
+    /// finish across the series' active issues on series views. NULL
+    /// until something is finished (`is_empty`).
+    FinishedAt,
+    // ───── M4: junction-backed entities (both views) ─────
+    /// Story arcs by name (`issue_arcs` / `series_arcs` → `story_arc`).
+    StoryArcs,
+    /// Universes by name (`issue_universes` / `series_universes`).
+    Universes,
+    /// Concepts by name (`issue_concepts` / `series_concepts`).
+    Concepts,
+    /// Objects by name (`issue_objects` / `series_objects`).
+    Objects,
+    /// Any credit role: the person holds *some* credit on the row
+    /// (the grid's any-role `credits` facet).
+    AnyCredit,
+    // ───── M4: provider linkage + release date ─────
+    /// `matched` when the row has a provider id in `external_ids`
+    /// (the same source list the admin metadata dashboard counts),
+    /// `unmatched` otherwise.
+    ProviderMatch,
+    /// Release date: `(year, month, day)` composed into a date on
+    /// issue views (missing month / day fall back to 1); `year`-01-01
+    /// on series views. NULL when the year is unknown.
+    ReleaseDate,
+    // ───── M4: more scalar columns ─────
+    /// Series type (MetronInfo vocabulary: "Ongoing Series", "Limited
+    /// Series", "Annual Series", "Trade Paperback", …). Free text; the
+    /// parent series' value on issue views.
+    SeriesType,
+    /// ComicInfo `<SeriesGroup>`; the parent series' value on issue views.
+    SeriesGroup,
+    /// Last publication year of the series (`series.year_end`); the
+    /// parent series' value on issue views.
+    YearEnd,
+    /// `issues.page_count` (issue views only).
+    PageCount,
+    /// The row's own summary / description text.
+    Summary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
@@ -159,6 +200,10 @@ pub enum Op {
     /// Date relative to now: `value` is a positive integer count of days
     /// (e.g., `7` ≡ "in the last 7 days").
     Relative,
+    /// Negation of [`Op::Relative`]: strictly older than `value` days
+    /// ("not in the last N days"). NULL dates never match — combine
+    /// with `is_empty` under `any` to include never-read rows.
+    NotRelative,
     // multi
     IncludesAny,
     IncludesAll,
@@ -224,10 +269,22 @@ pub enum SortField {
     Year,
     CreatedAt,
     UpdatedAt,
-    /// Per-user; views sorted by this trigger the reading-state join.
+    /// Per-user; series views sorted by this trigger the reading-state
+    /// join; issue views join the caller's `progress_records` row.
     LastRead,
-    /// Per-user.
+    /// Per-user (series rollup percent / the issue's own percent).
     ReadProgress,
+    /// Per-user finish timestamp (filter-parity-and-builtin-views-1.0):
+    /// the caller's `progress_records.finished_at` on issue views, the
+    /// latest finish across the series on series views. Unfinished rows
+    /// sort last on `desc`.
+    FinishedAt,
+    /// Per-user star rating; unrated rows sort last on `desc`.
+    Rating,
+    /// `issues.page_count` (issue views only).
+    PageCount,
+    /// `issues.sort_number` (issue views only).
+    Number,
 }
 
 impl SortField {
@@ -239,6 +296,10 @@ impl SortField {
             SortField::UpdatedAt => "updated_at",
             SortField::LastRead => "last_read",
             SortField::ReadProgress => "read_progress",
+            SortField::FinishedAt => "finished_at",
+            SortField::Rating => "rating",
+            SortField::PageCount => "page_count",
+            SortField::Number => "number",
         }
     }
 
@@ -251,6 +312,10 @@ impl SortField {
             "updated_at" => SortField::UpdatedAt,
             "last_read" => SortField::LastRead,
             "read_progress" => SortField::ReadProgress,
+            "finished_at" => SortField::FinishedAt,
+            "rating" => SortField::Rating,
+            "page_count" => SortField::PageCount,
+            "number" => SortField::Number,
             _ => return None,
         })
     }

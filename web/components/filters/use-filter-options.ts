@@ -27,7 +27,13 @@ function endpointKey(endpoint: OptionsEndpoint): string {
     case "characters":
     case "teams":
     case "locations":
+    case "story_arcs":
+    case "universes":
+    case "concepts":
+    case "objects":
       return endpoint.kind;
+    case "any_credit":
+      return "credits";
     case "credits":
       return `credits/${endpoint.role}`;
     case "libraries":
@@ -53,6 +59,16 @@ function endpointPath(endpoint: OptionsEndpoint, qs: string): string {
       return `/filter-options/teams${qs}`;
     case "locations":
       return `/filter-options/locations${qs}`;
+    case "story_arcs":
+      return `/filter-options/story_arcs${qs}`;
+    case "universes":
+      return `/filter-options/universes${qs}`;
+    case "concepts":
+      return `/filter-options/concepts${qs}`;
+    case "objects":
+      return `/filter-options/objects${qs}`;
+    case "any_credit":
+      return `/filter-options/credits${qs}`;
     case "credits":
       return `/filter-options/credits/${encodeURIComponent(endpoint.role)}${qs}`;
     case "libraries":

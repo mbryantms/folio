@@ -19,6 +19,9 @@ vi.mock("@/lib/api/queries", () => ({
   useOnDeck: () => failed(),
   useRecentIssues: () => failed(),
   useSimilarRailInfinite: () => failed(),
+  useRecentHistory: () => failed(),
+  useRandomPicks: () => failed(),
+  useOnThisDay: () => failed(),
 }));
 vi.mock("@/components/library/ProgressIssueCard", () => ({
   ProgressIssueCard: () => null,

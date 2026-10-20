@@ -3980,6 +3980,75 @@
         }
       }
     },
+    "/api/filter-options/concepts": {
+      "get": {
+        "operationId": "filter_options_concepts",
+        "parameters": [
+          {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_String"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/filter-options/credits": {
+      "get": {
+        "summary": "Any-role credits (filter-parity-and-builtin-views-1.0 M4): every\ncredited person regardless of role, for the `any_credit` field.",
+        "operationId": "filter_options_credits_any",
+        "parameters": [
+          {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_String"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/filter-options/credits/{role}": {
       "get": {
         "operationId": "filter_options_credits",
@@ -4127,9 +4196,77 @@
         }
       }
     },
+    "/api/filter-options/objects": {
+      "get": {
+        "operationId": "filter_options_objects",
+        "parameters": [
+          {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_String"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/filter-options/publishers": {
       "get": {
         "operationId": "filter_options_publishers",
+        "parameters": [
+          {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_String"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/filter-options/story_arcs": {
+      "get": {
+        "operationId": "filter_options_story_arcs",
         "parameters": [
           {
             "name": "library",
@@ -4198,6 +4335,40 @@
     "/api/filter-options/teams": {
       "get": {
         "operationId": "filter_options_teams",
+        "parameters": [
+          {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_String"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/filter-options/universes": {
+      "get": {
+        "operationId": "filter_options_universes",
         "parameters": [
           {
             "name": "library",
@@ -7475,6 +7646,54 @@
         }
       }
     },
+    "/api/me/on-this-day": {
+      "get": {
+        "summary": "Issues released on this calendar day in any year (`issues.month` /\n`issues.day`), oldest first. Only issues with a full release date\nqualify, so libraries tagged with years alone leave the rail empty\n(it hides itself). The client passes its local `month` / `day`;\nabsent, the server's UTC date applies.",
+        "operationId": "rails_on_this_day",
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "day",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnThisDayView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "bad date"
+          }
+        }
+      }
+    },
     "/api/me/pages": {
       "get": {
         "operationId": "pages_list",
@@ -7743,6 +7962,23 @@
         ],
         "responses": {
           "204": {}
+        }
+      }
+    },
+    "/api/me/random-picks": {
+      "get": {
+        "summary": "A daily shuffle of series the caller hasn't started (no progress row\non any issue), with at least one active issue, that they can see and\nhaven't dismissed. The order is `md5(series.id || seed)` with a\nper-user, per-UTC-day seed, so the rail is stable for a day and\ndifferent for every user. Dismissals (`series` kind) simply hide a\nseries — there is no activity to auto-restore on.",
+        "operationId": "rails_random_picks",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RandomPicksView"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -8106,6 +8342,23 @@
           },
           "400": {
             "description": "validation error"
+          }
+        }
+      }
+    },
+    "/api/me/recent-history": {
+      "get": {
+        "summary": "Everything the caller touched recently — in progress *or* finished —\nmost recent activity first. Bulk mark-read backfills are excluded\n(`is_backfill`) so marking a 200-issue run read doesn't bury the\nissues actually read. Dismissals follow the Continue-reading rule.",
+        "operationId": "rails_recent_history",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecentHistoryView"
+                }
+              }
+            }
           }
         }
       }
@@ -22126,7 +22379,20 @@
           "has_notes",
           "has_bookmarks",
           "has_highlights",
-          "has_favorites"
+          "has_favorites",
+          "finished_at",
+          "story_arcs",
+          "universes",
+          "concepts",
+          "objects",
+          "any_credit",
+          "provider_match",
+          "release_date",
+          "series_type",
+          "series_group",
+          "year_end",
+          "page_count",
+          "summary"
         ]
       },
       "FieldCount": {
@@ -26349,6 +26615,33 @@
           }
         }
       },
+      "OnThisDayView": {
+        "type": "object",
+        "description": "On-this-day rail: issues released on this calendar day (any year),\noldest first.",
+        "required": [
+          "month",
+          "day",
+          "items"
+        ],
+        "properties": {
+          "day": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueSummaryView"
+            }
+          },
+          "month": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "Op": {
         "type": "string",
         "enum": [
@@ -26369,6 +26662,7 @@
           "before",
           "after",
           "relative",
+          "not_relative",
           "includes_any",
           "includes_all",
           "excludes",
@@ -28023,6 +28317,25 @@
           }
         }
       },
+      "RandomPicksView": {
+        "type": "object",
+        "description": "Random-picks rail: a daily shuffle of series the caller hasn't\nstarted. `seed_date` is the UTC day the order is stable for.",
+        "required": [
+          "seed_date",
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesView"
+            }
+          },
+          "seed_date": {
+            "type": "string"
+          }
+        }
+      },
       "RatingView": {
         "type": "object",
         "description": "Response shape — mirrors what the GET endpoints inline so callers don't\nneed to refetch to refresh local state.",
@@ -28439,6 +28752,21 @@
           },
           "trigger_kind": {
             "type": "string"
+          }
+        }
+      },
+      "RecentHistoryView": {
+        "type": "object",
+        "description": "Recent-history rail (filter-parity-and-builtin-views-1.0 M6): every\nissue the caller touched recently, finished or not — the reading log\nas a rail. Same card as Continue reading.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContinueReadingCard"
+            }
           }
         }
       },
@@ -32575,7 +32903,11 @@
           "created_at",
           "updated_at",
           "last_read",
-          "read_progress"
+          "read_progress",
+          "finished_at",
+          "rating",
+          "page_count",
+          "number"
         ]
       },
       "SortOrder": {

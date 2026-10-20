@@ -76,6 +76,9 @@ import type {
   PageListView,
   PreviewReq,
   RecentIssuesView,
+  RecentHistoryView,
+  RandomPicksView,
+  OnThisDayView,
   SimilarSeriesListView,
   SimilarSeriesRailView,
   RefreshLogListView,
@@ -316,6 +319,13 @@ export type IssuesCrossListFilters = {
    *  it as a correlated subquery over the caller's progress; all-three or
    *  empty is a no-op. */
   read_status?: string;
+  /** Any-role credits CSV (filter-parity-and-builtin-views-1.0 M2). */
+  credits?: string;
+  /** Per-issue metadata tier: `needs_metadata` | `complete` (binary per
+   *  issue; `partial` is a series-only rollup and 422s here). */
+  metadata_completeness?: string;
+  provider_match?: string;
+  provider_source?: string;
 };
 
 // `queryKeys` now lives in ./query-keys (imported above). Re-export it
@@ -2382,6 +2392,44 @@ export function useRecentIssues(opts?: { enabled?: boolean }) {
     queryFn: () => jsonFetch<RecentIssuesView>("/me/recent-issues"),
     enabled: opts?.enabled ?? true,
     staleTime: 60_000,
+  });
+}
+
+/** Everything the user touched recently, finished or not — the reading
+ *  log as a rail (`/me/recent-history`). Same card as Continue reading;
+ *  invalidated with it. */
+export function useRecentHistory(opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.recentHistory,
+    queryFn: () => jsonFetch<RecentHistoryView>("/me/recent-history"),
+    enabled: opts?.enabled ?? true,
+  });
+}
+
+/** A daily shuffle of unstarted series (`/me/random-picks`). The server
+ *  seeds the order per user per UTC day, so refetches within a day return
+ *  the same picks. */
+export function useRandomPicks(opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.randomPicks,
+    queryFn: () => jsonFetch<RandomPicksView>("/me/random-picks"),
+    enabled: opts?.enabled ?? true,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** Issues released on the viewer's local calendar day, any year
+ *  (`/me/on-this-day?month=&day=`). */
+export function useOnThisDay(opts?: { enabled?: boolean }) {
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const day = now.getDate();
+  return useQuery({
+    queryKey: queryKeys.onThisDay(month, day),
+    queryFn: () =>
+      jsonFetch<OnThisDayView>(`/me/on-this-day${buildQuery({ month, day })}`),
+    enabled: opts?.enabled ?? true,
+    staleTime: 60 * 60_000,
   });
 }
 

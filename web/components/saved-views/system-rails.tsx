@@ -11,13 +11,19 @@ import {
   ProgressIssueCard,
   ProgressIssueCardSkeleton,
 } from "@/components/library/ProgressIssueCard";
-import { SeriesCardSkeleton } from "@/components/library/SeriesCard";
+import {
+  SeriesCard,
+  SeriesCardSkeleton,
+} from "@/components/library/SeriesCard";
 import { SimilarSeriesCard } from "@/components/library/SimilarSeriesCard";
 import { RailError } from "@/components/saved-views/RailError";
 import type { OnDeckCard as OnDeckCardData } from "@/lib/api/types";
 import {
   useContinueReading,
   useOnDeck,
+  useOnThisDay,
+  useRandomPicks,
+  useRecentHistory,
   useRecentIssues,
   useSimilarRailInfinite,
 } from "@/lib/api/queries";
@@ -185,6 +191,120 @@ export function SimilarSeriesRailBody({
   );
 }
 
+/**
+ * Recently-read rail body (filter-parity-and-builtin-views-1.0 M6): every
+ * issue with recent progress, finished or not — the reading log as a
+ * rail. Same progress card as Continue reading; the tap opens the issue
+ * page rather than the reader since many entries are already finished.
+ */
+export function RecentHistoryRailBody({
+  itemStyle,
+}: {
+  itemStyle: React.CSSProperties;
+}) {
+  const q = useRecentHistory();
+  if (q.isLoading) {
+    return (
+      <>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} style={itemStyle} className="shrink-0">
+            <ProgressIssueCardSkeleton />
+          </div>
+        ))}
+      </>
+    );
+  }
+  if (q.isError && !q.data) {
+    return <RailError onRetry={() => void q.refetch()} />;
+  }
+  const items = q.data?.items ?? [];
+  if (items.length === 0) return null;
+  return (
+    <>
+      {items.map((card) => (
+        <div key={card.issue.id} style={itemStyle} className="shrink-0">
+          <ProgressIssueCard card={card} />
+        </div>
+      ))}
+    </>
+  );
+}
+
+/**
+ * Random-picks rail body: a per-user daily shuffle of unstarted series.
+ * Plain series cards; the order is stable for the day (server seed).
+ */
+export function RandomPicksRailBody({
+  itemStyle,
+}: {
+  itemStyle: React.CSSProperties;
+}) {
+  const q = useRandomPicks();
+  if (q.isLoading) {
+    return (
+      <>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} style={itemStyle} className="shrink-0">
+            <SeriesCardSkeleton size="md" />
+          </div>
+        ))}
+      </>
+    );
+  }
+  if (q.isError && !q.data) {
+    return <RailError onRetry={() => void q.refetch()} />;
+  }
+  const items = q.data?.items ?? [];
+  if (items.length === 0) return null;
+  return (
+    <>
+      {items.map((series) => (
+        <div key={series.id} style={itemStyle} className="shrink-0">
+          <SeriesCard series={series} size="md" />
+        </div>
+      ))}
+    </>
+  );
+}
+
+/**
+ * On-this-day rail body: issues released on the viewer's local calendar
+ * day in any year, oldest first. Hidden when the library carries no
+ * full release dates for today.
+ */
+export function OnThisDayRailBody({
+  itemStyle,
+}: {
+  itemStyle: React.CSSProperties;
+}) {
+  const q = useOnThisDay();
+  if (q.isLoading) {
+    return (
+      <>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} style={itemStyle} className="shrink-0">
+            <IssueCardSkeleton />
+          </div>
+        ))}
+      </>
+    );
+  }
+  if (q.isError && !q.data) {
+    return <RailError onRetry={() => void q.refetch()} />;
+  }
+  const items = q.data?.items ?? [];
+  if (items.length === 0) return null;
+  return (
+    <>
+      {items.map((issue) => (
+        <div key={issue.id} style={itemStyle} className="shrink-0">
+          <IssueCard issue={issue} />
+        </div>
+      ))}
+    </>
+  );
+}
+
 /** "Because you read <seed>" — shown beside the similar rail's title.
  *  Shares the rail body's query cache entry. */
 export function SimilarRailSeedNote() {
@@ -227,6 +347,9 @@ export function useSystemRailIsEmpty(systemKey: string): boolean {
   const sim = useSimilarRailInfinite({
     enabled: systemKey === "similar_series",
   });
+  const rh = useRecentHistory({ enabled: systemKey === "recent_history" });
+  const rp = useRandomPicks({ enabled: systemKey === "random_picks" });
+  const otd = useOnThisDay({ enabled: systemKey === "on_this_day" });
   // An errored query with nothing cached is NOT empty — the rail stays
   // mounted so its body can show the retry state (post-audit T2.4).
   if (systemKey === "continue_reading") {
@@ -243,6 +366,17 @@ export function useSystemRailIsEmpty(systemKey: string): boolean {
       !sim.isLoading &&
       !sim.isError &&
       (sim.data?.pages[0]?.items.length ?? 0) === 0
+    );
+  }
+  if (systemKey === "recent_history") {
+    return !rh.isLoading && !rh.isError && (rh.data?.items.length ?? 0) === 0;
+  }
+  if (systemKey === "random_picks") {
+    return !rp.isLoading && !rp.isError && (rp.data?.items.length ?? 0) === 0;
+  }
+  if (systemKey === "on_this_day") {
+    return (
+      !otd.isLoading && !otd.isError && (otd.data?.items.length ?? 0) === 0
     );
   }
   return false;

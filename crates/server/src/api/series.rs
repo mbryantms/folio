@@ -1519,9 +1519,9 @@ pub struct ListSeriesQuery {
 /// list the admin metadata dashboard counts (`admin_metadata`).
 pub(crate) const PROVIDER_SERIES_ID_SOURCES_SQL: &str =
     "'comicvine','metron','gcd','marvel','locg'";
-const PROVIDER_MATCH_VALUES: &[&str] = &["matched", "unmatched"];
+pub(crate) const PROVIDER_MATCH_VALUES: &[&str] = &["matched", "unmatched"];
 /// `provider_source` values: the providers the dashboard counts, one at a time.
-const PROVIDER_SOURCE_VALUES: &[&str] = &["comicvine", "metron", "gcd"];
+pub(crate) const PROVIDER_SOURCE_VALUES: &[&str] = &["comicvine", "metron", "gcd"];
 
 const VALID_STATUSES: &[&str] = &["continuing", "ended", "cancelled", "hiatus"];
 pub(crate) const READ_STATUSES: &[&str] = &["unread", "in_progress", "read"];

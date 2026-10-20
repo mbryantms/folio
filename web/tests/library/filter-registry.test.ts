@@ -4,6 +4,7 @@ import {
   FIELD_SPECS,
   OP_LABELS,
   entityForKind,
+  enumValuesFor,
   fieldLabel,
   fieldsFor,
   kindForEntity,
@@ -55,6 +56,20 @@ const ALL_FIELDS: Field[] = [
   "has_bookmarks",
   "has_highlights",
   "has_favorites",
+  // filter-parity-and-builtin-views-1.0
+  "finished_at",
+  "story_arcs",
+  "universes",
+  "concepts",
+  "objects",
+  "any_credit",
+  "provider_match",
+  "release_date",
+  "series_type",
+  "series_group",
+  "year_end",
+  "page_count",
+  "summary",
 ];
 
 const ALL_OPS: Op[] = [
@@ -75,6 +90,7 @@ const ALL_OPS: Op[] = [
   "before",
   "after",
   "relative",
+  "not_relative",
   "includes_any",
   "includes_all",
   "excludes",
@@ -138,18 +154,59 @@ describe("filter field registry", () => {
 
   it("series rollups are hidden from issue views", () => {
     const issue = fieldsFor("issue").map((s) => s.id);
-    for (const f of [
-      "read_progress",
-      "last_read",
-      "read_count",
-      "unread_issues",
-      "collection_completeness",
-      "metadata_completeness",
-    ] as Field[]) {
+    for (const f of ["unread_issues", "collection_completeness"] as Field[]) {
       expect(issue).not.toContain(f);
     }
     expect(issue).toContain("read_status");
     expect(issue).toContain("rating");
+  });
+
+  // filter-parity-and-builtin-views-1.0 M1: the per-user reading fields
+  // are on both entities; `page_count` is the only new issue-only field.
+  it("reading fields are offered on both entities; page_count is issue-only", () => {
+    const series = fieldsFor("series").map((s) => s.id);
+    const issue = fieldsFor("issue").map((s) => s.id);
+    for (const f of [
+      "read_progress",
+      "last_read",
+      "read_count",
+      "finished_at",
+      "metadata_completeness",
+      "story_arcs",
+      "provider_match",
+      "release_date",
+      "any_credit",
+    ] as Field[]) {
+      expect(series).toContain(f);
+      expect(issue).toContain(f);
+    }
+    expect(issue).toContain("page_count");
+    expect(series).not.toContain("page_count");
+  });
+
+  it("metadata completeness drops the series-only `partial` tier on issue views", () => {
+    const spec = specFor("metadata_completeness");
+    expect(enumValuesFor(spec, "series")).toContain("partial");
+    expect(enumValuesFor(spec, "issue")).toEqual([
+      "complete",
+      "needs_metadata",
+    ]);
+    // Fields without an override fall back to the shared list.
+    expect(enumValuesFor(specFor("read_status"), "issue")).toEqual(
+      enumValuesFor(specFor("read_status"), "series"),
+    );
+  });
+
+  it("date fields offer `not_relative` (older than N days)", () => {
+    for (const f of [
+      "last_read",
+      "finished_at",
+      "created_at",
+      "release_date",
+    ] as Field[]) {
+      expect(specFor(f).allowedOps).toContain("not_relative");
+    }
+    expect(OP_LABELS.not_relative).toBe("not in last");
   });
 
   it("is_empty is offered on nullable fields but not on computed ones", () => {
@@ -184,7 +241,7 @@ describe("filter field registry", () => {
     expect(fieldLabel(specFor("name"), "series")).toBe("Name");
   });
 
-  it("switching the builder to issues drops series-only conditions + sorts", () => {
+  it("switching the builder to issues drops series-only conditions and keeps shared sorts", () => {
     const next = switchEntity(
       {
         name: "x",
@@ -203,6 +260,30 @@ describe("filter field registry", () => {
     );
     expect(next.entity).toBe("issue");
     expect(next.conditions.map((c) => c.field)).toEqual(["year"]);
+    // `read_progress` sorts issue views too since
+    // filter-parity-and-builtin-views-1.0 M1.
+    expect(next.sortField).toBe("read_progress");
+  });
+
+  it("switching the builder to series drops issue-only conditions + sorts", () => {
+    const next = switchEntity(
+      {
+        name: "x",
+        description: "",
+        entity: "issue",
+        matchMode: "all",
+        conditions: [
+          { field: "page_count", op: "lte", value: 24 },
+          { field: "finished_at", op: "relative", value: 7 },
+        ],
+        sortField: "page_count",
+        sortOrder: "asc",
+        resultLimit: 12,
+      },
+      "series",
+    );
+    expect(next.entity).toBe("series");
+    expect(next.conditions.map((c) => c.field)).toEqual(["finished_at"]);
     expect(next.sortField).toBe("created_at");
   });
 });

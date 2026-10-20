@@ -62,7 +62,7 @@ pub const KIND_COLLECTION: &str = "collection";
 /// on first GET in M2).
 pub const SYSTEM_KEY_WANT_TO_READ: &str = "want_to_read";
 
-/// Explicit top-down order for the five `auto_pin` system rails on a
+/// Explicit top-down order for the six `auto_pin` system rails on a
 /// fresh user's home page. Earlier in the slice = higher on the home
 /// page. Anything `auto_pin = true` but not listed here lands after
 /// these, ordered by `created_at` (so future system rails still seed
@@ -76,6 +76,7 @@ pub const DEFAULT_HOME_PIN_ORDER: &[&str] = &[
     "00000000-0000-0000-0000-000000000012", // New issues       (m20270122)
     "00000000-0000-0000-0000-000000000001", // Recently added series  (m20261205)
     "00000000-0000-0000-0000-000000000002", // Recently updated series (m20261205)
+    "00000000-0000-0000-0000-000000000020", // Recently finished (issues, m20271020)
 ];
 
 /// The DSL root a filter-view kind compiles against; `None` for non-filter
@@ -2050,9 +2051,33 @@ struct IssueViewRow {
     updated_at: chrono::DateTime<chrono::FixedOffset>,
     series_slug: String,
     series_name: String,
+    // Per-user sort keys (filter-parity-and-builtin-views-1.0 M1) —
+    // NULL unless the view sorts by them; see `compile_issues`.
+    sort_last_read: Option<chrono::DateTime<chrono::FixedOffset>>,
+    sort_read_progress: Option<f64>,
+    sort_finished_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    sort_rating: Option<f64>,
 }
 
 impl IssueViewRow {
+    fn cursor_row(&self) -> compile::IssueCursorRow<'_> {
+        compile::IssueCursorRow {
+            id: &self.id,
+            series_name: &self.series_name,
+            sort_number: self.sort_number,
+            year: self.year,
+            month: self.month,
+            day: self.day,
+            page_count: self.page_count,
+            created_at: &self.created_at,
+            updated_at: &self.updated_at,
+            last_read: self.sort_last_read,
+            read_progress: self.sort_read_progress,
+            finished_at: self.sort_finished_at,
+            rating: self.sort_rating,
+        }
+    }
+
     fn into_summary_view(self) -> IssueSummaryView {
         // `state` is pinned 'active' by the compiler's WHERE.
         let cover_url =
@@ -2147,20 +2172,8 @@ async fn run_issue_filter_query(
     // last row actually returned, so nothing is skipped or repeated.
     let next_cursor = if rows.len() as u64 > input.limit {
         rows.pop();
-        rows.last().map(|r| {
-            compile::IssueCursor::for_row(
-                input.sort_field,
-                &r.id,
-                &r.series_name,
-                r.sort_number,
-                r.year,
-                r.month,
-                r.day,
-                &r.created_at,
-                &r.updated_at,
-            )
-            .encode()
-        })
+        rows.last()
+            .map(|r| compile::IssueCursor::for_row(input.sort_field, &r.cursor_row()).encode())
     } else {
         None
     };
@@ -2199,31 +2212,44 @@ async fn run_filter_query(app: &AppState, input: CompileInput<'_>) -> axum::resp
     let backend = app.db.get_database_backend();
     let (sql, values) = stmt.build(PostgresQueryBuilder);
     let raw = Statement::from_sql_and_values(backend, sql, values);
-    let rows = match entity::series::Model::find_by_statement(raw)
-        .all(&app.db)
-        .await
-    {
+    // The compiler projects the sort key as text (`sort_value`) next to
+    // the full series row, so the cursor is a real keyset for every sort
+    // (including per-user ones that aren't `series` columns).
+    let rows = match app.db.query_all_raw(raw).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "saved_views: query failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+    let parsed: Result<Vec<(entity::series::Model, String)>, sea_orm::DbErr> = rows
+        .iter()
+        .map(|row| {
+            let model = entity::series::Model::from_query_result(row, "")?;
+            let sort_value: Option<String> = row.try_get("", "sort_value")?;
+            Ok((model, sort_value.unwrap_or_default()))
+        })
+        .collect();
+    let mut rows = match parsed {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "saved_views: row decode failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
 
     let limit = input.limit;
-    let mut rows = rows;
     // Drop the lookahead row, then cursor from the last KEPT row —
     // `apply_cursor` filters strictly after the cursor, so cursoring from
     // the lookahead would skip it.
     let next_cursor = if rows.len() as u64 > limit {
         rows.pop();
-        rows.last().map(|r| {
-            let value = sort_value_for(r, input.sort_field);
-            encode_cursor(&value, &r.id.to_string())
-        })
+        rows.last()
+            .map(|(r, sort_value)| encode_cursor(sort_value, &r.id.to_string()))
     } else {
         None
     };
+    let rows: Vec<entity::series::Model> = rows.into_iter().map(|(m, _)| m).collect();
 
     // hydrate_series attaches `issue_count` + `cover_url`. Skipping it
     // — as we did originally — was the M7 home page's empty-cover bug.
@@ -2354,19 +2380,6 @@ pub async fn resolve_metadata_batch_targets(
             "unsupported_view_kind",
             "metadata batch supports filter and cbl views only",
         )),
-    }
-}
-
-fn sort_value_for(row: &entity::series::Model, field: SortField) -> String {
-    match field {
-        SortField::Name => row.name.clone(),
-        SortField::Year => row.year.map(|y| y.to_string()).unwrap_or_default(),
-        SortField::CreatedAt => row.created_at.to_rfc3339(),
-        SortField::UpdatedAt => row.updated_at.to_rfc3339(),
-        // Reading-state sorts: cursor uses id-only fallback (sort_value
-        // empty); the compiler's id tiebreaker keeps page boundaries
-        // stable.
-        SortField::LastRead | SortField::ReadProgress => String::new(),
     }
 }
 

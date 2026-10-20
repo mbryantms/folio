@@ -28,7 +28,7 @@ use entity::{
     series::{ActiveModel as SeriesAM, normalize_name},
     user::Entity as UserEntity,
 };
-use sea_orm::{ActiveModelTrait, Database, EntityTrait, Set, Unchanged};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, Database, EntityTrait, Set, Unchanged};
 use serde_json::json;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -2213,4 +2213,215 @@ async fn on_deck_acl_filters_before_the_limit() {
         got, want,
         "every visible series' next issue, none of the hidden ones"
     );
+}
+
+// ───── filter-parity-and-builtin-views-1.0 M6 rails ─────
+
+async fn set_backfill(app: &TestApp, user_id: Uuid, issue_id: &str) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    db.execute_raw(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DbBackend::Postgres,
+        "UPDATE progress_records SET is_backfill = true WHERE user_id = $1 AND issue_id = $2",
+        [user_id.into(), issue_id.to_owned().into()],
+    ))
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn recent_history_lists_finished_and_in_progress_but_not_backfills() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-hist@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+    let (lib_a, _, finished) = seed_one_issue(&app, "hist-a").await;
+    let (lib_b, _, started) = seed_one_issue(&app, "hist-b").await;
+    let (lib_c, _, backfilled) = seed_one_issue(&app, "hist-c").await;
+    for lib in [lib_a, lib_b, lib_c] {
+        grant_access(&app, user.user_id, lib).await;
+    }
+    let t0 = Utc::now().fixed_offset();
+    write_progress(
+        &app,
+        user.user_id,
+        &finished,
+        19,
+        true,
+        t0 - chrono::Duration::minutes(2),
+    )
+    .await;
+    write_progress(
+        &app,
+        user.user_id,
+        &started,
+        4,
+        false,
+        t0 - chrono::Duration::minutes(1),
+    )
+    .await;
+    write_progress(&app, user.user_id, &backfilled, 19, true, t0).await;
+    set_backfill(&app, user.user_id, &backfilled).await;
+
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/recent-history",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ids: Vec<&str> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["issue"]["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec![started.as_str(), finished.as_str()], "{body}");
+    assert_eq!(body["items"][1]["progress"]["last_page"], 19);
+
+    // Continue reading stays in-progress-only.
+    let (_, cr) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(cr["items"].as_array().unwrap().len(), 1);
+    assert_eq!(cr["items"][0]["issue"]["id"], started);
+}
+
+#[tokio::test]
+async fn random_picks_shuffles_unstarted_series_stably_and_honours_dismissals() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-rand@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+    let (lib_a, series_a, issue_a) = seed_one_issue(&app, "rand-a").await;
+    let (lib_b, series_b, _) = seed_one_issue(&app, "rand-b").await;
+    let (_lib_c, series_c, _) = seed_one_issue(&app, "rand-c").await; // invisible
+    grant_access(&app, user.user_id, lib_a).await;
+    grant_access(&app, user.user_id, lib_b).await;
+
+    let picks = |user: &Authed| {
+        let app = &app;
+        let user = Authed {
+            session: user.session.clone(),
+            csrf: user.csrf.clone(),
+            user_id: user.user_id,
+        };
+        async move {
+            let (status, body) =
+                http(app, Method::GET, "/api/me/random-picks", Some(&user), None).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert!(body["seed_date"].is_string());
+            body["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["id"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        }
+    };
+    let first = picks(&user).await;
+    let mut sorted = first.clone();
+    sorted.sort();
+    let mut expected = vec![series_a.to_string(), series_b.to_string()];
+    expected.sort();
+    assert_eq!(sorted, expected, "both visible, unstarted series");
+    assert!(!first.contains(&series_c.to_string()), "ACL applies");
+    assert_eq!(picks(&user).await, first, "order is stable within the day");
+
+    // Starting a series drops it; dismissing hides the other.
+    write_progress(
+        &app,
+        user.user_id,
+        &issue_a,
+        3,
+        false,
+        Utc::now().fixed_offset(),
+    )
+    .await;
+    assert_eq!(picks(&user).await, vec![series_b.to_string()]);
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        "/api/me/rail-dismissals",
+        Some(&user),
+        Some(json!({"target_kind": "series", "target_id": series_b.to_string()})),
+    )
+    .await;
+    assert!(status.is_success(), "{status}");
+    assert!(picks(&user).await.is_empty());
+}
+
+#[tokio::test]
+async fn on_this_day_matches_month_and_day_in_any_year() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-otd@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+    let (lib_id, _series_id, issue_id) = seed_one_issue(&app, "otd").await;
+    grant_access(&app, user.user_id, lib_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    db.execute_raw(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DbBackend::Postgres,
+        "UPDATE issues SET year = 1986, month = 7, day = 4 WHERE id = $1",
+        [issue_id.clone().into()],
+    ))
+    .await
+    .unwrap();
+
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/on-this-day?month=7&day=4",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["month"], 7);
+    assert_eq!(body["day"], 4);
+    assert_eq!(body["items"].as_array().unwrap().len(), 1);
+    assert_eq!(body["items"][0]["id"], issue_id);
+    assert_eq!(body["items"][0]["year"], 1986);
+
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/on-this-day?month=7&day=5",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(body["items"].as_array().unwrap().len(), 0);
+
+    let (status, _) = http(
+        &app,
+        Method::GET,
+        "/api/me/on-this-day?month=13&day=1",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn wave2_system_rails_are_seeded_opt_in() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-wave2@example.com").await;
+    let (status, body) = http(&app, Method::GET, "/api/me/saved-views", Some(&user), None).await;
+    assert_eq!(status, StatusCode::OK);
+    for key in ["random_picks", "on_this_day", "recent_history"] {
+        let row = body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["system_key"] == key)
+            .unwrap_or_else(|| panic!("{key} seeded"));
+        assert_eq!(row["kind"], "system");
+        assert_eq!(row["is_system"], true);
+        assert_eq!(row["pinned"], false, "{key} is opt-in");
+    }
 }

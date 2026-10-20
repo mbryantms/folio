@@ -1922,6 +1922,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/filter-options/concepts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["filter_options_concepts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/filter-options/credits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Any-role credits (filter-parity-and-builtin-views-1.0 M4): every
+         *     credited person regardless of role, for the `any_credit` field.
+         */
+        get: operations["filter_options_credits_any"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/filter-options/credits/{role}": {
         parameters: {
             query?: never;
@@ -1986,6 +2022,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/filter-options/objects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["filter_options_objects"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/filter-options/publishers": {
         parameters: {
             query?: never;
@@ -1994,6 +2046,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["filter_options_publishers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/filter-options/story_arcs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["filter_options_story_arcs"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2026,6 +2094,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["filter_options_teams"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/filter-options/universes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["filter_options_universes"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3469,6 +3553,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/on-this-day": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Issues released on this calendar day in any year (`issues.month` /
+         *     `issues.day`), oldest first. Only issues with a full release date
+         *     qualify, so libraries tagged with years alone leave the rail empty
+         *     (it hides itself). The client passes its local `month` / `day`;
+         *     absent, the server's UTC date applies.
+         */
+        get: operations["rails_on_this_day"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/pages": {
         parameters: {
             query?: never;
@@ -3618,6 +3725,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/random-picks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A daily shuffle of series the caller hasn't started (no progress row
+         *     on any issue), with at least one active issue, that they can see and
+         *     haven't dismissed. The order is `md5(series.id || seed)` with a
+         *     per-user, per-UTC-day seed, so the rail is stable for a day and
+         *     different for every user. Dismissals (`series` kind) simply hide a
+         *     series — there is no activity to auto-restore on.
+         */
+        get: operations["rails_random_picks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/reading-log": {
         parameters: {
             query?: never;
@@ -3730,6 +3861,28 @@ export interface paths {
             cookie?: never;
         };
         get: operations["reading_sessions_stats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/recent-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Everything the caller touched recently — in progress *or* finished —
+         *     most recent activity first. Bulk mark-read backfills are excluded
+         *     (`is_backfill`) so marking a 200-issue run read doesn't bury the
+         *     issues actually read. Dismissals follow the Continue-reading rule.
+         */
+        get: operations["rails_recent_history"];
         put?: never;
         post?: never;
         delete?: never;
@@ -9274,7 +9427,7 @@ export interface components {
          *     JSON constant.
          * @enum {string}
          */
-        Field: "library" | "name" | "year" | "volume" | "total_issues" | "publisher" | "imprint" | "status" | "age_rating" | "language_code" | "created_at" | "updated_at" | "genres" | "tags" | "writer" | "penciller" | "inker" | "colorist" | "letterer" | "cover_artist" | "editor" | "translator" | "characters" | "teams" | "locations" | "read_progress" | "last_read" | "read_count" | "read_status" | "unread_issues" | "collection_completeness" | "metadata_completeness" | "special_type" | "format" | "story_arc" | "title" | "rating" | "has_notes" | "has_bookmarks" | "has_highlights" | "has_favorites";
+        Field: "library" | "name" | "year" | "volume" | "total_issues" | "publisher" | "imprint" | "status" | "age_rating" | "language_code" | "created_at" | "updated_at" | "genres" | "tags" | "writer" | "penciller" | "inker" | "colorist" | "letterer" | "cover_artist" | "editor" | "translator" | "characters" | "teams" | "locations" | "read_progress" | "last_read" | "read_count" | "read_status" | "unread_issues" | "collection_completeness" | "metadata_completeness" | "special_type" | "format" | "story_arc" | "title" | "rating" | "has_notes" | "has_bookmarks" | "has_highlights" | "has_favorites" | "finished_at" | "story_arcs" | "universes" | "concepts" | "objects" | "any_credit" | "provider_match" | "release_date" | "series_type" | "series_group" | "year_end" | "page_count" | "summary";
         FieldCount: {
             /**
              * @description [`crate::metadata::MetadataField::key`] or
@@ -11213,8 +11366,19 @@ export interface components {
         OnDeckView: {
             items: components["schemas"]["OnDeckCard"][];
         };
+        /**
+         * @description On-this-day rail: issues released on this calendar day (any year),
+         *     oldest first.
+         */
+        OnThisDayView: {
+            /** Format: int32 */
+            day: number;
+            items: components["schemas"]["IssueSummaryView"][];
+            /** Format: int32 */
+            month: number;
+        };
         /** @enum {string} */
-        Op: "contains" | "not_contains" | "starts_with" | "equals" | "not_equals" | "is" | "is_not" | "in" | "not_in" | "gt" | "gte" | "lt" | "lte" | "between" | "before" | "after" | "relative" | "includes_any" | "includes_all" | "excludes" | "is_true" | "is_false" | "is_empty" | "is_not_empty";
+        Op: "contains" | "not_contains" | "starts_with" | "equals" | "not_equals" | "is" | "is_not" | "in" | "not_in" | "gt" | "gte" | "lt" | "lte" | "between" | "before" | "after" | "relative" | "not_relative" | "includes_any" | "includes_all" | "excludes" | "is_true" | "is_false" | "is_empty" | "is_not_empty";
         OverviewView: {
             /**
              * Format: int64
@@ -11919,6 +12083,14 @@ export interface components {
             seconds_until_reset?: number | null;
         };
         /**
+         * @description Random-picks rail: a daily shuffle of series the caller hasn't
+         *     started. `seed_date` is the UTC day the order is stable for.
+         */
+        RandomPicksView: {
+            items: components["schemas"]["SeriesView"][];
+            seed_date: string;
+        };
+        /**
          * @description Response shape — mirrors what the GET endpoints inline so callers don't
          *     need to refetch to refresh local state.
          */
@@ -12096,6 +12268,14 @@ export interface components {
             /** @description Series slug for linking to the affected page, when resolvable. */
             series_slug?: string | null;
             trigger_kind: string;
+        };
+        /**
+         * @description Recent-history rail (filter-parity-and-builtin-views-1.0 M6): every
+         *     issue the caller touched recently, finished or not — the reading log
+         *     as a rail. Same card as Continue reading.
+         */
+        RecentHistoryView: {
+            items: components["schemas"]["ContinueReadingCard"][];
         };
         /**
          * @description Newest-ingests rail. Items are plain issue cards (`series_name`
@@ -13770,7 +13950,7 @@ export interface components {
          *     genres can't sort).
          * @enum {string}
          */
-        SortField: "name" | "year" | "created_at" | "updated_at" | "last_read" | "read_progress";
+        SortField: "name" | "year" | "created_at" | "updated_at" | "last_read" | "read_progress" | "finished_at" | "rating" | "page_count" | "number";
         /** @enum {string} */
         SortOrder: "asc" | "desc";
         /**
@@ -18745,6 +18925,50 @@ export interface operations {
             };
         };
     };
+    filter_options_concepts: {
+        parameters: {
+            query?: {
+                library?: string;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_String"];
+                };
+            };
+        };
+    };
+    filter_options_credits_any: {
+        parameters: {
+            query?: {
+                library?: string;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_String"];
+                };
+            };
+        };
+    };
     filter_options_credits: {
         parameters: {
             query?: {
@@ -18842,7 +19066,51 @@ export interface operations {
             };
         };
     };
+    filter_options_objects: {
+        parameters: {
+            query?: {
+                library?: string;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_String"];
+                };
+            };
+        };
+    };
     filter_options_publishers: {
+        parameters: {
+            query?: {
+                library?: string;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_String"];
+                };
+            };
+        };
+    };
+    filter_options_story_arcs: {
         parameters: {
             query?: {
                 library?: string;
@@ -18887,6 +19155,28 @@ export interface operations {
         };
     };
     filter_options_teams: {
+        parameters: {
+            query?: {
+                library?: string;
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage_String"];
+                };
+            };
+        };
+    };
+    filter_options_universes: {
         parameters: {
             query?: {
                 library?: string;
@@ -21916,6 +22206,35 @@ export interface operations {
             };
         };
     };
+    rails_on_this_day: {
+        parameters: {
+            query?: {
+                month?: number | null;
+                day?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnThisDayView"];
+                };
+            };
+            /** @description bad date */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     pages_list: {
         parameters: {
             query?: never;
@@ -22179,6 +22498,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    rails_random_picks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RandomPicksView"];
+                };
             };
         };
     };
@@ -22458,6 +22796,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    rails_recent_history: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecentHistoryView"];
+                };
             };
         };
     };

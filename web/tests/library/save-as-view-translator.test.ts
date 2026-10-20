@@ -205,7 +205,7 @@ describe("libraryGridStateToFilterBuilderState", () => {
     ).toBe("series");
   });
 
-  it("issues mode seeds an issue view and drops series-only rollups", () => {
+  it("issues mode seeds an issue view; metadata completeness carries over per issue", () => {
     const result = libraryGridStateToFilterBuilderState(
       snapshot({
         mode: "issues",
@@ -218,10 +218,47 @@ describe("libraryGridStateToFilterBuilderState", () => {
     );
     expect(result.state.entity).toBe("issue");
     expect(result.state.conditions).toEqual([
+      {
+        group_id: 0,
+        field: "metadata_completeness",
+        op: "is",
+        value: "needs_metadata",
+      },
       { group_id: 0, field: "year", op: "between", value: [2019, 2019] },
       { group_id: 0, field: "read_status", op: "in", value: ["unread"] },
     ]);
+    expect(result.droppedFacets).toEqual([]);
+  });
+
+  it("issues mode drops only the series-only `partial` metadata tier", () => {
+    const result = libraryGridStateToFilterBuilderState(
+      snapshot({ mode: "issues", metadataCompleteness: "partial" }),
+      TODAY,
+    );
+    expect(result.state.conditions).toEqual([]);
     expect(result.droppedFacets).toEqual(["Metadata completeness"]);
+  });
+
+  it("carries provider match and any-role credits; reports the letter + provider source as dropped", () => {
+    const result = libraryGridStateToFilterBuilderState(
+      snapshot({
+        providerMatch: "unmatched",
+        providerSource: "metron",
+        anyCredits: ["Alan Moore"],
+        startsWith: "s",
+      }),
+      TODAY,
+    );
+    expect(result.state.conditions).toEqual([
+      { group_id: 0, field: "provider_match", op: "is", value: "unmatched" },
+      {
+        group_id: 0,
+        field: "any_credit",
+        op: "includes_any",
+        value: ["Alan Moore"],
+      },
+    ]);
+    expect(result.droppedFacets).toEqual(["Provider source", "A–Z letter"]);
   });
 
   it("read status: a strict subset becomes `read_status in`, all three is a no-op", () => {

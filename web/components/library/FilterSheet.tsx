@@ -53,23 +53,27 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "hiatus", label: "Hiatus" },
 ];
 
-/** Per-user read-state pills (series mode). Values match the server's
- *  `read_status` param + the saved-views three-state rollup. */
+/** Per-user read-state pills (both modes). Values match the server's
+ *  `read_status` param on `/series` and `/issues` + the saved-views
+ *  three-state rollup. */
 const READ_STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "unread", label: "Unread" },
   { value: "in_progress", label: "Reading" },
   { value: "read", label: "Read" },
 ];
 
-/** Metadata-completeness tiers (series mode). `any` is the sentinel for
- *  "unfiltered"; the rest map to the server's `metadata_completeness`
- *  param. Worklist-first ordering — "Needs metadata" sits up top. */
+/** Metadata-completeness tiers. `any` is the sentinel for "unfiltered";
+ *  the rest map to the server's `metadata_completeness` param. Worklist-
+ *  first ordering — "Needs metadata" sits up top. Per issue the tier is
+ *  binary, so issues mode drops `partial` (a series-only rollup value). */
 const METADATA_COMPLETENESS_OPTIONS: { value: string; label: string }[] = [
   { value: "any", label: "Any" },
   { value: "needs_metadata", label: "Needs metadata" },
   { value: "partial", label: "Partial" },
   { value: "complete", label: "Complete" },
 ];
+const ISSUE_METADATA_COMPLETENESS_OPTIONS =
+  METADATA_COMPLETENESS_OPTIONS.filter((o) => o.value !== "partial");
 
 /**
  * Right-side sheet drawer holding the metadata-driven filter facets:
@@ -198,120 +202,36 @@ export function FilterSheet({
         </SheetHeader>
         <PopoverPortalContainer value={portalContainer}>
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {/* Status is series-only (issues don't carry one) — hide
-                the section when the grid is in issues mode rather
-                than disabling, so the picker stays uncluttered. */}
-            {mode === "series" ? (
-              <Section title="Status" defaultOpen>
-                <Select value={status} onValueChange={onStatus}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {STATUS_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Section>
-            ) : null}
-            {/* Metadata-completeness rollup — series only. `needs_metadata`
-                is the "Unmatched" worklist; the cover "meta" badge surfaces
-                the same tier. */}
-            {mode === "series" ? (
-              <Section title="Metadata">
-                <Select
-                  value={metadataCompleteness ?? "any"}
-                  onValueChange={(v) =>
-                    onMetadataCompleteness(
-                      v === "any" ? undefined : (v as MetadataCompletenessTier),
-                    )
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {METADATA_COMPLETENESS_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Section>
-            ) : null}
-            {/* Provider match — does the series have a ComicVine / Metron /
-                GCD id. The admin metadata dashboard's "Unmatched" tile
-                deep-links here. Series only. */}
-            {mode === "series" ? (
-              <Section title="Provider match">
-                <Select
-                  value={providerMatch ?? "any"}
-                  onValueChange={(v) =>
-                    onProviderMatch(
-                      v === "any" ? undefined : (v as ProviderMatch),
-                    )
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="any">Any</SelectItem>
-                    {PROVIDER_MATCH_VALUES.map((v) => (
-                      <SelectItem key={v} value={v}>
-                        {PROVIDER_MATCH_LABELS[v]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Section>
-            ) : null}
-            {/* Read status is a per-series rollup — series mode only. */}
-            {mode === "series" ? (
-              <Section title="Read status">
-                <div className="flex flex-wrap gap-2">
-                  {READ_STATUS_OPTIONS.map((o) => {
-                    const active = readStatus.includes(o.value);
-                    return (
-                      <FilterPill
-                        key={o.value}
-                        active={active}
-                        onClick={() =>
-                          onReadStatus(
-                            active
-                              ? readStatus.filter((v) => v !== o.value)
-                              : [...readStatus, o.value],
-                          )
-                        }
-                      >
-                        {o.label}
-                      </FilterPill>
-                    );
-                  })}
-                </div>
-              </Section>
-            ) : null}
-            <Section title="Year">
-              <div className="flex items-center gap-2">
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="From"
-                  value={yearFrom}
-                  onChange={(e) => onYearFrom(e.target.value)}
-                />
-                <span className="text-muted-foreground text-xs">—</span>
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="To"
-                  value={yearTo}
-                  onChange={(e) => onYearTo(e.target.value)}
-                />
+            {/* Sections run reader-first (filter-parity-and-builtin-views-1.0
+                follow-up): what the viewer has done with the books, then the
+                publication facts, then what the books are about, and the
+                librarian tools last. Same order in both modes so switching
+                modes never shuffles the list; `ActiveChips` mirrors it. */}
+            <GroupLabel>Reading</GroupLabel>
+            {/* Read status: the per-series rollup in series mode, the
+                issue's own three-state progress in issues mode (the
+                `/issues?read_status=` param has supported it since
+                WP-5.4; filter-parity-and-builtin-views-1.0 M2 un-hid it). */}
+            <Section title="Read status" defaultOpen>
+              <div className="flex flex-wrap gap-2">
+                {READ_STATUS_OPTIONS.map((o) => {
+                  const active = readStatus.includes(o.value);
+                  return (
+                    <FilterPill
+                      key={o.value}
+                      active={active}
+                      onClick={() =>
+                        onReadStatus(
+                          active
+                            ? readStatus.filter((v) => v !== o.value)
+                            : [...readStatus, o.value],
+                        )
+                      }
+                    >
+                      {o.label}
+                    </FilterPill>
+                  );
+                })}
               </div>
             </Section>
             <Section title="My rating">
@@ -336,8 +256,8 @@ export function FilterSheet({
                   }}
                 />
                 <p className="text-muted-foreground text-xs">
-                  Series you haven&apos;t rated are excluded when this filter is
-                  active.
+                  {mode === "issues" ? "Issues" : "Series"} you haven&apos;t
+                  rated are excluded when this filter is active.
                 </p>
                 {ratingRange ? (
                   <Button
@@ -352,18 +272,50 @@ export function FilterSheet({
                 ) : null}
               </div>
             </Section>
+            <GroupLabel>Publication</GroupLabel>
+            {/* Status is series-only (issues don't carry one) — hide
+                the section when the grid is in issues mode rather
+                than disabling, so the picker stays uncluttered. */}
+            {mode === "series" ? (
+              <Section title="Status">
+                <Select value={status} onValueChange={onStatus}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {STATUS_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Section>
+            ) : null}
+            <Section title="Year">
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  placeholder="From"
+                  value={yearFrom}
+                  onChange={(e) => onYearFrom(e.target.value)}
+                />
+                <span className="text-muted-foreground text-xs">—</span>
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  placeholder="To"
+                  value={yearTo}
+                  onChange={(e) => onYearTo(e.target.value)}
+                />
+              </div>
+            </Section>
             <FacetMultiSection
               title="Publisher"
               value={publishers}
               onChange={onPublishers}
               endpoint={{ kind: "publishers" }}
-              library={optsLibrary}
-            />
-            <FacetMultiSection
-              title="Language"
-              value={languages}
-              onChange={onLanguages}
-              endpoint={{ kind: "languages" }}
               library={optsLibrary}
             />
             <FacetMultiSection
@@ -374,19 +326,13 @@ export function FilterSheet({
               library={optsLibrary}
             />
             <FacetMultiSection
-              title="Genres"
-              value={genres}
-              onChange={onGenres}
-              endpoint={{ kind: "genres" }}
+              title="Language"
+              value={languages}
+              onChange={onLanguages}
+              endpoint={{ kind: "languages" }}
               library={optsLibrary}
             />
-            <FacetMultiSection
-              title="Tags"
-              value={tags}
-              onChange={onTags}
-              endpoint={{ kind: "tags" }}
-              library={optsLibrary}
-            />
+            <GroupLabel>Content</GroupLabel>
             <Section title="Credits">
               <div className="space-y-3">
                 {CREDIT_ROLES.map((c) => (
@@ -403,6 +349,20 @@ export function FilterSheet({
                 ))}
               </div>
             </Section>
+            <FacetMultiSection
+              title="Genres"
+              value={genres}
+              onChange={onGenres}
+              endpoint={{ kind: "genres" }}
+              library={optsLibrary}
+            />
+            <FacetMultiSection
+              title="Tags"
+              value={tags}
+              onChange={onTags}
+              endpoint={{ kind: "tags" }}
+              library={optsLibrary}
+            />
             <FacetMultiSection
               title="Characters"
               value={characters}
@@ -424,10 +384,79 @@ export function FilterSheet({
               endpoint={{ kind: "locations" }}
               library={optsLibrary}
             />
+            <GroupLabel>Curation</GroupLabel>
+            {/* Metadata-completeness tier. `needs_metadata` is the
+                "Unmatched" worklist; the cover "meta" badge surfaces the
+                same tier. Series mode filters the per-series rollup,
+                issues mode the issue's own (binary) tier. */}
+            <Section title="Metadata">
+              <Select
+                value={
+                  mode === "issues" && metadataCompleteness === "partial"
+                    ? "any"
+                    : (metadataCompleteness ?? "any")
+                }
+                onValueChange={(v) =>
+                  onMetadataCompleteness(
+                    v === "any" ? undefined : (v as MetadataCompletenessTier),
+                  )
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(mode === "issues"
+                    ? ISSUE_METADATA_COMPLETENESS_OPTIONS
+                    : METADATA_COMPLETENESS_OPTIONS
+                  ).map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Section>
+            {/* Provider match — does the series / issue have a ComicVine /
+                Metron / GCD id. The admin metadata dashboard's "Unmatched"
+                tile deep-links here. */}
+            <Section title="Provider match">
+              <Select
+                value={providerMatch ?? "any"}
+                onValueChange={(v) =>
+                  onProviderMatch(
+                    v === "any" ? undefined : (v as ProviderMatch),
+                  )
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="any">Any</SelectItem>
+                  {PROVIDER_MATCH_VALUES.map((v) => (
+                    <SelectItem key={v} value={v}>
+                      {PROVIDER_MATCH_LABELS[v]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Section>
           </div>
         </PopoverPortalContainer>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** Muted divider naming the block of sections below it. Not a
+ *  collapsible — four short labels make a 14-row list scannable
+ *  without adding chrome. */
+function GroupLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-muted-foreground/80 bg-muted/30 border-border/60 border-b px-6 pt-3 pb-1.5 text-[10px] font-semibold tracking-[0.14em] uppercase">
+      {children}
+    </div>
   );
 }
 

@@ -445,7 +445,8 @@ async fn default_home_pin_order_is_curated() {
 
     // First touch seeds auto-pin system views into user_view_pins. The
     // top-down pin order is curated: Continue Reading → On Deck →
-    // New Issues → Recently added series → Recently updated series.
+    // New Issues → Recently added series → Recently updated series →
+    // Recently finished (issues; filter-parity-and-builtin-views-1.0).
     let (status, json) = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let items = json["items"].as_array().unwrap();
@@ -469,6 +470,7 @@ async fn default_home_pin_order_is_curated() {
             "New issues".to_owned(),
             "Recently added series".to_owned(),
             "Recently updated series".to_owned(),
+            "Recently finished".to_owned(),
         ],
         "fresh user pin order should be curated top-down",
     );

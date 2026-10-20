@@ -15,6 +15,7 @@ import type { Condition, Field, Op } from "@/lib/api/types";
 
 import {
   OP_LABELS,
+  enumValuesFor,
   fieldLabel,
   fieldsFor,
   opTakesNoValue,
@@ -58,7 +59,7 @@ export function ConditionRow({
   onRemove,
 }: ConditionRowProps) {
   const spec = specFor(condition.field);
-  const valueEditor = renderValueEditor(spec, condition, library, (v) =>
+  const valueEditor = renderValueEditor(spec, entity, condition, library, (v) =>
     onChange({ ...condition, value: v }),
   );
 
@@ -121,6 +122,7 @@ export function ConditionRow({
 
 function renderValueEditor(
   spec: FieldSpec,
+  entity: ViewEntity,
   condition: Condition,
   library: string | undefined,
   onValueChange: (value: unknown) => void,
@@ -156,7 +158,7 @@ function renderValueEditor(
         <EnumEditor
           op={condition.op}
           value={condition.value}
-          values={spec.enumValues ?? []}
+          values={enumValuesFor(spec, entity)}
           labels={spec.enumLabels}
           onChange={(v) => onValueChange(v)}
         />
