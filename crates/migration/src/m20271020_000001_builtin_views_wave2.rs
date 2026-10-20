@@ -6,7 +6,7 @@
 //! `not_relative` op, …):
 //!
 //!   - **filter_issues templates** — the first issue-shaped built-ins
-//!     (every earlier template was series-shaped): Recently finished,
+//!     (every earlier template was series-shaped): Recently finished issues,
 //!     Finished this week, Rate what you read, Top rated issues, Annuals &
 //!     specials, Short unread reads, Favorite issues, Annotated issues.
 //!   - **filter_series templates** — Jump back in, Almost done, Complete
@@ -16,8 +16,8 @@
 //!     (`/me/random-picks`), On this day (`/me/on-this-day`), Recently
 //!     read (`/me/recent-history`).
 //!
-//! Everything is opt-in (`auto_pin = false`) except **Recently finished**
-//! issues, the issue-level twin of the series "Just Finished" template —
+//! Everything is opt-in (`auto_pin = false`) except **Recently finished
+//! issues**, the issue-level twin of the series "Just Finished" template —
 //! which is renamed here to "Recently finished series" so the pair reads
 //! consistently (guarded on the current name, like the
 //! `m20270122` renames).
@@ -53,7 +53,7 @@ pub(crate) const TEMPLATES: &[Template] = &[
     (
         "00000000-0000-0000-0000-000000000020",
         "filter_issues",
-        "Recently finished",
+        "Recently finished issues",
         "Issues you finished most recently.",
         r#"[{"group_id":0,"field":"read_status","op":"is","value":"read"}]"#,
         "all",

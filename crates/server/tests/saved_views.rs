@@ -374,10 +374,10 @@ async fn list_seeds_system_views_pinned_on_first_touch() {
     assert!(names.iter().any(|n| n == "Recently added series"));
     assert!(names.iter().any(|n| n == "Recently updated series"));
     // filter-parity-and-builtin-views-1.0 renamed "Just Finished" to
-    // pair with the issue-level "Recently finished" template.
+    // pair with the issue-level "Recently finished issues" template.
     assert!(names.iter().any(|n| n == "Recently finished series"));
     assert!(!names.iter().any(|n| n == "Just Finished"));
-    assert!(names.iter().any(|n| n == "Recently finished"));
+    assert!(names.iter().any(|n| n == "Recently finished issues"));
     assert!(names.iter().any(|n| n == "Jump back in"));
     assert!(names.iter().any(|n| n == "Random picks"));
     // M1 of markers + collections renamed the M9 "Want to Read"
@@ -410,10 +410,10 @@ async fn list_seeds_system_views_pinned_on_first_touch() {
             "New issues".to_owned(),
             "On deck".to_owned(),
             "Recently added series".to_owned(),
-            "Recently finished".to_owned(),
+            "Recently finished issues".to_owned(),
             "Recently updated series".to_owned(),
         ],
-        "exactly the M3 originals + new rails + Recently finished should auto-pin: {pinned_names:?}"
+        "exactly the M3 originals + new rails + Recently finished issues should auto-pin: {pinned_names:?}"
     );
     // Every system row (`user_id IS NULL`) must report is_system=true;
     // the per-user Want to Read collection is the only exception.
@@ -1077,7 +1077,7 @@ async fn pin_cap_enforced() {
     let auth = register(&app, "cap@example.com").await;
     // Trigger the lazy seed so the 6 auto-pinned system views land first.
     let _ = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
-    // 12 - 6 (auto-pinned rails + Recently finished) = 6 user pins reach the cap.
+    // 12 - 6 (auto-pinned rails + Recently finished issues) = 6 user pins reach the cap.
     for i in 0..6 {
         let body = serde_json::json!({
             "kind": "filter_series",

@@ -76,7 +76,7 @@ pub const DEFAULT_HOME_PIN_ORDER: &[&str] = &[
     "00000000-0000-0000-0000-000000000012", // New issues       (m20270122)
     "00000000-0000-0000-0000-000000000001", // Recently added series  (m20261205)
     "00000000-0000-0000-0000-000000000002", // Recently updated series (m20261205)
-    "00000000-0000-0000-0000-000000000020", // Recently finished (issues, m20271020)
+    "00000000-0000-0000-0000-000000000020", // Recently finished issues (m20271020)
 ];
 
 /// The DSL root a filter-view kind compiles against; `None` for non-filter
