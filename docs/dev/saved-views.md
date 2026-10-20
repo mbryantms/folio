@@ -172,7 +172,7 @@ the pin picker.
 | …0010 / …0011 / …0012 | system | Continue reading / On deck / New issues | ✓ |
 | …0013 | system | Similar series | — |
 | …0014 / …0015 / …0016 | system | Random picks (`/me/random-picks`) / On this day (`/me/on-this-day`) / Recently read (`/me/recent-history`) | — |
-| …0020 | filter_issues | Recently finished | ✓ |
+| …0020 | filter_issues | Recently finished issues | ✓ |
 | …0021 – …0027 | filter_issues | Finished this week, Rate what you read, Top rated issues, Annuals & specials, Short unread reads, Favorite issues, Annotated issues | — |
 | …0028 – …0034 | filter_series | Jump back in, Almost done, Complete runs to start, Ended but unfinished, Top rated series, Incomplete collections, Favorite series | — |
 
