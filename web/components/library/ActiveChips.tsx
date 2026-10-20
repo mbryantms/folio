@@ -98,29 +98,8 @@ export function ActiveChips({
 }) {
   return (
     <div className="mb-4 flex flex-wrap gap-1.5">
-      {status !== "any" ? (
-        <Chip
-          label={`Status: ${labelFor(LIBRARY_GRID_STATUS_OPTIONS, status)}`}
-          onRemove={onClearStatus}
-        />
-      ) : null}
-      {metadataCompleteness ? (
-        <Chip
-          label={`Metadata: ${labelFor(
-            LIBRARY_GRID_METADATA_COMPLETENESS_OPTIONS,
-            metadataCompleteness,
-          )}`}
-          onRemove={onClearMetadataCompleteness}
-        />
-      ) : null}
-      {providerMatch ? (
-        <Chip
-          label={`Provider: ${PROVIDER_MATCH_LABELS[providerMatch]}${
-            providerSource ? ` · ${PROVIDER_SOURCE_LABELS[providerSource]}` : ""
-          }`}
-          onRemove={onClearProviderMatch}
-        />
-      ) : null}
+      {/* Same order as the FilterSheet sections: reading, publication,
+          content, curation. */}
       {readStatus.map((v) => (
         <Chip
           key={`read-${v}`}
@@ -128,16 +107,22 @@ export function ActiveChips({
           onRemove={() => onRemoveReadStatus(v)}
         />
       ))}
-      {yearFrom || yearTo ? (
-        <Chip
-          label={`Year: ${yearFrom || "…"}–${yearTo || "…"}`}
-          onRemove={onClearYear}
-        />
-      ) : null}
       {ratingRange ? (
         <Chip
           label={`Rating: ${ratingRange[0].toFixed(1)}–${ratingRange[1].toFixed(1)} ★`}
           onRemove={onClearRating}
+        />
+      ) : null}
+      {status !== "any" ? (
+        <Chip
+          label={`Status: ${labelFor(LIBRARY_GRID_STATUS_OPTIONS, status)}`}
+          onRemove={onClearStatus}
+        />
+      ) : null}
+      {yearFrom || yearTo ? (
+        <Chip
+          label={`Year: ${yearFrom || "…"}–${yearTo || "…"}`}
+          onRemove={onClearYear}
         />
       ) : null}
       {publishers.map((v) => (
@@ -147,13 +132,6 @@ export function ActiveChips({
           onRemove={() => onRemovePublisher(v)}
         />
       ))}
-      {languages.map((v) => (
-        <Chip
-          key={`lang-${v}`}
-          label={`Language: ${v}`}
-          onRemove={() => onRemoveLanguage(v)}
-        />
-      ))}
       {ageRatings.map((v) => (
         <Chip
           key={`age-${v}`}
@@ -161,18 +139,11 @@ export function ActiveChips({
           onRemove={() => onRemoveAgeRating(v)}
         />
       ))}
-      {genres.map((v) => (
+      {languages.map((v) => (
         <Chip
-          key={`gen-${v}`}
-          label={`Genre: ${v}`}
-          onRemove={() => onRemoveGenre(v)}
-        />
-      ))}
-      {tags.map((v) => (
-        <Chip
-          key={`tag-${v}`}
-          label={`Tag: ${v}`}
-          onRemove={() => onRemoveTag(v)}
+          key={`lang-${v}`}
+          label={`Language: ${v}`}
+          onRemove={() => onRemoveLanguage(v)}
         />
       ))}
       {CREDIT_ROLES.flatMap((c) =>
@@ -189,6 +160,20 @@ export function ActiveChips({
           key={`credits-${v}`}
           label={`Credits: ${v}`}
           onRemove={() => onRemoveAnyCredit(v)}
+        />
+      ))}
+      {genres.map((v) => (
+        <Chip
+          key={`gen-${v}`}
+          label={`Genre: ${v}`}
+          onRemove={() => onRemoveGenre(v)}
+        />
+      ))}
+      {tags.map((v) => (
+        <Chip
+          key={`tag-${v}`}
+          label={`Tag: ${v}`}
+          onRemove={() => onRemoveTag(v)}
         />
       ))}
       {characters.map((v) => (
@@ -212,6 +197,23 @@ export function ActiveChips({
           onRemove={() => onRemoveLocation(v)}
         />
       ))}
+      {metadataCompleteness ? (
+        <Chip
+          label={`Metadata: ${labelFor(
+            LIBRARY_GRID_METADATA_COMPLETENESS_OPTIONS,
+            metadataCompleteness,
+          )}`}
+          onRemove={onClearMetadataCompleteness}
+        />
+      ) : null}
+      {providerMatch ? (
+        <Chip
+          label={`Provider: ${PROVIDER_MATCH_LABELS[providerMatch]}${
+            providerSource ? ` · ${PROVIDER_SOURCE_LABELS[providerSource]}` : ""
+          }`}
+          onRemove={onClearProviderMatch}
+        />
+      ) : null}
     </div>
   );
 }

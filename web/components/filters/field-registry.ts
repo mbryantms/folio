@@ -47,7 +47,13 @@ export type OptionsEndpoint =
   | { kind: "age_ratings" }
   | { kind: "characters" }
   | { kind: "teams" }
-  | { kind: "locations" };
+  | { kind: "locations" }
+  /** Any-role credits (`/filter-options/credits`, no role). */
+  | { kind: "any_credit" }
+  | { kind: "story_arcs" }
+  | { kind: "universes" }
+  | { kind: "concepts" }
+  | { kind: "objects" };
 
 export type FieldSpec = {
   id: Field;
@@ -58,6 +64,9 @@ export type FieldSpec = {
   allowedOps: readonly [Op, ...Op[]];
   /** Closed list of legal scalar values. Empty unless `kind === 'enum'`. */
   enumValues?: readonly string[];
+  /** Narrower value list on issue views (e.g. `metadata_completeness`
+   *  is binary per issue — `partial` only exists as a series rollup). */
+  issueEnumValues?: readonly string[];
   /** Optional display-label override per enum value. Falls back to the
    *  wire value when missing — so `status: "ended"` and `age_rating:
    *  "Teen"` render as-is, but `read_status: "in_progress"` doesn't have
@@ -111,6 +120,7 @@ const DATE_OPS_REQUIRED: readonly [Op, ...Op[]] = [
   "after",
   "between",
   "relative",
+  "not_relative",
   "lt",
   "gt",
 ];
@@ -174,6 +184,15 @@ const METADATA_COMPLETENESS_VALUES = [
   "partial",
   "needs_metadata",
 ] as const;
+/** Per-issue tier (filter-parity-and-builtin-views-1.0 M1): binary. */
+const ISSUE_METADATA_COMPLETENESS_VALUES = [
+  "complete",
+  "needs_metadata",
+] as const;
+
+/** Provider linkage (M4). Mirrors `PROVIDER_MATCH_VALUES` in the Rust
+ *  registry and the grid's `provider_match` facet. */
+const PROVIDER_MATCH_VALUES = ["matched", "unmatched"] as const;
 
 const AGE_RATING_VALUES = [
   "Unknown",
@@ -343,26 +362,26 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     allowedOps: MULTI_OPS,
     optionsEndpoint: { kind: "locations" },
   },
+  // filter-parity-and-builtin-views-1.0 M1: the per-user reading fields
+  // are on both entities — the issue side reads the caller's own
+  // progress row (percent / updated_at / completed-read count).
   {
     id: "read_progress",
     label: "Read Progress",
     kind: "number",
     allowedOps: COMPUTED_NUMBER_OPS,
-    entities: SERIES_ONLY,
   },
   {
     id: "last_read",
     label: "Last Read",
     kind: "date",
     allowedOps: DATE_OPS,
-    entities: SERIES_ONLY,
   },
   {
     id: "read_count",
     label: "Read Count",
     kind: "number",
     allowedOps: COMPUTED_NUMBER_OPS,
-    entities: SERIES_ONLY,
   },
   // library-filters-richer-1.0 M2: three-state read rollup
   {
@@ -395,19 +414,20 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     },
     entities: SERIES_ONLY,
   },
-  // metadata-completeness: which series still need metadata pulled
+  // metadata-completeness: which series / issues still need metadata
+  // pulled. Per issue the tier is binary (`issueEnumValues`).
   {
     id: "metadata_completeness",
     label: "Metadata Completeness",
     kind: "enum",
     allowedOps: COMPUTED_ENUM_OPS,
     enumValues: METADATA_COMPLETENESS_VALUES,
+    issueEnumValues: ISSUE_METADATA_COMPLETENESS_VALUES,
     enumLabels: {
       complete: "Complete",
       partial: "Partial",
       needs_metadata: "Needs metadata",
     },
-    entities: SERIES_ONLY,
   },
   // WP-5.4: issue-level fields (`filter_issues` views only)
   {
@@ -469,6 +489,98 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     kind: "bool",
     allowedOps: BOOL_OPS,
   },
+  // filter-parity-and-builtin-views-1.0 M1: when the caller finished it
+  // (the issue's own finish; the latest finish in the series).
+  {
+    id: "finished_at",
+    label: "Finished At",
+    kind: "date",
+    allowedOps: DATE_OPS,
+  },
+  // M4: lookup-table junctions on both entities.
+  {
+    id: "story_arcs",
+    label: "Story Arcs",
+    kind: "multi",
+    allowedOps: MULTI_OPS,
+    optionsEndpoint: { kind: "story_arcs" },
+  },
+  {
+    id: "universes",
+    label: "Universes",
+    kind: "multi",
+    allowedOps: MULTI_OPS,
+    optionsEndpoint: { kind: "universes" },
+  },
+  {
+    id: "concepts",
+    label: "Concepts",
+    kind: "multi",
+    allowedOps: MULTI_OPS,
+    optionsEndpoint: { kind: "concepts" },
+  },
+  {
+    id: "objects",
+    label: "Objects",
+    kind: "multi",
+    allowedOps: MULTI_OPS,
+    optionsEndpoint: { kind: "objects" },
+  },
+  {
+    id: "any_credit",
+    label: "Any Credit",
+    kind: "multi",
+    allowedOps: MULTI_OPS,
+    optionsEndpoint: { kind: "any_credit" },
+  },
+  // M4: provider linkage + release date.
+  {
+    id: "provider_match",
+    label: "Provider Match",
+    kind: "enum",
+    allowedOps: COMPUTED_ENUM_OPS,
+    enumValues: PROVIDER_MATCH_VALUES,
+    enumLabels: { matched: "Matched", unmatched: "Unmatched" },
+  },
+  {
+    id: "release_date",
+    label: "Release Date",
+    kind: "date",
+    allowedOps: DATE_OPS,
+  },
+  // M4: more scalar columns.
+  {
+    id: "series_type",
+    label: "Series Type",
+    kind: "text",
+    allowedOps: TEXT_OPS,
+  },
+  {
+    id: "series_group",
+    label: "Series Group",
+    kind: "text",
+    allowedOps: TEXT_OPS,
+  },
+  {
+    id: "year_end",
+    label: "End Year",
+    kind: "number",
+    allowedOps: NUMBER_OPS,
+    issueLabel: "Series End Year",
+  },
+  {
+    id: "page_count",
+    label: "Page Count",
+    kind: "number",
+    allowedOps: NUMBER_OPS,
+    entities: ISSUE_ONLY,
+  },
+  {
+    id: "summary",
+    label: "Summary",
+    kind: "text",
+    allowedOps: TEXT_OPS,
+  },
 ] as const;
 
 /** Whether `spec` can be used on a view of `entity`. */
@@ -484,6 +596,17 @@ export function fieldsFor(entity: ViewEntity): FieldSpec[] {
 /** The picker label for `spec` on `entity`. */
 export function fieldLabel(spec: FieldSpec, entity: ViewEntity): string {
   return entity === "issue" && spec.issueLabel ? spec.issueLabel : spec.label;
+}
+
+/** Enum values offered for `spec` on `entity` — the issue-side override
+ *  when there is one (`metadata_completeness` has no `partial` tier per
+ *  issue), else the shared list. */
+export function enumValuesFor(
+  spec: FieldSpec,
+  entity: ViewEntity,
+): readonly string[] {
+  if (entity === "issue" && spec.issueEnumValues) return spec.issueEnumValues;
+  return spec.enumValues ?? [];
 }
 
 /** Ops that take no value (the editor hides the value input). */
@@ -520,6 +643,7 @@ export const OP_LABELS: Record<Op, string> = {
   before: "before",
   after: "after",
   relative: "in last",
+  not_relative: "not in last",
   includes_any: "any of",
   includes_all: "all of",
   excludes: "none of",

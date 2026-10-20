@@ -540,6 +540,16 @@ export const queryKeys = {
    *  (data changes only when a scan lands); default staleness re-fetches
    *  on the next home-page visit, same as the filter rails. */
   recentIssues: ["rails", "recent-issues"] as const,
+  /** Recently-read rail (`/me/recent-history`) — every recent progress
+   *  write, finished or not. Same invalidation set as continueReading. */
+  recentHistory: ["rails", "recent-history"] as const,
+  /** Random-picks rail (`/me/random-picks`) — unstarted series only, so a
+   *  progress write (or a series dismissal) changes it. */
+  randomPicks: ["rails", "random-picks"] as const,
+  /** On-this-day rail (`/me/on-this-day`), keyed by the viewer's local
+   *  calendar day so a session that crosses midnight re-fetches. */
+  onThisDay: (month: number, day: number) =>
+    ["rails", "on-this-day", month, day] as const,
   /** WP-7.4 "Similar series" rail on the series page
    *  (`/series/{slug}/similar`, cursor-paginated). Lives under the
    *  `["similar"]` prefix so `invalidateRails` (hide / progress) drops it

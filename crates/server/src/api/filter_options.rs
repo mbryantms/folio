@@ -55,12 +55,17 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(genres))
         .routes(routes!(tags))
         .routes(routes!(credits))
+        .routes(routes!(credits_any))
         .routes(routes!(publishers))
         .routes(routes!(languages))
         .routes(routes!(age_ratings))
         .routes(routes!(characters))
         .routes(routes!(teams))
         .routes(routes!(locations))
+        .routes(routes!(story_arcs))
+        .routes(routes!(universes))
+        .routes(routes!(concepts))
+        .routes(routes!(objects))
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -245,6 +250,157 @@ pub async fn locations(
     Query(q): Query<OptionsQuery>,
 ) -> impl IntoResponse {
     fetch_distinct_issue_csv(&app, &user, "locations", q).await
+}
+
+// ─── filter-parity-and-builtin-views-1.0 M4: lookup-table junctions ───
+// Story arcs / universes / concepts / objects live in their own name
+// tables; the series junctions carry ids. One helper, four thin routes.
+
+#[utoipa::path(
+    operation_id = "filter_options_story_arcs",    get,
+    path = "/filter-options/story_arcs",
+    params(("library" = Option<String>, Query,), ("q" = Option<String>, Query,)),
+    responses((status = 200, body = shared::pagination::CursorPage<String>))
+)]
+#[handler]
+pub async fn story_arcs(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<OptionsQuery>,
+) -> impl IntoResponse {
+    fetch_distinct_lookup(&app, &user, "series_arcs", "arc_id", "story_arc", q).await
+}
+
+#[utoipa::path(
+    operation_id = "filter_options_universes",    get,
+    path = "/filter-options/universes",
+    params(("library" = Option<String>, Query,), ("q" = Option<String>, Query,)),
+    responses((status = 200, body = shared::pagination::CursorPage<String>))
+)]
+#[handler]
+pub async fn universes(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<OptionsQuery>,
+) -> impl IntoResponse {
+    fetch_distinct_lookup(
+        &app,
+        &user,
+        "series_universes",
+        "universe_id",
+        "universe",
+        q,
+    )
+    .await
+}
+
+#[utoipa::path(
+    operation_id = "filter_options_concepts",    get,
+    path = "/filter-options/concepts",
+    params(("library" = Option<String>, Query,), ("q" = Option<String>, Query,)),
+    responses((status = 200, body = shared::pagination::CursorPage<String>))
+)]
+#[handler]
+pub async fn concepts(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<OptionsQuery>,
+) -> impl IntoResponse {
+    fetch_distinct_lookup(&app, &user, "series_concepts", "concept_id", "concept", q).await
+}
+
+#[utoipa::path(
+    operation_id = "filter_options_objects",    get,
+    path = "/filter-options/objects",
+    params(("library" = Option<String>, Query,), ("q" = Option<String>, Query,)),
+    responses((status = 200, body = shared::pagination::CursorPage<String>))
+)]
+#[handler]
+pub async fn objects(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<OptionsQuery>,
+) -> impl IntoResponse {
+    fetch_distinct_lookup(&app, &user, "series_objects", "object_id", "object", q).await
+}
+
+/// Distinct lookup-table names reachable through a `series_*` junction
+/// (`series_arcs.arc_id → story_arc.name`, …), scoped to the caller's
+/// visible libraries like [`fetch_distinct`]. Identifiers are the
+/// `'static` registry constants above — never user input.
+async fn fetch_distinct_lookup(
+    app: &AppState,
+    user: &CurrentUser,
+    junction_table: &'static str,
+    fk_col: &'static str,
+    lookup_table: &'static str,
+    q: OptionsQuery,
+) -> axum::response::Response {
+    let after = match parse_cursor(q.cursor.as_deref()) {
+        Ok(v) => v,
+        Err(_) => return error(StatusCode::BAD_REQUEST, "bad_cursor", "invalid cursor"),
+    };
+    let limit = parse_limit(q.limit);
+    let visible = access::for_user(app, user).await;
+
+    let mut sql = format!(
+        "SELECT DISTINCT l.name AS value
+           FROM {junction_table} j
+           JOIN {lookup_table} l ON l.id = j.{fk_col}
+           JOIN series s ON s.id = j.series_id
+          WHERE s.removed_at IS NULL
+            AND l.name <> ''"
+    );
+    let mut params: Vec<Value> = Vec::new();
+
+    if let Some(lib) = q.library {
+        if !visible.contains(lib) {
+            return error(StatusCode::FORBIDDEN, "forbidden", "library not visible");
+        }
+        params.push(Value::from(lib));
+        sql.push_str(&format!(" AND s.library_id = ${}", params.len()));
+    } else if !visible.unrestricted {
+        if visible.allowed.is_empty() {
+            return Json(CursorPage::<String>::bounded(vec![])).into_response();
+        }
+        let placeholders: Vec<String> = visible
+            .allowed
+            .iter()
+            .map(|id| {
+                params.push(Value::from(*id));
+                format!("${}", params.len())
+            })
+            .collect();
+        sql.push_str(&format!(
+            " AND s.library_id IN ({})",
+            placeholders.join(",")
+        ));
+    }
+    sql.push_str(&visible.raw_cap_clause("s.library_id", "s.age_rating", &mut params));
+
+    if let Some(prefix) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        params.push(Value::from(format!("{}%", prefix.to_lowercase())));
+        sql.push_str(&format!(" AND lower(l.name) LIKE ${}", params.len()));
+    }
+    if let Some(after) = after {
+        params.push(Value::from(after));
+        sql.push_str(&format!(" AND l.name > ${}", params.len()));
+    }
+    params.push(Value::from(limit + 1));
+    sql.push_str(&format!(" ORDER BY value ASC LIMIT ${}", params.len()));
+
+    let backend = app.db.get_database_backend();
+    let stmt = Statement::from_sql_and_values(backend, sql, params);
+    match ValueRow::find_by_statement(stmt).all(&app.db).await {
+        Ok(rows) => {
+            let values: Vec<String> = rows.into_iter().map(|r| r.value).collect();
+            Json(page_from_rows(values, limit)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "filter_options lookup query failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "db", "internal")
+        }
+    }
 }
 
 /// Distinct values pulled out of a CSV column on the `issues` table
@@ -440,6 +596,23 @@ async fn fetch_distinct_series_column(
             error(StatusCode::INTERNAL_SERVER_ERROR, "db", "internal")
         }
     }
+}
+
+/// Any-role credits (filter-parity-and-builtin-views-1.0 M4): every
+/// credited person regardless of role, for the `any_credit` field.
+#[utoipa::path(
+    operation_id = "filter_options_credits_any",    get,
+    path = "/filter-options/credits",
+    params(("library" = Option<String>, Query,), ("q" = Option<String>, Query,)),
+    responses((status = 200, body = shared::pagination::CursorPage<String>))
+)]
+#[handler]
+pub async fn credits_any(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<OptionsQuery>,
+) -> impl IntoResponse {
+    fetch_distinct(&app, &user, "series_credits", "person", None, q).await
 }
 
 #[utoipa::path(

@@ -373,7 +373,13 @@ async fn list_seeds_system_views_pinned_on_first_touch() {
     // home-rails M1 system views (auto-pinned).
     assert!(names.iter().any(|n| n == "Recently added series"));
     assert!(names.iter().any(|n| n == "Recently updated series"));
-    assert!(names.iter().any(|n| n == "Just Finished"));
+    // filter-parity-and-builtin-views-1.0 renamed "Just Finished" to
+    // pair with the issue-level "Recently finished" template.
+    assert!(names.iter().any(|n| n == "Recently finished series"));
+    assert!(!names.iter().any(|n| n == "Just Finished"));
+    assert!(names.iter().any(|n| n == "Recently finished"));
+    assert!(names.iter().any(|n| n == "Jump back in"));
+    assert!(names.iter().any(|n| n == "Random picks"));
     // M1 of markers + collections renamed the M9 "Want to Read"
     // filter template to "Unstarted" so the name is free for the
     // per-user manual collection landing in M3. M20261224 then dropped
@@ -404,9 +410,10 @@ async fn list_seeds_system_views_pinned_on_first_touch() {
             "New issues".to_owned(),
             "On deck".to_owned(),
             "Recently added series".to_owned(),
+            "Recently finished".to_owned(),
             "Recently updated series".to_owned(),
         ],
-        "exactly the M3 originals + new rails should auto-pin: {pinned_names:?}"
+        "exactly the M3 originals + new rails + Recently finished should auto-pin: {pinned_names:?}"
     );
     // Every system row (`user_id IS NULL`) must report is_system=true;
     // the per-user Want to Read collection is the only exception.
@@ -418,6 +425,35 @@ async fn list_seeds_system_views_pinned_on_first_touch() {
             "row should be system or want_to_read: {it:#?}"
         );
     }
+}
+
+/// filter-parity-and-builtin-views-1.0 M5: every seeded filter template
+/// — both entities — must compile and run for a fresh user. A template
+/// whose DSL or sort drifted from the registry would otherwise 422 on
+/// the home page.
+#[tokio::test]
+async fn every_builtin_filter_template_resolves() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "templates@example.com").await;
+    let (status, json) = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut checked = 0;
+    for it in json["items"].as_array().unwrap() {
+        if it["is_system"].as_bool() != Some(true) {
+            continue;
+        }
+        let id = it["id"].as_str().unwrap();
+        let path = match it["kind"].as_str() {
+            Some("filter_series") => format!("/api/me/saved-views/{id}/results"),
+            Some("filter_issues") => format!("/api/me/saved-views/{id}/issue-results"),
+            _ => continue,
+        };
+        let (status, body) = http(&app, Method::GET, &path, Some(&auth), None).await;
+        assert_eq!(status, StatusCode::OK, "{} → {body}", it["name"]);
+        checked += 1;
+    }
+    // 3 pre-existing series templates + 7 wave-2 series + 8 wave-2 issue.
+    assert_eq!(checked, 18, "template count drifted");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1039,10 +1075,10 @@ async fn create_rejects_invalid_filter() {
 async fn pin_cap_enforced() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "cap@example.com").await;
-    // Trigger the lazy seed so the 5 auto-pinned system views land first.
+    // Trigger the lazy seed so the 6 auto-pinned system views land first.
     let _ = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
-    // 12 - 5 (auto-pinned system rails) = 7 user pins reach the cap.
-    for i in 0..7 {
+    // 12 - 6 (auto-pinned rails + Recently finished) = 6 user pins reach the cap.
+    for i in 0..6 {
         let body = serde_json::json!({
             "kind": "filter_series",
             "name": format!("View {i}"),
@@ -1096,11 +1132,11 @@ async fn pin_cap_enforced() {
 async fn pin_cap_respects_per_user_override() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "cap-override@example.com").await;
-    // Trigger the lazy seed so the 5 auto-pinned system rails land.
+    // Trigger the lazy seed so the 6 auto-pinned system rails land.
     let _ = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
 
-    // Fill to the default cap of 12 (5 auto + 7 user pins).
-    for i in 0..7 {
+    // Fill to the default cap of 12 (6 auto + 6 user pins).
+    for i in 0..6 {
         let body = serde_json::json!({
             "kind": "filter_series",
             "name": format!("View {i}"),

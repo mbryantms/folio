@@ -23,6 +23,7 @@ import {
   type CreditState,
   type LibraryGridMode,
   type MetadataCompletenessTier,
+  type ProviderMatch,
   RATING_MIN,
   RATING_MAX,
 } from "./library-grid-filters";
@@ -35,6 +36,17 @@ export type LibraryGridFilterSnapshot = {
   readStatus?: string[];
   status: string;
   metadataCompleteness: MetadataCompletenessTier | undefined;
+  /** Provider-linkage facet (`matched` / `unmatched`). The per-provider
+   *  narrowing (`providerSource`) has no DSL equivalent and is reported
+   *  as dropped when set. */
+  providerMatch?: ProviderMatch;
+  providerSource?: string;
+  /** Any-role credit chips (the `?credits=` facet). */
+  anyCredits?: string[];
+  /** A–Z jump-rail letter. Matched against `normalized_name` on the
+   *  grid; the DSL's `starts_with` is a case-sensitive probe on the raw
+   *  name, so this is reported as dropped rather than mistranslated. */
+  startsWith?: string | null;
   yearFrom: string;
   yearTo: string;
   publishers: string[];
@@ -91,8 +103,9 @@ export function libraryGridStateToFilterBuilderState(
 
   // Completeness is a first-class saved-view field — carry it so a saved
   // "Needs metadata" worklist keeps filtering after the grid hands off.
-  if (s.metadataCompleteness && entity === "issue") {
-    // Series-level rollup — no issue-view equivalent.
+  // Per issue the tier is binary: `partial` only exists as a series
+  // rollup, so that one value can't follow into an issue view.
+  if (s.metadataCompleteness === "partial" && entity === "issue") {
     dropped.push("Metadata completeness");
   } else if (s.metadataCompleteness) {
     conditions.push({
@@ -101,6 +114,22 @@ export function libraryGridStateToFilterBuilderState(
       op: "is",
       value: s.metadataCompleteness,
     });
+  }
+
+  if (s.providerMatch) {
+    conditions.push({
+      group_id: 0,
+      field: "provider_match",
+      op: "is",
+      value: s.providerMatch,
+    });
+    if (s.providerSource) {
+      dropped.push("Provider source");
+    }
+  }
+
+  if (s.startsWith) {
+    dropped.push("A–Z letter");
   }
 
   const yf = parseInt(s.yearFrom, 10);
@@ -174,6 +203,14 @@ export function libraryGridStateToFilterBuilderState(
         value: vals,
       });
     }
+  }
+  if (s.anyCredits && s.anyCredits.length > 0) {
+    conditions.push({
+      group_id: 0,
+      field: "any_credit",
+      op: "includes_any",
+      value: s.anyCredits,
+    });
   }
 
   // Read status: every state selected (or none) is a no-op on the grid,

@@ -5,6 +5,9 @@
 //!   - `GET    /me/continue-reading`               — partially-read issues
 //!   - `GET    /me/on-deck`                        — (M3) — next-up issues + CBLs
 //!   - `GET    /me/recent-issues`                  — newest ingests, per-series-capped
+//!   - `GET    /me/recent-history`                 — every issue with recent activity
+//!   - `GET    /me/random-picks`                   — daily shuffle of unstarted series
+//!   - `GET    /me/on-this-day`                    — issues released on today's date
 //!   - `POST   /me/rail-dismissals`                — hide a target from a rail
 //!   - `DELETE /me/rail-dismissals/{kind}/{id}`    — undo a dismissal
 //!
@@ -27,7 +30,7 @@ use axum::{
     http::{HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
-use chrono::Utc;
+use chrono::{Datelike, Utc};
 use entity::{cbl_entry, issue, progress_record, rail_dismissal, series};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter,
@@ -39,7 +42,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::{error, not_found};
-use crate::api::series::IssueSummaryView;
+use crate::api::series::{IssueSummaryView, SeriesView};
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::middleware::RequestContext;
@@ -55,6 +58,9 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(continue_reading))
         .routes(routes!(on_deck))
         .routes(routes!(recent_issues))
+        .routes(routes!(recent_history))
+        .routes(routes!(random_picks))
+        .routes(routes!(on_this_day))
         .routes(routes!(create_dismissal))
         .routes(routes!(delete_dismissal))
 }
@@ -68,6 +74,10 @@ pub fn routes() -> OpenApiRouter<AppState> {
 const RECENT_ISSUES_PER_SERIES_CAP: i32 = 3;
 /// Rail preview size; mirrors the web's `RAIL_PREVIEW_LIMIT`.
 const RECENT_ISSUES_LIMIT: i32 = 30;
+/// Random-picks rail size (filter-parity-and-builtin-views-1.0 M6).
+const RANDOM_PICKS_LIMIT: i64 = 12;
+/// On-this-day rail size.
+const ON_THIS_DAY_LIMIT: i64 = 30;
 
 // ───── Response shapes ─────
 
@@ -91,6 +101,39 @@ pub struct ContinueReadingCard {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContinueReadingView {
     pub items: Vec<ContinueReadingCard>,
+}
+
+/// Recent-history rail (filter-parity-and-builtin-views-1.0 M6): every
+/// issue the caller touched recently, finished or not — the reading log
+/// as a rail. Same card as Continue reading.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RecentHistoryView {
+    pub items: Vec<ContinueReadingCard>,
+}
+
+/// Random-picks rail: a daily shuffle of series the caller hasn't
+/// started. `seed_date` is the UTC day the order is stable for.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RandomPicksView {
+    pub seed_date: String,
+    pub items: Vec<SeriesView>,
+}
+
+/// On-this-day rail: issues released on this calendar day (any year),
+/// oldest first.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct OnThisDayView {
+    pub month: u32,
+    pub day: u32,
+    pub items: Vec<IssueSummaryView>,
+}
+
+/// `?month=&day=` for the on-this-day rail — the client sends its local
+/// calendar day; the server's UTC date is the fallback.
+#[derive(Debug, Deserialize, utoipa::ToSchema, utoipa::IntoParams)]
+pub struct OnThisDayQuery {
+    pub month: Option<u32>,
+    pub day: Option<u32>,
 }
 
 /// Discriminated union for the On Deck rail. Each card represents one
@@ -191,7 +234,54 @@ fn rail_acl_clause(
 )]
 #[handler]
 pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) -> Response {
-    let acl = access::for_user(&app, &user).await;
+    match progress_cards(
+        &app,
+        &user,
+        "AND p.finished = false AND p.last_page > 0",
+        "continue-reading",
+    )
+    .await
+    {
+        Ok(items) => Json(ContinueReadingView { items }).into_response(),
+        Err(resp) => resp,
+    }
+}
+
+/// Everything the caller touched recently — in progress *or* finished —
+/// most recent activity first. Bulk mark-read backfills are excluded
+/// (`is_backfill`) so marking a 200-issue run read doesn't bury the
+/// issues actually read. Dismissals follow the Continue-reading rule.
+#[utoipa::path(
+    operation_id = "rails_recent_history",    get,
+    path = "/me/recent-history",
+    responses((status = 200, body = RecentHistoryView))
+)]
+#[handler]
+pub async fn recent_history(State(app): State<AppState>, user: CurrentUser) -> Response {
+    match progress_cards(
+        &app,
+        &user,
+        "AND (p.finished = true OR p.last_page > 0) AND p.is_backfill = false",
+        "recent-history",
+    )
+    .await
+    {
+        Ok(items) => Json(RecentHistoryView { items }).into_response(),
+        Err(resp) => resp,
+    }
+}
+
+/// Shared body of the progress-backed rails: the caller's
+/// `progress_records` joined to active, visible issues, minus current
+/// dismissals, newest activity first, hydrated to `ContinueReadingCard`s.
+/// `extra_where` narrows the progress rows (static SQL, no user input).
+async fn progress_cards(
+    app: &AppState,
+    user: &CurrentUser,
+    extra_where: &'static str,
+    rail: &'static str,
+) -> Result<Vec<ContinueReadingCard>, Response> {
+    let acl = access::for_user(app, user).await;
 
     #[derive(Debug, FromQueryResult)]
     struct Row {
@@ -212,7 +302,7 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
     // rail while their visible in-progress issues sat past the cut.
     let mut params: Vec<sea_orm::Value> = vec![user.id.into()];
     let Some(acl_clause) = rail_acl_clause(&acl, "i.library_id", &mut params) else {
-        return Json(ContinueReadingView { items: Vec::new() }).into_response();
+        return Ok(Vec::new());
     };
     let cap_clause = acl.raw_cap_clause(
         "i.library_id",
@@ -237,8 +327,7 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
              AND d.target_kind = 'issue'
              AND d.target_id   = p.issue_id
             WHERE p.user_id   = $1
-              AND p.finished  = false
-              AND p.last_page > 0
+              {extra_where}
               AND i.state     = 'active'
               AND i.removed_at IS NULL
               {acl_clause}{cap_clause}
@@ -257,13 +346,17 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
     {
         Ok(r) => r,
         Err(e) => {
-            tracing::error!(error = %e, "rails: continue-reading query failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            tracing::error!(error = %e, rail, "rails: progress rail query failed");
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
         }
     };
 
     if rows.is_empty() {
-        return Json(ContinueReadingView { items: Vec::new() }).into_response();
+        return Ok(Vec::new());
     }
 
     // Hydrate the slim card projection (WP-3.6) for the page. One batched
@@ -277,13 +370,17 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
     {
         Ok(v) => v,
         Err(e) => {
-            tracing::error!(error = %e, "rails: continue-reading hydrate failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            tracing::error!(error = %e, rail, "rails: progress rail hydrate failed");
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
         }
     };
     // WP-2.7: drops issues rated above the caller's cap (one extra
     // series-rating query, only for capped callers).
-    let issue_rows = access::filter_issues(&app, &acl, issue_rows).await;
+    let issue_rows = access::filter_issues(app, &acl, issue_rows).await;
     let issue_by_id: std::collections::HashMap<String, OnDeckIssue> =
         issue_rows.into_iter().map(|i| (i.id.clone(), i)).collect();
 
@@ -308,7 +405,187 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
         })
         .collect();
 
-    Json(ContinueReadingView { items }).into_response()
+    Ok(items)
+}
+
+/// A daily shuffle of series the caller hasn't started (no progress row
+/// on any issue), with at least one active issue, that they can see and
+/// haven't dismissed. The order is `md5(series.id || seed)` with a
+/// per-user, per-UTC-day seed, so the rail is stable for a day and
+/// different for every user. Dismissals (`series` kind) simply hide a
+/// series — there is no activity to auto-restore on.
+#[utoipa::path(
+    operation_id = "rails_random_picks",    get,
+    path = "/me/random-picks",
+    responses((status = 200, body = RandomPicksView))
+)]
+#[handler]
+pub async fn random_picks(State(app): State<AppState>, user: CurrentUser) -> Response {
+    let acl = access::for_user(&app, &user).await;
+    let seed_date = Utc::now().date_naive().to_string();
+    let seed = format!("{}:{seed_date}", user.id);
+    let mut params: Vec<sea_orm::Value> = vec![user.id.into(), seed.into()];
+    let Some(acl_clause) = rail_acl_clause(&acl, "s.library_id", &mut params) else {
+        return Json(RandomPicksView {
+            seed_date,
+            items: Vec::new(),
+        })
+        .into_response();
+    };
+    let cap_clause = acl.raw_cap_clause("s.library_id", "s.age_rating", &mut params);
+    params.push(RANDOM_PICKS_LIMIT.into());
+    let limit_param = params.len();
+    let sql = format!(
+        r#"
+            SELECT s.*
+              FROM series s
+             WHERE s.removed_at IS NULL
+               AND EXISTS (SELECT 1 FROM issues i
+                            WHERE i.series_id = s.id
+                              AND i.state = 'active' AND i.removed_at IS NULL)
+               AND NOT EXISTS (SELECT 1 FROM progress_records p
+                                 JOIN issues pi ON pi.id = p.issue_id
+                                WHERE p.user_id = $1 AND pi.series_id = s.id)
+               AND NOT EXISTS (SELECT 1 FROM rail_dismissals d
+                                WHERE d.user_id = $1
+                                  AND d.target_kind = 'series'
+                                  AND d.target_id = s.id::text)
+               {acl_clause}{cap_clause}
+             ORDER BY md5(s.id::text || $2)
+             LIMIT ${limit_param}
+        "#
+    );
+    let rows = match series::Model::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        sql,
+        params,
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "rails: random-picks query failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let items = crate::api::series::hydrate_series(&app, rows, user.id).await;
+    Json(RandomPicksView { seed_date, items }).into_response()
+}
+
+/// Issues released on this calendar day in any year (`issues.month` /
+/// `issues.day`), oldest first. Only issues with a full release date
+/// qualify, so libraries tagged with years alone leave the rail empty
+/// (it hides itself). The client passes its local `month` / `day`;
+/// absent, the server's UTC date applies.
+#[utoipa::path(
+    operation_id = "rails_on_this_day",    get,
+    path = "/me/on-this-day",
+    params(OnThisDayQuery),
+    responses((status = 200, body = OnThisDayView), (status = 422, description = "bad date"))
+)]
+#[handler]
+pub async fn on_this_day(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    axum::extract::Query(q): axum::extract::Query<OnThisDayQuery>,
+) -> Response {
+    let today = Utc::now().date_naive();
+    let month = q.month.unwrap_or(today.month());
+    let day = q.day.unwrap_or(today.day());
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "month must be 1..=12 and day 1..=31",
+        );
+    }
+    let acl = access::for_user(&app, &user).await;
+
+    #[derive(Debug, FromQueryResult)]
+    struct Row {
+        id: String,
+        slug: String,
+        series_id: Uuid,
+        title: Option<String>,
+        number_raw: Option<String>,
+        sort_number: Option<f64>,
+        year: Option<i32>,
+        page_count: Option<i32>,
+        special_type: Option<String>,
+        created_at: chrono::DateTime<chrono::FixedOffset>,
+        updated_at: chrono::DateTime<chrono::FixedOffset>,
+        series_slug: String,
+        series_name: String,
+    }
+
+    let mut params: Vec<sea_orm::Value> = vec![(month as i32).into(), (day as i32).into()];
+    let Some(acl_clause) = rail_acl_clause(&acl, "i.library_id", &mut params) else {
+        return Json(OnThisDayView {
+            month,
+            day,
+            items: Vec::new(),
+        })
+        .into_response();
+    };
+    let cap_clause = acl.raw_cap_clause(
+        "i.library_id",
+        "COALESCE(i.age_rating, s.age_rating)",
+        &mut params,
+    );
+    params.push(ON_THIS_DAY_LIMIT.into());
+    let limit_param = params.len();
+    let sql = format!(
+        r#"
+            SELECT i.id, i.slug, i.series_id, i.title, i.number_raw,
+                   i.sort_number, i.year, i.page_count, i.special_type,
+                   i.created_at, i.updated_at,
+                   s.slug AS series_slug, s.name AS series_name
+              FROM issues i
+              JOIN series s ON s.id = i.series_id
+             WHERE i.state = 'active'
+               AND i.removed_at IS NULL
+               AND i.month = $1 AND i.day = $2
+               {acl_clause}{cap_clause}
+             ORDER BY i.year ASC NULLS LAST, s.name ASC, i.sort_number ASC NULLS LAST, i.id ASC
+             LIMIT ${limit_param}
+        "#
+    );
+    let rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        sql,
+        params,
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "rails: on-this-day query failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let items: Vec<IssueSummaryView> = rows
+        .into_iter()
+        .map(|r| IssueSummaryView {
+            cover_url: Some(format!("/issues/{}/pages/0/thumb", r.id)),
+            id: r.id,
+            slug: r.slug,
+            series_id: r.series_id.to_string(),
+            series_slug: r.series_slug,
+            series_name: Some(r.series_name),
+            title: r.title,
+            number: r.number_raw,
+            sort_number: r.sort_number,
+            year: r.year,
+            page_count: r.page_count,
+            state: "active".to_owned(),
+            special_type: r.special_type,
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
+        })
+        .collect();
+    Json(OnThisDayView { month, day, items }).into_response()
 }
 
 /// "What's next" suggestions for the home page. Returns a mix of

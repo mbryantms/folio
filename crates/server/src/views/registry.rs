@@ -85,7 +85,46 @@ pub enum Source {
     /// (`markers.issue_id = issues.id` / `markers.series_id = series.id`),
     /// ignoring markers on removed issues (WP-5.7).
     MarkerExists(&'static str),
+    /// The caller's own `progress_records.<col>` for the issue (issue
+    /// views only; filter-parity-and-builtin-views-1.0 M1). A scalar
+    /// subquery, so an issue the caller never opened is NULL — numeric
+    /// columns COALESCE to 0, dates stay NULL (`is_empty`). Tag
+    /// `read_count` is the derived `run + finished` completed-read count.
+    IssueReading(&'static str),
+    /// Per-user aggregate over the series' active issues (series views
+    /// only). Tag `finished_at` is `MAX(progress_records.finished_at)`.
+    ReadingAgg(&'static str),
+    /// Junction whose value lives in a lookup table: `EXISTS (SELECT 1
+    /// FROM {table} j JOIN {lookup} l ON l.id = j.{fk_col} WHERE j.<key>
+    /// = <root> AND l.name = ANY($1))`. Used for story arcs / universes /
+    /// concepts / objects, whose junctions carry ids rather than names.
+    LookupJunctionExists {
+        table: &'static str,
+        fk_col: &'static str,
+        lookup: &'static str,
+    },
+    /// `matched` / `unmatched` by the presence of a provider row in
+    /// `external_ids` for the row (`entity_type` per view entity).
+    ProviderMatch,
+    /// A raw SQL expression evaluated as the LHS (no user input inside;
+    /// the registry owns the text). Used for the composed release date.
+    RawExpr(&'static str),
 }
+
+/// Release date of an issue as a `date`: `year`-`month`-`day` with
+/// missing month / day falling back to 1. Built from `make_date(year, 1,
+/// 1)` plus month / day offsets so an out-of-range day (a ComicInfo
+/// `Day` of 31 in a 30-day month) rolls forward instead of raising.
+/// Years outside `make_date`'s range are treated as unknown.
+pub const ISSUE_RELEASE_DATE_SQL: &str = "(CASE WHEN issues.year BETWEEN 1 AND 9999 THEN \
+     (make_date(issues.year, 1, 1) \
+      + make_interval(months => GREATEST(COALESCE(issues.month, 1), 1) - 1, \
+                      days => GREATEST(COALESCE(issues.day, 1), 1) - 1))::date \
+     END)";
+
+/// Release date of a series: January 1st of `series.year`.
+pub const SERIES_RELEASE_DATE_SQL: &str =
+    "(CASE WHEN series.year BETWEEN 1 AND 9999 THEN make_date(series.year, 1, 1) END)";
 
 #[derive(Debug, Clone)]
 pub struct FieldSpec {
@@ -154,6 +193,7 @@ const DATE_OPS: &[Op] = &[
     Op::After,
     Op::Between,
     Op::Relative,
+    Op::NotRelative,
     Op::Lt,
     Op::Gt,
     Op::IsEmpty,
@@ -164,6 +204,7 @@ const DATE_OPS_REQUIRED: &[Op] = &[
     Op::After,
     Op::Between,
     Op::Relative,
+    Op::NotRelative,
     Op::Lt,
     Op::Gt,
 ];
@@ -207,6 +248,10 @@ const COLLECTION_COMPLETENESS_VALUES: &[&str] = &["complete", "incomplete", "unk
 /// (every / some / no issue meets the issue core criteria). Mirrors the
 /// per-issue tiers in `metadata::completeness::CompletenessTier`.
 const METADATA_COMPLETENESS_VALUES: &[&str] = &["complete", "partial", "needs_metadata"];
+/// Provider linkage (filter-parity-and-builtin-views-1.0 M4): whether the
+/// row has a provider id in `external_ids`. Mirrors the grid's
+/// `provider_match` facet and the admin dashboard's "matched" count.
+const PROVIDER_MATCH_VALUES: &[&str] = &["matched", "unmatched"];
 /// ComicInfo `AgeRating` values per the Anansi schema. Open-ended in the
 /// data (the scanner stores any string), but the UI restricts choices to
 /// the known set — unknown values still match via direct equality.
@@ -589,7 +634,7 @@ const SPECS: &[FieldSpec] = &[
         id: "read_progress",
         label: "Read Progress",
         source: Some(Source::Reading("percent")),
-        issue_source: None,
+        issue_source: Some(Source::IssueReading("percent")),
         allowed_ops: COMPUTED_NUMBER_OPS,
         enum_values: &[],
     },
@@ -599,7 +644,7 @@ const SPECS: &[FieldSpec] = &[
         id: "last_read",
         label: "Last Read",
         source: Some(Source::Reading("last_read_at")),
-        issue_source: None,
+        issue_source: Some(Source::IssueReading("updated_at")),
         allowed_ops: DATE_OPS,
         enum_values: &[],
     },
@@ -609,7 +654,7 @@ const SPECS: &[FieldSpec] = &[
         id: "read_count",
         label: "Read Count",
         source: Some(Source::Reading("finished_count")),
-        issue_source: None,
+        issue_source: Some(Source::IssueReading("read_count")),
         allowed_ops: COMPUTED_NUMBER_OPS,
         enum_values: &[],
     },
@@ -653,7 +698,9 @@ const SPECS: &[FieldSpec] = &[
         id: "metadata_completeness",
         label: "Metadata Completeness",
         source: Some(Source::SeriesComputed("metadata_completeness")),
-        issue_source: None,
+        // Per-issue the tier is binary (`complete` / `needs_metadata`);
+        // `partial` is a series-only rollup value and never matches here.
+        issue_source: Some(Source::IssueComputed("metadata_completeness")),
         allowed_ops: COMPUTED_ENUM_OPS,
         enum_values: METADATA_COMPLETENESS_VALUES,
     },
@@ -751,6 +798,180 @@ const SPECS: &[FieldSpec] = &[
         allowed_ops: BOOL_OPS,
         enum_values: &[],
     },
+    // ─── filter-parity-and-builtin-views-1.0 M1: finish timestamp ───────
+    FieldSpec {
+        field: Field::FinishedAt,
+        kind: FieldKind::Date,
+        id: "finished_at",
+        label: "Finished At",
+        source: Some(Source::ReadingAgg("finished_at")),
+        issue_source: Some(Source::IssueReading("finished_at")),
+        allowed_ops: DATE_OPS,
+        enum_values: &[],
+    },
+    // ─── M4: lookup-table junctions (both entities) ──────────────────────
+    FieldSpec {
+        field: Field::StoryArcs,
+        kind: FieldKind::Multi,
+        id: "story_arcs",
+        label: "Story Arcs",
+        source: Some(Source::LookupJunctionExists {
+            table: "series_arcs",
+            fk_col: "arc_id",
+            lookup: "story_arc",
+        }),
+        issue_source: Some(Source::LookupJunctionExists {
+            table: "issue_arcs",
+            fk_col: "arc_id",
+            lookup: "story_arc",
+        }),
+        allowed_ops: MULTI_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
+        field: Field::Universes,
+        kind: FieldKind::Multi,
+        id: "universes",
+        label: "Universes",
+        source: Some(Source::LookupJunctionExists {
+            table: "series_universes",
+            fk_col: "universe_id",
+            lookup: "universe",
+        }),
+        issue_source: Some(Source::LookupJunctionExists {
+            table: "issue_universes",
+            fk_col: "universe_id",
+            lookup: "universe",
+        }),
+        allowed_ops: MULTI_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
+        field: Field::Concepts,
+        kind: FieldKind::Multi,
+        id: "concepts",
+        label: "Concepts",
+        source: Some(Source::LookupJunctionExists {
+            table: "series_concepts",
+            fk_col: "concept_id",
+            lookup: "concept",
+        }),
+        issue_source: Some(Source::LookupJunctionExists {
+            table: "issue_concepts",
+            fk_col: "concept_id",
+            lookup: "concept",
+        }),
+        allowed_ops: MULTI_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
+        field: Field::Objects,
+        kind: FieldKind::Multi,
+        id: "objects",
+        label: "Objects",
+        source: Some(Source::LookupJunctionExists {
+            table: "series_objects",
+            fk_col: "object_id",
+            lookup: "object",
+        }),
+        issue_source: Some(Source::LookupJunctionExists {
+            table: "issue_objects",
+            fk_col: "object_id",
+            lookup: "object",
+        }),
+        allowed_ops: MULTI_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
+        field: Field::AnyCredit,
+        kind: FieldKind::Multi,
+        id: "any_credit",
+        label: "Any Credit",
+        source: Some(Source::JunctionExists {
+            table: "series_credits",
+            value_col: "person",
+            role: None,
+        }),
+        issue_source: Some(Source::JunctionExists {
+            table: "issue_credits",
+            value_col: "person",
+            role: None,
+        }),
+        allowed_ops: MULTI_OPS,
+        enum_values: &[],
+    },
+    // ─── M4: provider linkage + release date ─────────────────────────────
+    FieldSpec {
+        field: Field::ProviderMatch,
+        kind: FieldKind::Enum,
+        id: "provider_match",
+        label: "Provider Match",
+        source: Some(Source::ProviderMatch),
+        issue_source: Some(Source::ProviderMatch),
+        allowed_ops: COMPUTED_ENUM_OPS,
+        enum_values: PROVIDER_MATCH_VALUES,
+    },
+    FieldSpec {
+        field: Field::ReleaseDate,
+        kind: FieldKind::Date,
+        id: "release_date",
+        label: "Release Date",
+        source: Some(Source::RawExpr(SERIES_RELEASE_DATE_SQL)),
+        issue_source: Some(Source::RawExpr(ISSUE_RELEASE_DATE_SQL)),
+        allowed_ops: DATE_OPS,
+        enum_values: &[],
+    },
+    // ─── M4: more scalar columns ─────────────────────────────────────────
+    FieldSpec {
+        field: Field::SeriesType,
+        kind: FieldKind::Text,
+        id: "series_type",
+        label: "Series Type",
+        source: Some(Source::Series("series_type")),
+        issue_source: Some(Source::Series("series_type")),
+        allowed_ops: TEXT_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
+        field: Field::SeriesGroup,
+        kind: FieldKind::Text,
+        id: "series_group",
+        label: "Series Group",
+        source: Some(Source::Series("series_group")),
+        issue_source: Some(Source::Series("series_group")),
+        allowed_ops: TEXT_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
+        field: Field::YearEnd,
+        kind: FieldKind::Number,
+        id: "year_end",
+        label: "End Year",
+        source: Some(Source::Series("year_end")),
+        issue_source: Some(Source::Series("year_end")),
+        allowed_ops: NUMBER_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
+        field: Field::PageCount,
+        kind: FieldKind::Number,
+        id: "page_count",
+        label: "Page Count",
+        source: None,
+        issue_source: Some(Source::Issue("page_count")),
+        allowed_ops: NUMBER_OPS,
+        enum_values: &[],
+    },
+    FieldSpec {
+        field: Field::Summary,
+        kind: FieldKind::Text,
+        id: "summary",
+        label: "Summary",
+        source: Some(Source::Series("summary")),
+        issue_source: Some(Source::Issue("summary")),
+        allowed_ops: TEXT_OPS,
+        enum_values: &[],
+    },
 ];
 
 pub fn spec_for(field: Field) -> &'static FieldSpec {
@@ -787,7 +1008,7 @@ mod tests {
         // and a matching `FieldSpec` row. Forgetting both leaves the
         // count unchanged but `spec_for` would panic at runtime — the
         // mismatch is the alarm.
-        const KNOWN_FIELD_COUNT: usize = 41;
+        const KNOWN_FIELD_COUNT: usize = 54;
         assert_eq!(SPECS.len(), KNOWN_FIELD_COUNT);
         for spec in SPECS {
             let looked_up = spec_for(spec.field);
@@ -807,6 +1028,7 @@ mod tests {
             Field::Format,
             Field::StoryArc,
             Field::Title,
+            Field::PageCount,
         ] {
             assert!(source_for(spec_for(f), ViewEntity::Series).is_none());
             assert!(source_for(spec_for(f), ViewEntity::Issue).is_some());
@@ -815,15 +1037,44 @@ mod tests {
 
     #[test]
     fn series_rollups_have_no_issue_mapping() {
+        for f in [Field::UnreadIssues, Field::CollectionCompleteness] {
+            assert!(source_for(spec_for(f), ViewEntity::Issue).is_none());
+        }
+    }
+
+    // filter-parity-and-builtin-views-1.0 M1: the per-user reading
+    // fields exist on both entities now — the issue side reads the
+    // caller's own `progress_records` row.
+    #[test]
+    fn reading_fields_are_available_on_both_entities() {
         for f in [
             Field::ReadProgress,
             Field::LastRead,
             Field::ReadCount,
-            Field::UnreadIssues,
-            Field::CollectionCompleteness,
+            Field::ReadStatus,
+            Field::FinishedAt,
             Field::MetadataCompleteness,
         ] {
-            assert!(source_for(spec_for(f), ViewEntity::Issue).is_none());
+            assert!(
+                source_for(spec_for(f), ViewEntity::Series).is_some(),
+                "{f:?}"
+            );
+            assert!(
+                source_for(spec_for(f), ViewEntity::Issue).is_some(),
+                "{f:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn date_fields_offer_not_relative() {
+        for f in [
+            Field::LastRead,
+            Field::FinishedAt,
+            Field::CreatedAt,
+            Field::ReleaseDate,
+        ] {
+            assert!(spec_for(f).allowed_ops.contains(&Op::NotRelative), "{f:?}");
         }
     }
 }

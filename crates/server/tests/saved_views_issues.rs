@@ -441,6 +441,14 @@ async fn issue_results_keyset_walks_every_sort() {
         ("year", "desc"),
         ("created_at", "desc"),
         ("updated_at", "asc"),
+        // filter-parity-and-builtin-views-1.0 M1: per-user + issue-column
+        // sorts, all nullable keys (NULLS LAST).
+        ("last_read", "desc"),
+        ("read_progress", "asc"),
+        ("finished_at", "desc"),
+        ("rating", "desc"),
+        ("page_count", "asc"),
+        ("number", "asc"),
     ] {
         let id = create_view(&app, &auth, sort, order).await;
         let walked = walk(&app, &auth, &id).await;
@@ -462,6 +470,180 @@ async fn issue_results_keyset_walks_every_sort() {
             );
         }
     }
+}
+
+/// filter-parity-and-builtin-views-1.0 M1: the per-user reading fields on
+/// issue views read the caller's own `progress_records` row.
+#[tokio::test]
+async fn issue_reading_fields_read_the_callers_progress() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "reading@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = seed(&app, tmp.path(), auth.user_id).await;
+    let app = &app;
+    let auth = &auth;
+    let probe = move |conds: Value| async move {
+        let (status, body) = http(
+            app,
+            Method::POST,
+            "/api/me/saved-views/preview-issues",
+            auth,
+            Some(json!({
+                "filter": {"match_mode": "all", "conditions": conds.clone()},
+                "sort_field": "name", "sort_order": "asc", "result_limit": 50,
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{conds} → {body}");
+        let mut got = ids(&body);
+        got.sort();
+        got
+    };
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+    // Finished issue: 100 %, one completed read, finished just now.
+    assert_eq!(
+        probe(json!([{"field": "read_progress", "op": "gte", "value": 100}])).await,
+        vec![fx.annual_2019_read.clone()]
+    );
+    assert_eq!(
+        probe(json!([{"field": "read_count", "op": "gte", "value": 1}])).await,
+        vec![fx.annual_2019_read.clone()]
+    );
+    assert_eq!(
+        probe(json!([{"field": "finished_at", "op": "relative", "value": 1}])).await,
+        vec![fx.annual_2019_read.clone()]
+    );
+    // Nothing was finished more than a day ago.
+    assert!(
+        probe(json!([{"field": "finished_at", "op": "not_relative", "value": 1}]))
+            .await
+            .is_empty()
+    );
+    // Started-but-unfinished: progress strictly between 0 and 100.
+    assert_eq!(
+        probe(json!([{"field": "read_progress", "op": "between", "value": [1, 99]}])).await,
+        vec![fx.annual_2019_started.clone()]
+    );
+    // Never opened: no progress row → `last_read` is empty.
+    assert_eq!(
+        probe(json!([{"field": "last_read", "op": "is_empty"}])).await,
+        sorted(vec![
+            fx.annual_2019_unread.clone(),
+            fx.annual_2018.clone(),
+            fx.regular_2019.clone(),
+        ])
+    );
+    // Per-issue metadata tier is binary; nothing here has a summary /
+    // provider id, so every issue needs metadata and none is complete.
+    assert_eq!(
+        probe(json!([{"field": "metadata_completeness", "op": "is", "value": "needs_metadata"}]))
+            .await
+            .len(),
+        5
+    );
+    assert!(
+        probe(json!([{"field": "metadata_completeness", "op": "is", "value": "complete"}]))
+            .await
+            .is_empty()
+    );
+    // Series-level twin: the series was finished-in within the last day.
+    let (status, body) = http(
+        app,
+        Method::POST,
+        "/api/me/saved-views/preview",
+        auth,
+        Some(json!({
+            "filter": {"match_mode": "all", "conditions": [
+                {"field": "finished_at", "op": "relative", "value": 1}
+            ]},
+            "sort_field": "finished_at", "sort_order": "desc", "result_limit": 12,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"].as_array().unwrap().len(), 1);
+}
+
+/// M4 fields all compile and execute against real tables on both roots —
+/// a typo in a lookup table or column name would surface here as a 500.
+#[tokio::test]
+async fn wave2_fields_execute_on_both_entities() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "wave2@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let fx = seed(&app, tmp.path(), auth.user_id).await;
+    let conds = [
+        json!({"field": "story_arcs", "op": "includes_any", "value": ["Knightfall"]}),
+        json!({"field": "universes", "op": "excludes", "value": ["Earth-616"]}),
+        json!({"field": "concepts", "op": "is_empty"}),
+        json!({"field": "objects", "op": "is_not_empty"}),
+        json!({"field": "any_credit", "op": "includes_all", "value": ["Alan Moore"]}),
+        json!({"field": "provider_match", "op": "is", "value": "unmatched"}),
+        json!({"field": "release_date", "op": "after", "value": "2018-06-01T00:00:00Z"}),
+        json!({"field": "release_date", "op": "not_relative", "value": 30}),
+        json!({"field": "series_type", "op": "is_empty"}),
+        json!({"field": "series_group", "op": "contains", "value": "x"}),
+        json!({"field": "year_end", "op": "is_empty"}),
+        json!({"field": "summary", "op": "is_empty"}),
+        json!({"field": "finished_at", "op": "is_empty"}),
+        json!({"field": "created_at", "op": "before", "value": "2099-01-01T00:00:00Z"}),
+    ];
+    for c in &conds {
+        for (path, sort) in [
+            ("/api/me/saved-views/preview", "rating"),
+            ("/api/me/saved-views/preview-issues", "page_count"),
+        ] {
+            let (status, body) = http(
+                &app,
+                Method::POST,
+                path,
+                &auth,
+                Some(json!({
+                    "filter": {"match_mode": "all", "conditions": [c]},
+                    "sort_field": sort, "sort_order": "desc", "result_limit": 12,
+                })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{path} {c} → {body}");
+        }
+    }
+    // Spot-check semantics: nothing is provider-matched, so `unmatched`
+    // is every issue; the composed release date puts the 2018 annual
+    // before mid-2018 and the four 2019 issues after it.
+    let (_, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/saved-views/preview-issues",
+        &auth,
+        Some(json!({
+            "filter": {"match_mode": "all", "conditions": [
+                {"field": "release_date", "op": "after", "value": "2018-06-01T00:00:00Z"}
+            ]},
+            "sort_field": "year", "sort_order": "asc", "result_limit": 12,
+        })),
+    )
+    .await;
+    let got = ids(&body);
+    assert_eq!(got.len(), 4, "{body}");
+    assert!(!got.contains(&fx.annual_2018));
+    // `page_count` is issue-only: a series view 422s on it.
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        "/api/me/saved-views/preview",
+        &auth,
+        Some(json!({
+            "filter": {"match_mode": "all", "conditions": [
+                {"field": "page_count", "op": "gte", "value": 1}
+            ]},
+            "sort_field": "name", "sort_order": "asc", "result_limit": 12,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]
@@ -567,17 +749,19 @@ async fn issue_views_validate_entity_fields_and_sorts() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
-    // Per-user sort isn't available on issue views — create and PATCH.
+    // Issue-only sorts aren't available on series views — create and
+    // PATCH. (The per-user sorts work on both entities since
+    // filter-parity-and-builtin-views-1.0 M1.)
     let (status, _) = http(
         &app,
         Method::POST,
         "/api/me/saved-views",
         &auth,
         Some(json!({
-            "kind": "filter_issues",
+            "kind": "filter_series",
             "name": "bad",
             "filter": {"match_mode": "all", "conditions": []},
-            "sort_field": "read_progress",
+            "sort_field": "page_count",
         })),
     )
     .await;
@@ -588,7 +772,7 @@ async fn issue_views_validate_entity_fields_and_sorts() {
         "/api/me/saved-views",
         &auth,
         Some(json!({
-            "kind": "filter_issues",
+            "kind": "filter_series",
             "name": "ok",
             "filter": {"match_mode": "all", "conditions": []},
         })),
@@ -601,10 +785,25 @@ async fn issue_views_validate_entity_fields_and_sorts() {
         Method::PATCH,
         &format!("/api/me/saved-views/{id}"),
         &auth,
-        Some(json!({"sort_field": "last_read"})),
+        Some(json!({"sort_field": "number"})),
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    // And the per-user sorts are accepted on issue views.
+    let (status, view) = http(
+        &app,
+        Method::POST,
+        "/api/me/saved-views",
+        &auth,
+        Some(json!({
+            "kind": "filter_issues",
+            "name": "per-user sort",
+            "filter": {"match_mode": "all", "conditions": []},
+            "sort_field": "read_progress",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{view}");
 }
 
 #[tokio::test]

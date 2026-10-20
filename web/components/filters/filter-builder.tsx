@@ -79,10 +79,11 @@ const DEFAULT_STATE: FilterBuilderState = {
 
 // Labels mirror the grid sort dropdowns (LibraryGridView's
 // `SERIES_SORT_LABELS` / `ISSUE_SORT_LABELS`) so users see the same
-// names in saved views, the series list, and the issues list. The two
-// per-user axes (`last_read`, `read_progress`) are exclusive to saved
-// views today — extending the grid sort enums to expose them would
-// need a server-side enum + cursor change; tracked as a follow-up.
+// names in saved views, the series list, and the issues list. The
+// per-user axes (`last_read`, `read_progress`, `finished_at`, `rating`)
+// are exclusive to saved views on the series side — extending the grid
+// sort enums to expose them would need a server-side enum + cursor
+// change; tracked as a follow-up.
 const SORT_FIELDS: { value: SavedViewSortField; label: string }[] = [
   { value: "name", label: "Name" },
   { value: "year", label: "Year" },
@@ -90,16 +91,24 @@ const SORT_FIELDS: { value: SavedViewSortField; label: string }[] = [
   { value: "updated_at", label: "Recently updated" },
   { value: "last_read", label: "Last read" },
   { value: "read_progress", label: "Read progress" },
+  { value: "finished_at", label: "Finished" },
+  { value: "rating", label: "My rating" },
 ];
 
-/** Sort axes an issue view accepts — the per-user series rollups
- *  (`last_read`, `read_progress`) have no issue-level equivalent and the
- *  server 422s them. `name` sorts by series name, then issue number. */
+/** Sort axes an issue view accepts. `name` sorts by series name, then
+ *  issue number; the per-user axes read the caller's own progress /
+ *  rating row (filter-parity-and-builtin-views-1.0 M1). */
 const ISSUE_SORT_FIELDS: { value: SavedViewSortField; label: string }[] = [
   { value: "name", label: "Series & number" },
+  { value: "number", label: "Issue number" },
   { value: "year", label: "Release date" },
   { value: "created_at", label: "Recently added" },
   { value: "updated_at", label: "Recently updated" },
+  { value: "last_read", label: "Last read" },
+  { value: "read_progress", label: "Read progress" },
+  { value: "finished_at", label: "Finished" },
+  { value: "rating", label: "My rating" },
+  { value: "page_count", label: "Page count" },
 ];
 
 export function sortFieldsFor(

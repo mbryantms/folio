@@ -269,9 +269,8 @@ export function useLibraryGridFilters(
     ...sharedFilters,
     sort: trimmedQ && !sortExplicit ? undefined : seriesSort,
     status: status === "any" ? undefined : status,
-    // read_status is a per-series rollup — series mode only.
     read_status: csvOrUndef(readStatus),
-    // Completeness rollup is series-only (the worklist filter).
+    // The per-series completeness rollup (the worklist filter).
     metadata_completeness: metadataCompleteness,
     provider_match: providerMatch,
     provider_source: providerMatch ? providerSource : undefined,
@@ -281,6 +280,15 @@ export function useLibraryGridFilters(
   const issueFilters: IssuesCrossListFilters = {
     ...sharedFilters,
     sort: trimmedQ && !sortExplicit ? undefined : issueSort,
+    // Per-issue read state (`/issues?read_status=`), the issue's own
+    // (binary) metadata tier — `partial` only exists per series, so it
+    // is dropped rather than 422'd — and provider linkage
+    // (filter-parity-and-builtin-views-1.0 M2).
+    read_status: csvOrUndef(readStatus),
+    metadata_completeness:
+      metadataCompleteness === "partial" ? undefined : metadataCompleteness,
+    provider_match: providerMatch,
+    provider_source: providerMatch ? providerSource : undefined,
   };
 
   // ── URL ↔ state sync ──

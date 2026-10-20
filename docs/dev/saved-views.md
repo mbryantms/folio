@@ -50,7 +50,17 @@ guards the mirror.
 | `special_type`, `format`, `story_arc`, `title` | —                             | `issues.*` (`title` = the issue's own title) |
 | `has_notes`, `has_bookmarks`, `has_highlights` (WP-5.7) | the caller has a marker of that kind on any (non-removed) issue of the series | the caller has a marker of that kind on the issue |
 | `has_favorites` (WP-8.4) | the caller starred something on any (non-removed) issue of the series: a `favorite` marker or any marker with `is_favorite` | same, on the issue |
-| `read_progress`, `last_read`, `read_count`, `unread_issues`, `collection_completeness`, `metadata_completeness` | per-series rollups | — |
+| `read_progress`, `last_read`, `read_count` | per-series rollups over `user_series_progress` | the caller's own `progress_records` row: `percent`, `updated_at`, `run + finished` (completed reads); numbers COALESCE to 0, dates stay NULL (filter-parity-and-builtin-views-1.0 M1) |
+| `finished_at` (M1)                      | `MAX(progress_records.finished_at)` over the series' active issues for the caller | the issue's own `finished_at` |
+| `metadata_completeness`                 | 3-tier rollup (`complete` / `partial` / `needs_metadata`) | binary per issue via `completeness::issue_metadata_satisfied_sql` — `partial` never matches, and the builder hides it on issue views |
+| `unread_issues`, `collection_completeness` | per-series rollups | — |
+| `story_arcs`, `universes`, `concepts`, `objects` (M4) | `series_*` junction → lookup table `name` (`EXISTS … JOIN story_arc l ON l.id = j.arc_id`) | `issue_*` junction, same shape |
+| `any_credit` (M4)                       | `series_credits` any role              | `issue_credits` any role                  |
+| `provider_match` (M4)                   | `matched` / `unmatched` by an `external_ids` row (`entity_type='series'`, the dashboard's source list) | same, `entity_type='issue'` |
+| `release_date` (M4)                     | `make_date(year, 1, 1)`                | `year`-`month`-`day` composed as a `date`; missing month / day fall back to 1, out-of-range days roll forward |
+| `series_type`, `series_group`, `year_end` (M4) | `series.*`                      | the parent series' column                 |
+| `summary` (M4)                          | `series.summary`                       | `issues.summary`                          |
+| `page_count` (M4)                       | —                                      | `issues.page_count`                       |
 
 ### `is_empty` / `is_not_empty`
 
@@ -69,6 +79,19 @@ them — the result would be a constant.
 `not_contains` / `not_equals` keep SQL three-valued semantics: rows whose
 column is NULL are excluded (combine with `is_empty` under `any` to keep
 them).
+
+### `relative` / `not_relative`
+
+Both take a positive day count. `relative` is `col >= NOW() - N days`
+("in the last N days"); `not_relative` (filter-parity-and-builtin-views-1.0
+M3) is the strict `col < NOW() - N days` ("older than N days"). A NULL
+date never matches either, so "started but untouched for two weeks" is
+`read_status is in_progress` + `last_read not_relative 14`, and
+"never read or stale" adds `last_read is_empty` under `any`.
+
+Date values are bound as text and cast to `timestamptz` in SQL (a bare
+text parameter against a timestamp column raises `operator does not
+exist` in Postgres).
 
 ### Annotation filters (WP-5.7)
 
@@ -94,16 +117,23 @@ series-level probe is served by `markers_user_series_kind_idx`
 - `compile(&CompileInput)` — `SELECT series.* FROM series`, LEFT JOINing
   `user_series_progress` / the active-issue-count / metadata-completeness
   aggregates only when a condition or sort needs them. Keyset cursor on
-  `(sort value, series.id)`.
+  `(sort value, series.id)`; the sort key is also projected as text
+  (`sort_value`) so the results handler encodes a real cursor for every
+  sort, including the per-user ones (`last_read`, `read_progress`,
+  `finished_at`, `rating`) that aren't `series` columns.
 - `compile_issues(&IssueCompileInput)` — the `IssueSummaryView` card
   columns (never `comic_info_raw` / `pages`) plus `series_slug` /
   `series_name`, `FROM issues JOIN series`, active + not-removed issues
   only, library ACL on `issues.library_id` and the WP-2.7 age-rating cap
   on the issue's effective rating. Sorts: `name` (series name, then issue
   number, then id), `year`, `created_at`, `updated_at`; `last_read` /
-  `read_progress` are series-only (`SortNotAvailable`, 422). Paginated
-  with an opaque **keyset** cursor (`IssueCursor`: base64 JSON of the last
-  returned row's sort-key values + issue id). The "after" predicate is
+  `read_progress` / `finished_at` / `rating` join the caller's own
+  `progress_records` (`pr`) / `user_ratings` (`ur`) row (LEFT JOIN, only
+  for the sort that needs it; projected as `sort_*` columns so the row
+  shape is constant); `page_count` / `number` are issue-only
+  (`SortNotAvailable` on series views, 422). Paginated with an opaque
+  **keyset** cursor (`IssueCursor`: base64 JSON of the last returned
+  row's sort-key values + issue id). The "after" predicate is
   lexicographic over `(keys…, issues.id)` in the view's direction with
   nullable keys (`sort_number`, `year`) ordered NULLS LAST, so issues
   added or removed between page fetches never cause skipped or repeated
@@ -128,14 +158,42 @@ identifiers in the hand-written SQL fragments come from the registry.
    `entities` if it's single-entity) and the registry test's field list.
 4. `just openapi` (the `Field` enum is in the spec).
 
+## Built-in views
+
+Global rows (`user_id IS NULL`, `is_system = true`), seeded by migration
+with fixed UUIDs. `auto_pin = true` rows land on every user's Home via the
+lazy pin seed in `saved_views::list`; the rest show under "Built-in" in
+the pin picker.
+
+| id suffix | kind | name | auto_pin |
+| --- | --- | --- | --- |
+| …0001 / …0002 | filter_series | Recently added / updated series | ✓ |
+| …0003 | filter_series | Recently finished series (was "Just Finished") | — |
+| …0010 / …0011 / …0012 | system | Continue reading / On deck / New issues | ✓ |
+| …0013 | system | Similar series | — |
+| …0014 / …0015 / …0016 | system | Random picks (`/me/random-picks`) / On this day (`/me/on-this-day`) / Recently read (`/me/recent-history`) | — |
+| …0020 | filter_issues | Recently finished | ✓ |
+| …0021 – …0027 | filter_issues | Finished this week, Rate what you read, Top rated issues, Annuals & specials, Short unread reads, Favorite issues, Annotated issues | — |
+| …0028 – …0034 | filter_series | Jump back in, Almost done, Complete runs to start, Ended but unfinished, Top rated series, Incomplete collections, Favorite series | — |
+
+`crates/server/tests/saved_views.rs::every_builtin_filter_template_resolves`
+runs every filter template for a fresh user, so a DSL / sort that drifts
+from the registry fails CI rather than the home page. Adding a template:
+append to `TEMPLATES` in `m20271020_000001_builtin_views_wave2` (or a new
+migration), bump that test's expected count.
+
 ## Save-as-view from the library grid
 
 `web/components/library/libraryGridStateToFilterState.ts` translates the
 grid's facet state into a builder seed. Series mode seeds a
 `filter_series` view, issues mode a `filter_issues` view; the rating and
 read-status chips carry over as `rating between` / `read_status in`.
-Facets with no equivalent on the target entity (metadata completeness in
-issues mode) are reported as dropped and toasted.
+Facets with no equivalent in the DSL are reported as dropped and
+toasted rather than silently lost: the A–Z letter (the grid matches it
+on `normalized_name`; `starts_with` is a case-sensitive probe on the raw
+name), the per-provider `provider_source` narrowing, and the `partial`
+metadata tier in issues mode (binary per issue). Provider match, any-role
+credits and the two remaining metadata tiers carry over on both entities.
 
 ## Groups on the Views index
 

@@ -2041,7 +2041,27 @@ pub struct ListIssuesCrossQuery {
     /// valid) is a no-op; invalid tokens 422.
     #[serde(default)]
     pub read_status: Option<String>,
+    /// Any-role credits CSV (filter-parity-and-builtin-views-1.0 M2):
+    /// the person holds *some* credit on the issue. Mirrors the series
+    /// list's `credits` param so the grid's any-credit chip filters in
+    /// issues mode too.
+    #[serde(default)]
+    pub credits: Option<String>,
+    /// Per-issue metadata tier: `needs_metadata` or `complete` (M2). The
+    /// per-issue tier is binary, so `partial` is a 422 here — it only
+    /// exists as a series rollup.
+    #[serde(default)]
+    pub metadata_completeness: Option<String>,
+    /// `matched` / `unmatched`: whether the issue has a provider id in
+    /// `external_ids` (M2); `provider_source` narrows it to one provider
+    /// like the series list.
+    #[serde(default)]
+    pub provider_match: Option<String>,
+    #[serde(default)]
+    pub provider_source: Option<String>,
 }
+
+const ISSUE_COMPLETENESS_TIERS: &[&str] = &["complete", "needs_metadata"];
 
 fn default_cross_limit() -> u64 {
     50
@@ -2113,7 +2133,86 @@ fn validate_list_query_params(q: &ListIssuesCrossQuery) -> Result<(), &'static s
     {
         return Err("read_status must be unread, in_progress, or read");
     }
+    if let Some(s) = q.metadata_completeness.as_deref()
+        && !ISSUE_COMPLETENESS_TIERS.contains(&s.trim())
+    {
+        return Err("metadata_completeness must be complete or needs_metadata");
+    }
+    if let Some(v) = q.provider_match.as_deref()
+        && !super::series::PROVIDER_MATCH_VALUES.contains(&v.trim())
+    {
+        return Err("provider_match must be matched or unmatched");
+    }
+    if let Some(v) = q.provider_source.as_deref()
+        && !super::series::PROVIDER_SOURCE_VALUES.contains(&v.trim())
+    {
+        return Err("provider_source must be comicvine, metron or gcd");
+    }
     Ok(())
+}
+
+/// Any-role credits facet (`credits=`), mirroring
+/// `series::apply_series_metadata_filters`' any-role arm: the person holds
+/// some credit on the issue, so a creator with different roles across
+/// issues still matches every one of them.
+fn apply_issue_any_credit_filter(
+    select: sea_orm::Select<issue::Entity>,
+    q: &ListIssuesCrossQuery,
+) -> sea_orm::Select<issue::Entity> {
+    let Some(raw) = q.credits.as_deref() else {
+        return select;
+    };
+    let values = split_csv(raw);
+    if values.is_empty() {
+        return select;
+    }
+    select.filter(Expr::cust_with_values(
+        "EXISTS (SELECT 1 FROM issue_credits ic \
+           WHERE ic.issue_id = issues.id AND ic.person = ANY($1))",
+        [Value::from(values)],
+    ))
+}
+
+/// Per-issue `metadata_completeness` facet: the same core-criteria
+/// predicate the series rollup counts, applied to the row itself.
+fn apply_issue_metadata_completeness_filter(
+    select: sea_orm::Select<issue::Entity>,
+    q: &ListIssuesCrossQuery,
+) -> sea_orm::Select<issue::Entity> {
+    let Some(tier) = q.metadata_completeness.as_deref().map(str::trim) else {
+        return select;
+    };
+    let satisfied = crate::metadata::completeness::issue_metadata_satisfied_sql("issues");
+    match tier {
+        "complete" => select.filter(Expr::cust(format!("({satisfied})"))),
+        "needs_metadata" => select.filter(Expr::cust(format!("NOT ({satisfied})"))),
+        _ => select,
+    }
+}
+
+/// `provider_match` facet on the issue's own `external_ids` rows (same
+/// source list as the series facet and the admin dashboard).
+fn apply_issue_provider_match_filter(
+    select: sea_orm::Select<issue::Entity>,
+    q: &ListIssuesCrossQuery,
+) -> sea_orm::Select<issue::Entity> {
+    let Some(v) = q.provider_match.as_deref().map(str::trim) else {
+        return select;
+    };
+    let sources = match q.provider_source.as_deref().map(str::trim) {
+        Some(src) if super::series::PROVIDER_SOURCE_VALUES.contains(&src) => format!("'{src}'"),
+        _ => super::series::PROVIDER_SERIES_ID_SOURCES_SQL.to_owned(),
+    };
+    let exists = format!(
+        "EXISTS (SELECT 1 FROM external_ids e \
+           WHERE e.entity_type = 'issue' AND e.entity_id = issues.id \
+             AND e.source IN ({sources}))"
+    );
+    match v {
+        "matched" => select.filter(Expr::cust(exists)),
+        "unmatched" => select.filter(Expr::cust(format!("NOT {exists}"))),
+        _ => select,
+    }
 }
 
 /// Per-user read-status filter for the cross-library issue list. Correlated
@@ -2576,6 +2675,9 @@ pub async fn list(
     select = apply_issue_csv_facet_filters(select, &q);
     select = apply_issue_user_rating_filter(select, &q, user.id);
     select = apply_issue_read_status_filter(select, &q, user.id);
+    select = apply_issue_any_credit_filter(select, &q);
+    select = apply_issue_metadata_completeness_filter(select, &q);
+    select = apply_issue_provider_match_filter(select, &q);
 
     let limit = clamp_limit(q.limit);
     let q_text = q.q.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());

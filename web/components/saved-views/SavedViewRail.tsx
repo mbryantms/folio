@@ -26,6 +26,9 @@ import type { SavedViewView } from "@/lib/api/types";
 import {
   ContinueReadingRailBody,
   OnDeckRailBody,
+  OnThisDayRailBody,
+  RandomPicksRailBody,
+  RecentHistoryRailBody,
   RecentIssuesRailBody,
   SimilarRailSeedNote,
   SimilarSeriesRailBody,
@@ -135,6 +138,24 @@ function renderRailBody(
   if (view.kind === "system" && view.system_key === "similar_series") {
     return {
       body: <SimilarSeriesRailBody itemStyle={itemStyle} />,
+      hasMore: true,
+    };
+  }
+  if (view.kind === "system" && view.system_key === "recent_history") {
+    return {
+      body: <RecentHistoryRailBody itemStyle={itemStyle} />,
+      hasMore: true,
+    };
+  }
+  if (view.kind === "system" && view.system_key === "random_picks") {
+    return {
+      body: <RandomPicksRailBody itemStyle={itemStyle} />,
+      hasMore: true,
+    };
+  }
+  if (view.kind === "system" && view.system_key === "on_this_day") {
+    return {
+      body: <OnThisDayRailBody itemStyle={itemStyle} />,
       hasMore: true,
     };
   }
