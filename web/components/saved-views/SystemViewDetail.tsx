@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ChevronRight, Sparkles } from "lucide-react";
+import { ChevronRight, LayoutGrid, Sparkles } from "lucide-react";
 
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import {
@@ -14,7 +14,11 @@ import {
   ProgressIssueCardSkeleton,
 } from "@/components/library/ProgressIssueCard";
 import { useCardSize } from "@/components/library/use-card-size";
-import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import {
+  CardSizeFields,
+  CardSizeOptions,
+} from "@/components/library/CardSizeOptions";
+import { PhoneControlsBar } from "@/components/library/PhoneControlsBar";
 import {
   SeriesCard,
   SeriesCardSkeleton,
@@ -105,9 +109,12 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
 
   return (
     <div className="space-y-6">
+      {/* Breadcrumb + eyebrow are desktop-only: on a phone the title
+       *  already says where we are and every row above the grid costs
+       *  a card row. */}
       <nav
         aria-label="Breadcrumb"
-        className="text-muted-foreground flex items-center gap-1.5 text-xs"
+        className="text-muted-foreground flex items-center gap-1.5 text-xs max-sm:hidden"
       >
         <Link
           href="/"
@@ -121,15 +128,15 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
 
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
-          <div className="text-muted-foreground inline-flex items-center gap-1.5 text-xs font-medium tracking-wider uppercase">
+          <div className="text-muted-foreground inline-flex items-center gap-1.5 text-xs font-medium tracking-wider uppercase max-sm:hidden">
             <Sparkles className="h-3 w-3" />
             System rail
           </div>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight max-sm:mt-0 sm:text-3xl">
             {view.name}
           </h1>
           {view.description && (
-            <p className="text-muted-foreground mt-2 max-w-prose text-sm">
+            <p className="text-muted-foreground mt-2 max-w-prose text-sm max-sm:line-clamp-2 max-sm:text-xs">
               {view.description}
             </p>
           )}
@@ -152,20 +159,40 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
             </p>
           )}
         </div>
-        <CardSizeOptions
-          cardSize={cardSize}
-          onCardSize={setCardSize}
-          min={CARD_SIZE_MIN}
-          max={CARD_SIZE_MAX}
-          step={CARD_SIZE_STEP}
-          defaultSize={CARD_SIZE_DEFAULT}
+        {/* Desktop: the card-size popover. Phones: the same fields in a
+         *  bottom sheet behind a single icon, inline in the header row
+         *  (one row, no sticky band — this page has no search). */}
+        <div className="max-sm:hidden">
+          <CardSizeOptions
+            cardSize={cardSize}
+            onCardSize={setCardSize}
+            min={CARD_SIZE_MIN}
+            max={CARD_SIZE_MAX}
+            step={CARD_SIZE_STEP}
+            defaultSize={CARD_SIZE_DEFAULT}
+          />
+        </div>
+        <PhoneControlsBar
+          sticky={false}
+          menuIcon={<LayoutGrid className="size-4" />}
+          menu={() => (
+            <CardSizeFields
+              cardSize={cardSize}
+              onCardSize={setCardSize}
+              min={CARD_SIZE_MIN}
+              max={CARD_SIZE_MAX}
+              step={CARD_SIZE_STEP}
+              defaultSize={CARD_SIZE_DEFAULT}
+              fieldId="phone-card-size"
+            />
+          )}
         />
       </header>
 
       <div
         className="grid gap-4"
         style={{
-          gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
+          gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
         }}
       >
         {isContinueReading ? (

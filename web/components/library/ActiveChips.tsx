@@ -97,7 +97,10 @@ export function ActiveChips({
   onRemoveLocation: (v: string) => void;
 }) {
   return (
-    <div className="mb-4 flex flex-wrap gap-1.5">
+    // Phone: one horizontally scrolling row (edge to edge inside the
+    // shell's px-4) instead of a wrapping block that pushed the grid
+    // down a row per three chips. sm+: wrap as before.
+    <div className="mb-4 flex gap-1.5 max-sm:-mx-4 max-sm:[scrollbar-width:none] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:px-4 sm:flex-wrap max-sm:[&::-webkit-scrollbar]:hidden max-sm:[&>*]:shrink-0">
       {/* Same order as the FilterSheet sections: reading, publication,
           content, curation. */}
       {readStatus.map((v) => (

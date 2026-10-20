@@ -1,11 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { Sparkles } from "lucide-react";
+import { LayoutGrid, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import {
+  CardSizeFields,
+  CardSizeOptions,
+} from "@/components/library/CardSizeOptions";
+import { PhoneControlsBar } from "@/components/library/PhoneControlsBar";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { useCardSize } from "@/components/library/use-card-size";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
@@ -80,7 +84,7 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
     defaultSize: CARD_SIZE_DEFAULT,
   });
   const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
+    gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
   };
   const items = (results.data?.pages ?? []).flatMap((p) => p.items);
 
@@ -106,6 +110,26 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
             max={CARD_SIZE_MAX}
             step={CARD_SIZE_STEP}
             defaultSize={CARD_SIZE_DEFAULT}
+          />
+        }
+        // Phone (< sm): the card-size popover above is hidden; the same
+        // fields live in the sticky bar's `⋯` sheet.
+        phoneControlsPlacement="inline"
+        phoneControls={
+          <PhoneControlsBar
+            sticky={false}
+            menuIcon={<LayoutGrid className="size-4" />}
+            menu={() => (
+              <CardSizeFields
+                cardSize={cardSize}
+                onCardSize={setCardSize}
+                min={CARD_SIZE_MIN}
+                max={CARD_SIZE_MAX}
+                step={CARD_SIZE_STEP}
+                defaultSize={CARD_SIZE_DEFAULT}
+                fieldId="phone-card-size"
+              />
+            )}
           />
         }
       />

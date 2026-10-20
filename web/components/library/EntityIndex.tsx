@@ -6,6 +6,7 @@ import * as React from "react";
 
 import { PageHeader } from "@/components/admin/PageHeader";
 import { AtoZJumpRail } from "@/components/library/AtoZJumpRail";
+import { AtoZScrubber } from "@/components/library/AtoZScrubber";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useEntityListInfinite, type EntityKindPath } from "@/lib/api/queries";
 import type { EntityListItem } from "@/lib/api/types";
@@ -65,7 +66,7 @@ export function EntityIndex({
   return (
     <div className="space-y-6">
       {embedded ? (
-        <p className="text-muted-foreground text-sm">
+        <p className="text-muted-foreground text-sm max-sm:hidden">
           {total != null
             ? `${total.toLocaleString()} ${total === 1 ? meta.noun : `${meta.noun}s`} across your libraries`
             : `Every ${meta.noun} in your libraries`}
@@ -78,10 +79,11 @@ export function EntityIndex({
               ? `${total.toLocaleString()} ${total === 1 ? meta.noun : `${meta.noun}s`} across your libraries`
               : `Every ${meta.noun} in your libraries`
           }
+          phoneDescription="hidden"
         />
       )}
 
-      <div className="border-border bg-card focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm focus-within:ring-2">
+      <div className="border-border bg-card focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm focus-within:ring-2 max-sm:py-1.5 max-sm:shadow-none">
         <Search
           aria-hidden="true"
           className="text-muted-foreground size-4 shrink-0"
@@ -106,7 +108,15 @@ export function EntityIndex({
         ) : null}
       </div>
 
-      <AtoZJumpRail value={startsWith} onSelect={setStartsWith} />
+      {/* Desktop: the wrapped A–Z strip. Phone: a fixed letter scrubber
+          on the right edge instead (the strip cost two rows of 24px
+          targets above the grid). */}
+      <AtoZJumpRail
+        value={startsWith}
+        onSelect={setStartsWith}
+        className="max-sm:hidden"
+      />
+      <AtoZScrubber value={startsWith} onSelect={setStartsWith} />
 
       {query.isLoading ? (
         <EntityGridSkeleton />

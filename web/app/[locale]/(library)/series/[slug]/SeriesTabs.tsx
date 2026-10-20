@@ -57,6 +57,7 @@ export function SeriesTabs({
   relationshipCount,
   hasAppearances,
   hasNotes,
+  className,
   children,
 }: {
   seriesSlug: string;
@@ -64,6 +65,9 @@ export function SeriesTabs({
   relationshipCount: number | null;
   hasAppearances: boolean;
   hasNotes: boolean;
+  /** Applied to the Tabs root — the page uses it to reorder the strip
+   *  below the issue list on phones. */
+  className?: string;
   children: React.ReactNode;
 }) {
   const available = React.useMemo(() => {
@@ -101,7 +105,7 @@ export function SeriesTabs({
   };
 
   return (
-    <Tabs value={tab} onValueChange={onChange}>
+    <Tabs value={tab} onValueChange={onChange} className={className}>
       <TabsList>
         <TabsTrigger value="credits">Credits</TabsTrigger>
         <TabsTrigger value="cast">Cast &amp; Setting</TabsTrigger>

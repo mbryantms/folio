@@ -1,7 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { BookOpenCheck, BookOpen, FolderPlus, Sparkles } from "lucide-react";
+import {
+  BookOpenCheck,
+  BookOpen,
+  FolderPlus,
+  ListChecks,
+  Sparkles,
+  LayoutGrid,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -10,7 +17,14 @@ import {
   BulkMarkReadDialog,
   BULK_BACKFILL_PROMPT_THRESHOLD,
 } from "@/components/library/BulkMarkReadDialog";
-import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import {
+  CardSizeFields,
+  CardSizeOptions,
+} from "@/components/library/CardSizeOptions";
+import {
+  PhoneControlsBar,
+  PhoneMenuAction,
+} from "@/components/library/PhoneControlsBar";
 import {
   SeriesCard,
   SeriesCardSkeleton,
@@ -200,7 +214,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
   // user drags. Falls back to the default px while localStorage
   // rehydrates so the SSR markup stays stable.
   const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
+    gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
   };
 
   return (
@@ -236,6 +250,41 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
               />
             )}
           </>
+        }
+        // Phone (< sm): the desktop cluster above is hidden; card size
+        // and Select move into the sticky bar's `⋯` sheet. The bar
+        // yields to `SelectionToolbar` (also sticky) while selecting.
+        phoneControlsPlacement="inline"
+        phoneControls={
+          <PhoneControlsBar
+            sticky={false}
+            menuIcon={<LayoutGrid className="size-4" />}
+            hidden={selection.selectMode}
+            menu={(close) => (
+              <>
+                <CardSizeFields
+                  cardSize={cardSize}
+                  onCardSize={setCardSize}
+                  min={CARD_SIZE_MIN}
+                  max={CARD_SIZE_MAX}
+                  step={CARD_SIZE_STEP}
+                  defaultSize={CARD_SIZE_DEFAULT}
+                  fieldId="phone-card-size"
+                />
+                {items.length > 0 || selection.selectMode ? (
+                  <PhoneMenuAction
+                    icon={<ListChecks className="size-4" />}
+                    onClick={() => {
+                      close();
+                      selection.enter();
+                    }}
+                  >
+                    Select
+                  </PhoneMenuAction>
+                ) : null}
+              </>
+            )}
+          />
         }
       />
 

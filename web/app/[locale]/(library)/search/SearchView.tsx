@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowDownUp,
   ArrowLeft,
   Check,
   ChevronRight,
@@ -230,11 +231,13 @@ export function SearchView({
                 Back to all results
               </Link>
             ) : null}
-            <h1 className="mt-0.5 text-2xl font-semibold tracking-tight capitalize">
+            <h1 className="mt-0.5 text-2xl font-semibold tracking-tight capitalize max-sm:text-xl">
               {activeDef ? activeDef.labelPlural : "Search"}
             </h1>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Phone: the h1 and this cluster share one row, so the
+              triggers below collapse to icons under `sm`. */}
+          <div className="flex flex-wrap items-center gap-2 max-sm:shrink-0">
             {filtersActive ? (
               <SeriesSortDropdown
                 value={filters.sort}
@@ -270,12 +273,12 @@ export function SearchView({
           </div>
         </div>
         {activeDef ? null : (
-          <p className="text-muted-foreground text-sm">
+          <p className="text-muted-foreground text-sm max-sm:hidden">
             Search across your library: series, issues, bookmarks, people,
             characters, teams, locations and story arcs.
           </p>
         )}
-        <div className="border-border bg-card focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm focus-within:ring-2">
+        <div className="border-border bg-card focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm focus-within:ring-2 max-sm:shadow-none">
           <Search
             aria-hidden="true"
             className="text-muted-foreground size-4 shrink-0"
@@ -603,7 +606,7 @@ function CategoryGrid({
     );
   }
   const gridStyle: CSSProperties = {
-    gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
+    gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
   };
   const clearFilters = activeFilterCount > 0 ? onClearFilters : undefined;
   if (def.key === "series") {
@@ -1274,11 +1277,17 @@ function SeriesSortDropdown({
     >
       <SelectTrigger
         // Toolbar-row convention: h-9 to align with the CardSize +
-        // Filters sibling controls. See `docs/dev/search.md`.
-        className="h-9 min-w-36"
+        // Filters sibling controls. See `docs/dev/search.md`. Below
+        // `sm` the trigger collapses to an icon (the value stays in the
+        // accessible name via `sr-only`) so the h1 + controls cluster
+        // fits a 360px row.
+        className="h-9 min-w-36 max-sm:min-w-0 max-sm:gap-1 max-sm:px-2.5"
         aria-label="Sort search results"
       >
-        <SelectValue placeholder="Sort" />
+        <ArrowDownUp className="size-4 sm:hidden" aria-hidden="true" />
+        <span className="max-sm:sr-only">
+          <SelectValue placeholder="Sort" />
+        </span>
       </SelectTrigger>
       <SelectContent>
         {SERIES_SEARCH_SORT_OPTIONS.map((o) => (
@@ -1321,8 +1330,8 @@ function SeriesFilterSheet({
             activeCount > 0 ? `Filters (${activeCount} active)` : "Filters"
           }
         >
-          <Filter className="mr-1 size-3.5" aria-hidden="true" />
-          Filters
+          <Filter className="mr-1 size-3.5 max-sm:mr-0" aria-hidden="true" />
+          <span className="max-sm:sr-only">Filters</span>
           {activeCount > 0 ? (
             <span className="bg-foreground text-background ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-medium tabular-nums">
               {activeCount}
@@ -1467,8 +1476,8 @@ function IssueFilterSheet({
             activeCount > 0 ? `Filters (${activeCount} active)` : "Filters"
           }
         >
-          <Filter className="mr-1 size-3.5" aria-hidden="true" />
-          Filters
+          <Filter className="mr-1 size-3.5 max-sm:mr-0" aria-hidden="true" />
+          <span className="max-sm:sr-only">Filters</span>
           {activeCount > 0 ? (
             <span className="bg-foreground text-background ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-medium tabular-nums">
               {activeCount}

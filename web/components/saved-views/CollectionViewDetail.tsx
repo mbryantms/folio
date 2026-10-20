@@ -28,8 +28,10 @@ import {
   FileCog,
   FolderPlus,
   GripVertical,
+  ListChecks,
   Play,
   Trash2,
+  LayoutGrid,
 } from "lucide-react";
 
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
@@ -63,7 +65,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import {
+  CardSizeFields,
+  CardSizeOptions,
+} from "@/components/library/CardSizeOptions";
+import {
+  PhoneControlsBar,
+  PhoneMenuAction,
+} from "@/components/library/PhoneControlsBar";
 import { useCardSize } from "@/components/library/use-card-size";
 import {
   useCollectionEntriesInfinite,
@@ -318,7 +327,7 @@ export function CollectionViewDetail({
   }
 
   const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
+    gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
   };
 
   return (
@@ -363,6 +372,50 @@ export function CollectionViewDetail({
               />
             )}
           </>
+        }
+        // Phone (< sm): the cluster above is hidden. Continue / Start
+        // reading — the collection's primary action — stays one tap
+        // away as the bar's icon button; the item count takes the
+        // bar's leading slot; card size + Select move into `⋯`.
+        phoneControlsPlacement="inline"
+        phoneControls={
+          <PhoneControlsBar
+            sticky={false}
+            menuIcon={<LayoutGrid className="size-4" />}
+            hidden={selection.selectMode}
+            leading={
+              <p className="text-muted-foreground text-xs tabular-nums">
+                {total} item{total === 1 ? "" : "s"}
+              </p>
+            }
+            primary={
+              <CollectionContinueButton collectionId={savedView.id} iconOnly />
+            }
+            menu={(close) => (
+              <>
+                <CardSizeFields
+                  cardSize={cardSize}
+                  onCardSize={setCardSize}
+                  min={CARD_SIZE_MIN}
+                  max={CARD_SIZE_MAX}
+                  step={CARD_SIZE_STEP}
+                  defaultSize={CARD_SIZE_DEFAULT}
+                  fieldId="phone-card-size"
+                />
+                {orderedEntries.length > 0 || selection.selectMode ? (
+                  <PhoneMenuAction
+                    icon={<ListChecks className="size-4" />}
+                    onClick={() => {
+                      close();
+                      selection.enter();
+                    }}
+                  >
+                    Select
+                  </PhoneMenuAction>
+                ) : null}
+              </>
+            )}
+          />
         }
       />
 
@@ -595,19 +648,31 @@ export function CollectionViewDetail({
  *  collection is empty, and once everything is finished. */
 export function CollectionContinueButton({
   collectionId,
+  iconOnly = false,
 }: {
   collectionId: string;
+  /** Phone bar variant: a 36px square with just the Play glyph; the
+   *  label survives in `aria-label` / `title`. */
+  iconOnly?: boolean;
 }) {
   const q = useCollectionNextUp(collectionId);
   const target = q.data?.target;
   if (!target) return null;
   const label = q.data?.started ? "Continue" : "Start reading";
+  const ariaLabel = `${label}: ${target.title ?? `${target.series_name ?? ""} #${target.number ?? ""}`}`;
+  const href = readerUrl(target, { collection: collectionId });
+  if (iconOnly) {
+    return (
+      <Button asChild size="icon" className="h-9 w-9 shrink-0">
+        <Link href={href} aria-label={ariaLabel} title={label}>
+          <Play className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </Button>
+    );
+  }
   return (
     <Button asChild size="sm">
-      <Link
-        href={readerUrl(target, { collection: collectionId })}
-        aria-label={`${label}: ${target.title ?? `${target.series_name ?? ""} #${target.number ?? ""}`}`}
-      >
+      <Link href={href} aria-label={ariaLabel}>
         <Play className="mr-1 h-4 w-4" aria-hidden="true" />
         {label}
       </Link>

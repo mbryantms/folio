@@ -12,6 +12,7 @@ import {
   Circle,
   FileCog,
   FolderPlus,
+  ListChecks,
   Pencil,
   Sparkles,
 } from "lucide-react";
@@ -24,8 +25,15 @@ import {
   BulkMarkReadDialog,
   BULK_BACKFILL_PROMPT_THRESHOLD,
 } from "@/components/library/BulkMarkReadDialog";
-import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import {
+  CardSizeFields,
+  CardSizeOptions,
+} from "@/components/library/CardSizeOptions";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
+import {
+  PhoneControlsBar,
+  PhoneMenuAction,
+} from "@/components/library/PhoneControlsBar";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { VirtualizedCardGrid } from "@/components/library/VirtualizedCardGrid";
@@ -94,6 +102,11 @@ const SORT_LABELS: Partial<Record<IssueSort, string>> = {
   created_at: "Date added",
   updated_at: "Date updated",
 };
+/** The same three sorts as a list, for the phone sort sheet. */
+const SORT_OPTIONS = (Object.keys(SORT_LABELS) as IssueSort[]).map((value) => ({
+  value,
+  label: SORT_LABELS[value] ?? value,
+}));
 
 /** Card-size bounds + storage key, shared with the Related tab (WP-7.7)
  *  so every cover on the series page follows this panel's slider. */
@@ -398,7 +411,7 @@ export function IssuesPanel({
   // default px value keeps the grid sane during initial paint before the
   // localStorage rehydrate effect runs.
   const gridStyle = {
-    gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
+    gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
   } as CSSProperties;
 
   // One card renderer for the main grid and every specials section, so
@@ -431,7 +444,9 @@ export function IssuesPanel({
   );
 
   return (
-    <section className="mt-10">
+    // No top margin of its own: the page lays its blocks out with a gap
+    // column, so the spacing above this section comes from the parent.
+    <section>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold tracking-tight">Issues</h2>
@@ -441,7 +456,54 @@ export function IssuesPanel({
             </p>
           )}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Phone (< sm): search / sort / ⋯ icons on the heading's row
+            (the bar grows into the remaining width, so an expanded
+            search gets the room next to the heading). Not sticky — it
+            sits mid-page, after the hero. Hidden while selecting; the
+            sticky `SelectionToolbar` below takes over. The desktop
+            cluster underneath is `max-sm:hidden`. */}
+        <PhoneControlsBar
+          sticky={false}
+          hidden={selection.selectMode}
+          className="min-w-0 flex-1"
+          search={{
+            value: debouncedQ,
+            onChange: setQ,
+            placeholder: "Search issues…",
+            label: "Search issues in this series",
+          }}
+          sort={{
+            value: sort,
+            options: SORT_OPTIONS,
+            onChange: (v: string) => setSort(v as IssueSort),
+            order,
+            onOrder: setOrder,
+            disabled: !!debouncedQ,
+          }}
+          menu={(close) => (
+            <>
+              <CardSizeFields
+                cardSize={cardSize}
+                onCardSize={setCardSize}
+                min={CARD_SIZE_MIN}
+                max={CARD_SIZE_MAX}
+                step={CARD_SIZE_STEP}
+                defaultSize={CARD_SIZE_DEFAULT}
+                fieldId="phone-issue-card-size"
+              />
+              <PhoneMenuAction
+                icon={<ListChecks className="size-4" />}
+                onClick={() => {
+                  close();
+                  selection.enter();
+                }}
+              >
+                Select
+              </PhoneMenuAction>
+            </>
+          )}
+        />
+        <div className="flex flex-wrap items-center gap-2 max-sm:hidden">
           <Input
             type="search"
             aria-label="Search issues in this series"

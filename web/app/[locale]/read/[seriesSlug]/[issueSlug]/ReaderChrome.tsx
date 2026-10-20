@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -48,6 +48,7 @@ import { usePageTextPanel } from "@/lib/reader/page-text";
 // loads when the popover is first opened or the gear shows intent.
 import { ReaderSettings, preloadReaderSettings } from "./lazy";
 import { useMarkerDrawer } from "@/lib/reader/marker-drawer";
+import { useIsPhone } from "@/lib/ui/use-is-phone";
 import { ReadingProgress } from "./ReadingProgress";
 
 const AUTO_HIDE_MS = 4000;
@@ -570,21 +571,10 @@ function MoreMenuButton({ pageIndex }: { pageIndex: number }) {
   );
 }
 
-const NARROW_QUERY = "(max-width: 639px)";
-function subscribeNarrow(cb: () => void): () => void {
-  const mq = window.matchMedia(NARROW_QUERY);
-  mq.addEventListener?.("change", cb);
-  return () => mq.removeEventListener?.("change", cb);
-}
 /** True below Tailwind's `sm` breakpoint (phones). SSR renders the wide
- *  bar; the swap happens on hydration. */
-function useNarrowChrome(): boolean {
-  return useSyncExternalStore(
-    subscribeNarrow,
-    () => window.matchMedia(NARROW_QUERY).matches,
-    () => false,
-  );
-}
+ *  bar; the swap happens on hydration. Shared with toasts and the grid
+ *  controls via `useIsPhone`. */
+const useNarrowChrome = useIsPhone;
 
 function ChromeIconButton({
   label,

@@ -5,7 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Bookmark as BookmarkIcon,
+  Download,
   Highlighter,
+  ListChecks,
   Search as SearchIcon,
   Star,
   StickyNote,
@@ -18,7 +20,14 @@ import {
   type CoverMenuAction,
 } from "@/components/CoverMenuButton";
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
-import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import {
+  CardSizeFields,
+  CardSizeOptions,
+} from "@/components/library/CardSizeOptions";
+import {
+  PhoneControlsBar,
+  PhoneMenuAction,
+} from "@/components/library/PhoneControlsBar";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
@@ -28,6 +37,13 @@ import { NotesExportMenu } from "@/components/markers/NotesExportMenu";
 import { FilterPill } from "@/components/ui/filter-pill";
 import { Kbd } from "@/components/ui/kbd";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   useMarkerCount,
   useMarkersInfinite,
@@ -55,7 +71,12 @@ import {
   downloadMarkerImage,
   markerCropFilename,
 } from "@/lib/marker-crop";
-import { markerPermalink, pageBytesUrl, readerUrl } from "@/lib/urls";
+import {
+  markerPermalink,
+  notesExportHref,
+  pageBytesUrl,
+  readerUrl,
+} from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
 type KindFilter = MarkerKind | "all" | "favorite";
@@ -163,6 +184,11 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
   const [layout, setLayout] = React.useState<"grouped" | "flat">(
     embedded ? "flat" : "grouped",
   );
+  // Phone-only "Filters" bottom sheet (layout toggle + tags). On
+  // desktop those controls sit inline under the header.
+  const [phoneFiltersOpen, setPhoneFiltersOpen] = React.useState(false);
+  const phoneFilterCount =
+    selectedTags.length + (!embedded && layout !== "grouped" ? 1 : 0);
   const selection = useSelection(items);
   const bulkDelete = useBulkDeleteMarkers();
   const restoreMarkers = useRestoreMarkers();
@@ -311,8 +337,139 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
               ? `${markerCount.data.total} saved across your library — every page bookmark, note, favorite, and highlight.`
               : "Every page bookmark, note, favorite, and highlight you’ve saved across your library."
           }
+          phoneDescription="hidden"
           actions={headerActions}
+          // Below `sm` the PhoneControlsBar replaces this toolbar.
+          actionsClassName="max-sm:hidden"
         />
+      )}
+
+      {embedded ? null : (
+        <>
+          {/* Phone (< sm): one sticky row — search / filters / ⋯ — in
+              place of the header toolbar + layout toggle + Tags row.
+              The selection toolbar takes its place while selecting
+              (both are sticky under the topbar). */}
+          <PhoneControlsBar
+            hidden={selection.selectMode}
+            search={{
+              value: rawSearch,
+              onChange: setRawSearch,
+              placeholder: "Filter saved markers",
+              label: "Filter saved markers",
+            }}
+            filters={{
+              count: phoneFilterCount,
+              onOpen: () => setPhoneFiltersOpen(true),
+            }}
+            menu={(close) => (
+              <>
+                <CardSizeFields
+                  cardSize={cardSize}
+                  onCardSize={setCardSize}
+                  min={CARD_SIZE_MIN}
+                  max={CARD_SIZE_MAX}
+                  step={CARD_SIZE_STEP}
+                  defaultSize={CARD_SIZE_DEFAULT}
+                  fieldId="bookmarks-phone-card-size"
+                />
+                <div className="grid gap-2">
+                  {items.length > 0 ? (
+                    <PhoneMenuAction
+                      icon={<ListChecks className="size-4" />}
+                      onClick={() => {
+                        close();
+                        selection.enter();
+                      }}
+                    >
+                      Select
+                    </PhoneMenuAction>
+                  ) : null}
+                  {/* Same two `<a download>` links as `NotesExportMenu`. */}
+                  <PhoneMenuAction asChild>
+                    <a href={notesExportHref("md")} download>
+                      <Download className="size-4" aria-hidden="true" />
+                      Export notes as Markdown (.md)
+                    </a>
+                  </PhoneMenuAction>
+                  <PhoneMenuAction asChild>
+                    <a href={notesExportHref("json")} download>
+                      <Download className="size-4" aria-hidden="true" />
+                      Export notes as JSON (.json)
+                    </a>
+                  </PhoneMenuAction>
+                </div>
+              </>
+            )}
+          />
+          <Sheet open={phoneFiltersOpen} onOpenChange={setPhoneFiltersOpen}>
+            <SheetContent
+              side="bottom"
+              className="rounded-t-lg pb-[max(1.5rem,var(--safe-bottom))]"
+            >
+              <SheetHeader className="text-left">
+                <SheetTitle>Filters</SheetTitle>
+              </SheetHeader>
+              <div className="space-y-5">
+                <div className="space-y-2">
+                  <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                    Layout
+                  </p>
+                  <LayoutToggle
+                    layout={layout}
+                    onLayout={setLayout}
+                    className="grid w-full grid-cols-2 [&>button]:h-9"
+                  />
+                </div>
+                {availableTags.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                        Tags
+                      </p>
+                      {selectedTags.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTags([])}
+                          className="text-muted-foreground hover:text-foreground text-xs underline-offset-2 hover:underline"
+                        >
+                          Clear tags
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {availableTags.map((t) => (
+                        <FilterPill
+                          key={t.tag}
+                          active={selectedTags.includes(t.tag)}
+                          aria-pressed={selectedTags.includes(t.tag)}
+                          onClick={() => toggleTag(t.tag)}
+                          count={t.count}
+                        >
+                          <span>{t.tag}</span>
+                        </FilterPill>
+                      ))}
+                    </div>
+                    {selectedTags.length > 1 ? (
+                      <TagMatchToggle
+                        tagMatch={tagMatch}
+                        onTagMatch={setTagMatch}
+                        className="grid w-full grid-cols-2 [&>button]:h-9"
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
+                <Button
+                  type="button"
+                  className="h-11 w-full"
+                  onClick={() => setPhoneFiltersOpen(false)}
+                >
+                  Done
+                </Button>
+              </div>
+            </SheetContent>
+          </Sheet>
+        </>
       )}
 
       <SelectionToolbar
@@ -336,10 +493,15 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
       />
 
       <div className="flex flex-wrap items-center gap-2">
+        {/* Phone: one horizontally scrolling strip (edge to edge inside
+            the shell's `px-4`) instead of wrapping onto two rows. */}
         <div
           role="tablist"
           aria-label="Filter by kind"
-          className="flex flex-wrap gap-1"
+          className={cn(
+            "flex flex-wrap gap-1 max-sm:min-w-0 max-sm:flex-1 max-sm:[scrollbar-width:none] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:[&>*]:shrink-0",
+            !embedded && "max-sm:-mx-4 max-sm:px-4",
+          )}
         >
           {FILTER_OPTIONS.map((opt) => (
             <FilterPill
@@ -354,39 +516,25 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
           ))}
         </div>
         {/* Grouped-by-series ⇄ flat newest-first (audit B11). Hidden
-            when scoped to one series / issue — grouping is moot there. */}
-        <div
+            when scoped to one series / issue — grouping is moot there.
+            On phones it lives in the Filters sheet instead. */}
+        <LayoutToggle
           hidden={embedded}
-          role="group"
-          aria-label="Marker layout"
-          className="bg-muted ml-auto inline-flex items-center gap-0.5 rounded-md p-0.5"
-        >
-          {(
-            [
-              { value: "grouped", label: "By series" },
-              { value: "flat", label: "Newest" },
-            ] as const
-          ).map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              aria-pressed={layout === opt.value}
-              onClick={() => setLayout(opt.value)}
-              className={cn(
-                "rounded px-2 py-0.5 text-xs transition-colors",
-                layout === opt.value
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+          layout={layout}
+          onLayout={setLayout}
+          className="ml-auto max-sm:hidden"
+        />
       </div>
 
       {availableTags.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-2">
+        // On the /bookmarks page the Tags row moves into the phone
+        // Filters sheet; embedded lists keep it inline everywhere.
+        <div
+          className={cn(
+            "flex flex-wrap items-center gap-2",
+            !embedded && "max-sm:hidden",
+          )}
+        >
           <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
             Tags
           </span>
@@ -404,28 +552,11 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
             ))}
           </div>
           {selectedTags.length > 1 ? (
-            <div
-              role="group"
-              aria-label="Tag match mode"
-              className="bg-muted ml-1 inline-flex items-center gap-0.5 rounded-md p-0.5"
-            >
-              {(["all", "any"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  aria-pressed={tagMatch === mode}
-                  onClick={() => setTagMatch(mode)}
-                  className={cn(
-                    "rounded px-2 py-0.5 text-xs transition-colors",
-                    tagMatch === mode
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  Match {mode}
-                </button>
-              ))}
-            </div>
+            <TagMatchToggle
+              tagMatch={tagMatch}
+              onTagMatch={setTagMatch}
+              className="ml-1"
+            />
           ) : null}
           {selectedTags.length > 0 ? (
             <button
@@ -486,6 +617,93 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
           ) : null}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Grouped-by-series ⇄ flat newest-first segmented toggle. Rendered
+ *  inline on desktop and inside the phone Filters sheet. */
+function LayoutToggle({
+  layout,
+  onLayout,
+  hidden,
+  className,
+}: {
+  layout: "grouped" | "flat";
+  onLayout: (next: "grouped" | "flat") => void;
+  hidden?: boolean;
+  className?: string;
+}) {
+  return (
+    <div
+      hidden={hidden}
+      role="group"
+      aria-label="Marker layout"
+      className={cn(
+        "bg-muted inline-flex items-center gap-0.5 rounded-md p-0.5",
+        className,
+      )}
+    >
+      {(
+        [
+          { value: "grouped", label: "By series" },
+          { value: "flat", label: "Newest" },
+        ] as const
+      ).map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          aria-pressed={layout === opt.value}
+          onClick={() => onLayout(opt.value)}
+          className={cn(
+            "rounded px-2 py-0.5 text-xs transition-colors",
+            layout === opt.value
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** "Match all" ⇄ "Match any" toggle for multi-tag filters. */
+function TagMatchToggle({
+  tagMatch,
+  onTagMatch,
+  className,
+}: {
+  tagMatch: MarkerTagMatch;
+  onTagMatch: (next: MarkerTagMatch) => void;
+  className?: string;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Tag match mode"
+      className={cn(
+        "bg-muted inline-flex items-center gap-0.5 rounded-md p-0.5",
+        className,
+      )}
+    >
+      {(["all", "any"] as const).map((mode) => (
+        <button
+          key={mode}
+          type="button"
+          aria-pressed={tagMatch === mode}
+          onClick={() => onTagMatch(mode)}
+          className={cn(
+            "rounded px-2 py-0.5 text-xs transition-colors",
+            tagMatch === mode
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          Match {mode}
+        </button>
+      ))}
     </div>
   );
 }

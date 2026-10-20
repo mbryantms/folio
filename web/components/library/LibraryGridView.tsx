@@ -2,7 +2,14 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Check, Circle, FolderPlus } from "lucide-react";
+import {
+  BookmarkPlus,
+  Check,
+  Circle,
+  FolderPlus,
+  ListChecks,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { ActiveChips } from "@/components/library/ActiveChips";
@@ -12,9 +19,20 @@ import {
   BULK_BACKFILL_PROMPT_THRESHOLD,
 } from "@/components/library/BulkMarkReadDialog";
 import { AtoZJumpRail } from "@/components/library/AtoZJumpRail";
+import { AtoZScrubber } from "@/components/library/AtoZScrubber";
+import { CardSizeFields } from "@/components/library/CardSizeOptions";
 import { FilterSheet } from "@/components/library/FilterSheet";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
-import { LibraryGridToolbar } from "@/components/library/LibraryGridToolbar";
+import {
+  ISSUE_SORT_LABELS,
+  LibraryGridToolbar,
+  ModeSegmentedToggle,
+  SERIES_SORT_LABELS,
+} from "@/components/library/LibraryGridToolbar";
+import {
+  PhoneControlsBar,
+  PhoneMenuAction,
+} from "@/components/library/PhoneControlsBar";
 import { MetadataWorklistButton } from "@/components/library/MetadataWorklistButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { VirtualizedCardGrid } from "@/components/library/VirtualizedCardGrid";
@@ -42,6 +60,7 @@ import {
   useMe,
   useSeriesListInfinite,
 } from "@/lib/api/queries";
+import type { IssueSort, SeriesSort } from "@/lib/api/types";
 import { useLibraryGridFilters } from "@/lib/library/use-grid-filters";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
@@ -286,7 +305,7 @@ export function LibraryGridView({
   // virtual row nearing the loaded end) — the windowed DOM makes a
   // bottom IntersectionObserver sentinel unreliable.
   const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
+    gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
   };
 
   // Server populates `total` only on the first page (no cursor) so
@@ -341,18 +360,104 @@ export function LibraryGridView({
 
   return (
     <>
-      <div className="mb-6 flex flex-wrap items-baseline justify-between gap-4">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-4 sm:mb-6">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
             {libraryName}
           </h1>
-          <p className="text-muted-foreground mt-1 text-sm">
+          <p className="text-muted-foreground mt-0.5 text-xs sm:mt-1 sm:text-sm">
             {libraryId == null && libraryCount != null
               ? `${libraryCount} ${libraryCount === 1 ? "library" : "libraries"} · ${totalLabel} ${itemLabel}`
               : `${totalLabel} ${itemLabel}`}
           </p>
         </div>
       </div>
+
+      {/* Phone (< sm): one sticky 36px row — mode toggle + search /
+          sort / filters / ⋯ icons. The selection toolbar takes the
+          row's place while selecting (both are sticky under the
+          topbar). Desktop renders `LibraryGridToolbar` below. */}
+      <PhoneControlsBar
+        hidden={selection.selectMode}
+        className="mb-3"
+        leading={<ModeSegmentedToggle mode={mode} onMode={handleMode} />}
+        search={{
+          value: q,
+          onChange: setQ,
+          placeholder: mode === "series" ? "Search series…" : "Search issues…",
+        }}
+        sort={
+          isSeriesMode
+            ? {
+                value: seriesSort,
+                options: Object.entries(SERIES_SORT_LABELS).map(
+                  ([value, label]) => ({ value, label }),
+                ),
+                onChange: (v: string) => setSeriesSort(v as SeriesSort),
+                order,
+                onOrder: setOrder,
+                disabled: !!trimmedQ,
+              }
+            : {
+                value: issueSort,
+                options: Object.entries(ISSUE_SORT_LABELS).map(
+                  ([value, label]) => ({ value, label }),
+                ),
+                onChange: (v: string) => setIssueSort(v as IssueSort),
+                order,
+                onOrder: setOrder,
+                disabled: !!trimmedQ,
+              }
+        }
+        filters={{ count: facetCount, onOpen: () => setFilterOpen(true) }}
+        menu={(close) => (
+          <>
+            <CardSizeFields
+              cardSize={cardSize}
+              onCardSize={setCardSize}
+              min={CARD_SIZE_MIN}
+              max={CARD_SIZE_MAX}
+              step={CARD_SIZE_STEP}
+              defaultSize={CARD_SIZE_DEFAULT}
+              fieldId="phone-card-size"
+            />
+            <div className="grid gap-2">
+              {items.length > 0 ? (
+                <PhoneMenuAction
+                  icon={<ListChecks className="size-4" />}
+                  onClick={() => {
+                    close();
+                    selection.enter();
+                  }}
+                >
+                  Select
+                </PhoneMenuAction>
+              ) : null}
+              <PhoneMenuAction
+                icon={<BookmarkPlus className="size-4" />}
+                disabled={facetCount === 0}
+                onClick={() => {
+                  close();
+                  handleSaveView();
+                }}
+              >
+                Save as view…
+              </PhoneMenuAction>
+              {facetCount > 0 ? (
+                <PhoneMenuAction
+                  icon={<X className="size-4" />}
+                  onClick={() => {
+                    close();
+                    clearFacets();
+                  }}
+                >
+                  Clear filters
+                </PhoneMenuAction>
+              ) : null}
+            </div>
+          </>
+        )}
+      />
 
       <LibraryGridToolbar
         mode={mode}
@@ -502,11 +607,14 @@ export function LibraryGridView({
           `starts_with` filter on normalized_name. Issues sort by number,
           so the rail is meaningless there. */}
       {isSeriesMode ? (
-        <AtoZJumpRail
-          value={startsWith}
-          onSelect={setStartsWith}
-          className="mb-2"
-        />
+        <>
+          <AtoZJumpRail
+            value={startsWith}
+            onSelect={setStartsWith}
+            className="mb-2 max-sm:hidden"
+          />
+          <AtoZScrubber value={startsWith} onSelect={setStartsWith} />
+        </>
       ) : null}
 
       {/* Worklist churn (B4): when the grid is filtered to the
@@ -555,47 +663,49 @@ export function LibraryGridView({
           libraryCount={libraryCount}
         />
       ) : (
-        <VirtualizedCardGrid
-          items={items}
-          cardSize={cardSize}
-          estimateTextHeight={isSeriesMode ? SERIES_TEXT_H : ISSUE_TEXT_H}
-          hasNextPage={!!query.hasNextPage}
-          isFetchingNextPage={query.isFetchingNextPage}
-          fetchNextPage={() => void query.fetchNextPage()}
-          enableScrollRestore
-          renderCard={(item) =>
-            isSeriesMode ? (
-              <SeriesCard
-                series={item as (typeof seriesItems)[number]}
-                size="md"
-                selectMode={
-                  selection.selectMode
-                    ? {
-                        isActive: true,
-                        isSelected: selection.isSelected(item.id),
-                        onToggle: (ev) => selection.toggle(item.id, ev),
-                      }
-                    : undefined
-                }
-                onEnterSelectMode={(id) => selection.toggle(id)}
-              />
-            ) : (
-              <IssueCard
-                issue={item as (typeof issueItems)[number]}
-                selectMode={
-                  selection.selectMode
-                    ? {
-                        isActive: true,
-                        isSelected: selection.isSelected(item.id),
-                        onToggle: (ev) => selection.toggle(item.id, ev),
-                      }
-                    : undefined
-                }
-                onEnterSelectMode={(id) => selection.toggle(id)}
-              />
-            )
-          }
-        />
+        <div>
+          <VirtualizedCardGrid
+            items={items}
+            cardSize={cardSize}
+            estimateTextHeight={isSeriesMode ? SERIES_TEXT_H : ISSUE_TEXT_H}
+            hasNextPage={!!query.hasNextPage}
+            isFetchingNextPage={query.isFetchingNextPage}
+            fetchNextPage={() => void query.fetchNextPage()}
+            enableScrollRestore
+            renderCard={(item) =>
+              isSeriesMode ? (
+                <SeriesCard
+                  series={item as (typeof seriesItems)[number]}
+                  size="md"
+                  selectMode={
+                    selection.selectMode
+                      ? {
+                          isActive: true,
+                          isSelected: selection.isSelected(item.id),
+                          onToggle: (ev) => selection.toggle(item.id, ev),
+                        }
+                      : undefined
+                  }
+                  onEnterSelectMode={(id) => selection.toggle(id)}
+                />
+              ) : (
+                <IssueCard
+                  issue={item as (typeof issueItems)[number]}
+                  selectMode={
+                    selection.selectMode
+                      ? {
+                          isActive: true,
+                          isSelected: selection.isSelected(item.id),
+                          onToggle: (ev) => selection.toggle(item.id, ev),
+                        }
+                      : undefined
+                  }
+                  onEnterSelectMode={(id) => selection.toggle(id)}
+                />
+              )
+            }
+          />
+        </div>
       )}
 
       <FilterSheet
