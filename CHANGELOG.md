@@ -13,6 +13,20 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.60.0](https://github.com/mbryantms/folio/compare/v0.59.1...v0.60.0) (2026-10-20)
+
+
+### Added
+
+* **views:** bring issue filters to parity with series and add wave-2 built-ins ([#1245](https://github.com/mbryantms/folio/issues/1245)) ([296d174](https://github.com/mbryantms/folio/commit/296d1749491c790767af60a2e1fbf6a869acd3fe))
+
+
+### Dependencies
+
+* lock file maintenance ([#1230](https://github.com/mbryantms/folio/issues/1230)) ([87d6c8c](https://github.com/mbryantms/folio/commit/87d6c8c69941e2c0d368875ce6a979364a2b135a))
+* update dependency @hookform/resolvers to v5.9.2 ([#1244](https://github.com/mbryantms/folio/issues/1244)) ([e585d95](https://github.com/mbryantms/folio/commit/e585d9514efd56f698dfb5cda8d09103c6ae5473))
+* update dependency lucide-react to v1.59.0 ([#1243](https://github.com/mbryantms/folio/issues/1243)) ([9d265eb](https://github.com/mbryantms/folio/commit/9d265eb505edd818c3c3593a0a4f1ec91dc01f60))
+
 ## [0.59.1](https://github.com/mbryantms/folio/compare/v0.59.0...v0.59.1) (2026-10-19)
 
 
