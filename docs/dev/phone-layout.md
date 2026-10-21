@@ -63,11 +63,19 @@ max-sm:line-clamp-2`; `PageHeader` takes `phoneDescription="hidden"`
    size or the reserved A–Z column can never collapse a phone grid to
    one column; desktop is unaffected because half a wide column exceeds
    any card size.
-9. **Prefer CSS to JS.** Use `max-sm:` / `sm:` whenever the difference
-   is presentational. `useIsPhone()` (`lib/ui/use-is-phone.ts`,
-   `useSyncExternalStore` on `(max-width: 639px)`, `false` on SSR) is
-   for the rare case where the component _tree_ differs; it is the
-   single copy shared by the reader chrome and the toaster.
+9. **Touch floor is per row, not per button.** `globals.css` floors
+   `.folio-button` (every `<Button>`) _and_ `.folio-control` (`<Input>`,
+   `<SelectTrigger>`, the phone mode toggle) at 44px under
+   `(pointer: coarse)`. The `h-9` utilities still describe the fine-pointer
+   row; on iPad / iPhone the whole row grows together. A new inline
+   toolbar control that is not one of those components must carry
+   `folio-control`, or it will sit 8px shorter than its neighbours on
+   touch. Playwright only reports this with `hasTouch: true`.
+10. **Prefer CSS to JS.** Use `max-sm:` / `sm:` whenever the difference
+    is presentational. `useIsPhone()` (`lib/ui/use-is-phone.ts`,
+    `useSyncExternalStore` on `(max-width: 639px)`, `false` on SSR) is
+    for the rare case where the component _tree_ differs; it is the
+    single copy shared by the reader chrome and the toaster.
 
 ## Primitives
 
