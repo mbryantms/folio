@@ -1150,6 +1150,13 @@ pub struct IssueDetailView {
     pub library_default_reading_direction: Option<String>,
     /// Calling user's 0..=5 rating for this issue. `None` when unset.
     pub user_rating: Option<f64>,
+    /// Calling user's issue-level closing note (`user_issue_notes`), or
+    /// `None`. Not a page note — see `api::issue_notes`.
+    pub user_note: Option<String>,
+    /// Parent series' display name. Detail-only (the list shapes carry
+    /// it on `IssueSummaryView`); the reader names the finished issue
+    /// with it on the end-of-issue card.
+    pub series_name: Option<String>,
     /// File size in bytes from the disk row at the last scan. Surfaced in the
     /// admin "Details" tab alongside `file_path`.
     pub file_size: i64,
@@ -1329,6 +1336,8 @@ impl IssueDetailView {
             series_reading_direction: None,
             library_default_reading_direction: None,
             user_rating: None,
+            user_note: None,
+            series_name: None,
             file_size: m.file_size,
             created_at: m.created_at.to_rfc3339(),
             updated_at: m.updated_at.to_rfc3339(),

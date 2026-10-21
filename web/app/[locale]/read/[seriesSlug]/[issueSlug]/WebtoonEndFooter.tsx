@@ -11,14 +11,23 @@
  *
  * Sits at `z-20` so its buttons clear the webtoon chrome-toggle layer
  * (`fixed inset-0 z-10`) that covers the viewport.
+ *
+ * Carries the same two Wrap up pieces as the end-of-issue card: the
+ * rating strip under the Next up block, and a "Wrap up" disclosure that
+ * expands in place (no pane to flip in a scroll flow).
  */
 
+import { useState } from "react";
 import Link from "next/link";
+import { ChevronDown } from "lucide-react";
 
 import { Cover } from "@/components/Cover";
 import { Button } from "@/components/ui/button";
 import type { NextUpView } from "@/lib/api/types";
 import { nextUpListSubtitle } from "@/lib/reader/list-context";
+import type { WrapUpProps } from "@/lib/reader/wrap-up";
+
+import { WrapUpBody, WrapUpStrip } from "./WrapUp";
 
 export function WebtoonEndFooter({
   data,
@@ -27,6 +36,7 @@ export function WebtoonEndFooter({
   onRetry,
   onReadNext,
   exitUrl,
+  wrapUp,
 }: {
   data: NextUpView | undefined;
   isLoading: boolean;
@@ -35,7 +45,11 @@ export function WebtoonEndFooter({
   onRetry?: () => void;
   onReadNext: () => void;
   exitUrl: string;
+  /** Rating / closing note / markers for the finished issue; omitted →
+   *  the footer renders as before. */
+  wrapUp?: WrapUpProps;
 }) {
+  const [wrapOpen, setWrapOpen] = useState(false);
   const target = data?.target;
   const source = data?.source ?? "none";
   const failed = isError && !data;
@@ -106,6 +120,29 @@ export function WebtoonEndFooter({
           </Button>
         </>
       )}
+      {wrapUp ? (
+        <div className="border-border bg-background mt-6 overflow-hidden rounded-lg border text-left">
+          <WrapUpStrip wrapUp={wrapUp} onOpen={() => setWrapOpen((o) => !o)} />
+          <button
+            type="button"
+            onClick={() => setWrapOpen((o) => !o)}
+            aria-expanded={wrapOpen}
+            aria-controls="webtoon-wrap-up"
+            className="text-muted-foreground hover:text-foreground border-border flex w-full items-center justify-center gap-1 border-t py-1.5 text-xs transition-colors"
+          >
+            {wrapOpen ? "Hide" : "Show"} wrap up
+            <ChevronDown
+              className={`h-3.5 w-3.5 transition-transform ${wrapOpen ? "rotate-180" : ""}`}
+              aria-hidden="true"
+            />
+          </button>
+          {wrapOpen ? (
+            <div id="webtoon-wrap-up" className="border-border border-t pt-2">
+              <WrapUpBody wrapUp={wrapUp} noteId="webtoon-closing-note" />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </footer>
   );
 }

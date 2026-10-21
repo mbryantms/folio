@@ -57,6 +57,8 @@ import {
   type ZoomState,
 } from "@/lib/reader/zoom";
 import { useIssueMarkers, useNextUp, usePrevUp } from "@/lib/api/queries";
+import { useSetIssueNote, useSetIssueRating } from "@/lib/api/mutations";
+import { summarizeMarkers, type WrapUpProps } from "@/lib/reader/wrap-up";
 import { readerUrl } from "@/lib/urls";
 import { usePageMarkerToggle } from "@/lib/markers/use-page-marker-toggle";
 import type { NextUpView, PageInfo, PageOverridesView } from "@/lib/api/types";
@@ -126,9 +128,25 @@ export function Reader({
   readingMinPages,
   readingIdleMs,
   initialPageOverrides = null,
+  seriesSlug = null,
+  issueSlug = null,
+  issueLabel = "This issue",
+  initialUserRating = null,
+  initialUserNote = null,
 }: {
   issueId: string;
   seriesId: string | null;
+  /** Route slugs of the open issue — the Wrap up rating / closing-note
+   *  mutations address `/series/{s}/issues/{i}/…`. Null (the offline
+   *  reader) disables Wrap up: the end card renders without the strip. */
+  seriesSlug?: string | null;
+  issueSlug?: string | null;
+  /** "Saga #11" — names the finished issue on the Wrap up pane. */
+  issueLabel?: string;
+  /** The caller's rating / closing note as of page load (from the
+   *  issue detail the page already fetched). */
+  initialUserRating?: number | null;
+  initialUserNote?: string | null;
   /** Saved-view id of the CBL the user is reading through. When set,
    *  the next-up resolver picks from that list instead of the parent
    *  series. Forwarded onto the next-issue URL when source === "cbl"
@@ -286,6 +304,48 @@ export function Reader({
   // browser history clean. Render-phase setState-style guard: a state
   // flag prevents repeated replaces if the resolver's data sticks
   // around in cache across renders.
+  // End-of-issue Wrap up: rating + closing note for the issue just
+  // finished, plus a per-kind tally of its markers (same payload the
+  // overlay renders). Optimistic local state; the hooks toast on error
+  // and the state rolls back.
+  const wrapUpEnabled = !!seriesSlug && !!issueSlug;
+  const setRatingMut = useSetIssueRating(seriesSlug ?? "", issueSlug ?? "");
+  const setNoteMut = useSetIssueNote(seriesSlug ?? "", issueSlug ?? "");
+  const [userRating, setUserRating] = useState<number | null>(
+    initialUserRating,
+  );
+  const [userNote, setUserNote] = useState<string | null>(initialUserNote);
+  const onRate = useCallback(
+    (next: number | null) => {
+      setUserRating((prev) => {
+        setRatingMut.mutate(
+          { rating: next },
+          { onError: () => setUserRating(prev) },
+        );
+        return next;
+      });
+    },
+    [setRatingMut],
+  );
+  const onSaveNote = useCallback(
+    (body: string | null) => {
+      setUserNote((prev) => {
+        setNoteMut.mutate(
+          { body },
+          {
+            onSuccess: (view) => setUserNote(view?.body ?? null),
+            onError: () => setUserNote(prev),
+          },
+        );
+        return body;
+      });
+    },
+    [setNoteMut],
+  );
+  const markerCounts = useMemo(
+    () => summarizeMarkers(issueMarkers.data?.items),
+    [issueMarkers.data],
+  );
   const [cblParamScrubbed, setCblParamScrubbed] = useState(false);
   if (
     !cblParamScrubbed &&
@@ -378,6 +438,38 @@ export function Reader({
     setShowEndCard(false);
     goNextIssue();
   }, [goNextIssue]);
+  // "Review" on the Wrap up pane: close the card and open the marker
+  // drawer over the last page; paging forward again reopens the card.
+  const reviewMarkersFromEndCard = useCallback(() => {
+    setShowEndCard(false);
+    useMarkerDrawer.getState().setOpen(true);
+  }, []);
+  const wrapUp: WrapUpProps | undefined = useMemo(
+    () =>
+      wrapUpEnabled
+        ? {
+            issueLabel,
+            rating: userRating,
+            onRate,
+            note: userNote,
+            onSaveNote,
+            noteSaving: setNoteMut.isPending,
+            markerCounts,
+            onReviewMarkers: reviewMarkersFromEndCard,
+          }
+        : undefined,
+    [
+      wrapUpEnabled,
+      issueLabel,
+      userRating,
+      onRate,
+      userNote,
+      onSaveNote,
+      setNoteMut.isPending,
+      markerCounts,
+      reviewMarkersFromEndCard,
+    ],
+  );
   // Per-page natural dimensions, populated as pages load. Stored in a
   // ref so a slider that rebuilds PageImage doesn't trigger a re-render
   // here — the overlay reads it directly.
@@ -1190,6 +1282,7 @@ export function Reader({
             onRetryNextUp={retryNextUp}
             onReadNext={continueFromEndCard}
             exitUrl={exitUrl}
+            wrapUp={wrapUp}
           />
         ) : viewMode === "double" ? (
           <DoublePageView
@@ -1281,6 +1374,7 @@ export function Reader({
           exitUrl={exitUrl}
           onContinue={continueFromEndCard}
           onDismiss={dismissEndCard}
+          wrapUp={wrapUp}
         />
       ) : null}
     </div>
@@ -1761,6 +1855,7 @@ function WebtoonView({
   onRetryNextUp,
   onReadNext,
   exitUrl,
+  wrapUp,
 }: {
   issueId: string;
   totalPages: number;
@@ -1784,6 +1879,7 @@ function WebtoonView({
   onRetryNextUp: () => void;
   onReadNext: () => void;
   exitUrl: string;
+  wrapUp: WrapUpProps | undefined;
 }) {
   const markerMode = useReaderStore((s) => s.markerMode);
   const currentPage = useReaderStore((s) => s.currentPage);
@@ -1917,6 +2013,7 @@ function WebtoonView({
         onRetry={onRetryNextUp}
         onReadNext={onReadNext}
         exitUrl={exitUrl}
+        wrapUp={wrapUp}
       />
       {markerMode === "idle" ? (
         // Chrome-toggle tap region for webtoon. `<TapZones>` in

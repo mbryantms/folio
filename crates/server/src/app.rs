@@ -134,6 +134,7 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(api::next_up::routes())
         .merge(api::cover_pick::routes())
         .merge(api::ratings::routes())
+        .merge(api::issue_notes::routes())
         .merge(api::reading_sessions::routes())
         .merge(api::reading_log::routes())
         .merge(api::log_widgets::routes())

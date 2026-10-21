@@ -4638,6 +4638,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{series_slug}/issues/{issue_slug}/note": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["issue_notes_set_issue_note"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{series_slug}/issues/{issue_slug}/prev": {
         parameters: {
             query?: never;
@@ -9080,6 +9096,12 @@ export interface components {
             position: number;
             series?: components["schemas"]["SeriesRef"] | null;
         };
+        ExportIssueNote: {
+            body: string;
+            created_at: string;
+            issue: components["schemas"]["IssueRef"];
+            updated_at: string;
+        };
         ExportMarker: {
             body?: string | null;
             color?: string | null;
@@ -9252,6 +9274,11 @@ export interface components {
              *     its pinned rails.
              */
             custom_pages: components["schemas"]["ExportPage"][];
+            /**
+             * @description Issue-level closing notes (`user_issue_notes`) — not page notes,
+             *     which are in `markers` with `kind = "note"`.
+             */
+            issue_notes: components["schemas"]["ExportIssueNote"][];
             markers: components["schemas"]["ExportMarker"][];
             /**
              * @description Per-user preferences from the `users` row, including reader
@@ -9929,6 +9956,12 @@ export interface components {
             publisher?: string | null;
             series_id: string;
             /**
+             * @description Parent series' display name. Detail-only (the list shapes carry
+             *     it on `IssueSummaryView`); the reader names the finished issue
+             *     with it on the end-of-issue card.
+             */
+            series_name?: string | null;
+            /**
              * @description Parent series' `reading_direction` override. Consulted by the
              *     reader above the user and library defaults but below ComicInfo
              *     `<Manga>`. `None` = "Auto" (series has no override). Plumbed by
@@ -9953,6 +9986,11 @@ export interface components {
             title?: string | null;
             translator?: string | null;
             updated_at: string;
+            /**
+             * @description Calling user's issue-level closing note (`user_issue_notes`), or
+             *     `None`. Not a page note — see `api::issue_notes`.
+             */
+            user_note?: string | null;
             /**
              * @description Issue columns the user has pinned via `PATCH` — the column keys
              *     (`title`, `writer`, `number_raw`, …) carrying a `set_by='user'`
@@ -10016,6 +10054,14 @@ export interface components {
              *     pages. The reader overlay slices client-side by `page_index`.
              */
             items: components["schemas"]["MarkerView"][];
+        };
+        /**
+         * @description The note as stored. `body` is `None` after a clear; `updated_at` is
+         *     RFC 3339 and `None` alongside it.
+         */
+        IssueNoteView: {
+            body?: string | null;
+            updated_at?: string | null;
         };
         IssueProvenanceCounts: {
             /**
@@ -13838,6 +13884,10 @@ export interface components {
              *     to default by sending `null` or omitting the field.
              */
             icon?: string | null;
+        };
+        /** @description Body for the note endpoint. `null` / blank clears the note. */
+        SetIssueNoteReq: {
+            body?: string | null;
         };
         /** @description Body for both rating endpoints. `null` clears the rating. */
         SetRatingReq: {
@@ -24232,6 +24282,46 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issue_notes_set_issue_note: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetIssueNoteReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueNoteView"];
+                };
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation error */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

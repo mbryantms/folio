@@ -84,6 +84,7 @@ pub mod story_arc;
 pub mod team;
 pub mod universe;
 pub mod user;
+pub mod user_issue_note;
 pub mod user_page;
 pub mod user_rating;
 pub mod user_series_progress;
@@ -159,6 +160,7 @@ pub mod prelude {
     pub use super::team::Entity as Team;
     pub use super::universe::Entity as Universe;
     pub use super::user::Entity as User;
+    pub use super::user_issue_note::Entity as UserIssueNote;
     pub use super::user_page::Entity as UserPage;
     pub use super::user_rating::Entity as UserRating;
     pub use super::user_series_progress::Entity as UserSeriesProgress;

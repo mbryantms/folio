@@ -136,6 +136,7 @@ mod m20270615_000001_user_series_reader_prefs;
 mod m20270616_000001_saved_view_groups;
 mod m20271020_000001_builtin_views_wave2;
 mod m20271020_000002_rename_recently_finished_issues;
+mod m20271021_000001_user_issue_notes;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -280,6 +281,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20270616_000001_saved_view_groups::Migration),
             Box::new(m20271020_000001_builtin_views_wave2::Migration),
             Box::new(m20271020_000002_rename_recently_finished_issues::Migration),
+            Box::new(m20271021_000001_user_issue_notes::Migration),
         ]
     }
 }

@@ -45,6 +45,7 @@ import {
 } from "@/components/library/InlineIssueFieldEdit";
 import { Stat } from "@/components/library/Stat";
 import { UserRating } from "@/components/library/UserRating";
+import { IssueClosingNote } from "@/components/library/IssueClosingNote";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MarkersList } from "@/components/markers/MarkersList";
@@ -402,6 +403,16 @@ export default async function IssuePage({
                 Edit sheet header — it's operator-facing context that
                 belonged next to the override controls, not on the
                 landing surface. */}
+            {/* The caller's issue-level closing note (written from the
+                reader's Wrap up pane). Private to the user, distinct
+                from the ComicInfo Notes tab below. Renders a quiet
+                "Add a closing note" link when empty. */}
+            <IssueClosingNote
+              seriesSlug={issue.series_slug}
+              issueSlug={issue.slug}
+              initial={issue.user_note ?? null}
+              className="mt-3"
+            />
           </div>
           {issue.summary && <Description text={issue.summary} />}
         </div>
