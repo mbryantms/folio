@@ -36,6 +36,15 @@ ignore = [
     # upgrade available"; the suggested alternative (`skrifa`) isn't adoptable
     # at our edge. Revisit when comic-text-detector bumps its imageproc pin.
     "RUSTSEC-2026-0192",
+    # `webpki-roots 0.26.11` bundles roots that trust distrusted emSign
+    # intermediates (RUSTSEC-2026-0381, 2026-10-20). Fixed only in the 1.x
+    # line (>= 1.0.10, which we already carry for every core TLS client);
+    # the 0.26 copy reaches the graph solely through `hf-hub 0.4 → ureq 2`,
+    # the Hugging Face model download used by `comic-text-detector` /
+    # `manga-ocr` (optional OCR path; downloads happen from an operator-
+    # supplied model source). `hf-hub 1.0` moved to reqwest 0.13, but both
+    # OCR crates still pin `hf-hub ^0.4`. Revisit when they bump.
+    "RUSTSEC-2026-0381",
     # NOTE: `memmap2 0.9.10` unsound (RUSTSEC-2026-0186, transitive via
     # `candle-core`) is intentionally NOT ignored here — cargo-deny's DB does
     # not match it, so an ignore entry would only warn as
