@@ -574,9 +574,17 @@ body {
     --overlay-bottom: calc(var(--bottom-tab-h) + var(--safe-bottom) + 16px);
   }
 }
+/* Touch-target floor. `.folio-button` is every `<Button>`; `.folio-control`
+ * is the other inline toolbar controls (`<Input>`, `<SelectTrigger>`, the
+ * phone mode toggle). Both get the same 44px floor so a toolbar row stays
+ * one uniform band on iPad / iPhone — with only buttons floored, the
+ * search box and sort select sat 8px shorter than their neighbours. */
 @media (pointer: coarse) {
-  .folio-button {
+  .folio-button,
+  .folio-control {
     min-height: 44px;
+  }
+  .folio-button {
     min-width: 44px;
   }
   input:not([type="checkbox"]):not([type="radio"]),
