@@ -22,7 +22,7 @@
 //! (`docs/dev/archive-writes.md`): the helpers return
 //! [`IssueEnqueue::NotWriteback`] without composing anything.
 
-use apalis::prelude::Storage;
+use apalis::prelude::TaskSink;
 use entity::{issue, library, series};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;

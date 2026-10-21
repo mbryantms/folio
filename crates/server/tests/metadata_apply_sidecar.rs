@@ -68,10 +68,7 @@ async fn queued_rewrite_jobs(app: &TestApp) -> Vec<RewriteIssueSidecarsJob> {
         .unwrap();
     let mut jobs: Vec<RewriteIssueSidecarsJob> = all
         .values()
-        .map(|blob| {
-            let v: serde_json::Value = serde_json::from_str(blob).expect("request json");
-            serde_json::from_value(v["args"].clone()).expect("job args")
-        })
+        .map(|blob| serde_json::from_str(blob).expect("job args"))
         .collect();
     jobs.sort_by(|a, b| a.issue_id.cmp(&b.issue_id));
     jobs

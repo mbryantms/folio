@@ -87,6 +87,33 @@ the release-notes line, and the SBOM artifact.
   GitHub Action is digest-pinned. `git log -p -- Dockerfile compose.*.yml`
   is the image history.
 
+## apalis 1.0 (job queue) — what changed and what survives an upgrade
+
+`apalis` / `apalis-redis` / `redis` moved 0.7 / 0.7 / 0.32 → 1.0 / 1.0 / 1.7
+together (2026-10, replaces Renovate #379). Operator-visible facts:
+
+* **Redis key names are unchanged.** `jobs::storage_config` names each
+  queue after the job type, exactly the namespace 0.7 derived, so
+  `{queue}:active`, `:scheduled`, `:dead`, `:data` and `:inflight:{worker}`
+  keep their names. 0.7's `:consumers` ZSET became `:workers` (members are
+  worker names), and per-job metadata moved from the stored payload into a
+  `{queue}:meta:{task_id}` hash (`attempts`, `status`, `result`, `done_at`).
+  The dead set is now a plain SET; the kill time is `done_at` in the meta
+  hash.
+* **Payloads are not compatible.** 0.7 stored the whole `Request` JSON;
+  1.0 stores the bare args. `JobRuntime::purge_legacy_queue_state` runs at
+  boot: any queue that still has a 0.7 `:consumers` key is dropped
+  wholesale and a `WARN` names it. Every job type is re-derivable (scans
+  re-trigger, thumbnail marks re-seed from the DB, metadata runs re-queue),
+  so the loss is only the backlog that was queued when the old build
+  stopped. Drain queues before upgrading if that matters.
+* **Retry budget stays 5.** apalis-redis 1.0 reschedules failures until a
+  cut-off hardcoded in its Lua (25) and ignores per-task `max_attempts`, so
+  `jobs::with_retry_budget` wraps every handler and reports the failure on
+  attempt `JOB_MAX_ATTEMPTS` as an `AbortError` → `Killed` → dead set.
+* **Orphan window stays 300 s**, expressed as `heartbeat_interval (30 s) ×
+  missed_heartbeats (10)`.
+
 ## What the gate actually proves
 
 The Rust side: ~1,800 tests, nearly every endpoint exercised against real

@@ -253,12 +253,12 @@ async fn dead_letter_counts_reflect_the_dead_set() {
         "no dead jobs on a fresh app, got {before:?}"
     );
 
-    // Simulate apalis dead-lettering a scan job: ZADD to the exact key the
+    // Simulate apalis dead-lettering a scan job: SADD to the exact key the
     // counter reads (resolved from the same storage config), so the test is
-    // robust to the apalis namespace format.
+    // robust to the apalis queue-name format.
     let dead_key = jobs.scan_storage.get_config().dead_jobs_set();
     let mut conn = jobs.redis.clone();
-    let _: () = conn.zadd(&dead_key, "job-abc", 1_i64).await.unwrap();
+    let _: () = conn.sadd(&dead_key, "job-abc").await.unwrap();
 
     let after = jobs.dead_letter_counts().await.unwrap();
     let scan_dead = after
@@ -266,7 +266,10 @@ async fn dead_letter_counts_reflect_the_dead_set() {
         .find(|(q, _)| *q == "scan")
         .map(|(_, n)| *n)
         .unwrap();
-    assert_eq!(scan_dead, 1, "scan dead-letter count must reflect the ZSET");
+    assert_eq!(
+        scan_dead, 1,
+        "scan dead-letter count must reflect the dead SET"
+    );
     // Other queues stay at zero — the count is per-queue, not global.
     let series_dead = after
         .iter()

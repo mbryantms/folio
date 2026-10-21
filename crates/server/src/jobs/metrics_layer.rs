@@ -14,7 +14,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Instant;
 
-use apalis::prelude::{Error, Request};
+use apalis::prelude::Task;
 use tower::{Layer, Service};
 
 /// Apply with `.layer(JobMetricsLayer::new("scan"))` on a `WorkerBuilder`; the
@@ -46,21 +46,22 @@ pub struct JobMetricsService<S> {
     kind: &'static str,
 }
 
-impl<S, Req, Ctx, Res> Service<Request<Req, Ctx>> for JobMetricsService<S>
+impl<S, Args, Res, Err> Service<Task<Args>> for JobMetricsService<S>
 where
-    S: Service<Request<Req, Ctx>, Response = Res, Error = Error>,
+    S: Service<Task<Args>, Response = Res, Error = Err>,
     S::Future: Send + 'static,
     Res: Send + 'static,
+    Err: Send + 'static,
 {
     type Response = Res;
-    type Error = Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Res, Error>> + Send>>;
+    type Error = Err;
+    type Future = Pin<Box<dyn Future<Output = Result<Res, Err>> + Send>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(cx)
     }
 
-    fn call(&mut self, req: Request<Req, Ctx>) -> Self::Future {
+    fn call(&mut self, req: Task<Args>) -> Self::Future {
         let kind = self.kind;
         let start = Instant::now();
         let fut = self.service.call(req);

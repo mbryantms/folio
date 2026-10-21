@@ -55,4 +55,11 @@ ignore = [
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
+    # `webpki-roots 0.26.11` trusts distrusted emSign intermediates
+    # (RUSTSEC-2026-0381). Fixed only in the 1.x line, which every core
+    # TLS client already uses; the 0.26 copy is reachable solely via
+    # `hf-hub 0.4 → ureq 2` behind the optional OCR crates, which still
+    # pin hf-hub ^0.4. deny.toml carries the same entry. Revisit when
+    # comic-text-detector / manga-ocr move to hf-hub 1.
+    "RUSTSEC-2026-0381",
 ]

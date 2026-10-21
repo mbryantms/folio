@@ -268,10 +268,7 @@ async fn drain<T: DeserializeOwned>(app: &TestApp, data_hash: String) -> Vec<T> 
         .await
         .unwrap();
     all.values()
-        .map(|blob| {
-            let v: serde_json::Value = serde_json::from_str(blob).expect("request json");
-            serde_json::from_value(v["args"].clone()).expect("job args")
-        })
+        .map(|blob| serde_json::from_str(blob).expect("job args"))
         .collect()
 }
 

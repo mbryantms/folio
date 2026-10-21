@@ -1112,7 +1112,7 @@ async fn background_work_joins_scans_thumbnails_and_queues() {
     let scan_cfg = st.jobs.scan_storage.get_config().clone();
     let held = format!("{}:worker-a", scan_cfg.inflight_jobs_set());
     let _: i64 = conn
-        .zadd(scan_cfg.consumers_set(), &held, 1i64)
+        .zadd(scan_cfg.workers_set(), "worker-a", 1i64)
         .await
         .unwrap();
     let _: i64 = conn.sadd(&held, "scan-job").await.unwrap();

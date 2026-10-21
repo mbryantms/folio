@@ -98,7 +98,7 @@ struct PendingRow {
     file_mtime: chrono::DateTime<chrono::FixedOffset>,
 }
 
-pub async fn handle(job: HashBackfillJob, state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle(job: HashBackfillJob, state: Data<AppState>) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
     let library_id = job.library_id;
     let outcome = match drain_library(&state, library_id).await {

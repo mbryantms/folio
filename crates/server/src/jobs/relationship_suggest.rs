@@ -80,7 +80,7 @@ pub async fn enqueue(state: &AppState, library_id: Uuid) -> bool {
     }
 }
 
-pub async fn handle(job: RelationshipSuggestJob, state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle(job: RelationshipSuggestJob, state: Data<AppState>) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
     let library_id = job.library_id;
     // Clear first: triggers that arrive while this run is in progress must

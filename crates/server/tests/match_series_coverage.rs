@@ -18,7 +18,7 @@
 
 mod common;
 
-use apalis::prelude::Storage;
+use apalis::prelude::TaskSink;
 use axum::{
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header},
@@ -502,8 +502,11 @@ async fn run_apply(fx: &Fx, job: ApplySeriesJob) {
 }
 
 async fn coverage_jobs_waiting(app: &TestApp) -> i64 {
-    let mut storage = app.state().jobs.provider_coverage_storage.clone();
-    storage.len().await.unwrap()
+    let st = app.state();
+    st.jobs
+        .waiting_len(&st.jobs.provider_coverage_storage)
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
