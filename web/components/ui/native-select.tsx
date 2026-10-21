@@ -42,7 +42,10 @@ export function NativeSelect({
   return (
     <select
       className={cn(
-        "border-input bg-background focus-visible:ring-ring flex rounded-md border shadow-sm transition-colors focus-visible:ring-1 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
+        // `folio-control`: joins the 44px touch floor with `<Button>` /
+        // `<Input>` siblings (docs/dev/phone-layout.md rule 9) — the
+        // /bookmarks Sort select sat 36px beside 44px buttons on iPad.
+        "folio-control border-input bg-background focus-visible:ring-ring flex rounded-md border shadow-sm transition-colors focus-visible:ring-1 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
         SIZES[size],
         className,
       )}

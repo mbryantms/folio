@@ -13,7 +13,9 @@ import { join } from "node:path";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { CblStatsPillsStatic } from "@/components/cbl/CblStatsPills";
 import { ModeSegmentedToggle } from "@/components/library/LibraryGridToolbar";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -64,5 +66,38 @@ describe("touch-target floor", () => {
     for (const b of toggle.querySelectorAll("button")) {
       expect(b.className).not.toMatch(/\bh-8\b/);
     }
+  });
+
+  it("floors the /bookmarks sort select and the CBL header pills too", () => {
+    const { container } = render(
+      <>
+        <NativeSelect
+          aria-label="Sort"
+          options={[{ value: "newest", label: "Newest" }]}
+        />
+        <CblStatsPillsStatic
+          size="header"
+          stats={{
+            matched: 30,
+            total: 860,
+            read_count: 12,
+            ambiguous: 0,
+            manual: 0,
+            missing: 830,
+          }}
+        />
+      </>,
+    );
+    expect(
+      screen
+        .getByRole("combobox", { name: "Sort" })
+        .classList.contains("folio-control"),
+    ).toBe(true);
+    // Both pills carry the floor; on an iPad they sat 36px beside 44px
+    // buttons in the CBL view header.
+    // Select + the two pills.
+    expect(
+      container.querySelectorAll(".folio-control").length,
+    ).toBeGreaterThanOrEqual(3);
   });
 });

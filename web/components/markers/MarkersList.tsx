@@ -1122,7 +1122,9 @@ function SeriesFilter({
           type="button"
           aria-label="Clear series filter"
           onClick={() => onChange("")}
-          className="text-muted-foreground hover:text-foreground hover:bg-muted/50 inline-flex h-9 w-7 items-center justify-center rounded-md transition-colors"
+          // `folio-button` so the clear target floors at 44px on touch
+          // like the combobox trigger beside it.
+          className="folio-button text-muted-foreground hover:text-foreground hover:bg-muted/50 inline-flex h-9 w-9 items-center justify-center rounded-md transition-colors"
         >
           <X className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
