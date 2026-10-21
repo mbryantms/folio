@@ -77,7 +77,12 @@ max-sm:line-clamp-2`; `PageHeader` takes `phoneDescription="hidden"`
    row; on iPad / iPhone the whole row grows together. A new inline
    toolbar control that is not one of those components must carry
    `folio-control`, or it will sit 8px shorter than its neighbours on
-   touch. Playwright only reports this with `hasTouch: true`.
+   touch. Playwright only reports this with `hasTouch: true`. The
+   fine-pointer half of the same rule: a toolbar `<Button>` is `h-9`,
+   never bare `size="sm"` (32px). The shared controls — `SelectModeButton`,
+   `NotesExportMenu`, `CardSizeOptions`, `AddWidgetMenu`, the `/log`
+   `ActivityRangeSelector` — bake it in; `tests/dom/toolbar-row-height.test.tsx`
+   guards them.
 10. **Prefer CSS to JS.** Use `max-sm:` / `sm:` whenever the difference
     is presentational. `useIsPhone()` (`lib/ui/use-is-phone.ts`,
     `useSyncExternalStore` on `(max-width: 639px)`, `false` on SSR) is

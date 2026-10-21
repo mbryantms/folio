@@ -12,6 +12,12 @@ import type { LogWidgetProps, StatsHeroConfig, StatsHeroMetric } from "./types";
 
 const DEFAULT_METRICS: StatsHeroMetric[] = ["issues", "hours", "streak"];
 
+/** Tiles fill the row and wrap once a tile would drop under ~5.5rem,
+ *  instead of `repeat(N, 1fr)` — a fixed five-across row in a narrow
+ *  widget column squeezed every tile below its content and ran the
+ *  value ("21.4s") and the SEC/PAGE caption out of the card. */
+const TILE_GRID = "grid grid-cols-[repeat(auto-fit,minmax(5.5rem,1fr))] gap-3";
+
 const METRIC_META: Record<
   StatsHeroMetric,
   { label: string; Icon: typeof BookOpen }
@@ -37,12 +43,9 @@ export function StatsHero({ widget, scope }: LogWidgetProps<StatsHeroConfig>) {
   return (
     <WidgetCard widget={widget} title="At a glance">
       {stats.isLoading ? (
-        <div
-          className="grid gap-3"
-          style={{ gridTemplateColumns: `repeat(${metrics.length}, 1fr)` }}
-        >
+        <div className={TILE_GRID}>
           {metrics.map((m) => (
-            <Skeleton key={m} className="h-14" />
+            <Skeleton key={m} className="h-16" />
           ))}
         </div>
       ) : stats.data ? (
@@ -53,10 +56,7 @@ export function StatsHero({ widget, scope }: LogWidgetProps<StatsHeroConfig>) {
             description="Nothing logged in this range yet — start reading and your stats will appear here."
           />
         ) : (
-          <div
-            className="grid gap-3"
-            style={{ gridTemplateColumns: `repeat(${metrics.length}, 1fr)` }}
-          >
+          <div className={TILE_GRID}>
             {metrics.map((m) => (
               <Tile key={m} metric={m} data={stats.data} />
             ))}
@@ -91,15 +91,18 @@ function Tile({
   const meta = METRIC_META[metric];
   const value = computeMetric(metric, data);
   return (
-    <div className="border-border/60 bg-muted/30 flex flex-col gap-1 rounded-md border p-2.5">
+    <div className="border-border/60 bg-muted/30 flex min-w-0 flex-col gap-1 rounded-md border p-2.5">
       <meta.Icon
         aria-hidden="true"
         className="text-muted-foreground h-3.5 w-3.5"
       />
-      <div className="text-lg leading-tight font-semibold tabular-nums">
+      <div
+        className="truncate text-lg leading-tight font-semibold tabular-nums"
+        title={value}
+      >
         {value}
       </div>
-      <div className="text-muted-foreground text-[10px] tracking-wider uppercase">
+      <div className="text-muted-foreground truncate text-[10px] tracking-wider uppercase">
         {meta.label}
       </div>
     </div>

@@ -26,10 +26,12 @@ export function ReadingLogPage() {
       {widgetsQuery.isLoading ? (
         // Matches the LogWidgetGrid's multicolumn flow so the
         // loading state doesn't visibly reflow on data arrival.
-        <div className="columns-1 gap-x-6 md:columns-2">
-          <Skeleton className="mb-6 inline-block h-64 w-full break-inside-avoid" />
-          <Skeleton className="mb-6 inline-block h-48 w-full break-inside-avoid" />
-          <Skeleton className="mb-6 inline-block h-32 w-full break-inside-avoid" />
+        <div className="@container">
+          <div className="columns-1 gap-x-6 @3xl:columns-2">
+            <Skeleton className="mb-6 inline-block h-64 w-full break-inside-avoid" />
+            <Skeleton className="mb-6 inline-block h-48 w-full break-inside-avoid" />
+            <Skeleton className="mb-6 inline-block h-32 w-full break-inside-avoid" />
+          </div>
         </div>
       ) : widgetsQuery.data ? (
         <LogWidgetGrid widgets={widgets} scope={scope} />

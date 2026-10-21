@@ -344,7 +344,6 @@ export function LibraryGridToolbar({
               active={selectMode}
               onEnter={onEnterSelect}
               onExit={onExitSelect}
-              className="h-9"
             />
           ) : null}
           <CardSizeOptions

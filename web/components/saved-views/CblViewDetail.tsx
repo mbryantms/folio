@@ -518,9 +518,6 @@ function CblViewDetailInner({
                 active={selection.selectMode}
                 onEnter={() => selection.enter()}
                 onExit={() => selection.exit()}
-                // Toolbar convention: h-9 to align with the adjacent
-                // `<Input>` + CardSizeOptions trigger.
-                className="h-9"
               />
             )}
           </>

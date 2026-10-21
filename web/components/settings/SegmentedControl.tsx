@@ -16,12 +16,16 @@ export function SegmentedControl<T extends string>({
   options,
   ariaLabel,
   disabled,
+  className,
 }: {
   value: T;
   onChange: (next: T) => void;
   options: ReadonlyArray<{ value: T; label: string }>;
   ariaLabel: string;
   disabled?: boolean;
+  /** Extra classes on the group wrapper — e.g. `h-9` when the control
+   *  sits in a toolbar row beside `<Button>` / `<Input>` siblings. */
+  className?: string;
 }) {
   return (
     <div
@@ -33,7 +37,10 @@ export function SegmentedControl<T extends string>({
       // instead of widening the page. No-op when the options already fit.
       // `[&>*]:shrink-0` stops the pills squishing; scrollbar hidden to match
       // the TabsList pattern.
-      className="border-input bg-background inline-flex max-w-full [scrollbar-width:none] overflow-x-auto rounded-md border p-0.5 [&::-webkit-scrollbar]:hidden [&>*]:shrink-0"
+      className={cn(
+        "border-input bg-background inline-flex max-w-full [scrollbar-width:none] overflow-x-auto rounded-md border p-0.5 [&::-webkit-scrollbar]:hidden [&>*]:shrink-0",
+        className,
+      )}
     >
       {options.map((opt) => {
         const active = opt.value === value;

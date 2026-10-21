@@ -4,6 +4,7 @@ import * as React from "react";
 import { ListChecks, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 /**
  * The page-header entry point into (and out of) multi-select mode,
@@ -15,6 +16,11 @@ import { Button } from "@/components/ui/button";
  * the user to find the toolbar's "Done". Instead it now toggles in
  * place: **Select** to enter, **Cancel** to exit. Keeping it mounted
  * also means the focus-restore-on-exit pattern has a stable target.
+ *
+ * Toolbar-row convention: `h-9` (36px) so it lines up with the
+ * `<Input>` / `CardSizeOptions` / `NotesExportMenu` siblings in every
+ * header it sits in — `size="sm"` alone is 32px and read as a smaller
+ * button beside them.
  */
 export function SelectModeButton({
   active,
@@ -38,7 +44,7 @@ export function SelectModeButton({
       size="sm"
       aria-pressed={active}
       onClick={active ? onExit : onEnter}
-      className={className}
+      className={cn("h-9", className)}
     >
       {active ? (
         <>

@@ -118,13 +118,22 @@ export function LogWidgetGrid({
          *  neighbours without padding. `break-inside-avoid` keeps
          *  each card intact across the column boundary; `column-span:
          *  all` lets `size: "full"` widgets cut across the flow as a
-         *  full-width band. */}
-        <div className="columns-1 gap-x-6 md:columns-2">
-          {ids.map((id) => {
-            const w = widgetById.get(id);
-            if (!w) return null;
-            return <SortableWidget key={id} widget={w} scope={scope} />;
-          })}
+         *  full-width band.
+         *
+         *  The split is a container query on the grid's own width, not
+         *  a viewport breakpoint: `md:columns-2` fired at 768px even
+         *  with the sidebar open, leaving two ~250px columns in which
+         *  the stat tiles, the donut legend and the heatmap all
+         *  overflowed their cards. `@3xl` (48rem) keeps every column
+         *  at least ~360px wide. */}
+        <div className="@container">
+          <div className="columns-1 gap-x-6 @3xl:columns-2">
+            {ids.map((id) => {
+              const w = widgetById.get(id);
+              if (!w) return null;
+              return <SortableWidget key={id} widget={w} scope={scope} />;
+            })}
+          </div>
         </div>
       </SortableContext>
     </DndContext>
