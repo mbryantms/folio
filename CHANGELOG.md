@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.62.1](https://github.com/mbryantms/folio/compare/v0.62.0...v0.62.1) (2026-10-21)
+
+
+### Dependencies
+
+* apalis + apalis-redis + redis 1.0 (replaces [#379](https://github.com/mbryantms/folio/issues/379)) ([#1254](https://github.com/mbryantms/folio/issues/1254)) ([04460f5](https://github.com/mbryantms/folio/commit/04460f54aac98f3ae101815d77ccc6f8313394b8))
+
 ## [0.62.0](https://github.com/mbryantms/folio/compare/v0.61.0...v0.62.0) (2026-10-21)
 
 
