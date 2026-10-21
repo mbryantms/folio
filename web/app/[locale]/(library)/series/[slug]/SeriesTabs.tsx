@@ -2,6 +2,8 @@
 
 import * as React from "react";
 
+import { cn } from "@/lib/utils";
+
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSeriesRelationships } from "@/lib/api/queries";
 
@@ -79,12 +81,39 @@ export function SeriesTabs({
   const resolved = resolveSeriesTab(initialTab, available);
   const [tab, setTab] = React.useState<SeriesTab>(resolved);
   // A soft navigation to a different `?tab=` re-renders the server page
-  // with a new `initialTab`; follow it (derive-from-props, no effect).
+  // with a new `initialTab`; follow it (derive-from-props, no effect) and
+  // remember that it came from a navigation, not a click on the strip.
   const [prevResolved, setPrevResolved] = React.useState(resolved);
+  const [jumpedTo, setJumpedTo] = React.useState<SeriesTab | null>(null);
   if (prevResolved !== resolved) {
     setPrevResolved(resolved);
     setTab(resolved);
+    setJumpedTo(resolved);
   }
+  // The strip sits below the issue list, so a menu item that only
+  // changes `?tab=` (the settings gear's "Metadata") used to switch the
+  // panel with nothing visible happening. After a navigation, bring the
+  // strip into view and move focus to the new tab so both sighted and
+  // keyboard users see where they landed.
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!jumpedTo) return;
+    const root = rootRef.current;
+    if (root) {
+      const reduced = window.matchMedia?.(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+      root.scrollIntoView({
+        block: "start",
+        behavior: reduced ? "auto" : "smooth",
+      });
+      root
+        .querySelector<HTMLElement>(`[role="tab"][data-state="active"]`)
+        ?.focus({ preventScroll: true });
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setJumpedTo(null);
+  }, [jumpedTo]);
 
   const cached = useSeriesRelationships(seriesSlug, { enabled: false });
   const liveCount = cached.data
@@ -105,7 +134,12 @@ export function SeriesTabs({
   };
 
   return (
-    <Tabs value={tab} onValueChange={onChange} className={className}>
+    <Tabs
+      ref={rootRef}
+      value={tab}
+      onValueChange={onChange}
+      className={cn("scroll-mt-[calc(var(--topbar-h,4rem)+0.5rem)]", className)}
+    >
       <TabsList>
         <TabsTrigger value="credits">Credits</TabsTrigger>
         <TabsTrigger value="cast">Cast &amp; Setting</TabsTrigger>
