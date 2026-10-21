@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.62.2](https://github.com/mbryantms/folio/compare/v0.62.1...v0.62.2) (2026-10-21)
+
+
+### Fixed
+
+* **web:** uniform toolbar control heights + reading-log widgets that fit their cards ([#1256](https://github.com/mbryantms/folio/issues/1256)) ([64c3064](https://github.com/mbryantms/folio/commit/64c3064e548f89ba703d7b311fef9eaaad945159))
+
 ## [0.62.1](https://github.com/mbryantms/folio/compare/v0.62.0...v0.62.1) (2026-10-21)
 
 
