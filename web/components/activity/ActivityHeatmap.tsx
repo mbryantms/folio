@@ -1,5 +1,7 @@
 "use client";
 
+import * as React from "react";
+
 import {
   buildHeatmapGrid,
   formatDurationMs,
@@ -45,62 +47,81 @@ export function ActivityHeatmap({
   const width = PAD_LEFT + COLS * STRIDE;
   const height = PAD_TOP + ROWS * STRIDE;
 
+  // The grid renders at its natural pixel size and scrolls sideways
+  // when the host is narrower than it (a 52-week grid is ~820px; a
+  // reading-log column or a phone is far less). Scaling the SVG down
+  // instead (`max-width: 100%; height: auto`) shrank a year view to an
+  // unreadable 3px-cell strip inside the widget. Start scrolled to the
+  // right so the most recent weeks are the ones in view.
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  React.useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [width]);
+
   return (
     <figure className="space-y-2">
-      {/* Render at natural pixel size so the in-SVG month/day labels and
-          cells don't scale up with the container width. `maxWidth: 100%`
-          plus `height: auto` shrinks the whole grid proportionally on
-          narrow viewports while leaving wider pages alone. */}
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        width={width}
-        height={height}
-        style={{ maxWidth: "100%", height: "auto" }}
-        className="text-primary block"
-        role="img"
-        aria-label={`Reading activity, last ${weeks} week${weeks === 1 ? "" : "s"}`}
+      <div
+        ref={scrollRef}
+        className="max-w-full [scrollbar-width:thin] overflow-x-auto"
       >
-        {/* Month labels along the top edge. */}
-        {grid.monthLabels.map((m) => (
-          <text
-            key={`${m.col}-${m.label}`}
-            x={PAD_LEFT + m.col * STRIDE}
-            y={LABEL_FONT}
-            fontSize={LABEL_FONT}
-            className="fill-muted-foreground"
-          >
-            {m.label}
-          </text>
-        ))}
-        {/* Day-of-week labels — only Mon/Wed/Fri to keep things readable. */}
-        {[
-          { row: 1, label: "Mon" },
-          { row: 3, label: "Wed" },
-          { row: 5, label: "Fri" },
-        ].map(({ row, label }) => (
-          <text
-            key={label}
-            x={0}
-            y={PAD_TOP + row * STRIDE + CELL - 1}
-            fontSize={LABEL_FONT}
-            className="fill-muted-foreground"
-          >
-            {label}
-          </text>
-        ))}
-        {grid.cells.map((col, ci) =>
-          col.map((cell, ri) => (
-            <Cell
-              key={`${ci}-${ri}`}
-              x={PAD_LEFT + ci * STRIDE}
-              y={PAD_TOP + ri * STRIDE}
-              size={CELL}
-              cell={cell}
-              max={grid.max}
-            />
-          )),
-        )}
-      </svg>
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          width={width}
+          height={height}
+          className="text-primary block"
+          role="img"
+          aria-label={`Reading activity, last ${weeks} week${weeks === 1 ? "" : "s"}`}
+        >
+          {/* Month labels along the top edge. A label whose month starts
+              within two columns of the previous one is dropped — when the
+              window opens in the last days of a month the first two
+              labels otherwise overprint ("AprMay"). */}
+          {grid.monthLabels
+            .filter(
+              (m, i, all) => i === 0 || m.col - (all[i - 1]?.col ?? -9) >= 3,
+            )
+            .map((m) => (
+              <text
+                key={`${m.col}-${m.label}`}
+                x={PAD_LEFT + m.col * STRIDE}
+                y={LABEL_FONT}
+                fontSize={LABEL_FONT}
+                className="fill-muted-foreground"
+              >
+                {m.label}
+              </text>
+            ))}
+          {/* Day-of-week labels — only Mon/Wed/Fri to keep things readable. */}
+          {[
+            { row: 1, label: "Mon" },
+            { row: 3, label: "Wed" },
+            { row: 5, label: "Fri" },
+          ].map(({ row, label }) => (
+            <text
+              key={label}
+              x={0}
+              y={PAD_TOP + row * STRIDE + CELL - 1}
+              fontSize={LABEL_FONT}
+              className="fill-muted-foreground"
+            >
+              {label}
+            </text>
+          ))}
+          {grid.cells.map((col, ci) =>
+            col.map((cell, ri) => (
+              <Cell
+                key={`${ci}-${ri}`}
+                x={PAD_LEFT + ci * STRIDE}
+                y={PAD_TOP + ri * STRIDE}
+                size={CELL}
+                cell={cell}
+                max={grid.max}
+              />
+            )),
+          )}
+        </svg>
+      </div>
       <Legend />
     </figure>
   );

@@ -44,72 +44,79 @@ export function TimeOfDayDonut({ data }: { data: TimeOfDayBuckets }) {
   }
 
   return (
-    <div className="grid grid-cols-1 items-center gap-4 sm:grid-cols-2">
-      <ResponsiveContainer width="100%" height={180}>
-        <PieChart>
-          <Pie
-            data={rows}
-            dataKey="value"
-            nameKey="label"
-            innerRadius={50}
-            outerRadius={80}
-            paddingAngle={2}
-            stroke="var(--color-background)"
-            strokeWidth={2}
-          >
-            {rows.map((r) => (
-              <Cell
-                key={r.key}
-                fill="var(--color-primary)"
-                fillOpacity={r.opacity}
-              />
-            ))}
-          </Pie>
-          <Tooltip
-            cursor={false}
-            contentStyle={{
-              background: "var(--color-popover)",
-              border: "1px solid var(--color-border)",
-              borderRadius: 6,
-              fontSize: 12,
-            }}
-            labelStyle={{ color: "var(--color-foreground)" }}
-            formatter={(_value, _name, item) => {
-              const payload = item?.payload as
-                { value?: number; sessions?: number } | undefined;
-              const ms = payload?.value ?? 0;
-              const sessions = payload?.sessions ?? 0;
-              return [
-                `${formatDurationMs(ms)} · ${sessions} session${sessions === 1 ? "" : "s"}`,
-                "Read",
-              ];
-            }}
-          />
-        </PieChart>
-      </ResponsiveContainer>
-      <ul className="space-y-1">
-        {rows.map((r) => {
-          const pct = total > 0 ? Math.round((r.value / total) * 100) : 0;
-          return (
-            <li
-              key={r.key}
-              className="text-foreground flex items-center justify-between gap-3 text-sm"
+    // Legend beside the donut only when the component itself is wide
+    // enough (`@md` = 28rem): the viewport `sm:` split put the two
+    // side by side inside a ~250px reading-log column, where each
+    // legend row wrapped onto three lines and spilled out of the
+    // card. Below that the legend stacks under the donut.
+    <div className="@container">
+      <div className="grid grid-cols-1 items-center gap-4 @md:grid-cols-2">
+        <ResponsiveContainer width="100%" height={180}>
+          <PieChart>
+            <Pie
+              data={rows}
+              dataKey="value"
+              nameKey="label"
+              innerRadius={50}
+              outerRadius={80}
+              paddingAngle={2}
+              stroke="var(--color-background)"
+              strokeWidth={2}
             >
-              <span className="flex items-center gap-2">
-                <span
-                  aria-hidden="true"
-                  className="bg-primary inline-block size-2.5 rounded-sm"
-                  style={{ opacity: r.opacity }}
+              {rows.map((r) => (
+                <Cell
+                  key={r.key}
+                  fill="var(--color-primary)"
+                  fillOpacity={r.opacity}
                 />
-                <span className="font-medium">{r.label}</span>
-              </span>
-              <span className="text-muted-foreground tabular-nums">
-                {pct}% · {formatDurationMs(r.value)}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
+              ))}
+            </Pie>
+            <Tooltip
+              cursor={false}
+              contentStyle={{
+                background: "var(--color-popover)",
+                border: "1px solid var(--color-border)",
+                borderRadius: 6,
+                fontSize: 12,
+              }}
+              labelStyle={{ color: "var(--color-foreground)" }}
+              formatter={(_value, _name, item) => {
+                const payload = item?.payload as
+                  { value?: number; sessions?: number } | undefined;
+                const ms = payload?.value ?? 0;
+                const sessions = payload?.sessions ?? 0;
+                return [
+                  `${formatDurationMs(ms)} · ${sessions} session${sessions === 1 ? "" : "s"}`,
+                  "Read",
+                ];
+              }}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+        <ul className="space-y-1">
+          {rows.map((r) => {
+            const pct = total > 0 ? Math.round((r.value / total) * 100) : 0;
+            return (
+              <li
+                key={r.key}
+                className="text-foreground flex items-center justify-between gap-3 text-sm"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <span
+                    aria-hidden="true"
+                    className="bg-primary inline-block size-2.5 shrink-0 rounded-sm"
+                    style={{ opacity: r.opacity }}
+                  />
+                  <span className="truncate font-medium">{r.label}</span>
+                </span>
+                <span className="text-muted-foreground shrink-0 whitespace-nowrap tabular-nums">
+                  {pct}% · {formatDurationMs(r.value)}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
     </div>
   );
 }
