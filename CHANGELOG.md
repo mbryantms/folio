@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.63.1](https://github.com/mbryantms/folio/compare/v0.63.0...v0.63.1) (2026-10-21)
+
+
+### Fixed
+
+* **web:** scroll to and focus the series tab a menu navigation opens ([#1265](https://github.com/mbryantms/folio/issues/1265)) ([8e098eb](https://github.com/mbryantms/folio/commit/8e098eb75b9723188facb3558dba9156d9904505))
+
+
+### Dependencies
+
+* update dependency oasdiff/oasdiff to v1.34.0 ([#1264](https://github.com/mbryantms/folio/issues/1264)) ([17da3fa](https://github.com/mbryantms/folio/commit/17da3fa2e9f47ef4da3157c72429f7c0dd96c716))
+* update dependency postcss@&lt;8.5.10 to v8.5.31 ([#1262](https://github.com/mbryantms/folio/issues/1262)) ([b4c3356](https://github.com/mbryantms/folio/commit/b4c3356f99638dfa34312be84adfbe159a44a79c))
+
 ## [0.63.0](https://github.com/mbryantms/folio/compare/v0.62.2...v0.63.0) (2026-10-21)
 
 
