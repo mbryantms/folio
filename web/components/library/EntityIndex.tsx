@@ -83,7 +83,7 @@ export function EntityIndex({
         />
       )}
 
-      <div className="border-border bg-card focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm focus-within:ring-2 max-sm:py-1.5 max-sm:shadow-none">
+      <div className="border-border bg-card focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm focus-within:ring-2 max-sm:mr-2 max-sm:py-1.5 max-sm:shadow-none">
         <Search
           aria-hidden="true"
           className="text-muted-foreground size-4 shrink-0"

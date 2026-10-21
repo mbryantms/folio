@@ -65,6 +65,7 @@ import { useLibraryGridFilters } from "@/lib/library/use-grid-filters";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import { useCoarsePointerActionsHint } from "@/lib/ui/use-coarse-pointer";
+import { cn } from "@/lib/utils";
 
 const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
@@ -379,7 +380,9 @@ export function LibraryGridView({
           topbar). Desktop renders `LibraryGridToolbar` below. */}
       <PhoneControlsBar
         hidden={selection.selectMode}
-        className="mb-3"
+        // Series mode: inset the icon cluster by the same 8px the grid
+        // reserves for the A–Z rail, so `⋯` doesn't butt against it.
+        className={cn("mb-3", isSeriesMode && "pr-6")}
         leading={<ModeSegmentedToggle mode={mode} onMode={handleMode} />}
         search={{
           value: q,
@@ -541,6 +544,7 @@ export function LibraryGridView({
 
       {facetCount > 0 ? (
         <ActiveChips
+          className={isSeriesMode ? "max-sm:pr-6" : undefined}
           status={status}
           metadataCompleteness={metadataCompleteness}
           providerMatch={providerMatch}
