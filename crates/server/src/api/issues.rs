@@ -132,16 +132,18 @@ pub async fn get_one(
     // the already-fetched `row`), so run them concurrently instead of paying
     // four sequential round-trips. `tokio::join!` polls them together on this
     // task; each grabs a pooled connection briefly (pool has ample headroom).
-    let series_dir_fut = async {
-        // Parent series' reading-direction override — consulted in the reader's
-        // resolution chain below ComicInfo `<Manga>` but above the LTR default.
-        // See `manga-and-bulk-metadata-1.0` M1 + M2.
+    let series_fut = async {
+        // Parent series row: its reading-direction override (consulted in
+        // the reader's resolution chain below ComicInfo `<Manga>` but above
+        // the LTR default — `manga-and-bulk-metadata-1.0` M1 + M2) and its
+        // display name, which the reader's end-of-issue card uses to name
+        // the finished issue ("Saga #11").
         series::Entity::find_by_id(row.series_id)
             .one(&app.db)
             .await
             .ok()
             .flatten()
-            .and_then(|s| s.reading_direction)
+            .map(|s| (s.reading_direction, s.name))
     };
     let library_fut = async {
         library::Entity::find_by_id(row.library_id)
@@ -153,9 +155,10 @@ pub async fn get_one(
     // Creator-slug map for this issue's credits. One JOIN against `person` —
     // the FK populated by the scanner's series rollup. The UI uses this so
     // credit chips link to /creators/<slug> directly.
-    let (rating, series_dir, library_row, creator_slugs, junctions) = tokio::join!(
+    let (rating, note, series_row, library_row, creator_slugs, junctions) = tokio::join!(
         crate::api::series::lookup_user_rating(&app, user.id, "issue", &row.id),
-        series_dir_fut,
+        crate::api::issue_notes::lookup_user_note(&app, user.id, &row.id),
+        series_fut,
         library_fut,
         build_issue_creator_slugs(&app, &row.id),
         build_issue_junction_lists(&app, &row.id),
@@ -172,7 +175,10 @@ pub async fn get_one(
     let issue_id = row.id.clone();
     let mut view = IssueDetailView::from_model(row, &series_slug);
     view.user_rating = rating;
-    view.series_reading_direction = series_dir;
+    view.user_note = note;
+    let (series_dir, series_name) = series_row.unzip();
+    view.series_reading_direction = series_dir.flatten();
+    view.series_name = series_name;
     view.library_default_reading_direction = library_default_dir;
     view.allow_archive_writeback = allow_archive_writeback;
     view.library_cbr_convert_confirmed = library_cbr_convert_confirmed;

@@ -306,6 +306,15 @@ export default async function ReadPage({
         readingMinPages={readingMinPages}
         readingIdleMs={readingIdleMs}
         initialPageOverrides={pageOverrides}
+        seriesSlug={seriesSlug}
+        issueSlug={issueSlug}
+        issueLabel={
+          issue.series_name && issue.number
+            ? `${issue.series_name} #${issue.number}`
+            : (issue.title ?? issue.series_name ?? "This issue")
+        }
+        initialUserRating={issue.user_rating ?? null}
+        initialUserNote={issue.user_note ?? null}
       />
     </>
   );

@@ -9990,6 +9990,56 @@
         }
       }
     },
+    "/api/series/{series_slug}/issues/{issue_slug}/note": {
+      "put": {
+        "operationId": "issue_notes_set_issue_note",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetIssueNoteReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueNoteView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "issue not found"
+          },
+          "422": {
+            "description": "validation error"
+          }
+        }
+      }
+    },
     "/api/series/{series_slug}/issues/{issue_slug}/prev": {
       "get": {
         "summary": "Returns the single issue immediately *before* the current one in the same\nseries — the mirror of [`next_in_series`], using the same ordering\n(`sort_number` ASC NULLS LAST, `id` tie-breaker) reversed so the immediate\npredecessor is selected. Removed / soft-deleted issues are filtered out.\n`item` is `null` when the current issue is the first in the series.",
@@ -21313,6 +21363,29 @@
           }
         }
       },
+      "ExportIssueNote": {
+        "type": "object",
+        "required": [
+          "issue",
+          "body",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "issue": {
+            "$ref": "#/components/schemas/IssueRef"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
       "ExportMarker": {
         "type": "object",
         "required": [
@@ -21865,6 +21938,7 @@
           "collections",
           "saved_views",
           "ratings",
+          "issue_notes",
           "custom_pages",
           "sidebar",
           "rail_dismissals",
@@ -21885,6 +21959,13 @@
               "$ref": "#/components/schemas/ExportPage"
             },
             "description": "Every `user_page` row including the system Home page, each with\nits pinned rails."
+          },
+          "issue_notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportIssueNote"
+            },
+            "description": "Issue-level closing notes (`user_issue_notes`) — not page notes,\nwhich are in `markers` with `kind = \"note\"`."
           },
           "markers": {
             "type": "array",
@@ -23477,6 +23558,13 @@
           "series_id": {
             "type": "string"
           },
+          "series_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Parent series' display name. Detail-only (the list shapes carry\nit on `IssueSummaryView`); the reader names the finished issue\nwith it on the end-of-issue card."
+          },
           "series_reading_direction": {
             "type": [
               "string",
@@ -23553,6 +23641,13 @@
           },
           "updated_at": {
             "type": "string"
+          },
+          "user_note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Calling user's issue-level closing note (`user_issue_notes`), or\n`None`. Not a page note — see `api::issue_notes`."
           },
           "user_pinned_columns": {
             "type": "array",
@@ -23716,6 +23811,24 @@
               "$ref": "#/components/schemas/MarkerView"
             },
             "description": "Every marker the calling user has on this issue, across all\npages. The reader overlay slices client-side by `page_index`."
+          }
+        }
+      },
+      "IssueNoteView": {
+        "type": "object",
+        "description": "The note as stored. `body` is `None` after a clear; `updated_at` is\nRFC 3339 and `None` alongside it.",
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -32617,6 +32730,18 @@
               "null"
             ],
             "description": "Free-form key matched against the client's icon registry. Reset\nto default by sending `null` or omitting the field."
+          }
+        }
+      },
+      "SetIssueNoteReq": {
+        "type": "object",
+        "description": "Body for the note endpoint. `null` / blank clears the note.",
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

@@ -81,6 +81,7 @@ import type {
   DeadJobsPurgeReq,
   DeadJobsPurgeResp,
   ProgressView,
+  IssueNoteView,
   RatingView,
   SavedViewListView,
   SavedViewView,
@@ -88,6 +89,7 @@ import type {
   ScanAllResp,
   ScanMode,
   ScanResp,
+  SetIssueNoteReq,
   SetRatingReq,
   AppPasswordCreatedView,
   CreateAppPasswordReq,
@@ -979,6 +981,26 @@ export function useSetIssueRating(seriesSlug: string, issueSlug: string) {
       body,
     }),
     {},
+  );
+}
+
+/**
+ * `PUT /series/{series_slug}/issues/{issue_slug}/note` — the caller's
+ * issue-level closing note (not a page note). `body: null` or blank
+ * clears it. Written from the reader's end-of-issue Wrap up pane and
+ * the issue page; the response echoes the stored body.
+ */
+export function useSetIssueNote(seriesSlug: string, issueSlug: string) {
+  return useApiMutation<IssueNoteView, SetIssueNoteReq>(
+    (body) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/note`,
+      method: "PUT",
+      body,
+    }),
+    {
+      successMessage: (view) =>
+        view?.body ? "Closing note saved" : "Closing note cleared",
+    },
   );
 }
 

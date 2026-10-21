@@ -36,7 +36,8 @@ use uuid::Uuid;
 
 use entity::{
     collection_entry, issue, library, marker, progress_record, rail_dismissal, reading_session,
-    saved_view, series, user, user_page, user_rating, user_sidebar_entry, user_view_pin,
+    saved_view, series, user, user_issue_note, user_page, user_rating, user_sidebar_entry,
+    user_view_pin,
 };
 
 use crate::api::respond;
@@ -102,6 +103,9 @@ pub struct ExportSections {
     /// row whose `kind != 'collection'`).
     pub saved_views: Vec<ExportSavedView>,
     pub ratings: Vec<ExportRating>,
+    /// Issue-level closing notes (`user_issue_notes`) — not page notes,
+    /// which are in `markers` with `kind = "note"`.
+    pub issue_notes: Vec<ExportIssueNote>,
     /// Every `user_page` row including the system Home page, each with
     /// its pinned rails.
     pub custom_pages: Vec<ExportPage>,
@@ -237,6 +241,14 @@ pub struct ExportRating {
     pub issue: Option<IssueRef>,
     pub series: Option<SeriesRef>,
     pub rating: f64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ExportIssueNote {
+    pub issue: IssueRef,
+    pub body: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -409,6 +421,11 @@ async fn build_export(
         .order_by_asc(user_rating::Column::CreatedAt)
         .all(db)
         .await?;
+    let note_rows = user_issue_note::Entity::find()
+        .filter(user_issue_note::Column::UserId.eq(user_id))
+        .order_by_asc(user_issue_note::Column::CreatedAt)
+        .all(db)
+        .await?;
     let page_rows = user_page::Entity::find()
         .filter(user_page::Column::UserId.eq(user_id))
         .order_by_asc(user_page::Column::Position)
@@ -511,6 +528,9 @@ async fn build_export(
         issue_ids.insert(s.issue_id.clone());
         series_ids.insert(s.series_id);
     }
+    for n in &note_rows {
+        issue_ids.insert(n.issue_id.clone());
+    }
 
     let refs = Refs::load(db, issue_ids, series_ids).await?;
 
@@ -590,6 +610,16 @@ async fn build_export(
             cbl_list_id: v.cbl_list_id,
             created_at: v.created_at.to_rfc3339(),
             updated_at: v.updated_at.to_rfc3339(),
+        })
+        .collect();
+
+    let issue_notes = note_rows
+        .into_iter()
+        .map(|n| ExportIssueNote {
+            issue: refs.issue(&n.issue_id),
+            body: n.body,
+            created_at: n.created_at.to_rfc3339(),
+            updated_at: n.updated_at.to_rfc3339(),
         })
         .collect();
 
@@ -729,6 +759,7 @@ async fn build_export(
             want_to_read,
             saved_views,
             ratings,
+            issue_notes,
             custom_pages,
             sidebar,
             rail_dismissals,

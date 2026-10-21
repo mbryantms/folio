@@ -62,6 +62,7 @@ Default bindings — global scope (work outside the reader too):
 | `?`       | Toggle the keyboard-shortcuts sheet   | Help-overlay convention                                                |
 | `g g`     | First page (alias for `Home`)         | Vim-flavored leader sequence (500 ms window)                           |
 | `Shift+G` | Last page (alias for `End`)           | Vim convention                                                         |
+| `1`–`5`   | Rate the finished issue               | Only while the end-of-issue card is open; a second press on the current value clears. `0` stays zoom-reset. Not while typing in the closing note |
 | `Ctrl` + scroll | Zoom at the pointer             | Continuous, 1×–3×; also a desktop trackpad pinch. Single + double view (see [Zoom](#zoom)) |
 | Double-click | Toggle 2× zoom at the pointer      | Center tap zone; single + double view                                  |
 
