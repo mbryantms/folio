@@ -27,8 +27,9 @@ const CHROME_BAND = (() => {
   const m = read("lib/ui/chrome-band.ts").match(
     /CHROME_BAND_CLASS\s*=\s*"([^"]+)"/,
   );
-  if (!m) throw new Error("CHROME_BAND_CLASS literal not found");
-  return m[1];
+  const literal = m?.[1];
+  if (!literal) throw new Error("CHROME_BAND_CLASS literal not found");
+  return literal;
 })();
 
 /** Class lists of bars docked to the top or bottom edge with a frosted
