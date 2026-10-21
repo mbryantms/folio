@@ -931,7 +931,7 @@ pub async fn flush_metadata_drift(
 /// were user-set vs provider-set so the new XML carries the right
 /// provenance markers.
 async fn enqueue_drift_flush_for_series(app: &AppState, series_ids: &[Uuid]) -> (u32, u32) {
-    use apalis::prelude::Storage;
+    use apalis::prelude::TaskSink;
     use entity::{issue, series};
     use sea_orm::EntityTrait;
 

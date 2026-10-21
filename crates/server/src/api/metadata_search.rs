@@ -604,7 +604,7 @@ pub async fn search_series(
             .into_response();
     }
 
-    use apalis::prelude::Storage;
+    use apalis::prelude::TaskSink;
     let mut storage = app.jobs.metadata_search_series_storage.clone();
     if let Err(e) = storage
         .push(metadata_search::SearchSeriesJob {
@@ -1190,7 +1190,7 @@ pub async fn search_issue(
             .into_response();
     }
 
-    use apalis::prelude::Storage;
+    use apalis::prelude::TaskSink;
     let mut storage = app.jobs.metadata_search_issue_storage.clone();
     if let Err(e) = storage
         .push(metadata_search::SearchIssueJob {
@@ -1926,7 +1926,7 @@ pub async fn apply_series(
         );
     }
 
-    use apalis::prelude::Storage;
+    use apalis::prelude::TaskSink;
     let mut storage = app.jobs.metadata_apply_series_storage.clone();
     if let Err(e) = storage
         .push(metadata_apply::ApplySeriesJob {
@@ -2263,7 +2263,7 @@ pub async fn apply_issue(
         );
     }
 
-    use apalis::prelude::Storage;
+    use apalis::prelude::TaskSink;
     let mut storage = app.jobs.metadata_apply_issue_storage.clone();
     if let Err(e) = storage
         .push(metadata_apply::ApplyIssueJob {
@@ -4023,7 +4023,7 @@ pub async fn batch_apply(
     // SE-3 (WP-6.3): `override_user_edits` is admin-gated by the extractor.
     AdminGatedOverride(req): AdminGatedOverride<BatchApplyReq>,
 ) -> Response {
-    use apalis::prelude::Storage;
+    use apalis::prelude::TaskSink;
 
     let batch = match metadata_batch::Entity::find_by_id(batch_id)
         .one(&app.db)

@@ -99,7 +99,7 @@ pub struct DictionaryJob {
     pub library_id: Uuid,
 }
 
-pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), BoxDynError> {
     let app: AppState = (*state).clone();
     let dedupe_key = job.dedupe_key();
 
@@ -117,7 +117,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
         }
         Err(e) => {
             tracing::error!(issue_id = %job.issue_id, error = %e, "thumbs job: db lookup failed");
-            return Err(Error::Failed(std::sync::Arc::new(Box::new(e))));
+            return Err(e.into());
         }
     };
 
@@ -152,7 +152,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
         }
         Err(e) => {
             tracing::error!(library_id = %row.library_id, error = %e, "thumbs job: library lookup failed");
-            return Err(Error::Failed(std::sync::Arc::new(Box::new(e))));
+            return Err(e.into());
         }
     };
     if !lib.thumbnails_enabled {
@@ -420,7 +420,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                 error: msg,
             });
             app.unmark_thumb_job_queued(&dedupe_key).await;
-            Err(Error::Failed(std::sync::Arc::new(Box::new(e))))
+            Err(e.into())
         }
     }
 }
@@ -1008,7 +1008,7 @@ pub async fn enqueue_strips_for_library(app: &AppState, library_id: Uuid) -> usi
     count
 }
 
-pub async fn handle_search(job: SearchJob, _state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle_search(job: SearchJob, _state: Data<AppState>) -> Result<(), BoxDynError> {
     tracing::debug!(
         library_id = %job.library_id,
         "post_scan_search (no-op — search_docs is upserted inline today)",
@@ -1016,7 +1016,10 @@ pub async fn handle_search(job: SearchJob, _state: Data<AppState>) -> Result<(),
     Ok(())
 }
 
-pub async fn handle_dictionary(job: DictionaryJob, _state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle_dictionary(
+    job: DictionaryJob,
+    _state: Data<AppState>,
+) -> Result<(), BoxDynError> {
     // No-op by design. The "did you mean" trigram surface was deferred
     // by decision in incompleteness-cleanup M2 (D-3) — Postgres-side
     // `pg_trgm` similarity hits already cover the common typos without

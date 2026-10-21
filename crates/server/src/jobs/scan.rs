@@ -35,7 +35,7 @@ pub struct Job {
 /// bad config) at the timescale of those retries.
 /// The operator — or the next scheduled / file-watch trigger — re-runs it
 /// deliberately. (OPS-3 follow-up.)
-pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), BoxDynError> {
     // Data<AppState> derefs to &AppState; clone the AppState to drop the Data wrapper.
     let state: AppState = (*state).clone();
     tracing::info!(

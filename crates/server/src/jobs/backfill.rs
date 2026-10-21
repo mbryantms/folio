@@ -67,7 +67,7 @@ pub struct BackfillJob {
 /// pathological loop. 500 rows/iter × this is far beyond any real library.
 const MAX_DRAIN_ITERS: u32 = 100_000;
 
-pub async fn handle(job: BackfillJob, state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle(job: BackfillJob, state: Data<AppState>) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
     let (processed, skipped) = match job.kind {
         BackfillKind::CoverPhash => drain_phash(&state).await,

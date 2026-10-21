@@ -1,14 +1,24 @@
-//! Background job runtime — apalis 0.7 over Redis.
+//! Background job runtime — apalis 1.0 over Redis.
 //!
 //! Library Scanner v1, Milestone 2 (spec §3, §3.2, §4.8).
 //!
 //! **Retry / orphan policy** (WP-1.6 ops hygiene) is explicit, not
 //! inherited from library defaults: every queue is built by [`storage`]
-//! from [`storage_config`], which pins `reenqueue_orphaned_after` to
-//! [`JOB_REENQUEUE_ORPHANED_AFTER_SECS`] and keeps the namespace apalis
-//! derives from the job type (so queued jobs survive an upgrade). The
-//! per-job attempt budget is [`JOB_MAX_ATTEMPTS`]; see its doc for why it
-//! is a mirrored constant rather than a setter.
+//! from [`storage_config`], which pins the orphan window to
+//! [`JOB_REENQUEUE_ORPHANED_AFTER_SECS`] (heartbeat × missed heartbeats)
+//! and names the queue after the job type, exactly as apalis-redis 0.7
+//! derived its namespace, so every Redis key keeps its 0.7 name. The
+//! per-job attempt budget is [`JOB_MAX_ATTEMPTS`], enforced by
+//! [`with_retry_budget`] around every handler; see its doc for why the
+//! backend cannot do it for us.
+//!
+//! **Upgrading from apalis-redis 0.7** (folio ≤ 0.61): the key *names*
+//! survive but the stored payload shape does not (0.7 wrote the whole
+//! `Request` as JSON; 1.0 writes the bare args plus a `{queue}:meta:{id}`
+//! hash). [`JobRuntime::purge_legacy_queue_state`] runs at boot and drops
+//! any queue that still carries a 0.7 `:consumers` set, with a warning —
+//! every job type is re-derivable (scans re-trigger, thumbnail marks
+//! re-seed, metadata runs re-queue), so nothing is lost but the backlog.
 //!
 //! Two responsibilities:
 //!   1. Own the [`apalis_redis::RedisStorage`] for each typed queue.
@@ -34,6 +44,7 @@
 //! separate worker binary; this matches the single-binary deploy story.
 
 use crate::state::AppState;
+use apalis::prelude::{AbortError, Attempt, BoxDynError, Data};
 use apalis_redis::{Config as RedisConfig, RedisStorage, connect};
 use entity::scan_run::{ActiveModel as ScanRunAM, Entity as ScanRunEntity};
 use redis::AsyncCommands;
@@ -114,7 +125,7 @@ impl JobRuntime {
         let provider_coverage_storage =
             storage::<provider_coverage::ProviderCoverageJob>(conn.clone());
         let entity_enrich_storage = storage::<entity_enrich::EntityEnrichJob>(conn.clone());
-        Ok(Self {
+        let rt = Self {
             db,
             scan_storage,
             scan_series_storage,
@@ -133,7 +144,9 @@ impl JobRuntime {
             provider_coverage_storage,
             entity_enrich_storage,
             redis: conn,
-        })
+        };
+        rt.purge_legacy_queue_state().await?;
+        Ok(rt)
     }
 
     /// Coalesce a full-library scan request (spec §3.2).
@@ -254,7 +267,7 @@ impl JobRuntime {
             .await?;
         // Push to apalis last; if push fails the in_flight key is stale, but
         // the next request will see no apalis backlog and overwrite cleanly.
-        use apalis::prelude::Storage;
+        use apalis::prelude::TaskSink;
         let mut storage = self.scan_storage.clone();
         storage
             .push(scan::Job {
@@ -304,7 +317,7 @@ impl JobRuntime {
                 .await?;
             self.insert_queued_scan_run(library_id, new_id, "library", None, None, None)
                 .await?;
-            use apalis::prelude::Storage;
+            use apalis::prelude::TaskSink;
             let mut storage = self.scan_storage.clone();
             storage
                 .push(scan::Job {
@@ -381,146 +394,170 @@ impl JobRuntime {
         let scan_concurrency = state.cfg().scan_worker_count;
         let post_concurrency = state.cfg().post_scan_worker_count;
 
-        let scan_worker = WorkerBuilder::new("scan")
-            .concurrency(scan_concurrency)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new("scan"))
-            .backend(self.scan_storage.clone())
-            .build_fn(scan::handle);
+        // apalis 1.0 registers a worker *factory*: the monitor rebuilds the
+        // worker on every (re)start, so each registration captures its
+        // storage + state and builds the chain inside the closure. Builder
+        // order matters — `backend` must come first (the layer helpers are
+        // only available once the backend type is known); the middleware
+        // stack is then concurrency (outermost) → Data → metrics, and the
+        // handler is wrapped by [`with_retry_budget`].
+        macro_rules! register {
+            ($monitor:expr, $name:literal, $storage:expr, $concurrency:expr, $handler:expr) => {{
+                let storage = $storage.clone();
+                let state = state.clone();
+                $monitor.register(move |_runs: usize| {
+                    WorkerBuilder::new($name)
+                        .backend(storage.clone())
+                        .concurrency($concurrency)
+                        .data(state.clone())
+                        .layer(metrics_layer::JobMetricsLayer::new($name))
+                        .build(with_retry_budget($handler))
+                })
+            }};
+        }
 
-        let scan_series_worker = WorkerBuilder::new("scan_series")
-            .concurrency(scan_concurrency)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new("scan_series"))
-            .backend(self.scan_series_storage.clone())
-            .build_fn(scan_series::handle);
-
-        let thumbs_worker = WorkerBuilder::new("post_scan_thumbs")
-            .concurrency(post_concurrency)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new("post_scan_thumbs"))
-            .backend(self.post_scan_thumbs_storage.clone())
-            .build_fn(post_scan::handle_thumbs);
-
-        let search_worker = WorkerBuilder::new("post_scan_search")
-            .concurrency(post_concurrency)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new("post_scan_search"))
-            .backend(self.post_scan_search_storage.clone())
-            .build_fn(post_scan::handle_search);
-
-        let dictionary_worker = WorkerBuilder::new("post_scan_dictionary")
-            .concurrency(post_concurrency)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new("post_scan_dictionary"))
-            .backend(self.post_scan_dictionary_storage.clone())
-            .build_fn(post_scan::handle_dictionary);
-
+        let monitor = Monitor::new();
+        let monitor = register!(
+            monitor,
+            "scan",
+            self.scan_storage,
+            scan_concurrency,
+            scan::handle
+        );
+        let monitor = register!(
+            monitor,
+            "scan_series",
+            self.scan_series_storage,
+            scan_concurrency,
+            scan_series::handle
+        );
+        let monitor = register!(
+            monitor,
+            "post_scan_thumbs",
+            self.post_scan_thumbs_storage,
+            post_concurrency,
+            post_scan::handle_thumbs
+        );
+        let monitor = register!(
+            monitor,
+            "post_scan_search",
+            self.post_scan_search_storage,
+            post_concurrency,
+            post_scan::handle_search
+        );
+        let monitor = register!(
+            monitor,
+            "post_scan_dictionary",
+            self.post_scan_dictionary_storage,
+            post_concurrency,
+            post_scan::handle_dictionary
+        );
         // Metadata search workers: concurrency=1 — the per-provider
         // velocity caps + Redis token buckets already throttle the
         // outbound calls; spinning up multiple workers only contends
         // for the same budget.
-        let metadata_series_worker = WorkerBuilder::new("metadata_search_series")
-            .concurrency(1)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new(
-                "metadata_search_series",
-            ))
-            .backend(self.metadata_search_series_storage.clone())
-            .build_fn(metadata_search::handle_series);
-
-        let metadata_issue_worker = WorkerBuilder::new("metadata_search_issue")
-            .concurrency(1)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new("metadata_search_issue"))
-            .backend(self.metadata_search_issue_storage.clone())
-            .build_fn(metadata_search::handle_issue);
-
+        let monitor = register!(
+            monitor,
+            "metadata_search_series",
+            self.metadata_search_series_storage,
+            1,
+            metadata_search::handle_series
+        );
+        let monitor = register!(
+            monitor,
+            "metadata_search_issue",
+            self.metadata_search_issue_storage,
+            1,
+            metadata_search::handle_issue
+        );
         // Apply workers: concurrency=1 per-job-type — apply itself
         // is short (single detail fetch + DB writes), serializing
         // by entity is sufficient via the per-entity mutex inside
         // the handler.
-        let metadata_apply_series_worker = WorkerBuilder::new("metadata_apply_series")
-            .concurrency(1)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new("metadata_apply_series"))
-            .backend(self.metadata_apply_series_storage.clone())
-            .build_fn(metadata_apply::handle_series);
-
-        let metadata_apply_issue_worker = WorkerBuilder::new("metadata_apply_issue")
-            .concurrency(1)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new("metadata_apply_issue"))
-            .backend(self.metadata_apply_issue_storage.clone())
-            .build_fn(metadata_apply::handle_issue);
-
+        let monitor = register!(
+            monitor,
+            "metadata_apply_series",
+            self.metadata_apply_series_storage,
+            1,
+            metadata_apply::handle_series
+        );
+        let monitor = register!(
+            monitor,
+            "metadata_apply_issue",
+            self.metadata_apply_issue_storage,
+            1,
+            metadata_apply::handle_issue
+        );
         // Sidecar writeback workers — concurrency=2 because the work
         // is mostly zip stream-copy + filesystem rename; per-issue
         // serialization is enforced by the rewrite mutex inside the
         // handler, so two workers won't race on the same archive.
-        let rewrite_issue_sidecars_worker = WorkerBuilder::new("rewrite_issue_sidecars")
-            .concurrency(2)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new(
-                "rewrite_issue_sidecars",
-            ))
-            .backend(self.rewrite_issue_sidecars_storage.clone())
-            .build_fn(rewrite_sidecars::handle);
-
+        let monitor = register!(
+            monitor,
+            "rewrite_issue_sidecars",
+            self.rewrite_issue_sidecars_storage,
+            2,
+            rewrite_sidecars::handle
+        );
         // Page-byte edits — concurrency=1. Re-encoding pages on a large
         // archive can be CPU-heavy; serializing keeps host load bounded
         // under a bulk fan-out (per-issue serialization is the mutex's
         // job, but we also cap total in-flight edits here).
-        let archive_edit_worker = WorkerBuilder::new("archive_edit")
-            .concurrency(1)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new("archive_edit"))
-            .backend(self.archive_edit_storage.clone())
-            .build_fn(archive_edit::handle);
-
+        let monitor = register!(
+            monitor,
+            "archive_edit",
+            self.archive_edit_storage,
+            1,
+            archive_edit::handle
+        );
         // Backfill drains — concurrency=1. Each job loops the whole backlog;
         // serializing keeps one operator-triggered sweep at a time (and a
         // redundant re-enqueue just queues behind it and finds nothing left).
-        let backfill_worker = WorkerBuilder::new("backfill")
-            .concurrency(1)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new("backfill"))
-            .backend(self.backfill_storage.clone())
-            .build_fn(backfill::handle);
+        let monitor = register!(
+            monitor,
+            "backfill",
+            self.backfill_storage,
+            1,
+            backfill::handle
+        );
         // First-import lazy-hash drains (WP-3.2) — concurrency=1. Hashing is
         // full-file I/O against the same disks the scanner and reader use
         // (and shares their archive-work semaphore); one library at a time.
-        let hash_backfill_worker = WorkerBuilder::new("hash_backfill")
-            .concurrency(1)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new("hash_backfill"))
-            .backend(self.hash_backfill_storage.clone())
-            .build_fn(hash_backfill::handle);
+        let monitor = register!(
+            monitor,
+            "hash_backfill",
+            self.hash_backfill_storage,
+            1,
+            hash_backfill::handle
+        );
         // Relationship suggestions (WP-7.2) — concurrency=1. A run is a
         // handful of set-based queries per library; serializing keeps two
         // post-scan runs from upserting the same rows concurrently.
-        let relationship_suggest_worker = WorkerBuilder::new("relationship_suggest")
-            .concurrency(1)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new("relationship_suggest"))
-            .backend(self.relationship_suggest_storage.clone())
-            .build_fn(relationship_suggest::handle);
+        let monitor = register!(
+            monitor,
+            "relationship_suggest",
+            self.relationship_suggest_storage,
+            1,
+            relationship_suggest::handle
+        );
         // Provider coverage analyses — concurrency=1. Each run spends the
         // provider budgets (ComicVine's 200/h, GCD's 100/h); serializing
         // keeps two analyses from racing for the same buckets.
-        let provider_coverage_worker = WorkerBuilder::new("provider_coverage")
-            .concurrency(1)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new("provider_coverage"))
-            .backend(self.provider_coverage_storage.clone())
-            .build_fn(provider_coverage::handle);
+        let monitor = register!(
+            monitor,
+            "provider_coverage",
+            self.provider_coverage_storage,
+            1,
+            provider_coverage::handle
+        );
         // Entity profile fetches — concurrency=1 for the same reason.
-        let entity_enrich_worker = WorkerBuilder::new("entity_enrich")
-            .concurrency(1)
-            .data(state.clone())
-            .layer(metrics_layer::JobMetricsLayer::new("entity_enrich"))
-            .backend(self.entity_enrich_storage.clone())
-            .build_fn(entity_enrich::handle);
+        let monitor = register!(
+            monitor,
+            "entity_enrich",
+            self.entity_enrich_storage,
+            1,
+            entity_enrich::handle
+        );
 
         let shutdown_fut = {
             let token = shutdown.clone();
@@ -529,23 +566,7 @@ impl JobRuntime {
                 Ok(())
             }
         };
-        Monitor::new()
-            .register(scan_worker)
-            .register(scan_series_worker)
-            .register(thumbs_worker)
-            .register(search_worker)
-            .register(dictionary_worker)
-            .register(metadata_series_worker)
-            .register(metadata_issue_worker)
-            .register(metadata_apply_series_worker)
-            .register(metadata_apply_issue_worker)
-            .register(rewrite_issue_sidecars_worker)
-            .register(archive_edit_worker)
-            .register(backfill_worker)
-            .register(hash_backfill_worker)
-            .register(relationship_suggest_worker)
-            .register(provider_coverage_worker)
-            .register(entity_enrich_worker)
+        monitor
             // Bound the graceful drain (OPS-3, JOBS-3): without this the monitor
             // waits indefinitely for an in-flight job, so a SIGTERM during a
             // 30-minute scan wouldn't return until the scan finished — past the
@@ -555,6 +576,7 @@ impl JobRuntime {
             .shutdown_timeout(std::time::Duration::from_secs(JOB_SHUTDOWN_TIMEOUT_SECS))
             .run_with_signal(shutdown_fut)
             .await
+            .map_err(std::io::Error::other)
     }
 
     /// Coalesce a series- or issue-scoped scan request. Unlike full-library
@@ -606,7 +628,7 @@ impl JobRuntime {
             .set_ex(&scan_id_key, scan_id.to_string(), SCAN_COALESCE_TTL_SECS)
             .await?;
 
-        use apalis::prelude::Storage;
+        use apalis::prelude::TaskSink;
         let mut storage = self.scan_series_storage.clone();
         storage
             .push(scan_series::Job {
@@ -706,49 +728,95 @@ impl CoalesceOutcome {
 /// worst case is a redundant, idempotent re-scan, not data loss.
 const SCAN_COALESCE_TTL_SECS: u64 = 6 * 60 * 60;
 
-/// Attempts apalis-redis makes on a job whose handler returns `Err` before
-/// moving it to the queue's `{namespace}:dead` set (surfaced by
-/// [`JobRuntime::dead_letter_counts`]). Handlers that return `Ok` on a
-/// recorded failure (the scan handlers, most soft-fails) never consume this
-/// budget — see `jobs::scan::handle`.
+/// Attempts a job whose handler returns `Err` gets before it is moved to the
+/// queue's `{queue}:dead` set (surfaced by [`JobRuntime::dead_letter_counts`]).
+/// Handlers that return `Ok` on a recorded failure (the scan handlers, most
+/// soft-fails) never consume this budget — see `jobs::scan::handle`.
 ///
-/// apalis-redis 0.7 stores the budget in the per-job [`apalis_redis::RedisContext`]
-/// stamped at push time (`max_attempts`, default 5) and exposes no setter —
-/// it is *not* part of [`apalis_redis::Config`]. This constant mirrors that
-/// default so call sites and comments have one name to point at; the
-/// `job_retry_budget_matches_apalis_default` test fails the build if an
-/// apalis bump changes the library value, at which point the choice is
-/// deliberate: either update this constant or stamp the context by hand.
+/// apalis-redis 1.0 reschedules a `Failed` task until a cut-off hardcoded in
+/// its `handle_results.lua` (25 attempts); the per-task `max_attempts` it
+/// stores is never consulted. [`with_retry_budget`] therefore wraps every
+/// handler: a failure on attempt `JOB_MAX_ATTEMPTS` is reported as an
+/// [`AbortError`], which apalis marks `Killed` and the backend dead-letters
+/// at once. The `retry_budget_kills_on_last_attempt` test pins the wrapper.
 pub const JOB_MAX_ATTEMPTS: usize = 5;
+
+/// apalis-redis's own retry cut-off is a literal in its `handle_results.lua`;
+/// the budget here must stay below it or [`with_retry_budget`] never fires
+/// first and the backend's 25-attempt loop takes over.
+const APALIS_REDIS_HARDCODED_RETRY_CUTOFF: usize = 25;
+const _: () = assert!(
+    JOB_MAX_ATTEMPTS >= 1 && JOB_MAX_ATTEMPTS < APALIS_REDIS_HARDCODED_RETRY_CUTOFF,
+    "JOB_MAX_ATTEMPTS must sit below apalis-redis's hardcoded 25-attempt cut-off"
+);
+
+/// Wrap a `(job, Data<AppState>)` handler with the [`JOB_MAX_ATTEMPTS`]
+/// budget: an `Err` on the last budgeted attempt becomes an [`AbortError`]
+/// (task `Killed` → dead set, no further reschedule); earlier failures pass
+/// through unchanged so apalis-redis retries them. `Attempt` is the task's
+/// own counter, already incremented for the running attempt (1-based).
+pub fn with_retry_budget<Args, D, H, Fut>(
+    handler: H,
+) -> impl FnMut(Args, Data<D>, Attempt) -> futures::future::BoxFuture<'static, Result<(), BoxDynError>>
++ Clone
++ Send
++ 'static
+where
+    Args: Send + 'static,
+    D: Clone + Send + Sync + 'static,
+    H: Fn(Args, Data<D>) -> Fut + Clone + Send + 'static,
+    Fut: std::future::Future<Output = Result<(), BoxDynError>> + Send + 'static,
+{
+    move |job, state, attempt| {
+        let fut = handler(job, state);
+        Box::pin(async move {
+            match fut.await {
+                Ok(()) => Ok(()),
+                Err(e) if attempt.current() >= JOB_MAX_ATTEMPTS => {
+                    Err(Box::new(AbortError::new(e)) as BoxDynError)
+                }
+                Err(e) => Err(e),
+            }
+        })
+    }
+}
 
 /// Seconds a job may sit in a worker's in-flight set without a heartbeat
 /// before apalis's orphan sweep re-enqueues it. Covers a process that died
 /// mid-job (SIGKILL past the [`JOB_SHUTDOWN_TIMEOUT_SECS`] drain, OOM, host
 /// crash): the sweep — run at worker start and then on an interval — sees
 /// the stale lock and hands the job to a live worker. Must comfortably
-/// exceed the worker `keep_alive` heartbeat (30s default) so a
-/// slow-but-alive worker is never mistaken for a dead one.
+/// exceed the worker heartbeat ([`JOB_HEARTBEAT_SECS`]) so a slow-but-alive
+/// worker is never mistaken for a dead one. apalis-redis 1.0 expresses the
+/// window as `heartbeat_interval × missed_heartbeats`, so the two constants
+/// must divide evenly (checked at compile time).
 pub const JOB_REENQUEUE_ORPHANED_AFTER_SECS: u64 = 300;
 
-/// The [`RedisConfig`] every queue is built with. Namespace is the job's
-/// `type_name` — identical to what `RedisStorage::new` derives, so the Redis
-/// keys (`{namespace}:active`, `:dead`, …) of jobs queued by an older build
-/// are still the keys the new build polls. Changing the namespace would
-/// silently orphan every queued job across an upgrade.
+/// Worker heartbeat period — how often a running worker re-stamps its entry
+/// in the queue's `{queue}:workers` set.
+pub const JOB_HEARTBEAT_SECS: u64 = 30;
+
+const _: () = assert!(
+    JOB_REENQUEUE_ORPHANED_AFTER_SECS.is_multiple_of(JOB_HEARTBEAT_SECS)
+        && JOB_REENQUEUE_ORPHANED_AFTER_SECS > JOB_HEARTBEAT_SECS,
+    "orphan window must be a whole number (> 1) of heartbeats"
+);
+
+/// The [`RedisConfig`] every queue is built with. The queue name is the
+/// job's `type_name` — exactly the namespace apalis-redis 0.7 derived in
+/// `RedisStorage::new`, so the Redis keys (`{queue}:active`, `:dead`, …) keep
+/// the names every dashboard, test and operator runbook already knows.
+/// Changing it would silently orphan every queued job across an upgrade.
 pub fn storage_config<T>() -> RedisConfig {
     RedisConfig::default()
-        .set_namespace(std::any::type_name::<T>())
-        .set_reenqueue_orphaned_after(std::time::Duration::from_secs(
-            JOB_REENQUEUE_ORPHANED_AFTER_SECS,
-        ))
+        .queue(std::any::type_name::<T>())
+        .heartbeat_interval(std::time::Duration::from_secs(JOB_HEARTBEAT_SECS))
+        .missed_heartbeats((JOB_REENQUEUE_ORPHANED_AFTER_SECS / JOB_HEARTBEAT_SECS) as usize)
 }
 
 /// Build one typed queue on a shared connection with [`storage_config`].
-fn storage<T>(conn: ConnectionManager) -> RedisStorage<T>
-where
-    T: serde::Serialize + serde::de::DeserializeOwned,
-{
-    RedisStorage::new_with_config(conn, storage_config::<T>())
+fn storage<T>(conn: ConnectionManager) -> RedisStorage<T> {
+    RedisStorage::new(conn).with_config(storage_config::<T>())
 }
 
 /// Max seconds the apalis monitor waits for in-flight jobs to drain on shutdown
@@ -845,6 +913,58 @@ impl JobRuntime {
         Ok(total)
     }
 
+    /// Jobs waiting for a worker — what apalis 0.7's `Storage::len()`
+    /// reported (apalis 1.0 has no equivalent). apalis-redis 1.0 pushes
+    /// every task into `{queue}:scheduled` stamped `run_at = now`, and a
+    /// worker's fetch promotes the due ones onto `{queue}:active`, so a job
+    /// is "waiting" in either place once its `run_at` has passed; a
+    /// retry-delayed job (future `run_at`) is not. Excludes in-flight jobs;
+    /// see [`Self::queue_counts`] for the full split.
+    pub async fn waiting_len<T>(&self, storage: &RedisStorage<T>) -> redis::RedisResult<i64> {
+        let cfg = storage.get_config();
+        let mut conn = self.redis.clone();
+        let now = unix_now_secs();
+        let (active, due): (i64, i64) = redis::pipe()
+            .llen(cfg.active_jobs_list())
+            .zcount(cfg.scheduled_jobs_set(), "-inf", now)
+            .query_async(&mut conn)
+            .await?;
+        Ok(active + due)
+    }
+
+    /// Boot-time sweep of queue state written by apalis-redis 0.7 (folio ≤
+    /// 0.61). The key names are unchanged, but 0.7 stored each job as a
+    /// whole `Request` JSON and kept per-worker sets in a `{queue}:consumers`
+    /// ZSET; 1.0 stores the bare args plus a `{queue}:meta:{id}` hash and
+    /// tracks workers in `{queue}:workers`. A 0.7 payload fetched by a 1.0
+    /// worker cannot decode, so any queue that still carries the 0.7-only
+    /// `:consumers` key is dropped wholesale, with a warning naming it.
+    /// Every job type is re-derivable (scans re-trigger, thumbnail marks
+    /// re-seed from the DB, metadata runs re-queue), so the only loss is the
+    /// backlog itself. A no-op once every queue is in the 1.0 shape. Returns
+    /// the number of keys removed.
+    pub async fn purge_legacy_queue_state(&self) -> redis::RedisResult<usize> {
+        let mut conn = self.redis.clone();
+        let mut total = 0usize;
+        for (label, cfg) in self.queue_configs() {
+            let legacy_marker = format!("{}:consumers", cfg.queue.as_ref());
+            let legacy: bool = conn.exists(&legacy_marker).await?;
+            if !legacy {
+                continue;
+            }
+            let pattern = format!("{}:*", cfg.queue.as_ref());
+            let removed = delete_matching_scan_keys(&mut conn, &pattern).await?;
+            tracing::warn!(
+                queue = label,
+                keys = removed,
+                "dropped apalis-redis 0.7 queue state left by a previous build; \
+                 its queued jobs will not run — re-trigger scans or metadata runs as needed"
+            );
+            total += removed;
+        }
+        Ok(total)
+    }
+
     /// Every apalis queue, by its admin label, with the storage config that
     /// names its Redis keys. One list so the depth, dead-letter and gauge
     /// readers can never disagree about which queues exist.
@@ -900,19 +1020,19 @@ impl JobRuntime {
     }
 
     /// Count dead-lettered jobs per queue (OPS-3 follow-up). apalis moves a job
-    /// to its `{namespace}:dead` set after it exhausts [`JOB_MAX_ATTEMPTS`]; nothing
+    /// to its `{queue}:dead` set after it exhausts [`JOB_MAX_ATTEMPTS`]; nothing
     /// surfaced these before, so a permanently-failing job vanished silently.
     ///
-    /// The dead set is a Redis ZSET, so each is counted with `ZCARD`. The key is
-    /// resolved from the storage's own `Config::dead_jobs_set()` rather than
-    /// hardcoded, so it stays correct across apalis versions (the dead key is
-    /// `{type_name}:dead` and the ZSET shape are unchanged from 0.7 through the
-    /// 1.0 release candidates). Returns `(queue_label, count)` for every queue.
+    /// The dead set is a plain Redis SET in apalis-redis 1.0 (0.7 scored a
+    /// ZSET by kill time; the time now lives in `{queue}:meta:{id}`), so each
+    /// is counted with `SCARD`. The key is resolved from the storage's own
+    /// `Config::dead_jobs_set()` rather than hardcoded. Returns
+    /// `(queue_label, count)` for every queue.
     pub async fn dead_letter_counts(&self) -> redis::RedisResult<Vec<(&'static str, i64)>> {
         let mut conn = self.redis.clone();
         let mut out = Vec::with_capacity(QUEUE_COUNT);
         for (label, cfg) in self.queue_configs() {
-            let count: i64 = conn.zcard(cfg.dead_jobs_set()).await?;
+            let count: i64 = conn.scard(cfg.dead_jobs_set()).await?;
             out.push((label, count));
         }
         Ok(out)
@@ -921,15 +1041,14 @@ impl JobRuntime {
     /// Outstanding (not yet finished) jobs per queue, split by where apalis
     /// holds them. Two pipelined round-trips for all queues.
     ///
-    /// apalis-redis 0.7 keeps a job in exactly one of three places until it
-    /// finishes: the `{ns}:active` LIST (waiting for a worker), the
-    /// `{ns}:scheduled` ZSET (waiting out a retry delay), or one worker's
-    /// `{ns}:inflight:{worker}` SET (fetched by that worker — executing, or
-    /// in its prefetch buffer). `Storage::len()` is only the first, so a
-    /// queue whose last jobs are all executing reads as empty. The in-flight
-    /// sets are found through the `{ns}:consumers` ZSET, whose members are
-    /// the set keys (`register_consumer.lua`); a dead process's set stays
-    /// counted until the orphan sweep hands its jobs back to `active`.
+    /// apalis-redis keeps a job in exactly one of three places until it
+    /// finishes: the `{queue}:active` LIST (waiting for a worker), the
+    /// `{queue}:scheduled` ZSET (waiting out a retry delay), or one worker's
+    /// `{queue}:inflight:{worker}` SET (fetched by that worker — executing,
+    /// or in its prefetch buffer). The in-flight sets are found through the
+    /// `{queue}:workers` ZSET, whose members are the worker names (scored by
+    /// last heartbeat); a dead process's set stays counted until the orphan
+    /// sweep hands its jobs back to `active`.
     pub async fn queue_counts(&self) -> redis::RedisResult<Vec<QueueCount>> {
         let queues = self.queue_configs();
         let mut conn = self.redis.clone();
@@ -938,15 +1057,18 @@ impl JobRuntime {
         for (_, cfg) in &queues {
             pipe.llen(cfg.active_jobs_list())
                 .zcard(cfg.scheduled_jobs_set())
-                .zrange(cfg.consumers_set(), 0, -1);
+                .zrange(cfg.workers_set(), 0, -1);
         }
         let firsts: Vec<redis::Value> = pipe.query_async(&mut conn).await?;
+        let mut firsts = firsts.into_iter();
 
         let mut out = Vec::with_capacity(QUEUE_COUNT);
-        let mut consumers: Vec<Vec<String>> = Vec::with_capacity(QUEUE_COUNT);
-        for ((label, _), chunk) in queues.iter().zip(firsts.chunks(3)) {
-            let [waiting, scheduled, members] = chunk else {
-                continue;
+        let mut inflight_sets: Vec<Vec<String>> = Vec::with_capacity(QUEUE_COUNT);
+        for (label, cfg) in &queues {
+            let (Some(waiting), Some(scheduled), Some(members)) =
+                (firsts.next(), firsts.next(), firsts.next())
+            else {
+                break;
             };
             out.push(QueueCount {
                 queue: label,
@@ -954,19 +1076,20 @@ impl JobRuntime {
                 scheduled: redis::from_redis_value(scheduled)?,
                 in_flight: 0,
             });
-            consumers.push(redis::from_redis_value(members)?);
+            let workers: Vec<String> = redis::from_redis_value(members)?;
+            inflight_sets.push(workers.iter().map(|w| inflight_set_key(cfg, w)).collect());
         }
 
         let mut pipe = redis::pipe();
         let mut any = false;
-        for set in consumers.iter().flatten() {
+        for set in inflight_sets.iter().flatten() {
             pipe.scard(set);
             any = true;
         }
         if any {
             let sizes: Vec<i64> = pipe.query_async(&mut conn).await?;
             let mut sizes = sizes.into_iter();
-            for (count, sets) in out.iter_mut().zip(&consumers) {
+            for (count, sets) in out.iter_mut().zip(&inflight_sets) {
                 count.in_flight = sizes.by_ref().take(sets.len()).sum();
             }
         }
@@ -986,9 +1109,9 @@ impl JobRuntime {
         let mut ids: Vec<String> = conn.lrange(cfg.active_jobs_list(), 0, -1).await?;
         let scheduled: Vec<String> = conn.zrange(cfg.scheduled_jobs_set(), 0, -1).await?;
         ids.extend(scheduled);
-        let workers: Vec<String> = conn.zrange(cfg.consumers_set(), 0, -1).await?;
-        for set in workers {
-            let held: Vec<String> = conn.smembers(set).await?;
+        let workers: Vec<String> = conn.zrange(cfg.workers_set(), 0, -1).await?;
+        for worker in workers {
+            let held: Vec<String> = conn.smembers(inflight_set_key(cfg, &worker)).await?;
             ids.extend(held);
         }
         let data_hash = cfg.job_data_hash();
@@ -1032,12 +1155,26 @@ impl QueueCount {
     }
 }
 
-/// The job arguments of one stored apalis payload. apalis-redis encodes a
-/// job as JSON `{"args": <job>, "parts": {…}}` (`JsonCodec` over
-/// `Request<T, RedisContext>`).
+/// The job arguments of one stored apalis payload. apalis-redis 1.0 stores
+/// the bare args as JSON (`JsonCodec`) in `{queue}:data`; the attempt
+/// counter, status and result live in the `{queue}:meta:{id}` hash.
 fn decode_job_args<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
-    let mut v: serde_json::Value = serde_json::from_slice(bytes).ok()?;
-    serde_json::from_value(v.get_mut("args")?.take()).ok()
+    serde_json::from_slice(bytes).ok()
+}
+
+/// Unix seconds, the clock apalis-redis stamps `run_at` with.
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// A worker's in-flight SET (`{queue}:inflight:{worker}`) — the key
+/// `Config::inflight_set_for` derives, for a worker name read back from
+/// the `{queue}:workers` ZSET rather than a live `WorkerContext`.
+fn inflight_set_key(cfg: &RedisConfig, worker: &str) -> String {
+    format!("{}:{worker}", cfg.inflight_jobs_set())
 }
 
 /// SCAN + DEL every key matching `pattern`. Cursor-based (never `KEYS`) so it
@@ -1075,53 +1212,64 @@ async fn delete_matching_scan_keys(
 mod tests {
     use super::*;
 
-    /// The namespace must stay exactly what `RedisStorage::new` derives
-    /// (`type_name::<T>()`): it is the Redis key prefix for every queue, so a
-    /// drift here would orphan jobs queued by the previous build on upgrade.
+    /// The queue name must stay exactly the job's `type_name`: it is the
+    /// Redis key prefix for every queue (and what apalis-redis 0.7 derived),
+    /// so a drift here would rename every key across an upgrade.
     #[test]
-    fn storage_config_keeps_type_name_namespace() {
+    fn storage_config_keeps_type_name_queue() {
         let cfg = storage_config::<scan::Job>();
         assert_eq!(
-            cfg.get_namespace(),
+            cfg.queue.as_ref(),
             std::any::type_name::<scan::Job>(),
-            "namespace must match apalis-redis's RedisStorage::new derivation"
+            "queue must match the 0.7 RedisStorage::new namespace derivation"
         );
         assert!(
-            cfg.get_namespace().ends_with("jobs::scan::Job"),
+            cfg.queue.as_ref().ends_with("jobs::scan::Job"),
             "type_name shape changed: {}",
-            cfg.get_namespace()
+            cfg.queue.as_ref()
         );
+        assert_eq!(
+            cfg.active_jobs_list(),
+            format!("{}:active", cfg.queue.as_ref())
+        );
+        assert_eq!(cfg.dead_jobs_set(), format!("{}:dead", cfg.queue.as_ref()));
+        assert_eq!(cfg.job_data_hash(), format!("{}:data", cfg.queue.as_ref()));
     }
 
     #[test]
-    fn storage_config_pins_reenqueue_orphaned_after() {
+    fn storage_config_pins_orphan_window() {
         let cfg = storage_config::<post_scan::ThumbsJob>();
         assert_eq!(
-            cfg.reenqueue_orphaned_after(),
+            cfg.orphaned_duration(),
             std::time::Duration::from_secs(JOB_REENQUEUE_ORPHANED_AFTER_SECS)
         );
-        // Must exceed the keep-alive heartbeat or a live-but-slow worker's
-        // job gets re-enqueued underneath it.
-        assert!(cfg.reenqueue_orphaned_after() > *cfg.get_keep_alive());
+        // Must exceed the heartbeat or a live-but-slow worker's job gets
+        // re-enqueued underneath it.
+        assert!(cfg.orphaned_duration() > cfg.heartbeat_interval);
+        assert_eq!(
+            cfg.heartbeat_interval,
+            std::time::Duration::from_secs(JOB_HEARTBEAT_SECS)
+        );
     }
 
-    /// `JOB_MAX_ATTEMPTS` mirrors the private `RedisContext::max_attempts`
-    /// default apalis-redis stamps on every pushed job (no public setter in
-    /// 0.7). Read it back through serde so a dependency bump that changes
-    /// the library default fails here instead of silently changing the
-    /// retry budget in production.
-    #[test]
-    fn job_retry_budget_matches_apalis_default() {
-        let ctx = serde_json::to_value(apalis_redis::RedisContext::default())
-            .expect("RedisContext serializes");
-        let max_attempts = ctx
-            .get("max_attempts")
-            .and_then(serde_json::Value::as_u64)
-            .expect("RedisContext carries max_attempts");
-        assert_eq!(
-            usize::try_from(max_attempts).expect("fits usize"),
-            JOB_MAX_ATTEMPTS,
-            "apalis-redis changed its default attempt budget; update JOB_MAX_ATTEMPTS deliberately"
-        );
+    /// `with_retry_budget` passes early failures through (apalis reschedules
+    /// them) and converts the failure on attempt `JOB_MAX_ATTEMPTS` into an
+    /// `AbortError` (task killed → dead set).
+    #[tokio::test]
+    async fn retry_budget_kills_on_last_attempt() {
+        async fn always_fails(_job: u8, _state: Data<()>) -> Result<(), BoxDynError> {
+            Err("boom".into())
+        }
+        let mut wrapped = with_retry_budget(always_fails);
+
+        let early = wrapped(1, Data::new(()), Attempt::new_with_value(1))
+            .await
+            .expect_err("handler fails");
+        assert!(early.downcast_ref::<AbortError>().is_none(), "{early}");
+
+        let last = wrapped(1, Data::new(()), Attempt::new_with_value(JOB_MAX_ATTEMPTS))
+            .await
+            .expect_err("handler fails");
+        assert!(last.downcast_ref::<AbortError>().is_some(), "{last}");
     }
 }

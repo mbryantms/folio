@@ -148,7 +148,10 @@ pub struct PostRewriteWrites {
     pub reprints_source_external_id: Option<String>,
 }
 
-pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle(
+    job: RewriteIssueSidecarsJob,
+    state: Data<AppState>,
+) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
 
     let mut redis = state.jobs.redis.clone();
@@ -172,7 +175,7 @@ pub async fn handle(job: RewriteIssueSidecarsJob, state: Data<AppState>) -> Resu
                 error = %e,
                 "sidecar writeback: mutex claim failed; returning Err for apalis retry",
             );
-            return Err(Error::Failed(std::sync::Arc::new(Box::new(e))));
+            return Err(e.into());
         }
     };
     // Keep the lock alive for as long as the blocking rewrite runs (a
@@ -241,7 +244,7 @@ const BUSY_MAX_ATTEMPTS: u32 = 40;
 const BUSY_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
 
 async fn requeue_busy(state: &AppState, job: &RewriteIssueSidecarsJob) {
-    use apalis::prelude::Storage;
+    use apalis::prelude::TaskSink;
     if job.attempt >= BUSY_MAX_ATTEMPTS {
         tracing::error!(
             issue_id = %job.issue_id,

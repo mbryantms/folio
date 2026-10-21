@@ -255,7 +255,7 @@ pub async fn edit(
     }
 
     let _ = lib; // gating already done in preflight
-    use apalis::prelude::Storage;
+    use apalis::prelude::TaskSink;
     let mut storage = app.jobs.archive_edit_storage.clone();
     if let Err(e) = storage
         .push(ArchiveEditJob {
@@ -376,7 +376,7 @@ pub async fn bulk_edit(
         }
     };
 
-    use apalis::prelude::Storage;
+    use apalis::prelude::TaskSink;
     let mut storage = app.jobs.archive_edit_storage.clone();
     let mut skipped: Vec<BulkSkip> = Vec::new();
     let mut queued_ids: Vec<String> = Vec::new();

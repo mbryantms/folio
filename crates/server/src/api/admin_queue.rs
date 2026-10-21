@@ -10,7 +10,7 @@
 
 use std::str::FromStr;
 
-use apalis::prelude::{Storage, TaskId};
+use apalis::prelude::{FetchById, TaskId, TaskSink};
 use axum::{Extension, Json, extract::Query, http::StatusCode, response::IntoResponse};
 use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
@@ -343,9 +343,10 @@ pub async fn clear_queue(
 
 // ───────────────────────── dead-job inspection (D8b) ─────────────────────────
 //
-// apalis moves a job to `{queue}:dead` after it exhausts its 5 attempts,
-// stamping the kill time as the ZSET score and the final error into a
-// `{queue}:data::result` hash. `dead_letters` already surfaces the per-queue
+// apalis moves a job to the `{queue}:dead` SET after it exhausts its
+// attempts ([`JOB_MAX_ATTEMPTS`](crate::jobs::JOB_MAX_ATTEMPTS)), writing the
+// kill time (`done_at`), final `status` and the last error (`result`) into the
+// job's `{queue}:meta:{id}` hash. `dead_letters` already surfaces the per-queue
 // COUNT; these endpoints let an operator see the individual failures and
 // either retry one (re-enqueue a fresh copy via the typed storage) or purge
 // the queue's dead set. "Manual retry + retention" — dead jobs are kept until
@@ -429,13 +430,13 @@ pub async fn dead_jobs(
     _admin: RequireAdmin,
     Query(q): Query<DeadJobsQuery>,
 ) -> impl IntoResponse {
-    let Some((dead_set, data_hash)) = dead_keys(&app, &q.queue) else {
+    let Some(keys) = dead_keys(&app, &q.queue) else {
         return unknown_queue(&q.queue);
     };
     let page = q.page.unwrap_or(1).max(1);
     let page_size = q.page_size.unwrap_or(20).clamp(1, 100);
     let offset = (i64::from(page) - 1) * i64::from(page_size);
-    match list_dead(&app, &dead_set, &data_hash, offset, i64::from(page_size)).await {
+    match list_dead(&app, &keys, offset, i64::from(page_size)).await {
         Ok((mut jobs, total)) => {
             // One bulk lookup for the page's payload ids → labels + slugs.
             let mut refs = crate::api::work_targets::TargetRefs::default();
@@ -552,10 +553,10 @@ pub async fn purge_dead_jobs(
     Extension(ctx): Extension<RequestContext>,
     Json(req): Json<DeadJobsPurgeReq>,
 ) -> impl IntoResponse {
-    let Some((dead_set, data_hash)) = dead_keys(&app, &req.queue) else {
+    let Some(keys) = dead_keys(&app, &req.queue) else {
         return unknown_queue(&req.queue);
     };
-    match purge_dead(&app, &dead_set, &data_hash).await {
+    match purge_dead(&app, &keys).await {
         Ok(purged) => {
             audit::record(
                 &app.db,
@@ -583,17 +584,18 @@ pub async fn purge_dead_jobs(
     }
 }
 
-/// `(dead_jobs_set, job_data_hash)` Redis keys for a queue label, resolved from
-/// each typed storage's apalis `Config` so they track the lib's key scheme.
-/// `None` for an unknown label.
-fn dead_keys(app: &AppState, queue: &str) -> Option<(String, String)> {
+/// `(dead_jobs_set, job_data_hash, job_meta_hash)` Redis keys for a queue
+/// label, resolved from each typed storage's apalis `Config` so they track
+/// the lib's key scheme. `None` for an unknown label.
+fn dead_keys(app: &AppState, queue: &str) -> Option<DeadKeys> {
     let j = &app.jobs;
     macro_rules! keys {
         ($s:expr) => {
-            Some((
-                $s.get_config().dead_jobs_set(),
-                $s.get_config().job_data_hash(),
-            ))
+            Some(DeadKeys {
+                dead_set: $s.get_config().dead_jobs_set(),
+                data_hash: $s.get_config().job_data_hash(),
+                meta_hash: $s.get_config().job_meta_hash(),
+            })
         };
     }
     match queue {
@@ -617,54 +619,100 @@ fn dead_keys(app: &AppState, queue: &str) -> Option<(String, String)> {
     }
 }
 
+/// The three Redis keys a queue's dead-letter handling touches.
+struct DeadKeys {
+    dead_set: String,
+    data_hash: String,
+    /// Prefix of the per-job meta hash: `{meta_hash}:{task_id}`.
+    meta_hash: String,
+}
+
+impl DeadKeys {
+    fn meta_key(&self, task_id: &str) -> String {
+        format!("{}:{task_id}", self.meta_hash)
+    }
+}
+
+/// The dead-letter fields of one job's `{queue}:meta:{id}` hash.
+struct DeadMeta {
+    done_at: Option<i64>,
+    result: Option<String>,
+}
+
+/// `HMGET done_at result` for every id, pipelined.
+async fn dead_meta(
+    conn: &mut redis::aio::ConnectionManager,
+    keys: &DeadKeys,
+    ids: &[String],
+) -> redis::RedisResult<Vec<DeadMeta>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut pipe = redis::pipe();
+    for id in ids {
+        pipe.cmd("HMGET")
+            .arg(keys.meta_key(id))
+            .arg("done_at")
+            .arg("result");
+    }
+    let rows: Vec<(Option<String>, Option<String>)> = pipe.query_async(conn).await?;
+    Ok(rows
+        .into_iter()
+        .map(|(done_at, result)| DeadMeta {
+            done_at: done_at.and_then(|s| s.parse::<i64>().ok()),
+            result,
+        })
+        .collect())
+}
+
 /// Read one page of a queue's dead set, newest-killed first. Type-erased: the
-/// payload is the stored `Request`'s `args` sub-object as opaque JSON, so no
-/// per-queue code is needed to list any of the eleven queues.
+/// payload is the stored args as opaque JSON, so no per-queue code is needed
+/// to list any of the queues. The dead set is unordered (a SET), so the page
+/// is cut after sorting every member by its `done_at`; dead sets are small by
+/// construction (an operator either retries or purges them).
 async fn list_dead(
     app: &AppState,
-    dead_set: &str,
-    data_hash: &str,
+    keys: &DeadKeys,
     offset: i64,
     limit: i64,
 ) -> redis::RedisResult<(Vec<DeadJob>, i64)> {
     let mut conn = app.jobs.redis.clone();
-    let total: i64 = conn.zcard(dead_set).await?;
+    let ids: Vec<String> = conn.smembers(&keys.dead_set).await?;
+    let total = ids.len() as i64;
     if total == 0 || limit <= 0 {
         return Ok((Vec::new(), total));
     }
-    let stop = offset + limit - 1;
-    let pairs: Vec<(String, i64)> = conn
-        .zrevrange_withscores(dead_set, offset as isize, stop as isize)
-        .await?;
-    if pairs.is_empty() {
+    let metas = dead_meta(&mut conn, keys, &ids).await?;
+    let mut rows: Vec<(String, DeadMeta)> = ids.into_iter().zip(metas).collect();
+    // Newest kill first; ties (and missing timestamps) fall back to the id,
+    // which is a ULID and therefore time-ordered itself.
+    rows.sort_by(|a, b| b.1.done_at.cmp(&a.1.done_at).then_with(|| b.0.cmp(&a.0)));
+    let page: Vec<(String, DeadMeta)> = rows
+        .into_iter()
+        .skip(offset.max(0) as usize)
+        .take(limit as usize)
+        .collect();
+    if page.is_empty() {
         return Ok((Vec::new(), total));
     }
-    let ids: Vec<String> = pairs.iter().map(|(id, _)| id.clone()).collect();
-    let result_hash = format!("{data_hash}::result");
+    let page_ids: Vec<String> = page.iter().map(|(id, _)| id.clone()).collect();
     let blobs: Vec<Option<String>> = redis::cmd("HMGET")
-        .arg(data_hash)
-        .arg(&ids)
+        .arg(&keys.data_hash)
+        .arg(&page_ids)
         .query_async(&mut conn)
         .await?;
-    let errors: Vec<Option<String>> = redis::cmd("HMGET")
-        .arg(&result_hash)
-        .arg(&ids)
-        .query_async(&mut conn)
-        .await?;
-    let jobs = pairs
+    let jobs = page
         .into_iter()
         .enumerate()
-        .map(|(i, (task_id, score))| {
+        .map(|(i, (task_id, meta))| {
             let payload = blobs
                 .get(i)
                 .and_then(|b| b.as_deref())
-                .and_then(|b| serde_json::from_str::<serde_json::Value>(b).ok())
-                .and_then(|v| v.get("args").cloned());
-            let error = errors.get(i).and_then(Clone::clone);
+                .and_then(|b| serde_json::from_str::<serde_json::Value>(b).ok());
             DeadJob {
                 task_id,
-                failed_at: Some(score),
-                error,
+                failed_at: meta.done_at,
+                error: meta.result,
                 payload,
                 targets: Vec::new(),
             }
@@ -673,19 +721,20 @@ async fn list_dead(
     Ok((jobs, total))
 }
 
-/// Re-enqueue a single dead job. Robust by construction: it fetches the typed
-/// job via apalis `fetch_by_id` and `push`es a fresh copy (new task id, attempt
-/// counter reset to 0) so the retry doesn't instantly re-die on the exhausted
-/// counter — then drops the old dead entry. Returns `false` when the id isn't
+/// Re-enqueue a single dead job. Robust by construction: it fetches the stored
+/// job via apalis `fetch_by_id`, decodes the args with the queue's own codec
+/// (JSON) and `push`es a fresh copy (new task id, attempt counter reset to 0)
+/// so the retry doesn't instantly re-die on the exhausted counter — then drops
+/// the old dead entry and its meta hash. Returns `false` when the id isn't
 /// actually in the queue's dead set (so a stale id can't double-enqueue a live
 /// job).
 async fn retry_one(app: &AppState, queue: &str, task_id: &str) -> anyhow::Result<bool> {
-    let Some((dead_set, data_hash)) = dead_keys(app, queue) else {
+    let Some(keys) = dead_keys(app, queue) else {
         return Ok(false);
     };
     let mut conn = app.jobs.redis.clone();
-    let score: Option<i64> = conn.zscore(&dead_set, task_id).await?;
-    if score.is_none() {
+    let dead: bool = conn.sismember(&keys.dead_set, task_id).await?;
+    if !dead {
         return Ok(false);
     }
     let tid = TaskId::from_str(task_id)?;
@@ -693,8 +742,9 @@ async fn retry_one(app: &AppState, queue: &str, task_id: &str) -> anyhow::Result
         ($s:expr) => {{
             let mut st = $s.clone();
             match st.fetch_by_id(&tid).await? {
-                Some(req) => {
-                    st.push(req.args).await?;
+                Some(task) => {
+                    let args = serde_json::from_slice(&task.args)?;
+                    st.push(args).await?;
                     true
                 }
                 None => false,
@@ -723,34 +773,32 @@ async fn retry_one(app: &AppState, queue: &str, task_id: &str) -> anyhow::Result
     if !pushed {
         return Ok(false);
     }
-    let result_hash = format!("{data_hash}::result");
     let _: () = redis::pipe()
-        .zrem(&dead_set, task_id)
+        .srem(&keys.dead_set, task_id)
         .ignore()
-        .hdel(&data_hash, task_id)
+        .hdel(&keys.data_hash, task_id)
         .ignore()
-        .hdel(&result_hash, task_id)
+        .del(keys.meta_key(task_id))
         .ignore()
         .query_async(&mut conn)
         .await?;
     Ok(true)
 }
 
-/// Drop every dead job in a queue (member ids + their data + result rows).
+/// Drop every dead job in a queue (member ids + their data + meta hashes).
 /// Returns the count removed.
-async fn purge_dead(app: &AppState, dead_set: &str, data_hash: &str) -> redis::RedisResult<usize> {
+async fn purge_dead(app: &AppState, keys: &DeadKeys) -> redis::RedisResult<usize> {
     let mut conn = app.jobs.redis.clone();
-    let ids: Vec<String> = conn.zrange(dead_set, 0, -1).await?;
+    let ids: Vec<String> = conn.smembers(&keys.dead_set).await?;
     let n = ids.len();
     if n == 0 {
         return Ok(0);
     }
-    let result_hash = format!("{data_hash}::result");
     let mut pipe = redis::pipe();
-    pipe.del(dead_set).ignore();
+    pipe.del(&keys.dead_set).ignore();
     for id in &ids {
-        pipe.hdel(data_hash, id).ignore();
-        pipe.hdel(&result_hash, id).ignore();
+        pipe.hdel(&keys.data_hash, id).ignore();
+        pipe.del(keys.meta_key(id)).ignore();
     }
     let _: () = pipe.query_async(&mut conn).await?;
     Ok(n)

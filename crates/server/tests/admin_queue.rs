@@ -4,7 +4,7 @@
 
 mod common;
 
-use apalis::prelude::Storage;
+use apalis::prelude::TaskSink;
 use axum::{
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode, header},
@@ -235,33 +235,65 @@ async fn clear_queue_requires_admin() {
 
 // ───── Dead-job inspection / retry / purge (D8b) ─────
 
-/// `(dead_set, data_hash, result_hash, conn)` for the `scan` queue, resolved
-/// from the app's own apalis storage config so the keys match production.
+/// `(dead_set, data_hash, meta_hash_prefix, conn)` for the `scan` queue,
+/// resolved from the app's own apalis storage config so the keys match
+/// production. A job's meta hash is `{meta_hash_prefix}:{task_id}`.
 fn scan_dead_keys(app: &TestApp) -> (String, String, String, redis::aio::ConnectionManager) {
     let st = app.state();
     let storage = st.jobs.scan_storage.clone();
     let data = storage.get_config().job_data_hash();
-    let result = format!("{data}::result");
+    let meta = storage.get_config().job_meta_hash();
     let dead = storage.get_config().dead_jobs_set();
-    (dead, data, result, st.jobs.redis.clone())
+    (dead, data, meta, st.jobs.redis.clone())
+}
+
+/// Seed one dead-lettered job the way apalis-redis 1.0 leaves it: id in the
+/// dead SET, bare args JSON in the data hash, kill time + last error in the
+/// job's meta hash.
+async fn seed_dead_job(
+    conn: &mut redis::aio::ConnectionManager,
+    (dead, data, meta): (&str, &str, &str),
+    id: &str,
+    done_at: i64,
+    args: serde_json::Value,
+    error: &str,
+) {
+    let _: i64 = conn.sadd(dead, id).await.unwrap();
+    let _: i64 = conn.hset(data, id, args.to_string()).await.unwrap();
+    let _: () = conn
+        .hset_multiple(
+            format!("{meta}:{id}"),
+            &[
+                ("status", "Failed".to_owned()),
+                ("done_at", done_at.to_string()),
+                ("result", error.to_owned()),
+            ],
+        )
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn dead_jobs_lists_seeded_failures_newest_first() {
     let app = TestApp::spawn().await;
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
-    let (dead, data, result, mut conn) = scan_dead_keys(&app);
+    let (dead, data, meta, mut conn) = scan_dead_keys(&app);
 
-    // Seed two dead jobs: older (score 1000) + newer (score 2000). The list
-    // pulls `args` out of the stored `Request` JSON, so seed that shape.
-    for (id, score, lib) in [
+    // Seed two dead jobs: older (killed at 1000) + newer (killed at 2000).
+    // The list reads the stored args JSON and the meta hash, so seed both.
+    for (id, done_at, lib) in [
         ("task-old", 1000i64, "lib-a"),
         ("task-new", 2000i64, "lib-b"),
     ] {
-        let _: i64 = conn.zadd(&dead, id, score).await.unwrap();
-        let blob = json!({ "args": { "library_id": lib, "force": false }, "parts": {} });
-        let _: i64 = conn.hset(&data, id, blob.to_string()).await.unwrap();
-        let _: i64 = conn.hset(&result, id, format!("boom {id}")).await.unwrap();
+        seed_dead_job(
+            &mut conn,
+            (&dead, &data, &meta),
+            id,
+            done_at,
+            json!({ "library_id": lib, "force": false }),
+            &format!("boom {id}"),
+        )
+        .await;
     }
 
     let resp = send_authed(
@@ -315,10 +347,10 @@ async fn retry_dead_job_reenqueues_and_audits() {
     let st = app.state();
     let mut storage = st.jobs.scan_storage.clone();
 
-    // Enqueue a real job so a *valid* serialized Request lands in the data
+    // Enqueue a real job so a *valid* encoded payload lands in the data
     // hash (what the typed retry deserializes), then simulate apalis's kill:
     // pull it off the pending list and drop it into the dead set.
-    let parts = storage
+    storage
         .push(scan::Job {
             library_id: Uuid::now_v7(),
             scan_run_id: Uuid::now_v7(),
@@ -327,21 +359,38 @@ async fn retry_dead_job_reenqueues_and_audits() {
         })
         .await
         .expect("push");
-    let task_id = parts.task_id.to_string();
 
+    // apalis-redis 1.0 parks a fresh push in `scheduled` (run_at = now)
+    // until a worker's fetch promotes it to `active`; no worker runs here.
     let active = storage.get_config().active_jobs_list();
-    let (dead, _data, result, mut conn) = scan_dead_keys(&app);
+    let scheduled = storage.get_config().scheduled_jobs_set();
+    let (dead, _data, meta, mut conn) = scan_dead_keys(&app);
+    let mut pending: Vec<String> = conn.lrange(&active, 0, -1).await.unwrap();
+    let parked: Vec<String> = conn.zrange(&scheduled, 0, -1).await.unwrap();
+    pending.extend(parked);
+    let task_id = pending.last().cloned().expect("pushed job is pending");
     let _: i64 = conn.lrem(&active, 0, &task_id).await.unwrap();
-    let _: i64 = conn.zadd(&dead, &task_id, 1000i64).await.unwrap();
-    let _: i64 = conn.hset(&result, &task_id, "boom").await.unwrap();
+    let _: i64 = conn.zrem(&scheduled, &task_id).await.unwrap();
+    let _: i64 = conn.sadd(&dead, &task_id).await.unwrap();
+    let _: () = conn
+        .hset_multiple(
+            format!("{meta}:{task_id}"),
+            &[
+                ("status", "Failed"),
+                ("done_at", "1000"),
+                ("result", "boom"),
+            ],
+        )
+        .await
+        .unwrap();
 
     // Precondition: nothing pending, exactly one dead.
     assert_eq!(
-        storage.len().await.unwrap(),
+        st.jobs.waiting_len(&storage).await.unwrap(),
         0,
         "pending drained for the sim"
     );
-    let dead_n: i64 = conn.zcard(&dead).await.unwrap();
+    let dead_n: i64 = conn.scard(&dead).await.unwrap();
     assert_eq!(dead_n, 1);
 
     let resp = send_authed(
@@ -357,10 +406,10 @@ async fn retry_dead_job_reenqueues_and_audits() {
     assert_eq!(body["retried"], true);
 
     // Old dead entry gone; a fresh copy re-enqueued onto pending.
-    let dead_after: i64 = conn.zcard(&dead).await.unwrap();
+    let dead_after: i64 = conn.scard(&dead).await.unwrap();
     assert_eq!(dead_after, 0, "old dead entry removed on retry");
     assert_eq!(
-        storage.len().await.unwrap(),
+        st.jobs.waiting_len(&storage).await.unwrap(),
         1,
         "a fresh job was re-enqueued onto the pending list"
     );
@@ -395,12 +444,18 @@ async fn retry_unknown_dead_job_returns_404() {
 async fn purge_dead_jobs_clears_set_and_audits() {
     let app = TestApp::spawn().await;
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
-    let (dead, data, result, mut conn) = scan_dead_keys(&app);
+    let (dead, data, meta, mut conn) = scan_dead_keys(&app);
 
     for id in ["d1", "d2", "d3"] {
-        let _: i64 = conn.zadd(&dead, id, 1000i64).await.unwrap();
-        let _: i64 = conn.hset(&data, id, "{}").await.unwrap();
-        let _: i64 = conn.hset(&result, id, "boom").await.unwrap();
+        seed_dead_job(
+            &mut conn,
+            (&dead, &data, &meta),
+            id,
+            1000,
+            json!({}),
+            "boom",
+        )
+        .await;
     }
 
     let resp = send_authed(
@@ -415,8 +470,10 @@ async fn purge_dead_jobs_clears_set_and_audits() {
     let body = body_json(resp).await;
     assert_eq!(body["purged"], 3);
 
-    let remaining: i64 = conn.zcard(&dead).await.unwrap();
+    let remaining: i64 = conn.scard(&dead).await.unwrap();
     assert_eq!(remaining, 0, "dead set emptied");
+    let meta_left: bool = conn.exists(format!("{meta}:d1")).await.unwrap();
+    assert!(!meta_left, "meta hashes purged with the set");
 
     use entity::audit_log;
     let rows = audit_log::Entity::find()
@@ -488,9 +545,11 @@ async fn queue_depth_counts_jobs_held_by_a_worker_and_retry_delayed() {
         .zadd(cfg.scheduled_jobs_set(), "s1", 9_999_999_999i64)
         .await
         .unwrap();
+    // apalis-redis 1.0 registers workers by name in `{queue}:workers`; each
+    // worker's fetched jobs sit in `{queue}:inflight:{worker}`.
     let inflight = format!("{}:worker-a", cfg.inflight_jobs_set());
     let _: i64 = conn
-        .zadd(cfg.consumers_set(), &inflight, 1i64)
+        .zadd(cfg.workers_set(), "worker-a", 1i64)
         .await
         .unwrap();
     let _: i64 = conn.sadd(&inflight, &["r1", "r2", "r3"]).await.unwrap();
@@ -692,19 +751,21 @@ async fn dead_jobs_resolve_their_targets_to_labels_and_slugs() {
 
     // A dead job whose args name an issue by hash, a series and a library
     // by UUID — the shapes the apply / rewrite / scan queues use.
-    let (dead, data, result, mut conn) = scan_dead_keys(&app);
-    let _: i64 = conn.zadd(&dead, "task-x", 3000i64).await.unwrap();
-    let blob = json!({
-        "args": {
+    let (dead, data, meta, mut conn) = scan_dead_keys(&app);
+    seed_dead_job(
+        &mut conn,
+        (&dead, &data, &meta),
+        "task-x",
+        3000,
+        json!({
             "issue_id": issue_id,
             "series_id": series_id.to_string(),
             "library_id": lib_id.to_string(),
             "actor_id": Uuid::now_v7().to_string(),
-        },
-        "parts": {}
-    });
-    let _: i64 = conn.hset(&data, "task-x", blob.to_string()).await.unwrap();
-    let _: i64 = conn.hset(&result, "task-x", "boom").await.unwrap();
+        }),
+        "boom",
+    )
+    .await;
 
     let resp = send_authed(
         &app,

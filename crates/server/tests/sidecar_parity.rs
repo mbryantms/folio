@@ -250,10 +250,7 @@ async fn run_queued_rewrite_jobs(app: &TestApp) -> usize {
         .unwrap();
     let jobs: Vec<RewriteIssueSidecarsJob> = all
         .values()
-        .map(|blob| {
-            let v: serde_json::Value = serde_json::from_str(blob).unwrap();
-            serde_json::from_value(v["args"].clone()).unwrap()
-        })
+        .map(|blob| serde_json::from_str(blob).unwrap())
         .collect();
     let n = jobs.len();
     for job in jobs {

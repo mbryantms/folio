@@ -64,7 +64,7 @@ pub struct Job {
     pub scan_run_id: Option<Uuid>,
 }
 
-pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
     tracing::info!(
         library_id = %job.library_id,
@@ -137,9 +137,7 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), Error> {
             }
             Err(e) => {
                 tracing::error!(series_id = %sid, error = %e, "scan_series: series lookup failed");
-                return Err(Error::Failed(std::sync::Arc::new(Box::new(
-                    std::io::Error::other(e.to_string()),
-                ))));
+                return Err(std::io::Error::other(e.to_string()).into());
             }
         },
         (None, Some(fp)) => {
@@ -243,9 +241,7 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), Error> {
             error = %e,
             "scan_series coalesce_scan failed",
         );
-        return Err(Error::Failed(std::sync::Arc::new(Box::new(
-            std::io::Error::other(e.to_string()),
-        ))));
+        return Err(std::io::Error::other(e.to_string()).into());
     }
     Ok(())
 }

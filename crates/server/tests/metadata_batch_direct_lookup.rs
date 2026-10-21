@@ -429,10 +429,7 @@ async fn run_issue_jobs(app: &TestApp) -> usize {
         .unwrap();
     let jobs: Vec<SearchIssueJob> = all
         .values()
-        .map(|blob| {
-            let v: Value = serde_json::from_str(blob).unwrap();
-            serde_json::from_value(v["args"].clone()).unwrap()
-        })
+        .map(|blob| serde_json::from_str(blob).unwrap())
         .collect();
     let n = jobs.len();
     for job in jobs {
@@ -758,7 +755,7 @@ async fn dialog_issue_search_still_searches() {
         .unwrap();
     assert_eq!(all.len(), 1);
     let v: Value = serde_json::from_str(all.values().next().unwrap()).unwrap();
-    assert_eq!(v["args"]["direct_lookup"], false);
+    assert_eq!(v["direct_lookup"], false);
 }
 
 /// A distinct, decodable PNG (solid fill).

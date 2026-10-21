@@ -162,7 +162,7 @@ pub async fn latest_for_series(redis: &ConnectionManager, series_id: Uuid) -> Op
 pub async fn save(redis: &ConnectionManager, rec: &JobRecord) -> redis::RedisResult<()> {
     let raw = serde_json::to_string(rec).map_err(|e| {
         redis::RedisError::from((
-            redis::ErrorKind::TypeError,
+            redis::ErrorKind::Parse,
             "serialize coverage record",
             e.to_string(),
         ))
@@ -322,8 +322,12 @@ pub async fn enqueue_after_series_apply(
         return None;
     }
     if !manual {
-        let mut storage = state.jobs.provider_coverage_storage.clone();
-        let waiting = storage.len().await.unwrap_or(0).max(0) as usize;
+        let waiting = state
+            .jobs
+            .waiting_len(&state.jobs.provider_coverage_storage)
+            .await
+            .unwrap_or(0)
+            .max(0) as usize;
         if waiting >= MAX_QUEUED_AFTER_APPLY {
             tracing::info!(
                 series_id = %series_id,
@@ -356,7 +360,7 @@ pub async fn enqueue_after_series_apply(
     }
 }
 
-pub async fn handle(job: ProviderCoverageJob, state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle(job: ProviderCoverageJob, state: Data<AppState>) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
     if let Err(e) = process(&state, job.job_id).await {
         // Recorded on the job record; not retried (a retry would spend the

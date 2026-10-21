@@ -1226,7 +1226,7 @@ pub(crate) async fn apply_issue_via_sidecar(
         bump_sync: true,
     };
 
-    use apalis::prelude::Storage;
+    use apalis::prelude::TaskSink;
     let mut storage = state.jobs.rewrite_issue_sidecars_storage.clone();
     storage
         .push(crate::jobs::rewrite_sidecars::RewriteIssueSidecarsJob {

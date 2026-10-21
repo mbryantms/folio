@@ -105,6 +105,9 @@ allow = [
     # NCSA`. NCSA is the University of Illinois open-source license
     # used by LLVM-adjacent projects; OSI-approved + FSF-free.
     "NCSA",
+    # `xxhash-rust` (redis ≥ 1.x transitive, RESP3 hashing). Boost Software
+    # License 1.0: OSI-approved, permissive, no copyleft.
+    "BSL-1.0",
 ]
 confidence-threshold = 0.9
 

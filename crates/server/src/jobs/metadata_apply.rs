@@ -155,7 +155,7 @@ pub struct ApplySeriesJob {
     pub bulk: bool,
 }
 
-pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
     let ApplySeriesJob {
         run_id,
@@ -358,7 +358,7 @@ pub struct ApplyIssueJob {
     pub composite: Option<CompositeSpec>,
 }
 
-pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
     let ApplyIssueJob {
         run_id,

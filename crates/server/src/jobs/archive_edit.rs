@@ -287,7 +287,7 @@ pub struct ArchiveEditJob {
     pub attempt: u32,
 }
 
-pub async fn handle(job: ArchiveEditJob, state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle(job: ArchiveEditJob, state: Data<AppState>) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
 
     let mut redis = state.jobs.redis.clone();
@@ -302,7 +302,7 @@ pub async fn handle(job: ArchiveEditJob, state: Data<AppState>) -> Result<(), Er
             // than dropping the operator's edit (same policy as the sidecar
             // job — WP-2.6 (e)).
             tracing::error!(issue_id = %job.issue_id, error = %e, "archive edit: mutex claim failed; returning Err for apalis retry");
-            return Err(Error::Failed(std::sync::Arc::new(Box::new(e))));
+            return Err(e.into());
         }
     };
     // Keep the lock alive across a long re-encode (WP-2.6 (h)).
@@ -882,7 +882,7 @@ const BUSY_MAX_ATTEMPTS: u32 = 40;
 const BUSY_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
 
 async fn requeue_busy(state: &AppState, job: &ArchiveEditJob) {
-    use apalis::prelude::Storage;
+    use apalis::prelude::TaskSink;
     if job.attempt >= BUSY_MAX_ATTEMPTS {
         tracing::error!(
             issue_id = %job.issue_id,

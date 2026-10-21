@@ -40,7 +40,7 @@ pub async fn enqueue(
     Ok(())
 }
 
-pub async fn handle(job: EntityEnrichJob, state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle(job: EntityEnrichJob, state: Data<AppState>) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
     if let Err(e) = process(&state, job.kind, job.entity_id).await {
         // Recorded on the profile row where it can be; not retried (a

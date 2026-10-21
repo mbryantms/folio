@@ -119,7 +119,7 @@ pub struct SearchSeriesJob {
     pub year_asserted: bool,
 }
 
-pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle_series(job: SearchSeriesJob, state: Data<AppState>) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
     // Stashed with the partial results if the run parks on quota, so the
     // resume re-runs this exact job on the owed providers.
@@ -246,7 +246,7 @@ impl SearchIssueJob {
     }
 }
 
-pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<(), Error> {
+pub async fn handle_issue(job: SearchIssueJob, state: Data<AppState>) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
     let mode = job.direct_mode();
     let job_payload = serde_json::to_value(&job).ok();
@@ -728,7 +728,7 @@ async fn maybe_auto_apply_series(
     if trigger_kind == crate::metadata::orchestrator::trigger_kind::MANUAL {
         return;
     }
-    use apalis::prelude::Storage;
+    use apalis::prelude::TaskSink;
     let mut storage = state.jobs.metadata_apply_series_storage.clone();
     let push_result = storage
         .push(crate::jobs::metadata_apply::ApplySeriesJob {
@@ -791,7 +791,7 @@ async fn maybe_auto_apply_issue(
     if trigger_kind == crate::metadata::orchestrator::trigger_kind::MANUAL {
         return;
     }
-    use apalis::prelude::Storage;
+    use apalis::prelude::TaskSink;
     let mut storage = state.jobs.metadata_apply_issue_storage.clone();
     let push_result = storage
         .push(crate::jobs::metadata_apply::ApplyIssueJob {
@@ -907,7 +907,7 @@ pub async fn resume_parked_run(
     state: &AppState,
     parked: &entity::metadata_run::Model,
 ) -> Result<ResumeOutcome, anyhow::Error> {
-    use apalis::prelude::Storage;
+    use apalis::prelude::TaskSink;
     use sea_orm::EntityTrait;
     // Re-read the status: a second sweep tick (or a stale model) must not
     // queue the job twice — once re-queued the run is `queued`, not parked.

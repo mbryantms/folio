@@ -472,10 +472,7 @@ async fn queued_issue_jobs(app: &TestApp) -> Vec<server::jobs::metadata_search::
         .await
         .unwrap();
     all.values()
-        .map(|blob| {
-            let v: Value = serde_json::from_str(blob).unwrap();
-            serde_json::from_value(v["args"].clone()).unwrap()
-        })
+        .map(|blob| serde_json::from_str(blob).unwrap())
         .collect()
 }
 
