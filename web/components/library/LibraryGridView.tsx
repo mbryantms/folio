@@ -663,7 +663,7 @@ export function LibraryGridView({
           libraryCount={libraryCount}
         />
       ) : (
-        <div>
+        <div className={isSeriesMode ? "max-sm:pr-2" : undefined}>
           <VirtualizedCardGrid
             items={items}
             cardSize={cardSize}

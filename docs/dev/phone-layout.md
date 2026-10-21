@@ -42,8 +42,9 @@ indexes.
    right edge between the topbar and the bottom tab bar (tap to jump,
    drag to scrub with a preview bubble, commit on release, tap the
    active letter to clear). Give the desktop `AtoZJumpRail`
-   `max-sm:hidden`; the scrubber is 16px wide and sits in the shell's right
-   gutter, so the grid keeps its full width (no padding needed).
+   `max-sm:hidden` and reserve the index column on the grid with
+   `max-sm:pr-2` (the 20px rail already overlaps the 16px shell gutter), so the glyphs sit
+   ~11px off the covers and ~7px off the bezel like the system index.
 6. **Chips scroll, they don't wrap.** `ActiveChips` is a single
    horizontally scrolling row on phones (`-mx-4 px-4` so it runs edge
    to edge, scrollbar hidden). Tab strips already do this via
@@ -57,9 +58,11 @@ max-sm:line-clamp-2`; `PageHeader` takes `phoneDescription="hidden"`
    bar are `max-sm:hidden`.
 8. **Two columns minimum.** Every cover grid uses
    `repeat(auto-fill, minmax(min(<cardSize>px, calc(50% - 0.5rem)), 1fr))`
-   so a large saved card size (a desktop preference synced to the
-   phone) can never collapse the grid to one column; desktop is
-   unaffected because 50% of a wide column exceeds any card size.
+   and the virtualized library grid applies the same half-row cap in
+   `computeColumnsPerRow` (down to 96px cards), so a large saved card
+   size or the reserved A–Z column can never collapse a phone grid to
+   one column; desktop is unaffected because half a wide column exceeds
+   any card size.
 9. **Prefer CSS to JS.** Use `max-sm:` / `sm:` whenever the difference
    is presentational. `useIsPhone()` (`lib/ui/use-is-phone.ts`,
    `useSyncExternalStore` on `(max-width: 639px)`, `false` on SSR) is

@@ -202,7 +202,7 @@ export function CreatorsIndex({
                 : "No creators are credited in any library you can access yet."}
             </p>
           ) : (
-            <CreatorGrid items={items} />
+            <CreatorGrid items={items} className="max-sm:pr-2" />
           )}
 
           <div

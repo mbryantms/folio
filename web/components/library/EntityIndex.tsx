@@ -131,7 +131,7 @@ export function EntityIndex({
       ) : (
         <ul
           role="list"
-          className="grid gap-3"
+          className="grid gap-3 max-sm:pr-2"
           style={{
             gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
           }}

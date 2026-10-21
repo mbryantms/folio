@@ -88,11 +88,14 @@ export function AtoZScrubber({
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
         className={cn(
-          // `w-4` = the shell's 16px right gutter, so the rail lives in
-          // the margin and never covers (or narrows) the cover grid —
-          // one more column matters more than a wider tap target, and
-          // the rail is scrubbed by drag, not aimed at per letter.
-          "fixed top-(--topbar-h) right-0 bottom-[calc(var(--bottom-tab-h)+var(--safe-bottom))] z-20 flex w-4 touch-none flex-col items-stretch justify-center py-2 select-none sm:hidden",
+          // 20px column over the shell's 16px right gutter, so it only eats
+          // 4px of content; grids that render the rail add `max-sm:pr-2`
+          // on top, which puts the glyphs ~11px off the covers and ~7px
+          // off the bezel — the system-index look — instead of glued to
+          // the art. The grids keep two
+          // columns regardless via the half-width floor in
+          // `computeColumnsPerRow` / the CSS `minmax(min(...))` rule.
+          "fixed top-(--topbar-h) right-0 bottom-[calc(var(--bottom-tab-h)+var(--safe-bottom))] z-20 flex w-5 touch-none flex-col items-stretch justify-center py-2 select-none sm:hidden",
           className,
         )}
       >

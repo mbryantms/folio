@@ -32,13 +32,27 @@ export const ISSUE_TEXT_H = 64;
  * `n <= (width + gap) / (cardSize + gap)`. Always at least 1 (a single
  * card never disappears, even in a sliver of width).
  */
+/** Smallest card the two-column floor will shrink to. Below this a
+ *  container is a sliver (a collapsed pane), not a phone. */
+const MIN_CARD_PX = 96;
+
 export function computeColumnsPerRow(
   containerWidth: number,
   cardSize: number,
   gap: number = GRID_GAP_PX,
 ): number {
   if (containerWidth <= 0 || cardSize <= 0) return 1;
-  return Math.max(1, Math.floor((containerWidth + gap) / (cardSize + gap)));
+  // Two-column floor (phone-layout.md): a card size saved on a wide
+  // screen, or the gutter reserved for the phone A–Z rail, must never
+  // collapse a phone grid to one column. The effective card width is
+  // capped at half the row (never below `MIN_CARD_PX`, so a genuine
+  // sliver still gets one card). Mirrors the CSS grids'
+  // `minmax(min(<cardSize>px, calc(50% - 0.5rem)), 1fr)`; wide
+  // containers are unaffected because half their width exceeds any
+  // card size.
+  const half = Math.max(MIN_CARD_PX, (containerWidth - gap) / 2);
+  const effective = Math.min(cardSize, half);
+  return Math.max(1, Math.floor((containerWidth + gap) / (effective + gap)));
 }
 
 /** Number of virtual rows for `itemCount` items at `columnsPerRow`. */
