@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.63.0](https://github.com/mbryantms/folio/compare/v0.62.2...v0.63.0) (2026-10-21)
+
+
+### Added
+
+* **bookmarks:** closing notes, expand in place, sort, series filter, counts ([#1260](https://github.com/mbryantms/folio/issues/1260)) ([e4be665](https://github.com/mbryantms/folio/commit/e4be665db5bd17357ee470eb4bc6536bc04458a7))
+* **reader:** rate, note, and review from the end-of-issue card ([#1258](https://github.com/mbryantms/folio/issues/1258)) ([9bba4e2](https://github.com/mbryantms/folio/commit/9bba4e268d2ca68a8c922c1d5b06e16eb65ba27f))
+
+
+### Dependencies
+
+* update rust crate lru to 0.19 ([#1259](https://github.com/mbryantms/folio/issues/1259)) ([36315f5](https://github.com/mbryantms/folio/commit/36315f5b0716cb5d4cc0c299b00a4dd347ffb817))
+
 ## [0.62.2](https://github.com/mbryantms/folio/compare/v0.62.1...v0.62.2) (2026-10-21)
 
 
