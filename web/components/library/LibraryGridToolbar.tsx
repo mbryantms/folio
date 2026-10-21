@@ -17,6 +17,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { IssueSort, SeriesSort, SortOrder } from "@/lib/api/types";
+import { useStickyToolbar } from "@/lib/ui/use-sticky-toolbar";
+import { cn } from "@/lib/utils";
 
 // `random` is excluded — it's a one-shot discovery pick ("Surprise me"),
 // never a user-selectable grid sort. The Exclude keeps this map exhaustive
@@ -92,6 +94,15 @@ export function ModeSegmentedToggle({
  * `LibraryGridView.tsx` in audit-remediation M7.3 to keep the composer
  * under the 400-LOC target. Phones render `PhoneControlsBar` instead —
  * this row folded into six on a 390px viewport.
+ *
+ * Like the phone bar, the row sticks under the topbar — but only while
+ * it fits on one line and select mode is off (`useStickyToolbar`): a
+ * wrapped toolbar stays in flow rather than pinning three rows, and in
+ * select mode the sticky `SelectionToolbar` takes the band instead,
+ * exactly as the phone bar hides itself then. The negative horizontal
+ * margins let the band run edge to edge inside the shell's `px-4` /
+ * `md:px-8` main column; the border and backdrop only appear once the
+ * row is actually held (`stuck`), so the page looks unchanged at rest.
  */
 export function LibraryGridToolbar({
   mode,
@@ -169,164 +180,183 @@ export function LibraryGridToolbar({
       lastSent.current = q;
     }
   }, [q]);
+  const { ref, sentinelRef, sticky, stuck } = useStickyToolbar({
+    enabled: !selectMode,
+  });
   return (
-    <div className="mb-6 flex flex-wrap items-center justify-between gap-2 max-sm:hidden">
-      {/* Left controls flow + wrap as a group; the Select + card-size
+    <>
+      <div ref={sentinelRef} aria-hidden="true" className="max-sm:hidden" />
+      <div
+        ref={ref}
+        data-library-toolbar=""
+        data-sticky={sticky ? "" : undefined}
+        data-stuck={stuck ? "" : undefined}
+        className={cn(
+          "-mx-4 mb-4 flex flex-wrap items-center justify-between gap-2 px-4 py-2 max-sm:hidden md:-mx-8 md:px-8",
+          sticky && "sticky top-(--topbar-h) z-20",
+          stuck &&
+            "border-border bg-background/95 standalone:bg-background standalone:backdrop-blur-none border-b backdrop-blur",
+        )}
+      >
+        {/* Left controls flow + wrap as a group; the Select + card-size
           group below sits opposite via the container's justify-between —
           so it right-aligns when there's room and drops to a left-aligned
           new line (no stranded empty space) when the toolbar wraps. */}
-      <div className="flex flex-wrap items-center gap-2">
-        {/* Mode toggle: two side-by-side buttons that match the rest
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Mode toggle: two side-by-side buttons that match the rest
           of the toolbar (same `size="sm"` + outline base; active mode
           takes `variant="secondary"` for visual contrast). Earlier
           iterations used a bordered wrapper around the pair, which
           ran ~2px taller than the peer Sort / Order / Filters
           buttons — this version sits flush. */}
-        <Button
-          type="button"
-          variant={mode === "series" ? "secondary" : "outline"}
-          size="sm"
-          aria-pressed={mode === "series"}
-          onClick={() => onMode("series")}
-          className="h-9"
-        >
-          Series
-        </Button>
-        <Button
-          type="button"
-          variant={mode === "issues" ? "secondary" : "outline"}
-          size="sm"
-          aria-pressed={mode === "issues"}
-          onClick={() => onMode("issues")}
-          className="h-9"
-        >
-          Issues
-        </Button>
-        <Input
-          type="search"
-          placeholder={mode === "series" ? "Search series…" : "Search issues…"}
-          value={searchInput}
-          onChange={(e) => {
-            const next = e.target.value;
-            setSearchInput(next);
-            lastSent.current = next.trim();
-            onQ(next);
-          }}
-          className="h-9 w-72"
-        />
-        {mode === "series" ? (
-          <Select
-            value={seriesSort}
-            onValueChange={(v) => onSeriesSort(v as SeriesSort)}
-          >
-            <SelectTrigger className="h-9 w-44" disabled={!!trimmedQ}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {(
-                Object.keys(SERIES_SORT_LABELS) as Array<
-                  keyof typeof SERIES_SORT_LABELS
-                >
-              ).map((s) => (
-                <SelectItem key={s} value={s}>
-                  {SERIES_SORT_LABELS[s]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : (
-          <Select
-            value={issueSort}
-            onValueChange={(v) => onIssueSort(v as IssueSort)}
-          >
-            <SelectTrigger className="h-9 w-44" disabled={!!trimmedQ}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {(Object.keys(ISSUE_SORT_LABELS) as IssueSort[]).map((s) => (
-                <SelectItem key={s} value={s}>
-                  {ISSUE_SORT_LABELS[s]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={!!trimmedQ}
-          onClick={() => onOrder(order === "asc" ? "desc" : "asc")}
-          title={`Order: ${order === "asc" ? "Ascending" : "Descending"}`}
-          className="h-9 w-9"
-        >
-          {order === "asc" ? "↑" : "↓"}
-        </Button>
-
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onOpenFilters}
-          className="h-9"
-        >
-          <Filter className="mr-1 h-3.5 w-3.5" />
-          Filters
-          {facetCount > 0 ? (
-            <Badge
-              variant="secondary"
-              className="ml-2 h-5 min-w-5 rounded-full px-1.5 text-xs"
-            >
-              {facetCount}
-            </Badge>
-          ) : null}
-        </Button>
-
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={!canSaveView}
-          className="h-9"
-          onClick={onSaveView}
-          title="Persist these filters as a new saved view"
-        >
-          <BookmarkPlus className="mr-1 h-3.5 w-3.5" />
-          Save as view…
-        </Button>
-
-        {facetCount > 0 ? (
           <Button
             type="button"
-            variant="ghost"
+            variant={mode === "series" ? "secondary" : "outline"}
             size="sm"
-            onClick={onClearFacets}
-            className="text-muted-foreground h-9"
-          >
-            <X className="mr-1 h-3 w-3" /> Clear filters
-          </Button>
-        ) : null}
-      </div>
-
-      <div className="flex items-center gap-2">
-        {canSelect || selectMode ? (
-          <SelectModeButton
-            ref={selectButtonRef}
-            active={selectMode}
-            onEnter={onEnterSelect}
-            onExit={onExitSelect}
+            aria-pressed={mode === "series"}
+            onClick={() => onMode("series")}
             className="h-9"
+          >
+            Series
+          </Button>
+          <Button
+            type="button"
+            variant={mode === "issues" ? "secondary" : "outline"}
+            size="sm"
+            aria-pressed={mode === "issues"}
+            onClick={() => onMode("issues")}
+            className="h-9"
+          >
+            Issues
+          </Button>
+          <Input
+            type="search"
+            placeholder={
+              mode === "series" ? "Search series…" : "Search issues…"
+            }
+            value={searchInput}
+            onChange={(e) => {
+              const next = e.target.value;
+              setSearchInput(next);
+              lastSent.current = next.trim();
+              onQ(next);
+            }}
+            className="h-9 w-72"
           />
-        ) : null}
-        <CardSizeOptions
-          cardSize={cardSize}
-          onCardSize={onCardSize}
-          min={cardSizeMin}
-          max={cardSizeMax}
-          step={cardSizeStep}
-          defaultSize={cardSizeDefault}
-        />
+          {mode === "series" ? (
+            <Select
+              value={seriesSort}
+              onValueChange={(v) => onSeriesSort(v as SeriesSort)}
+            >
+              <SelectTrigger className="h-9 w-44" disabled={!!trimmedQ}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(
+                  Object.keys(SERIES_SORT_LABELS) as Array<
+                    keyof typeof SERIES_SORT_LABELS
+                  >
+                ).map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {SERIES_SORT_LABELS[s]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Select
+              value={issueSort}
+              onValueChange={(v) => onIssueSort(v as IssueSort)}
+            >
+              <SelectTrigger className="h-9 w-44" disabled={!!trimmedQ}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(ISSUE_SORT_LABELS) as IssueSort[]).map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {ISSUE_SORT_LABELS[s]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!!trimmedQ}
+            onClick={() => onOrder(order === "asc" ? "desc" : "asc")}
+            title={`Order: ${order === "asc" ? "Ascending" : "Descending"}`}
+            className="h-9 w-9"
+          >
+            {order === "asc" ? "↑" : "↓"}
+          </Button>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onOpenFilters}
+            className="h-9"
+          >
+            <Filter className="mr-1 h-3.5 w-3.5" />
+            Filters
+            {facetCount > 0 ? (
+              <Badge
+                variant="secondary"
+                className="ml-2 h-5 min-w-5 rounded-full px-1.5 text-xs"
+              >
+                {facetCount}
+              </Badge>
+            ) : null}
+          </Button>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!canSaveView}
+            className="h-9"
+            onClick={onSaveView}
+            title="Persist these filters as a new saved view"
+          >
+            <BookmarkPlus className="mr-1 h-3.5 w-3.5" />
+            Save as view…
+          </Button>
+
+          {facetCount > 0 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onClearFacets}
+              className="text-muted-foreground h-9"
+            >
+              <X className="mr-1 h-3 w-3" /> Clear filters
+            </Button>
+          ) : null}
+        </div>
+
+        <div className="flex items-center gap-2">
+          {canSelect || selectMode ? (
+            <SelectModeButton
+              ref={selectButtonRef}
+              active={selectMode}
+              onEnter={onEnterSelect}
+              onExit={onExitSelect}
+              className="h-9"
+            />
+          ) : null}
+          <CardSizeOptions
+            cardSize={cardSize}
+            onCardSize={onCardSize}
+            min={cardSizeMin}
+            max={cardSizeMax}
+            step={cardSizeStep}
+            defaultSize={cardSizeDefault}
+          />
+        </div>
       </div>
-    </div>
+    </>
   );
 }
