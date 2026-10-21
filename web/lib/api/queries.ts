@@ -9,6 +9,12 @@
  * The shared `useMe` hook lives here so any client tree can read the current
  * user without re-fetching across components.
  */
+import type {
+  BookmarksFeedFilters,
+  BookmarksFeedView,
+  BookmarkCountsView,
+  BookmarkSeriesListView,
+} from "@/lib/api/types";
 import type { IssueUrlOpts } from "@/lib/urls";
 import {
   useQuery,
@@ -2130,6 +2136,70 @@ export function useMarkers(filters: MarkerListFilters = {}) {
     queryFn: () =>
       jsonFetch<MarkerListView>(`/me/markers${buildQuery(params)}`),
     placeholderData: keepPreviousData,
+  });
+}
+
+/** The `/bookmarks` page feed: markers and issue-level closing notes in
+ *  one cursor-paged stream, sorted server-side (`newest` | `oldest` |
+ *  `reading`). Filters are server query params, never a client
+ *  `.filter()` over the loaded pages. */
+export function useBookmarksFeedInfinite(filters: BookmarksFeedFilters = {}) {
+  const params: Record<string, string> = {};
+  if (filters.kind) params.kind = filters.kind;
+  if (filters.issue_id) params.issue_id = filters.issue_id;
+  if (filters.series_id) params.series_id = filters.series_id;
+  if (filters.q) params.q = filters.q;
+  if (filters.is_favorite === true) params.is_favorite = "true";
+  if (filters.tags) params.tags = filters.tags;
+  if (filters.tag_match) params.tag_match = filters.tag_match;
+  if (filters.sort) params.sort = filters.sort;
+  if (filters.limit) params.limit = String(filters.limit);
+  return useInfiniteQuery({
+    queryKey: queryKeys.bookmarksFeed(filters),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<BookmarksFeedView>(
+        `/me/bookmarks${buildQuery(pageParam ? { ...params, cursor: pageParam } : params)}`,
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Per-kind counts for the `/bookmarks` chips under the active
+ *  non-kind filters, plus the caller's unfiltered total. */
+export function useBookmarkCounts(filters: BookmarksFeedFilters = {}) {
+  const params: Record<string, string> = {};
+  if (filters.issue_id) params.issue_id = filters.issue_id;
+  if (filters.series_id) params.series_id = filters.series_id;
+  if (filters.q) params.q = filters.q;
+  if (filters.tags) params.tags = filters.tags;
+  if (filters.tag_match) params.tag_match = filters.tag_match;
+  const key: BookmarksFeedFilters = {
+    issue_id: filters.issue_id,
+    series_id: filters.series_id,
+    q: filters.q,
+    tags: filters.tags,
+    tag_match: filters.tag_match,
+  };
+  return useQuery({
+    queryKey: queryKeys.bookmarkCounts(key),
+    queryFn: () =>
+      jsonFetch<BookmarkCountsView>(
+        `/me/bookmarks/counts${buildQuery(params)}`,
+      ),
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Series the caller has markers or closing notes in — the Series
+ *  filter combobox on `/bookmarks`. */
+export function useBookmarkSeries(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.bookmarkSeries,
+    queryFn: () => jsonFetch<BookmarkSeriesListView>("/me/bookmarks/series"),
+    staleTime: 60_000,
+    enabled,
   });
 }
 

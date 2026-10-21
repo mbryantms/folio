@@ -2742,6 +2742,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/bookmarks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["bookmarks_feed"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/bookmarks/counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["bookmarks_counts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/bookmarks/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["bookmarks_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/cbl-lists": {
         parameters: {
             query?: never;
@@ -6668,6 +6716,61 @@ export interface components {
             /** Format: int64 */
             series_created: number;
         };
+        BookmarkCountsView: {
+            /**
+             * Format: int64
+             * @description The caller's unfiltered total (visibility only).
+             */
+            all: number;
+            by_kind: components["schemas"]["BookmarkKindCounts"];
+            /**
+             * Format: int64
+             * @description Entries matching every filter except `kind` / `is_favorite`.
+             */
+            total: number;
+        };
+        /** @description A feed entry — a marker, or an issue-level closing note. */
+        BookmarkEntryView: {
+            marker: components["schemas"]["MarkerView"];
+            /** @enum {string} */
+            type: "marker";
+        } | {
+            note: components["schemas"]["ClosingNoteEntryView"];
+            /** @enum {string} */
+            type: "closing_note";
+        };
+        BookmarkKindCounts: {
+            /** Format: int64 */
+            bookmark: number;
+            /** Format: int64 */
+            closing_note: number;
+            /**
+             * Format: int64
+             * @description `is_favorite` OR `kind = favorite` — what the Favorites chip lists.
+             */
+            favorite: number;
+            /** Format: int64 */
+            highlight: number;
+            /** Format: int64 */
+            note: number;
+        };
+        BookmarkSeriesListView: {
+            items: components["schemas"]["BookmarkSeriesView"][];
+        };
+        BookmarkSeriesView: {
+            /**
+             * Format: int64
+             * @description Markers + closing notes the caller has in this series.
+             */
+            count: number;
+            id: string;
+            name: string;
+            slug: string;
+        };
+        BookmarksFeedView: {
+            items: components["schemas"]["BookmarkEntryView"][];
+            next_cursor?: string | null;
+        };
         /**
          * @description Refill window a budget figure applies to.
          * @enum {string}
@@ -7329,6 +7432,29 @@ export interface components {
         ClearHistoryResp: {
             /** Format: int64 */
             deleted: number;
+        };
+        /**
+         * @description One closing note as the feed renders it: enough identity to draw the
+         *     row (series, issue, cover, rating) without a second request.
+         */
+        ClosingNoteEntryView: {
+            body: string;
+            /** @description `/issues/{id}/pages/0/thumb` while the issue is active. */
+            cover_url?: string | null;
+            created_at: string;
+            issue_id: string;
+            issue_number?: string | null;
+            issue_slug?: string | null;
+            issue_title?: string | null;
+            /**
+             * Format: double
+             * @description The caller's 0..=5 rating of the issue, if any.
+             */
+            rating?: number | null;
+            series_id: string;
+            series_name?: string | null;
+            series_slug?: string | null;
+            updated_at: string;
         };
         CollectionEntriesView: {
             items: components["schemas"]["CollectionEntryView"][];
@@ -11129,6 +11255,11 @@ export interface components {
             target?: components["schemas"]["IssueSummaryView"] | null;
         };
         NotesExport: {
+            /**
+             * Format: int64
+             * @description Number of issue-level closing notes in the document.
+             */
+            closing_notes?: number;
             /** @description RFC 3339. */
             exported_at: string;
             /** @description Always `"folio-notes-export"`. */
@@ -11143,7 +11274,22 @@ export interface components {
             /** Format: int32 */
             version: number;
         };
+        /**
+         * @description Issue-level closing note (`user_issue_notes`) — written from the
+         *     reader's end-of-issue Wrap up pane; not anchored to a page.
+         */
+        NotesExportClosingNote: {
+            body: string;
+            created_at: string;
+            /**
+             * Format: double
+             * @description The caller's 0..=5 rating of the issue at export time, if any.
+             */
+            rating?: number | null;
+            updated_at: string;
+        };
         NotesExportIssue: {
+            closing_note?: components["schemas"]["NotesExportClosingNote"] | null;
             issue: components["schemas"]["IssueRef"];
             issue_title?: string | null;
             /** @description Pages in reading order; only pages that carry a marker appear. */
@@ -20670,6 +20816,93 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    bookmarks_feed: {
+        parameters: {
+            query?: {
+                /** @description bookmark | note | favorite | highlight | closing_note */
+                kind?: string;
+                issue_id?: string;
+                /** @description series UUID */
+                series_id?: string;
+                q?: string;
+                is_favorite?: boolean;
+                tags?: string;
+                /** @description all | any */
+                tag_match?: string;
+                /** @description newest (default) | oldest | reading */
+                sort?: string;
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookmarksFeedView"];
+                };
+            };
+            /** @description bad cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    bookmarks_counts: {
+        parameters: {
+            query?: {
+                issue_id?: string;
+                /** @description series UUID */
+                series_id?: string;
+                q?: string;
+                tags?: string;
+                /** @description all | any */
+                tag_match?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookmarkCountsView"];
+                };
+            };
+        };
+    };
+    bookmarks_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookmarkSeriesListView"];
+                };
             };
         };
     };

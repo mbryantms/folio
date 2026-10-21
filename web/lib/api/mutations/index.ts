@@ -991,6 +991,7 @@ export function useSetIssueRating(seriesSlug: string, issueSlug: string) {
  * the issue page; the response echoes the stored body.
  */
 export function useSetIssueNote(seriesSlug: string, issueSlug: string) {
+  const qc = useQueryClient();
   return useApiMutation<IssueNoteView, SetIssueNoteReq>(
     (body) => ({
       path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/note`,
@@ -1000,6 +1001,13 @@ export function useSetIssueNote(seriesSlug: string, issueSlug: string) {
     {
       successMessage: (view) =>
         view?.body ? "Closing note saved" : "Closing note cleared",
+      // The /bookmarks feed, its counts and series list carry closing
+      // notes (`["markers", "feed…"]` keys).
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ["markers", "feed"] });
+        qc.invalidateQueries({ queryKey: ["markers", "feed-counts"] });
+        qc.invalidateQueries({ queryKey: ["markers", "feed-series"] });
+      },
     },
   );
 }

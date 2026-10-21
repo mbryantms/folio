@@ -5898,6 +5898,189 @@
         }
       }
     },
+    "/api/me/bookmarks": {
+      "get": {
+        "operationId": "bookmarks_feed",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "bookmark | note | favorite | highlight | closing_note",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "series_id",
+            "in": "query",
+            "description": "series UUID",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "is_favorite",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag_match",
+            "in": "query",
+            "description": "all | any",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "newest (default) | oldest | reading",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookmarksFeedView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "bad cursor"
+          }
+        }
+      }
+    },
+    "/api/me/bookmarks/counts": {
+      "get": {
+        "operationId": "bookmarks_counts",
+        "parameters": [
+          {
+            "name": "issue_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "series_id",
+            "in": "query",
+            "description": "series UUID",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag_match",
+            "in": "query",
+            "description": "all | any",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookmarkCountsView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/me/bookmarks/series": {
+      "get": {
+        "operationId": "bookmarks_series",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookmarkSeriesListView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/me/cbl-lists": {
       "get": {
         "operationId": "cbl_lists_list",
@@ -15203,6 +15386,170 @@
           }
         }
       },
+      "BookmarkCountsView": {
+        "type": "object",
+        "required": [
+          "total",
+          "by_kind",
+          "all"
+        ],
+        "properties": {
+          "all": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The caller's unfiltered total (visibility only).",
+            "minimum": 0
+          },
+          "by_kind": {
+            "$ref": "#/components/schemas/BookmarkKindCounts"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Entries matching every filter except `kind` / `is_favorite`.",
+            "minimum": 0
+          }
+        }
+      },
+      "BookmarkEntryView": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "marker",
+              "type"
+            ],
+            "properties": {
+              "marker": {
+                "$ref": "#/components/schemas/MarkerView"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "marker"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "note",
+              "type"
+            ],
+            "properties": {
+              "note": {
+                "$ref": "#/components/schemas/ClosingNoteEntryView"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "closing_note"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A feed entry — a marker, or an issue-level closing note."
+      },
+      "BookmarkKindCounts": {
+        "type": "object",
+        "required": [
+          "bookmark",
+          "note",
+          "favorite",
+          "highlight",
+          "closing_note"
+        ],
+        "properties": {
+          "bookmark": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "closing_note": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "favorite": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`is_favorite` OR `kind = favorite` — what the Favorites chip lists.",
+            "minimum": 0
+          },
+          "highlight": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "note": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "BookmarkSeriesListView": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookmarkSeriesView"
+            }
+          }
+        }
+      },
+      "BookmarkSeriesView": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Markers + closing notes the caller has in this series.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "BookmarksFeedView": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookmarkEntryView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "BudgetWindow": {
         "type": "string",
         "description": "Refill window a budget figure applies to.",
@@ -16683,6 +17030,79 @@
           "deleted": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ClosingNoteEntryView": {
+        "type": "object",
+        "description": "One closing note as the feed renders it: enough identity to draw the\nrow (series, issue, cover, rating) without a second request.",
+        "required": [
+          "issue_id",
+          "series_id",
+          "body",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`/issues/{id}/pages/0/thumb` while the issue is active."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "issue_id": {
+            "type": "string"
+          },
+          "issue_number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issue_slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issue_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rating": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The caller's 0..=5 rating of the issue, if any."
+          },
+          "series_id": {
+            "type": "string"
+          },
+          "series_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series_slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": "string"
           }
         }
       },
@@ -26186,6 +26606,12 @@
           "series"
         ],
         "properties": {
+          "closing_notes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of issue-level closing notes in the document.",
+            "minimum": 0
+          },
           "exported_at": {
             "type": "string",
             "description": "RFC 3339."
@@ -26214,6 +26640,34 @@
           }
         }
       },
+      "NotesExportClosingNote": {
+        "type": "object",
+        "description": "Issue-level closing note (`user_issue_notes`) — written from the\nreader's end-of-issue Wrap up pane; not anchored to a page.",
+        "required": [
+          "body",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "rating": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The caller's 0..=5 rating of the issue at export time, if any."
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
       "NotesExportIssue": {
         "type": "object",
         "required": [
@@ -26221,6 +26675,17 @@
           "pages"
         ],
         "properties": {
+          "closing_note": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NotesExportClosingNote",
+                "description": "The caller's issue-level closing note, when one exists. An issue\nwith a closing note but no markers still appears, with `pages`\nempty."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "issue": {
             "$ref": "#/components/schemas/IssueRef"
           },

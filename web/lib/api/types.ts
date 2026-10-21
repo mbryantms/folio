@@ -93,6 +93,35 @@ export type SetRatingReq = Schemas["SetRatingReq"];
 export type RatingView = Schemas["RatingView"];
 export type SetIssueNoteReq = Schemas["SetIssueNoteReq"];
 export type IssueNoteView = Schemas["IssueNoteView"];
+export type ClosingNoteEntryView = Schemas["ClosingNoteEntryView"];
+/** Inline (not an alias): the generated `MarkerView` carries `kind` as a
+ *  bare string; the frontend narrows it to `MarkerKind` (same reason
+ *  `MarkerListView` is inline). */
+export type BookmarkEntryView =
+  | { type: "marker"; marker: MarkerView }
+  | { type: "closing_note"; note: ClosingNoteEntryView };
+export type BookmarksFeedView = {
+  items: BookmarkEntryView[];
+  next_cursor?: string | null;
+};
+export type BookmarkCountsView = Schemas["BookmarkCountsView"];
+export type BookmarkKindCounts = Schemas["BookmarkKindCounts"];
+export type BookmarkSeriesListView = Schemas["BookmarkSeriesListView"];
+export type BookmarkSeriesView = Schemas["BookmarkSeriesView"];
+/** `/me/bookmarks` filters (frontend-only: the server takes bare strings). */
+export type BookmarksFeedKind = MarkerKind | "closing_note";
+export type BookmarksFeedSort = "newest" | "oldest" | "reading";
+export type BookmarksFeedFilters = {
+  kind?: BookmarksFeedKind;
+  issue_id?: string;
+  series_id?: string;
+  q?: string;
+  is_favorite?: boolean;
+  tags?: string;
+  tag_match?: MarkerTagMatch;
+  sort?: BookmarksFeedSort;
+  limit?: number;
+};
 export type PageOverridesView = Schemas["PageOverridesView"];
 export type PutPageOverridesReq = Schemas["PutPageOverridesReq"];
 export type MeView = Schemas["MeResp"]; // renamed in codegen as MeResp

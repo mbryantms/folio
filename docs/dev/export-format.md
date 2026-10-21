@@ -328,6 +328,16 @@ app. It reuses the `markers` section's shape above (`ExportMarker` +
 `sort_number` (NULLs last); pages ascending; markers on a page oldest
 first. Only pages that carry a marker appear.
 
+**Closing notes.** An issue-level closing note (`user_issue_notes`, written
+from the reader's end-of-issue Wrap up pane) rides on its issue as
+`closing_note: { body, rating, created_at, updated_at }` and counts in
+the top-level `closing_notes`. An issue with a note and no markers still
+appears, with `pages` empty. In Markdown it renders under the issue
+heading, before any page, as `**Closing note** · ★★★★½ (4.5/5)` followed
+by the body verbatim. The same notes also list on `/bookmarks` through
+`GET /me/bookmarks` (`crates/server/src/api/bookmarks_feed.rs`), the
+union feed the page reads instead of `/me/markers`.
+
 **Jump URL.** Every marker carries `jump_url` =
 `{COMIC_PUBLIC_URL}/markers/{id}`, the marker permalink. That bare route
 303s to `/read/{series_slug}/{issue_slug}?page=<page_index>&peek=1` for

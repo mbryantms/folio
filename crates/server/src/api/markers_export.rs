@@ -28,7 +28,7 @@
 //! Wire format is documented in `docs/dev/export-format.md` ("Notes
 //! export").
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use axum::{
@@ -38,7 +38,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use entity::{issue, marker};
+use entity::{issue, marker, user_issue_note, user_rating};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -95,6 +95,9 @@ pub struct NotesExport {
     pub exported_at: String,
     /// Number of markers in the document.
     pub total: u64,
+    /// Number of issue-level closing notes in the document.
+    #[serde(default)]
+    pub closing_notes: u64,
     /// Series ordered by name, then year.
     pub series: Vec<NotesExportSeries>,
 }
@@ -110,8 +113,24 @@ pub struct NotesExportSeries {
 pub struct NotesExportIssue {
     pub issue: IssueRef,
     pub issue_title: Option<String>,
+    /// The caller's issue-level closing note, when one exists. An issue
+    /// with a closing note but no markers still appears, with `pages`
+    /// empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub closing_note: Option<NotesExportClosingNote>,
     /// Pages in reading order; only pages that carry a marker appear.
     pub pages: Vec<NotesExportPage>,
+}
+
+/// Issue-level closing note (`user_issue_notes`) — written from the
+/// reader's end-of-issue Wrap up pane; not anchored to a page.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct NotesExportClosingNote {
+    pub body: String,
+    /// The caller's 0..=5 rating of the issue at export time, if any.
+    pub rating: Option<f64>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -262,24 +281,73 @@ async fn build(
         .all(db)
         .await?;
     let total = rows.len() as u64;
-    let issue_ids: HashSet<String> = rows.iter().map(|m| m.issue_id.clone()).collect();
+    // Issue-level closing notes ride along: an issue may have a note and
+    // no markers, so its id joins the hydration set too.
+    let note_rows = user_issue_note::Entity::find()
+        .filter(user_issue_note::Column::UserId.eq(user_id))
+        .order_by_asc(user_issue_note::Column::CreatedAt)
+        .all(db)
+        .await?;
+    let closing_notes = note_rows.len() as u64;
+    let mut issue_ids: HashSet<String> = rows.iter().map(|m| m.issue_id.clone()).collect();
+    issue_ids.extend(note_rows.iter().map(|n| n.issue_id.clone()));
     let visible = visible_issue_ids(db, acl, &issue_ids).await?;
-    let series_ids = rows.iter().map(|m| m.series_id).collect();
+    let mut series_ids: HashSet<Uuid> = rows.iter().map(|m| m.series_id).collect();
+    if !note_rows.is_empty() {
+        // Series ids for note-only issues come from the issue rows.
+        let note_issue_ids: Vec<String> = note_rows.iter().map(|n| n.issue_id.clone()).collect();
+        series_ids.extend(
+            issue::Entity::find()
+                .select_only()
+                .column(issue::Column::SeriesId)
+                .filter(issue::Column::Id.is_in(note_issue_ids))
+                .into_tuple::<Uuid>()
+                .all(db)
+                .await?,
+        );
+    }
     let refs = Refs::load(db, issue_ids, series_ids).await?;
+    let ratings: HashMap<String, f64> = if note_rows.is_empty() {
+        HashMap::new()
+    } else {
+        user_rating::Entity::find()
+            .filter(user_rating::Column::UserId.eq(user_id))
+            .filter(user_rating::Column::TargetType.eq("issue"))
+            .filter(
+                user_rating::Column::TargetId.is_in(
+                    note_rows
+                        .iter()
+                        .map(|n| n.issue_id.clone())
+                        .collect::<Vec<_>>(),
+                ),
+            )
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|r| (r.target_id, r.rating))
+            .collect()
+    };
 
-    // series → issue → page → markers, each level in display order.
+    // series → issue → (closing note, page → markers), each level in
+    // display order.
     type Pages = BTreeMap<i32, Vec<NotesExportMarker>>;
-    type Issues = BTreeMap<IssueKey, (String, Pages)>;
+    struct IssueBucket {
+        issue_id: String,
+        closing_note: Option<NotesExportClosingNote>,
+        pages: Pages,
+    }
+    type Issues = BTreeMap<IssueKey, IssueBucket>;
     let mut tree: BTreeMap<SeriesKey, Issues> = BTreeMap::new();
-    for m in rows {
-        let issue_id = m.issue_id.clone();
-        let page_index = m.page_index;
-        let issue_row = refs.issues.get(&issue_id);
-        // The issue's current series wins over the marker's stored
-        // `series_id` (they only differ if the issue was re-homed).
-        let series_id = issue_row.map_or(m.series_id, |i| i.series_id);
+    // Group keys for an issue. The issue's current series wins over a
+    // marker's stored `series_id` (they only differ after a re-home).
+    let keys_for = |issue_id: &str, fallback_series: Option<Uuid>| {
+        let issue_row = refs.issues.get(issue_id);
+        let series_id = issue_row
+            .map(|i| i.series_id)
+            .or(fallback_series)
+            .unwrap_or_default();
         let series_row = refs.series.get(&series_id);
-        let series_key = (
+        let series_key: SeriesKey = (
             series_row
                 .map(|s| s.name.to_lowercase())
                 .unwrap_or_default(),
@@ -287,20 +355,30 @@ async fn build(
             series_id,
         );
         let sort = issue_row.and_then(|i| i.sort_number);
-        let issue_key = (
+        let issue_key: IssueKey = (
             sort.is_none(),
             OrdF64(sort.unwrap_or(0.0)),
-            refs.issue(&issue_id).issue_number.unwrap_or_default(),
-            issue_id.clone(),
+            refs.issue(issue_id).issue_number.unwrap_or_default(),
+            issue_id.to_owned(),
         );
+        (series_key, issue_key)
+    };
+    for m in rows {
+        let issue_id = m.issue_id.clone();
+        let page_index = m.page_index;
+        let (series_key, issue_key) = keys_for(&issue_id, Some(m.series_id));
         let available = visible.contains(&issue_id);
         let jump_url = available.then(|| format!("{base_url}/markers/{}", m.id));
         let marker = export_marker(m, &refs);
         tree.entry(series_key)
             .or_default()
             .entry(issue_key)
-            .or_insert_with(|| (issue_id, BTreeMap::new()))
-            .1
+            .or_insert_with(|| IssueBucket {
+                issue_id,
+                closing_note: None,
+                pages: BTreeMap::new(),
+            })
+            .pages
             .entry(page_index)
             .or_default()
             .push(NotesExportMarker {
@@ -309,6 +387,24 @@ async fn build(
                 jump_url,
             });
     }
+    for n in note_rows {
+        let (series_key, issue_key) = keys_for(&n.issue_id, None);
+        let bucket = tree
+            .entry(series_key)
+            .or_default()
+            .entry(issue_key)
+            .or_insert_with(|| IssueBucket {
+                issue_id: n.issue_id.clone(),
+                closing_note: None,
+                pages: BTreeMap::new(),
+            });
+        bucket.closing_note = Some(NotesExportClosingNote {
+            rating: ratings.get(&n.issue_id).copied(),
+            body: n.body,
+            created_at: n.created_at.to_rfc3339(),
+            updated_at: n.updated_at.to_rfc3339(),
+        });
+    }
 
     let series = tree
         .into_iter()
@@ -316,10 +412,15 @@ async fn build(
             series: refs.series(series_id),
             issues: issues
                 .into_values()
-                .map(|(issue_id, pages)| NotesExportIssue {
-                    issue: refs.issue(&issue_id),
-                    issue_title: refs.issues.get(&issue_id).and_then(|i| i.title.clone()),
-                    pages: pages
+                .map(|bucket| NotesExportIssue {
+                    issue: refs.issue(&bucket.issue_id),
+                    issue_title: refs
+                        .issues
+                        .get(&bucket.issue_id)
+                        .and_then(|i| i.title.clone()),
+                    closing_note: bucket.closing_note,
+                    pages: bucket
+                        .pages
                         .into_iter()
                         .map(|(page_index, markers)| NotesExportPage {
                             page_index,
@@ -336,6 +437,7 @@ async fn build(
         version: NOTES_EXPORT_VERSION,
         exported_at: Utc::now().to_rfc3339(),
         total,
+        closing_notes,
         series,
     })
 }
@@ -360,7 +462,17 @@ pub fn render_markdown(doc: &NotesExport) -> String {
     let mut out = String::new();
     let noun = if doc.total == 1 { "marker" } else { "markers" };
     let _ = writeln!(out, "# Folio notes\n");
-    let _ = writeln!(out, "Exported {} · {} {noun}", doc.exported_at, doc.total);
+    let _ = write!(out, "Exported {} · {} {noun}", doc.exported_at, doc.total);
+    if doc.closing_notes > 0 {
+        let n = doc.closing_notes;
+        let noun = if n == 1 {
+            "closing note"
+        } else {
+            "closing notes"
+        };
+        let _ = write!(out, " · {n} {noun}");
+    }
+    out.push('\n');
     for s in &doc.series {
         let name = s.series.series_name.as_deref().unwrap_or("Unknown series");
         match s.series.series_year {
@@ -379,6 +491,9 @@ pub fn render_markdown(doc: &NotesExport) -> String {
                 (None, None) => "Issue".to_owned(),
             };
             let _ = write!(out, "\n### {heading}\n");
+            if let Some(note) = &i.closing_note {
+                render_closing_note(&mut out, note);
+            }
             for p in &i.pages {
                 let _ = write!(out, "\n#### Page {}\n", p.page_index + 1);
                 for nm in &p.markers {
@@ -388,6 +503,24 @@ pub fn render_markdown(doc: &NotesExport) -> String {
         }
     }
     out
+}
+
+/// `**Closing note** · ★★★★☆ (4/5)` then the body verbatim. Sits under
+/// the issue heading, before any page.
+fn render_closing_note(out: &mut String, note: &NotesExportClosingNote) {
+    out.push_str("\n**Closing note**");
+    if let Some(r) = note.rating {
+        let full = r.floor() as usize;
+        let half = r - r.floor() >= 0.5;
+        let mut stars = "★".repeat(full.min(5));
+        if half && full < 5 {
+            stars.push('½');
+        }
+        let _ = write!(out, " · {stars} ({r}/5)");
+    }
+    out.push_str("\n\n");
+    out.push_str(note.body.trim());
+    out.push('\n');
 }
 
 fn render_marker(out: &mut String, nm: &NotesExportMarker) {
