@@ -20,7 +20,14 @@ export function NotesExportMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" aria-label="Export notes">
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label="Export notes"
+          // Toolbar-row convention: h-9 to match the search input +
+          // Select + CardSizeOptions siblings on /bookmarks.
+          className="h-9"
+        >
           <Download aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
           Export
         </Button>

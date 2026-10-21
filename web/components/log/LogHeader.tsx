@@ -63,6 +63,7 @@ export function LogHeader({
               variant="ghost"
               size="sm"
               asChild
+              className="h-9"
               title="Download your full reading log as a CSV"
             >
               <a href="/api/me/reading-log/export" download>
@@ -73,6 +74,7 @@ export function LogHeader({
             <Button
               variant="ghost"
               size="sm"
+              className="h-9"
               onClick={() => setResetOpen(true)}
               title="Reset to default layout"
             >

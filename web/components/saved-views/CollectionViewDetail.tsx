@@ -671,7 +671,8 @@ export function CollectionContinueButton({
     );
   }
   return (
-    <Button asChild size="sm">
+    // Toolbar-row convention: h-9 beside CardSizeOptions + Select.
+    <Button asChild size="sm" className="h-9">
       <Link href={href} aria-label={ariaLabel}>
         <Play className="mr-1 h-4 w-4" aria-hidden="true" />
         {label}

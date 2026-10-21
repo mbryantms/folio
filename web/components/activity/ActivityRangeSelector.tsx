@@ -25,6 +25,12 @@ export function ActivityRangeSelector({
       onChange={onChange}
       options={OPTIONS}
       ariaLabel="Stats range"
+      // Toolbar-row convention: h-9 (36px) so the group lines up with
+      // the Add widget / Export / Reset buttons in the /log header
+      // (its natural height is 38px). The pills drop their vertical
+      // padding and stretch to the group instead. `folio-control`
+      // joins it to the 44px touch floor (phone-layout.md rule 9).
+      className="folio-control h-9 [&>button]:py-0"
     />
   );
 }
