@@ -1070,6 +1070,10 @@ function SeriesFilter({
           "h-9 w-auto min-w-28 max-w-56",
           active && "border-primary bg-primary/10",
         )}
+        // The popover defaults to the trigger's width, which is the
+        // placeholder's — too narrow to read a series name or the
+        // search field. Fixed width instead.
+        contentClassName="w-72"
       />
       {active ? (
         <button
