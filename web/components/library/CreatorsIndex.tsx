@@ -5,11 +5,13 @@ import Link from "next/link";
 import * as React from "react";
 
 import { AtoZJumpRail } from "@/components/library/AtoZJumpRail";
+import { AtoZScrubber } from "@/components/library/AtoZScrubber";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCreatorsInfinite, usePeopleSearch } from "@/lib/api/queries";
 import type { CreatorListItem } from "@/lib/api/types";
+import { cn } from "@/lib/utils";
 
 const SEARCH_DEBOUNCE_MS = 250;
 /** Min query length before switching from browse to search — matches the
@@ -113,7 +115,7 @@ export function CreatorsIndex({
   return (
     <div className="space-y-6">
       {embedded ? (
-        <p className="text-muted-foreground text-sm">
+        <p className="text-muted-foreground text-sm max-sm:hidden">
           {searching
             ? `Searching for “${debouncedQ}”`
             : total != null
@@ -130,10 +132,11 @@ export function CreatorsIndex({
                 ? `${total.toLocaleString()} ${total === 1 ? "creator" : "creators"} across your libraries`
                 : "Everyone credited across your libraries"
           }
+          phoneDescription="hidden"
         />
       )}
 
-      <div className="border-border bg-card focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm focus-within:ring-2">
+      <div className="border-border bg-card focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 py-2 shadow-sm focus-within:ring-2 max-sm:mr-2 max-sm:py-1.5 max-sm:shadow-none">
         <Search
           aria-hidden="true"
           className="text-muted-foreground size-4 shrink-0"
@@ -176,7 +179,15 @@ export function CreatorsIndex({
       ) : (
         /* ── Browse mode: A–Z rail + the infinite directory. ── */
         <>
-          <AtoZJumpRail value={startsWith} onSelect={setStartsWith} />
+          {/* Desktop: the wrapped A–Z strip. Phone: a fixed letter
+              scrubber on the right edge instead. Both only exist in
+              browse mode — ranked search results have no buckets. */}
+          <AtoZJumpRail
+            value={startsWith}
+            onSelect={setStartsWith}
+            className="max-sm:hidden"
+          />
+          <AtoZScrubber value={startsWith} onSelect={setStartsWith} />
 
           {query.isLoading ? (
             <CreatorGridSkeleton />
@@ -191,7 +202,7 @@ export function CreatorsIndex({
                 : "No creators are credited in any library you can access yet."}
             </p>
           ) : (
-            <CreatorGrid items={items} />
+            <CreatorGrid items={items} className="max-sm:pr-2" />
           )}
 
           <div
@@ -210,11 +221,17 @@ export function CreatorsIndex({
   );
 }
 
-function CreatorGrid({ items }: { items: CreatorListItem[] }) {
+function CreatorGrid({
+  items,
+  className,
+}: {
+  items: CreatorListItem[];
+  className?: string;
+}) {
   return (
     <ul
       role="list"
-      className="grid gap-3"
+      className={cn("grid gap-3", className)}
       style={{ gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}
     >
       {items.map((c) => (

@@ -16,6 +16,7 @@ import {
 import {
   computeColumnsPerRow,
   effectiveColumnWidth,
+  GRID_GAP_PX,
 } from "@/lib/library/grid-window";
 import { SERIES_CARD_SIZE } from "@/lib/library/series-card-size";
 
@@ -40,10 +41,19 @@ describe("effectiveColumnWidth", () => {
     expect(effectiveColumnWidth(-5, 240)).toBe(240);
   });
 
-  it("is never narrower than the slider value when it fits", () => {
+  it("is never narrower than the slider value once two cards fit", () => {
     for (let w = 300; w <= 1600; w += 37) {
       for (const size of [120, 160, 200, 240, 280]) {
-        expect(effectiveColumnWidth(w, size)).toBeGreaterThanOrEqual(size);
+        if (w >= 2 * size + GRID_GAP_PX) {
+          expect(effectiveColumnWidth(w, size)).toBeGreaterThanOrEqual(size);
+        } else {
+          // Narrower than two cards at the slider value: the two-column
+          // floor wins (phone-layout.md) and the row is split in half.
+          expect(computeColumnsPerRow(w, size)).toBe(2);
+          expect(effectiveColumnWidth(w, size)).toBeCloseTo(
+            (w - GRID_GAP_PX) / 2,
+          );
+        }
       }
     }
   });

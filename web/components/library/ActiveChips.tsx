@@ -18,6 +18,7 @@ import {
   LIBRARY_GRID_STATUS_OPTIONS,
 } from "@/components/library/FilterSheet";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 /**
  * Renders the strip of removable chips shown above the library grid
@@ -26,6 +27,7 @@ import { Badge } from "@/components/ui/badge";
  * `LibraryGridView.tsx` in audit-remediation M7.3.
  */
 export function ActiveChips({
+  className,
   status,
   metadataCompleteness,
   providerMatch,
@@ -95,9 +97,20 @@ export function ActiveChips({
   onRemoveCharacter: (v: string) => void;
   onRemoveTeam: (v: string) => void;
   onRemoveLocation: (v: string) => void;
+  /** Extra classes on the row — the library grid insets it on phones
+   *  in series mode so the last chip clears the A–Z rail. */
+  className?: string;
 }) {
   return (
-    <div className="mb-4 flex flex-wrap gap-1.5">
+    // Phone: one horizontally scrolling row (edge to edge inside the
+    // shell's px-4) instead of a wrapping block that pushed the grid
+    // down a row per three chips. sm+: wrap as before.
+    <div
+      className={cn(
+        "mb-4 flex gap-1.5 max-sm:-mx-4 max-sm:[scrollbar-width:none] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:px-4 sm:flex-wrap max-sm:[&::-webkit-scrollbar]:hidden max-sm:[&>*]:shrink-0",
+        className,
+      )}
+    >
       {/* Same order as the FilterSheet sections: reading, publication,
           content, curation. */}
       {readStatus.map((v) => (

@@ -11,6 +11,7 @@ import {
   Download,
   EyeOff,
   FileCog,
+  ListChecks,
   Loader2,
   RefreshCw,
   Search as SearchIcon,
@@ -24,7 +25,14 @@ import {
   BulkMarkReadDialog,
   BULK_BACKFILL_PROMPT_THRESHOLD,
 } from "@/components/library/BulkMarkReadDialog";
-import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import {
+  CardSizeFields,
+  CardSizeOptions,
+} from "@/components/library/CardSizeOptions";
+import {
+  PhoneControlsBar,
+  PhoneMenuAction,
+} from "@/components/library/PhoneControlsBar";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
@@ -383,7 +391,7 @@ function CblViewDetailInner({
     );
   };
   const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
+    gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
   };
 
   // Jump the page to the Up Next anchor card.
@@ -566,6 +574,71 @@ function CblViewDetailInner({
               </DropdownMenuItem>
             ) : null}
           </>
+        }
+        // Phone (< sm): the whole desktop cluster above is hidden. The
+        // sticky bar keeps the two stats pills (leading), search (icon
+        // that expands in place) and Up Next (icon) one tap away; card
+        // size + Select move into its `⋯` sheet. Export / Hide missing /
+        // Refresh stay in the header's `⋯` menu, which is visible at
+        // every width — so they are deliberately *not* duplicated here.
+        phoneControls={
+          <PhoneControlsBar
+            hidden={selection.selectMode}
+            leading={<CblStatsPills cblListId={list.id} size="rail" />}
+            search={{
+              value: q,
+              onChange: setQ,
+              placeholder: "Search this list…",
+              label: "Search entries in this list",
+            }}
+            primary={
+              upNextPosition != null ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={scrollToUpNext}
+                  className="h-9 w-9 shrink-0"
+                  disabled={jumpTarget != null}
+                  aria-label="Scroll to Up Next entry"
+                  title="Up Next"
+                >
+                  {jumpTarget != null ? (
+                    <Loader2
+                      className="h-4 w-4 animate-spin"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <BookOpen className="h-4 w-4" aria-hidden="true" />
+                  )}
+                </Button>
+              ) : null
+            }
+            menu={(close) => (
+              <>
+                <CardSizeFields
+                  cardSize={cardSize}
+                  onCardSize={setCardSize}
+                  min={CARD_SIZE_MIN}
+                  max={CARD_SIZE_MAX}
+                  step={CARD_SIZE_STEP}
+                  defaultSize={CARD_SIZE_DEFAULT}
+                  fieldId="phone-card-size"
+                />
+                {loadedEntries.length > 0 || selection.selectMode ? (
+                  <PhoneMenuAction
+                    icon={<ListChecks className="size-4" />}
+                    onClick={() => {
+                      close();
+                      selection.enter();
+                    }}
+                  >
+                    Select
+                  </PhoneMenuAction>
+                ) : null}
+              </>
+            )}
+          />
         }
       />
       {/* Catalog/source path + import date — useful context on the

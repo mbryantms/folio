@@ -123,7 +123,7 @@ export function VirtualizedCardGrid({
           role="list"
           className="grid gap-4"
           style={{
-            gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))`,
+            gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
           }}
         >
           {Array.from({ length: 12 }).map((_, i) => (

@@ -49,9 +49,13 @@ export function BrowseTabs({
       <PageHeader
         title="Browse"
         description="Characters, teams, story arcs, publishers, and creators across your libraries"
+        phoneDescription="hidden"
       />
       <Tabs value={tab} onValueChange={onChange}>
-        <TabsList className="flex-wrap">
+        {/* No `flex-wrap`: `TabsList` is a fixed-height (`h-9`) strip
+            that scrolls horizontally with edge fades, so a wrapped
+            second row would be clipped. */}
+        <TabsList>
           {BROWSE_TABS.map((t) => (
             <TabsTrigger key={t} value={t}>
               {tabLabel(t)}

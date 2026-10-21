@@ -108,6 +108,25 @@ describe("BrowseTabs", () => {
     ).toBe("/creators/alan-moore");
   });
 
+  it("tab strip scrolls (no flex-wrap) and the index renders both A–Z rails", () => {
+    render(<BrowseTabs initialTab="characters" />);
+    // `TabsList` is a fixed-height scroll strip; wrapping would clip
+    // the second row, so the phone fix is simply not to wrap.
+    expect(screen.getByRole("tablist").className).not.toContain("flex-wrap");
+    // Desktop strip hidden on phones; phone scrubber (sm:hidden) next
+    // to it; the scrubber sits in the 16px right gutter so the grid keeps its width.
+    const rails = screen.getAllByRole("navigation", { name: "Jump to letter" });
+    expect(rails).toHaveLength(2);
+    expect(rails.some((r) => r.className.includes("max-sm:hidden"))).toBe(true);
+    expect(rails.some((r) => r.hasAttribute("data-az-scrubber"))).toBe(true);
+  });
+
+  it("creators tab renders the scrubber too", () => {
+    render(<BrowseTabs initialTab="creators" />);
+    const rails = screen.getAllByRole("navigation", { name: "Jump to letter" });
+    expect(rails.some((r) => r.hasAttribute("data-az-scrubber"))).toBe(true);
+  });
+
   it("parseBrowseTab falls back to characters", () => {
     expect(parseBrowseTab("teams")).toBe("teams");
     expect(parseBrowseTab("bogus")).toBe("characters");

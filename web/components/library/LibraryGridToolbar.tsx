@@ -21,7 +21,10 @@ import type { IssueSort, SeriesSort, SortOrder } from "@/lib/api/types";
 // `random` is excluded — it's a one-shot discovery pick ("Surprise me"),
 // never a user-selectable grid sort. The Exclude keeps this map exhaustive
 // over the *pickable* sorts so adding a real sort still fails the build.
-const SERIES_SORT_LABELS: Record<Exclude<SeriesSort, "random">, string> = {
+export const SERIES_SORT_LABELS: Record<
+  Exclude<SeriesSort, "random">,
+  string
+> = {
   name: "Name",
   created_at: "Recently added",
   updated_at: "Recently updated",
@@ -29,7 +32,7 @@ const SERIES_SORT_LABELS: Record<Exclude<SeriesSort, "random">, string> = {
   year: "Year",
 };
 
-const ISSUE_SORT_LABELS: Record<IssueSort, string> = {
+export const ISSUE_SORT_LABELS: Record<IssueSort, string> = {
   number: "Issue number",
   created_at: "Recently added",
   updated_at: "Recently updated",
@@ -39,12 +42,54 @@ const ISSUE_SORT_LABELS: Record<IssueSort, string> = {
   user_rating: "My rating",
 };
 
+/** Series ⇄ Issues as a compact segmented control — the phone row's
+ *  leading slot (`PhoneControlsBar`). Desktop keeps the two outline
+ *  buttons below so the toolbar's h-9 band stays uniform. */
+export function ModeSegmentedToggle({
+  mode,
+  onMode,
+}: {
+  mode: LibraryGridMode;
+  onMode: (m: LibraryGridMode) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Browse series or issues"
+      className="bg-muted inline-flex h-9 items-center gap-0.5 rounded-md p-0.5"
+    >
+      {(
+        [
+          { value: "series", label: "Series" },
+          { value: "issues", label: "Issues" },
+        ] as const
+      ).map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          aria-pressed={mode === o.value}
+          onClick={() => onMode(o.value)}
+          className={
+            mode === o.value
+              ? "bg-background text-foreground h-8 rounded px-3 text-sm font-medium shadow-sm"
+              : "text-muted-foreground h-8 rounded px-3 text-sm"
+          }
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /**
- * Toolbar above the library grid: mode toggle (Series/Issues), search
- * input, per-mode sort dropdown, order arrow, Filters button, Save-as-
- * view button, Clear-filters button, and the card-size slider on the
- * far right. Extracted from `LibraryGridView.tsx` in audit-remediation
- * M7.3 to keep the composer under the 400-LOC target.
+ * Desktop (`sm+`) toolbar above the library grid: mode toggle
+ * (Series/Issues), search input, per-mode sort dropdown, order arrow,
+ * Filters button, Save-as-view button, Clear-filters button, and the
+ * card-size slider on the far right. Extracted from
+ * `LibraryGridView.tsx` in audit-remediation M7.3 to keep the composer
+ * under the 400-LOC target. Phones render `PhoneControlsBar` instead —
+ * this row folded into six on a 390px viewport.
  */
 export function LibraryGridToolbar({
   mode,
@@ -123,7 +168,7 @@ export function LibraryGridToolbar({
     }
   }, [q]);
   return (
-    <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-2 max-sm:hidden">
       {/* Left controls flow + wrap as a group; the Select + card-size
           group below sits opposite via the container's justify-between —
           so it right-aligns when there's room and drops to a left-aligned

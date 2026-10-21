@@ -384,7 +384,7 @@ body {
   /* Re-establish stickiness on the inner wrapper since the outer
    * grid container resets the toolbar body's `top: 0`. */
   position: sticky;
-  top: 0;
+  top: var(--topbar-h);
   z-index: 20;
 }
 

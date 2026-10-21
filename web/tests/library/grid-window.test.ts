@@ -19,10 +19,26 @@ describe("computeColumnsPerRow", () => {
     expect(computeColumnsPerRow(80, 160)).toBe(1);
   });
 
+  it("floors at two columns on phone-width rows (phone-layout.md)", () => {
+    // 390px phone: 358 content, 350 with the A–Z gutter reserved.
+    // 375px phone: 343 / 335. All stay two-up at the default 160 and
+    // at the 280 maximum — the effective card width is capped at half
+    // the row, matching the CSS `minmax(min(cardSize, 50% - 0.5rem))`.
+    for (const w of [358, 350, 343, 335]) {
+      expect(computeColumnsPerRow(w, 160)).toBe(2);
+      expect(computeColumnsPerRow(w, 280)).toBe(2);
+    }
+    // The floor stops at 96px cards: a 200px row is two 92s → one card.
+    expect(computeColumnsPerRow(200, 160)).toBe(1);
+    expect(computeColumnsPerRow(208, 160)).toBe(2);
+    // Wide containers are untouched by the floor.
+    expect(computeColumnsPerRow(1200, 160)).toBe(6);
+  });
+
   it("matches the auto-fill minmax inversion (gap=16)", () => {
-    // One 160 card: needs 160. Two: 160+16+160 = 336.
+    // One 160 card: needs 160 (half of 160 is below the 96px floor).
     expect(computeColumnsPerRow(160, 160)).toBe(1);
-    expect(computeColumnsPerRow(335, 160)).toBe(1);
+    // Two: 160+16+160 = 336 (the floor already grants two from 208).
     expect(computeColumnsPerRow(336, 160)).toBe(2);
     // Five 160 cards: 5*160 + 4*16 = 864.
     expect(computeColumnsPerRow(864, 160)).toBe(5);

@@ -4,23 +4,13 @@ import { useTheme } from "next-themes";
 import * as React from "react";
 import { Toaster as Sonner } from "sonner";
 
+import { useIsPhone } from "@/lib/ui/use-is-phone";
+
 /** Below `sm` (phones) dialogs are bottom sheets and the tab bar owns the
  *  bottom edge, so a bottom-anchored toast lands on exactly the buttons
  *  the person is about to tap. Toasts move to the top there. SSR and the
  *  first paint assume desktop; the listener corrects before any toast
  *  can be shown. */
-function useIsPhone(): boolean {
-  const [phone, setPhone] = React.useState(false);
-  React.useEffect(() => {
-    const mq = window.matchMedia("(max-width: 639px)");
-    const update = () => setPhone(mq.matches);
-    update();
-    mq.addEventListener("change", update);
-    return () => mq.removeEventListener("change", update);
-  }, []);
-  return phone;
-}
-
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 
 const Toaster = ({ ...props }: ToasterProps) => {

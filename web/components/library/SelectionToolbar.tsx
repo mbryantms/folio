@@ -188,7 +188,7 @@ export function SelectionToolbarBody({
       aria-label={`${count} item${count === 1 ? "" : "s"} selected`}
       aria-live="polite"
       className={cn(
-        "bg-background/95 border-border sticky top-0 z-20 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b py-2 backdrop-blur",
+        "bg-background/95 border-border sticky top-(--topbar-h) z-20 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b py-2 backdrop-blur",
         "sm:flex sm:flex-wrap 2xl:flex-nowrap",
         // Mount + unmount animation: keyframes selection-toolbar-in
         // / -out in `web/styles/globals.css`. Toggled via the

@@ -59,6 +59,7 @@ import {
 } from "@/lib/series-status";
 import { type ReadState, readButtonLabel } from "@/lib/reading-state";
 import { statusTone } from "@/lib/ui/status-tone";
+import { cn } from "@/lib/utils";
 
 import { readerUrl } from "@/lib/urls";
 
@@ -192,12 +193,16 @@ export default async function SeriesPage({
     : "You've finished this series — every issue is read.";
 
   return (
-    <div className="space-y-10">
+    // A flex column (not `space-y`) so phones can reorder children with
+    // `order`: the issue list moves above the metadata tabs there.
+    <div className="flex flex-col gap-6 sm:gap-10">
       {/* Ancestor trail — `Library › <library name>`. The series-name H1
           below is the leaf, so the trail stays the parents (mirrors the
           admin PageHeader breadcrumbs). The library segment scopes the
-          home grid to this series' library (`?library=<id>`). */}
+          home grid to this series' library (`?library=<id>`). On phones
+          the trail stays one line — a long library name truncates. */}
       <Breadcrumbs
+        className="max-sm:[&_a]:truncate max-sm:[&_li]:min-w-0 max-sm:[&_ol]:flex-nowrap"
         items={[
           { label: "Library", href: "/" },
           ...(library
@@ -206,14 +211,20 @@ export default async function SeriesPage({
         ]}
       />
 
-      <header className="grid grid-cols-1 gap-6 sm:gap-8 lg:grid-cols-[18rem_1fr]">
+      {/* Phone (< sm): a 2fr/3fr grid — cover on the left, title block
+          beside it, then the Read row, summary and facts spanning both
+          columns. The two column wrappers become `display: contents`
+          there so their children place directly on this grid (`order`
+          pulls the title block up next to the cover). sm+ keeps the
+          prior layout: a stacked cover sidebar, then the text column
+          (side by side from lg). */}
+      <header className="grid grid-cols-[2fr_3fr] gap-4 sm:grid-cols-1 sm:gap-8 lg:grid-cols-[18rem_1fr]">
         {/* v0.5.10 mobile hero reshape — mirrors the issue page so
-            the two surfaces feel consistent on phones. Cover grows
-            to ~82% viewport width on mobile; Read + Actions collapse
-            to a single 48px-tall row with Actions as an icon-only
-            kebab. sm+ keeps the prior stacked sidebar layout. */}
-        <div className="flex flex-col gap-3 sm:gap-4">
-          <div className="mx-auto w-4/5 max-w-full sm:w-56 lg:mx-0 lg:w-72">
+            the two surfaces feel consistent on phones. Read + Actions
+            collapse to a single 48px-tall row with Actions as an
+            icon-only kebab. sm+ keeps the prior stacked sidebar layout. */}
+        <div className="flex flex-col gap-3 max-sm:contents sm:gap-4">
+          <div className="mx-auto w-full max-w-full max-sm:order-1 sm:w-56 lg:mx-0 lg:w-72">
             <Cover
               src={series.cover_url}
               alt={`Cover of ${series.name}`}
@@ -223,7 +234,7 @@ export default async function SeriesPage({
           {/* Read CTA + a small gear for actions, always side by side —
               the Read button is the focus, so actions stay a compact icon
               to its right rather than a full-width stacked button. */}
-          <div className="mx-auto flex w-full max-w-xs flex-row gap-2 sm:max-w-sm lg:mx-0 lg:max-w-72">
+          <div className="mx-auto flex w-full max-w-xs flex-row gap-2 max-sm:order-3 max-sm:col-span-full max-sm:max-w-none sm:max-w-sm lg:mx-0 lg:max-w-72">
             {nextHref ? (
               <Button asChild size="lg" className="h-12 flex-1 sm:h-10">
                 <Link href={nextHref}>{readButtonLabel(nextState)}</Link>
@@ -241,7 +252,7 @@ export default async function SeriesPage({
             />
           </div>
           {caughtUp ? (
-            <p className="text-muted-foreground mx-auto flex max-w-xs items-start gap-1.5 text-center text-xs text-balance sm:max-w-sm lg:mx-0 lg:max-w-72 lg:text-left">
+            <p className="text-muted-foreground mx-auto flex max-w-xs items-start gap-1.5 text-center text-xs text-balance max-sm:order-3 max-sm:col-span-full sm:max-w-sm lg:mx-0 lg:max-w-72 lg:text-left">
               <CheckCircle2
                 aria-hidden="true"
                 className="text-primary mt-px size-3.5 shrink-0"
@@ -255,8 +266,8 @@ export default async function SeriesPage({
             chips. Per the user's request, series-level data (publisher,
             year, reading time, etc.) is surfaced front and center rather
             than buried under a tab. */}
-        <div className="min-w-0 space-y-5">
-          <div>
+        <div className="min-w-0 max-sm:contents sm:space-y-5">
+          <div className="min-w-0 max-sm:order-2">
             {/* Prominent volume caption above the H1 — mirrors the
                 issue page's `Vol. N` badge so the multi-volume signal
                 is visible without drilling into the Details tab. Only
@@ -267,7 +278,7 @@ export default async function SeriesPage({
                 Volume {series.volume}
               </p>
             )}
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-4xl">
               {series.name}
             </h1>
             <SeriesFactRow series={series} readingTime={readingTime} />
@@ -287,10 +298,15 @@ export default async function SeriesPage({
               <ProviderBadgesRow scope="series" seriesSlug={series.slug} />
             </div>
           </div>
-          <Description text={series.summary} />
+          <div className="min-w-0 max-sm:order-3 max-sm:col-span-full">
+            <Description text={series.summary} />
+          </div>
 
-          <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
-            <FactBlock label="Writers">
+          {/* Writers and Publication hide on phones: writers lead the
+              Credits tab and the status is already the badge above (and
+              the first stat), so the hero stays short there. */}
+          <div className="grid gap-x-6 gap-y-4 max-sm:order-3 max-sm:col-span-full sm:grid-cols-2">
+            <FactBlock label="Writers" className="max-sm:hidden">
               {series.writers && series.writers.length > 0 ? (
                 <ChipList
                   items={series.writers}
@@ -301,7 +317,7 @@ export default async function SeriesPage({
                 <p className="text-muted-foreground text-sm">—</p>
               )}
             </FactBlock>
-            <FactBlock label="Publication">
+            <FactBlock label="Publication" className="max-sm:hidden">
               <p className="text-sm">{status ?? "—"}</p>
             </FactBlock>
             {hasGenres && (
@@ -318,9 +334,16 @@ export default async function SeriesPage({
         </div>
       </header>
 
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Status" value={status} />
-        <Stat label="Released" value={releasedLabel} />
+      {/* Phone: one horizontally scrolling strip bleeding to the screen
+          edges (the shell's `px-4` is undone and re-added as padding so
+          the first tile still lines up with the text). sm+: 4-up grid. */}
+      <section className="grid grid-cols-2 gap-3 max-sm:-mx-4 max-sm:flex max-sm:[scrollbar-width:none] max-sm:overflow-x-auto max-sm:px-4 sm:grid-cols-4">
+        <Stat label="Status" value={status} className={PHONE_STAT_TILE} />
+        <Stat
+          label="Released"
+          value={releasedLabel}
+          className={PHONE_STAT_TILE}
+        />
         <ReadingLoadStat
           totalPages={series.total_page_count ?? null}
           finishedPages={series.progress_summary?.finished_pages ?? 0}
@@ -329,8 +352,12 @@ export default async function SeriesPage({
       </section>
 
       {/* WP-7.7: the strip is a client wrapper so `?tab=` deep-links and
-          stays in sync, and the Related label carries a live count. */}
+          stays in sync, and the Related label carries a live count. On
+          phones the tabs drop below the issue list (`order-last`): the
+          covers are what a phone visit is for, and the Credits panel
+          alone was several screens of chips. */}
       <SeriesTabs
+        className="max-sm:order-last"
         seriesSlug={series.slug}
         initialTab={initialTab ?? null}
         relationshipCount={series.relationship_count ?? null}
@@ -666,10 +693,21 @@ export default async function SeriesPage({
         initialQuery={initialQuery ?? ""}
       />
 
-      <SeriesSourcesFooter seriesSlug={series.slug} />
+      {/* The footer carries its own `mt-8`, sized for the old margin-
+          collapsing `space-y` root; in this gap column the wrapper
+          cancels it so the footer sits one gap below the last block
+          (and, with no attribution to show, costs nothing). Phones:
+          `order-last` keeps it below the tabs. */}
+      <div className="-mt-8 empty:hidden max-sm:order-last">
+        <SeriesSourcesFooter seriesSlug={series.slug} />
+      </div>
     </div>
   );
 }
+
+/** Phone stat tiles: fixed-width, non-shrinking cards in a scroll strip
+ *  (the section is `flex overflow-x-auto` below `sm`). */
+const PHONE_STAT_TILE = "max-sm:min-w-[9rem] max-sm:shrink-0";
 
 /**
  * Inline icon-driven row of series-level facts that aren't ComicInfo issue
@@ -734,13 +772,15 @@ function SeriesFactRow({
 
 function FactBlock({
   label,
+  className,
   children,
 }: {
   label: string;
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-1.5">
+    <div className={cn("space-y-1.5", className)}>
       {/* A field label, not a document section — keep it out of the heading
           outline so the page doesn't jump h1 → h3 (audit E9). */}
       <p className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
@@ -839,7 +879,12 @@ function ReadProgressStat({ read, total }: { read: number; total: number }) {
       : 0;
   const complete = total > 0 && read === total;
   return (
-    <div className="border-border bg-card flex flex-col gap-2 rounded-md border px-4 py-3">
+    <div
+      className={cn(
+        "border-border bg-card flex flex-col gap-2 rounded-md border px-4 py-3",
+        PHONE_STAT_TILE,
+      )}
+    >
       <div className="flex items-baseline justify-between">
         <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
           Read progress
@@ -888,7 +933,12 @@ function ReadingLoadStat({
 }) {
   if (totalPages == null || totalPages <= 0) {
     return (
-      <div className="border-border bg-card flex flex-col gap-1 rounded-md border px-4 py-3">
+      <div
+        className={cn(
+          "border-border bg-card flex flex-col gap-1 rounded-md border px-4 py-3",
+          PHONE_STAT_TILE,
+        )}
+      >
         <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
           Reading load remaining
         </span>
@@ -903,7 +953,12 @@ function ReadingLoadStat({
   const pagesShown = isReread ? totalPages : remainingPages;
   const time = formatReadingTimeCompact(pagesShown);
   return (
-    <div className="border-border bg-card flex flex-col gap-1 rounded-md border px-4 py-3">
+    <div
+      className={cn(
+        "border-border bg-card flex flex-col gap-1 rounded-md border px-4 py-3",
+        PHONE_STAT_TILE,
+      )}
+    >
       <div className="flex items-baseline justify-between">
         <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
           Reading load remaining
