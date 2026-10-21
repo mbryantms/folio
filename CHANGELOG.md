@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.62.0](https://github.com/mbryantms/folio/compare/v0.61.0...v0.62.0) (2026-10-21)
+
+
+### Added
+
+* **web:** stick the desktop library toolbar under the topbar ([#1253](https://github.com/mbryantms/folio/issues/1253)) ([e3fa211](https://github.com/mbryantms/folio/commit/e3fa211096e79e7307321a4a7b0fedf190c109df))
+
+
+### Fixed
+
+* **web:** floor every toolbar control at 44px on touch, not just buttons ([#1251](https://github.com/mbryantms/folio/issues/1251)) ([15e8279](https://github.com/mbryantms/folio/commit/15e827961ef6511ba7574fb47bf3a5fc54fa0cea))
+
 ## [0.61.0](https://github.com/mbryantms/folio/compare/v0.60.1...v0.61.0) (2026-10-21)
 
 
