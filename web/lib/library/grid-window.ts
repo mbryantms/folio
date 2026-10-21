@@ -115,7 +115,8 @@ export function estimateRowHeight(
  * `containerWidth` (WP-7.7): the column count the browser picks
  * (`computeColumnsPerRow`), then the `1fr` stretch
  * (`computeColumnWidth`) — `(W − gap·(cols − 1)) / cols` with
- * `cols = max(1, floor((W + gap) / (minSize + gap)))`. Lets surfaces that
+ * `cols = max(1, floor((W + gap) / (minSize + gap)))`, subject to the
+ * two-column floor in `computeColumnsPerRow`. Lets surfaces that
  * aren't that grid (rails, strips) render covers at exactly the issue
  * grid's width. Falls back to `minSize` before the first measurement.
  */
