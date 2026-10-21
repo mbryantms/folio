@@ -12,6 +12,8 @@ import {
   Star,
   StickyNote,
   Trash2,
+  X,
+  MoreVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -44,11 +46,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import {
-  useMarkerCount,
-  useMarkersInfinite,
-  useMarkerTags,
-} from "@/lib/api/queries";
+import { useMarkerTags } from "@/lib/api/queries";
 import {
   useBulkDeleteMarkers,
   useDeleteMarker,
@@ -78,13 +76,48 @@ import {
   readerUrl,
 } from "@/lib/urls";
 import { cn } from "@/lib/utils";
+import {
+  useBookmarkCounts,
+  useBookmarkSeries,
+  useBookmarksFeedInfinite,
+} from "@/lib/api/queries";
+import type {
+  BookmarkEntryView,
+  BookmarkKindCounts,
+  BookmarksFeedFilters,
+  BookmarksFeedKind,
+  BookmarksFeedSort,
+  ClosingNoteEntryView,
+} from "@/lib/api/types";
+import { Combobox } from "@/components/ui/combobox";
+import { NativeSelect } from "@/components/ui/native-select";
+import {
+  ClampedBody,
+  ClosingNoteRow,
+} from "@/components/markers/ClosingNoteRow";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
-type KindFilter = MarkerKind | "all" | "favorite";
+type KindFilter = BookmarksFeedKind | "all" | "favorite";
+
+const SORT_OPTIONS: { value: BookmarksFeedSort; label: string }[] = [
+  { value: "newest", label: "Newest" },
+  { value: "oldest", label: "Oldest" },
+  { value: "reading", label: "Reading order" },
+];
 
 const FILTER_OPTIONS: { value: KindFilter; label: string }[] = [
   { value: "all", label: "All" },
   { value: "bookmark", label: "Bookmarks" },
   { value: "note", label: "Notes" },
+  // Issue-level closing notes (`user_issue_notes`) — written from the
+  // reader's end-of-issue Wrap up pane; rendered as text rows, not
+  // picture tiles (`ClosingNoteRow`).
+  { value: "closing_note", label: "Closing notes" },
   // v0.3.44: favorite is now a kind again (decoupled from bookmark)
   // but legacy `is_favorite=true` rows still exist on other kinds.
   // The chip wires through `is_favorite=true` so the server's union
@@ -129,6 +162,11 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
   const [selectedTags, setSelectedTags] = React.useState<string[]>([]);
   const [tagMatch, setTagMatch] = React.useState<MarkerTagMatch>("all");
+  // Sort + Series are server-side like every other filter, so they
+  // survive pagination (a client re-sort of the loaded pages would lie
+  // past the first page).
+  const [sort, setSort] = React.useState<BookmarksFeedSort>("newest");
+  const [seriesFilter, setSeriesFilter] = React.useState<string>("");
   const [cardSize, setCardSize] = useCardSize({
     storageKey: CARD_SIZE_STORAGE_KEY,
     min: CARD_SIZE_MIN,
@@ -149,33 +187,58 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
   // `is_favorite=true` (no kind constraint), and selected tags become
   // `tags=a,b&tag_match=…`.
   const isFavoriteFilter = filter === "favorite";
-  const kindFilter: MarkerKind | undefined =
-    filter === "all" || filter === "favorite"
-      ? undefined
-      : (filter as MarkerKind);
+  const kindFilter: BookmarksFeedKind | undefined =
+    filter === "all" || filter === "favorite" ? undefined : filter;
   // Infinite scroll — the previous single-shot 200-cap meant power
   // users with > 200 markers silently lost access to older ones.
-  // Filters (kind, favorite, tags, search) all drive server-side
-  // query params, not client-side `.filter()` over the loaded page.
-  const query = useMarkersInfinite({
-    series_id: scope?.kind === "series" ? scope.seriesId : undefined,
+  // Filters (kind, favorite, tags, search, series, sort) all drive
+  // server-side query params, not client-side `.filter()` over the
+  // loaded page. The feed unions markers with closing notes.
+  const feedFilters: BookmarksFeedFilters = {
+    series_id:
+      scope?.kind === "series" ? scope.seriesId : seriesFilter || undefined,
     issue_id: scope?.kind === "issue" ? scope.issueId : undefined,
     kind: kindFilter,
     is_favorite: isFavoriteFilter ? true : undefined,
     q: debouncedSearch || undefined,
     tags: selectedTags.length > 0 ? selectedTags.join(",") : undefined,
     tag_match: selectedTags.length > 0 ? tagMatch : undefined,
-  });
+    sort,
+  };
+  const query = useBookmarksFeedInfinite(feedFilters);
+  // Per-kind counts under the other filters (chips + header), and the
+  // series the caller has entries in (the Series filter).
+  const counts = useBookmarkCounts(feedFilters);
+  const seriesQuery = useBookmarkSeries(!embedded);
   const tagsQuery = useMarkerTags();
   const availableTags = tagsQuery.data?.items ?? [];
 
-  const items = React.useMemo<MarkerView[]>(
+  const entries = React.useMemo<BookmarkEntryView[]>(
     () => query.data?.pages.flatMap((p) => p.items) ?? [],
     [query.data],
   );
-  const groups = React.useMemo(() => groupBySeries(items), [items]);
+  // Markers only — the selection / bulk-delete surface is marker-backed;
+  // closing notes delete from their own row menu.
+  const items = React.useMemo<MarkerView[]>(
+    () => entries.flatMap((e) => (e.type === "marker" ? [e.marker] : [])),
+    [entries],
+  );
+  const groups = React.useMemo(() => groupEntriesBySeries(entries), [entries]);
+  const runs = React.useMemo(() => splitIntoRuns(entries), [entries]);
   const hasFilterOrSearch =
-    filter !== "all" || debouncedSearch.length > 0 || selectedTags.length > 0;
+    filter !== "all" ||
+    debouncedSearch.length > 0 ||
+    selectedTags.length > 0 ||
+    seriesFilter.length > 0;
+  const activeSeriesName = seriesQuery.data?.items.find(
+    (s) => s.id === seriesFilter,
+  )?.name;
+  const countFor = (value: KindFilter): number | undefined => {
+    const by = counts.data?.by_kind;
+    if (!by) return undefined;
+    if (value === "all") return counts.data?.total;
+    return by[value as keyof BookmarkKindCounts];
+  };
 
   // --- Layout + multi-select (audit B11) ---
   // Grouped-by-series (default) ⇄ flat newest-first. The server already
@@ -188,14 +251,16 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
   // desktop those controls sit inline under the header.
   const [phoneFiltersOpen, setPhoneFiltersOpen] = React.useState(false);
   const phoneFilterCount =
-    selectedTags.length + (!embedded && layout !== "grouped" ? 1 : 0);
+    selectedTags.length +
+    (!embedded && layout !== "grouped" ? 1 : 0) +
+    (sort !== "newest" ? 1 : 0) +
+    (seriesFilter ? 1 : 0);
   const selection = useSelection(items);
   const bulkDelete = useBulkDeleteMarkers();
   const restoreMarkers = useRestoreMarkers();
   // Header total — global (the list endpoint carries no per-filter
   // count), so it reads as "you've saved N markers" regardless of the
   // active chips.
-  const markerCount = useMarkerCount();
   const selectButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const wasSelectModeRef = React.useRef(false);
 
@@ -299,6 +364,20 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
           className="pl-8"
         />
       </div>
+      <NativeSelect
+        aria-label="Sort"
+        value={sort}
+        onChange={(v) => setSort(v as BookmarksFeedSort)}
+        options={SORT_OPTIONS}
+        className="h-9 w-auto"
+      />
+      {embedded ? null : (
+        <SeriesFilter
+          value={seriesFilter}
+          onChange={setSeriesFilter}
+          options={seriesQuery.data?.items ?? []}
+        />
+      )}
       {items.length > 0 || selection.selectMode ? (
         <SelectModeButton
           ref={selectButtonRef}
@@ -332,11 +411,12 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
       ) : (
         <PageHeader
           title="Bookmarks"
-          description={
-            markerCount.data
-              ? `${markerCount.data.total} saved across your library — every page bookmark, note, favorite, and highlight.`
-              : "Every page bookmark, note, favorite, and highlight you’ve saved across your library."
-          }
+          description={headerDescription({
+            all: counts.data?.all,
+            shown: countFor(filter),
+            filtered: hasFilterOrSearch,
+            seriesName: activeSeriesName,
+          })}
           phoneDescription="hidden"
           actions={headerActions}
           // Below `sm` the PhoneControlsBar replaces this toolbar.
@@ -419,6 +499,36 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
                     layout={layout}
                     onLayout={setLayout}
                     className="grid w-full grid-cols-2 [&>button]:h-9"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                    Sort
+                  </p>
+                  <NativeSelect
+                    aria-label="Sort"
+                    value={sort}
+                    onChange={(v) => setSort(v as BookmarksFeedSort)}
+                    options={SORT_OPTIONS}
+                    className="folio-control"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                    Series
+                  </p>
+                  <NativeSelect
+                    aria-label="Series"
+                    value={seriesFilter}
+                    onChange={setSeriesFilter}
+                    options={[
+                      { value: "", label: "All series" },
+                      ...(seriesQuery.data?.items ?? []).map((s) => ({
+                        value: s.id,
+                        label: `${s.name} (${s.count})`,
+                      })),
+                    ]}
+                    className="folio-control"
                   />
                 </div>
                 {availableTags.length > 0 ? (
@@ -510,6 +620,7 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
               active={filter === opt.value}
               aria-selected={filter === opt.value}
               onClick={() => setFilter(opt.value)}
+              count={countFor(opt.value)}
             >
               {opt.label}
             </FilterPill>
@@ -578,30 +689,80 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
         <div className="text-destructive rounded-md border p-4 text-sm">
           Failed to load markers.
         </div>
-      ) : items.length === 0 ? (
+      ) : entries.length === 0 ? (
         <EmptyState hasFilter={hasFilterOrSearch} scope={scope} />
       ) : (
         <div className="space-y-8">
-          {layout === "grouped" ? (
-            groups.map((group) => (
-              <section key={group.key} className="space-y-3">
-                <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-                  {group.label}
-                </h2>
-                <RowPackedSection
-                  items={group.items}
-                  cardSize={cardSize}
-                  selection={selection}
-                />
-              </section>
-            ))
-          ) : (
-            <RowPackedSection
-              items={items}
-              cardSize={cardSize}
-              selection={selection}
-            />
-          )}
+          {layout === "grouped"
+            ? groups.map((group) => (
+                <section key={group.key} className="space-y-3">
+                  <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                    {group.label}
+                  </h2>
+                  {/* Closing notes lead the group as full-width text rows:
+                    "what I thought of the issues, then what I marked in
+                    them". */}
+                  {group.notes.map((n) => (
+                    <ClosingNoteRow key={`note-${n.issue_id}`} note={n} />
+                  ))}
+                  {group.pageNotes.map((m) => (
+                    <PageNoteRow
+                      key={m.id}
+                      marker={m}
+                      selectMode={
+                        selection.selectMode
+                          ? {
+                              isActive: true,
+                              isSelected: selection.isSelected(m.id),
+                              onToggle: (ev) => selection.toggle(m.id, ev),
+                            }
+                          : undefined
+                      }
+                      onEnterSelectMode={(id) => selection.toggle(id)}
+                    />
+                  ))}
+                  {group.markers.length > 0 ? (
+                    <RowPackedSection
+                      items={group.markers}
+                      cardSize={cardSize}
+                      selection={selection}
+                    />
+                  ) : null}
+                </section>
+              ))
+            : // Flat (Newest / Oldest): closing notes interleave as rows
+              // between runs of packed tiles, in server order.
+              runs.map((run) =>
+                run.type === "note" ? (
+                  <ClosingNoteRow
+                    key={`note-${run.note.issue_id}`}
+                    note={run.note}
+                  />
+                ) : run.type === "pageNote" ? (
+                  <PageNoteRow
+                    key={run.marker.id}
+                    marker={run.marker}
+                    selectMode={
+                      selection.selectMode
+                        ? {
+                            isActive: true,
+                            isSelected: selection.isSelected(run.marker.id),
+                            onToggle: (ev) =>
+                              selection.toggle(run.marker.id, ev),
+                          }
+                        : undefined
+                    }
+                    onEnterSelectMode={(id) => selection.toggle(id)}
+                  />
+                ) : (
+                  <RowPackedSection
+                    key={run.key}
+                    items={run.markers}
+                    cardSize={cardSize}
+                    selection={selection}
+                  />
+                ),
+              )}
           <div
             ref={sentinelRef}
             aria-hidden
@@ -899,6 +1060,322 @@ function RowPackedSection({
   );
 }
 
+/** Header copy: the unfiltered total, or "Showing N of M" once any chip,
+ *  tag, search or series filter narrows the feed. */
+export function headerDescription({
+  all,
+  shown,
+  filtered,
+  seriesName,
+}: {
+  all: number | undefined;
+  shown: number | undefined;
+  filtered: boolean;
+  seriesName?: string;
+}): string {
+  if (all === undefined) {
+    return "Every page bookmark, note, favorite, highlight, and closing note you’ve saved across your library.";
+  }
+  if (!filtered || shown === undefined) {
+    return `${all} saved across your library — every page bookmark, note, favorite, highlight, and closing note.`;
+  }
+  const suffix = seriesName ? ` — filtered to ${seriesName}` : "";
+  return `Showing ${shown} of ${all} saved${suffix}.`;
+}
+
+/** Series filter for the desktop toolbar: a searchable combobox over the
+ *  series the caller has entries in, with counts. */
+function SeriesFilter({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  options: ReadonlyArray<{ id: string; name: string; count: number }>;
+}) {
+  const active = options.find((s) => s.id === value);
+  return (
+    <div className="flex items-center gap-1">
+      <Combobox
+        value={value}
+        onChange={(v) => onChange(v === value ? "" : v)}
+        placeholder="Series"
+        searchPlaceholder="Filter series…"
+        emptyText="No series with markers."
+        options={options.map((s) => ({
+          value: s.id,
+          label: s.name,
+          description: `${s.count} saved`,
+        }))}
+        triggerClassName={cn(
+          "h-9 w-auto min-w-28 max-w-56",
+          active && "border-primary bg-primary/10",
+        )}
+        // The popover defaults to the trigger's width, which is the
+        // placeholder's — too narrow to read a series name or the
+        // search field. Fixed width instead.
+        contentClassName="w-72"
+      />
+      {active ? (
+        <button
+          type="button"
+          aria-label="Clear series filter"
+          onClick={() => onChange("")}
+          className="text-muted-foreground hover:text-foreground hover:bg-muted/50 inline-flex h-9 w-7 items-center justify-center rounded-md transition-colors"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** A long or multi-line snippet gets a three-line clamp plus More / Less
+ *  that expands in place, so reading a page note never requires the
+ *  reader. */
+const SNIPPET_CLAMP_CHARS = 120;
+function ExpandableSnippet({ text }: { text: string }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const clamp = text.length > SNIPPET_CLAMP_CHARS || text.includes("\n");
+  return (
+    <>
+      <p
+        className={cn(
+          "text-muted-foreground text-xs whitespace-pre-line",
+          clamp && !expanded && "line-clamp-3",
+        )}
+      >
+        {text}
+      </p>
+      {clamp ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((e) => !e)}
+          className="text-primary self-start text-xs font-medium hover:underline"
+        >
+          {expanded ? "Less" : "More"}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+/** A page note with text renders as a text row (`PageNoteRow`), the
+ *  same shape as a closing note; bookmarks, favorites, highlights and a
+ *  bodyless note stay picture tiles. */
+export function isPageNoteRow(m: MarkerView): boolean {
+  return m.kind === "note" && !!m.body?.trim();
+}
+
+/**
+ * A page note as a full-width text row: page thumb (the crop when the
+ * note has a region) linking to the page, Note badge, issue + page,
+ * tags, date, the same kebab as the tile, and the body clamped at four
+ * lines with More / Less. In select mode the thumb carries the checkbox
+ * and the whole row toggles.
+ */
+function PageNoteRow({
+  marker,
+  selectMode,
+  onEnterSelectMode,
+}: {
+  marker: MarkerView;
+  selectMode?: {
+    isActive: boolean;
+    isSelected: boolean;
+    onToggle: (ev?: React.MouseEvent) => void;
+  };
+  onEnterSelectMode?: (id: string) => void;
+}) {
+  const { actions, jumpHref } = useMarkerActions(marker, onEnterSelectMode);
+  const kindMeta = KIND_META[marker.kind];
+  const KindIcon = kindMeta.icon;
+  const issueLabel = `${formatIssueLabel(marker)} · Page ${marker.page_index + 1}`;
+  const inSelect = selectMode?.isActive ?? false;
+  const body = marker.body?.trim() ?? "";
+  const thumb = (
+    <div className="group relative w-14 shrink-0">
+      <MarkerThumbnail marker={marker} height={84} />
+      {selectMode?.isActive ? (
+        <SelectionCheckbox
+          isSelected={selectMode.isSelected}
+          selectMode
+          onToggle={selectMode.onToggle}
+          label={`Note · page ${marker.page_index + 1}`}
+        />
+      ) : null}
+    </div>
+  );
+  return (
+    <article
+      data-page-note-row=""
+      data-selected={inSelect && selectMode?.isSelected ? "" : undefined}
+      onClick={inSelect ? (ev) => selectMode?.onToggle(ev) : undefined}
+      className={cn(
+        "border-border bg-card flex gap-3.5 rounded-lg border p-3",
+        inSelect && "cursor-pointer",
+        inSelect && selectMode?.isSelected && "ring-primary ring-2",
+      )}
+    >
+      {!inSelect && jumpHref ? (
+        <Link
+          href={jumpHref}
+          aria-label={`Jump to page ${marker.page_index + 1}`}
+          className="shrink-0"
+        >
+          {thumb}
+        </Link>
+      ) : (
+        thumb
+      )}
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase",
+              kindMeta.badge,
+            )}
+          >
+            <KindIcon className="h-3 w-3" aria-hidden="true" />
+            {kindMeta.shortLabel}
+          </span>
+          <span
+            className="text-muted-foreground truncate text-xs"
+            title={issueLabel}
+          >
+            {issueLabel}
+          </span>
+          {marker.is_favorite ? (
+            <Star
+              aria-label="Favorite"
+              className="h-3.5 w-3.5 fill-current text-rose-400"
+            />
+          ) : null}
+          {marker.tags.slice(0, 4).map((t) => (
+            <span
+              key={t}
+              className="bg-muted text-muted-foreground inline-flex items-center rounded px-1.5 py-0.5 text-[10px]"
+            >
+              {t}
+            </span>
+          ))}
+          <span className="text-muted-foreground ml-auto shrink-0 text-xs whitespace-nowrap">
+            {new Date(marker.updated_at).toLocaleDateString(undefined, {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+            })}
+          </span>
+          {!inSelect ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`Actions for note on page ${marker.page_index + 1}`}
+                  className="text-muted-foreground hover:text-foreground hover:bg-muted/50 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors"
+                >
+                  <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {actions.map((a) => (
+                  <DropdownMenuItem
+                    key={a.label}
+                    disabled={a.disabled}
+                    onSelect={a.onSelect}
+                    className={
+                      a.destructive
+                        ? "text-destructive focus:text-destructive"
+                        : undefined
+                    }
+                  >
+                    {a.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+        </div>
+        <ClampedBody text={body} lines={4} />
+      </div>
+    </article>
+  );
+}
+
+/** Group feed entries by series in first-appearance order (the server
+ *  already sorted the stream); closing notes, page-note rows and picture
+ *  markers kept apart so the group renders rows above the packed tiles. */
+export function groupEntriesBySeries(
+  entries: ReadonlyArray<BookmarkEntryView>,
+): {
+  key: string;
+  label: string;
+  notes: ClosingNoteEntryView[];
+  pageNotes: MarkerView[];
+  markers: MarkerView[];
+}[] {
+  const map = new Map<
+    string,
+    {
+      label: string;
+      notes: ClosingNoteEntryView[];
+      pageNotes: MarkerView[];
+      markers: MarkerView[];
+    }
+  >();
+  for (const e of entries) {
+    const key = e.type === "marker" ? e.marker.series_id : e.note.series_id;
+    const label =
+      (e.type === "marker" ? e.marker.series_name : e.note.series_name) ??
+      "Unknown series";
+    const entry = map.get(key) ?? {
+      label,
+      notes: [],
+      pageNotes: [],
+      markers: [],
+    };
+    if (e.type === "closing_note") entry.notes.push(e.note);
+    else if (isPageNoteRow(e.marker)) entry.pageNotes.push(e.marker);
+    else entry.markers.push(e.marker);
+    map.set(key, entry);
+  }
+  return Array.from(map.entries()).map(([key, value]) => ({ key, ...value }));
+}
+
+/** Flat layout: consecutive picture markers become one packed run; each
+ *  closing note and each page note is its own full-width row, in server
+ *  order. */
+export type FeedRun =
+  | { type: "markers"; key: string; markers: MarkerView[] }
+  | { type: "note"; note: ClosingNoteEntryView }
+  | { type: "pageNote"; marker: MarkerView };
+export function splitIntoRuns(
+  entries: ReadonlyArray<BookmarkEntryView>,
+): FeedRun[] {
+  const out: FeedRun[] = [];
+  for (const e of entries) {
+    if (e.type === "closing_note") {
+      out.push({ type: "note", note: e.note });
+      continue;
+    }
+    if (isPageNoteRow(e.marker)) {
+      out.push({ type: "pageNote", marker: e.marker });
+      continue;
+    }
+    const last = out[out.length - 1];
+    if (last && last.type === "markers") last.markers.push(e.marker);
+    else
+      out.push({
+        type: "markers",
+        key: `run-${e.marker.id}`,
+        markers: [e.marker],
+      });
+  }
+  return out;
+}
+
 export function groupBySeries(items: MarkerView[]): {
   key: string;
   label: string;
@@ -1003,33 +1480,18 @@ function MarkerThumbnail({
   );
 }
 
-function MarkerCard({
-  marker,
-  thumbHeight,
-  selectMode,
-  onEnterSelectMode,
-}: {
-  marker: MarkerView;
-  thumbHeight: number;
-  /** When active, the whole card is a selection toggle (audit B11). */
-  selectMode?: {
-    isActive: boolean;
-    isSelected: boolean;
-    onToggle: (ev?: React.MouseEvent) => void;
-  };
-  /** Long-press / menu "Select" entry point into select mode. */
-  onEnterSelectMode?: (id: string) => void;
-}) {
-  const inSelect = selectMode?.isActive ?? false;
+/** The per-marker action list (Jump, Copy link, Favorite, Copy / Save
+ *  image for crops, Delete with Undo) shared by the picture tile and the
+ *  page-note row. */
+function useMarkerActions(
+  marker: MarkerView,
+  onEnterSelectMode?: (id: string) => void,
+): { actions: CoverMenuAction[]; jumpHref: string | null; hasRegion: boolean } {
   const del = useDeleteMarker(marker.id, marker.issue_id, { silent: true });
   const restore = useRestoreMarkers();
   const update = useUpdateMarker(marker.id, marker.issue_id);
   const router = useRouter();
   const jumpHref = buildJumpHref(marker);
-  const kindMeta = KIND_META[marker.kind];
-  const KindIcon = kindMeta.icon;
-  const snippet = marker.body?.trim() || marker.selection?.text?.trim() || null;
-  const issueLabel = formatIssueLabel(marker);
   // Image-bearing markers — anything with a region — get Copy/Save
   // affordances. We only want them for crops where the user
   // intentionally selected an area (any shape: rect / text / image);
@@ -1125,6 +1587,33 @@ function MarkerCard({
     router,
     update,
   ]);
+  return { actions, jumpHref, hasRegion };
+}
+
+function MarkerCard({
+  marker,
+  thumbHeight,
+  selectMode,
+  onEnterSelectMode,
+}: {
+  marker: MarkerView;
+  thumbHeight: number;
+  /** When active, the whole card is a selection toggle (audit B11). */
+  selectMode?: {
+    isActive: boolean;
+    isSelected: boolean;
+    onToggle: (ev?: React.MouseEvent) => void;
+  };
+  /** Long-press / menu "Select" entry point into select mode. */
+  onEnterSelectMode?: (id: string) => void;
+}) {
+  const inSelect = selectMode?.isActive ?? false;
+  const { actions, jumpHref } = useMarkerActions(marker, onEnterSelectMode);
+  const router = useRouter();
+  const kindMeta = KIND_META[marker.kind];
+  const KindIcon = kindMeta.icon;
+  const snippet = marker.body?.trim() || marker.selection?.text?.trim() || null;
+  const issueLabel = formatIssueLabel(marker);
 
   const longPress = useCoverLongPressActions({
     primary: jumpHref
@@ -1226,11 +1715,7 @@ function MarkerCard({
         >
           Page {marker.page_index + 1}
         </div>
-        {snippet ? (
-          <p className="text-muted-foreground line-clamp-2 text-xs">
-            {snippet}
-          </p>
-        ) : null}
+        {snippet ? <ExpandableSnippet text={snippet} /> : null}
         {marker.tags.length > 0 ? (
           <div className="flex flex-wrap gap-1 pt-1">
             {marker.tags.slice(0, 4).map((t) => (
@@ -1263,7 +1748,7 @@ function EmptyState({
   return (
     <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm">
       {hasFilter ? (
-        <>No markers match the current filter.</>
+        <>Nothing matches the current filters.</>
       ) : scope ? (
         <>
           No markers{" "}

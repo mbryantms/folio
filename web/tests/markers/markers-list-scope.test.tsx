@@ -9,7 +9,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/api/queries", () => ({
-  useMarkersInfinite: (filters: unknown) => {
+  useBookmarksFeedInfinite: (filters: unknown) => {
     infinite(filters);
     return {
       data: { pages: [{ items: [], next_cursor: null }] },
@@ -20,7 +20,20 @@ vi.mock("@/lib/api/queries", () => ({
       fetchNextPage: vi.fn(),
     };
   },
-  useMarkerCount: () => ({ data: { total: 0 } }),
+  useBookmarkCounts: () => ({
+    data: {
+      total: 0,
+      all: 0,
+      by_kind: {
+        bookmark: 0,
+        note: 0,
+        favorite: 0,
+        highlight: 0,
+        closing_note: 0,
+      },
+    },
+  }),
+  useBookmarkSeries: () => ({ data: { items: [] } }),
   useMarkerTags: () => ({ data: { items: [] } }),
 }));
 

@@ -10,6 +10,7 @@
  * imported type-only here — the import is erased at runtime, so there is
  * no module cycle. New hooks: add a key factory here, then reference it.
  */
+import type { BookmarksFeedFilters } from "@/lib/api/types";
 import type { IssueUrlOpts } from "@/lib/urls";
 import type {
   ReadingLogFilters,
@@ -509,6 +510,14 @@ export const queryKeys = {
   /** Markers + Collections M5 — global feed for `/bookmarks` index. */
   markers: (filters: MarkerListFilters = {}) =>
     ["markers", "list", filters] as const,
+  /** `/me/bookmarks` feed (markers + closing notes). Under the `markers`
+   *  prefix so every marker mutation's `["markers", …]` invalidation
+   *  refreshes the feed, its counts and its series list too. */
+  bookmarksFeed: (filters: BookmarksFeedFilters = {}) =>
+    ["markers", "feed", filters] as const,
+  bookmarkCounts: (filters: BookmarksFeedFilters = {}) =>
+    ["markers", "feed-counts", filters] as const,
+  bookmarkSeries: ["markers", "feed-series"] as const,
   /** Reader overlay's per-issue fetch (one round-trip, all kinds). */
   issueMarkers: (issueId: string) => ["markers", "issue", issueId] as const,
   /** WP-4.3 — caller's manual spread controls for one issue. */

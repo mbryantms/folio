@@ -145,7 +145,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
 
 // ────────────── DTOs ──────────────
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct MarkerView {
     pub id: String,
     pub user_id: String,
@@ -631,7 +631,7 @@ fn normalize_tags(raw: Vec<String>) -> Result<Vec<String>, MarkerError> {
     Ok(out)
 }
 
-fn parse_tag_list(raw: &str) -> Vec<String> {
+pub(crate) fn parse_tag_list(raw: &str) -> Vec<String> {
     raw.split(',')
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty())
@@ -642,7 +642,7 @@ fn parse_tag_list(raw: &str) -> Vec<String> {
 /// `issue_number` to a page of markers in a single batched series +
 /// issue fetch. Used by `/me/markers` so the index page can render
 /// thumbnails and "Jump to page" links without a second round-trip.
-async fn hydrate_views(
+pub(crate) async fn hydrate_views(
     db: &sea_orm::DatabaseConnection,
     rows: Vec<marker::Model>,
 ) -> Result<Vec<MarkerView>, axum::response::Response> {
@@ -932,7 +932,10 @@ fn visible_marker_condition(acl: &access::VisibleLibraries) -> sea_orm::sea_quer
 /// [`visible_marker_condition`] for hand-written SQL over
 /// `markers m JOIN issues i ON i.id = m.issue_id`. Pushes bind values onto
 /// `params`; the fragment starts with ` AND `.
-fn visible_marker_sql(acl: &access::VisibleLibraries, params: &mut Vec<sea_orm::Value>) -> String {
+pub(crate) fn visible_marker_sql(
+    acl: &access::VisibleLibraries,
+    params: &mut Vec<sea_orm::Value>,
+) -> String {
     let mut sql = String::from(" AND i.removed_at IS NULL");
     if !acl.unrestricted {
         params.push(sea_orm::Value::from(

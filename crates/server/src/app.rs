@@ -149,6 +149,7 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(api::admin_ocr::routes())
         .merge(api::markers::routes())
         .merge(api::markers_export::routes())
+        .merge(api::bookmarks_feed::routes())
         .merge(api::page_overrides::routes())
         .merge(api::filter_options::routes())
         .merge(api::admin_logs::routes())

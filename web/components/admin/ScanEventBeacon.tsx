@@ -68,7 +68,11 @@ export function ScanEventBeacon() {
               "hover:bg-warning/10 hover:text-warning inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase transition-colors",
               queueTone,
             )}
-            aria-label={`Background work: ${total} jobs pending${breakdown ? ` (${breakdown})` : ""}. Open background work.`}
+            // WCAG 2.5.3 (axe `label-content-name-mismatch`): the visible
+            // text must appear verbatim in the accessible name, so the
+            // label opens with it. This pill is in the shell, so every
+            // page-level axe scan sees it whenever a job is pending.
+            aria-label={`queue: ${compactCount(total)} — ${total} background jobs pending${breakdown ? ` (${breakdown})` : ""}. Open background work.`}
             title={breakdown || `${total} pending jobs`}
           >
             <ListOrdered className="h-3 w-3" />
@@ -99,7 +103,7 @@ export function ScanEventBeacon() {
             "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wider uppercase",
             tone,
           )}
-          aria-label={`Scan event stream ${status}. Open background work.`}
+          aria-label={`${status === "open" ? "scan active" : status} — scan event stream ${status}. Open background work.`}
         >
           <Activity
             className={cn(
