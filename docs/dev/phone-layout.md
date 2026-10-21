@@ -33,7 +33,14 @@ indexes.
    `sticky={false}` for a mid-page bar (the series page's Issues
    panel). `SelectionToolbar` is also sticky at `top-(--topbar-h)`, so
    pass `hidden={selection.selectMode}` — the selection toolbar takes
-   the row's place while selecting.
+   the row's place while selecting. The desktop library toolbar has the
+   same behaviour via `useStickyToolbar` (`lib/ui/use-sticky-toolbar.ts`):
+   it sticks only while it fits on one row (a `ResizeObserver` on its
+   content height) and select mode is off, and shows its border /
+   backdrop only once actually held (`stuck`), so the page is unchanged
+   at rest. Use it for any other desktop control row that is its own
+   line; header rows that share a line with the title (saved views,
+   search) stay in flow — pinning them would pin the title too.
 4. **No second search box.** The topbar already has one. On phones a
    page-local search is the bar's 🔍 icon, which expands to an input in
    place with a Cancel button. The bar keeps keystrokes local, so pass
