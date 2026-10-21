@@ -35,6 +35,52 @@ export function needsClamp(body: string): boolean {
   return body.length > CLAMP_THRESHOLD_CHARS || body.trim().includes("\n");
 }
 
+/** Body text that clamps to `lines` with an in-place More / Less when
+ *  it is long or multi-paragraph; short text just renders. Shared by
+ *  the closing-note and page-note rows. */
+export function ClampedBody({
+  text,
+  lines = 4,
+  className,
+}: {
+  text: string;
+  lines?: 3 | 4;
+  className?: string;
+}) {
+  const [expanded, setExpanded] = React.useState(false);
+  const clamp = needsClamp(text);
+  return (
+    <>
+      <p
+        className={cn(
+          "text-sm leading-relaxed whitespace-pre-line",
+          clamp && !expanded && (lines === 3 ? "line-clamp-3" : "line-clamp-4"),
+          className,
+        )}
+      >
+        {text}
+      </p>
+      {clamp ? (
+        <Button
+          type="button"
+          variant="link"
+          size="sm"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((e) => !e)}
+          className="h-6 self-start px-0 text-xs"
+        >
+          {expanded ? "Less" : "More"}
+          {expanded ? (
+            <ChevronUp className="ml-1 h-3 w-3" aria-hidden="true" />
+          ) : (
+            <ChevronDown className="ml-1 h-3 w-3" aria-hidden="true" />
+          )}
+        </Button>
+      ) : null}
+    </>
+  );
+}
+
 /** "Saga · #11" (or the title when there is no number). */
 export function closingNoteIssueLabel(n: ClosingNoteEntryView): string {
   const parts: string[] = [];
@@ -69,7 +115,6 @@ export function ClosingNoteRow({
   note: ClosingNoteEntryView;
   className?: string;
 }) {
-  const [expanded, setExpanded] = React.useState(false);
   const [editing, setEditing] = React.useState(false);
   // Optimistic body: the feed re-fetches after the PUT, but the row
   // should not flash the old text in between.
@@ -85,7 +130,6 @@ export function ClosingNoteRow({
     note.series_slug && note.issue_slug
       ? issueUrl({ series_slug: note.series_slug, slug: note.issue_slug })
       : null;
-  const clamp = needsClamp(body);
 
   const remove = () => {
     const prev = body;
@@ -203,33 +247,7 @@ export function ClosingNoteRow({
             }}
           />
         ) : (
-          <>
-            <p
-              className={cn(
-                "text-sm leading-relaxed whitespace-pre-line",
-                clamp && !expanded && "line-clamp-4",
-              )}
-            >
-              {body}
-            </p>
-            {clamp ? (
-              <Button
-                type="button"
-                variant="link"
-                size="sm"
-                aria-expanded={expanded}
-                onClick={() => setExpanded((e) => !e)}
-                className="h-6 self-start px-0 text-xs"
-              >
-                {expanded ? "Less" : "More"}
-                {expanded ? (
-                  <ChevronUp className="ml-1 h-3 w-3" aria-hidden="true" />
-                ) : (
-                  <ChevronDown className="ml-1 h-3 w-3" aria-hidden="true" />
-                )}
-              </Button>
-            ) : null}
-          </>
+          <ClampedBody text={body} lines={4} />
         )}
       </div>
     </article>

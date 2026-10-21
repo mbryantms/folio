@@ -13,6 +13,7 @@ import {
   StickyNote,
   Trash2,
   X,
+  MoreVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -90,7 +91,16 @@ import type {
 } from "@/lib/api/types";
 import { Combobox } from "@/components/ui/combobox";
 import { NativeSelect } from "@/components/ui/native-select";
-import { ClosingNoteRow } from "@/components/markers/ClosingNoteRow";
+import {
+  ClampedBody,
+  ClosingNoteRow,
+} from "@/components/markers/ClosingNoteRow";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 type KindFilter = BookmarksFeedKind | "all" | "favorite";
 
@@ -679,7 +689,7 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
         <div className="text-destructive rounded-md border p-4 text-sm">
           Failed to load markers.
         </div>
-      ) : items.length === 0 ? (
+      ) : entries.length === 0 ? (
         <EmptyState hasFilter={hasFilterOrSearch} scope={scope} />
       ) : (
         <div className="space-y-8">
@@ -694,6 +704,22 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
                     them". */}
                   {group.notes.map((n) => (
                     <ClosingNoteRow key={`note-${n.issue_id}`} note={n} />
+                  ))}
+                  {group.pageNotes.map((m) => (
+                    <PageNoteRow
+                      key={m.id}
+                      marker={m}
+                      selectMode={
+                        selection.selectMode
+                          ? {
+                              isActive: true,
+                              isSelected: selection.isSelected(m.id),
+                              onToggle: (ev) => selection.toggle(m.id, ev),
+                            }
+                          : undefined
+                      }
+                      onEnterSelectMode={(id) => selection.toggle(id)}
+                    />
                   ))}
                   {group.markers.length > 0 ? (
                     <RowPackedSection
@@ -711,6 +737,22 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
                   <ClosingNoteRow
                     key={`note-${run.note.issue_id}`}
                     note={run.note}
+                  />
+                ) : run.type === "pageNote" ? (
+                  <PageNoteRow
+                    key={run.marker.id}
+                    marker={run.marker}
+                    selectMode={
+                      selection.selectMode
+                        ? {
+                            isActive: true,
+                            isSelected: selection.isSelected(run.marker.id),
+                            onToggle: (ev) =>
+                              selection.toggle(run.marker.id, ev),
+                          }
+                        : undefined
+                    }
+                    onEnterSelectMode={(id) => selection.toggle(id)}
                   />
                 ) : (
                   <RowPackedSection
@@ -1120,49 +1162,206 @@ function ExpandableSnippet({ text }: { text: string }) {
   );
 }
 
+/** A page note with text renders as a text row (`PageNoteRow`), the
+ *  same shape as a closing note; bookmarks, favorites, highlights and a
+ *  bodyless note stay picture tiles. */
+export function isPageNoteRow(m: MarkerView): boolean {
+  return m.kind === "note" && !!m.body?.trim();
+}
+
+/**
+ * A page note as a full-width text row: page thumb (the crop when the
+ * note has a region) linking to the page, Note badge, issue + page,
+ * tags, date, the same kebab as the tile, and the body clamped at four
+ * lines with More / Less. In select mode the thumb carries the checkbox
+ * and the whole row toggles.
+ */
+function PageNoteRow({
+  marker,
+  selectMode,
+  onEnterSelectMode,
+}: {
+  marker: MarkerView;
+  selectMode?: {
+    isActive: boolean;
+    isSelected: boolean;
+    onToggle: (ev?: React.MouseEvent) => void;
+  };
+  onEnterSelectMode?: (id: string) => void;
+}) {
+  const { actions, jumpHref } = useMarkerActions(marker, onEnterSelectMode);
+  const kindMeta = KIND_META[marker.kind];
+  const KindIcon = kindMeta.icon;
+  const issueLabel = `${formatIssueLabel(marker)} · Page ${marker.page_index + 1}`;
+  const inSelect = selectMode?.isActive ?? false;
+  const body = marker.body?.trim() ?? "";
+  const thumb = (
+    <div className="group relative w-14 shrink-0">
+      <MarkerThumbnail marker={marker} height={84} />
+      {selectMode?.isActive ? (
+        <SelectionCheckbox
+          isSelected={selectMode.isSelected}
+          selectMode
+          onToggle={selectMode.onToggle}
+          label={`Note · page ${marker.page_index + 1}`}
+        />
+      ) : null}
+    </div>
+  );
+  return (
+    <article
+      data-page-note-row=""
+      data-selected={inSelect && selectMode?.isSelected ? "" : undefined}
+      onClick={inSelect ? (ev) => selectMode?.onToggle(ev) : undefined}
+      className={cn(
+        "border-border bg-card flex gap-3.5 rounded-lg border p-3",
+        inSelect && "cursor-pointer",
+        inSelect && selectMode?.isSelected && "ring-primary ring-2",
+      )}
+    >
+      {!inSelect && jumpHref ? (
+        <Link
+          href={jumpHref}
+          aria-label={`Jump to page ${marker.page_index + 1}`}
+          className="shrink-0"
+        >
+          {thumb}
+        </Link>
+      ) : (
+        thumb
+      )}
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase",
+              kindMeta.badge,
+            )}
+          >
+            <KindIcon className="h-3 w-3" aria-hidden="true" />
+            {kindMeta.shortLabel}
+          </span>
+          <span
+            className="text-muted-foreground truncate text-xs"
+            title={issueLabel}
+          >
+            {issueLabel}
+          </span>
+          {marker.is_favorite ? (
+            <Star
+              aria-label="Favorite"
+              className="h-3.5 w-3.5 fill-current text-rose-400"
+            />
+          ) : null}
+          {marker.tags.slice(0, 4).map((t) => (
+            <span
+              key={t}
+              className="bg-muted text-muted-foreground inline-flex items-center rounded px-1.5 py-0.5 text-[10px]"
+            >
+              {t}
+            </span>
+          ))}
+          <span className="text-muted-foreground ml-auto shrink-0 text-xs whitespace-nowrap">
+            {new Date(marker.updated_at).toLocaleDateString(undefined, {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+            })}
+          </span>
+          {!inSelect ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`Actions for note on page ${marker.page_index + 1}`}
+                  className="text-muted-foreground hover:text-foreground hover:bg-muted/50 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors"
+                >
+                  <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {actions.map((a) => (
+                  <DropdownMenuItem
+                    key={a.label}
+                    disabled={a.disabled}
+                    onSelect={a.onSelect}
+                    className={
+                      a.destructive
+                        ? "text-destructive focus:text-destructive"
+                        : undefined
+                    }
+                  >
+                    {a.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+        </div>
+        <ClampedBody text={body} lines={4} />
+      </div>
+    </article>
+  );
+}
+
 /** Group feed entries by series in first-appearance order (the server
- *  already sorted the stream), closing notes and markers kept apart so
- *  the group renders notes as rows above the packed tiles. */
+ *  already sorted the stream); closing notes, page-note rows and picture
+ *  markers kept apart so the group renders rows above the packed tiles. */
 export function groupEntriesBySeries(
   entries: ReadonlyArray<BookmarkEntryView>,
 ): {
   key: string;
   label: string;
   notes: ClosingNoteEntryView[];
+  pageNotes: MarkerView[];
   markers: MarkerView[];
 }[] {
   const map = new Map<
     string,
-    { label: string; notes: ClosingNoteEntryView[]; markers: MarkerView[] }
+    {
+      label: string;
+      notes: ClosingNoteEntryView[];
+      pageNotes: MarkerView[];
+      markers: MarkerView[];
+    }
   >();
   for (const e of entries) {
     const key = e.type === "marker" ? e.marker.series_id : e.note.series_id;
     const label =
       (e.type === "marker" ? e.marker.series_name : e.note.series_name) ??
       "Unknown series";
-    const entry = map.get(key) ?? { label, notes: [], markers: [] };
-    if (e.type === "marker") entry.markers.push(e.marker);
-    else entry.notes.push(e.note);
+    const entry = map.get(key) ?? {
+      label,
+      notes: [],
+      pageNotes: [],
+      markers: [],
+    };
+    if (e.type === "closing_note") entry.notes.push(e.note);
+    else if (isPageNoteRow(e.marker)) entry.pageNotes.push(e.marker);
+    else entry.markers.push(e.marker);
     map.set(key, entry);
   }
   return Array.from(map.entries()).map(([key, value]) => ({ key, ...value }));
 }
 
-/** Flat layout: consecutive markers become one packed run; each closing
- *  note is its own full-width row, in server order. */
-export function splitIntoRuns(
-  entries: ReadonlyArray<BookmarkEntryView>,
-): (
+/** Flat layout: consecutive picture markers become one packed run; each
+ *  closing note and each page note is its own full-width row, in server
+ *  order. */
+export type FeedRun =
   | { type: "markers"; key: string; markers: MarkerView[] }
   | { type: "note"; note: ClosingNoteEntryView }
-)[] {
-  const out: (
-    | { type: "markers"; key: string; markers: MarkerView[] }
-    | { type: "note"; note: ClosingNoteEntryView }
-  )[] = [];
+  | { type: "pageNote"; marker: MarkerView };
+export function splitIntoRuns(
+  entries: ReadonlyArray<BookmarkEntryView>,
+): FeedRun[] {
+  const out: FeedRun[] = [];
   for (const e of entries) {
     if (e.type === "closing_note") {
       out.push({ type: "note", note: e.note });
+      continue;
+    }
+    if (isPageNoteRow(e.marker)) {
+      out.push({ type: "pageNote", marker: e.marker });
       continue;
     }
     const last = out[out.length - 1];
@@ -1281,33 +1480,18 @@ function MarkerThumbnail({
   );
 }
 
-function MarkerCard({
-  marker,
-  thumbHeight,
-  selectMode,
-  onEnterSelectMode,
-}: {
-  marker: MarkerView;
-  thumbHeight: number;
-  /** When active, the whole card is a selection toggle (audit B11). */
-  selectMode?: {
-    isActive: boolean;
-    isSelected: boolean;
-    onToggle: (ev?: React.MouseEvent) => void;
-  };
-  /** Long-press / menu "Select" entry point into select mode. */
-  onEnterSelectMode?: (id: string) => void;
-}) {
-  const inSelect = selectMode?.isActive ?? false;
+/** The per-marker action list (Jump, Copy link, Favorite, Copy / Save
+ *  image for crops, Delete with Undo) shared by the picture tile and the
+ *  page-note row. */
+function useMarkerActions(
+  marker: MarkerView,
+  onEnterSelectMode?: (id: string) => void,
+): { actions: CoverMenuAction[]; jumpHref: string | null; hasRegion: boolean } {
   const del = useDeleteMarker(marker.id, marker.issue_id, { silent: true });
   const restore = useRestoreMarkers();
   const update = useUpdateMarker(marker.id, marker.issue_id);
   const router = useRouter();
   const jumpHref = buildJumpHref(marker);
-  const kindMeta = KIND_META[marker.kind];
-  const KindIcon = kindMeta.icon;
-  const snippet = marker.body?.trim() || marker.selection?.text?.trim() || null;
-  const issueLabel = formatIssueLabel(marker);
   // Image-bearing markers — anything with a region — get Copy/Save
   // affordances. We only want them for crops where the user
   // intentionally selected an area (any shape: rect / text / image);
@@ -1403,6 +1587,33 @@ function MarkerCard({
     router,
     update,
   ]);
+  return { actions, jumpHref, hasRegion };
+}
+
+function MarkerCard({
+  marker,
+  thumbHeight,
+  selectMode,
+  onEnterSelectMode,
+}: {
+  marker: MarkerView;
+  thumbHeight: number;
+  /** When active, the whole card is a selection toggle (audit B11). */
+  selectMode?: {
+    isActive: boolean;
+    isSelected: boolean;
+    onToggle: (ev?: React.MouseEvent) => void;
+  };
+  /** Long-press / menu "Select" entry point into select mode. */
+  onEnterSelectMode?: (id: string) => void;
+}) {
+  const inSelect = selectMode?.isActive ?? false;
+  const { actions, jumpHref } = useMarkerActions(marker, onEnterSelectMode);
+  const router = useRouter();
+  const kindMeta = KIND_META[marker.kind];
+  const KindIcon = kindMeta.icon;
+  const snippet = marker.body?.trim() || marker.selection?.text?.trim() || null;
+  const issueLabel = formatIssueLabel(marker);
 
   const longPress = useCoverLongPressActions({
     primary: jumpHref

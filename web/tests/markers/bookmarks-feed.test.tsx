@@ -75,6 +75,15 @@ const entries: BookmarkEntryView[] = [
   {
     type: "marker",
     marker: marker({
+      id: "pn",
+      kind: "note",
+      body: "Page note text",
+      page_index: 2,
+    }),
+  },
+  {
+    type: "marker",
+    marker: marker({
       id: "a",
       series_id: "s-alpha",
       series_name: "Alpha Flight",
@@ -97,11 +106,14 @@ const entries: BookmarkEntryView[] = [
 describe("feed splitters", () => {
   it("groups by series in first-appearance order, notes apart from markers", () => {
     const groups = groupEntriesBySeries(entries);
-    expect(groups.map((g) => g.label)).toEqual(["Alpha Flight", "Saga"]);
-    expect(groups[0]!.markers.map((m) => m.id)).toEqual(["a"]);
-    expect(groups[0]!.notes.map((n) => n.issue_id)).toEqual(["i9"]);
-    expect(groups[1]!.notes.map((n) => n.issue_id)).toEqual(["i2"]);
-    expect(groups[1]!.markers.map((m) => m.id)).toEqual(["b", "c"]);
+    // First appearance: the Saga page note leads the stream.
+    expect(groups.map((g) => g.label)).toEqual(["Saga", "Alpha Flight"]);
+    expect(groups[0]!.notes.map((n) => n.issue_id)).toEqual(["i2"]);
+    // A page note with text is a row, not a tile.
+    expect(groups[0]!.pageNotes.map((m) => m.id)).toEqual(["pn"]);
+    expect(groups[0]!.markers.map((m) => m.id)).toEqual(["b", "c"]);
+    expect(groups[1]!.markers.map((m) => m.id)).toEqual(["a"]);
+    expect(groups[1]!.notes.map((n) => n.issue_id)).toEqual(["i9"]);
   });
 
   it("flat view keeps server order: packed runs broken by note rows", () => {
@@ -110,9 +122,11 @@ describe("feed splitters", () => {
       runs.map((r) =>
         r.type === "note"
           ? `note:${r.note.issue_id}`
-          : `run:${r.markers.map((m) => m.id).join("")}`,
+          : r.type === "pageNote"
+            ? `pageNote:${r.marker.id}`
+            : `run:${r.markers.map((m) => m.id).join("")}`,
       ),
-    ).toEqual(["run:a", "note:i2", "run:bc", "note:i9"]);
+    ).toEqual(["pageNote:pn", "run:a", "note:i2", "run:bc", "note:i9"]);
   });
 });
 
