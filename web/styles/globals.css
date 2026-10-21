@@ -365,6 +365,16 @@ body {
   display: grid;
   grid-template-rows: 0fr;
   transition: grid-template-rows 260ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* The sticky box must be this outer wrapper. A sticky element can
+   * only move within its parent, and the inner wrapper's parent is this
+   * grid — exactly the toolbar's own height — so `position: sticky` on
+   * the inner (or on the toolbar body) never had any room to engage and
+   * the toolbar scrolled away with the page (2026-10-20). The wrapper's
+   * parent is the page column, which is what the toolbar should pin
+   * against. */
+  position: sticky;
+  top: var(--topbar-h);
+  z-index: 20;
 }
 
 .selection-toolbar-wrap[data-state="open"] {
@@ -378,14 +388,8 @@ body {
 
 .selection-toolbar-wrap-inner {
   /* Required so the child's content is clipped during the height
-   * transition — otherwise the body's `sticky` positioning would
-   * spill outside the collapsed track. */
+   * transition. Not sticky itself — see `.selection-toolbar-wrap`. */
   overflow: hidden;
-  /* Re-establish stickiness on the inner wrapper since the outer
-   * grid container resets the toolbar body's `top: 0`. */
-  position: sticky;
-  top: var(--topbar-h);
-  z-index: 20;
 }
 
 .selection-toolbar-anim[data-state="open"] {
