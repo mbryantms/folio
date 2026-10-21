@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/sheet";
 import type { SortOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";
 
 export type PhoneSortOption = { value: string; label: string };
 
@@ -112,7 +113,10 @@ export function PhoneControlsBar({
       className={cn(
         "sm:hidden",
         sticky &&
-          "border-border bg-background/95 standalone:bg-background standalone:backdrop-blur-none sticky top-(--topbar-h) z-20 -mx-4 border-b px-4 py-2 backdrop-blur",
+          cn(
+            CHROME_BAND_CLASS,
+            "sticky top-(--topbar-h) z-20 -mx-4 border-b px-4 py-2",
+          ),
         className,
       )}
     >

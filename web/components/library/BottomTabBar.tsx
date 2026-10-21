@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Bookmark, House, Library, Menu, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";
 
 const TAB_CLASS =
   "flex flex-1 flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors active:bg-secondary focus-visible:outline-2 focus-visible:outline-ring";
@@ -32,7 +33,10 @@ export function BottomTabBar({ onMore }: { onMore: () => void }) {
       // Floating content (menus, popovers, selects) keeps clear of the bar:
       // `safeAreaCollisionPadding` reads this marker's height.
       data-bottom-inset=""
-      className="border-border bg-background/95 standalone:bg-background standalone:backdrop-blur-none fixed inset-x-0 bottom-0 z-30 flex h-[calc(var(--bottom-tab-h)+var(--safe-bottom))] items-stretch border-t pr-(--safe-right) pb-(--safe-bottom) pl-(--safe-left) backdrop-blur md:hidden"
+      className={cn(
+        CHROME_BAND_CLASS,
+        "fixed inset-x-0 bottom-0 z-30 flex h-[calc(var(--bottom-tab-h)+var(--safe-bottom))] items-stretch border-t pr-(--safe-right) pb-(--safe-bottom) pl-(--safe-left) md:hidden",
+      )}
     >
       <TabLink
         href="/"

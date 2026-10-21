@@ -494,6 +494,8 @@ export function LibraryGridView({
 
       <SelectionToolbar
         open={selection.selectMode}
+        // Series mode: clear the phone A–Z scrubber like the grid does.
+        className={isSeriesMode ? "max-sm:pr-2" : undefined}
         count={selection.count}
         total={items.length}
         primary={[

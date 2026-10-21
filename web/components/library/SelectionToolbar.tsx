@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";
 
 /**
  * Per-page bulk-action toolbar. Renders sticky at the top of the
@@ -62,6 +63,10 @@ export type SelectionActionGroup = {
 };
 
 export type SelectionToolbarProps = {
+  /** Extra classes on the toolbar body (the band with the background).
+   *  The library grid passes `max-sm:pr-2` in series mode so the right
+   *  edge clears the phone A–Z scrubber like the grid itself does. */
+  className?: string;
   count: number;
   total: number;
   primary: SelectionAction[];
@@ -151,6 +156,7 @@ export function SelectionToolbar({
  * generally use the presence wrapper, not this directly.
  */
 export function SelectionToolbarBody({
+  className,
   count,
   total,
   primary,
@@ -188,12 +194,17 @@ export function SelectionToolbarBody({
       aria-label={`${count} item${count === 1 ? "" : "s"} selected`}
       aria-live="polite"
       className={cn(
-        "bg-background/95 border-border sticky top-(--topbar-h) z-20 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b py-2 backdrop-blur",
+        // Not sticky itself: the presence wrapper (`.selection-toolbar-wrap`
+        // in globals.css) is the sticky box, because this body sits inside
+        // an `overflow: hidden` clip whose parent is exactly its own height.
+        CHROME_BAND_CLASS,
+        "grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b py-2",
         "sm:flex sm:flex-wrap 2xl:flex-nowrap",
         // Mount + unmount animation: keyframes selection-toolbar-in
         // / -out in `web/styles/globals.css`. Toggled via the
         // `data-state` attribute the presence wrapper sets.
         "selection-toolbar-anim",
+        className,
       )}
     >
       <Button

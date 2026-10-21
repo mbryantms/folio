@@ -19,6 +19,7 @@ import {
 import type { IssueSort, SeriesSort, SortOrder } from "@/lib/api/types";
 import { useStickyToolbar } from "@/lib/ui/use-sticky-toolbar";
 import { cn } from "@/lib/utils";
+import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";
 
 // `random` is excluded — it's a one-shot discovery pick ("Surprise me"),
 // never a user-selectable grid sort. The Exclude keeps this map exhaustive
@@ -194,8 +195,7 @@ export function LibraryGridToolbar({
         className={cn(
           "-mx-4 mb-4 flex flex-wrap items-center justify-between gap-2 px-4 py-2 max-sm:hidden md:-mx-8 md:px-8",
           sticky && "sticky top-(--topbar-h) z-20",
-          stuck &&
-            "border-border bg-background/95 standalone:bg-background standalone:backdrop-blur-none border-b backdrop-blur",
+          stuck && cn(CHROME_BAND_CLASS, "border-b"),
         )}
       >
         {/* Left controls flow + wrap as a group; the Select + card-size

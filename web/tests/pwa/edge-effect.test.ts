@@ -20,10 +20,25 @@ const EDGE_BAR_FILES = [
   "app/[locale]/read/[seriesSlug]/[issueSlug]/loading.tsx",
 ];
 
+/** The shared frosted-chrome class string (`lib/ui/chrome-band.ts`).
+ *  The shell bars compose it via `cn(CHROME_BAND_CLASS, "…")`, so the
+ *  scan below inlines it first to see the bar's full class list. */
+const CHROME_BAND = (() => {
+  const m = read("lib/ui/chrome-band.ts").match(
+    /CHROME_BAND_CLASS\s*=\s*"([^"]+)"/,
+  );
+  if (!m) throw new Error("CHROME_BAND_CLASS literal not found");
+  return m[1];
+})();
+
 /** Class lists of bars docked to the top or bottom edge with a frosted
  *  (translucent + backdrop-blur) background. */
 function edgeBars(src: string): string[] {
-  return [...src.matchAll(/className="([^"]+)"/g)]
+  const inlined = src.replace(
+    /className=\{cn\(\s*CHROME_BAND_CLASS,\s*"([^"]+)",?\s*\)\}/g,
+    (_, cls: string) => `className="${CHROME_BAND} ${cls}"`,
+  );
+  return [...inlined.matchAll(/className="([^"]+)"/g)]
     .map((m) => m[1] ?? "")
     .filter((cls) => {
       const t = cls.split(/\s+/);
@@ -36,6 +51,13 @@ function edgeBars(src: string): string[] {
 }
 
 describe("iOS 26 scroll edge effect", () => {
+  it("the shared chrome band goes opaque when installed", () => {
+    const t = CHROME_BAND.split(/\s+/);
+    expect(t).toContain("backdrop-blur");
+    expect(t).toContain("standalone:backdrop-blur-none");
+    expect(t).toContain("standalone:bg-background");
+  });
+
   it("declares the standalone variant", () => {
     expect(read("styles/globals.css")).toMatch(
       /@custom-variant standalone \(@media \(display-mode: standalone\)\);/,
