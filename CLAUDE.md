@@ -214,8 +214,12 @@ Default admin (first registered user becomes admin):
   the gate is structural, not body-level.
   - **Inline `if user.role == "admin"` is reserved for ACL widening**
     (admin gets broader visibility on a handler users can also call):
-    e.g. `series::list` shows admins removed/hidden rows, `libraries::list`
-    shows admins all libraries instead of just their ACL-grant set.
+    e.g. `series::get_one` lets admins open a soft-deleted series (readers
+    get 404), `libraries::list` shows admins all libraries instead of just
+    their ACL-grant set. Soft-deleted series are hidden from **every list
+    surface for every role** (`access::active_series`, applied in
+    `series::list`, the saved-view compiler and the OPDS catalogs); the
+    admin Removed tab is the only place they appear.
     These handlers take `CurrentUser` and branch on role. Confirmed
     legitimate sites (do not migrate to `RequireAdmin`): libraries.rs,
     ratings.rs, reading_sessions.rs, reading_log.rs, progress.rs,

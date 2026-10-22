@@ -243,6 +243,23 @@ pub fn issue_effective_rating_expr() -> SimpleExpr {
     )
 }
 
+/// `series.removed_at IS NULL` — the row is still on disk as far as the
+/// last scan knows. Every surface that *lists* series (library grid,
+/// search, saved-view rails, OPDS catalogs) applies this on top of the ACL
+/// predicate so a soft-deleted series never renders as an empty card; the
+/// admin Removed tab (`api::reconcile`) is the one place removed rows are
+/// meant to appear. Soft-deleted issues are filtered the same way at every
+/// issue listing (`issue.removed_at IS NULL`), this is the series-level twin.
+pub fn active_series() -> SimpleExpr {
+    Expr::col((series::Entity, series::Column::RemovedAt)).is_null()
+}
+
+/// `series::Entity::find()` with [`active_series`] already applied — the
+/// starting point for any series listing.
+pub fn active_series_select() -> sea_orm::Select<series::Entity> {
+    series::Entity::find().filter(active_series())
+}
+
 pub async fn for_user(app: &AppState, user: &CurrentUser) -> VisibleLibraries {
     if user.role == "admin" {
         return VisibleLibraries::unrestricted();

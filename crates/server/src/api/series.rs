@@ -828,6 +828,13 @@ pub struct SeriesView {
     pub special_issue_count: Option<i64>,
     /// URL of the first issue's cover thumbnail. Null when no active issue exists.
     pub cover_url: Option<String>,
+    /// Set when the scanner soft-deleted this series (its folder vanished
+    /// from disk). Never present on list responses — removed series are
+    /// filtered out of every listing — and `GET /series/{slug}` returns
+    /// 404 to non-admins. Admins get the detail view with this stamp so
+    /// the page can point at the library's Removed tab.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_at: Option<String>,
     /// RFC3339 timestamps from the series row.
     pub created_at: String,
     pub updated_at: String,
@@ -994,6 +1001,7 @@ impl From<series::Model> for SeriesView {
             main_issue_count: None,
             special_issue_count: None,
             cover_url: None,
+            removed_at: m.removed_at.map(|t| t.to_rfc3339()),
             created_at: m.created_at.to_rfc3339(),
             updated_at: m.updated_at.to_rfc3339(),
             writers: Vec::new(),
@@ -1735,6 +1743,9 @@ fn apply_series_visibility(
     visible: &access::VisibleLibraries,
     library: Option<Uuid>,
 ) -> Option<sea_orm::Select<series::Entity>> {
+    // Soft-deleted series (folder gone from disk) stay out of every list
+    // surface for every role; they live on the admin Removed tab.
+    select = select.filter(access::active_series());
     if let Some(lib) = library {
         if !visible.contains(lib) {
             return None;
@@ -3471,6 +3482,12 @@ pub async fn get_one(
         Err(resp) => return resp,
     };
     if !access::series_visible(&app, &user, &row).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
+    }
+    // A soft-deleted series is gone for readers (its issues are hidden
+    // everywhere already); only an admin can still open it, to restore or
+    // confirm it from the Removed tab the page links to.
+    if row.removed_at.is_some() && user.role != "admin" {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     // `RemovedAt.is_null()` keeps soft-deleted and confirmed-removed issues

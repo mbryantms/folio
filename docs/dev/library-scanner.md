@@ -437,6 +437,16 @@ Two reconciles run after all folders complete:
     comicid) > **`MAX(issues.comicinfo_count)`** > **default** (leave
     existing values; never overwrite `total_issues` with `NULL`).
 
+**What a soft-deleted series looks like to the app.** Every series listing
+— `series::list` (library grid + search), the saved-view compiler behind
+the home rails, the OPDS v1/v2 catalogs — filters on
+[`access::active_series`](../../crates/server/src/library/access.rs)
+(`series.removed_at IS NULL`) for every role, so a removed series never
+renders as an empty card. `GET /series/{slug}` returns 404 to readers and
+the detail view (with `removed_at` set) to admins, whose page shows a
+banner linking to the library's Removed tab. Regression guard:
+`reconcile.rs::removed_series_hidden_from_lists_rails_and_opds`.
+
 The narrow per-series path in
 [`reconcile::reconcile_series`](../../crates/server/src/library/reconcile.rs#L175)
 runs the same logic scoped to one series so siblings stay untouched.

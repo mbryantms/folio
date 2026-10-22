@@ -7,6 +7,7 @@ import {
   Clock,
   Calendar,
   Languages,
+  TriangleAlert,
 } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -196,6 +197,33 @@ export default async function SeriesPage({
     // A flex column (not `space-y`) so phones can reorder children with
     // `order`: the issue list moves above the metadata tabs there.
     <div className="flex flex-col gap-6 sm:gap-10">
+      {/* Only admins reach a soft-deleted series (the API 404s everyone
+          else, and no list surface shows it). Say so up front and point at
+          the Removed tab, which holds Restore / Confirm removal. */}
+      {series.removed_at ? (
+        <div
+          role="status"
+          className="border-border bg-muted/40 text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border px-4 py-3 text-sm"
+        >
+          <TriangleAlert
+            className="text-foreground size-4 shrink-0"
+            aria-hidden="true"
+          />
+          <span className="text-foreground">
+            Removed from disk {formatRelativeDate(series.removed_at)}.
+          </span>
+          <span>
+            This series is hidden from readers and every list; its issues are
+            soft-deleted.
+          </span>
+          <Link
+            href={`/admin/libraries/${library?.slug ?? series.library_id}/removed`}
+            className="text-foreground underline underline-offset-4"
+          >
+            Open the library&apos;s Removed tab
+          </Link>
+        </div>
+      ) : null}
       {/* Ancestor trail — `Library › <library name>`. The series-name H1
           below is the leaf, so the trail stays the parents (mirrors the
           admin PageHeader breadcrumbs). The library segment scopes the

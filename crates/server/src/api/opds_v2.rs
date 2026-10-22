@@ -278,7 +278,7 @@ async fn series_list(
         Ok(v) => v,
         Err(e) => return server_error(e),
     };
-    let mut count_sel = series::Entity::find();
+    let mut count_sel = access::active_series_select();
     if let Some(cond) = allowed.series_filter() {
         count_sel = count_sel.filter(cond);
     }
@@ -288,7 +288,7 @@ async fn series_list(
     };
     let total_pages = total.div_ceil(opds::PAGE_SIZE).max(1);
 
-    let mut sel = series::Entity::find().order_by_asc(series::Column::Name);
+    let mut sel = access::active_series_select().order_by_asc(series::Column::Name);
     if let Some(cond) = allowed.series_filter() {
         sel = sel.filter(cond);
     }
@@ -354,7 +354,7 @@ async fn browse(
         Err(e) => return server_error(e),
     };
 
-    let mut count_sel = series::Entity::find();
+    let mut count_sel = access::active_series_select();
     if let Some(cond) = allowed.series_filter() {
         count_sel = count_sel.filter(cond);
     }
@@ -370,7 +370,7 @@ async fn browse(
     };
     let total_pages = total.div_ceil(opds::PAGE_SIZE).max(1);
 
-    let mut sel = series::Entity::find().order_by_asc(series::Column::Name);
+    let mut sel = access::active_series_select().order_by_asc(series::Column::Name);
     if let Some(cond) = allowed.series_filter() {
         sel = sel.filter(cond);
     }
@@ -988,7 +988,8 @@ async fn by_creator(
         return json_response(body);
     }
 
-    let mut count_sel = series::Entity::find().filter(series::Column::Id.is_in(series_ids.clone()));
+    let mut count_sel =
+        access::active_series_select().filter(series::Column::Id.is_in(series_ids.clone()));
     if let Some(cond) = allowed.series_filter() {
         count_sel = count_sel.filter(cond);
     }
@@ -998,7 +999,7 @@ async fn by_creator(
     };
     let total_pages = total.div_ceil(opds::PAGE_SIZE).max(1);
 
-    let mut sel = series::Entity::find()
+    let mut sel = access::active_series_select()
         .filter(series::Column::Id.is_in(series_ids))
         .order_by_asc(series::Column::Name);
     if let Some(cond) = allowed.series_filter() {
@@ -1067,7 +1068,7 @@ async fn search(
     };
     // Case-insensitive, multi-term series-name search (see opds::search).
     use crate::util::search::{col_ilike, ilike_pattern};
-    let mut sel = series::Entity::find()
+    let mut sel = access::active_series_select()
         .order_by_asc(series::Column::Name)
         .limit(opds::PAGE_SIZE);
     for token in needle.split_whitespace() {

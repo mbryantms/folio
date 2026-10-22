@@ -32956,6 +32956,13 @@
             "format": "int64",
             "description": "WP-7.7: direct relationships (series + story-arc edges) the caller\ncan see — the series page's \"Related\" tab label. Detail-only."
           },
+          "removed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when the scanner soft-deleted this series (its folder vanished\nfrom disk). Never present on list responses — removed series are\nfiltered out of every listing — and `GET /series/{slug}` returns\n404 to non-admins. Admins get the detail view with this stamp so\nthe page can point at the library's Removed tab."
+          },
           "slug": {
             "type": "string"
           },
