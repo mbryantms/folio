@@ -13,6 +13,26 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.64.1](https://github.com/mbryantms/folio/compare/v0.64.0...v0.64.1) (2026-10-22)
+
+
+### Fixed
+
+* **series:** phone stat row tiles 2x2 like the issue page ([#1272](https://github.com/mbryantms/folio/issues/1272)) ([6c71736](https://github.com/mbryantms/folio/commit/6c717367b186397ffad1b9d86bf95c6b8ec37139))
+
+
+### Dependencies
+
+* tokio 1.54.0 -&gt; 1.54.1 (RUSTSEC-2026-0384) ([#1276](https://github.com/mbryantms/folio/issues/1276)) ([f9b49ed](https://github.com/mbryantms/folio/commit/f9b49ed12fcc7c83a2bf9bcabf00fc30b22f1a25))
+* update dependency @hookform/resolvers to v6 ([#1271](https://github.com/mbryantms/folio/issues/1271)) ([63b61a2](https://github.com/mbryantms/folio/commit/63b61a2c00c5f5ea3c04c384216accb8b04db301))
+* update dependency browserslist@&lt;4.28.9 to v4.29.4 ([#1275](https://github.com/mbryantms/folio/issues/1275)) ([fd62f4c](https://github.com/mbryantms/folio/commit/fd62f4c51a32769a5e4a33b94b5eac17347aca7c))
+* update dependency cronstrue to v3.33.0 ([#1270](https://github.com/mbryantms/folio/issues/1270)) ([2139ed6](https://github.com/mbryantms/folio/commit/2139ed67be6e0221a1bb249754ea3b2cdc9c58b1))
+
+
+### Build & CI
+
+* tolerate npm registry outages in the PR-gating pnpm audit steps ([#1274](https://github.com/mbryantms/folio/issues/1274)) ([259b071](https://github.com/mbryantms/folio/commit/259b07164360b2090ca839f05c9b0d71cffe0cf2))
+
 ## [0.64.0](https://github.com/mbryantms/folio/compare/v0.63.2...v0.64.0) (2026-10-22)
 
 
