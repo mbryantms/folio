@@ -96,8 +96,12 @@ describe("touch-target floor", () => {
     // Both pills carry the floor; on an iPad they sat 36px beside 44px
     // buttons in the CBL view header.
     // Select + the two pills.
-    expect(
-      container.querySelectorAll(".folio-control").length,
-    ).toBeGreaterThanOrEqual(3);
+    const floored = container.querySelectorAll(".folio-control");
+    expect(floored.length).toBeGreaterThanOrEqual(3);
+    // Explicit touch height too: WebKit ignores `min-height` on a native
+    // <select>, and the pills stayed 36px on an iPad with the floor alone.
+    for (const el of floored) {
+      expect(el.className).toMatch(/\bpointer-coarse:h-11\b/);
+    }
   });
 });

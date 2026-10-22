@@ -45,7 +45,10 @@ export function NativeSelect({
         // `folio-control`: joins the 44px touch floor with `<Button>` /
         // `<Input>` siblings (docs/dev/phone-layout.md rule 9) — the
         // /bookmarks Sort select sat 36px beside 44px buttons on iPad.
-        "folio-control border-input bg-background focus-visible:ring-ring flex rounded-md border shadow-sm transition-colors focus-visible:ring-1 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
+        // `pointer-coarse:h-11` as well: WebKit ignores `min-height` on a
+        // native <select>, so the shared floor alone left this 36px on
+        // iPad beside 44px buttons.
+        "folio-control border-input bg-background focus-visible:ring-ring flex rounded-md border shadow-sm transition-colors focus-visible:ring-1 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-11",
         SIZES[size],
         className,
       )}

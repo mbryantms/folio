@@ -74,7 +74,7 @@ export function CblStatsPillsStatic({
         // instead of orphan smaller chips. See `docs/dev/search.md`.
         // `folio-control` joins the pills to the 44px touch floor so
         // they stay level with the buttons on iPad (phone-layout rule 9).
-        "folio-control text-sm h-9 px-3 [&_svg]:h-3.5 [&_svg]:w-3.5"
+        "folio-control text-sm h-9 px-3 pointer-coarse:h-11 [&_svg]:h-3.5 [&_svg]:w-3.5"
       : "text-xs";
   return (
     <div className={cn("flex shrink-0 items-center gap-2", className)}>
