@@ -117,6 +117,8 @@ import type {
   IssueCoverPickResp,
   SeriesCoverPickReq,
   SeriesCoverPickResp,
+  ConfirmRemovalsReq,
+  ConfirmRemovalsResp,
 } from "../types";
 
 // ---------- Library Scanner v1 mutations ----------
@@ -927,6 +929,58 @@ export function useConfirmIssueRemoval(libraryId: string) {
     }),
     {
       successMessage: "Removal confirmed",
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.removed(libraryId) });
+      },
+    },
+  );
+}
+
+function confirmedMessage(data: ConfirmRemovalsResp | null): string {
+  if (!data) return "Removal confirmed";
+  const parts: string[] = [];
+  if (data.series_confirmed > 0) parts.push(`${data.series_confirmed} series`);
+  if (data.issues_confirmed > 0) {
+    parts.push(
+      `${data.issues_confirmed} ${data.issues_confirmed === 1 ? "issue" : "issues"}`,
+    );
+  }
+  return parts.length > 0
+    ? `Removal confirmed for ${parts.join(" and ")}`
+    : "Nothing left to confirm";
+}
+
+/** `POST /series/{slug}/confirm-removal` — confirm a soft-removed series and
+ *  every still-pending issue under it in one call. */
+export function useConfirmSeriesRemoval(libraryId: string) {
+  const qc = useQueryClient();
+  return useApiMutation<ConfirmRemovalsResp, { seriesSlug: string }>(
+    ({ seriesSlug }) => ({
+      path: `/series/${seriesSlug}/confirm-removal`,
+      method: "POST",
+    }),
+    {
+      successMessage: confirmedMessage,
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: queryKeys.removed(libraryId) });
+      },
+    },
+  );
+}
+
+/** `POST /libraries/{slug}/removed/confirm` — bulk confirm: `all: true` for
+ *  every pending removal in the library, or picked `series_ids` (cascading
+ *  to their issues) / loose `issue_ids`. */
+export function useConfirmRemovals(libraryId: string) {
+  const qc = useQueryClient();
+  return useApiMutation<ConfirmRemovalsResp, ConfirmRemovalsReq>(
+    (body) => ({
+      path: `/libraries/${libraryId}/removed/confirm`,
+      method: "POST",
+      body,
+    }),
+    {
+      successMessage: confirmedMessage,
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.removed(libraryId) });
       },

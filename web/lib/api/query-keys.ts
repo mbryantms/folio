@@ -129,6 +129,10 @@ export const queryKeys = {
   scanPreview: (libraryId: string) =>
     ["libraries", libraryId, "scan-preview"] as const,
   removed: (libraryId: string) => ["libraries", libraryId, "removed"] as const,
+  /** First-page probe of the removed listing for the tab badge. Prefixed
+   *  by `removed` so one invalidation refreshes both. */
+  removedPending: (libraryId: string) =>
+    ["libraries", libraryId, "removed", "pending"] as const,
   /** Prefix for every duplicates listing of a library (any kind filter). */
   duplicatesAll: (libraryId: string) =>
     ["libraries", libraryId, "duplicates"] as const,

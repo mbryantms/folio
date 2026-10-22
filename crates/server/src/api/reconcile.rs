@@ -3,13 +3,21 @@
 //! Library Scanner v1, Milestone 7 (spec §4.7).
 //!
 //! Routes:
-//!   - `GET    /libraries/{id}/removed` — list issues + series with `removed_at` set
-//!   - `POST   /issues/{id}/restore`     — clear `removed_at` (file must be back)
-//!   - `POST   /issues/{id}/confirm-removal` — set `removal_confirmed_at` now
+//!   - `GET    /libraries/{slug}/removed` — removed series (with per-series
+//!     issue counts) + the *loose* removed issues whose series is still live
+//!   - `POST   /libraries/{slug}/removed/confirm` — bulk confirm: everything
+//!     pending in the library, or a picked set of series / issue ids
+//!   - `POST   /series/{s}/issues/{i}/restore`   — clear `removed_at` (file must be back)
+//!   - `POST   /series/{s}/issues/{i}/confirm-removal` — set `removal_confirmed_at` now
 //!   - `POST   /series/{slug}/restore`   — clear `removed_at` on a series +
 //!     its on-disk issues (folder must be back)
+//!   - `POST   /series/{slug}/confirm-removal` — confirm the series and every
+//!     still-pending issue under it in one go
 //!
-//! All admin-only.
+//! All admin-only. Confirming is the operator's early "yes, it's really
+//! gone" — the daily `auto_confirm_sweep` does the same after
+//! `library.soft_delete_days`, and the hard purge follows later. Nothing here
+//! removes a row from the database; see `jobs::hard_purge`.
 
 use axum::{
     Extension, Json,
@@ -21,7 +29,7 @@ use chrono::{DateTime, FixedOffset};
 use entity::{issue, series};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, EntityTrait, FromQueryResult, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, Set, sea_query::Expr,
+    QueryFilter, QueryOrder, QuerySelect, Set, sea_query::Expr, sea_query::ExprTrait,
 };
 use serde::{Deserialize, Serialize};
 use shared::pagination::{decode_cursor, encode_cursor};
@@ -40,13 +48,19 @@ use server_macros::handler;
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_removed))
+        .routes(routes!(confirm_removals))
         .routes(routes!(restore_issue))
         .routes(routes!(confirm_issue))
         .routes(routes!(restore_series))
+        .routes(routes!(confirm_series))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RemovedListView {
+    /// **Loose** removed issues: files that vanished while their series
+    /// folder is still on disk. Issues of a removed *series* are not listed
+    /// here — the series row stands for them (its `issue_count`), and the
+    /// series-level restore / confirm act on them as a unit.
     pub issues: Vec<RemovedIssueView>,
     /// Complete on the first page (cursor absent); empty on subsequent
     /// pages. Removed-series counts are small (one row per folder), so
@@ -54,10 +68,18 @@ pub struct RemovedListView {
     pub series: Vec<RemovedSeriesView>,
     /// Cursor for the next page of `issues`; `None` on the last page.
     pub next_cursor: Option<String>,
-    /// Total removed-issue count. First page only, mirroring the
+    /// Total loose removed-issue count. First page only, mirroring the
     /// `CursorPage::total` convention.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_issues: Option<u64>,
+    /// Removed-but-unconfirmed issues in the whole library, loose *and*
+    /// under removed series — what "Confirm all pending" would stamp.
+    /// First page only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_issues: Option<u64>,
+    /// Removed-but-unconfirmed series in the library. First page only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_series: Option<u64>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -81,6 +103,120 @@ pub struct RemovedSeriesView {
     pub folder_path: Option<String>,
     pub removed_at: String,
     pub removal_confirmed_at: Option<String>,
+    /// Removed issues under this series (confirmed or not).
+    pub issue_count: u64,
+    /// Of those, the ones still awaiting confirmation.
+    pub pending_issue_count: u64,
+}
+
+/// Body of `POST /libraries/{slug}/removed/confirm`. Either `all: true`
+/// (every pending removal in the library) or a picked set — `series_ids`
+/// confirm the series rows **and** every pending issue under them,
+/// `issue_ids` confirm loose issues. Ids outside the library are ignored.
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
+pub struct ConfirmRemovalsReq {
+    #[serde(default)]
+    #[garde(skip)]
+    pub all: bool,
+    #[serde(default)]
+    #[garde(length(max = 5000))]
+    pub series_ids: Vec<Uuid>,
+    #[serde(default)]
+    #[garde(length(max = 5000))]
+    pub issue_ids: Vec<String>,
+}
+
+/// What a confirm call stamped. Rows that were already confirmed (by an
+/// earlier click or the nightly sweep) are not counted.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ConfirmRemovalsResp {
+    pub issues_confirmed: u64,
+    pub series_confirmed: u64,
+}
+
+/// Per-series removed-issue tally for the listing.
+#[derive(FromQueryResult)]
+struct SeriesRemovedCounts {
+    series_id: Uuid,
+    issue_count: i64,
+    pending_count: i64,
+}
+
+/// `removed_at IS NOT NULL AND removal_confirmed_at IS NULL` on `issues` —
+/// the rows a confirm can still act on.
+fn pending_issue_condition() -> Condition {
+    Condition::all()
+        .add(issue::Column::RemovedAt.is_not_null())
+        .add(issue::Column::RemovalConfirmedAt.is_null())
+}
+
+/// Issues whose parent series is itself soft-deleted. The listing hides
+/// them behind the series row; the series-level actions cover them.
+fn parent_series_removed() -> sea_orm::sea_query::SimpleExpr {
+    Expr::cust(
+        "EXISTS (SELECT 1 FROM series s \
+         WHERE s.id = issues.series_id AND s.removed_at IS NOT NULL)",
+    )
+}
+
+/// Stamp `removal_confirmed_at = now()` on every pending removed issue that
+/// matches `scope`, then drop their on-disk thumbnails (off-thread — a
+/// folder removal can hold hundreds). Returns how many rows flipped.
+async fn confirm_pending_issues(
+    db: &sea_orm::DatabaseConnection,
+    data_dir: std::path::PathBuf,
+    scope: Condition,
+) -> Result<u64, sea_orm::DbErr> {
+    let ids: Vec<String> = issue::Entity::find()
+        .filter(scope)
+        .filter(pending_issue_condition())
+        .select_only()
+        .column(issue::Column::Id)
+        .into_tuple()
+        .all(db)
+        .await?;
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let now = chrono::Utc::now().fixed_offset();
+    let mut flipped = 0u64;
+    for chunk in ids.chunks(500) {
+        let res = issue::Entity::update_many()
+            .col_expr(issue::Column::RemovalConfirmedAt, Expr::value(now))
+            .filter(issue::Column::Id.is_in(chunk.to_vec()))
+            // Re-check so a row confirmed between the select and here isn't
+            // re-stamped with a later time.
+            .filter(issue::Column::RemovalConfirmedAt.is_null())
+            .exec(db)
+            .await?;
+        flipped += res.rows_affected;
+    }
+    let wipe_ids = ids;
+    tokio::task::spawn_blocking(move || {
+        for id in &wipe_ids {
+            crate::library::thumbnails::wipe_issue_thumbs(&data_dir, id);
+        }
+    })
+    .await
+    .map_err(|e| sea_orm::DbErr::Custom(format!("thumbnail wipe join failed: {e}")))?;
+    Ok(flipped)
+}
+
+/// Stamp `removal_confirmed_at = now()` on every pending removed series
+/// matching `scope`. Returns how many rows flipped.
+async fn confirm_pending_series(
+    db: &sea_orm::DatabaseConnection,
+    scope: Condition,
+) -> Result<u64, sea_orm::DbErr> {
+    let now = chrono::Utc::now().fixed_offset();
+    let res = series::Entity::update_many()
+        .col_expr(series::Column::RemovalConfirmedAt, Expr::value(now))
+        .filter(scope)
+        .filter(series::Column::RemovedAt.is_not_null())
+        .filter(series::Column::RemovalConfirmedAt.is_null())
+        .exec(db)
+        .await?;
+    Ok(res.rows_affected)
 }
 
 /// Lean projection for the removed-issue listing — `issue::Model` carries
@@ -164,6 +300,7 @@ pub async fn list_removed(
     let mut sel = issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(uuid))
         .filter(issue::Column::RemovedAt.is_not_null())
+        .filter(parent_series_removed().not())
         .select_only()
         .column(issue::Column::Id)
         .column(issue::Column::Slug)
@@ -202,21 +339,33 @@ pub async fn list_removed(
     };
     let issues: Vec<RemovedIssueRow> = rows.into_iter().take(limit as usize).collect();
 
-    let total_issues = if first_page {
-        match issue::Entity::find()
+    let (total_issues, pending_issues, pending_series) = if first_page {
+        let loose = issue::Entity::find()
             .filter(issue::Column::LibraryId.eq(uuid))
             .filter(issue::Column::RemovedAt.is_not_null())
+            .filter(parent_series_removed().not())
             .count(&app.db)
-            .await
-        {
-            Ok(n) => Some(n),
-            Err(e) => {
-                tracing::error!(error = %e, "count removed issues failed");
+            .await;
+        let pending_i = issue::Entity::find()
+            .filter(issue::Column::LibraryId.eq(uuid))
+            .filter(pending_issue_condition())
+            .count(&app.db)
+            .await;
+        let pending_s = series::Entity::find()
+            .filter(series::Column::LibraryId.eq(uuid))
+            .filter(series::Column::RemovedAt.is_not_null())
+            .filter(series::Column::RemovalConfirmedAt.is_null())
+            .count(&app.db)
+            .await;
+        match (loose, pending_i, pending_s) {
+            (Ok(a), Ok(b), Ok(c)) => (Some(a), Some(b), Some(c)),
+            (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
+                tracing::error!(error = %e, "count removed rows failed");
                 return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
         }
     } else {
-        None
+        (None, None, None)
     };
 
     // Removed series ride on the first page only — one row per folder,
@@ -246,6 +395,42 @@ pub async fn list_removed(
     } else {
         Vec::new()
     };
+    // Per-series removed-issue tallies, one grouped query.
+    let mut series_counts: HashMap<Uuid, (u64, u64)> = HashMap::new();
+    if !series_rows.is_empty() {
+        let ids: Vec<Uuid> = series_rows.iter().map(|s| s.id).collect();
+        match issue::Entity::find()
+            .select_only()
+            .column(issue::Column::SeriesId)
+            .column_as(issue::Column::Id.count(), "issue_count")
+            .column_as(
+                Expr::cust("COUNT(*) FILTER (WHERE removal_confirmed_at IS NULL)"),
+                "pending_count",
+            )
+            .filter(issue::Column::SeriesId.is_in(ids))
+            .filter(issue::Column::RemovedAt.is_not_null())
+            .group_by(issue::Column::SeriesId)
+            .into_model::<SeriesRemovedCounts>()
+            .all(&app.db)
+            .await
+        {
+            Ok(rows) => {
+                for r in rows {
+                    series_counts.insert(
+                        r.series_id,
+                        (
+                            u64::try_from(r.issue_count).unwrap_or(0),
+                            u64::try_from(r.pending_count).unwrap_or(0),
+                        ),
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "count removed issues per series failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    }
 
     // Batch-fetch the parent series slug for each removed issue so the
     // payload carries the data the admin UI needs to build a restore URL
@@ -285,17 +470,25 @@ pub async fn list_removed(
             .collect(),
         series: series_rows
             .into_iter()
-            .map(|s| RemovedSeriesView {
-                id: s.id.to_string(),
-                slug: s.slug,
-                name: s.name,
-                folder_path: s.folder_path,
-                removed_at: s.removed_at.to_rfc3339(),
-                removal_confirmed_at: s.removal_confirmed_at.map(|t| t.to_rfc3339()),
+            .map(|s| {
+                let (issue_count, pending_issue_count) =
+                    series_counts.get(&s.id).copied().unwrap_or((0, 0));
+                RemovedSeriesView {
+                    id: s.id.to_string(),
+                    slug: s.slug,
+                    name: s.name,
+                    folder_path: s.folder_path,
+                    removed_at: s.removed_at.to_rfc3339(),
+                    removal_confirmed_at: s.removal_confirmed_at.map(|t| t.to_rfc3339()),
+                    issue_count,
+                    pending_issue_count,
+                }
             })
             .collect(),
         next_cursor,
         total_issues,
+        pending_issues,
+        pending_series,
     };
     Json(view).into_response()
 }
@@ -537,4 +730,174 @@ pub async fn restore_series(
     );
 
     StatusCode::NO_CONTENT.into_response()
+}
+
+#[utoipa::path(
+    operation_id = "reconcile_confirm_series",    post,
+    path = "/series/{slug}/confirm-removal",
+    params(("slug" = String, Path,)),
+    responses(
+        (status = 200, body = ConfirmRemovalsResp),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "series not found"),
+        (status = 409, description = "series is not soft-deleted"),
+    )
+)]
+#[handler]
+pub async fn confirm_series(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    AxPath(slug): AxPath<String>,
+) -> impl IntoResponse {
+    let row = match crate::api::series::find_by_slug(&app.db, &slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    if row.removed_at.is_none() {
+        return error(
+            StatusCode::CONFLICT,
+            "conflict.not_removed",
+            "series is not soft-deleted",
+        );
+    }
+    let series_id = row.id;
+    let data_dir = app.cfg().data_path.clone();
+    // Issues first, so a failure between the two leaves the series row
+    // pending (and still listed) rather than confirmed with pending children.
+    let issues_confirmed = match confirm_pending_issues(
+        &app.db,
+        data_dir,
+        Condition::all().add(issue::Column::SeriesId.eq(series_id)),
+    )
+    .await
+    {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::error!(error = %e, series_id = %series_id, "confirm series: issues failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let series_confirmed = match confirm_pending_series(
+        &app.db,
+        Condition::all().add(series::Column::Id.eq(series_id)),
+    )
+    .await
+    {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::error!(error = %e, series_id = %series_id, "confirm series failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.series.confirm_removal",
+        target = ("series", series_id.to_string()),
+        payload = serde_json::json!({
+            "series_slug": slug,
+            "issues_confirmed": issues_confirmed,
+            "series_confirmed": series_confirmed,
+        }),
+    );
+
+    Json(ConfirmRemovalsResp {
+        issues_confirmed,
+        series_confirmed,
+    })
+    .into_response()
+}
+
+#[utoipa::path(
+    operation_id = "reconcile_confirm_removals",    post,
+    path = "/libraries/{slug}/removed/confirm",
+    params(("slug" = String, Path,)),
+    request_body = ConfirmRemovalsReq,
+    responses(
+        (status = 200, body = ConfirmRemovalsResp),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "library not found"),
+        (status = 422, description = "neither `all` nor any ids given"),
+    )
+)]
+#[handler]
+pub async fn confirm_removals(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    AxPath(slug): AxPath<String>,
+    crate::api::extractors::Validated(req): crate::api::extractors::Validated<ConfirmRemovalsReq>,
+) -> impl IntoResponse {
+    let lib = match crate::api::libraries::find_by_slug(&app.db, &slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    if !req.all && req.series_ids.is_empty() && req.issue_ids.is_empty() {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "pass `all: true` or at least one of `series_ids` / `issue_ids`",
+        );
+    }
+    let lib_id = lib.id;
+    // Scope every write to the library in the path, whatever ids the body
+    // carries. Picked series take their pending issues with them.
+    let issue_scope = if req.all {
+        Condition::all().add(issue::Column::LibraryId.eq(lib_id))
+    } else {
+        Condition::all()
+            .add(issue::Column::LibraryId.eq(lib_id))
+            .add(
+                Condition::any()
+                    .add(issue::Column::Id.is_in(req.issue_ids.clone()))
+                    .add(issue::Column::SeriesId.is_in(req.series_ids.clone())),
+            )
+    };
+    let series_scope = if req.all {
+        Condition::all().add(series::Column::LibraryId.eq(lib_id))
+    } else {
+        Condition::all()
+            .add(series::Column::LibraryId.eq(lib_id))
+            .add(series::Column::Id.is_in(req.series_ids.clone()))
+    };
+    let data_dir = app.cfg().data_path.clone();
+    let issues_confirmed = match confirm_pending_issues(&app.db, data_dir, issue_scope).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::error!(error = %e, library_id = %lib_id, "confirm removals: issues failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let series_confirmed = match confirm_pending_series(&app.db, series_scope).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::error!(error = %e, library_id = %lib_id, "confirm removals: series failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    record_admin_action!(
+        db = &app.db,
+        ctx = &ctx,
+        actor = actor.id,
+        action = "admin.library.confirm_removals",
+        target = ("library", lib_id.to_string()),
+        payload = serde_json::json!({
+            "library_slug": slug,
+            "all": req.all,
+            "series_ids": req.series_ids.len(),
+            "issue_ids": req.issue_ids.len(),
+            "issues_confirmed": issues_confirmed,
+            "series_confirmed": series_confirmed,
+        }),
+    );
+
+    Json(ConfirmRemovalsResp {
+        issues_confirmed,
+        series_confirmed,
+    })
+    .into_response()
 }

@@ -38,7 +38,7 @@ export default async function LibraryDetailLayout({
           {library.root_path}
         </p>
       </header>
-      <LibraryTabs basePath={basePath} />
+      <LibraryTabs basePath={basePath} librarySlug={slug} />
       <div className="pt-4">{children}</div>
     </div>
   );

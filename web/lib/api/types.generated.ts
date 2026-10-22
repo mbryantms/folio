@@ -2465,6 +2465,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/libraries/{slug}/removed/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reconcile_confirm_removals"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/libraries/{slug}/scan": {
         parameters: {
             query?: never;
@@ -4815,6 +4831,22 @@ export interface paths {
         get: operations["series_collection_report"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{slug}/confirm-removal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reconcile_confirm_series"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7741,6 +7773,27 @@ export interface components {
              *     matrix of allowed combinations.
              */
             value?: unknown;
+        };
+        /**
+         * @description Body of `POST /libraries/{slug}/removed/confirm`. Either `all: true`
+         *     (every pending removal in the library) or a picked set — `series_ids`
+         *     confirm the series rows **and** every pending issue under them,
+         *     `issue_ids` confirm loose issues. Ids outside the library are ignored.
+         */
+        ConfirmRemovalsReq: {
+            all?: boolean;
+            issue_ids?: string[];
+            series_ids?: string[];
+        };
+        /**
+         * @description What a confirm call stamped. Rows that were already confirmed (by an
+         *     earlier click or the nightly sweep) are not counted.
+         */
+        ConfirmRemovalsResp: {
+            /** Format: int64 */
+            issues_confirmed: number;
+            /** Format: int64 */
+            series_confirmed: number;
         };
         ContentInsightsView: {
             abandoned: components["schemas"]["AbandonedEntry"][];
@@ -12718,9 +12771,27 @@ export interface components {
             slug: string;
         };
         RemovedListView: {
+            /**
+             * @description **Loose** removed issues: files that vanished while their series
+             *     folder is still on disk. Issues of a removed *series* are not listed
+             *     here — the series row stands for them (its `issue_count`), and the
+             *     series-level restore / confirm act on them as a unit.
+             */
             issues: components["schemas"]["RemovedIssueView"][];
             /** @description Cursor for the next page of `issues`; `None` on the last page. */
             next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Removed-but-unconfirmed issues in the whole library, loose *and*
+             *     under removed series — what "Confirm all pending" would stamp.
+             *     First page only.
+             */
+            pending_issues?: number | null;
+            /**
+             * Format: int64
+             * @description Removed-but-unconfirmed series in the library. First page only.
+             */
+            pending_series?: number | null;
             /**
              * @description Complete on the first page (cursor absent); empty on subsequent
              *     pages. Removed-series counts are small (one row per folder), so
@@ -12729,7 +12800,7 @@ export interface components {
             series: components["schemas"]["RemovedSeriesView"][];
             /**
              * Format: int64
-             * @description Total removed-issue count. First page only, mirroring the
+             * @description Total loose removed-issue count. First page only, mirroring the
              *     `CursorPage::total` convention.
              */
             total_issues?: number | null;
@@ -12737,7 +12808,17 @@ export interface components {
         RemovedSeriesView: {
             folder_path?: string | null;
             id: string;
+            /**
+             * Format: int64
+             * @description Removed issues under this series (confirmed or not).
+             */
+            issue_count: number;
             name: string;
+            /**
+             * Format: int64
+             * @description Of those, the ones still awaiting confirmation.
+             */
+            pending_issue_count: number;
             removal_confirmed_at?: string | null;
             removed_at: string;
             slug: string;
@@ -20304,6 +20385,52 @@ export interface operations {
             };
         };
     };
+    reconcile_confirm_removals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmRemovalsReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfirmRemovalsResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description neither `all` nor any ids given */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     libraries_scan: {
         parameters: {
             query?: {
@@ -24844,6 +24971,48 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reconcile_confirm_series: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfirmRemovalsResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series is not soft-deleted */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

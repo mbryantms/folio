@@ -5342,6 +5342,51 @@
         }
       }
     },
+    "/api/libraries/{slug}/removed/confirm": {
+      "post": {
+        "operationId": "reconcile_confirm_removals",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmRemovalsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfirmRemovalsResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "library not found"
+          },
+          "422": {
+            "description": "neither `all` nor any ids given"
+          }
+        }
+      }
+    },
     "/api/libraries/{slug}/scan": {
       "post": {
         "operationId": "libraries_scan",
@@ -10524,6 +10569,41 @@
             }
           },
           "404": {}
+        }
+      }
+    },
+    "/api/series/{slug}/confirm-removal": {
+      "post": {
+        "operationId": "reconcile_confirm_series",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfirmRemovalsResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "series not found"
+          },
+          "409": {
+            "description": "series is not soft-deleted"
+          }
         }
       }
     },
@@ -17713,6 +17793,48 @@
           },
           "value": {
             "description": "Shape varies by `(field, op)`. The compiler validates and rejects\nmismatches with a clear error. See [`super::registry`] for the\nmatrix of allowed combinations."
+          }
+        }
+      },
+      "ConfirmRemovalsReq": {
+        "type": "object",
+        "description": "Body of `POST /libraries/{slug}/removed/confirm`. Either `all: true`\n(every pending removal in the library) or a picked set — `series_ids`\nconfirm the series rows **and** every pending issue under them,\n`issue_ids` confirm loose issues. Ids outside the library are ignored.",
+        "properties": {
+          "all": {
+            "type": "boolean"
+          },
+          "issue_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "series_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "ConfirmRemovalsResp": {
+        "type": "object",
+        "description": "What a confirm call stamped. Rows that were already confirmed (by an\nearlier click or the nightly sweep) are not counted.",
+        "required": [
+          "issues_confirmed",
+          "series_confirmed"
+        ],
+        "properties": {
+          "issues_confirmed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "series_confirmed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -30080,7 +30202,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/RemovedIssueView"
-            }
+            },
+            "description": "**Loose** removed issues: files that vanished while their series\nfolder is still on disk. Issues of a removed *series* are not listed\nhere — the series row stands for them (its `issue_count`), and the\nseries-level restore / confirm act on them as a unit."
           },
           "next_cursor": {
             "type": [
@@ -30088,6 +30211,24 @@
               "null"
             ],
             "description": "Cursor for the next page of `issues`; `None` on the last page."
+          },
+          "pending_issues": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Removed-but-unconfirmed issues in the whole library, loose *and*\nunder removed series — what \"Confirm all pending\" would stamp.\nFirst page only.",
+            "minimum": 0
+          },
+          "pending_series": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Removed-but-unconfirmed series in the library. First page only.",
+            "minimum": 0
           },
           "series": {
             "type": "array",
@@ -30102,7 +30243,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "Total removed-issue count. First page only, mirroring the\n`CursorPage::total` convention.",
+            "description": "Total loose removed-issue count. First page only, mirroring the\n`CursorPage::total` convention.",
             "minimum": 0
           }
         }
@@ -30113,7 +30254,9 @@
           "id",
           "slug",
           "name",
-          "removed_at"
+          "removed_at",
+          "issue_count",
+          "pending_issue_count"
         ],
         "properties": {
           "folder_path": {
@@ -30125,8 +30268,20 @@
           "id": {
             "type": "string"
           },
+          "issue_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Removed issues under this series (confirmed or not).",
+            "minimum": 0
+          },
           "name": {
             "type": "string"
+          },
+          "pending_issue_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of those, the ones still awaiting confirmation.",
+            "minimum": 0
           },
           "removal_confirmed_at": {
             "type": [
