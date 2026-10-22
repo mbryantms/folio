@@ -447,6 +447,23 @@ the detail view (with `removed_at` set) to admins, whose page shows a
 banner linking to the library's Removed tab. Regression guard:
 `reconcile.rs::removed_series_hidden_from_lists_rails_and_opds`.
 
+**Confirming removals** (`api/reconcile.rs`). The Removed tab groups by
+series: one row per missing folder with its removed-issue tally, plus the
+*loose* issues whose series folder is still present (issues of a removed
+series are not repeated as rows). Confirming is the operator's early "it's
+really gone" — the same stamp the nightly `auto_confirm_sweep` applies after
+`library.soft_delete_days`; it never touches files or deletes rows (the hard
+purge does that later). Three write paths, all admin-only and audited:
+`POST /series/{s}/issues/{i}/confirm-removal` (one file),
+`POST /series/{slug}/confirm-removal` (the series row **and** every pending
+issue under it; `admin.series.confirm_removal`), and
+`POST /libraries/{slug}/removed/confirm` with `{all: true}` or picked
+`series_ids` / `issue_ids` (`admin.library.confirm_removals`). The listing's
+first page carries `pending_issues` / `pending_series`, which the admin
+library tabs show as a badge on "Removed". Guards:
+`reconcile.rs::confirm_series_cascades_to_its_issues` and
+`::bulk_confirm_selected_then_all`.
+
 The narrow per-series path in
 [`reconcile::reconcile_series`](../../crates/server/src/library/reconcile.rs#L175)
 runs the same logic scoped to one series so siblings stay untouched.

@@ -927,6 +927,24 @@ export function useRemovedItemsInfinite(libraryId: string) {
   });
 }
 
+/**
+ * Pending-removal counts for the admin library "Removed" tab badge: the
+ * listing's first page with `limit=1` carries `pending_issues` /
+ * `pending_series`, so no extra endpoint is needed.
+ */
+export function useRemovedPending(libraryId: string) {
+  return useQuery({
+    queryKey: queryKeys.removedPending(libraryId),
+    queryFn: () =>
+      jsonFetch<RemovedListView>(`/libraries/${libraryId}/removed?limit=1`),
+    enabled: !!libraryId,
+    select: (page) => ({
+      issues: page.pending_issues ?? 0,
+      series: page.pending_series ?? 0,
+    }),
+  });
+}
+
 /** `getNextPageParam` for {@link useDuplicatesInfinite}. Exported + tested
  *  so a refactor can't swallow `next_cursor` and silently truncate the
  *  duplicates list (WP-3.3). */

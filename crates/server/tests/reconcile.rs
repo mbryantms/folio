@@ -187,7 +187,16 @@ async fn delete_then_rescan_soft_deletes() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
-    assert_eq!(body["issues"].as_array().unwrap().len(), 1);
+    // Mu's only file is gone, so the series itself soft-deletes and stands
+    // for its issue in the listing: one series row carrying the tally, no
+    // loose issue row.
+    assert_eq!(body["issues"].as_array().unwrap().len(), 0, "{body}");
+    let series = body["series"].as_array().unwrap();
+    assert_eq!(series.len(), 1, "{body}");
+    assert_eq!(series[0]["issue_count"], 1);
+    assert_eq!(series[0]["pending_issue_count"], 1);
+    assert_eq!(body["pending_issues"], 1);
+    assert_eq!(body["pending_series"], 1);
 }
 
 #[tokio::test]
@@ -440,7 +449,10 @@ async fn removed_list_paginates_by_cursor() {
     let tmp = tempfile::tempdir().unwrap();
     let folder = tmp.path().join("Series Rho (2025)");
     std::fs::create_dir_all(&folder).unwrap();
-    for n in 1..=3u32 {
+    // Four files; three go missing while the fourth keeps the series alive,
+    // so the removed three are *loose* issues and paginate as issue rows (a
+    // removed series folds its issues into its own row instead).
+    for n in 1..=4u32 {
         write_cbz(&folder.join(format!("Rho 00{n}.cbz")), n);
     }
 
@@ -480,8 +492,10 @@ async fn removed_list_paginates_by_cursor() {
     let page1 = body_json(resp.into_body()).await;
     assert_eq!(page1["issues"].as_array().unwrap().len(), 2);
     assert_eq!(page1["total_issues"], 3);
-    // The all-issues-removed series soft-deletes and rides the first page.
-    assert_eq!(page1["series"].as_array().unwrap().len(), 1);
+    assert_eq!(page1["pending_issues"], 3);
+    // The series still has a file on disk, so it is not removed itself.
+    assert_eq!(page1["series"].as_array().unwrap().len(), 0);
+    assert_eq!(page1["pending_series"], 0);
     let cursor = page1["next_cursor"]
         .as_str()
         .expect("next_cursor")
@@ -775,4 +789,318 @@ async fn removed_series_hidden_from_lists_rails_and_opds() {
         body["removed_at"].is_null(),
         "restored detail has no stamp: {body}"
     );
+}
+
+/// Series-level confirm: one call stamps the series row and every pending
+/// issue under it (the prod case was nine clicks, one per issue). Issues of
+/// a removed series are folded into the series row in the listing.
+#[tokio::test]
+async fn confirm_series_cascades_to_its_issues() {
+    let app = TestApp::spawn().await;
+    let admin = register_admin(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Phi (2025)");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz(&folder.join("Phi 001.cbz"), 1);
+    write_cbz(&folder.join("Phi 002.cbz"), 2);
+    write_cbz(&folder.join("Phi 003.cbz"), 3);
+    let decoy = tmp.path().join("Series Chi (2025)");
+    std::fs::create_dir_all(&decoy).unwrap();
+    let loose = decoy.join("Chi 001.cbz");
+    write_cbz(&loose, 9);
+    write_cbz(&decoy.join("Chi 002.cbz"), 10);
+
+    let lib_id = create_library(&app, tmp.path(), 30).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let phi = SeriesEntity::find()
+        .all(&state.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name.contains("Phi"))
+        .unwrap();
+
+    // Phi's folder goes; one loose Chi file goes too.
+    let park = tempfile::tempdir().unwrap();
+    std::fs::rename(&folder, park.path().join("Series Phi (2025)")).unwrap();
+    std::fs::remove_file(&loose).unwrap();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let get = |uri: String| {
+        let router = app.router.clone();
+        let cookie = format!("__Host-comic_session={}", admin.session);
+        async move {
+            router
+                .oneshot(
+                    Request::builder()
+                        .method(Method::GET)
+                        .uri(uri)
+                        .header(header::COOKIE, cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let post = |uri: String, body: Option<String>| {
+        let router = app.router.clone();
+        let cookie = format!(
+            "__Host-comic_session={}; __Host-comic_csrf={}",
+            admin.session, admin.csrf
+        );
+        let csrf = admin.csrf.clone();
+        async move {
+            let mut b = Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .header(header::COOKIE, cookie)
+                .header("X-CSRF-Token", csrf);
+            let body = match body {
+                Some(json) => {
+                    b = b.header(header::CONTENT_TYPE, "application/json");
+                    Body::from(json)
+                }
+                None => Body::empty(),
+            };
+            router.oneshot(b.body(body).unwrap()).await.unwrap()
+        }
+    };
+
+    // Listing: the series row carries its issue tally; only the loose Chi
+    // file appears as an issue row; pending counts span both.
+    let body = body_json(
+        get(format!("/api/libraries/{lib_id}/removed"))
+            .await
+            .into_body(),
+    )
+    .await;
+    let series = body["series"].as_array().unwrap();
+    assert_eq!(series.len(), 1, "{body}");
+    assert_eq!(series[0]["issue_count"], 3);
+    assert_eq!(series[0]["pending_issue_count"], 3);
+    let issues = body["issues"].as_array().unwrap();
+    assert_eq!(
+        issues.len(),
+        1,
+        "Phi's issues fold into the series row: {body}"
+    );
+    assert!(
+        issues[0]["file_path"]
+            .as_str()
+            .unwrap()
+            .ends_with("Chi 001.cbz")
+    );
+    assert_eq!(body["total_issues"], 1);
+    assert_eq!(body["pending_issues"], 4);
+    assert_eq!(body["pending_series"], 1);
+
+    // Not removed → 409.
+    let chi_slug = SeriesEntity::find()
+        .all(&state.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name.contains("Chi"))
+        .unwrap()
+        .slug;
+    let resp = post(format!("/api/series/{chi_slug}/confirm-removal"), None).await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    // Confirm Phi: series + 3 issues in one call.
+    let resp = post(format!("/api/series/{}/confirm-removal", phi.slug), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["issues_confirmed"], 3, "{body}");
+    assert_eq!(body["series_confirmed"], 1, "{body}");
+    let phi_issues = IssueEntity::find()
+        .filter(entity::issue::Column::SeriesId.eq(phi.id))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(phi_issues.len(), 3);
+    assert!(
+        phi_issues.iter().all(|i| i.removal_confirmed_at.is_some()),
+        "every Phi issue confirmed"
+    );
+    let phi_row = SeriesEntity::find_by_id(phi.id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(phi_row.removal_confirmed_at.is_some());
+    // The loose Chi file is untouched.
+    let body = body_json(
+        get(format!("/api/libraries/{lib_id}/removed"))
+            .await
+            .into_body(),
+    )
+    .await;
+    assert_eq!(body["pending_issues"], 1, "{body}");
+    assert_eq!(body["pending_series"], 0);
+    assert_eq!(body["series"][0]["pending_issue_count"], 0);
+
+    // Second call is a no-op, not an error.
+    let resp = post(format!("/api/series/{}/confirm-removal", phi.slug), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["issues_confirmed"], 0);
+    assert_eq!(body["series_confirmed"], 0);
+
+    // Audit row.
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let n = entity::audit_log::Entity::find()
+        .filter(entity::audit_log::Column::Action.eq("admin.series.confirm_removal"))
+        .all(&db)
+        .await
+        .unwrap()
+        .len();
+    assert_eq!(n, 2, "one audit row per confirm call");
+}
+
+/// Library-wide bulk confirm: a picked set (series ids cascade to their
+/// issues, issue ids hit loose files), then `all` sweeps the rest. Readers
+/// get 403; an empty selection is 422.
+#[tokio::test]
+async fn bulk_confirm_selected_then_all() {
+    let app = TestApp::spawn().await;
+    let admin = register_admin(&app).await;
+    let reader = register(&app, "reader2@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let f1 = tmp.path().join("Series Alpha (2025)");
+    let f2 = tmp.path().join("Series Beta (2025)");
+    let f3 = tmp.path().join("Series Gamma (2025)");
+    for f in [&f1, &f2, &f3] {
+        std::fs::create_dir_all(f).unwrap();
+    }
+    write_cbz(&f1.join("Alpha 001.cbz"), 1);
+    write_cbz(&f1.join("Alpha 002.cbz"), 2);
+    write_cbz(&f2.join("Beta 001.cbz"), 3);
+    let g1 = f3.join("Gamma 001.cbz");
+    let g2 = f3.join("Gamma 002.cbz");
+    write_cbz(&g1, 4);
+    write_cbz(&g2, 5);
+    write_cbz(&f3.join("Gamma 003.cbz"), 6);
+
+    let lib_id = create_library(&app, tmp.path(), 30).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let all_series = SeriesEntity::find().all(&state.db).await.unwrap();
+    let id_of = |needle: &str| {
+        all_series
+            .iter()
+            .find(|s| s.name.contains(needle))
+            .unwrap()
+            .id
+    };
+    let (alpha, beta, gamma) = (id_of("Alpha"), id_of("Beta"), id_of("Gamma"));
+
+    // Alpha + Beta folders vanish; two loose Gamma files vanish.
+    let park = tempfile::tempdir().unwrap();
+    std::fs::rename(&f1, park.path().join("a")).unwrap();
+    std::fs::rename(&f2, park.path().join("b")).unwrap();
+    std::fs::remove_file(&g1).unwrap();
+    std::fs::remove_file(&g2).unwrap();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let gamma_removed: Vec<String> = IssueEntity::find()
+        .filter(entity::issue::Column::SeriesId.eq(gamma))
+        .filter(entity::issue::Column::RemovedAt.is_not_null())
+        .all(&state.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|i| i.id)
+        .collect();
+    assert_eq!(gamma_removed.len(), 2);
+
+    let post = |auth: &Authed, body: String| {
+        let router = app.router.clone();
+        let cookie = format!(
+            "__Host-comic_session={}; __Host-comic_csrf={}",
+            auth.session, auth.csrf
+        );
+        let csrf = auth.csrf.clone();
+        let uri = format!("/api/libraries/{lib_id}/removed/confirm");
+        async move {
+            router
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(uri)
+                        .header(header::COOKIE, cookie)
+                        .header("X-CSRF-Token", csrf)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+
+    // Reader → 403 before anything happens.
+    let resp = post(&reader, r#"{"all":true}"#.to_owned()).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    // Nothing picked → 422.
+    let resp = post(&admin, r#"{"series_ids":[],"issue_ids":[]}"#.to_owned()).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Picked: Alpha (cascades to its 2 issues) + one loose Gamma file.
+    let body = serde_json::json!({
+        "series_ids": [alpha],
+        "issue_ids": [gamma_removed[0]],
+    });
+    let resp = post(&admin, body.to_string()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["issues_confirmed"], 3, "{body}");
+    assert_eq!(body["series_confirmed"], 1, "{body}");
+    let beta_row = SeriesEntity::find_by_id(beta)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(beta_row.removed_at.is_some() && beta_row.removal_confirmed_at.is_none());
+    let g_other = IssueEntity::find_by_id(gamma_removed[1].clone())
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        g_other.removal_confirmed_at.is_none(),
+        "unpicked loose file stays pending"
+    );
+
+    // All: Beta (+1 issue) and the other Gamma file.
+    let resp = post(&admin, r#"{"all":true}"#.to_owned()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["issues_confirmed"], 2, "{body}");
+    assert_eq!(body["series_confirmed"], 1, "{body}");
+    let pending = IssueEntity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .filter(entity::issue::Column::RemovedAt.is_not_null())
+        .filter(entity::issue::Column::RemovalConfirmedAt.is_null())
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert!(pending.is_empty(), "nothing pending after `all`");
+    // Live Gamma 003 was never touched.
+    let live = IssueEntity::find()
+        .filter(entity::issue::Column::SeriesId.eq(gamma))
+        .filter(entity::issue::Column::RemovedAt.is_null())
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(live.len(), 1);
+
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let n = entity::audit_log::Entity::find()
+        .filter(entity::audit_log::Column::Action.eq("admin.library.confirm_removals"))
+        .all(&db)
+        .await
+        .unwrap()
+        .len();
+    assert_eq!(n, 2, "the reader's 403 and the 422 write no audit rows");
 }
