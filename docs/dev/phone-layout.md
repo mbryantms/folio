@@ -126,10 +126,10 @@ max-sm:line-clamp-2`; `PageHeader` takes `phoneDescription="hidden"`
   breadcrumb and eyebrow.
 - **Series detail**: cover beside the title block (≈40% width) with
   the Read row under both; Writers / Publication fact blocks hidden
-  (Credits tab and status badge carry them); stat row is a horizontal
-  strip; the issue list comes _before_ the metadata tabs
-  (`max-sm:order-last` on `SeriesTabs`); the Issues panel header is
-  `h2 … [🔍][⇅][⋯]` with `sticky={false}`.
+  (Credits tab and status badge carry them); stat row stays the 2×2 grid the issue page uses (a horizontal
+  strip was tried in #1249 and reverted); the issue list comes _before_
+  the metadata tabs (`max-sm:order-last` on `SeriesTabs`); the Issues
+  panel header is `h2 … [🔍][⇅][⋯]` with `sticky={false}`.
 - **Bookmarks**: header without description, sticky bar with search,
   a Filters sheet (layout toggle, tags, match mode) and `⋯` (card size,
   Select, export); kind pills scroll horizontally.
