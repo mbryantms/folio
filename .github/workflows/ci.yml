@@ -471,11 +471,18 @@ jobs:
       # then-weekly sweep left a Monday-sized window where a fresh
       # high-severity npm advisory shipped silently (advisories.yml is daily now). Prod deps only — dev
       # tooling advisories stay a weekly concern.
+      # --ignore-registry-errors: exit 0 when npm's advisory endpoint is
+      # unreachable (2026-09-04 and 2026-10-22: multi-hour "npm audits
+      # endpoint" incidents failed this step on every open PR after
+      # pnpm's own retries, regardless of what the PR touched). Advisory
+      # findings still fail the step; only registry errors are tolerated.
+      # The daily advisories.yml sweep stays strict and catches anything
+      # that slips through an outage window.
       - name: Audit (prod deps)
         if: env.WEB == 'true'
         run: |
           start=$(date +%s)
-          pnpm audit --prod --audit-level=high
+          pnpm audit --prod --audit-level=high --ignore-registry-errors
           elapsed=$(($(date +%s) - start))
           echo "| audit | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
       - name: Lint
@@ -581,11 +588,12 @@ jobs:
       # Only when deps changed (lockfile/manifest) — code-only web PRs don't
       # alter the dep tree. The daily advisories.yml sweep covers advisory
       # drift in unchanged deps.
+      # --ignore-registry-errors: see the prod-deps audit step above.
       - name: pnpm audit
         if: needs.changes.outputs.web_deps == 'true'
         run: |
           start=$(date +%s)
-          pnpm audit --audit-level=high
+          pnpm audit --audit-level=high --ignore-registry-errors
           elapsed=$(($(date +%s) - start))
           echo "| pnpm audit | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
 
