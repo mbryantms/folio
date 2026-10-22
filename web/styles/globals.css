@@ -578,18 +578,39 @@ body {
     --overlay-bottom: calc(var(--bottom-tab-h) + var(--safe-bottom) + 16px);
   }
 }
-/* Touch-target floor. `.folio-button` is every `<Button>`; `.folio-control`
- * is the other inline toolbar controls (`<Input>`, `<SelectTrigger>`, the
- * phone mode toggle). Both get the same 44px floor so a toolbar row stays
- * one uniform band on iPad / iPhone — with only buttons floored, the
- * search box and sort select sat 8px shorter than their neighbours. */
+/* Touch target. The visible control keeps shadcn's size on every pointer
+ * (36px toolbar controls and tab strip, 28px chips) — the same on iPad as
+ * on desktop. Under `(pointer: coarse)` each interactive control instead
+ * grows an invisible tap area to Apple's 44pt minimum: a pseudo-element
+ * centred on the control, 44px tall and 4px wider on each side, so an
+ * 8px toolbar gap leaves neighbouring tap areas touching but not
+ * overlapping. This is what Apple and Material do themselves (a 32pt
+ * segmented control inside a 44pt target; a 40dp button inside 48dp).
+ *
+ * `.folio-button` is every `<Button>`, `.folio-control` the other inline
+ * controls (`<Input>`, `<SelectTrigger>`, `NativeSelect`, segmented
+ * groups, the CBL header pills), `.folio-tap` the small interactive
+ * pieces that are neither (tab triggers, filter pills, segment buttons,
+ * card kebabs). A text field or native select cannot carry a
+ * pseudo-element; those stay their 36px box, which as wide targets is
+ * fine. An earlier version floored the box itself at 44px, which made
+ * every toolbar taller than the tab strip beside it. */
 @media (pointer: coarse) {
-  .folio-button,
-  .folio-control {
-    min-height: 44px;
+  .folio-button:not(.absolute, .fixed, .sticky),
+  .folio-control:not(.absolute, .fixed, .sticky),
+  .folio-tap:not(.absolute, .fixed, .sticky) {
+    position: relative;
   }
-  .folio-button {
-    min-width: 44px;
+  .folio-button::after,
+  .folio-control::after,
+  .folio-tap::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: -4px;
+    left: -4px;
+    height: max(100%, 44px);
+    transform: translateY(-50%);
   }
   input:not([type="checkbox"]):not([type="radio"]),
   textarea,

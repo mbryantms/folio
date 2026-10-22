@@ -817,7 +817,7 @@ function LayoutToggle({
           aria-pressed={layout === opt.value}
           onClick={() => onLayout(opt.value)}
           className={cn(
-            "rounded px-2 py-0.5 text-xs transition-colors",
+            "folio-tap rounded px-2 py-0.5 text-xs transition-colors",
             layout === opt.value
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
@@ -856,7 +856,7 @@ function TagMatchToggle({
           aria-pressed={tagMatch === mode}
           onClick={() => onTagMatch(mode)}
           className={cn(
-            "rounded px-2 py-0.5 text-xs transition-colors",
+            "folio-tap rounded px-2 py-0.5 text-xs transition-colors",
             tagMatch === mode
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
@@ -1263,42 +1263,44 @@ function PageNoteRow({
               {t}
             </span>
           ))}
-          <span className="text-muted-foreground ml-auto shrink-0 text-xs whitespace-nowrap">
-            {new Date(marker.updated_at).toLocaleDateString(undefined, {
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-            })}
-          </span>
-          {!inSelect ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={`Actions for note on page ${marker.page_index + 1}`}
-                  className="text-muted-foreground hover:text-foreground hover:bg-muted/50 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors"
-                >
-                  <MoreVertical className="h-4 w-4" aria-hidden="true" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {actions.map((a) => (
-                  <DropdownMenuItem
-                    key={a.label}
-                    disabled={a.disabled}
-                    onSelect={a.onSelect}
-                    className={
-                      a.destructive
-                        ? "text-destructive focus:text-destructive"
-                        : undefined
-                    }
+          <span className="ml-auto flex shrink-0 items-center gap-1.5">
+            <span className="text-muted-foreground text-xs whitespace-nowrap">
+              {new Date(marker.updated_at).toLocaleDateString(undefined, {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+              })}
+            </span>
+            {!inSelect ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={`Actions for note on page ${marker.page_index + 1}`}
+                    className="folio-tap text-muted-foreground hover:text-foreground hover:bg-muted/50 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors"
                   >
-                    {a.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null}
+                    <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {actions.map((a) => (
+                    <DropdownMenuItem
+                      key={a.label}
+                      disabled={a.disabled}
+                      onSelect={a.onSelect}
+                      className={
+                        a.destructive
+                          ? "text-destructive focus:text-destructive"
+                          : undefined
+                      }
+                    >
+                      {a.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+          </span>
         </div>
         <ClampedBody text={body} lines={4} />
       </div>

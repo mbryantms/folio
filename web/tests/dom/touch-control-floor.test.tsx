@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 /**
- * Touch-target floor (`docs/dev/phone-layout.md`, rule 9). Under
- * `(pointer: coarse)` `globals.css` floors `.folio-button` *and*
- * `.folio-control` at 44px. jsdom cannot evaluate the media query, so
- * this guards the two halves separately: the CSS rule names both
- * classes with the same floor, and the inline toolbar controls that are
- * not `<Button>` carry `folio-control`. Without the class an iPad
- * toolbar showed 44px buttons beside a 36px search box and sort select.
+ * Touch target (`docs/dev/phone-layout.md`, rule 9). Under
+ * `(pointer: coarse)` `globals.css` gives `.folio-button`, `.folio-control`
+ * and `.folio-tap` an invisible 44px-tall tap area via `::after` — the
+ * visible control keeps shadcn's size, so an iPad toolbar is the same
+ * 36px band as the tab strip beside it. jsdom cannot evaluate the media
+ * query, so this guards the halves separately: the CSS rule is the hit
+ * area and not a size floor, and the controls that are not `<Button>`
+ * carry the classes.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,20 +16,25 @@ import { describe, expect, it } from "vitest";
 
 import { CblStatsPillsStatic } from "@/components/cbl/CblStatsPills";
 import { ModeSegmentedToggle } from "@/components/library/LibraryGridToolbar";
+import { FilterPill } from "@/components/ui/filter-pill";
 import { NativeSelect } from "@/components/ui/native-select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 describe("touch-target floor", () => {
-  it("floors .folio-button and .folio-control together under pointer: coarse", () => {
+  it("grows a 44px tap area under pointer: coarse instead of the box", () => {
     const css = readFileSync(join(process.cwd(), "styles/globals.css"), "utf8");
     const at = css.indexOf("@media (pointer: coarse)");
     expect(at).toBeGreaterThan(0);
     const block = css.slice(at, css.indexOf("\n}\n", at));
     expect(block).toMatch(
-      /\.folio-button,\s*\.folio-control\s*\{\s*min-height:\s*44px;/,
+      /\.folio-button::after,\s*\.folio-control::after,\s*\.folio-tap::after\s*\{[^}]*height:\s*max\(100%,\s*44px\);/,
     );
+    // The visible size is shadcn's on every pointer: no floor.
+    expect(block).not.toMatch(/min-height:\s*44px/);
+    expect(block).not.toMatch(/min-width:\s*44px/);
   });
 
   it("marks the non-Button toolbar controls with folio-control", () => {
@@ -68,7 +74,7 @@ describe("touch-target floor", () => {
     }
   });
 
-  it("floors the /bookmarks sort select and the CBL header pills too", () => {
+  it("the sort select, CBL pills, tabs and pills carry the tap-area classes", () => {
     const { container } = render(
       <>
         <NativeSelect
@@ -86,6 +92,12 @@ describe("touch-target floor", () => {
             missing: 830,
           }}
         />
+        <Tabs defaultValue="credits">
+          <TabsList>
+            <TabsTrigger value="credits">Credits</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <FilterPill active={false}>Notes</FilterPill>
       </>,
     );
     expect(
@@ -95,13 +107,22 @@ describe("touch-target floor", () => {
     ).toBe(true);
     // Both pills carry the floor; on an iPad they sat 36px beside 44px
     // buttons in the CBL view header.
-    // Select + the two pills.
-    const floored = container.querySelectorAll(".folio-control");
-    expect(floored.length).toBeGreaterThanOrEqual(3);
-    // Explicit touch height too: WebKit ignores `min-height` on a native
-    // <select>, and the pills stayed 36px on an iPad with the floor alone.
-    for (const el of floored) {
-      expect(el.className).toMatch(/\bpointer-coarse:h-11\b/);
+    // Select + the two pills carry folio-control; none grows its box.
+    const controls = container.querySelectorAll(".folio-control");
+    expect(controls.length).toBeGreaterThanOrEqual(3);
+    for (const el of controls) {
+      expect(el.className).not.toMatch(/pointer-coarse:h-/);
     }
+    // Tab triggers and filter pills get the tap area too.
+    expect(
+      screen
+        .getByRole("tab", { name: "Credits" })
+        .classList.contains("folio-tap"),
+    ).toBe(true);
+    expect(
+      screen
+        .getByRole("button", { name: /Notes/ })
+        .classList.contains("folio-tap"),
+    ).toBe(true);
   });
 });

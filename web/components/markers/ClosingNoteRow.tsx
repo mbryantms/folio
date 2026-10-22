@@ -185,52 +185,54 @@ export function ClosingNoteRow({
               label={`Your rating of ${label}`}
             />
           ) : null}
-          <span className="text-muted-foreground ml-auto shrink-0 text-xs whitespace-nowrap">
-            {formatDate(note.updated_at)}
-          </span>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label={`Actions for closing note on ${label}`}
-                className="text-muted-foreground hover:text-foreground hover:bg-muted/50 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors"
-              >
-                <MoreVertical className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                disabled={!canMutate}
-                onSelect={() => setEditing(true)}
-              >
-                Edit
-              </DropdownMenuItem>
-              {issueHref ? (
-                <DropdownMenuItem asChild>
-                  <Link href={issueHref}>Open issue page</Link>
+          <span className="ml-auto flex shrink-0 items-center gap-1.5">
+            <span className="text-muted-foreground text-xs whitespace-nowrap">
+              {formatDate(note.updated_at)}
+            </span>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`Actions for closing note on ${label}`}
+                  className="folio-tap text-muted-foreground hover:text-foreground hover:bg-muted/50 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors"
+                >
+                  <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  disabled={!canMutate}
+                  onSelect={() => setEditing(true)}
+                >
+                  Edit
                 </DropdownMenuItem>
-              ) : null}
-              <DropdownMenuItem
-                disabled={!issueHref}
-                onSelect={() => {
-                  if (!issueHref) return;
-                  const url = `${window.location.origin}${issueHref}`;
-                  void navigator.clipboard?.writeText(url);
-                  toast.success("Link copied");
-                }}
-              >
-                Copy link
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
-                disabled={!canMutate || mut.isPending}
-                onSelect={remove}
-              >
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                {issueHref ? (
+                  <DropdownMenuItem asChild>
+                    <Link href={issueHref}>Open issue page</Link>
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem
+                  disabled={!issueHref}
+                  onSelect={() => {
+                    if (!issueHref) return;
+                    const url = `${window.location.origin}${issueHref}`;
+                    void navigator.clipboard?.writeText(url);
+                    toast.success("Link copied");
+                  }}
+                >
+                  Copy link
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  disabled={!canMutate || mut.isPending}
+                  onSelect={remove}
+                >
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </span>
         </div>
 
         {editing ? (
