@@ -13,6 +13,23 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.65.0](https://github.com/mbryantms/folio/compare/v0.64.1...v0.65.0) (2026-10-22)
+
+
+### Added
+
+* **admin:** series-level and bulk confirm for pending removals ([#1278](https://github.com/mbryantms/folio/issues/1278)) ([a82e3f0](https://github.com/mbryantms/folio/commit/a82e3f0b66e3dd969496af434c7f3114e52053db))
+
+
+### Fixed
+
+* **series:** hide soft-deleted series from every list surface ([#1277](https://github.com/mbryantms/folio/issues/1277)) ([41d3f69](https://github.com/mbryantms/folio/commit/41d3f69c9f3a0fb0e58cbbab8a344ab884c7cc64))
+
+
+### Dependencies
+
+* update dependency @tanstack/react-query to v5.104.5 ([#1280](https://github.com/mbryantms/folio/issues/1280)) ([8f360da](https://github.com/mbryantms/folio/commit/8f360da906521fc2c6c1d88cd861d9fa39c37075))
+
 ## [0.64.1](https://github.com/mbryantms/folio/compare/v0.64.0...v0.64.1) (2026-10-22)
 
 
