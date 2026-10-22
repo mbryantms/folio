@@ -13879,6 +13879,14 @@ export interface components {
              *     can see — the series page's "Related" tab label. Detail-only.
              */
             relationship_count?: number | null;
+            /**
+             * @description Set when the scanner soft-deleted this series (its folder vanished
+             *     from disk). Never present on list responses — removed series are
+             *     filtered out of every listing — and `GET /series/{slug}` returns
+             *     404 to non-admins. Admins get the detail view with this stamp so
+             *     the page can point at the library's Removed tab.
+             */
+            removed_at?: string | null;
             slug: string;
             /**
              * @description Search-result excerpt with `<mark>…</mark>` tags around matched

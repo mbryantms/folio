@@ -21,7 +21,7 @@ use entity::{
     library::ActiveModel as LibraryAM,
     series::Entity as SeriesEntity,
 };
-use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use server::library::{reconcile, scanner};
 use std::io::Write;
 use std::path::Path;
@@ -38,7 +38,12 @@ struct Authed {
     csrf: String,
 }
 
+/// First registration becomes the admin; later ones are plain readers.
 async fn register_admin(app: &TestApp) -> Authed {
+    register(app, "rec@example.com").await
+}
+
+async fn register(app: &TestApp, email: &str) -> Authed {
     let resp = app
         .router
         .clone()
@@ -47,9 +52,9 @@ async fn register_admin(app: &TestApp) -> Authed {
                 .method(Method::POST)
                 .uri("/auth/local/register")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    r#"{"email":"rec@example.com","password":"correctly-horse-battery"}"#,
-                ))
+                .body(Body::from(format!(
+                    r#"{{"email":"{email}","password":"correctly-horse-battery"}}"#
+                )))
                 .unwrap(),
         )
         .await
@@ -576,4 +581,198 @@ async fn issue_permalink_redirects_to_canonical_url() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Soft-deleted series stay out of every list surface — the library grid /
+/// search endpoint, the saved-view rails (home "Recently added"), and the
+/// OPDS series catalog — for admins too. The detail endpoint 404s for
+/// readers and hands admins the `removed_at` stamp (the page renders a
+/// banner pointing at the Removed tab). Restoring brings the series back
+/// everywhere. Prod 2026-10-22: a deleted folder's series kept rendering as
+/// a blank card on "Recently added" because only the issues were filtered.
+#[tokio::test]
+async fn removed_series_hidden_from_lists_rails_and_opds() {
+    let app = TestApp::spawn().await;
+    let admin = register_admin(&app).await;
+    let reader = register(&app, "reader@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Rho (2025)");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz(&folder.join("Rho 001.cbz"), 1);
+    // Keeps the root non-empty once Rho's folder is parked (empty-root guard).
+    let decoy = tmp.path().join("Series Sigma (2025)");
+    std::fs::create_dir_all(&decoy).unwrap();
+    write_cbz(&decoy.join("Sigma 001.cbz"), 9);
+
+    let lib_id = create_library(&app, tmp.path(), 30).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    // The reader needs a grant to see the library at all.
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let reader_row = entity::user::Entity::find()
+        .filter(entity::user::Column::Email.eq("reader@example.com"))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let now = Utc::now().fixed_offset();
+    entity::library_user_access::ActiveModel {
+        user_id: Set(reader_row.id),
+        library_id: Set(lib_id),
+        age_rating_max: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+
+    let rho = SeriesEntity::find()
+        .all(&state.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name.contains("Rho"))
+        .unwrap();
+    let rho_slug = rho.slug.clone();
+
+    let get = |auth: &Authed, uri: String| {
+        let router = app.router.clone();
+        let cookie = format!("__Host-comic_session={}", auth.session);
+        async move {
+            router
+                .oneshot(
+                    Request::builder()
+                        .method(Method::GET)
+                        .uri(uri)
+                        .header(header::COOKIE, cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let list_names = |body: serde_json::Value| -> Vec<String> {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let series_url = format!("/api/series?library={lib_id}");
+    // Built-in "Recently added series" system view (m20261205).
+    let rail_url = "/api/me/saved-views/00000000-0000-0000-0000-000000000001/results".to_owned();
+    let opds_url = "/opds/v1/series".to_owned();
+
+    // Baseline: visible on all three surfaces.
+    let names = list_names(body_json(get(&admin, series_url.clone()).await.into_body()).await);
+    assert!(
+        names.iter().any(|n| n.contains("Rho")),
+        "baseline list: {names:?}"
+    );
+    let names = list_names(body_json(get(&admin, rail_url.clone()).await.into_body()).await);
+    assert!(
+        names.iter().any(|n| n.contains("Rho")),
+        "baseline rail: {names:?}"
+    );
+    let resp = get(&admin, opds_url.clone()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let xml = String::from_utf8(
+        axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(xml.contains("<title>Rho</title>"), "baseline opds: {xml}");
+
+    // Folder disappears → the series soft-deletes.
+    let park = tempfile::tempdir().unwrap();
+    std::fs::rename(&folder, park.path().join("Series Rho (2025)")).unwrap();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let row = SeriesEntity::find_by_id(rho.id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(row.removed_at.is_some(), "series should soft-delete");
+
+    // Gone from the list, the rail and the OPDS catalog — for the admin too.
+    let names = list_names(body_json(get(&admin, series_url.clone()).await.into_body()).await);
+    assert!(
+        !names.iter().any(|n| n.contains("Rho")) && names.iter().any(|n| n.contains("Sigma")),
+        "removed series leaked into /series: {names:?}"
+    );
+    let names = list_names(body_json(get(&admin, rail_url.clone()).await.into_body()).await);
+    assert!(
+        !names.iter().any(|n| n.contains("Rho")),
+        "removed series leaked into the Recently added rail: {names:?}"
+    );
+    let resp = get(&admin, opds_url.clone()).await;
+    let xml = String::from_utf8(
+        axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(
+        !xml.contains("<title>Rho</title>"),
+        "removed series leaked into OPDS: {xml}"
+    );
+    let names = list_names(body_json(get(&reader, series_url.clone()).await.into_body()).await);
+    assert!(
+        !names.iter().any(|n| n.contains("Rho")),
+        "reader list: {names:?}"
+    );
+
+    // Detail: admins get the row with its removal stamp; readers get 404.
+    let resp = get(&admin, format!("/api/series/{rho_slug}")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert!(
+        body["removed_at"].is_string(),
+        "admin detail carries removed_at: {body}"
+    );
+    let resp = get(&reader, format!("/api/series/{rho_slug}")).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Folder comes back + admin restores → visible again, stamp cleared.
+    std::fs::rename(park.path().join("Series Rho (2025)"), &folder).unwrap();
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/series/{rho_slug}/restore"))
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={}; __Host-comic_csrf={}",
+                        admin.session, admin.csrf
+                    ),
+                )
+                .header("X-CSRF-Token", admin.csrf.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let names = list_names(body_json(get(&reader, series_url.clone()).await.into_body()).await);
+    assert!(
+        names.iter().any(|n| n.contains("Rho")),
+        "restored series back in list: {names:?}"
+    );
+    let resp = get(&reader, format!("/api/series/{rho_slug}")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert!(
+        body["removed_at"].is_null(),
+        "restored detail has no stamp: {body}"
+    );
 }

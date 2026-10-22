@@ -730,6 +730,9 @@ fn apply_issue_visibility(q: &mut SelectStatement, vis: &VisibleLibraries) {
 }
 
 fn apply_visibility(q: &mut SelectStatement, vis: &VisibleLibraries) {
+    // Soft-deleted series never surface on a rail, admin or not — the
+    // same rule `api::series::list` applies (`access::active_series`).
+    q.and_where(crate::library::access::active_series());
     if vis.unrestricted {
         return;
     }

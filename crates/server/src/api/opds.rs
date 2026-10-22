@@ -418,7 +418,7 @@ async fn series_list(
         Ok(v) => v,
         Err(e) => return server_error(e),
     };
-    let mut count_sel = series::Entity::find();
+    let mut count_sel = access::active_series_select();
     if let Some(cond) = allowed.series_filter() {
         count_sel = count_sel.filter(cond);
     }
@@ -428,7 +428,7 @@ async fn series_list(
     };
     let total_pages = total.div_ceil(PAGE_SIZE).max(1);
 
-    let mut sel = series::Entity::find().order_by_asc(series::Column::Name);
+    let mut sel = access::active_series_select().order_by_asc(series::Column::Name);
     if let Some(cond) = allowed.series_filter() {
         sel = sel.filter(cond);
     }
@@ -535,7 +535,7 @@ pub(crate) async fn compute_status_facets(
 ) -> Vec<(&'static str, u64)> {
     let mut out: Vec<(&'static str, u64)> = Vec::with_capacity(BROWSE_STATUSES.len());
     for status in BROWSE_STATUSES {
-        let mut sel = series::Entity::find().filter(series::Column::Status.eq(*status));
+        let mut sel = access::active_series_select().filter(series::Column::Status.eq(*status));
         if let Some(cond) = visible.series_filter() {
             sel = sel.filter(cond);
         }
@@ -646,7 +646,7 @@ async fn browse(
 
     // Count + fetch the filtered series. Mirrors series_list's two-
     // pass shape so total_pages / pagination linkery is identical.
-    let mut count_sel = series::Entity::find();
+    let mut count_sel = access::active_series_select();
     if let Some(cond) = allowed.series_filter() {
         count_sel = count_sel.filter(cond);
     }
@@ -662,7 +662,7 @@ async fn browse(
     };
     let total_pages = total.div_ceil(PAGE_SIZE).max(1);
 
-    let mut sel = series::Entity::find().order_by_asc(series::Column::Name);
+    let mut sel = access::active_series_select().order_by_asc(series::Column::Name);
     if let Some(cond) = allowed.series_filter() {
         sel = sel.filter(cond);
     }
@@ -1283,7 +1283,8 @@ async fn by_creator(
         return atom(body);
     }
 
-    let mut count_sel = series::Entity::find().filter(series::Column::Id.is_in(series_ids.clone()));
+    let mut count_sel =
+        access::active_series_select().filter(series::Column::Id.is_in(series_ids.clone()));
     if let Some(cond) = allowed.series_filter() {
         count_sel = count_sel.filter(cond);
     }
@@ -1293,7 +1294,7 @@ async fn by_creator(
     };
     let total_pages = total.div_ceil(PAGE_SIZE).max(1);
 
-    let mut sel = series::Entity::find()
+    let mut sel = access::active_series_select()
         .filter(series::Column::Id.is_in(series_ids))
         .order_by_asc(series::Column::Name);
     if let Some(cond) = allowed.series_filter() {
@@ -1392,7 +1393,7 @@ async fn search(
     let page = q.page.unwrap_or(1).max(1);
     let offset = (page - 1) * PAGE_SIZE;
 
-    let mut count_sel = series::Entity::find();
+    let mut count_sel = access::active_series_select();
     for token in needle.split_whitespace() {
         count_sel = count_sel.filter(col_ilike(series::Column::Name, &ilike_pattern(token)));
     }
@@ -1405,7 +1406,7 @@ async fn search(
     };
     let total_pages = total.div_ceil(PAGE_SIZE).max(1);
 
-    let mut sel = series::Entity::find().order_by_asc(series::Column::Name);
+    let mut sel = access::active_series_select().order_by_asc(series::Column::Name);
     for token in needle.split_whitespace() {
         sel = sel.filter(col_ilike(series::Column::Name, &ilike_pattern(token)));
     }
