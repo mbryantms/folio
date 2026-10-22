@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.64.0](https://github.com/mbryantms/folio/compare/v0.63.2...v0.64.0) (2026-10-22)
+
+
+### Added
+
+* **web:** one visible control size on every pointer, 44px invisible tap area on touch ([#1268](https://github.com/mbryantms/folio/issues/1268)) ([88f085e](https://github.com/mbryantms/folio/commit/88f085ebba2f80583383951080e163a6b1fb8a0a))
+
 ## [0.63.2](https://github.com/mbryantms/folio/compare/v0.63.1...v0.63.2) (2026-10-22)
 
 
