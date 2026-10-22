@@ -48,7 +48,7 @@ export const ISSUE_SORT_LABELS: Record<IssueSort, string> = {
 /** Series ⇄ Issues as a compact segmented control — the phone row's
  *  leading slot (`PhoneControlsBar`). Desktop keeps the two outline
  *  buttons below so the toolbar's h-9 band stays uniform. Carries
- *  `folio-control` so the touch-target floor (`globals.css`) grows it
+ *  `folio-control` so the touch-target rule (`globals.css`) covers it
  *  with its icon-button neighbours; the segments stretch to fill. */
 export function ModeSegmentedToggle({
   mode,
@@ -76,8 +76,8 @@ export function ModeSegmentedToggle({
           onClick={() => onMode(o.value)}
           className={
             mode === o.value
-              ? "bg-background text-foreground rounded px-3 text-sm font-medium shadow-sm"
-              : "text-muted-foreground rounded px-3 text-sm"
+              ? "folio-tap bg-background text-foreground rounded px-3 text-sm font-medium shadow-sm"
+              : "folio-tap text-muted-foreground rounded px-3 text-sm"
           }
         >
           {o.label}

@@ -52,7 +52,7 @@ export function SegmentedControl<T extends string>({
             disabled={disabled}
             onClick={() => onChange(opt.value)}
             className={cn(
-              "relative rounded px-3 py-1.5 text-sm font-medium transition-colors",
+              "folio-tap relative rounded px-3 py-1.5 text-sm font-medium transition-colors",
               "focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none",
               "disabled:cursor-not-allowed disabled:opacity-50",
               active

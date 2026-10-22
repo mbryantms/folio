@@ -70,14 +70,23 @@ max-sm:line-clamp-2`; `PageHeader` takes `phoneDescription="hidden"`
    size or the reserved A–Z column can never collapse a phone grid to
    one column; desktop is unaffected because half a wide column exceeds
    any card size.
-9. **Touch floor is per row, not per button.** `globals.css` floors
-   `.folio-button` (every `<Button>`) _and_ `.folio-control` (`<Input>`,
-   `<SelectTrigger>`, the phone mode toggle) at 44px under
-   `(pointer: coarse)`. The `h-9` utilities still describe the fine-pointer
-   row; on iPad / iPhone the whole row grows together. A new inline
-   toolbar control that is not one of those components must carry
-   `folio-control`, or it will sit 8px shorter than its neighbours on
-   touch. Playwright only reports this with `hasTouch: true`. The
+9. **One visible size, an invisible touch target.** Controls keep
+   shadcn's size on every pointer — 36px toolbar controls and tab strip,
+   28px chips — so iPad looks like desktop and no toolbar is taller than
+   the tabs beside it. Under `(pointer: coarse)` `globals.css` gives
+   `.folio-button` (every `<Button>`), `.folio-control` (`<Input>`,
+   `<SelectTrigger>`, `NativeSelect`, segmented groups, the CBL header
+   pills) and `.folio-tap` (tab triggers, filter pills, segment buttons,
+   card kebabs) a transparent `::after` tap area 44px tall and 4px wider
+   on each side — Apple's 44pt minimum met the way Apple and Material
+   meet it, by a hit region larger than the drawn control. The 8px
+   toolbar gap keeps neighbouring tap areas from overlapping. A text
+   field or native select cannot carry a pseudo-element and stays its
+   36px box; as a wide target that is fine. Never floor the box itself
+   (`min-height: 44px` was tried and made every toolbar taller than the
+   tab strip). A new small interactive element that is not a `<Button>`
+   must carry `folio-tap`; Playwright reports the tap area only with
+   `hasTouch: true` by probing `getComputedStyle(el, "::after")`. The
    fine-pointer half of the same rule: a toolbar `<Button>` is `h-9`,
    never bare `size="sm"` (32px). The shared controls — `SelectModeButton`,
    `NotesExportMenu`, `CardSizeOptions`, `AddWidgetMenu`, the `/log`

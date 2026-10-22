@@ -39,7 +39,7 @@ export function FilterPill({
       data-active={active || undefined}
       aria-pressed={active}
       className={cn(
-        "focus-visible:ring-ring inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs transition-colors focus-visible:ring-2 focus-visible:outline-none",
+        "folio-tap focus-visible:ring-ring inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs transition-colors focus-visible:ring-2 focus-visible:outline-none",
         active
           ? "border-primary bg-primary/10 text-primary"
           : "border-border text-muted-foreground hover:text-foreground",
