@@ -334,16 +334,13 @@ export default async function SeriesPage({
         </div>
       </header>
 
-      {/* Phone: one horizontally scrolling strip bleeding to the screen
-          edges (the shell's `px-4` is undone and re-added as padding so
-          the first tile still lines up with the text). sm+: 4-up grid. */}
-      <section className="grid grid-cols-2 gap-3 max-sm:-mx-4 max-sm:flex max-sm:[scrollbar-width:none] max-sm:overflow-x-auto max-sm:px-4 sm:grid-cols-4">
-        <Stat label="Status" value={status} className={PHONE_STAT_TILE} />
-        <Stat
-          label="Released"
-          value={releasedLabel}
-          className={PHONE_STAT_TILE}
-        />
+      {/* 2×2 on phones, 4-up from `sm` — the same grid the issue page's
+          stat row uses, so the two detail pages read alike. (#1249 made
+          this a horizontal scroll strip on phones; the owner preferred
+          the tiled layout.) */}
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat label="Status" value={status} />
+        <Stat label="Released" value={releasedLabel} />
         <ReadingLoadStat
           totalPages={series.total_page_count ?? null}
           finishedPages={series.progress_summary?.finished_pages ?? 0}
@@ -705,10 +702,6 @@ export default async function SeriesPage({
   );
 }
 
-/** Phone stat tiles: fixed-width, non-shrinking cards in a scroll strip
- *  (the section is `flex overflow-x-auto` below `sm`). */
-const PHONE_STAT_TILE = "max-sm:min-w-[9rem] max-sm:shrink-0";
-
 /**
  * Inline icon-driven row of series-level facts that aren't ComicInfo issue
  * metadata: publisher, total page count, reading time, publication year,
@@ -879,12 +872,7 @@ function ReadProgressStat({ read, total }: { read: number; total: number }) {
       : 0;
   const complete = total > 0 && read === total;
   return (
-    <div
-      className={cn(
-        "border-border bg-card flex flex-col gap-2 rounded-md border px-4 py-3",
-        PHONE_STAT_TILE,
-      )}
-    >
+    <div className="border-border bg-card flex flex-col gap-2 rounded-md border px-4 py-3">
       <div className="flex items-baseline justify-between">
         <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
           Read progress
@@ -933,12 +921,7 @@ function ReadingLoadStat({
 }) {
   if (totalPages == null || totalPages <= 0) {
     return (
-      <div
-        className={cn(
-          "border-border bg-card flex flex-col gap-1 rounded-md border px-4 py-3",
-          PHONE_STAT_TILE,
-        )}
-      >
+      <div className="border-border bg-card flex flex-col gap-1 rounded-md border px-4 py-3">
         <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
           Reading load remaining
         </span>
@@ -953,12 +936,7 @@ function ReadingLoadStat({
   const pagesShown = isReread ? totalPages : remainingPages;
   const time = formatReadingTimeCompact(pagesShown);
   return (
-    <div
-      className={cn(
-        "border-border bg-card flex flex-col gap-1 rounded-md border px-4 py-3",
-        PHONE_STAT_TILE,
-      )}
-    >
+    <div className="border-border bg-card flex flex-col gap-1 rounded-md border px-4 py-3">
       <div className="flex items-baseline justify-between">
         <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
           Reading load remaining
