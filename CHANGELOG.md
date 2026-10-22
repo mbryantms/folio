@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.63.2](https://github.com/mbryantms/folio/compare/v0.63.1...v0.63.2) (2026-10-22)
+
+
+### Fixed
+
+* **web:** floor the bookmarks sort select, series clear, and CBL pills on touch ([#1266](https://github.com/mbryantms/folio/issues/1266)) ([9d1a897](https://github.com/mbryantms/folio/commit/9d1a897fb9dced1d423c5f764983bcd0859f4848))
+
 ## [0.63.1](https://github.com/mbryantms/folio/compare/v0.63.0...v0.63.1) (2026-10-21)
 
 
