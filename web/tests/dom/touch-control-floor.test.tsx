@@ -13,7 +13,9 @@ import { join } from "node:path";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { CblStatsPillsStatic } from "@/components/cbl/CblStatsPills";
 import { ModeSegmentedToggle } from "@/components/library/LibraryGridToolbar";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -63,6 +65,43 @@ describe("touch-target floor", () => {
     // so a 44px group on touch does not leave two 32px pills inside it.
     for (const b of toggle.querySelectorAll("button")) {
       expect(b.className).not.toMatch(/\bh-8\b/);
+    }
+  });
+
+  it("floors the /bookmarks sort select and the CBL header pills too", () => {
+    const { container } = render(
+      <>
+        <NativeSelect
+          aria-label="Sort"
+          options={[{ value: "newest", label: "Newest" }]}
+        />
+        <CblStatsPillsStatic
+          size="header"
+          stats={{
+            matched: 30,
+            total: 860,
+            read_count: 12,
+            ambiguous: 0,
+            manual: 0,
+            missing: 830,
+          }}
+        />
+      </>,
+    );
+    expect(
+      screen
+        .getByRole("combobox", { name: "Sort" })
+        .classList.contains("folio-control"),
+    ).toBe(true);
+    // Both pills carry the floor; on an iPad they sat 36px beside 44px
+    // buttons in the CBL view header.
+    // Select + the two pills.
+    const floored = container.querySelectorAll(".folio-control");
+    expect(floored.length).toBeGreaterThanOrEqual(3);
+    // Explicit touch height too: WebKit ignores `min-height` on a native
+    // <select>, and the pills stayed 36px on an iPad with the floor alone.
+    for (const el of floored) {
+      expect(el.className).toMatch(/\bpointer-coarse:h-11\b/);
     }
   });
 });
