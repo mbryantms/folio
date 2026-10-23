@@ -13,6 +13,16 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.65.2](https://github.com/mbryantms/folio/compare/v0.65.1...v0.65.2) (2026-10-23)
+
+
+### Dependencies
+
+* ctutils 0.4.3 -&gt; 0.4.5 (RUSTSEC-2026-0385) ([#1292](https://github.com/mbryantms/folio/issues/1292)) ([e678a5b](https://github.com/mbryantms/folio/commit/e678a5b9a0772e7307962e8713535aa9bc023224))
+* update dependency @scalar/api-reference-react to v0.9.82 ([#1291](https://github.com/mbryantms/folio/issues/1291)) ([64a38bf](https://github.com/mbryantms/folio/commit/64a38bf4d9cceb52f23a34d9d1230133213f3dce))
+* update dependency cronstrue to v3.37.0 ([#1289](https://github.com/mbryantms/folio/issues/1289)) ([af4aa4a](https://github.com/mbryantms/folio/commit/af4aa4a864e2d55bf3481ee12ea407bb691f01d4))
+* update swatinem/rust-cache digest to d1527c8 ([#1288](https://github.com/mbryantms/folio/issues/1288)) ([f1b9e3f](https://github.com/mbryantms/folio/commit/f1b9e3f86fa7368a8280e6562ea4176ca4f0269a))
+
 ## [0.65.1](https://github.com/mbryantms/folio/compare/v0.65.0...v0.65.1) (2026-10-23)
 
 
