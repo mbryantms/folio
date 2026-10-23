@@ -11,6 +11,7 @@ import {
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
+  AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
@@ -126,15 +127,12 @@ export function ScanEventBeacon() {
               executing may still finish and report its normal events.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {/* Five buttons don't fit cleanly on one row at typical dialog
-              widths — labels wrap mid-word. Force a two-column grid so
-              each button gets equal width and labels don't break. The
-              destructive "Clear all" remains visually distinct via the
-              bg-destructive override. */}
-          <div className="grid grid-cols-2 gap-2 pt-2 sm:grid-cols-5">
-            <AlertDialogCancel disabled={clearQueue.isPending} className="m-0">
-              Cancel
-            </AlertDialogCancel>
+          {/* Three scoped clears on their own row, then the footer pair.
+              The earlier five-column grid gave each button ~90px at the
+              dialog's 512px max width while shadcn buttons never wrap, so
+              "Thumbnails only" spilled over its neighbours. Three columns
+              leave ~150px per label; on phones they stack. */}
+          <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-3">
             <Button
               type="button"
               variant="outline"
@@ -174,6 +172,11 @@ export function ScanEventBeacon() {
             >
               Metadata only
             </Button>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={clearQueue.isPending}>
+              Cancel
+            </AlertDialogCancel>
             <AlertDialogAction
               disabled={clearQueue.isPending}
               onClick={() =>
@@ -182,11 +185,11 @@ export function ScanEventBeacon() {
                   { onSettled: () => setConfirmClear(false) },
                 )
               }
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 m-0"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {clearQueue.isPending ? "Clearing…" : "Clear all"}
             </AlertDialogAction>
-          </div>
+          </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>
