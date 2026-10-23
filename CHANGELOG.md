@@ -13,6 +13,22 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.65.1](https://github.com/mbryantms/folio/compare/v0.65.0...v0.65.1) (2026-10-23)
+
+
+### Fixed
+
+* **admin:** stop clear-queue dialog buttons overflowing their neighbours ([#1287](https://github.com/mbryantms/folio/issues/1287)) ([1a8e52e](https://github.com/mbryantms/folio/commit/1a8e52e9a0fe2cdf8cd3e9d0c1dda0a529f21cc1))
+* **jobs:** poll Redis every 500 ms — apalis 1.0 workers parked until the 30 s heartbeat ([#1286](https://github.com/mbryantms/folio/issues/1286)) ([5d95657](https://github.com/mbryantms/folio/commit/5d95657c1726ce6fa82ffa58dec1c88da37eceef))
+
+
+### Dependencies
+
+* update dependency cronstrue to v3.34.0 ([#1281](https://github.com/mbryantms/folio/issues/1281)) ([6d7892d](https://github.com/mbryantms/folio/commit/6d7892d80611220b35cfe61309ea0ebacf000546))
+* update dependency cronstrue to v3.35.0 ([#1283](https://github.com/mbryantms/folio/issues/1283)) ([890ccae](https://github.com/mbryantms/folio/commit/890ccaeabd65f85477a2ca2ffac8440ea98ad86a))
+* update dependency cronstrue to v3.36.0 ([#1284](https://github.com/mbryantms/folio/issues/1284)) ([f12b72b](https://github.com/mbryantms/folio/commit/f12b72b6adefd10aea03faebec40a171b54c675d))
+* update dependency lucide-react to v1.60.0 ([#1285](https://github.com/mbryantms/folio/issues/1285)) ([2fff88d](https://github.com/mbryantms/folio/commit/2fff88d147b820583149e17ed93a5f373ad28b8a))
+
 ## [0.65.0](https://github.com/mbryantms/folio/compare/v0.64.1...v0.65.0) (2026-10-22)
 
 
