@@ -156,7 +156,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.96.0
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: clippy
         run: |
           start=$(date +%s)
@@ -258,7 +258,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.96.0
       # One cache entry for all four shards (identical builds). Concurrent
       # saves of the same key are fine: the losers skip "already exists".
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: rust-test
       - name: install nextest
@@ -333,7 +333,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@1.96.0
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: build migration CLI
         run: cargo build --locked -p migration --bin migration
       - name: up → down -n 10 → up
@@ -398,7 +398,7 @@ jobs:
         if: env.DEPS == 'true'
       - uses: dtolnay/rust-toolchain@1.96.0
         if: env.DEPS == 'true'
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         if: env.DEPS == 'true'
       # Prebuilt binaries — avoids the ~1min `cargo install` compiles. cargo-deny
       # used to run through EmbarkStudios/cargo-deny-action, a Docker action
@@ -622,7 +622,7 @@ jobs:
       # checked-in spec changed; the spec can't have drifted otherwise.
       - uses: dtolnay/rust-toolchain@1.96.0
         if: needs.changes.outputs.backend_or_spec == 'true'
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         if: needs.changes.outputs.backend_or_spec == 'true'
       - name: Generate spec from PR
         if: needs.changes.outputs.backend_or_spec == 'true'
@@ -703,7 +703,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@1.96.0
         if: needs.changes.outputs.rust == 'true'
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         if: needs.changes.outputs.rust == 'true'
       # AST-walks every handler under crates/server/src/api/ and
       # fails if any RequireAdmin-gated function returns success
