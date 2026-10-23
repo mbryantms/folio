@@ -42,6 +42,18 @@
 //!
 //! Workers run inside the same tokio runtime as the HTTP server. There is no
 //! separate worker binary; this matches the single-binary deploy story.
+//!
+//! **Pickup latency.** apalis 1.0 does not poll Redis on its own: after a
+//! fetch comes back empty the worker parks its waker, and the only built-in
+//! wake-up is the heartbeat timer ([`JOB_HEARTBEAT_SECS`], 30 s). apalis-redis
+//! 0.7 polled every 100 ms, so the 1.0 upgrade (#1254) silently turned every
+//! queue hop into a 0–30 s wait — a metadata apply (apply → sidecar rewrite →
+//! scoped rescan → thumbnails) took a minute of mostly idle time. Every worker
+//! is therefore built with `poll_with_interval(`[`JOB_POLL_INTERVAL`]`)`, which
+//! wakes it on a short timer independent of the heartbeat. The interval is a
+//! trade between pickup latency and idle Redis traffic (one `fetch_next` per
+//! worker per tick); 500 ms × ~17 workers is a few dozen cheap commands a
+//! second. `job_worker_loop.rs` pins the latency.
 
 use crate::state::AppState;
 use apalis::prelude::{AbortError, Attempt, BoxDynError, Data};
@@ -407,7 +419,9 @@ impl JobRuntime {
                 let state = state.clone();
                 $monitor.register(move |_runs: usize| {
                     WorkerBuilder::new($name)
-                        .backend(storage.clone())
+                        // Short fetch timer: without a poll strategy an idle
+                        // 1.0 worker only wakes on the 30 s heartbeat.
+                        .backend(storage.clone().poll_with_interval(JOB_POLL_INTERVAL))
                         .concurrency($concurrency)
                         .data(state.clone())
                         .layer(metrics_layer::JobMetricsLayer::new($name))
@@ -793,8 +807,15 @@ where
 pub const JOB_REENQUEUE_ORPHANED_AFTER_SECS: u64 = 300;
 
 /// Worker heartbeat period — how often a running worker re-stamps its entry
-/// in the queue's `{queue}:workers` set.
+/// in the queue's `{queue}:workers` set. **Not** the fetch cadence — see
+/// [`JOB_POLL_INTERVAL`].
 pub const JOB_HEARTBEAT_SECS: u64 = 30;
+
+/// How often an idle worker asks Redis for new tasks. apalis 1.0 workers
+/// park after an empty fetch and would otherwise wait for the next heartbeat
+/// (30 s) — see the module docs. Keep well under [`JOB_HEARTBEAT_SECS`]; the
+/// unit test pins the relationship.
+pub const JOB_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
 const _: () = assert!(
     JOB_REENQUEUE_ORPHANED_AFTER_SECS.is_multiple_of(JOB_HEARTBEAT_SECS)
@@ -1211,6 +1232,20 @@ async fn delete_matching_scan_keys(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The fetch timer is what bounds job pickup latency (module docs). It
+    /// must stay far below the heartbeat — equal to it would reproduce the
+    /// 30 s hops of the un-polled 1.0 default — and sub-second so a chained
+    /// apply → rewrite → rescan still feels immediate.
+    #[test]
+    fn poll_interval_is_sub_second_and_below_heartbeat() {
+        assert!(JOB_POLL_INTERVAL <= std::time::Duration::from_secs(1));
+        assert!(JOB_POLL_INTERVAL >= std::time::Duration::from_millis(100));
+        assert!(
+            JOB_POLL_INTERVAL * 10 <= std::time::Duration::from_secs(JOB_HEARTBEAT_SECS),
+            "poll interval must be at least an order of magnitude below the heartbeat"
+        );
+    }
 
     /// The queue name must stay exactly the job's `type_name`: it is the
     /// Redis key prefix for every queue (and what apalis-redis 0.7 derived),

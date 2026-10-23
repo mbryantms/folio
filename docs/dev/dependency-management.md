@@ -113,6 +113,13 @@ together (2026-10, replaces Renovate #379). Operator-visible facts:
   attempt `JOB_MAX_ATTEMPTS` as an `AbortError` → `Killed` → dead set.
 * **Orphan window stays 300 s**, expressed as `heartbeat_interval (30 s) ×
   missed_heartbeats (10)`.
+* **Fetch cadence is explicit.** 0.7 polled Redis every 100 ms; a 1.0 worker
+  parks after an empty fetch and only wakes on the heartbeat unless a poll
+  strategy is attached. The first 1.0 build shipped without one, so every
+  queue hop waited 0–30 s (a metadata apply → rewrite → rescan chain took
+  about a minute on prod). Every worker now gets
+  `poll_with_interval(jobs::JOB_POLL_INTERVAL)` (500 ms);
+  `tests/job_worker_loop.rs` pins idle-worker pickup under 10 s.
 
 ## What the gate actually proves
 
