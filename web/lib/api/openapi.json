@@ -7087,6 +7087,58 @@
         }
       }
     },
+    "/api/me/collections/{id}/window": {
+      "get": {
+        "summary": "`GET /me/collections/{id}/window` — the collection's flattened reading\norder from the caller's first unfinished issue onward (or strictly\nafter `cursor`), with progress overlaid. The offline \"download the\nnext N of this list\" picker walks it the same way it walks\n`/me/cbl-lists/{id}/window-paginated`: finished issues are reported,\nnot hidden, so the client decides what to skip. Issues the caller\ncannot open are dropped; positions stay those of the full order.",
+        "operationId": "collections_reading_window",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionWindowView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not the caller's collection"
+          },
+          "404": {
+            "description": "collection not found"
+          }
+        }
+      }
+    },
     "/api/me/continue-reading": {
       "get": {
         "summary": "In-progress issues for the calling user, ordered by most recent\nactivity. Excludes finished issues, issues that haven't actually been\nopened (`last_page = 0`), removed/encrypted issues, issues the user\ncan't see (library ACL), and issues whose dismissal is still current\n(no newer progress write past the dismissal timestamp).",
@@ -17417,6 +17469,76 @@
             "type": "integer",
             "format": "int64",
             "description": "Active (non-removed) issues owned. Matches the saved-view\n`collection_completeness` `active_count`, so this report and the\nSeriesCard collection dot never disagree."
+          }
+        }
+      },
+      "CollectionWindowEntry": {
+        "type": "object",
+        "description": "One issue of a collection's flattened reading order, with the\ncaller's progress overlaid. Mirrors `CblWindowEntry` so the offline\ndownload picker can treat both list kinds alike.",
+        "required": [
+          "issue",
+          "position",
+          "finished",
+          "last_page"
+        ],
+        "properties": {
+          "finished": {
+            "type": "boolean"
+          },
+          "issue": {
+            "$ref": "#/components/schemas/IssueSummaryView"
+          },
+          "last_page": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Last page index the caller reached (0 if unread)."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0-based index in the flattened reading order (series entries\nexpanded). Stable while the collection is unchanged."
+          }
+        }
+      },
+      "CollectionWindowView": {
+        "type": "object",
+        "description": "`GET /me/collections/{id}/window` response. `current_index` is set\nonly on an anchored (cursor-less) fetch.",
+        "required": [
+          "items",
+          "total",
+          "has_more_after"
+        ],
+        "properties": {
+          "current_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Index within `items` of the caller's first unfinished issue.\n`None` on a cursor page, and when every issue is finished."
+          },
+          "has_more_after": {
+            "type": "boolean",
+            "description": "True when at least one openable issue exists past `max_position`."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CollectionWindowEntry"
+            }
+          },
+          "max_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Largest `position` on this page; the `cursor` for the next one."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of issues in the reading order."
           }
         }
       },

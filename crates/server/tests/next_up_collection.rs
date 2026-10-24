@@ -675,3 +675,92 @@ async fn collection_next_up_endpoint_start_then_continue_then_done() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// `GET /me/collections/{id}/window` — the reading order from the
+/// caller's first unfinished issue onward, progress overlaid, with a
+/// position cursor for the offline "next N of this list" picker.
+#[tokio::test]
+async fn collection_window_anchors_on_first_unfinished_and_pages_by_position() {
+    let app = TestApp::spawn().await;
+    let f = fixture(&app, "win-page").await;
+    let base = format!("/api/me/collections/{}/window", f.cid);
+
+    // Nothing read: anchored on b1, every issue upcoming, in order.
+    let (status, body) = http(&app, Method::GET, &base, Some(&f.user), None).await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    let ids: Vec<&str> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["issue"]["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            f.b1.as_str(),
+            f.a[0].as_str(),
+            f.a[1].as_str(),
+            f.a[2].as_str()
+        ]
+    );
+    assert_eq!(body["current_index"], 0);
+    assert_eq!(body["total"], 4);
+    assert_eq!(body["has_more_after"], false);
+    assert_eq!(body["max_position"], 3);
+    assert_eq!(body["items"][0]["position"], 0);
+    assert_eq!(body["items"][0]["finished"], false);
+    assert_eq!(
+        body["items"][1]["issue"]["series_name"],
+        "Series win-page-a"
+    );
+
+    // Finish b1 and a1: the anchor moves to a2; finished issues before
+    // it are not in the window, finished issues after it would be
+    // reported with `finished: true`.
+    finish_issue(&app, f.user.user_id, &f.b1).await;
+    finish_issue(&app, f.user.user_id, &f.a[0]).await;
+    finish_issue(&app, f.user.user_id, &f.a[2]).await;
+    let (_, body) = http(&app, Method::GET, &base, Some(&f.user), None).await;
+    assert_eq!(body["items"][0]["issue"]["id"], f.a[1]);
+    assert_eq!(body["items"][0]["position"], 2);
+    assert_eq!(body["items"][1]["issue"]["id"], f.a[2]);
+    assert_eq!(body["items"][1]["finished"], true);
+    assert_eq!(body["items"].as_array().unwrap().len(), 2);
+
+    // `after` caps the page and reports more; `cursor` continues past a
+    // position without re-anchoring (and carries no current_index).
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        &format!("{base}?after=1"),
+        Some(&f.user),
+        None,
+    )
+    .await;
+    assert_eq!(body["items"].as_array().unwrap().len(), 1);
+    assert_eq!(body["has_more_after"], true);
+    assert_eq!(body["max_position"], 2);
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        &format!("{base}?after=10&cursor=2"),
+        Some(&f.user),
+        None,
+    )
+    .await;
+    assert_eq!(body["items"][0]["issue"]["id"], f.a[2]);
+    assert!(body.get("current_index").is_none(), "{body:#?}");
+    assert_eq!(body["has_more_after"], false);
+
+    // Everything finished: empty, no anchor.
+    finish_issue(&app, f.user.user_id, &f.a[1]).await;
+    let (_, body) = http(&app, Method::GET, &base, Some(&f.user), None).await;
+    assert_eq!(body["items"].as_array().unwrap().len(), 0);
+    assert!(body.get("current_index").is_none());
+    assert_eq!(body["total"], 4);
+
+    // Ownership: someone else's collection is forbidden.
+    let other = register(&app, "win-page-2@example.com").await;
+    let (status, _) = http(&app, Method::GET, &base, Some(&other), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}

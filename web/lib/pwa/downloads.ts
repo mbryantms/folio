@@ -26,9 +26,18 @@
  *   load (`setAccount`) purges every other account's downloads; explicit
  *   sign-out (`clearAll`) removes everything. Session expiry keeps them
  *   for offline reading (the same rule as the progress outbox).
+ * - **Reading lists**: `downloadList` takes the next N unfinished issues
+ *   of a reading list (CBL) or collection in its reading order — walking
+ *   the server's progress-anchored window — and records the list as an
+ *   `OfflineList` (membership + positions) so the offline library keeps
+ *   it together, apart from other downloads, and can say what is next
+ *   with no network. Issues are stored once however many lists share
+ *   them; removing a list drops only the issues nothing else wants.
  */
 
 import type {
+  CblWindowPageView,
+  CollectionWindowView,
   IssueDetailView,
   IssueListView,
   IssueSummaryView,
@@ -47,6 +56,10 @@ import {
   OFFLINE_CACHE_PREFIX,
   OFFLINE_SHELL_CACHE,
   indexedOfflineDb,
+  isDirect,
+  listsMetaKey,
+  readOfflineLists,
+  writeOfflineLists,
   offlineCacheName,
   offlineCoverKey,
   offlinePageKey,
@@ -54,6 +67,9 @@ import {
   recordKey,
   type DownloadErrorKind,
   type DownloadRecord,
+  type OfflineList,
+  type OfflineListEntry,
+  type OfflineListKind,
   type DownloadTier,
   type OfflineDb,
   type ReaderSnapshot,
@@ -94,6 +110,22 @@ export interface DownloadManager {
     tier: DownloadTier,
     opts?: { reader?: ReaderSnapshot | null },
   ): Promise<number>;
+  /** Offline reading lists of the current account, oldest first; a new
+   *  array on every change (same `subscribe` as the downloads). */
+  lists(): readonly OfflineList[];
+  /** Enqueue the next unfinished issues of a reading list / collection
+   *  in its reading order (`scope.count`, or every remaining one) and
+   *  record the list. Resolves with how many issues the list now covers
+   *  from this call and how many of them were newly queued. */
+  downloadList(
+    list: OfflineListSource,
+    scope: ListDownloadScope,
+    tier: DownloadTier,
+    opts?: { reader?: ReaderSnapshot | null },
+  ): Promise<{ selected: number; queued: number }>;
+  /** Forget an offline list and remove its issues, except those also
+   *  downloaded directly or belonging to another list. */
+  removeList(listId: string): Promise<void>;
   pause(issueId: string): Promise<void>;
   resume(issueId: string): Promise<void>;
   /** Remove one download (also cancels it when in flight). */
@@ -113,6 +145,27 @@ export interface DownloadManager {
    *  offline resume position. No-op for issues that are not downloaded. */
   noteProgress(body: ProgressLike): Promise<void>;
 }
+
+/** A reading list or collection to download from. */
+export type OfflineListSource = {
+  /** Saved-view id. */
+  id: string;
+  kind: OfflineListKind;
+  name: string;
+  /** CBL list id for a reading list; the saved-view id for a collection. */
+  sourceId: string;
+};
+
+/** How much of a list to take: the next `count` unfinished issues from
+ *  the reader's current position, or everything left. */
+export type ListDownloadScope = { count: number } | "rest";
+
+/** One upcoming issue of a list, as the server's window reports it. */
+export type ListWindowItem = {
+  issue: IssueSummaryView;
+  position: number;
+  finished: boolean;
+};
 
 /** The subset of a progress write the offline resume position needs. */
 export type ProgressLike = {
@@ -172,6 +225,11 @@ const UNKNOWN_ORIGINAL_PAGE = 1_200_000;
 /** Rough WebP q80 density for comic art at the variant tiers. */
 const WEBP_BYTES_PER_PX = 0.2;
 const SERIES_PAGE_SIZE = 100;
+/** CBL window: the initial anchored page allows ≤ 40 upcoming entries,
+ *  continuation pages ≤ 60; the collection window allows ≤ 200. */
+const CBL_WINDOW_INITIAL = 40;
+const CBL_WINDOW_PAGE = 60;
+const COLLECTION_WINDOW_PAGE = 200;
 
 /** Estimated stored size of one issue at a tier (pages + strip thumbs). */
 export function estimateIssueBytes(
@@ -335,6 +393,8 @@ export function createDownloadManager(
   let owner: string | null = null;
   const records = new Map<string, DownloadRecord>();
   let snap: readonly DownloadRecord[] = [];
+  let lists: OfflineList[] = [];
+  let listSnap: readonly OfflineList[] = [];
   const listeners = new Set<() => void>();
   const eventListeners = new Set<(event: DownloadEvent) => void>();
   let active: { issueId: string; controller: AbortController } | null = null;
@@ -346,7 +406,12 @@ export function createDownloadManager(
 
   const emit = () => {
     snap = [...records.values()].sort((a, b) => a.createdAt - b.createdAt);
+    listSnap = [...lists];
     for (const l of listeners) l();
+  };
+  const saveLists = async () => {
+    if (owner) await writeOfflineLists(db, owner, lists);
+    emit();
   };
   const fire = (event: DownloadEvent) => {
     for (const l of eventListeners) l(event);
@@ -373,6 +438,7 @@ export function createDownloadManager(
 
   const loadOwner = async () => {
     records.clear();
+    lists = owner ? await readOfflineLists(db, owner) : [];
     if (owner) {
       for (const r of await db.all()) {
         if (r.account !== owner) continue;
@@ -389,9 +455,16 @@ export function createDownloadManager(
     emit();
   };
 
-  const purgeOthers = async (account: string) => {
+  const purgeOthers = async (account: string, previous?: string) => {
+    const others = new Set<string>();
+    if (previous && previous !== account) others.add(previous);
     for (const r of await db.all())
-      if (r.account !== account) await db.delete(r.key);
+      if (r.account !== account) {
+        others.add(r.account);
+        await db.delete(r.key);
+      }
+    for (const other of others)
+      await db.setMeta(listsMetaKey(other), undefined);
     const cs = cacheStorage();
     if (!cs) return;
     for (const name of await cs.keys())
@@ -481,7 +554,7 @@ export function createDownloadManager(
       record = (await write(issueId, {
         ...detailFields(issue),
         pages,
-        pageCount: Math.max(pages.length, issue.page_count ?? 0),
+        pageCount: readablePageCount(issue, pages),
         estimatedBytes: estimateIssueBytes(pages, record.tier, {
           pageCount: issue.page_count,
           fileSize: issue.file_size,
@@ -510,7 +583,7 @@ export function createDownloadManager(
       if (!record) return;
     }
     const target = await cache();
-    const total = Math.max(record.pages.length, record.pageCount);
+    const total = record.pageCount || record.pages.length;
     const indices = Array.from({ length: total }, (_, i) => i);
     let bytes = 0;
     let done = 0;
@@ -660,6 +733,7 @@ export function createDownloadManager(
     seriesReadingDirection: null,
     libraryDefaultReadingDirection: null,
     progress: null,
+    direct: true,
     createdAt: now(),
     updatedAt: now(),
     completedAt: null,
@@ -668,12 +742,20 @@ export function createDownloadManager(
 
   const enqueue = async (record: DownloadRecord) => {
     const stored = await db.update(record.key, (cur) => {
+      // A record stays "direct" once asked for on its own.
+      const direct = cur ? isDirect(cur) || isDirect(record) : isDirect(record);
       // Re-downloading at another tier starts over; the same tier resumes.
       if (cur && cur.status === "complete" && cur.tier === record.tier)
-        return cur;
+        return direct === isDirect(cur) ? cur : { ...cur, direct };
       if (cur && cur.tier === record.tier)
-        return { ...cur, status: "queued", error: null, errorMessage: null };
-      return record;
+        return {
+          ...cur,
+          status: "queued",
+          error: null,
+          errorMessage: null,
+          direct,
+        };
+      return { ...record, direct };
     });
     if (stored) records.set(record.issueId, stored);
     emit();
@@ -698,11 +780,83 @@ export function createDownloadManager(
     await Promise.all(keys.map((k) => target.delete(k)));
   };
 
+  /** The list's upcoming issues from the reader's current position, in
+   *  reading order, one server page at a time. Stops being consumed as
+   *  soon as the caller has enough. */
+  async function* walkList(
+    list: OfflineListSource,
+  ): AsyncGenerator<ListWindowItem & { total: number | null }> {
+    const id = encodeURIComponent(list.sourceId);
+    if (list.kind === "cbl") {
+      let cursor: number | null = null;
+      let more = true;
+      let total: number | null = null;
+      while (more) {
+        const qs: string =
+          cursor == null
+            ? `before=0&after=${CBL_WINDOW_INITIAL}`
+            : `direction=after&cursor=${cursor}&limit=${CBL_WINDOW_PAGE}`;
+        const page: CblWindowPageView = await fetchJson<CblWindowPageView>(
+          `/me/cbl-lists/${id}/window-paginated?${qs}`,
+        );
+        if (cursor == null) {
+          total = page.total_matched ?? null;
+          // The anchored page is `before` finished entries (none asked
+          // for) + the current entry + upcoming ones; without a current
+          // entry everything is finished.
+          if (page.current_index == null) return;
+        }
+        for (const item of page.items)
+          yield {
+            issue: item.issue,
+            position: item.position,
+            finished: item.finished,
+            total,
+          };
+        more = page.has_more_after && page.max_position != null;
+        cursor = page.max_position ?? null;
+      }
+      return;
+    }
+    let cursor: number | null = null;
+    let more = true;
+    while (more) {
+      const qs: string =
+        cursor == null
+          ? `after=${COLLECTION_WINDOW_PAGE}`
+          : `after=${COLLECTION_WINDOW_PAGE}&cursor=${cursor}`;
+      const page: CollectionWindowView = await fetchJson<CollectionWindowView>(
+        `/me/collections/${id}/window?${qs}`,
+      );
+      for (const item of page.items)
+        yield {
+          issue: item.issue,
+          position: item.position,
+          finished: item.finished,
+          total: page.total,
+        };
+      more = page.has_more_after && page.max_position != null;
+      cursor = page.max_position ?? null;
+    }
+  }
+
+  /** Remove one record and its stored assets; no list bookkeeping. */
+  const dropRecord = async (issueId: string) => {
+    if (!owner) return;
+    const account = owner;
+    if (active?.issueId === issueId) active.controller.abort();
+    const record = records.get(issueId);
+    await db.delete(recordKey(account, issueId));
+    records.delete(issueId);
+    emit();
+    if (record) await dropAssets(account, record).catch(() => undefined);
+  };
+
   const manager: DownloadManager = {
     async setAccount(account) {
       const previous = await db.getMeta<string>(META_ACCOUNT);
       if (previous !== account) {
-        await purgeOthers(account);
+        await purgeOthers(account, previous);
         await db.setMeta(META_ACCOUNT, account);
       }
       if (owner !== account) {
@@ -745,7 +899,7 @@ export function createDownloadManager(
             ...detailFields(issue),
             seriesName: opts?.seriesName ?? null,
             pages,
-            pageCount: Math.max(pages.length, issue.page_count ?? 0),
+            pageCount: readablePageCount(issue, pages),
             estimatedBytes: estimateIssueBytes(pages, tier, {
               pageCount: issue.page_count,
               fileSize: issue.file_size,
@@ -803,6 +957,87 @@ export function createDownloadManager(
       void pump();
       return queued;
     },
+    lists: () => listSnap,
+    async downloadList(list, scope, tier, opts) {
+      const account = ensureOwner();
+      if (opts?.reader) await db.setMeta(META_READER, opts.reader);
+      await requestPersistence();
+      const want = scope === "rest" ? Infinity : Math.max(1, scope.count);
+      const entries: OfflineListEntry[] = [];
+      let total: number | null = null;
+      let queued = 0;
+      for await (const item of walkList(list)) {
+        total = item.total;
+        if (item.finished || item.issue.state !== "active") continue;
+        const issue = item.issue;
+        entries.push({ issueId: issue.id, position: item.position });
+        const existing = records.get(issue.id);
+        if (!(existing?.status === "complete" && existing.tier === tier)) {
+          await enqueue(
+            baseRecord(
+              account,
+              {
+                issueId: issue.id,
+                seriesId: issue.series_id,
+                seriesSlug: issue.series_slug,
+                issueSlug: issue.slug,
+                seriesName: issue.series_name ?? null,
+                title: issue.title ?? null,
+                number: issue.number ?? null,
+                pageCount: issue.page_count ?? 0,
+                estimatedBytes: estimateIssueBytes([], tier, {
+                  pageCount: issue.page_count,
+                }),
+                direct: false,
+              },
+              tier,
+            ),
+          );
+          queued++;
+        }
+        if (entries.length >= want) break;
+      }
+      if (entries.length > 0) {
+        const current = lists.find((l) => l.id === list.id);
+        const merged = new Map<string, OfflineListEntry>();
+        for (const e of current?.entries ?? []) merged.set(e.issueId, e);
+        for (const e of entries) merged.set(e.issueId, e);
+        const next: OfflineList = {
+          id: list.id,
+          kind: list.kind,
+          sourceId: list.sourceId,
+          name: list.name,
+          tier,
+          entries: [...merged.values()].sort((a, b) => a.position - b.position),
+          totalInList: total,
+          createdAt: current?.createdAt ?? now(),
+          updatedAt: now(),
+        };
+        lists = current
+          ? lists.map((l) => (l.id === list.id ? next : l))
+          : [...lists, next];
+        await saveLists();
+      }
+      halted = false;
+      void pump();
+      return { selected: entries.length, queued };
+    },
+    async removeList(listId) {
+      const list = lists.find((l) => l.id === listId);
+      if (!list || !owner) return;
+      lists = lists.filter((l) => l.id !== listId);
+      await saveLists();
+      for (const entry of list.entries) {
+        const record = records.get(entry.issueId);
+        if (!record || isDirect(record)) continue;
+        const elsewhere = lists.some((l) =>
+          l.entries.some((e) => e.issueId === entry.issueId),
+        );
+        if (!elsewhere) await dropRecord(entry.issueId);
+      }
+      halted = false;
+      void pump();
+    },
     async pause(issueId) {
       if (active?.issueId === issueId) active.controller.abort();
       await write(issueId, (r) =>
@@ -814,19 +1049,36 @@ export function createDownloadManager(
       await write(issueId, (r) =>
         r.status === "complete"
           ? {}
-          : { status: "queued", error: null, errorMessage: null },
+          : {
+              status: "queued",
+              error: null,
+              errorMessage: null,
+              // A retry after "no longer available" re-reads the issue:
+              // its page map or page count may have changed under the
+              // stored record (stored pages are kept and skipped).
+              ...(r.error === "gone" ? { pages: [], pageCount: 0 } : {}),
+            },
       );
       void pump();
     },
     async remove(issueId) {
       if (!owner) return;
-      const account = owner;
-      if (active?.issueId === issueId) active.controller.abort();
-      const record = records.get(issueId);
-      await db.delete(recordKey(account, issueId));
-      records.delete(issueId);
-      emit();
-      if (record) await dropAssets(account, record).catch(() => undefined);
+      await dropRecord(issueId);
+      // A list no longer claims an issue the user removed; a list left
+      // with nothing is forgotten.
+      const stripped = lists
+        .map((l) => ({
+          ...l,
+          entries: l.entries.filter((e) => e.issueId !== issueId),
+        }))
+        .filter((l) => l.entries.length > 0);
+      if (
+        stripped.length !== lists.length ||
+        stripped.some((l, i) => l.entries.length !== lists[i]!.entries.length)
+      ) {
+        lists = stripped;
+        await saveLists();
+      }
       halted = false;
       void pump();
     },
@@ -837,6 +1089,8 @@ export function createDownloadManager(
       for (const r of await db.all())
         if (r.account === account) await db.delete(r.key);
       records.clear();
+      lists = [];
+      await writeOfflineLists(db, account, []);
       emit();
       const cs = cacheStorage();
       await cs?.delete(offlineCacheName(account)).catch(() => false);
@@ -847,6 +1101,7 @@ export function createDownloadManager(
       active?.controller.abort();
       await db.clear();
       records.clear();
+      lists = [];
       owner = null;
       loaded = null;
       emit();
@@ -864,7 +1119,7 @@ export function createDownloadManager(
       if (!record || record.status !== "complete" || !owner) return false;
       const target = await cache().catch(() => null);
       if (!target) return false;
-      const total = Math.max(record.pages.length, record.pageCount);
+      const total = record.pageCount || record.pages.length;
       let present = 0;
       for (let i = 0; i < total; i++)
         if (await target.match(offlinePageKey(issueId, i))) present++;
@@ -904,6 +1159,20 @@ export function createDownloadManager(
     },
   };
   return manager;
+}
+
+/**
+ * Pages to download: the issue's `page_count`, which is what the reader
+ * shows (`totalPages`) and what the page-bytes route serves. The page map
+ * can list more entries than the archive has readable pages (a stale map
+ * after a rewrite); asking for those 404s and used to fail the download.
+ */
+function readablePageCount(
+  issue: Pick<IssueDetailView, "page_count">,
+  pages: PageInfo[],
+): number {
+  const count = issue.page_count ?? 0;
+  return count > 0 ? count : pages.length;
 }
 
 function detailFields(issue: IssueDetailView): Partial<DownloadRecord> {

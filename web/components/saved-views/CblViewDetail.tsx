@@ -11,6 +11,7 @@ import {
   Download,
   EyeOff,
   FileCog,
+  HardDriveDownload,
   ListChecks,
   Loader2,
   RefreshCw,
@@ -82,6 +83,15 @@ const BulkArchiveEditDialog = dynamic(
   { ssr: false },
 );
 
+// "Download for offline" dialog (WP-4.6) — lazy, like the archive dialog.
+const OfflineDownloadDialog = dynamic(
+  () =>
+    import("@/components/offline/OfflineDownloadDialog").then(
+      (m) => m.OfflineDownloadDialog,
+    ),
+  { ssr: false },
+);
+
 const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
 const CARD_SIZE_STEP = 20;
@@ -115,6 +125,9 @@ function CblViewDetailInner({
   const detail = useCblList(listId);
   const router = useRouter();
   const createBatch = useCreateSavedViewBatch();
+  const [offlineOpen, setOfflineOpen] = React.useState(false);
+  const [offlineMounted, setOfflineMounted] = React.useState(false);
+  if (offlineOpen && !offlineMounted) setOfflineMounted(true);
   const fetchViewMetadata = () => {
     createBatch.mutate(
       { saved_view_id: savedView.id },
@@ -451,6 +464,25 @@ function CblViewDetailInner({
 
   return (
     <div className="space-y-6">
+      {offlineMounted && (
+        <OfflineDownloadDialog
+          open={offlineOpen}
+          onOpenChange={setOfflineOpen}
+          target={{
+            kind: "list",
+            list: {
+              id: savedView.id,
+              kind: "cbl",
+              name: savedView.name,
+              sourceId: list.id,
+            },
+            remaining:
+              list.stats != null
+                ? Math.max(0, list.stats.matched - list.stats.read_count)
+                : null,
+          }}
+        />
+      )}
       <ViewHeader
         view={savedView}
         onEdit={() => setEditOpen(true)}
@@ -529,6 +561,10 @@ function CblViewDetailInner({
               disabled={createBatch.isPending}
             >
               <Sparkles className="mr-2 h-4 w-4" /> Fetch metadata for view
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
+              <HardDriveDownload className="mr-2 h-4 w-4" />
+              Download for offline…
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <a

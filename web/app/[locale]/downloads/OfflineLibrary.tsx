@@ -18,7 +18,7 @@ import {
   type DownloadRecord,
 } from "@/lib/pwa/offline-store";
 import { getOutbox } from "@/lib/pwa/outbox";
-import { useDownloads } from "@/lib/pwa/use-downloads";
+import { useDownloads, useOfflineLists } from "@/lib/pwa/use-downloads";
 
 import { OfflineReader } from "./OfflineReader";
 
@@ -76,6 +76,7 @@ export function OfflineLibrary() {
   const [owner, setOwner] = useState<string | null>(null);
   const [intact, setIntact] = useState<Record<string, boolean>>({});
   const downloads = useDownloads(manager);
+  const lists = useOfflineLists(manager);
   const online = useSyncExternalStore(
     subscribeOnline,
     () => navigator.onLine,
@@ -108,6 +109,12 @@ export function OfflineLibrary() {
     from: params.get("from"),
   });
   const readable = record?.status === "complete";
+  // `?list=` — the offline reading list the issue was opened from; Up
+  // Next then follows that list's order from the device.
+  const listParam = params.get("list");
+  const list = listParam
+    ? (lists.find((l) => l.id === listParam) ?? null)
+    : null;
 
   // Integrity check before advertising a download as readable offline.
   const recordId = readable ? record.issueId : null;
@@ -122,8 +129,8 @@ export function OfflineLibrary() {
     };
   }, [manager, recordId]);
 
-  const open = useCallback((d: DownloadRecord) => {
-    window.history.pushState(null, "", offlineReadHref(d.issueId));
+  const open = useCallback((d: DownloadRecord, listId?: string | null) => {
+    window.history.pushState(null, "", offlineReadHref(d.issueId, listId));
   }, []);
   const back = useCallback(() => {
     window.history.pushState(null, "", OFFLINE_SHELL_PATH);
@@ -136,7 +143,12 @@ export function OfflineLibrary() {
     return (
       <>
         {replayer}
-        <OfflineReader key={record.issueId} record={record} manager={manager} />
+        <OfflineReader
+          key={record.issueId}
+          record={record}
+          list={list}
+          manager={manager}
+        />
       </>
     );
   }
@@ -199,7 +211,7 @@ export function OfflineLibrary() {
           size="sm"
           icon={HardDriveDownload}
           title="No downloads on this device"
-          description="Sign in and use “Download for offline” on an issue or series to read it here without a connection."
+          description="Sign in and use “Download for offline” on an issue, series, reading list or collection to read it here without a connection."
         />
       ) : (
         <DownloadsList manager={manager} onRead={open} />

@@ -7,15 +7,23 @@ import {
   type DownloadManager,
   type StorageUsage,
 } from "./downloads";
-import type { DownloadRecord } from "./offline-store";
+import type { DownloadRecord, OfflineList } from "./offline-store";
 
 const EMPTY: readonly DownloadRecord[] = [];
+const NO_LISTS: readonly OfflineList[] = [];
 
 /** Live list of this device's downloads (current account only). */
 export function useDownloads(
   manager: DownloadManager = getDownloadManager(),
 ): readonly DownloadRecord[] {
   return useSyncExternalStore(manager.subscribe, manager.snapshot, () => EMPTY);
+}
+
+/** Live offline reading lists of this device (current account only). */
+export function useOfflineLists(
+  manager: DownloadManager = getDownloadManager(),
+): readonly OfflineList[] {
+  return useSyncExternalStore(manager.subscribe, manager.lists, () => NO_LISTS);
 }
 
 /** One issue's download record, if any. */

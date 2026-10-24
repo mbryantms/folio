@@ -14,7 +14,12 @@
  *   - `meta` (keyPath `name`): `account` — the account that owns the
  *     downloads on this device (set by a signed-in page load; survives
  *     session expiry so a plane ride that outlives the session still
- *     reads; cleared by explicit sign-out) — plus small snapshots.
+ *     reads; cleared by explicit sign-out) — plus small snapshots, and
+ *     `lists:<account>`: the account's offline reading lists
+ *     (`OfflineList[]`) — which downloaded issues were taken from which
+ *     reading list or collection, in that list's reading order, so the
+ *     offline library can keep them together and "next in list" works
+ *     with no network.
  * - Cache Storage `folio-offline-v1:<account>`: page bytes and strip/cover
  *   thumbnails under canonical, query-free keys (`offlineKeyFor`), so any
  *   `?w=`/`?v=`/`?r=` variant the reader asks for maps to the downloaded
@@ -105,6 +110,11 @@ export type DownloadRecord = {
   /** Server progress captured at download time (the offline resume seed;
    *  queued outbox writes win over it). */
   progress: { page: number; finished: boolean; run: number } | null;
+  /** Asked for on its own (issue / series download) — as opposed to
+   *  only as part of an offline reading list. Removing a list drops its
+   *  issues unless they were also downloaded directly or belong to
+   *  another list. Records from before this field count as direct. */
+  direct?: boolean;
   createdAt: number;
   updatedAt: number;
   completedAt: number | null;
@@ -112,6 +122,60 @@ export type DownloadRecord = {
 
 export const recordKey = (account: string, issueId: string) =>
   `${account}\u0000${issueId}`;
+
+export type OfflineListKind = "cbl" | "collection";
+
+export type OfflineListEntry = {
+  issueId: string;
+  /** 0-based position in the source list's reading order at download
+   *  time — what keeps the offline copy in list order. */
+  position: number;
+};
+
+/**
+ * A reading list or collection downloaded for offline reading: the
+ * issues taken from it, in its reading order. Issue details live on the
+ * `DownloadRecord`s; the list only carries membership and order, so an
+ * issue can belong to several lists and still be stored once.
+ */
+export type OfflineList = {
+  /** Saved-view id of the source list (the reader's `?cbl=` /
+   *  `?collection=` context). */
+  id: string;
+  kind: OfflineListKind;
+  /** Id the list's API lives under: the CBL list id for a reading list,
+   *  the saved-view id for a collection. */
+  sourceId: string;
+  name: string;
+  entries: OfflineListEntry[];
+  tier: DownloadTier;
+  /** Issues in the source list's reading order at download time. */
+  totalInList: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+/** `meta` row holding an account's offline reading lists. */
+export const listsMetaKey = (account: string) => `lists:${account}`;
+
+export async function readOfflineLists(
+  db: OfflineDb,
+  account: string,
+): Promise<OfflineList[]> {
+  return (await db.getMeta<OfflineList[]>(listsMetaKey(account))) ?? [];
+}
+
+export async function writeOfflineLists(
+  db: OfflineDb,
+  account: string,
+  lists: OfflineList[],
+): Promise<void> {
+  await db.setMeta(listsMetaKey(account), lists.length ? lists : undefined);
+}
+
+/** Does the record count as downloaded on its own (not only via a list)? */
+export const isDirect = (record: Pick<DownloadRecord, "direct">) =>
+  record.direct !== false;
 
 export const offlineCacheName = (account: string) =>
   `${OFFLINE_CACHE_PREFIX}${account}`;
