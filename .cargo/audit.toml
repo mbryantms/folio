@@ -24,6 +24,13 @@ ignore = [
     # (we sign with Ed25519), and the OIDC test's throwaway mock-OP key.
     # No fixed version exists; deny.toml carries the full rationale.
     "RUSTSEC-2023-0071",
+    # `crypto-bigint 0.5.5` timing variability in constant-time ops
+    # (RUSTSEC-2026-0387). Patched only in the 0.7 line; in the graph via
+    # p256/p384 0.13 from jsonwebtoken 11.1 + openidconnect 4.0, both at
+    # their latest and pinned to p256 ^0.13. Only ECDSA *verification* of
+    # OIDC id_tokens; our own tokens are EdDSA. deny.toml carries the full
+    # rationale and the delete-when condition.
+    "RUSTSEC-2026-0387",
     # `memmap2 0.9.10` unsound "unchecked pointer offset"
     # (RUSTSEC-2026-0186) — transitive via candle-core in the optional
     # OCR/ML stack; not reachable from the core reader/scanner request
