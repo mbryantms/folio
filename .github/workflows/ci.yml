@@ -683,7 +683,7 @@ jobs:
           # Pinned: with no `version` the installer resolves "latest" through the
           # unauthenticated GitHub API, which rate-limits shared runners and fails
           # the job (#1032). Renovate bumps this via the regex manager in renovate.json.
-          OASDIFF_VERSION=1.34.0
+          OASDIFF_VERSION=1.34.1
           curl -fsSL https://raw.githubusercontent.com/oasdiff/oasdiff/main/install.sh | version="$OASDIFF_VERSION" sh
           # The installer drops the binary in /usr/local/bin (on PATH); invoke
           # it by name, not `./oasdiff` (the old install-to-cwd behavior).
