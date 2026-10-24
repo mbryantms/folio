@@ -107,7 +107,7 @@ export function ActiveChips({
     // down a row per three chips. sm+: wrap as before.
     <div
       className={cn(
-        "mb-4 flex gap-1.5 max-sm:-mx-4 max-sm:[scrollbar-width:none] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:px-4 sm:flex-wrap max-sm:[&::-webkit-scrollbar]:hidden max-sm:[&>*]:shrink-0",
+        "mb-4 flex gap-1.5 max-sm:-mx-4 max-sm:[scrollbar-width:none] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:overflow-y-hidden max-sm:px-4 sm:flex-wrap max-sm:[&::-webkit-scrollbar]:hidden max-sm:[&>*]:shrink-0",
         className,
       )}
     >

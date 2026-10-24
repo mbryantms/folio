@@ -119,6 +119,13 @@ describe("touch-target floor", () => {
         .getByRole("tab", { name: "Credits" })
         .classList.contains("folio-tap"),
     ).toBe(true);
+    // The strip around them scrolls horizontally only: with
+    // `overflow-x-auto` alone the tap areas poking past the 36px strip
+    // gave it a vertical scroll range, and iOS let a finger drag the tab
+    // labels up and down inside the bar (2026-10-24).
+    expect(screen.getByRole("tablist").className).toMatch(
+      /\boverflow-y-hidden\b/,
+    );
     expect(
       screen
         .getByRole("button", { name: /Notes/ })

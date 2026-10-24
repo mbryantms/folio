@@ -98,6 +98,13 @@ max-sm:line-clamp-2`; `PageHeader` takes `phoneDescription="hidden"`
     for the rare case where the component _tree_ differs; it is the
     single copy shared by the reader chrome and the toaster.
 
+   A horizontal strip of such controls (`TabsList`, `SegmentedControl`, the
+   phone chip rows) must be `overflow-x-auto overflow-y-hidden`: with
+   `overflow-x-auto` alone the tap areas poking past the strip give it a few
+   px of vertical scroll, and iOS lets a finger drag the labels up and down
+   inside the bar. Inside a strip the tap area is bounded by the strip's
+   height (36px); the horizontal +4px each side still applies.
+
 ## Primitives
 
 | Piece                      | File                                        | Notes                                                                                                                                                                                                                                                                                                                                                                                                       |

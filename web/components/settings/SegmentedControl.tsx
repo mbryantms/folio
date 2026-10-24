@@ -38,7 +38,9 @@ export function SegmentedControl<T extends string>({
       // `[&>*]:shrink-0` stops the pills squishing; scrollbar hidden to match
       // the TabsList pattern.
       className={cn(
-        "border-input bg-background inline-flex max-w-full [scrollbar-width:none] overflow-x-auto rounded-md border p-0.5 [&::-webkit-scrollbar]:hidden [&>*]:shrink-0",
+        // `overflow-y-hidden`: see `TabsList` — the segments' touch tap
+        // area would otherwise give the strip a few px of vertical scroll.
+        "border-input bg-background inline-flex max-w-full [scrollbar-width:none] overflow-x-auto overflow-y-hidden rounded-md border p-0.5 [&::-webkit-scrollbar]:hidden [&>*]:shrink-0",
         className,
       )}
     >

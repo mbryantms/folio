@@ -609,7 +609,7 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
           role="tablist"
           aria-label="Filter by kind"
           className={cn(
-            "flex flex-wrap gap-1 max-sm:min-w-0 max-sm:flex-1 max-sm:[scrollbar-width:none] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:[&>*]:shrink-0",
+            "flex flex-wrap gap-1 max-sm:min-w-0 max-sm:flex-1 max-sm:[scrollbar-width:none] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:overflow-y-hidden max-sm:[&>*]:shrink-0",
             !embedded && "max-sm:-mx-4 max-sm:px-4",
           )}
         >
