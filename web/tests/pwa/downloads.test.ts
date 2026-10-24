@@ -272,6 +272,62 @@ describe("issue download", () => {
   });
 });
 
+describe("page count", () => {
+  it("downloads page_count pages when the page map lists more than the archive serves", async () => {
+    const api = vi.fn(async (path: string) =>
+      path.startsWith("/progress")
+        ? new Response(JSON.stringify({ records: [] }))
+        : new Response("{}", { status: 404 }),
+    );
+    const m = manager({
+      api,
+      fetch: async (url: string) =>
+        /\/pages\/3(\?|$)/.test(url)
+          ? new Response("", { status: 404 })
+          : image(),
+    });
+    await m.setAccount("alice");
+    // The map has 4 entries; the archive (and the reader) has 3 pages.
+    await m.downloadIssue({ ...issue("a", 4), page_count: 3 }, 720);
+    const record = await settled(m, "a");
+    expect(record.status).toBe("complete");
+    expect(record.pageCount).toBe(3);
+    expect(record.donePages).toBe(3);
+    expect(fetched.some((u) => u.includes("/pages/3"))).toBe(false);
+  });
+
+  it("re-reads the issue on retry after 'no longer available'", async () => {
+    let pageCount = 4;
+    const api = vi.fn(async (path: string) =>
+      path.startsWith("/progress")
+        ? new Response(JSON.stringify({ records: [] }))
+        : /\/issues\/issue-a$/.test(path)
+          ? new Response(
+              JSON.stringify({ ...issue("a", 4), page_count: pageCount }),
+            )
+          : new Response("{}", { status: 404 }),
+    );
+    const m = manager({
+      api,
+      fetch: async (url: string) =>
+        /\/pages\/3(\?|$)/.test(url)
+          ? new Response("", { status: 404 })
+          : image(),
+    });
+    await m.setAccount("alice");
+    // A record stored with a page count the archive no longer has.
+    await m.downloadIssue({ ...issue("a", 4), page_count: 4 }, 720);
+    let record = await settled(m, "a");
+    expect(record.status).toBe("error");
+    expect(record.error).toBe("gone");
+    pageCount = 3;
+    await m.resume("a");
+    record = await settled(m, "a");
+    expect(record.status).toBe("complete");
+    expect(record.pageCount).toBe(3);
+  });
+});
+
 describe("series download", () => {
   it("walks every cursor page and fetches each issue's detail on its turn", async () => {
     const api = vi.fn(async (path: string) => {
@@ -483,5 +539,247 @@ describe("helpers", () => {
       }),
     );
     stop();
+  });
+});
+
+// ───── Offline reading lists ─────
+
+function windowItem(id: string, position: number, finished = false) {
+  return { issue: summary(id), position, finished, last_page: 0, percent: 0 };
+}
+
+/** A CBL whose current entry is at position 3; 4 is already read; the
+ *  anchored page is full at position 7 and one more page holds 8. */
+function cblApi() {
+  return vi.fn(async (path: string) => {
+    if (path.startsWith("/me/cbl-lists/L1/window-paginated?")) {
+      const qs = new URLSearchParams(path.split("?")[1]);
+      const body =
+        qs.get("direction") === "after"
+          ? {
+              items: [windowItem("g", 8)],
+              current_index: null,
+              total_matched: null,
+              total_entries: null,
+              min_position: 8,
+              max_position: 8,
+              has_more_before: true,
+              has_more_after: false,
+            }
+          : {
+              items: [
+                windowItem("c", 3),
+                windowItem("d", 4, true),
+                windowItem("e", 5),
+                windowItem("f", 7),
+              ],
+              current_index: 0,
+              total_matched: 12,
+              total_entries: 14,
+              min_position: 3,
+              max_position: 7,
+              has_more_before: true,
+              has_more_after: true,
+            };
+      return new Response(JSON.stringify(body));
+    }
+    const detail = /\/series\/series-one\/issues\/issue-(\w+)$/.exec(path);
+    if (detail) return new Response(JSON.stringify(issue(detail[1]!, 2)));
+    return new Response(JSON.stringify({ records: [] }));
+  });
+}
+
+const crisis = {
+  id: "view-1",
+  kind: "cbl" as const,
+  name: "Crisis",
+  sourceId: "L1",
+};
+
+describe("reading list download", () => {
+  it("takes the next N unfinished entries in list order and records the list", async () => {
+    const api = cblApi();
+    const m = manager({ api });
+    await m.setAccount("alice");
+    const result = await m.downloadList(crisis, { count: 3 }, 720);
+    expect(result).toEqual({ selected: 3, queued: 3 });
+    // d is finished → skipped; the second page was never needed.
+    expect(m.lists()).toHaveLength(1);
+    expect(m.lists()[0]).toMatchObject({
+      id: "view-1",
+      kind: "cbl",
+      sourceId: "L1",
+      name: "Crisis",
+      tier: 720,
+      totalInList: 12,
+      entries: [
+        { issueId: "c", position: 3 },
+        { issueId: "e", position: 5 },
+        { issueId: "f", position: 7 },
+      ],
+    });
+    expect(m.get("d")).toBeUndefined();
+    expect(m.get("c")?.direct).toBe(false);
+    expect(
+      api.mock.calls.some(([p]) => String(p).includes("direction=after")),
+    ).toBe(false);
+    expect((await settled(m, "c")).status).toBe("complete");
+    expect((await settled(m, "f")).status).toBe("complete");
+  });
+
+  it("'rest' walks every window page and merges into the existing list", async () => {
+    const api = cblApi();
+    const m = manager({ api });
+    await m.setAccount("alice");
+    await m.downloadList(crisis, { count: 1 }, 720);
+    await settled(m, "c");
+    const result = await m.downloadList(crisis, "rest", 720);
+    // c was already complete at this tier: selected, not re-queued.
+    expect(result).toEqual({ selected: 4, queued: 3 });
+    expect(m.lists()[0]?.entries.map((e) => e.issueId)).toEqual([
+      "c",
+      "e",
+      "f",
+      "g",
+    ]);
+    expect(api.mock.calls.map(([p]) => p)).toContain(
+      "/me/cbl-lists/L1/window-paginated?direction=after&cursor=7&limit=60",
+    );
+  });
+
+  it("walks a collection's window with a position cursor", async () => {
+    const api = vi.fn(async (path: string) => {
+      if (path.startsWith("/me/collections/V2/window?")) {
+        const qs = new URLSearchParams(path.split("?")[1]);
+        const body = qs.has("cursor")
+          ? {
+              items: [windowItem("b", 2)],
+              total: 3,
+              max_position: 2,
+              has_more_after: false,
+            }
+          : {
+              items: [windowItem("a", 1)],
+              current_index: 0,
+              total: 3,
+              max_position: 1,
+              has_more_after: true,
+            };
+        return new Response(JSON.stringify(body));
+      }
+      const detail = /\/series\/series-one\/issues\/issue-(\w+)$/.exec(path);
+      if (detail) return new Response(JSON.stringify(issue(detail[1]!, 2)));
+      return new Response(JSON.stringify({ records: [] }));
+    });
+    const m = manager({ api });
+    await m.setAccount("alice");
+    const result = await m.downloadList(
+      { id: "V2", kind: "collection", name: "Pile", sourceId: "V2" },
+      "rest",
+      1080,
+    );
+    expect(result).toEqual({ selected: 2, queued: 2 });
+    expect(m.lists()[0]).toMatchObject({
+      kind: "collection",
+      totalInList: 3,
+      entries: [
+        { issueId: "a", position: 1 },
+        { issueId: "b", position: 2 },
+      ],
+    });
+    expect(api.mock.calls.map(([p]) => p)).toContain(
+      "/me/collections/V2/window?after=200&cursor=1",
+    );
+  });
+
+  it("downloads nothing from a list that is finished", async () => {
+    const api = vi.fn(async (path: string) =>
+      path.includes("window-paginated")
+        ? new Response(
+            JSON.stringify({
+              items: [],
+              current_index: null,
+              total_matched: 3,
+              total_entries: 3,
+              min_position: null,
+              max_position: null,
+              has_more_before: false,
+              has_more_after: false,
+            }),
+          )
+        : new Response(JSON.stringify({ records: [] })),
+    );
+    const m = manager({ api });
+    await m.setAccount("alice");
+    expect(await m.downloadList(crisis, "rest", 720)).toEqual({
+      selected: 0,
+      queued: 0,
+    });
+    expect(m.lists()).toHaveLength(0);
+  });
+
+  it("removing a list keeps issues downloaded directly or through another list", async () => {
+    const api = cblApi();
+    const m = manager({ api });
+    await m.setAccount("alice");
+    // e on its own first; then the list takes c, e, f.
+    await m.downloadIssue(issue("e", 2), 720);
+    await m.downloadList(crisis, { count: 3 }, 720);
+    expect(m.get("e")?.direct).toBe(true);
+    // f is also in a second list.
+    await m.downloadList(
+      { id: "view-9", kind: "cbl", name: "Other", sourceId: "L1" },
+      { count: 3 },
+      720,
+    );
+    await settled(m, "f");
+    await m.removeList("view-1");
+    expect(m.lists().map((l) => l.id)).toEqual(["view-9"]);
+    expect(m.get("c")).toBeDefined(); // still in "Other"
+    expect(m.get("e")).toBeDefined(); // direct
+    await m.removeList("view-9");
+    expect(m.get("c")).toBeUndefined();
+    expect(m.get("f")).toBeUndefined();
+    expect(m.get("e")).toBeDefined();
+    expect(m.lists()).toHaveLength(0);
+  });
+
+  it("removing an issue drops it from its lists; an emptied list is forgotten", async () => {
+    const m = manager({ api: cblApi() });
+    await m.setAccount("alice");
+    await m.downloadList(crisis, { count: 2 }, 720);
+    await m.remove("c");
+    expect(m.lists()[0]?.entries.map((e) => e.issueId)).toEqual(["e"]);
+    await m.remove("e");
+    expect(m.lists()).toHaveLength(0);
+  });
+
+  it("lists survive a reload and belong to one account", async () => {
+    const m = manager({ api: cblApi() });
+    await m.setAccount("alice");
+    await m.downloadList(crisis, { count: 2 }, 720);
+    const again = manager({ api: cblApi() });
+    await again.hydrate();
+    expect(again.account()).toBe("alice");
+    expect(again.lists()[0]?.entries.map((e) => e.issueId)).toEqual(["c", "e"]);
+    // Another account signing in purges alice's lists with her downloads.
+    const bob = manager({ api: cblApi() });
+    await bob.setAccount("bob");
+    expect(bob.lists()).toHaveLength(0);
+    const back = manager({ api: cblApi() });
+    await back.setAccount("alice");
+    expect(back.lists()).toHaveLength(0);
+    expect(back.snapshot()).toHaveLength(0);
+  });
+
+  it("remove all forgets the lists too", async () => {
+    const m = manager({ api: cblApi() });
+    await m.setAccount("alice");
+    await m.downloadList(crisis, { count: 2 }, 720);
+    await m.removeAll();
+    expect(m.lists()).toHaveLength(0);
+    const again = manager({ api: cblApi() });
+    await again.hydrate();
+    expect(again.lists()).toHaveLength(0);
   });
 });

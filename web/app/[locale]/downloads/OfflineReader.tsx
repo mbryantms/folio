@@ -1,22 +1,26 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { offlineReadHref } from "@/components/offline/DownloadsList";
 import { apiFetch } from "@/lib/api/auth-refresh";
-import type { PageInfo } from "@/lib/api/types";
+import type { IssueSummaryView, PageInfo } from "@/lib/api/types";
 import {
   resolveOfflineResume,
   type DownloadManager,
   type OfflineResume,
   type ProgressLike,
 } from "@/lib/pwa/downloads";
+import { offlineNextUp } from "@/lib/pwa/offline-lists";
 import {
   OFFLINE_SHELL_PATH,
   type DownloadRecord,
+  type OfflineList,
   type ReaderSnapshot,
 } from "@/lib/pwa/offline-store";
 import { getOutbox } from "@/lib/pwa/outbox";
+import { useDownloads } from "@/lib/pwa/use-downloads";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
 import { PROGRESS_OUTBOX_KIND } from "@/lib/reader/progress-writer";
 import type { FitMode } from "@/lib/reader/store";
@@ -72,17 +76,35 @@ async function serverProgress(issueId: string): Promise<ProgressLike | null> {
  * The regular reader, fed from IndexedDB instead of SSR (WP-4.6 offline
  * shell). Page and thumbnail requests from this document are answered by
  * the service worker from the downloaded copy; progress and reading
- * sessions go through the durable outbox exactly as online.
+ * sessions go through the durable outbox exactly as online. Opened from
+ * an offline reading list, Up Next is the next downloaded, unfinished
+ * issue of that list in its reading order — resolved from the device,
+ * never the server.
  */
 export function OfflineReader({
   record,
+  list = null,
   manager,
 }: {
   record: DownloadRecord;
+  /** The offline reading list the issue was opened from, if any. */
+  list?: OfflineList | null;
   manager: DownloadManager;
 }) {
   const [resolved, setResolved] = useState<Resolved | null>(null);
   const issueId = record.issueId;
+  const downloads = useDownloads(manager);
+  const nextUp = useMemo(
+    () => (list ? offlineNextUp(list, downloads, issueId) : undefined),
+    [list, downloads, issueId],
+  );
+  const listId = list?.id ?? null;
+  const openNext = useCallback(
+    (target: IssueSummaryView) => {
+      window.history.pushState(null, "", offlineReadHref(target.id, listId));
+    },
+    [listId],
+  );
 
   useEffect(() => {
     let live = true;
@@ -168,6 +190,8 @@ export function OfflineReader({
       readingMinActiveMs={prefs.reading_min_active_ms ?? 30_000}
       readingMinPages={prefs.reading_min_pages ?? 3}
       readingIdleMs={prefs.reading_idle_ms ?? 180_000}
+      nextUpOverride={nextUp}
+      onNextIssue={list ? openNext : undefined}
     />
   );
 }

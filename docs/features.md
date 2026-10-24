@@ -135,6 +135,15 @@ how much storage Folio is using. Downloads belong to the signed-in account
 on that browser — signing out removes them, and another account signing
 in on the same browser never sees them.
 
+Reading lists and collections download the same way, but by **what's
+next**: "Download for offline…" in a list's actions menu takes the next
+issue, the next 5, the next 10, or the rest of the list from where you
+are in it, in reading order, skipping what you have already finished. The
+list stays together in Downloads — its own section, in list order, with a
+Continue button and a Remove list action — apart from issues and series
+downloaded on their own, and the reader's Up Next follows the list offline
+exactly as it does online.
+
 ### "Up Next" that understands reading lists
 
 Finish an issue and a small card slides in from the page-turn edge (never

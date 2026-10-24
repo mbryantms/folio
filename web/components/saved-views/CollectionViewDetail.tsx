@@ -28,6 +28,7 @@ import {
   FileCog,
   FolderPlus,
   GripVertical,
+  HardDriveDownload,
   ListChecks,
   Play,
   Trash2,
@@ -101,6 +102,15 @@ import { ViewHeader } from "./ViewHeader";
 
 // Heavy archive-edit dialog (+dnd) — lazy so it stays out of the collection
 // view's initial bundle; the chunk loads on first open (G6).
+// "Download for offline" dialog (WP-4.6) — lazy, like the archive dialog.
+const OfflineDownloadDialog = dynamic(
+  () =>
+    import("@/components/offline/OfflineDownloadDialog").then(
+      (m) => m.OfflineDownloadDialog,
+    ),
+  { ssr: false },
+);
+
 const BulkArchiveEditDialog = dynamic(
   () =>
     import("@/components/library/BulkArchiveEditDialog").then(
@@ -146,6 +156,10 @@ export function CollectionViewDetail({
   // free — no extra fetch needed.
   const del = useDeleteCollection(savedView.id, { silent: true });
   const showDeleteUndo = useCollectionDeleteUndo();
+  const nextUpQ = useCollectionNextUp(savedView.id);
+  const [offlineOpen, setOfflineOpen] = React.useState(false);
+  const [offlineMounted, setOfflineMounted] = React.useState(false);
+  if (offlineOpen && !offlineMounted) setOfflineMounted(true);
   // Multi-select bulk actions on the collection detail page.
   // Selection tracks `collection_entries.id` (the row PK) so we can
   // resolve each selected entry to its `(entry_kind, ref_id)` pair
@@ -332,22 +346,50 @@ export function CollectionViewDetail({
 
   return (
     <div className="space-y-6">
+      {offlineMounted && (
+        <OfflineDownloadDialog
+          open={offlineOpen}
+          onOpenChange={setOfflineOpen}
+          target={{
+            kind: "list",
+            list: {
+              id: savedView.id,
+              kind: "collection",
+              name: savedView.name,
+              sourceId: savedView.id,
+            },
+            remaining:
+              nextUpQ.data?.position != null
+                ? nextUpQ.data.total - nextUpQ.data.position + 1
+                : nextUpQ.data
+                  ? 0
+                  : null,
+          }}
+        />
+      )}
       <ViewHeader
         view={savedView}
         onEdit={() => setEditOpen(true)}
         extraMenuItems={
-          // Data-liberation (3.3): export the collection as a CBL reading
-          // list. Series entries expand to their issues server-side; a
-          // plain same-origin `<a download>` carries the session cookie.
-          <DropdownMenuItem asChild>
-            <a
-              href={`/api/me/collections/${savedView.id}/export`}
-              download
-              title="Download as a .cbl reading list"
-            >
-              <Download className="mr-2 h-4 w-4" /> Export CBL
-            </a>
-          </DropdownMenuItem>
+          <>
+            <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
+              <HardDriveDownload className="mr-2 h-4 w-4" />
+              Download for offline…
+            </DropdownMenuItem>
+            {/* Data-liberation (3.3): export the collection as a CBL
+             *  reading list. Series entries expand to their issues
+             *  server-side; a plain same-origin `<a download>` carries
+             *  the session cookie. */}
+            <DropdownMenuItem asChild>
+              <a
+                href={`/api/me/collections/${savedView.id}/export`}
+                download
+                title="Download as a .cbl reading list"
+              >
+                <Download className="mr-2 h-4 w-4" /> Export CBL
+              </a>
+            </DropdownMenuItem>
+          </>
         }
         extraActions={
           <>

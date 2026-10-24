@@ -148,6 +148,51 @@ worker routes in `web/app/sw.ts`.
   record (`resolveOfflineResume`), and reopens a finished issue from the
   cover as a new run exactly like the SSR page.
 
+### Offline reading lists
+
+"Download for offline…" in a reading list's (CBL) or collection's actions
+menu takes the **next** issues of that list — Next issue / Next 5 /
+Next 10 / Rest of the list (default Next 5; the last choice is remembered) —
+from the reader's current position, in the list's reading order, skipping
+entries already finished and issues already downloaded at the tier.
+Code: `downloadList` in `downloads.ts`, the pure helpers in
+`offline-lists.ts`, the `OfflineListSection` in `DownloadsList.tsx`.
+
+- **Source of order**: the server's progress-anchored windows —
+  `/me/cbl-lists/{id}/window-paginated` (initial `before=0&after=40`, then
+  `direction=after` pages of 60) and `/me/collections/{id}/window`
+  (`after=200`, then `cursor=<position>` pages). The collection window
+  (`api/collections.rs::reading_window`) flattens series entries exactly as
+  the collection's next-up does, so what downloads is what "Continue"
+  would open. The walk stops as soon as the scope is filled; "Rest" walks
+  every page.
+- **Manifest**: the list is stored as an `OfflineList` in the `meta` row
+  `lists:<account>` — saved-view id, kind, the API id (`sourceId`: the CBL
+  list id or the collection's saved-view id), name, tier, the list's total
+  at download time, and `entries: {issueId, position}[]`. Issue details
+  stay on the `DownloadRecord`s; a record is stored once however many
+  lists include it. No schema version bump: the worker's `indexedOfflineDb`
+  keeps opening version 1.
+- **Direct vs list-only**: `DownloadRecord.direct` (absent = `true` for
+  records from before the field) marks an issue asked for on its own.
+  Removing a list deletes its issues unless they are direct or in another
+  list; removing an issue strips it from every list, and a list left empty
+  is forgotten; "Remove all" and sign-out forget the lists; switching
+  accounts purges the previous account's lists with its downloads.
+- **Downloads UI**: each list is its own section — name, kind badge,
+  "N of M downloaded · K read · size", entries in list position with their
+  position number, a **Continue** / **Start reading** button on the first
+  downloaded, unfinished entry, and **Remove list** behind a confirm.
+  Issues not in any list follow under "Other downloads".
+- **Offline Up Next**: the shell opens a list entry at
+  `/downloads?issue=<id>&list=<viewId>`; `OfflineReader` resolves the next
+  issue from the device (`offlineNextUp`: first entry after the current
+  one that is complete and unfinished, per the records' folded progress)
+  and hands the `Reader` a `nextUpOverride` shaped like the server's
+  `NextUpView` (`source: "cbl" | "collection"`, position/total from the
+  list) plus `onNextIssue`, which navigates with `pushState` inside the
+  shell document. The next-up / prev-up queries do not run.
+
 ### Offline reader shell
 
 - `/downloads` renders nothing from the server: it reads IndexedDB and

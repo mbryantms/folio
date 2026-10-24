@@ -65,6 +65,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(bulk_remove_members))
         .routes(routes!(export))
         .routes(routes!(next_up))
+        .routes(routes!(reading_window))
 }
 
 // ───── wire types ─────
@@ -114,6 +115,50 @@ pub struct CollectionNextUpView {
     /// `true` once the caller has progress on any issue in the order —
     /// the page labels the button "Continue" instead of "Start reading".
     pub started: bool,
+}
+
+/// One issue of a collection's flattened reading order, with the
+/// caller's progress overlaid. Mirrors `CblWindowEntry` so the offline
+/// download picker can treat both list kinds alike.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CollectionWindowEntry {
+    pub issue: IssueSummaryView,
+    /// 0-based index in the flattened reading order (series entries
+    /// expanded). Stable while the collection is unchanged.
+    pub position: i32,
+    pub finished: bool,
+    /// Last page index the caller reached (0 if unread).
+    pub last_page: i32,
+}
+
+/// `GET /me/collections/{id}/window` response. `current_index` is set
+/// only on an anchored (cursor-less) fetch.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CollectionWindowView {
+    pub items: Vec<CollectionWindowEntry>,
+    /// Index within `items` of the caller's first unfinished issue.
+    /// `None` on a cursor page, and when every issue is finished.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_index: Option<i32>,
+    /// Number of issues in the reading order.
+    pub total: i32,
+    /// Largest `position` on this page; the `cursor` for the next one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_position: Option<i32>,
+    /// True when at least one openable issue exists past `max_position`.
+    pub has_more_after: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CollectionWindowQuery {
+    /// Upcoming issues to include after the anchor. Clamped to
+    /// [1, 200], default 24.
+    #[serde(default)]
+    pub after: Option<u32>,
+    /// Continue strictly after this `position` instead of anchoring on
+    /// the caller's first unfinished issue.
+    #[serde(default)]
+    pub cursor: Option<i32>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -744,6 +789,98 @@ pub async fn next_up(
         position: pick.map(|idx| i32::try_from(idx + 1).unwrap_or(i32::MAX)),
         total: seq.total(),
         started,
+    })
+    .into_response()
+}
+
+/// `GET /me/collections/{id}/window` — the collection's flattened reading
+/// order from the caller's first unfinished issue onward (or strictly
+/// after `cursor`), with progress overlaid. The offline "download the
+/// next N of this list" picker walks it the same way it walks
+/// `/me/cbl-lists/{id}/window-paginated`: finished issues are reported,
+/// not hidden, so the client decides what to skip. Issues the caller
+/// cannot open are dropped; positions stay those of the full order.
+#[utoipa::path(
+    operation_id = "collections_reading_window",    get,
+    path = "/me/collections/{id}/window",
+    params(
+        ("id"     = String, Path,),
+        ("after"  = Option<u32>, Query,),
+        ("cursor" = Option<i32>, Query,),
+    ),
+    responses(
+        (status = 200, body = CollectionWindowView),
+        (status = 404, description = "collection not found"),
+        (status = 403, description = "not the caller's collection")
+    )
+)]
+#[handler]
+pub async fn reading_window(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    AxPath(id): AxPath<Uuid>,
+    Query(q): Query<CollectionWindowQuery>,
+) -> impl IntoResponse {
+    let view = match fetch_owned(&app.db, user.id, id).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let seq = match collection_sequence::load_for_view(&app, view).await {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    let progress = match collection_sequence::progress_map(&app, user.id, &seq).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let acl = access::for_user(&app, &user).await;
+    let after = q.after.unwrap_or(24).clamp(1, 200) as usize;
+
+    let openable = |idx: usize| seq.series_of(idx).is_some() && seq.visible(&acl, idx);
+    // Anchor: the first unfinished openable issue (no cursor), or the
+    // first openable issue strictly past the cursor.
+    let start = match q.cursor {
+        Some(cursor) => {
+            let from = usize::try_from(cursor).map(|c| c + 1).unwrap_or(0);
+            (from..seq.items.len()).find(|&idx| openable(idx))
+        }
+        None => seq.first_unfinished_after(&acl, &progress, None),
+    };
+    let mut items = Vec::new();
+    let mut has_more_after = false;
+    if let Some(start) = start {
+        for idx in start..seq.items.len() {
+            if !openable(idx) {
+                continue;
+            }
+            if items.len() >= after {
+                has_more_after = true;
+                break;
+            }
+            let row = &seq.items[idx];
+            let (slug, name) = seq
+                .series_of(idx)
+                .map(|s| (s.slug.clone(), s.name.clone()))
+                .unwrap_or_default();
+            let p = progress.get(&row.id);
+            items.push(CollectionWindowEntry {
+                issue: row.clone().into_summary_view(&slug).with_series_name(name),
+                position: i32::try_from(idx).unwrap_or(i32::MAX),
+                finished: p.map(|p| p.finished).unwrap_or(false),
+                last_page: p.map(|p| p.last_page).unwrap_or(0),
+            });
+        }
+    }
+    let current_index = match (q.cursor, start) {
+        (None, Some(_)) if !items.is_empty() => Some(0),
+        _ => None,
+    };
+    Json(CollectionWindowView {
+        max_position: items.last().map(|e| e.position),
+        current_index,
+        total: seq.total(),
+        has_more_after,
+        items,
     })
     .into_response()
 }

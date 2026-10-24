@@ -61,7 +61,14 @@ import { useSetIssueNote, useSetIssueRating } from "@/lib/api/mutations";
 import { summarizeMarkers, type WrapUpProps } from "@/lib/reader/wrap-up";
 import { readerUrl } from "@/lib/urls";
 import { usePageMarkerToggle } from "@/lib/markers/use-page-marker-toggle";
-import type { NextUpView, PageInfo, PageOverridesView } from "@/lib/api/types";
+import type {
+  IssueSummaryView,
+  NextUpView,
+  PageInfo,
+  PageOverridesView,
+} from "@/lib/api/types";
+
+const NO_NEXT_UP: NextUpView = { source: "none" };
 import {
   computeWebtoonWindow,
   placeholderAspectRatio,
@@ -133,6 +140,8 @@ export function Reader({
   issueLabel = "This issue",
   initialUserRating = null,
   initialUserNote = null,
+  nextUpOverride,
+  onNextIssue,
 }: {
   issueId: string;
   seriesId: string | null;
@@ -147,6 +156,13 @@ export function Reader({
    *  issue detail the page already fetched). */
   initialUserRating?: number | null;
   initialUserNote?: string | null;
+  /** The offline reader's Up Next, resolved from the device instead of
+   *  the server (`null` = nothing next). When set, the next-up / prev-up
+   *  queries do not run. */
+  nextUpOverride?: NextUpView | null;
+  /** With `nextUpOverride`: opens the next issue (the offline shell
+   *  navigates within its own document rather than to `/read/…`). */
+  onNextIssue?: (target: IssueSummaryView) => void;
   /** Saved-view id of the CBL the user is reading through. When set,
    *  the next-up resolver picks from that list instead of the parent
    *  series. Forwarded onto the next-issue URL when source === "cbl"
@@ -291,7 +307,20 @@ export function Reader({
   // round-trip. The hook handles the CBL > series > none resolution
   // server-side; the client just consumes the result.
   const listContext = { cbl: cblSavedViewId, collection: collectionId };
-  const nextUp = useNextUp(issueId, listContext);
+  const overridden = nextUpOverride !== undefined;
+  const liveNextUp = useNextUp(issueId, listContext, { enabled: !overridden });
+  const nextUp = useMemo(
+    () =>
+      overridden
+        ? {
+            data: nextUpOverride ?? NO_NEXT_UP,
+            isLoading: false,
+            isError: false,
+            refetch: () => Promise.resolve(),
+          }
+        : liveNextUp,
+    [liveNextUp, nextUpOverride, overridden],
+  );
   // Post-audit T2.6: the end card / webtoon footer show a Retry when the
   // resolver failed instead of claiming "You're caught up".
   const retryNextUp = useCallback(() => {
@@ -388,6 +417,10 @@ export function Reader({
       }
       return;
     }
+    if (onNextIssue) {
+      onNextIssue(data.target);
+      return;
+    }
     // Forward the list context only when the resolver also picked that
     // list — a series fallback means the user is no longer following it
     // and the next read should reset to series-only context.
@@ -397,12 +430,12 @@ export function Reader({
         collection: data.source === "collection" ? collectionId : null,
       }),
     );
-  }, [cblSavedViewId, collectionId, nextUp.data, router]);
+  }, [cblSavedViewId, collectionId, nextUp.data, onNextIssue, router]);
 
   // Symmetric to useNextUp for the `Shift+P` keybind. Pure sequential
   // back-navigation (no finished-state filter); the resolver returns
   // source=none when the user is already at the first issue.
-  const prevUp = usePrevUp(issueId, listContext);
+  const prevUp = usePrevUp(issueId, listContext, { enabled: !overridden });
   const goPrevIssue = useCallback(() => {
     const data = prevUp.data;
     if (!data || !data.target) {

@@ -3263,6 +3263,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/collections/{id}/window": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /me/collections/{id}/window` — the collection's flattened reading
+         *     order from the caller's first unfinished issue onward (or strictly
+         *     after `cursor`), with progress overlaid. The offline "download the
+         *     next N of this list" picker walks it the same way it walks
+         *     `/me/cbl-lists/{id}/window-paginated`: finished issues are reported,
+         *     not hidden, so the client decides what to skip. Issues the caller
+         *     cannot open are dropped; positions stay those of the full order.
+         */
+        get: operations["collections_reading_window"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/continue-reading": {
         parameters: {
             query?: never;
@@ -7615,6 +7640,51 @@ export interface components {
              *     SeriesCard collection dot never disagree.
              */
             total_owned: number;
+        };
+        /**
+         * @description One issue of a collection's flattened reading order, with the
+         *     caller's progress overlaid. Mirrors `CblWindowEntry` so the offline
+         *     download picker can treat both list kinds alike.
+         */
+        CollectionWindowEntry: {
+            finished: boolean;
+            issue: components["schemas"]["IssueSummaryView"];
+            /**
+             * Format: int32
+             * @description Last page index the caller reached (0 if unread).
+             */
+            last_page: number;
+            /**
+             * Format: int32
+             * @description 0-based index in the flattened reading order (series entries
+             *     expanded). Stable while the collection is unchanged.
+             */
+            position: number;
+        };
+        /**
+         * @description `GET /me/collections/{id}/window` response. `current_index` is set
+         *     only on an anchored (cursor-less) fetch.
+         */
+        CollectionWindowView: {
+            /**
+             * Format: int32
+             * @description Index within `items` of the caller's first unfinished issue.
+             *     `None` on a cursor page, and when every issue is finished.
+             */
+            current_index?: number | null;
+            /** @description True when at least one openable issue exists past `max_position`. */
+            has_more_after: boolean;
+            items: components["schemas"]["CollectionWindowEntry"][];
+            /**
+             * Format: int32
+             * @description Largest `position` on this page; the `cursor` for the next one.
+             */
+            max_position?: number | null;
+            /**
+             * Format: int32
+             * @description Number of issues in the reading order.
+             */
+            total: number;
         };
         CompletenessReport: {
             /**
@@ -21842,6 +21912,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CollectionNextUpView"];
+                };
+            };
+            /** @description not the caller's collection */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description collection not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    collections_reading_window: {
+        parameters: {
+            query?: {
+                after?: number;
+                cursor?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CollectionWindowView"];
                 };
             };
             /** @description not the caller's collection */
