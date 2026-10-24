@@ -194,6 +194,7 @@ async fn assemble_details(
                 source: p.source,
                 external_id: p.row.external_id.clone(),
                 ordinal: p.row.ordinal,
+                confidence: merge::confidence_rank(&p.row.bucket),
                 detail,
             }),
             Err(e) => {
