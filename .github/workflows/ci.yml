@@ -29,7 +29,11 @@ jobs:
   changes:
     name: Detect changed paths
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # 15, not 5: the job does a second of work, but `timeout-minutes` also
+    # counts a hosted runner that is assigned and never starts executing
+    # (zero steps run, 2026-10-24 on #1300). Every other job needs this one,
+    # so a stall here must not cancel the whole run.
+    timeout-minutes: 15
     outputs:
       rust: ${{ steps.filter.outputs.rust || steps.mergequeue.outputs.full }}
       backend_or_spec: ${{ steps.filter.outputs.backend_or_spec || steps.mergequeue.outputs.full }}
@@ -349,7 +353,11 @@ jobs:
     runs-on: ubuntu-24.04
     needs: [changes, rust-fmt, rust-clippy, rust-test, migration-roundtrip]
     if: always()
-    timeout-minutes: 5
+    # 15, not 5: a runner stall (assigned, zero steps run) cancelled this
+    # summary gate on #1300 (2026-10-24) and, because the Docker smoke test
+    # depends on it and is a required check, blocked the PR with every real
+    # gate green. See `changes` above.
+    timeout-minutes: 15
     steps:
       - name: Verify Rust gates
         run: |
