@@ -1279,12 +1279,10 @@ async fn duplicate_external_id_finding_settles_when_the_other_copy_goes() {
     assert_eq!(open().await.len(), 1, "collision still stands");
 
     // Remove the owner; the flagged file is untouched. The next full scan
-    // soft-removes the owner and re-ingests nothing else — the row must
-    // still close, and the survivor holds the id afterwards.
+    // soft-removes the owner and skips the survivor as unchanged, so the
+    // id still sits on the removed row until the survivor is re-read — the
+    // finding must close regardless, because no *live* issue holds it.
     std::fs::remove_file(other).unwrap();
-    scanner::scan_library(&state, lib_id).await.unwrap();
-    // The survivor only reclaims the id when it is re-ingested; a forced
-    // re-read stands in for the user's rescan.
     scanner::scan_library(&state, lib_id).await.unwrap();
     let holders = ExternalIdEntity::find()
         .filter(entity::external_id::Column::Source.eq("comicvine"))
@@ -1298,13 +1296,21 @@ async fn duplicate_external_id_finding_settles_when_the_other_copy_goes() {
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        holders.is_empty() || holders[0].entity_id == survivor.id,
-        "the id is free or on the survivor: {holders:?}"
-    );
+    for h in &holders {
+        if h.entity_id != survivor.id {
+            let owner = IssueEntity::find_by_id(h.entity_id.clone())
+                .one(&state.db)
+                .await
+                .unwrap();
+            assert!(
+                owner.is_none_or(|o| o.removed_at.is_some()),
+                "a live issue other than the survivor still holds the id: {h:?}"
+            );
+        }
+    }
     assert!(
         open().await.is_empty(),
-        "the finding settled once the collision was gone"
+        "the finding settled once no live issue held the id"
     );
 }
 
