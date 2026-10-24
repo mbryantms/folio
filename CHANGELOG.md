@@ -13,6 +13,26 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.66.1](https://github.com/mbryantms/folio/compare/v0.66.0...v0.66.1) (2026-10-24)
+
+
+### Fixed
+
+* **issue:** move the closing note from the header to the Notes tab ([#1306](https://github.com/mbryantms/folio/issues/1306)) ([952b3ae](https://github.com/mbryantms/folio/commit/952b3ae77678498036b8cedff0b3f5a4c6d1a090))
+* **metadata:** compare-view defaults pick the surer match on ties and count junctions by distinct entries ([#1307](https://github.com/mbryantms/folio/issues/1307)) ([4ea1a44](https://github.com/mbryantms/folio/commit/4ea1a44e5002fcc9ff288da9d630b60fb76c7852))
+* **scanner:** Duplicate provider ID findings name both files and the fix; base-only barcodes stop colliding ([#1305](https://github.com/mbryantms/folio/issues/1305)) ([c17c089](https://github.com/mbryantms/folio/commit/c17c08930f5c16d5992a8be3acb8ff19f843229a))
+
+
+### Dependencies
+
+* update dependency cronstrue to v3.38.0 ([#1302](https://github.com/mbryantms/folio/issues/1302)) ([887ba1a](https://github.com/mbryantms/folio/commit/887ba1a1dba7eb2923a7097e2470162bcaf7a144))
+* update node.js to 55fb5f5 ([#1304](https://github.com/mbryantms/folio/issues/1304)) ([58315d4](https://github.com/mbryantms/folio/commit/58315d43ed059f29ed5c4e0fc1b87d3fc0bb3b37))
+
+
+### Build & CI
+
+* give the summary gates 15 minutes — a runner stall cancelled one and blocked a green PR ([#1301](https://github.com/mbryantms/folio/issues/1301)) ([5f7de4f](https://github.com/mbryantms/folio/commit/5f7de4fbc8cd222dee1d9834a8d13ad80a0911d7))
+
 ## [0.66.0](https://github.com/mbryantms/folio/compare/v0.65.2...v0.66.0) (2026-10-24)
 
 
