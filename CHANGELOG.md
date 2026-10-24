@@ -13,6 +13,31 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.66.0](https://github.com/mbryantms/folio/compare/v0.65.2...v0.66.0) (2026-10-24)
+
+
+### Added
+
+* **offline:** download the next issues of a reading list or collection, kept in list order ([#1296](https://github.com/mbryantms/folio/issues/1296)) ([00296e9](https://github.com/mbryantms/folio/commit/00296e9f16f9185487fe896626252a09c3975eef))
+
+
+### Fixed
+
+* **ui:** tab strips scroll horizontally only — iOS dragged the labels up and down ([#1297](https://github.com/mbryantms/folio/issues/1297)) ([aacbcdb](https://github.com/mbryantms/folio/commit/aacbcdbbade6bc381f772362044b918ee148e51c))
+
+
+### Dependencies
+
+* update dependency @ai-sdk/provider-utils@&lt;4.0.34 to v4.0.62 ([#1293](https://github.com/mbryantms/folio/issues/1293)) ([059a20e](https://github.com/mbryantms/folio/commit/059a20eecd36cb26e77d956c0b3ad9fe67aeaf35))
+* update dependency lucide-react to v1.61.0 ([#1294](https://github.com/mbryantms/folio/issues/1294)) ([7dfaf07](https://github.com/mbryantms/folio/commit/7dfaf07416afaa7582f2c327ac46572c98afca42))
+* update dependency oasdiff/oasdiff to v1.34.1 ([#1300](https://github.com/mbryantms/folio/issues/1300)) ([cca2963](https://github.com/mbryantms/folio/commit/cca29638a6e06ad65781decac37dbd72618f9a68))
+* update dependency pnpm to v12.15.0 ([#1295](https://github.com/mbryantms/folio/issues/1295)) ([31660b1](https://github.com/mbryantms/folio/commit/31660b17b02b196e8259d0f61c26b31c01c64bd0))
+
+
+### Build & CI
+
+* clear the zod and crypto-bigint advisories that redden every PR ([#1298](https://github.com/mbryantms/folio/issues/1298)) ([08a7b63](https://github.com/mbryantms/folio/commit/08a7b638ff321e6e7a128a9851cce7efb71ffc4c))
+
 ## [0.65.2](https://github.com/mbryantms/folio/compare/v0.65.1...v0.65.2) (2026-10-23)
 
 
