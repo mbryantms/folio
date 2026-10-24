@@ -402,17 +402,10 @@ export default async function IssuePage({
             {/* "Sidecar metadata refreshed N ago" badge moved into the
                 Edit sheet header — it's operator-facing context that
                 belonged next to the override controls, not on the
-                landing surface. */}
-            {/* The caller's issue-level closing note (written from the
-                reader's Wrap up pane). Private to the user, distinct
-                from the ComicInfo Notes tab below. Renders a quiet
-                "Add a closing note" link when empty. */}
-            <IssueClosingNote
-              seriesSlug={issue.series_slug}
-              issueSlug={issue.slug}
-              initial={issue.user_note ?? null}
-              className="mt-3"
-            />
+                landing surface. The caller's closing note moved to the
+                Notes tab for the same reason: most issues have none,
+                and an "Add a closing note" link above the description
+                read as part of the issue's own metadata. */}
           </div>
           {issue.summary && <Description text={issue.summary} />}
         </div>
@@ -823,12 +816,37 @@ export default async function IssuePage({
             />
           </StackedTabsPanel>
 
-          <StackedTabsPanel value="notes">
-            <InlineNotesEditor
-              seriesSlug={seriesSlug}
-              issueSlug={issue.slug}
-              initial={issue.notes ?? null}
-            />
+          {/* Two kinds of note, kept apart: the caller's private closing
+              note (written from the reader's Wrap up pane; also listed
+              on /bookmarks) and the archive's ComicInfo <Notes>, which
+              every reader of the library sees. */}
+          <StackedTabsPanel value="notes" className="space-y-6">
+            <section aria-labelledby="issue-closing-note-heading">
+              <h3
+                id="issue-closing-note-heading"
+                className="text-muted-foreground mb-2 text-xs font-medium tracking-wide uppercase"
+              >
+                Your closing note
+              </h3>
+              <IssueClosingNote
+                seriesSlug={issue.series_slug}
+                issueSlug={issue.slug}
+                initial={issue.user_note ?? null}
+              />
+            </section>
+            <section aria-labelledby="issue-file-notes-heading">
+              <h3
+                id="issue-file-notes-heading"
+                className="text-muted-foreground mb-2 text-xs font-medium tracking-wide uppercase"
+              >
+                File notes
+              </h3>
+              <InlineNotesEditor
+                seriesSlug={seriesSlug}
+                issueSlug={issue.slug}
+                initial={issue.notes ?? null}
+              />
+            </section>
           </StackedTabsPanel>
 
           <StackedTabsPanel value="covers">
