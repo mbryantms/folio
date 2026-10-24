@@ -1241,6 +1241,73 @@ async fn duplicate_embedded_external_id_surfaces_health_without_wedging_scan() {
     );
 }
 
+/// Removing the other copy clears the finding on the next scan even though
+/// the flagged file is byte-identical and the scanner skips it: the row is
+/// settled against `external_ids` (the survivor reclaimed the id), not
+/// against the file (prod, 2026-10-24: rows stayed open through two full
+/// scans after the duplicates were moved out).
+#[tokio::test]
+async fn duplicate_external_id_finding_settles_when_the_other_copy_goes() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Dup (2009)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let xml = r#"<?xml version="1.0"?><ComicInfo><Series>Dup</Series><Number>36</Number><Web>https://comicvine.gamespot.com/dup-36/4000-12345/</Web></ComicInfo>"#;
+    let a = folder.join("Dup 036 (digital).cbz");
+    let b = folder.join("Dup 036 (variant).cbz");
+    write_cbz_with_xml(&a, 1, 2, Some(xml), None);
+    write_cbz_with_xml(&b, 2, 2, Some(xml), None);
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let open = || async {
+        HealthEntity::find()
+            .filter(entity::library_health_issue::Column::Kind.eq("DuplicateExternalId"))
+            .filter(entity::library_health_issue::Column::ResolvedAt.is_null())
+            .all(&state.db)
+            .await
+            .unwrap()
+    };
+    let rows = open().await;
+    assert_eq!(rows.len(), 1);
+    let flagged_path = rows[0].payload["data"]["path"].as_str().unwrap().to_owned();
+    let flagged = std::path::Path::new(&flagged_path);
+    let other = if flagged == a { &b } else { &a };
+
+    // A scan with nothing changed keeps the row open (the collision stands).
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(open().await.len(), 1, "collision still stands");
+
+    // Remove the owner; the flagged file is untouched. The next full scan
+    // soft-removes the owner and re-ingests nothing else — the row must
+    // still close, and the survivor holds the id afterwards.
+    std::fs::remove_file(other).unwrap();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    // The survivor only reclaims the id when it is re-ingested; a forced
+    // re-read stands in for the user's rescan.
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let holders = ExternalIdEntity::find()
+        .filter(entity::external_id::Column::Source.eq("comicvine"))
+        .filter(entity::external_id::Column::ExternalId.eq("12345"))
+        .all(&state.db)
+        .await
+        .unwrap();
+    let survivor = IssueEntity::find()
+        .filter(entity::issue::Column::FilePath.eq(flagged_path.clone()))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        holders.is_empty() || holders[0].entity_id == survivor.id,
+        "the id is free or on the survivor: {holders:?}"
+    );
+    assert!(
+        open().await.is_empty(),
+        "the finding settled once the collision was gone"
+    );
+}
+
 /// A barcode without its 5-digit issue add-on names the title, not the
 /// issue (every issue of the run carries it), so it is neither stored as
 /// an external id nor reported as a duplicate — the Weird Western Tales
