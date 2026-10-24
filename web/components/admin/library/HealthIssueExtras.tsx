@@ -2,8 +2,8 @@ import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 
 import {
-  healthKindHint,
   healthPayloadDetails,
+  healthPayloadHint,
   healthPayloadRefs,
 } from "@/lib/library/health-issues";
 
@@ -16,7 +16,8 @@ const MAX_SERIES_LINKS = 5;
  *  the path of least resistance (audit UX-3). */
 export function PayloadRefLinks({ payload }: { payload: unknown }) {
   const refs = healthPayloadRefs(payload);
-  if (refs.seriesIds.length === 0 && !refs.issueId) return null;
+  if (refs.seriesIds.length === 0 && !refs.issueId && !refs.ownerIssueId)
+    return null;
   const linkCls =
     "text-foreground/80 hover:text-foreground inline-flex items-center gap-1 text-xs underline-offset-2 hover:underline";
   const shown = refs.seriesIds.slice(0, MAX_SERIES_LINKS);
@@ -26,7 +27,13 @@ export function PayloadRefLinks({ payload }: { payload: unknown }) {
       {refs.issueId ? (
         <Link href={`/issues/${refs.issueId}`} className={linkCls}>
           <ExternalLink className="size-3" aria-hidden="true" />
-          View issue
+          {refs.ownerIssueId ? "View this issue" : "View issue"}
+        </Link>
+      ) : null}
+      {refs.ownerIssueId ? (
+        <Link href={`/issues/${refs.ownerIssueId}`} className={linkCls}>
+          <ExternalLink className="size-3" aria-hidden="true" />
+          View the other issue
         </Link>
       ) : null}
       {shown.map((id, i) => (
@@ -51,7 +58,7 @@ export function HealthPayloadExtras({
   kind: string;
   payload: unknown;
 }) {
-  const hint = healthKindHint(kind);
+  const hint = healthPayloadHint(kind, payload);
   const details = healthPayloadDetails(kind, payload);
   if (!hint && !details) return null;
   return (

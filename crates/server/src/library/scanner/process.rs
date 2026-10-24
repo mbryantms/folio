@@ -1385,7 +1385,15 @@ pub async fn persist_prepared<C: ConnectionTrait>(
             crate::metadata::writers::SetBy::ComicInfo,
         )
         .await?;
-        emit_external_id_skips(health, path, skips);
+        emit_external_id_skips(
+            db,
+            health,
+            path,
+            &updated.id,
+            number_label.as_deref(),
+            skips,
+        )
+        .await?;
         write_notes_gcd_id(db, &updated.id, info.gcd_id).await?;
         // metadata-providers-1.0 M8: MetronInfo's `<ID source="…">` list
         // carries IDs for any number of providers (GCD, Marvel, LoCG,
@@ -1398,7 +1406,15 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         // user-precedence rule is symmetric across non-user set_by).
         if let Some(ids) = &metron_ids {
             let skips = write_metroninfo_external_ids(db, "issue", &updated.id, ids).await?;
-            emit_external_id_skips(health, path, skips);
+            emit_external_id_skips(
+                db,
+                health,
+                path,
+                &updated.id,
+                number_label.as_deref(),
+                skips,
+            )
+            .await?;
         }
         // F-1: pass the just-updated model directly instead of re-fetching by id.
         super::metadata_rollup::replace_issue_metadata_from_model_skipping(
@@ -1567,12 +1583,28 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         )
         .await?;
         write_notes_gcd_id(db, &inserted.id, info.gcd_id).await?;
-        emit_external_id_skips(health, path, skips);
+        emit_external_id_skips(
+            db,
+            health,
+            path,
+            &inserted.id,
+            number_label.as_deref(),
+            skips,
+        )
+        .await?;
         // metadata-providers-1.0 M8 — see the matching block on the
         // update path above for the cross-source-IDs rationale.
         if let Some(ids) = &metron_ids {
             let skips = write_metroninfo_external_ids(db, "issue", &inserted.id, ids).await?;
-            emit_external_id_skips(health, path, skips);
+            emit_external_id_skips(
+                db,
+                health,
+                path,
+                &inserted.id,
+                number_label.as_deref(),
+                skips,
+            )
+            .await?;
         }
         // F-1: pass the just-inserted model directly instead of re-fetching by id.
         super::metadata_rollup::replace_issue_metadata_from_model(db, &inserted).await?;
@@ -2847,22 +2879,43 @@ pub async fn write_series_folder_tags<C: ConnectionTrait>(
 ///
 /// metadata-providers-1.0 M8.
 /// Raise a `DuplicateExternalId` health finding for each provider ID a
-/// write skipped because a live issue already owns it (the duplicate /
-/// variant-file case). The scan still completes; the operator sees the
-/// dups in `/admin/findings` instead of a wedged, retrying scan.
-fn emit_external_id_skips(
+/// write skipped because a live issue already owns it. The scan still
+/// completes; the operator sees the collision in `/admin/findings`
+/// instead of a wedged, retrying scan. The owner's file and number ride
+/// along so the row can say whether the two files are copies of one
+/// issue (remove one) or different issues sharing a tag (fix the id).
+async fn emit_external_id_skips<C: ConnectionTrait>(
+    db: &C,
     health: &mut HealthCollector,
     path: &Path,
+    issue_id: &str,
+    number: Option<&str>,
     skips: Vec<crate::metadata::writers::SkippedExternalId>,
-) {
+) -> Result<(), sea_orm::DbErr> {
     for s in skips {
+        let owner = entity::issue::Entity::find_by_id(s.owner.clone())
+            .select_only()
+            .column(entity::issue::Column::FilePath)
+            .column(entity::issue::Column::NumberRaw)
+            .into_tuple::<(String, Option<String>)>()
+            .one(db)
+            .await?;
+        let (owner_path, owner_number) = match owner {
+            Some((p, n)) => (Some(p), n),
+            None => (None, None),
+        };
         health.emit(IssueKind::DuplicateExternalId {
             path: path.to_path_buf(),
             source: s.source.as_str().to_owned(),
             external_id: s.external_id,
             owner_entity_id: s.owner,
+            issue_id: Some(issue_id.to_owned()),
+            number: number.map(str::to_owned),
+            owner_path,
+            owner_number,
         });
     }
+    Ok(())
 }
 
 async fn write_metroninfo_external_ids<C: ConnectionTrait>(
@@ -2885,6 +2938,14 @@ async fn write_metroninfo_external_ids<C: ConnectionTrait>(
             );
             continue;
         };
+        if crate::metadata::writers::is_base_only_barcode(source, trimmed) {
+            tracing::debug!(
+                entity_id,
+                source = raw_source,
+                "scanner: MetronInfo barcode has no issue add-on; not an issue id"
+            );
+            continue;
+        }
         let identifier = crate::metadata::identifier::Identifier::new(source, trimmed);
         if let crate::metadata::writers::SetExternalIdOutcome::SkippedConflict { owner } =
             crate::metadata::writers::set_external_id(

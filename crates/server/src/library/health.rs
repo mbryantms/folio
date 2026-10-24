@@ -184,16 +184,32 @@ pub enum IssueKind {
         skipped_archive_count: u32,
     },
     /// A provider ID embedded in this archive's ComicInfo/MetronInfo is
-    /// already owned by another *live* issue — almost always a duplicate
-    /// or variant file carrying the same ComicVine/Metron/GTIN id. The
-    /// scanner skips that one ID (rather than aborting) and surfaces this
-    /// so the operator can de-dup. The survivor reclaims the ID
-    /// automatically once the duplicate is removed.
+    /// already owned by another *live* issue. Two situations, which the
+    /// payload lets the UI tell apart: a second copy of the same issue
+    /// (`number` == `owner_number` — remove one; the survivor reclaims
+    /// the ID on the next scan), or two different issues where one is
+    /// tagged with the other's id (fix the id on the wrong file). The
+    /// scanner skips that one ID rather than aborting. Base-only
+    /// barcodes (a UPC/EAN without its 5-digit add-on names the series,
+    /// not the issue) never raise this — `writers::is_base_only_barcode`.
     DuplicateExternalId {
         path: PathBuf,
         source: String,
         external_id: String,
+        /// The issue that holds the id.
         owner_entity_id: String,
+        /// The issue the flagged file was ingested as (links the row to
+        /// its issue page). Absent on rows written before 2026-10.
+        #[serde(default)]
+        issue_id: Option<String>,
+        /// `number_raw` of the flagged file, for the same-issue check.
+        #[serde(default)]
+        number: Option<String>,
+        /// The owner's file, so the row names both claimants.
+        #[serde(default)]
+        owner_path: Option<String>,
+        #[serde(default)]
+        owner_number: Option<String>,
     },
 }
 
