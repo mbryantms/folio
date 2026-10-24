@@ -13,9 +13,11 @@
 //! require a migration.
 
 use chrono::{DateTime, FixedOffset, Utc};
-use entity::library_health_issue;
+use entity::{external_id, issue, library_health_issue};
 use sea_orm::sea_query::{Expr, OnConflict};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter, Set};
+use sea_orm::{
+    ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect, Set,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -184,16 +186,32 @@ pub enum IssueKind {
         skipped_archive_count: u32,
     },
     /// A provider ID embedded in this archive's ComicInfo/MetronInfo is
-    /// already owned by another *live* issue — almost always a duplicate
-    /// or variant file carrying the same ComicVine/Metron/GTIN id. The
-    /// scanner skips that one ID (rather than aborting) and surfaces this
-    /// so the operator can de-dup. The survivor reclaims the ID
-    /// automatically once the duplicate is removed.
+    /// already owned by another *live* issue. Two situations, which the
+    /// payload lets the UI tell apart: a second copy of the same issue
+    /// (`number` == `owner_number` — remove one; the survivor reclaims
+    /// the ID on the next scan), or two different issues where one is
+    /// tagged with the other's id (fix the id on the wrong file). The
+    /// scanner skips that one ID rather than aborting. Base-only
+    /// barcodes (a UPC/EAN without its 5-digit add-on names the series,
+    /// not the issue) never raise this — `writers::is_base_only_barcode`.
     DuplicateExternalId {
         path: PathBuf,
         source: String,
         external_id: String,
+        /// The issue that holds the id.
         owner_entity_id: String,
+        /// The issue the flagged file was ingested as (links the row to
+        /// its issue page). Absent on rows written before 2026-10.
+        #[serde(default)]
+        issue_id: Option<String>,
+        /// `number_raw` of the flagged file, for the same-issue check.
+        #[serde(default)]
+        number: Option<String>,
+        /// The owner's file, so the row names both claimants.
+        #[serde(default)]
+        owner_path: Option<String>,
+        #[serde(default)]
+        owner_number: Option<String>,
     },
 }
 
@@ -408,6 +426,126 @@ impl Severity {
 /// round-trip). Variants don't share a single field name — `path`, `path_a`,
 /// `path_b`, and `folder` all show up across the enum — so we look at all of
 /// them. Used by the touch-on-skip logic in `HealthCollector::finalize`.
+impl HealthCollector {
+    /// Re-check every open `DuplicateExternalId` row of this library
+    /// against `external_ids` and resolve the ones whose collision is
+    /// gone: the flagged issue now holds the id itself (it reclaimed it
+    /// after the other copy was removed), nobody live holds it (the tag
+    /// was removed from the owner), or the flagged file itself is gone
+    /// or soft-removed. A row whose collision stands is kept alive
+    /// instead (its `last_seen_at` moves), since the write it reports is
+    /// not retried for a file the scanner skipped as unchanged. Runs on
+    /// every scan scope — the answer comes from the database, not from
+    /// what this run walked.
+    async fn settle_duplicate_external_ids(
+        &self,
+        db: &DatabaseConnection,
+        now: DateTime<FixedOffset>,
+    ) -> anyhow::Result<()> {
+        let open: Vec<library_health_issue::Model> = library_health_issue::Entity::find()
+            .filter(library_health_issue::Column::LibraryId.eq(self.library_id))
+            .filter(library_health_issue::Column::ResolvedAt.is_null())
+            .filter(library_health_issue::Column::Kind.eq("DuplicateExternalId"))
+            .all(db)
+            .await?;
+        if open.is_empty() {
+            return Ok(());
+        }
+        let emitted: HashSet<String> = self
+            .issues
+            .iter()
+            .filter(|i| matches!(i, IssueKind::DuplicateExternalId { .. }))
+            .map(IssueKind::fingerprint)
+            .collect();
+        let mut resolve = Vec::new();
+        let mut keep = Vec::new();
+        for row in open {
+            // Re-emitted this run: the upsert above already refreshed it.
+            if emitted.contains(&row.fingerprint) {
+                continue;
+            }
+            let Some(data) = row.payload.get("data") else {
+                continue;
+            };
+            let field = |k: &str| data.get(k).and_then(|v| v.as_str()).map(str::to_owned);
+            let (Some(source), Some(external_id), Some(path)) =
+                (field("source"), field("external_id"), field("path"))
+            else {
+                continue;
+            };
+            // The flagged issue: by id when the row carries one, else by
+            // the file path (rows written before `issue_id` existed).
+            let flagged: Option<(String, bool)> = match field("issue_id") {
+                Some(id) => issue::Entity::find_by_id(id)
+                    .select_only()
+                    .column(issue::Column::Id)
+                    .column(issue::Column::RemovedAt)
+                    .into_tuple::<(String, Option<DateTime<FixedOffset>>)>()
+                    .one(db)
+                    .await?
+                    .map(|(id, removed)| (id, removed.is_some())),
+                None => issue::Entity::find()
+                    .filter(issue::Column::FilePath.eq(path))
+                    .select_only()
+                    .column(issue::Column::Id)
+                    .column(issue::Column::RemovedAt)
+                    .into_tuple::<(String, Option<DateTime<FixedOffset>>)>()
+                    .one(db)
+                    .await?
+                    .map(|(id, removed)| (id, removed.is_some())),
+            };
+            let Some((flagged_id, flagged_removed)) = flagged else {
+                resolve.push(row.id);
+                continue;
+            };
+            if flagged_removed {
+                resolve.push(row.id);
+                continue;
+            }
+            let holder = external_id::Entity::find()
+                .filter(external_id::Column::EntityType.eq("issue"))
+                .filter(external_id::Column::Source.eq(source))
+                .filter(external_id::Column::ExternalId.eq(external_id))
+                .select_only()
+                .column(external_id::Column::EntityId)
+                .into_tuple::<String>()
+                .one(db)
+                .await?;
+            let standing = match holder {
+                None => false,
+                Some(h) if h == flagged_id => false,
+                Some(h) => issue::Entity::find_by_id(h)
+                    .select_only()
+                    .column(issue::Column::RemovedAt)
+                    .into_tuple::<Option<DateTime<FixedOffset>>>()
+                    .one(db)
+                    .await?
+                    .is_some_and(|removed| removed.is_none()),
+            };
+            if standing {
+                keep.push(row.id);
+            } else {
+                resolve.push(row.id);
+            }
+        }
+        if !resolve.is_empty() {
+            library_health_issue::Entity::update_many()
+                .col_expr(library_health_issue::Column::ResolvedAt, Expr::value(now))
+                .filter(library_health_issue::Column::Id.is_in(resolve))
+                .exec(db)
+                .await?;
+        }
+        if !keep.is_empty() {
+            library_health_issue::Entity::update_many()
+                .col_expr(library_health_issue::Column::LastSeenAt, Expr::value(now))
+                .filter(library_health_issue::Column::Id.is_in(keep))
+                .exec(db)
+                .await?;
+        }
+        Ok(())
+    }
+}
+
 fn paths_in_payload(payload: &serde_json::Value) -> Vec<String> {
     let Some(data) = payload.get("data").and_then(|d| d.as_object()) else {
         return Vec::new();
@@ -577,6 +715,14 @@ impl HealthCollector {
                 .await?;
         }
 
+        // `DuplicateExternalId` rows are settled against the database, not
+        // the file: whether the collision still exists is a question of who
+        // holds the id now, which changes when the other copy is removed or
+        // re-tagged while this file stays byte-identical. Touch-on-skip
+        // below would otherwise pin such a row open for as long as the file
+        // is unchanged — which, for a healthy file, is forever.
+        self.settle_duplicate_external_ids(db, now).await?;
+
         // Touch open issues for files/folders the scanner skipped this run
         // because their on-disk fingerprint didn't change. Without this, the
         // auto-resolve sweep below would falsely close warnings whose root
@@ -595,6 +741,7 @@ impl HealthCollector {
                 .filter(library_health_issue::Column::ResolvedAt.is_null())
                 .filter(library_health_issue::Column::Kind.ne("PageCountMismatch"))
                 .filter(library_health_issue::Column::Kind.ne("UnreadableFolder"))
+                .filter(library_health_issue::Column::Kind.ne("DuplicateExternalId"))
                 .all(db)
                 .await?;
             let touched_files: HashSet<&str> =

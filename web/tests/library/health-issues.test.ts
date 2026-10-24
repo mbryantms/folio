@@ -4,6 +4,7 @@ import {
   healthKindHint,
   healthKindLabel,
   healthPayloadDetails,
+  healthPayloadHint,
   healthPayloadRefs,
   healthPayloadSummary,
 } from "@/lib/library/health-issues";
@@ -136,5 +137,63 @@ describe("health-issue presentation (WP-3.4 kinds)", () => {
       }),
     ).toBe("/lib/a.cbz — bad zip");
     expect(healthKindLabel("SomethingNew")).toBe("SomethingNew");
+  });
+});
+
+describe("DuplicateExternalId", () => {
+  const base = {
+    path: "/lib/X-Men Blue (2017)/X-Men Blue 033 (digital).cbz",
+    source: "comicvine",
+    external_id: "679423",
+    owner_entity_id: "owner-issue",
+    issue_id: "this-issue",
+  };
+
+  it("names both claimants and links both issues", () => {
+    const payload = {
+      kind: "duplicate_external_id",
+      data: {
+        ...base,
+        number: "33",
+        owner_path: "/lib/X-Men Blue (2017)/X-Men Blue V2017 033.cbz",
+        owner_number: "033",
+      },
+    };
+    expect(healthPayloadSummary("DuplicateExternalId", payload)).toBe(
+      "/lib/X-Men Blue (2017)/X-Men Blue 033 (digital).cbz — ComicVine 679423 is also on /lib/X-Men Blue (2017)/X-Men Blue V2017 033.cbz",
+    );
+    expect(healthPayloadRefs(payload)).toEqual({
+      seriesIds: [],
+      issueId: "this-issue",
+      ownerIssueId: "owner-issue",
+    });
+  });
+
+  it("tells a second copy (same number) from a wrong tag (different numbers)", () => {
+    const copy = {
+      kind: "duplicate_external_id",
+      data: { ...base, number: "33", owner_number: "033" },
+    };
+    expect(healthPayloadHint("DuplicateExternalId", copy)).toMatch(
+      /^Two copies of the same issue carry this ComicVine id\. Remove the copy/,
+    );
+    const wrong = {
+      kind: "duplicate_external_id",
+      data: { ...base, source: "upc", number: "33", owner_number: "32" },
+    };
+    expect(healthPayloadHint("DuplicateExternalId", wrong)).toMatch(
+      /^Issues #33 and #32 both carry this UPC id, so one of them is tagged wrong\./,
+    );
+  });
+
+  it("falls back to the generic hint and summary on rows written before the numbers", () => {
+    const old = { kind: "duplicate_external_id", data: base };
+    expect(healthPayloadHint("DuplicateExternalId", old)).toBe(
+      healthKindHint("DuplicateExternalId"),
+    );
+    expect(healthPayloadSummary("DuplicateExternalId", old)).toBe(
+      "/lib/X-Men Blue (2017)/X-Men Blue 033 (digital).cbz — ComicVine 679423 already belongs to another issue",
+    );
+    expect(healthPayloadHint("MissingComicInfo", old)).toBeUndefined();
   });
 });

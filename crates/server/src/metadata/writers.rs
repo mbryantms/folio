@@ -532,6 +532,27 @@ pub async fn set_external_id_with_override<C: ConnectionTrait>(
     .await
 }
 
+/// Is this barcode a bare series/title code rather than an issue id?
+///
+/// A comic's UPC-A / EAN-13 base (12 / 13 digits) names the *title*;
+/// the 5-digit add-on after it (issue number + cover) is what makes the
+/// 17 / 18-digit code unique per issue. Tagging tools often store the
+/// base alone, so every issue of a run — or every issue cover-dated the
+/// same month, for 1970s codes — carries the same value. Such a code
+/// must not take part in the one-owner rule: it is neither written to
+/// `external_ids` nor reported as a duplicate. An ISBN-13 (978/979
+/// prefix) stored under `gtin` is a book id and stays unique.
+pub fn is_base_only_barcode(source: Source, id: &str) -> bool {
+    if !matches!(source, Source::Upc | Source::Gtin) {
+        return false;
+    }
+    let digits: String = id.chars().filter(char::is_ascii_digit).collect();
+    if digits.len() == 13 && (digits.starts_with("978") || digits.starts_with("979")) {
+        return false;
+    }
+    digits.len() < 17
+}
+
 /// Convenience for the legacy `comicvine_id` + `metron_id` + `gtin`
 /// trio that used to live as fixed columns on `series` + `issues`.
 /// Used by the scanner (ComicInfo parse), bulk-edit dialog, and
@@ -589,6 +610,7 @@ pub async fn set_legacy_id_trio<C: ConnectionTrait>(
     }
     if let Some(g) = gtin
         && !g.is_empty()
+        && !is_base_only_barcode(Source::Gtin, g)
         && let SetExternalIdOutcome::SkippedConflict { owner } = set_external_id(
             db,
             entity_type,

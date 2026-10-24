@@ -1219,6 +1219,211 @@ async fn duplicate_embedded_external_id_surfaces_health_without_wedging_scan() {
         1,
         "the duplicate id raised one DuplicateExternalId finding"
     );
+    // The row names both claimants so the UI can say "second copy of #36"
+    // (same number) rather than leaving the operator to work it out.
+    let data = &health[0].payload["data"];
+    assert_eq!(data["source"], "comicvine");
+    assert_eq!(data["external_id"], "12345");
+    assert_eq!(data["number"], "36");
+    assert_eq!(data["owner_number"], "36");
+    let owner_id = data["owner_entity_id"].as_str().unwrap();
+    assert_eq!(
+        owner_id, owners[0].entity_id,
+        "owner_entity_id is the holder"
+    );
+    let flagged = data["issue_id"].as_str().unwrap();
+    assert_ne!(flagged, owner_id, "issue_id is the flagged file's issue");
+    assert!(issues.iter().any(|i| i.id == flagged));
+    let owner_path = data["owner_path"].as_str().unwrap();
+    assert!(
+        owner_path.ends_with(".cbz") && owner_path != data["path"].as_str().unwrap(),
+        "owner_path is the other file: {owner_path}"
+    );
+}
+
+/// Removing the other copy clears the finding on the next scan even though
+/// the flagged file is byte-identical and the scanner skips it: the row is
+/// settled against `external_ids` (the survivor reclaimed the id), not
+/// against the file (prod, 2026-10-24: rows stayed open through two full
+/// scans after the duplicates were moved out).
+#[tokio::test]
+async fn duplicate_external_id_finding_settles_when_the_other_copy_goes() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Dup (2009)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let xml = r#"<?xml version="1.0"?><ComicInfo><Series>Dup</Series><Number>36</Number><Web>https://comicvine.gamespot.com/dup-36/4000-12345/</Web></ComicInfo>"#;
+    let a = folder.join("Dup 036 (digital).cbz");
+    let b = folder.join("Dup 036 (variant).cbz");
+    write_cbz_with_xml(&a, 1, 2, Some(xml), None);
+    write_cbz_with_xml(&b, 2, 2, Some(xml), None);
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let open = || async {
+        HealthEntity::find()
+            .filter(entity::library_health_issue::Column::Kind.eq("DuplicateExternalId"))
+            .filter(entity::library_health_issue::Column::ResolvedAt.is_null())
+            .all(&state.db)
+            .await
+            .unwrap()
+    };
+    let rows = open().await;
+    assert_eq!(rows.len(), 1);
+    let flagged_path = rows[0].payload["data"]["path"].as_str().unwrap().to_owned();
+    let flagged = std::path::Path::new(&flagged_path);
+    let other = if flagged == a { &b } else { &a };
+
+    // A scan with nothing changed keeps the row open (the collision stands).
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(open().await.len(), 1, "collision still stands");
+
+    // Remove the owner; the flagged file is untouched. The next full scan
+    // soft-removes the owner and skips the survivor as unchanged, so the
+    // id still sits on the removed row until the survivor is re-read — the
+    // finding must close regardless, because no *live* issue holds it.
+    std::fs::remove_file(other).unwrap();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let holders = ExternalIdEntity::find()
+        .filter(entity::external_id::Column::Source.eq("comicvine"))
+        .filter(entity::external_id::Column::ExternalId.eq("12345"))
+        .all(&state.db)
+        .await
+        .unwrap();
+    let survivor = IssueEntity::find()
+        .filter(entity::issue::Column::FilePath.eq(flagged_path.clone()))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    for h in &holders {
+        if h.entity_id != survivor.id {
+            let owner = IssueEntity::find_by_id(h.entity_id.clone())
+                .one(&state.db)
+                .await
+                .unwrap();
+            assert!(
+                owner.is_none_or(|o| o.removed_at.is_some()),
+                "a live issue other than the survivor still holds the id: {h:?}"
+            );
+        }
+    }
+    assert!(
+        open().await.is_empty(),
+        "the finding settled once no live issue held the id"
+    );
+}
+
+/// A barcode without its 5-digit issue add-on names the title, not the
+/// issue (every issue of the run carries it), so it is neither stored as
+/// an external id nor reported as a duplicate — the Weird Western Tales
+/// case from prod (18 findings for one series).
+#[tokio::test]
+async fn base_only_barcode_is_not_an_issue_id() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Weird (1972)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let xml = |n: u32| {
+        format!(
+            r#"<?xml version="1.0"?><ComicInfo><Series>Weird</Series><Number>{n}</Number><GTIN>0709893042008</GTIN></ComicInfo>"#
+        )
+    };
+    write_cbz_with_xml(&folder.join("Weird 035.cbz"), 1, 2, Some(&xml(35)), None);
+    write_cbz_with_xml(&folder.join("Weird 041.cbz"), 2, 2, Some(&xml(41)), None);
+    // MetronInfo's UPC takes the same rule.
+    let metron = r#"<?xml version="1.0"?><MetronInfo><IDS><ID source="UPC" primary="false">759606017720</ID></IDS><Series><Name>Weird</Name></Series><Number>47</Number></MetronInfo>"#;
+    write_cbz_with_xml(
+        &folder.join("Weird 047.cbz"),
+        3,
+        2,
+        Some(&xml(47)),
+        Some(metron),
+    );
+    write_cbz_with_xml(
+        &folder.join("Weird 048.cbz"),
+        4,
+        2,
+        Some(&xml(48)),
+        Some(metron),
+    );
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    assert_eq!(IssueEntity::find().all(&state.db).await.unwrap().len(), 4);
+    let barcodes = ExternalIdEntity::find()
+        .filter(entity::external_id::Column::EntityType.eq("issue"))
+        .filter(entity::external_id::Column::Source.is_in(["gtin", "upc"]))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert!(
+        barcodes.is_empty(),
+        "base-only barcodes are not issue ids: {barcodes:?}"
+    );
+    let health = HealthEntity::find()
+        .filter(entity::library_health_issue::Column::Kind.eq("DuplicateExternalId"))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert!(
+        health.is_empty(),
+        "no duplicate finding for a shared title barcode"
+    );
+}
+
+/// A full 17-digit UPC (base + issue add-on) is one issue's id: a second
+/// file carrying it is reported, and the row names both issue numbers so
+/// the UI can call it a wrong tag (#33 carrying #32's code).
+#[tokio::test]
+async fn full_barcode_collision_is_reported_with_both_numbers() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Aquaman (2003)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let xml = |n: u32| {
+        format!(
+            r#"<?xml version="1.0"?><ComicInfo><Series>Aquaman</Series><Number>{n}</Number><GTIN>76194123532503211</GTIN></ComicInfo>"#
+        )
+    };
+    write_cbz_with_xml(&folder.join("Aquaman 032.cbz"), 1, 2, Some(&xml(32)), None);
+    write_cbz_with_xml(&folder.join("Aquaman 033.cbz"), 2, 2, Some(&xml(33)), None);
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let barcodes = ExternalIdEntity::find()
+        .filter(entity::external_id::Column::EntityType.eq("issue"))
+        .filter(entity::external_id::Column::Source.eq("gtin"))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        barcodes.len(),
+        1,
+        "the full code is held by exactly one issue"
+    );
+    let health = HealthEntity::find()
+        .filter(entity::library_health_issue::Column::Kind.eq("DuplicateExternalId"))
+        .filter(entity::library_health_issue::Column::ResolvedAt.is_null())
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(health.len(), 1);
+    let data = &health[0].payload["data"];
+    assert_eq!(data["source"], "gtin");
+    let numbers = [
+        data["number"].as_str().unwrap().to_owned(),
+        data["owner_number"].as_str().unwrap().to_owned(),
+    ];
+    assert!(
+        numbers.contains(&"32".to_owned()) && numbers.contains(&"33".to_owned()),
+        "both numbers are named: {numbers:?}"
+    );
+    assert!(data["owner_path"].as_str().unwrap().ends_with(".cbz"));
 }
 
 /// PERF-6: the manifest's SQL-computed `needs_count_backfill` flag must

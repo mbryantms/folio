@@ -81,7 +81,10 @@ const KIND_COPY: Record<string, KindCopy> = {
   SkippedArchiveEntries: { label: "Skipped archive entries" },
   UnreadablePage: { label: "Unreadable page" },
   NoPages: { label: "Archive has no pages" },
-  DuplicateExternalId: { label: "Duplicate provider ID" },
+  DuplicateExternalId: {
+    label: "Duplicate provider ID",
+    hint: "Two files claim the same provider id; only one can hold it. Remove the extra copy, or fix the id on the file that is tagged wrong, then rescan.",
+  },
   MetadataDriftFromXml: { label: "Edits not written to XML" },
 };
 
@@ -93,6 +96,54 @@ export function healthKindLabel(kind: string): string {
 /** Optional fix hint for a health kind. */
 export function healthKindHint(kind: string): string | undefined {
   return KIND_COPY[kind]?.hint;
+}
+
+/** Human name of an external-id source as the finding payloads carry it. */
+const SOURCE_LABEL: Record<string, string> = {
+  comicvine: "ComicVine",
+  metron: "Metron",
+  gcd: "GCD",
+  upc: "UPC",
+  gtin: "GTIN",
+  isbn: "ISBN",
+};
+
+export function externalIdSourceLabel(source: string): string {
+  return SOURCE_LABEL[source] ?? source;
+}
+
+/** "009" and "9" are the same issue number. */
+function sameIssueNumber(a: string, b: string): boolean {
+  const norm = (n: string) =>
+    n
+      .trim()
+      .toLowerCase()
+      .replace(/^0+(?=\d)/, "");
+  return norm(a) === norm(b);
+}
+
+/**
+ * Fix hint that reads the payload where the kind has more than one
+ * situation. `DuplicateExternalId` carries both claimants' numbers: the
+ * same number means a second copy (remove one), different numbers mean a
+ * wrong tag (fix the id). Falls back to the kind's static hint.
+ */
+export function healthPayloadHint(
+  kind: string,
+  p: unknown,
+): string | undefined {
+  if (kind === "DuplicateExternalId") {
+    const obj = healthPayloadFields(p);
+    const mine = str(obj.number);
+    const theirs = str(obj.owner_number);
+    const source = externalIdSourceLabel(str(obj.source) ?? "id");
+    if (mine && theirs) {
+      if (sameIssueNumber(mine, theirs))
+        return `Two copies of the same issue carry this ${source} id. Remove the copy you don't want; the other takes the id on the next scan.`;
+      return `Issues #${mine} and #${theirs} both carry this ${source} id, so one of them is tagged wrong. Fix or remove the id on that file (with writeback on, the edit rewrites the archive), then rescan.`;
+    }
+  }
+  return healthKindHint(kind);
 }
 
 function str(v: unknown): string | undefined {
@@ -176,6 +227,16 @@ export function healthPayloadSummary(kind: string, p: unknown): string {
       const b = str(obj.path_b);
       if (a && b) return `${a} ≡ ${b}`;
       break;
+    }
+    case "DuplicateExternalId": {
+      const source = externalIdSourceLabel(str(obj.source) ?? "id");
+      const id = str(obj.external_id) ?? "?";
+      const owner = str(obj.owner_path);
+      const claim = `${source} ${id}`;
+      if (!path) break;
+      return owner
+        ? `${path} — ${claim} is also on ${owner}`
+        : `${path} — ${claim} already belongs to another issue`;
     }
   }
 
@@ -265,6 +326,8 @@ export function healthPayloadDetails(
 export function healthPayloadRefs(p: unknown): {
   seriesIds: string[];
   issueId?: string;
+  /** `DuplicateExternalId`: the issue that holds the contested id. */
+  ownerIssueId?: string;
 } {
   const obj = healthPayloadFields(p);
   const seriesIds: string[] = [];
@@ -274,8 +337,12 @@ export function healthPayloadRefs(p: unknown): {
       if (typeof v === "string") seriesIds.push(v);
     }
   }
+  const issueId = typeof obj.issue_id === "string" ? obj.issue_id : undefined;
+  const owner =
+    typeof obj.owner_entity_id === "string" ? obj.owner_entity_id : undefined;
   return {
     seriesIds,
-    issueId: typeof obj.issue_id === "string" ? obj.issue_id : undefined,
+    issueId,
+    ownerIssueId: owner && owner !== issueId ? owner : undefined,
   };
 }
