@@ -27,6 +27,18 @@ ignore = [
     # `paste` no longer maintained — proc-macro used at build time by
     # several macro crates. Doesn't ship to runtime. Tracked upstream.
     "RUSTSEC-2024-0436",
+    # `crypto-bigint 0.5` timing variability in constant-time ops
+    # (RUSTSEC-2026-0387, 2026-10-23). Patched only in the 0.7 line
+    # (>= 0.7.6), i.e. the RustCrypto 0.14 release train; we get 0.5.5
+    # via `p256`/`p384 0.13` ← `jsonwebtoken 11.1` and `openidconnect 4.0`,
+    # both at their latest release and still pinned to `p256 ^0.13`, so no
+    # bump on our side can clear it. Folio's own tokens are EdDSA
+    # (`auth/jwt.rs`); the only ECDSA path is *verifying* an OIDC
+    # provider's ES-signed id_token with the provider's public key, so no
+    # secret of ours flows through the affected arithmetic.
+    # Delete when `cargo tree -i crypto-bigint` shows no 0.5 (jsonwebtoken /
+    # openidconnect move to p256 0.14).
+    "RUSTSEC-2026-0387",
     # --- OCR / ML stack (candle → comic-text-detector → imageproc), confined
     # to the optional OCR path; not reachable from the core reader/scanner
     # request paths. (audit DEP-1, 2026-07-01.)
