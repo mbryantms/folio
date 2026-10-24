@@ -72,7 +72,13 @@ const TabsList = React.forwardRef<
         //   at 768px) otherwise pushed the whole page into horizontal
         //   scroll. The `p-1` leaves room for the triggers' focus ring
         //   (ring-2 + offset-2) inside the scroller.
-        "bg-muted text-muted-foreground justify-[safe_center] flex h-9 w-full max-w-full items-center overflow-x-auto rounded-md p-1 md:inline-flex md:w-fit",
+        // `overflow-y-hidden`: `overflow-x-auto` alone makes the strip a
+        //   scroll container on both axes, and on touch each trigger's
+        //   invisible 44px tap area (`.folio-tap::after`, globals.css)
+        //   pokes 4px past the 36px strip — iOS then lets a finger drag
+        //   the labels up and down inside the bar. Hidden keeps the strip
+        //   horizontal-only and hands vertical swipes to the page.
+        "bg-muted text-muted-foreground justify-[safe_center] flex h-9 w-full max-w-full items-center overflow-x-auto overflow-y-hidden rounded-md p-1 md:inline-flex md:w-fit",
         "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0",
         // Edge fade (see `useEdgeFade`): a 2rem gradient mask on whichever
         //   side still hides tabs. Never a scrollbar.

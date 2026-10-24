@@ -33,7 +33,7 @@ export function LibraryTabs({
       : (pending.data?.series ?? 0);
   return (
     <nav
-      className="border-border -mb-px flex gap-1 overflow-x-auto border-b"
+      className="border-border -mb-px flex gap-1 overflow-x-auto overflow-y-hidden border-b"
       aria-label="Library sections"
     >
       {TABS.map((tab) => {
