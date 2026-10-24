@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.66.2](https://github.com/mbryantms/folio/compare/v0.66.1...v0.66.2) (2026-10-24)
+
+
+### Build & CI
+
+* gated production deploy — the release records a GitHub Deployment, the compose host pulls it ([#1308](https://github.com/mbryantms/folio/issues/1308)) ([aff7af2](https://github.com/mbryantms/folio/commit/aff7af26aa3324058aef7959899d04ca51763de3))
+
 ## [0.66.1](https://github.com/mbryantms/folio/compare/v0.66.0...v0.66.1) (2026-10-24)
 
 
