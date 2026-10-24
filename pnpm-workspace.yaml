@@ -51,6 +51,12 @@ auditConfig:
     - GHSA-vfj7-8cjw-p6xm
 
 overrides:
+  # GHSA-mrhx-c7xc-m3w5 zod <4.6.6 memory exhaustion on oversized
+  # constrained collections (high). Transitive build tooling only —
+  # @serwist/next / @serwist/build / @serwist/webpack-plugin 9.5.13
+  # exact-pin 4.6.5 so it can't float. Delete when `pnpm why zod` shows
+  # no in-range <4.6.6 consumers (serwist bumps its pin).
+  "zod@<4.6.6": "4.6.7"
   # GHSA lodash prototype-pollution line; transitive dev/tooling copies.
   # Delete when `pnpm why lodash` shows no in-range <4.18.0 consumers.
   "lodash@<4.18.0": "4.18.1"
