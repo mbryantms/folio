@@ -1349,6 +1349,20 @@ best-ranked candidate (today's search). `CompositeProviderColumn.via_coverage`
 labels the column "From series coverage". Cost: one cached detail fetch
 per covered provider per dialog search (the row the apply reads).
 
+**Per-field default** (`merge::choose_field_candidate`, the compare
+view's pre-selected radio per row — "most complete, then most
+trusted"): a scalar takes any non-empty value (page count 0 is empty); a
+junction takes the richest set, counted as *distinct* entries (names
+case-insensitive; a credit is a name + canonical role pair, and a credit
+with no role from the provider is not counted; equal credit pairs prefer
+more distinct people). Every tie then breaks by the candidate's match
+bucket — a `high` match over a `medium` one, since a weaker match is
+likelier to be a different issue — before `provider_preference`
+(`metadata.merge_provider_preference`, default Metron, ComicVine) and
+finally the lower ordinal. The credits cell reads "13 credits (10
+people)" so two equal counts can still be told apart. External ids are
+unioned, never picked.
+
 ### Issue-level library / weekly refresh
 
 `metadata::refresh::fan_out_issue_refresh` — called by
