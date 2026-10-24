@@ -1,0 +1,89 @@
+# Record a production deployment for a published release.
+#
+# This job does not reach the host. It records a GitHub Deployment for the
+# `production` environment; the compose host polls that list every couple
+# of minutes (deploy/host/folio-deploy-poll.sh) and runs pull / up / prune
+# for the tag, then checks /healthz reports it. The environment's required
+# reviewers are the gate: the release workflow queues this job after the
+# images publish, and approving it in the GitHub app is the deploy button.
+#
+#   - called from release.yml after both images publish for a stable tag
+#   - `workflow_dispatch` re-records a deployment for any published tag
+#     (re-deploy, or roll back to an earlier release)
+
+name: deploy
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Release tag (vX.Y.Z)"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to deploy (vX.Y.Z); its images must already be on GHCR"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  record:
+    name: Record production deployment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: https://folio.bryhome.live
+    steps:
+      - name: Check the tag and its images
+        env:
+          VERSION: ${{ inputs.version }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$VERSION' is not a stable release tag (vX.Y.Z)"; exit 1
+          fi
+          for image in folio folio-web; do
+            ref="ghcr.io/${OWNER}/${image}:${VERSION}"
+            if ! docker manifest inspect "$ref" >/dev/null 2>&1; then
+              echo "::error::$ref is not on GHCR — publish the release first"; exit 1
+            fi
+            echo "found $ref"
+          done
+      - name: Record the deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          jq -n --arg ref "$VERSION" --arg owner "$OWNER" '{
+            ref: $ref,
+            environment: "production",
+            production_environment: true,
+            auto_merge: false,
+            required_contexts: [],
+            description: ("Folio " + $ref + " — applied by folio-deploy on the compose host"),
+            payload: {
+              version: $ref,
+              images: [("ghcr.io/" + $owner + "/folio:" + $ref), ("ghcr.io/" + $owner + "/folio-web:" + $ref)]
+            }
+          }' > deployment.json
+          id=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/deployments" --input deployment.json --jq .id)
+          echo "deployment_id=$id" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Production deployment recorded"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Release | \`$VERSION\` |"
+            echo "| Deployment id | $id |"
+            echo
+            echo "The compose host picks it up within a few minutes and runs pull / up / prune, then checks \`/healthz\` reports \`$VERSION\`."
+          } >> "$GITHUB_STEP_SUMMARY"

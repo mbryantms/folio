@@ -9,6 +9,10 @@
 #   - manual dispatch at a tag → release publish for that tag
 #   - manual dispatch at a branch → ad-hoc image build
 #
+# A stable tag ends with the `deploy` job (deploy.yml): behind the
+# `production` environment's approval it records a GitHub Deployment that
+# the compose host polls for and applies (deploy/host/, docs/dev/deploy.md).
+#
 # Images published:
 #   ghcr.io/<owner>/folio        (Rust server,    Dockerfile)
 #   ghcr.io/<owner>/folio-web    (Next.js front,  web/Dockerfile)
@@ -33,6 +37,7 @@ permissions:
   packages: write       # push to ghcr.io
   id-token: write       # cosign keyless OIDC
   attestations: write   # GHA attestations API (SBOM/provenance)
+  deployments: write    # deploy.yml records the production deployment
 
 jobs:
   # On a plain push to main we only need to rebuild the floating `:edge` images
@@ -300,3 +305,18 @@ jobs:
           body_path: RELEASE_BODY.md
           prerelease: false
           make_latest: "true"
+
+  deploy:
+    # Stable tags only (no pre-releases), after both images are on GHCR.
+    # The job inside deploy.yml carries `environment: production`, so the
+    # environment's required reviewers gate it; approving in the GitHub app
+    # is the deploy button. The host does the rest (deploy/host/).
+    name: Deploy to production
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
+    needs: [publish]
+    uses: ./.github/workflows/deploy.yml
+    with:
+      version: ${{ github.ref_name }}
+    permissions:
+      contents: read
+      deployments: write

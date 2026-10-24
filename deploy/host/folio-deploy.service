@@ -1,0 +1,9 @@
+[Unit]
+Description=Apply the newest Folio production deployment recorded on GitHub
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/folio/bin/folio-deploy-poll.sh
+# One deploy at a time; a tick that lands mid-deploy waits.
