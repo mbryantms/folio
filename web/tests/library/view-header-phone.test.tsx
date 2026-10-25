@@ -77,6 +77,14 @@ describe("ViewHeader phone layout", () => {
     expect(desc?.className).toContain("max-sm:text-xs");
   });
 
+  it('renders no ⋯ with actions="none" so a page can place ViewActionsMenu itself', () => {
+    const { container, queryByLabelText } = render(
+      <ViewHeader view={view()} actions="none" />,
+    );
+    expect(queryByLabelText("More actions")).toBeNull();
+    expect(container.querySelector("h1")?.textContent).toBe(view().name);
+  });
+
   it("renders phoneControls as a sibling after <header>, not inside it", () => {
     const { container, getByTestId } = render(
       <ViewHeader
