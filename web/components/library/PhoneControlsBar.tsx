@@ -215,7 +215,7 @@ export function PhoneControlsBar({
             side="bottom"
             className="rounded-t-lg pb-[max(1.5rem,var(--safe-bottom))]"
           >
-            <SheetHeader className="text-left">
+            <SheetHeader>
               <SheetTitle>Sort by</SheetTitle>
             </SheetHeader>
             <div role="radiogroup" aria-label="Sort by" className="-mx-2">
@@ -284,7 +284,7 @@ export function PhoneControlsBar({
             side="bottom"
             className="rounded-t-lg pb-[max(1.5rem,var(--safe-bottom))]"
           >
-            <SheetHeader className="text-left">
+            <SheetHeader>
               <SheetTitle>{menuTitle}</SheetTitle>
             </SheetHeader>
             <div className="space-y-4">{menu(() => setMenuOpen(false))}</div>

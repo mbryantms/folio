@@ -98,6 +98,13 @@ max-sm:line-clamp-2`; `PageHeader` takes `phoneDescription="hidden"`
     for the rare case where the component _tree_ differs; it is the
     single copy shared by the reader chrome and the toaster.
 
+   A control that *contains* controls (a segmented group: `role="group"`
+   with buttons inside) carries `folio-control` for the row's sake but
+   gets no tap area of its own — `globals.css` suppresses the
+   pseudo-element on a `.folio-control:has(button, …)`, because it would
+   paint above the children and take their taps. The children carry
+   `folio-tap` / `folio-button` and their own tap areas.
+
    A horizontal strip of such controls (`TabsList`, `SegmentedControl`, the
    phone chip rows) must be `overflow-x-auto overflow-y-hidden`: with
    `overflow-x-auto` alone the tap areas poking past the strip give it a few
