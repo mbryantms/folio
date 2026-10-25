@@ -32,6 +32,7 @@ import {
 } from "@/components/library/PhoneControlsBar";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
+import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
 import { useCardSize } from "@/components/library/use-card-size";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
@@ -345,12 +346,12 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
 
   const headerActions = (
     <>
-      {/* `w-full` only below `sm` — there it stacks above the buttons;
-          from `sm` up it's a fixed width so the Select + card-size
-          controls share the row instead of wrapping underneath (was
-          `w-full max-w-xs`, which claimed the whole actions row at every
-          width). */}
-      <div className="relative w-full sm:w-64">
+      {/* `w-full` only below `sm` (the embedded tab stacks it above the
+          buttons). From `sm` up the input flexes between 10rem and
+          16rem so the row fits on one line down to an iPad-landscape
+          column with the sidebar open (~694px) — a fixed `w-64` wrapped
+          the row there, and a wrapped row does not pin (rule 3). */}
+      <div className="relative w-full sm:max-w-64 sm:min-w-40 sm:flex-1 sm:basis-40">
         <SearchIcon
           className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2"
           aria-hidden="true"
@@ -418,14 +419,24 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
             seriesName: activeSeriesName,
           })}
           phoneDescription="hidden"
-          actions={headerActions}
           // Below `sm` the whole header goes: the description is already
           // hidden there and the title rides in the PhoneControlsBar's
           // leading slot, so title + controls share one sticky row
           // instead of stacking two bordered bands.
           className="max-sm:hidden"
-          actionsClassName="max-sm:hidden"
         />
+      )}
+
+      {embedded ? null : (
+        // `sm` and up: search / sort / series / Select / Export / card
+        // size in their own row under the header, pinned under the
+        // topbar while it fits one line (the rule in
+        // docs/dev/phone-layout.md: rows that hold search, sort or
+        // filters pin at every width). It used to sit inside the
+        // header's actions and scrolled away with the title.
+        <StickyToolbarRow enabled={!selection.selectMode}>
+          {headerActions}
+        </StickyToolbarRow>
       )}
 
       {embedded ? null : (

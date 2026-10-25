@@ -36,6 +36,7 @@ import {
 } from "@/components/library/PhoneControlsBar";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
+import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
 import { VirtualizedCardGrid } from "@/components/library/VirtualizedCardGrid";
 import { useCardSize } from "@/components/library/use-card-size";
 import { SERIES_CARD_SIZE } from "@/lib/library/series-card-size";
@@ -447,7 +448,10 @@ export function IssuesPanel({
     // No top margin of its own: the page lays its blocks out with a gap
     // column, so the spacing above this section comes from the parent.
     <section>
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+      {/* `sm` and up: heading + count on their own row; the tools sit in
+          the pinned row below. Below `sm` the heading rides in the phone
+          bar's leading slot instead (bookmarks pattern). */}
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3 max-sm:hidden">
         <div>
           <h2 className="text-lg font-semibold tracking-tight">Issues</h2>
           {issueCount != null && (
@@ -456,114 +460,122 @@ export function IssuesPanel({
             </p>
           )}
         </div>
-        {/* Phone (< sm): search / sort / View options icons on the heading's row
-            (the bar grows into the remaining width, so an expanded
-            search gets the room next to the heading). Not sticky — it
-            sits mid-page, after the hero. Hidden while selecting; the
-            sticky `SelectionToolbar` below takes over. The desktop
-            cluster underneath is `max-sm:hidden`. */}
-        <PhoneControlsBar
-          sticky={false}
-          hidden={selection.selectMode}
-          className="min-w-0 flex-1"
-          search={{
-            value: debouncedQ,
-            onChange: setQ,
-            placeholder: "Search issues…",
-            label: "Search issues in this series",
-          }}
-          sort={{
-            value: sort,
-            options: SORT_OPTIONS,
-            onChange: (v: string) => setSort(v as IssueSort),
-            order,
-            onOrder: setOrder,
-            disabled: !!debouncedQ,
-          }}
-          menu={(close) => (
-            <>
-              <CardSizeFields
-                cardSize={cardSize}
-                onCardSize={setCardSize}
-                min={CARD_SIZE_MIN}
-                max={CARD_SIZE_MAX}
-                step={CARD_SIZE_STEP}
-                defaultSize={CARD_SIZE_DEFAULT}
-                fieldId="phone-issue-card-size"
-              />
-              <PhoneMenuAction
-                icon={<ListChecks className="size-4" />}
-                onClick={() => {
-                  close();
-                  selection.enter();
-                }}
-              >
-                Select
-              </PhoneMenuAction>
-            </>
-          )}
-        />
-        <div className="flex flex-wrap items-center gap-2 max-sm:hidden">
-          <Input
-            type="search"
-            aria-label="Search issues in this series"
-            placeholder="Search issues…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            className="w-56"
-          />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!!debouncedQ}
-                // Toolbar-row convention: h-9 beside the search input.
-                className="h-9"
-              >
-                Sort: {SORT_LABELS[sort]} ({order === "asc" ? "↑" : "↓"})
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Sort by</DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                value={sort}
-                onValueChange={(v) => setSort(v as IssueSort)}
-              >
-                <DropdownMenuRadioItem value="number">
-                  Issue number
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="created_at">
-                  Date added
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="updated_at">
-                  Date updated
-                </DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onSelect={() => setOrder((o) => (o === "asc" ? "desc" : "asc"))}
-              >
-                Reverse order
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <CardSizeOptions
-            cardSize={cardSize}
-            onCardSize={setCardSize}
-            min={CARD_SIZE_MIN}
-            max={CARD_SIZE_MAX}
-            step={CARD_SIZE_STEP}
-            defaultSize={CARD_SIZE_DEFAULT}
-          />
-          <SelectModeButton
-            ref={selectButtonRef}
-            active={selection.selectMode}
-            onEnter={() => selection.enter()}
-            onExit={() => selection.exit()}
-          />
-        </div>
       </div>
+      {/* Phone (< sm): heading · search / sort / View options in one
+          sticky row. It sits mid-page after the hero, so it pins only
+          once the page has scrolled to it (phone-layout rule 3: rows
+          with search or sort pin at every width). Hidden while
+          selecting; the sticky `SelectionToolbar` below takes over. */}
+      <PhoneControlsBar
+        hidden={selection.selectMode}
+        className="mb-4"
+        leading={
+          <h2 className="flex min-w-0 items-baseline gap-2 text-lg font-semibold tracking-tight">
+            Issues
+            {issueCount != null && (
+              <span className="text-muted-foreground text-xs font-normal">
+                {issueCount} {issueCount === 1 ? "issue" : "issues"}
+              </span>
+            )}
+          </h2>
+        }
+        search={{
+          value: debouncedQ,
+          onChange: setQ,
+          placeholder: "Search issues…",
+          label: "Search issues in this series",
+        }}
+        sort={{
+          value: sort,
+          options: SORT_OPTIONS,
+          onChange: (v: string) => setSort(v as IssueSort),
+          order,
+          onOrder: setOrder,
+          disabled: !!debouncedQ,
+        }}
+        menu={(close) => (
+          <>
+            <CardSizeFields
+              cardSize={cardSize}
+              onCardSize={setCardSize}
+              min={CARD_SIZE_MIN}
+              max={CARD_SIZE_MAX}
+              step={CARD_SIZE_STEP}
+              defaultSize={CARD_SIZE_DEFAULT}
+              fieldId="phone-issue-card-size"
+            />
+            <PhoneMenuAction
+              icon={<ListChecks className="size-4" />}
+              onClick={() => {
+                close();
+                selection.enter();
+              }}
+            >
+              Select
+            </PhoneMenuAction>
+          </>
+        )}
+      />
+      <StickyToolbarRow enabled={!selection.selectMode} className="mb-4">
+        <Input
+          type="search"
+          aria-label="Search issues in this series"
+          placeholder="Search issues…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          className="w-56"
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!!debouncedQ}
+              // Toolbar-row convention: h-9 beside the search input.
+              className="h-9"
+            >
+              Sort: {SORT_LABELS[sort]} ({order === "asc" ? "↑" : "↓"})
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Sort by</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={sort}
+              onValueChange={(v) => setSort(v as IssueSort)}
+            >
+              <DropdownMenuRadioItem value="number">
+                Issue number
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="created_at">
+                Date added
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="updated_at">
+                Date updated
+              </DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => setOrder((o) => (o === "asc" ? "desc" : "asc"))}
+            >
+              Reverse order
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <CardSizeOptions
+          cardSize={cardSize}
+          onCardSize={setCardSize}
+          min={CARD_SIZE_MIN}
+          max={CARD_SIZE_MAX}
+          step={CARD_SIZE_STEP}
+          defaultSize={CARD_SIZE_DEFAULT}
+        />
+        <SelectModeButton
+          ref={selectButtonRef}
+          active={selection.selectMode}
+          onEnter={() => selection.enter()}
+          onExit={() => selection.exit()}
+        />
+      </StickyToolbarRow>
 
       <SelectionToolbar
         open={selection.selectMode}

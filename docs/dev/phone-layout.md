@@ -39,19 +39,36 @@ indexes.
    `PageActionsMenu`). So the same icon always opens the same kind of
    surface, and a page never shows two `⋯`.
 
-3. **Sticky under the topbar.** The bar is `sticky top-(--topbar-h)`
-   by default so the controls stay reachable after scrolling. Pass
-   `sticky={false}` for a mid-page bar (the series page's Issues
-   panel). `SelectionToolbar` is also sticky at `top-(--topbar-h)`, so
-   pass `hidden={selection.selectMode}` — the selection toolbar takes
-   the row's place while selecting. The desktop library toolbar has the
-   same behaviour via `useStickyToolbar` (`lib/ui/use-sticky-toolbar.ts`):
-   it sticks only while it fits on one row (a `ResizeObserver` on its
-   content height) and select mode is off, and shows its border /
-   backdrop only once actually held (`stuck`), so the page is unchanged
-   at rest. Use it for any other desktop control row that is its own
-   line; header rows that share a line with the title (saved views,
-   search) stay in flow — pinning them would pin the title too.
+3. **What pins is decided by content, not by width.** A control row
+   pins under the topbar at every width if and only if it holds tools
+   you need _while scrolling_: search, sort, filters, or bulk selection.
+   Everything else scrolls away — titles, descriptions, breadcrumbs,
+   tab strips, chip rows, the A–Z rail, and one-time settings such as
+   card size, Continue, View options and `⋯`. So the library grid,
+   bookmarks, CBL reading lists and the series Issues panel pin their
+   row; filter / system / collection views, search and the indexes do
+   not. A mid-page row (the Issues panel) still qualifies: `sticky`
+   only engages once the page has scrolled to it, so it never covers
+   the hero.
+
+   One pinned band per page, same offset and material everywhere:
+   `top-(--topbar-h)`, `CHROME_BAND_CLASS`, `z-20`, border / backdrop
+   only once actually held. Below `sm` that band is `PhoneControlsBar`
+   (sticky by default; the page title may ride in its `leading` slot
+   when the page hides its header — bookmarks, the Issues panel — so
+   the band stays the only pinned thing). From `sm` up it is
+   `StickyToolbarRow` (`components/library/StickyToolbarRow.tsx`), the
+   row the desktop controls live in: it pins only while it fits on one
+   line (`useStickyToolbar`'s `ResizeObserver` guard — a toolbar that has
+   wrapped on an iPad with the sidebar open stays in flow rather than
+   pinning 100px of chrome) and only while `enabled`. Pass
+   `enabled={!selection.selectMode}` to the row and
+   `hidden={selection.selectMode}` to the bar: `SelectionToolbar` is
+   sticky at the same offset and owns the band while selecting. Do not
+   put a qualifying row inside `PageHeader`'s actions or a title row —
+   it would scroll away with the title. Rows that only hold card size,
+   Continue or `⋯` stay in the title row at every width.
+
 4. **No second search box.** The topbar already has one. On phones a
    page-local search is the bar's 🔍 icon, which expands to an input in
    place with a Cancel button. The bar keeps keystrokes local, so pass
@@ -137,6 +154,7 @@ height (36px); the horizontal +4px each side still applies.
 | `CardSizeFields`           | `components/library/CardSizeOptions.tsx`    | The card-size popover's body (slider, collection-dot switch, Reset) for use inside the sheet. Pass a unique `fieldId`.                                                                                                                                                                                                                                                                                                                    |
 | `AtoZScrubber`             | `components/library/AtoZScrubber.tsx`       | Same `value` / `onSelect` contract as `AtoZJumpRail`.                                                                                                                                                                                                                                                                                                                                                                                     |
 | `ModeSegmentedToggle`      | `components/library/LibraryGridToolbar.tsx` | Series ⇄ Issues segmented control for the bar's leading slot.                                                                                                                                                                                                                                                                                                                                                                             |
+| `StickyToolbarRow`         | `components/library/StickyToolbarRow.tsx`   | The `sm`-and-up pinned control row (rule 3): `enabled`, `className`, extra `data-*` pass through. Wraps `useStickyToolbar`; `data-sticky` / `data-stuck` report state. Edge to edge in the shell column.                                                                                                                                                                                                                                  |
 | `useIsPhone`               | `lib/ui/use-is-phone.ts`                    | See rule 8.                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `ViewHeader.phoneControls` | `components/saved-views/ViewHeader.tsx`     | `phoneControlsPlacement="row"` (default) renders the bar as a sibling _after_ the header so it can stick — for bars with search or a leading slot (CBL). `"inline"` puts it in the title row beside the `⋯` actions menu — for single-icon bars (pass `sticky={false}`; the bar's trigger is already the four-squares glyph, so it never reads as a second `⋯`). `extraActions` are `max-sm:hidden`; the `⋯` menu and Built-in chip stay. |
 
@@ -152,18 +170,24 @@ height (36px); the horizontal +4px each side still applies.
   the bar inline in the title row (one row total); collection shows
   the item count in `leading` and Continue as `primary`. CBL keeps a
   separate sticky row because its bar carries search, the stats pills
-  in `leading` and Up Next as `primary`. System views hide the
-  breadcrumb and eyebrow.
+  in `leading` and Up Next as `primary`; from `sm` up Up Next, search,
+  card size and Select sit in a `StickyToolbarRow` under the header
+  while the header row keeps the stats pills and `⋯`. System views hide
+  the breadcrumb and eyebrow.
 - **Series detail**: cover beside the title block (≈40% width) with
   the Read row under both; Writers / Publication fact blocks hidden
   (Credits tab and status badge carry them); stat row stays the 2×2 grid the issue page uses (a horizontal
   strip was tried in #1249 and reverted); the issue list comes _before_
   the metadata tabs (`max-sm:order-last` on `SeriesTabs`); the Issues
-  panel header is `h2 … [🔍][⇅][▦]` with `sticky={false}`.
+  panel is one sticky row `Issues · N … [🔍][⇅][▦]` with the heading in
+  `leading`, pinned once scrolled to; from `sm` up the heading has its
+  own row and the input / Sort / card size / Select cluster is a
+  `StickyToolbarRow`. `SeriesTabs`' `scroll-mt` clears the pinned row.
 - **Bookmarks**: no separate header — the title rides in the sticky
   bar's leading slot beside search, a Filters sheet (layout toggle,
   tags, match mode) and View options (card size, Select, export); kind
-  pills scroll horizontally.
+  pills scroll horizontally. From `sm` up the header keeps the title and
+  description and the toolbar is a `StickyToolbarRow` beneath it.
 - **Search**, **Browse**, **entity / creator indexes**: description
   hidden, tab strip scrolls, indexes use the scrubber. Search keeps
   its own search box, so its only phone control is the four-squares

@@ -138,7 +138,11 @@ export function SeriesTabs({
       ref={rootRef}
       value={tab}
       onValueChange={onChange}
-      className={cn("scroll-mt-[calc(var(--topbar-h,4rem)+0.5rem)]", className)}
+      // Clears the topbar plus the pinned Issues toolbar (py-2 + h-9 ≈ 52px).
+      className={cn(
+        "scroll-mt-[calc(var(--topbar-h,4rem)+3.75rem)]",
+        className,
+      )}
     >
       <TabsList>
         <TabsTrigger value="credits">Credits</TabsTrigger>
