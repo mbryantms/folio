@@ -192,7 +192,7 @@ export function LibraryGridToolbar({
           new line (no stranded empty space) when the toolbar wraps. */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Mode toggle: two side-by-side buttons that match the rest
-          of the toolbar (same `size="sm"` + outline base; active mode
+          of the toolbar (same `size="toolbar"` + outline base; active mode
           takes `variant="secondary"` for visual contrast). Earlier
           iterations used a bordered wrapper around the pair, which
           ran ~2px taller than the peer Sort / Order / Filters
@@ -200,20 +200,18 @@ export function LibraryGridToolbar({
           <Button
             type="button"
             variant={mode === "series" ? "secondary" : "outline"}
-            size="sm"
+            size="toolbar"
             aria-pressed={mode === "series"}
             onClick={() => onMode("series")}
-            className="h-9"
           >
             Series
           </Button>
           <Button
             type="button"
             variant={mode === "issues" ? "secondary" : "outline"}
-            size="sm"
+            size="toolbar"
             aria-pressed={mode === "issues"}
             onClick={() => onMode("issues")}
-            className="h-9"
           >
             Issues
           </Button>
@@ -271,11 +269,11 @@ export function LibraryGridToolbar({
           <Button
             type="button"
             variant="outline"
-            size="sm"
+            size="toolbar"
             disabled={!!trimmedQ}
             onClick={() => onOrder(order === "asc" ? "desc" : "asc")}
             title={`Order: ${order === "asc" ? "Ascending" : "Descending"}`}
-            className="h-9 w-9"
+            className="w-9"
           >
             {order === "asc" ? "↑" : "↓"}
           </Button>
@@ -283,9 +281,8 @@ export function LibraryGridToolbar({
           <Button
             type="button"
             variant="outline"
-            size="sm"
+            size="toolbar"
             onClick={onOpenFilters}
-            className="h-9"
           >
             <Filter className="mr-1 h-3.5 w-3.5" />
             Filters
@@ -302,9 +299,8 @@ export function LibraryGridToolbar({
           <Button
             type="button"
             variant="outline"
-            size="sm"
+            size="toolbar"
             disabled={!canSaveView}
-            className="h-9"
             onClick={onSaveView}
             title="Persist these filters as a new saved view"
           >
@@ -316,9 +312,9 @@ export function LibraryGridToolbar({
             <Button
               type="button"
               variant="ghost"
-              size="sm"
+              size="toolbar"
               onClick={onClearFacets}
-              className="text-muted-foreground h-9"
+              className="text-muted-foreground"
             >
               <X className="mr-1 h-3 w-3" /> Clear filters
             </Button>

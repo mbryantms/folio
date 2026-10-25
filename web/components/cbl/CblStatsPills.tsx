@@ -74,7 +74,10 @@ export function CblStatsPillsStatic({
         // instead of orphan smaller chips. See `docs/dev/search.md`.
         // `folio-control`: shared touch-target rule (phone-layout rule 9).
         "folio-control text-sm h-9 px-3 [&_svg]:h-3.5 [&_svg]:w-3.5"
-      : "text-xs";
+      : // `px-2`: in the phone bar's leading slot two pills share the row
+        // with four icon buttons; the default badge padding overran a
+        // 375px column by a few px.
+        "text-xs px-2";
   return (
     <div className={cn("flex shrink-0 items-center gap-2", className)}>
       <Badge

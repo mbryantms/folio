@@ -38,10 +38,8 @@ export function AddWidgetMenu({ current }: { current: LogWidgetView[] }) {
       <DropdownMenuTrigger asChild>
         <Button
           variant="outline"
-          size="sm"
+          size="toolbar"
           disabled={items.length === 0 || add.isPending}
-          // Toolbar-row convention: h-9 beside the range selector.
-          className="h-9"
         >
           <Plus aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
           Add widget

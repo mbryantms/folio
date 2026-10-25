@@ -23,6 +23,9 @@ import { NotesExportMenu } from "@/components/markers/NotesExportMenu";
 import { Input } from "@/components/ui/input";
 
 const H9 = /\bh-9\b/;
+/** `size="sm"` adds `text-xs`; a toolbar control must keep the base
+ *  `text-sm` so its label matches the `<Input>` beside it. */
+const XS = /\btext-xs\b/;
 
 describe("toolbar row height", () => {
   it("shared header controls all carry h-9 like the Input beside them", () => {
@@ -51,6 +54,11 @@ describe("toolbar row height", () => {
     expect(
       screen.getByRole("button", { name: "View options" }).className,
     ).toMatch(H9);
+    for (const name of ["Select", "Export notes", "View options"]) {
+      const cls = screen.getByRole("button", { name }).className;
+      expect(cls).toMatch(/\btext-sm\b/);
+      expect(cls).not.toMatch(XS);
+    }
   });
 
   it("keeps h-9 when a call site passes its own classes", () => {

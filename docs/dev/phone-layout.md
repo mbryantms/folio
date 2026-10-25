@@ -123,8 +123,11 @@ max-sm:line-clamp-2`; `PageHeader` takes `phoneDescription="hidden"`
    tab strip). A new small interactive element that is not a `<Button>`
    must carry `folio-tap`; Playwright reports the tap area only with
    `hasTouch: true` by probing `getComputedStyle(el, "::after")`. The
-   fine-pointer half of the same rule: a toolbar `<Button>` is `h-9`,
-   never bare `size="sm"` (32px). The shared controls — `SelectModeButton`,
+   fine-pointer half of the same rule: a toolbar `<Button>` is
+   `size="toolbar"` — `h-9` at the base 14px text, matching the
+   `<Input>` / `<NativeSelect>` beside it — never `size="sm"` (32px at
+   12px), and never `size="sm"` with an `h-9` override, which fixed the
+   height but left the label two sizes smaller than the input. The shared controls — `SelectModeButton`,
    `NotesExportMenu`, `CardSizeOptions`, `AddWidgetMenu`, the `/log`
    `ActivityRangeSelector` — bake it in; `tests/dom/toolbar-row-height.test.tsx`
    guards them.

@@ -527,13 +527,7 @@ export function IssuesPanel({
         />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!!debouncedQ}
-              // Toolbar-row convention: h-9 beside the search input.
-              className="h-9"
-            >
+            <Button variant="outline" size="toolbar" disabled={!!debouncedQ}>
               Sort: {SORT_LABELS[sort]} ({order === "asc" ? "↑" : "↓"})
             </Button>
           </DropdownMenuTrigger>
