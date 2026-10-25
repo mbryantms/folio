@@ -456,7 +456,7 @@ export function IssuesPanel({
             </p>
           )}
         </div>
-        {/* Phone (< sm): search / sort / ⋯ icons on the heading's row
+        {/* Phone (< sm): search / sort / View options icons on the heading's row
             (the bar grows into the remaining width, so an expanded
             search gets the room next to the heading). Not sticky — it
             sits mid-page, after the hero. Hidden while selecting; the

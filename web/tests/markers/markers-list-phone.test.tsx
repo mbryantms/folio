@@ -84,6 +84,21 @@ describe("MarkersList phone chrome", () => {
     expect(
       within(bar as HTMLElement).getByRole("button", { name: "View options" }),
     ).toBeTruthy();
+    // The title rides in the bar's leading slot so title + controls
+    // share one sticky row on phones; the desktop PageHeader (whose
+    // own h1 is the other "Bookmarks" heading) carries the phone-hide
+    // hook as a whole, not just its toolbar.
+    expect(
+      within(bar as HTMLElement).getByRole("heading", {
+        level: 1,
+        name: "Bookmarks",
+      }),
+    ).toBeTruthy();
+    const desktopHeader = screen
+      .getAllByRole("heading", { level: 1, name: "Bookmarks" })
+      .map((h) => h.closest("header"))
+      .find((h): h is HTMLElement => h !== null);
+    expect(desktopHeader?.className).toContain("max-sm:hidden");
     // Desktop header toolbar is still rendered (desktop) but carries
     // the phone-hide hook; so do the inline layout toggle + Tags row.
     const exportBtn = screen.getByRole("button", { name: /export notes/i });

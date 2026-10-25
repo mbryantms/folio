@@ -38,7 +38,12 @@ describe("PhoneControlsBar", () => {
     expect(screen.getByRole("button", { name: "Search" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Sort: Name" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Filters" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "View options" })).toBeTruthy();
+    // The View options trigger is the four-squares glyph at every
+    // width (the same icon `CardSizeOptions` uses on desktop), never a
+    // second `⋯` — `⋯` is reserved for More-actions dropdowns.
+    const viewOptions = screen.getByRole("button", { name: "View options" });
+    expect(viewOptions.querySelector("svg.lucide-layout-grid")).not.toBeNull();
+    expect(viewOptions.querySelector("svg.lucide-ellipsis")).toBeNull();
 
     rerender(
       <PhoneControlsBar

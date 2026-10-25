@@ -23,11 +23,22 @@ indexes.
    it with `sm:hidden`. They never both render, and the desktop output
    is unchanged.
 2. **One control row on phones.** `PhoneControlsBar` is the row:
-   icons for search / sort / filters / `⋯`, an optional leading slot
-   (mode toggle, stats pills, item count) and one optional inline
+   icons for search / sort / filters / View options, an optional leading
+   slot (mode toggle, stats pills, item count) and one optional inline
    `primary` icon (CBL's Up Next, a collection's Continue). Anything
    secondary — card size, Select, Save as view, Clear filters — goes in
-   the `⋯` "View options" bottom sheet via `menu={(close) => …}`.
+   the View options bottom sheet via `menu={(close) => …}`.
+
+   **Two menu icons, two meanings, at every width.** The four-squares
+   glyph (`LayoutGrid`) is _View options_: a panel of presentation
+   settings (card size, collection dots, layout) plus the grid-wide
+   tools above. It is `CardSizeOptions`' popover on desktop and the
+   bar's bottom sheet on phones, and the bar's trigger defaults to that
+   glyph. `⋯` is _More actions_ on the page's subject — Edit, Export,
+   Pin, Refresh — and is a dropdown list at every width (`ViewHeader`,
+   `PageActionsMenu`). So the same icon always opens the same kind of
+   surface, and a page never shows two `⋯`.
+
 3. **Sticky under the topbar.** The bar is `sticky top-(--topbar-h)`
    by default so the controls stay reachable after scrolling. Pass
    `sticky={false}` for a mid-page bar (the series page's Issues
@@ -62,7 +73,12 @@ indexes.
 max-sm:line-clamp-2`; `PageHeader` takes `phoneDescription="hidden"`
    for pages whose description only restates the title. Breadcrumbs,
    eyebrows and item counts that duplicate the title or the bottom tab
-   bar are `max-sm:hidden`.
+   bar are `max-sm:hidden`. When that leaves the phone header as a bare
+   title above a bar that has no leading content of its own, fold the
+   title into the bar: give `PageHeader` `className="max-sm:hidden"` and
+   pass an `<h1>` as the bar's `leading` (bookmarks). Title and controls
+   then share one sticky row instead of two stacked bordered bands; the
+   desktop header is untouched.
 8. **Two columns minimum.** Every cover grid uses
    `repeat(auto-fill, minmax(min(<cardSize>px, calc(50% - 0.5rem)), 1fr))`
    and the virtualized library grid applies the same half-row cap in
@@ -98,38 +114,38 @@ max-sm:line-clamp-2`; `PageHeader` takes `phoneDescription="hidden"`
     for the rare case where the component _tree_ differs; it is the
     single copy shared by the reader chrome and the toaster.
 
-   A control that *contains* controls (a segmented group: `role="group"`
-   with buttons inside) carries `folio-control` for the row's sake but
-   gets no tap area of its own — `globals.css` suppresses the
-   pseudo-element on a `.folio-control:has(button, …)`, because it would
-   paint above the children and take their taps. The children carry
-   `folio-tap` / `folio-button` and their own tap areas.
+A control that _contains_ controls (a segmented group: `role="group"`
+with buttons inside) carries `folio-control` for the row's sake but
+gets no tap area of its own — `globals.css` suppresses the
+pseudo-element on a `.folio-control:has(button, …)`, because it would
+paint above the children and take their taps. The children carry
+`folio-tap` / `folio-button` and their own tap areas.
 
-   A horizontal strip of such controls (`TabsList`, `SegmentedControl`, the
-   phone chip rows) must be `overflow-x-auto overflow-y-hidden`: with
-   `overflow-x-auto` alone the tap areas poking past the strip give it a few
-   px of vertical scroll, and iOS lets a finger drag the labels up and down
-   inside the bar. Inside a strip the tap area is bounded by the strip's
-   height (36px); the horizontal +4px each side still applies.
+A horizontal strip of such controls (`TabsList`, `SegmentedControl`, the
+phone chip rows) must be `overflow-x-auto overflow-y-hidden`: with
+`overflow-x-auto` alone the tap areas poking past the strip give it a few
+px of vertical scroll, and iOS lets a finger drag the labels up and down
+inside the bar. Inside a strip the tap area is bounded by the strip's
+height (36px); the horizontal +4px each side still applies.
 
 ## Primitives
 
-| Piece                      | File                                        | Notes                                                                                                                                                                                                                                                                                                                                                                                                       |
-| -------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PhoneControlsBar`         | `components/library/PhoneControlsBar.tsx`   | `leading`, `search`, `sort` (bottom sheet with radio list + asc/desc), `filters {count,onOpen}`, `primary`, `menu(close)`, `sticky`, `hidden`. `sort.onChange` is untyped (`string`); narrow it back to your sort union.                                                                                                                                                                                    |
-| `PhoneMenuAction`          | same file                                   | Full-width `h-11` row button for the `⋯` sheet; supports `asChild` for download links.                                                                                                                                                                                                                                                                                                                      |
-| `CardSizeFields`           | `components/library/CardSizeOptions.tsx`    | The card-size popover's body (slider, collection-dot switch, Reset) for use inside the sheet. Pass a unique `fieldId`.                                                                                                                                                                                                                                                                                      |
-| `AtoZScrubber`             | `components/library/AtoZScrubber.tsx`       | Same `value` / `onSelect` contract as `AtoZJumpRail`.                                                                                                                                                                                                                                                                                                                                                       |
-| `ModeSegmentedToggle`      | `components/library/LibraryGridToolbar.tsx` | Series ⇄ Issues segmented control for the bar's leading slot.                                                                                                                                                                                                                                                                                                                                               |
-| `useIsPhone`               | `lib/ui/use-is-phone.ts`                    | See rule 8.                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `ViewHeader.phoneControls` | `components/saved-views/ViewHeader.tsx`     | `phoneControlsPlacement="row"` (default) renders the bar as a sibling _after_ the header so it can stick — for bars with search or a leading slot (CBL). `"inline"` puts it in the title row beside the `⋯` actions menu — for single-icon bars (pass `sticky={false}` and `menuIcon={<LayoutGrid />}` so it is not a second `⋯`). `extraActions` are `max-sm:hidden`; the `⋯` menu and Built-in chip stay. |
+| Piece                      | File                                        | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PhoneControlsBar`         | `components/library/PhoneControlsBar.tsx`   | `leading`, `search`, `sort` (bottom sheet with radio list + asc/desc), `filters {count,onOpen}`, `primary`, `menu(close)`, `sticky`, `hidden`. `sort.onChange` is untyped (`string`); narrow it back to your sort union.                                                                                                                                                                                                                  |
+| `PhoneMenuAction`          | same file                                   | Full-width `h-11` row button for the View options sheet; supports `asChild` for download links.                                                                                                                                                                                                                                                                                                                                           |
+| `CardSizeFields`           | `components/library/CardSizeOptions.tsx`    | The card-size popover's body (slider, collection-dot switch, Reset) for use inside the sheet. Pass a unique `fieldId`.                                                                                                                                                                                                                                                                                                                    |
+| `AtoZScrubber`             | `components/library/AtoZScrubber.tsx`       | Same `value` / `onSelect` contract as `AtoZJumpRail`.                                                                                                                                                                                                                                                                                                                                                                                     |
+| `ModeSegmentedToggle`      | `components/library/LibraryGridToolbar.tsx` | Series ⇄ Issues segmented control for the bar's leading slot.                                                                                                                                                                                                                                                                                                                                                                             |
+| `useIsPhone`               | `lib/ui/use-is-phone.ts`                    | See rule 8.                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `ViewHeader.phoneControls` | `components/saved-views/ViewHeader.tsx`     | `phoneControlsPlacement="row"` (default) renders the bar as a sibling _after_ the header so it can stick — for bars with search or a leading slot (CBL). `"inline"` puts it in the title row beside the `⋯` actions menu — for single-icon bars (pass `sticky={false}`; the bar's trigger is already the four-squares glyph, so it never reads as a second `⋯`). `extraActions` are `max-sm:hidden`; the `⋯` menu and Built-in chip stay. |
 
 ## Page-by-page
 
 - **Library grid** (`LibraryGridView`): title (`text-xl`) + count, sticky
-  bar `[Series|Issues] … [🔍][⇅][⚲][⋯]`, chips row, grid with the
-  scrubber in series mode. The `⋯` sheet holds card size, Select, Save
-  as view, Clear filters.
+  bar `[Series|Issues] … [🔍][⇅][⚲][▦]`, chips row, grid with the
+  scrubber in series mode. The View options sheet holds card size,
+  Select, Save as view, Clear filters.
 - **Saved views** (filter / issue filter / collection / CBL / system):
   `ViewHeader` title row with the card-size icon and `⋯`, clamped
   description. Filter, issue-filter, collection and system views place
@@ -143,12 +159,15 @@ max-sm:line-clamp-2`; `PageHeader` takes `phoneDescription="hidden"`
   (Credits tab and status badge carry them); stat row stays the 2×2 grid the issue page uses (a horizontal
   strip was tried in #1249 and reverted); the issue list comes _before_
   the metadata tabs (`max-sm:order-last` on `SeriesTabs`); the Issues
-  panel header is `h2 … [🔍][⇅][⋯]` with `sticky={false}`.
-- **Bookmarks**: header without description, sticky bar with search,
-  a Filters sheet (layout toggle, tags, match mode) and `⋯` (card size,
-  Select, export); kind pills scroll horizontally.
+  panel header is `h2 … [🔍][⇅][▦]` with `sticky={false}`.
+- **Bookmarks**: no separate header — the title rides in the sticky
+  bar's leading slot beside search, a Filters sheet (layout toggle,
+  tags, match mode) and View options (card size, Select, export); kind
+  pills scroll horizontally.
 - **Search**, **Browse**, **entity / creator indexes**: description
-  hidden, tab strip scrolls, indexes use the scrubber.
+  hidden, tab strip scrolls, indexes use the scrubber. Search keeps
+  its own search box, so its only phone control is the four-squares
+  View options sheet, inline in the title row like the saved views.
 
 ## Testing
 

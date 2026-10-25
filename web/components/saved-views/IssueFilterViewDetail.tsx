@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { LayoutGrid, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -113,12 +113,11 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
           />
         }
         // Phone (< sm): the card-size popover above is hidden; the same
-        // fields live in the sticky bar's `⋯` sheet.
+        // fields live in the sticky bar's View options sheet.
         phoneControlsPlacement="inline"
         phoneControls={
           <PhoneControlsBar
             sticky={false}
-            menuIcon={<LayoutGrid className="size-4" />}
             menu={() => (
               <CardSizeFields
                 cardSize={cardSize}

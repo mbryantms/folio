@@ -611,7 +611,7 @@ function CblViewDetailInner({
         // Phone (< sm): the whole desktop cluster above is hidden. The
         // sticky bar keeps the two stats pills (leading), search (icon
         // that expands in place) and Up Next (icon) one tap away; card
-        // size + Select move into its `⋯` sheet. Export / Hide missing /
+        // size + Select move into its View options sheet. Export / Hide missing /
         // Refresh stay in the header's `⋯` menu, which is visible at
         // every width — so they are deliberately *not* duplicated here.
         phoneControls={
