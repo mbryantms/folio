@@ -41,13 +41,16 @@ indexes.
 
 3. **What pins is decided by content, not by width.** A control row
    pins under the topbar at every width if and only if it holds tools
-   you need _while scrolling_: search, sort, filters, or bulk selection.
-   Everything else scrolls away — titles, descriptions, breadcrumbs,
-   tab strips, chip rows, the A–Z rail, and one-time settings such as
-   card size, Continue, View options and `⋯`. So the library grid,
-   bookmarks, CBL reading lists and the series Issues panel pin their
-   row; filter / system / collection views, search and the indexes do
-   not. A mid-page row (the Issues panel) still qualifies: `sticky`
+   you need _while scrolling_: search, sort, filters, bulk selection —
+   and, on a rails page (Home, custom pages), the density control, since
+   you tune card size while browsing a long stack of rails. Everything
+   else scrolls away — titles, descriptions, breadcrumbs, tab strips,
+   chip rows, the A–Z rail, and one-time settings in a title row such as
+   Continue and `⋯` (a grid's card size and `⋯` ride in the pinned row
+   when the page has one, but never earn a row by themselves). So the
+   library grid, bookmarks, CBL reading lists, the series Issues panel
+   and the rails pages pin their row; filter / system / collection
+   views, search and the indexes do not. A mid-page row (the Issues panel) still qualifies: `sticky`
    only engages once the page has scrolled to it, so it never covers
    the hero.
 
@@ -161,6 +164,12 @@ height (36px); the horizontal +4px each side still applies.
 
 ## Page-by-page
 
+- **Home and custom pages** (`PageRails`): from `sm` up the heading
+  (title + description) is in flow and a `StickyToolbarRow` beneath it
+  carries card size + `⋯`, right aligned; below `sm` the title rides in
+  the sticky bar's leading slot beside View options (card size as a
+  sheet) and `⋯`, with the description following in flow. Inline
+  title editing is `sm`-and-up; phones rename through `⋯`.
 - **Library grid** (`LibraryGridView`): title (`text-xl`) + count, sticky
   bar `[Series|Issues] … [🔍][⇅][⚲][▦]`, chips row, grid with the
   scrubber in series mode. The View options sheet holds card size,
