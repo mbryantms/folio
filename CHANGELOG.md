@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.66.5](https://github.com/mbryantms/folio/compare/v0.66.4...v0.66.5) (2026-10-25)
+
+
+### Fixed
+
+* **web:** bookmarks title shares the phone controls row; View options is the four-squares icon everywhere ([#1318](https://github.com/mbryantms/folio/issues/1318)) ([d244520](https://github.com/mbryantms/folio/commit/d244520a5db2e0a04b651b7af21258a7395ac521))
+
+
+### Dependencies
+
+* update dependency zustand to v5.0.16 ([#1315](https://github.com/mbryantms/folio/issues/1315)) ([eedfea8](https://github.com/mbryantms/folio/commit/eedfea86f3a899343f5e467078ec946454487c3e))
+* update rust:1-slim-bookworm docker digest to 86234e8 ([#1316](https://github.com/mbryantms/folio/issues/1316)) ([782e04e](https://github.com/mbryantms/folio/commit/782e04e964c133ddbf5329b3e26e8a60a50293ba))
+
 ## [0.66.4](https://github.com/mbryantms/folio/compare/v0.66.3...v0.66.4) (2026-10-25)
 
 
