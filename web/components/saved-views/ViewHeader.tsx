@@ -1,29 +1,12 @@
 "use client";
 
 import * as React from "react";
-import {
-  Lock,
-  MoreHorizontal,
-  PanelLeft,
-  PanelLeftClose,
-  Pencil,
-  Pin,
-} from "lucide-react";
+import { Lock } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { useSidebarSavedView } from "@/lib/api/mutations";
 import { cn } from "@/lib/utils";
 import type { SavedViewView } from "@/lib/api/types";
 
-import { MultiPinDialog } from "./MultiPinDialog";
+import { ViewActionsMenu } from "./ViewActionsMenu";
 
 /** Detail-page header shared by both filter and CBL view types.
  *
@@ -41,6 +24,9 @@ import { MultiPinDialog } from "./MultiPinDialog";
  *  read-only `Built-in` chip inline so the constraint is visible
  *  instead of just dimmed.
  *
+ *  The `⋯` itself is `ViewActionsMenu`; pass `actions="none"` to render
+ *  it elsewhere (the CBL page puts it in its pinned control row).
+ *
  *  Phones (< `sm`): the `extraActions` cluster is hidden — pages pass
  *  the same controls compacted into a `PhoneControlsBar` via
  *  `phoneControls`, which renders as a *sibling* of the `<header>`
@@ -56,6 +42,7 @@ export function ViewHeader({
   extraMenuItems,
   phoneControls,
   phoneControlsPlacement = "row",
+  actions = "inline",
   className,
 }: {
   view: SavedViewView;
@@ -84,12 +71,14 @@ export function ViewHeader({
    *  the `⋯` actions menu — for bars that are a single icon (card size
    *  + Select); pass `sticky={false}` on the bar then. */
   phoneControlsPlacement?: "row" | "inline";
+  /** Where the `⋯` More-actions menu renders. `"inline"` (default): at
+   *  the end of the title row's right cluster. `"none"`: the header
+   *  renders no menu and the page places `<ViewActionsMenu>` itself —
+   *  CBL reading lists put it in their pinned control row at every
+   *  width so the title row is title-only. */
+  actions?: "inline" | "none";
   className?: string;
 }) {
-  const sidebar = useSidebarSavedView();
-  const [pinOpen, setPinOpen] = React.useState(false);
-  const canEdit = onEdit !== undefined && !view.is_system;
-  const pinnedCount = (view.pinned_on_pages ?? []).length;
   return (
     <>
       <header className={cn("space-y-3", className)}>
@@ -161,73 +150,15 @@ export function ViewHeader({
                 <Lock className="mr-1 h-3 w-3" /> Built-in
               </span>
             ) : null}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  // Toolbar-row convention: h-9 square button matches
-                  // the adjacent search input + CardSizeOptions trigger.
-                  className="h-9 w-9"
-                  aria-label="More actions"
-                  title="More actions"
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[10rem]">
-                <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {canEdit ? (
-                  <DropdownMenuItem
-                    onSelect={(e) => {
-                      e.preventDefault();
-                      onEdit?.();
-                    }}
-                  >
-                    <Pencil className="mr-2 h-4 w-4" /> Edit
-                  </DropdownMenuItem>
-                ) : null}
-                {extraMenuItems}
-                <DropdownMenuItem
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    sidebar.mutate({
-                      id: view.id,
-                      show: !view.show_in_sidebar,
-                    });
-                  }}
-                >
-                  {view.show_in_sidebar ? (
-                    <>
-                      <PanelLeftClose className="mr-2 h-4 w-4" /> Hide from
-                      sidebar
-                    </>
-                  ) : (
-                    <>
-                      <PanelLeft className="mr-2 h-4 w-4" /> Show in sidebar
-                    </>
-                  )}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    setPinOpen(true);
-                  }}
-                >
-                  <Pin className="mr-2 h-4 w-4" />
-                  {pinnedCount === 0
-                    ? "Pin to pages…"
-                    : pinnedCount === 1
-                      ? "Pinned to 1 page"
-                      : `Pinned to ${pinnedCount} pages`}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {actions === "inline" ? (
+              <ViewActionsMenu
+                view={view}
+                onEdit={onEdit}
+                extraMenuItems={extraMenuItems}
+              />
+            ) : null}
           </div>
         </div>
-        <MultiPinDialog view={view} open={pinOpen} onOpenChange={setPinOpen} />
       </header>
       {/* Sibling, not a child, of `<header>` — see the component doc:
        *  a sticky bar inside the header could only stick while the

@@ -73,6 +73,7 @@ import { useCblHideMissing } from "@/lib/cbl/use-hide-missing";
 
 import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
 
+import { ViewActionsMenu } from "./ViewActionsMenu";
 import { ViewHeader } from "./ViewHeader";
 
 // Heavy archive-edit dialog (+dnd) — lazy so it stays out of the CBL view's
@@ -464,6 +465,63 @@ function CblViewDetailInner({
     }
   }
 
+  // `⋯` menu body, shared by the phone bar's instance and the pinned
+  // row's instance (one per breakpoint composition).
+  const viewMenuItems = (
+    <>
+      <DropdownMenuItem
+        onSelect={fetchViewMetadata}
+        disabled={createBatch.isPending}
+      >
+        <Sparkles className="mr-2 h-4 w-4" /> Fetch metadata for view
+      </DropdownMenuItem>
+      <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
+        <HardDriveDownload className="mr-2 h-4 w-4" />
+        Download for offline…
+      </DropdownMenuItem>
+      <DropdownMenuItem asChild>
+        <a
+          href={`/api/me/cbl-lists/${list.id}/export`}
+          download
+          title="Download as .cbl"
+        >
+          <Download className="mr-2 h-4 w-4" /> Export
+        </a>
+      </DropdownMenuItem>
+      {missingCount > 0 ? (
+        <DropdownMenuItem
+          onSelect={(e) => {
+            e.preventDefault();
+            setHideMissing(!hideMissing);
+          }}
+        >
+          {hideMissing ? (
+            <Check className="mr-2 h-4 w-4" />
+          ) : (
+            <EyeOff className="mr-2 h-4 w-4" />
+          )}
+          {hideMissing
+            ? `Showing matched only (${missingCount} hidden)`
+            : `Hide ${missingCount} missing`}
+        </DropdownMenuItem>
+      ) : null}
+      {canRefresh ? (
+        <DropdownMenuItem
+          onSelect={(e) => {
+            e.preventDefault();
+            if (!refresh.isPending) refresh.mutate({});
+          }}
+          disabled={refresh.isPending}
+        >
+          <RefreshCw
+            className={`mr-2 h-4 w-4 ${refresh.isPending ? "animate-spin" : ""}`}
+          />
+          Refresh
+        </DropdownMenuItem>
+      ) : null}
+    </>
+  );
+
   return (
     <div className="space-y-6">
       {offlineMounted && (
@@ -492,74 +550,11 @@ function CblViewDetailInner({
           savedView.custom_year_start,
           savedView.custom_year_end,
         )}
-        extraActions={
-          // Same two-pill summary the home rail header carries —
-          // `size="header"` bumps padding/typography so the pills line
-          // up with the adjacent `size="sm"` icon button. The tools
-          // (Up Next, search, card size, Select) live in the pinned
-          // row under the header instead; see below.
-          <CblStatsPills cblListId={list.id} size="header" />
-        }
-        extraMenuItems={
-          <>
-            <DropdownMenuItem
-              onSelect={fetchViewMetadata}
-              disabled={createBatch.isPending}
-            >
-              <Sparkles className="mr-2 h-4 w-4" /> Fetch metadata for view
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
-              <HardDriveDownload className="mr-2 h-4 w-4" />
-              Download for offline…
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <a
-                href={`/api/me/cbl-lists/${list.id}/export`}
-                download
-                title="Download as .cbl"
-              >
-                <Download className="mr-2 h-4 w-4" /> Export
-              </a>
-            </DropdownMenuItem>
-            {missingCount > 0 ? (
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  setHideMissing(!hideMissing);
-                }}
-              >
-                {hideMissing ? (
-                  <Check className="mr-2 h-4 w-4" />
-                ) : (
-                  <EyeOff className="mr-2 h-4 w-4" />
-                )}
-                {hideMissing
-                  ? `Showing matched only (${missingCount} hidden)`
-                  : `Hide ${missingCount} missing`}
-              </DropdownMenuItem>
-            ) : null}
-            {canRefresh ? (
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  if (!refresh.isPending) refresh.mutate({});
-                }}
-                disabled={refresh.isPending}
-              >
-                <RefreshCw
-                  className={`mr-2 h-4 w-4 ${refresh.isPending ? "animate-spin" : ""}`}
-                />
-                Refresh
-              </DropdownMenuItem>
-            ) : null}
-          </>
-        }
-        // Phone (< sm): the whole desktop cluster above is hidden. The
-        // sticky bar keeps the two stats pills (leading), search (icon
-        // that expands in place) and Up Next (icon) one tap away; card
-        // size + Select move into its View options sheet. Export / Hide missing /
-        // Refresh stay in the header's `⋯` menu, which is visible at
-        // every width — so they are deliberately *not* duplicated here.
+        // The title row is title-only: the stats pills and the `⋯` menu
+        // ride in the pinned control row (phone bar / StickyToolbarRow)
+        // with the tools, at every width, so the list's header never
+        // splits its controls across two lines.
+        actions="none"
         phoneControls={
           <PhoneControlsBar
             hidden={selection.selectMode}
@@ -571,27 +566,34 @@ function CblViewDetailInner({
               label: "Search entries in this list",
             }}
             primary={
-              upNextPosition != null ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  onClick={scrollToUpNext}
-                  className="h-9 w-9 shrink-0"
-                  disabled={jumpTarget != null}
-                  aria-label="Scroll to Up Next entry"
-                  title="Up Next"
-                >
-                  {jumpTarget != null ? (
-                    <Loader2
-                      className="h-4 w-4 animate-spin"
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <BookOpen className="h-4 w-4" aria-hidden="true" />
-                  )}
-                </Button>
-              ) : null
+              <>
+                {upNextPosition != null ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={scrollToUpNext}
+                    className="h-9 w-9 shrink-0"
+                    disabled={jumpTarget != null}
+                    aria-label="Scroll to Up Next entry"
+                    title="Up Next"
+                  >
+                    {jumpTarget != null ? (
+                      <Loader2
+                        className="h-4 w-4 animate-spin"
+                        aria-hidden="true"
+                      />
+                    ) : (
+                      <BookOpen className="h-4 w-4" aria-hidden="true" />
+                    )}
+                  </Button>
+                ) : null}
+                <ViewActionsMenu
+                  view={savedView}
+                  onEdit={() => setEditOpen(true)}
+                  extraMenuItems={viewMenuItems}
+                />
+              </>
             }
             menu={(close) => (
               <>
@@ -620,11 +622,11 @@ function CblViewDetailInner({
           />
         }
       />
-      {/* `sm` and up: the tools you need while scrolling — Up Next,
-       *  search, card size, Select — in their own row under the header,
+      {/* `sm` and up: one control row under the title — Up Next, search,
+       *  card size, Select, then the stats pills and `⋯` on the right —
        *  pinned under the topbar while it fits one line (phone-layout
-       *  rule 3). The header row above keeps the stats pills and `⋯`
-       *  and scrolls away like every other title row. */}
+       *  rule 3). The search flexes between 10rem and 14rem so the row
+       *  still fits an iPad-landscape column with the sidebar open. */}
       <StickyToolbarRow enabled={!selection.selectMode}>
         {upNextPosition != null && (
           <Button
@@ -652,7 +654,7 @@ function CblViewDetailInner({
          *  actions row alongside card-size + select so the
          *  toolbar reads as one cluster. Search is server-side,
          *  preserving pagination + totals for long CBLs. */}
-        <div className="relative w-56">
+        <div className="relative max-w-56 min-w-40 flex-1 basis-40">
           <SearchIcon
             aria-hidden="true"
             className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
@@ -682,6 +684,15 @@ function CblViewDetailInner({
             onExit={() => selection.exit()}
           />
         )}
+        <div className="ml-auto flex items-center gap-2">
+          {/* `size="header"` matches the h-9 controls beside it. */}
+          <CblStatsPills cblListId={list.id} size="header" />
+          <ViewActionsMenu
+            view={savedView}
+            onEdit={() => setEditOpen(true)}
+            extraMenuItems={viewMenuItems}
+          />
+        </div>
       </StickyToolbarRow>
       {/* Catalog/source path + import date — useful context on the
        *  desktop detail page, but redundant on mobile where the title
