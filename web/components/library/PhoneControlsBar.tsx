@@ -141,8 +141,8 @@ export function PhoneControlsBar({
           <Button
             type="button"
             variant="ghost"
-            size="sm"
-            className="h-9 shrink-0"
+            size="toolbar"
+            className="shrink-0"
             onClick={() => {
               setSearchInput("");
               lastSent.current = "";
@@ -156,7 +156,14 @@ export function PhoneControlsBar({
       ) : (
         <div className="flex items-center gap-2">
           {leading ? (
-            <div className="flex min-w-0 items-center gap-2">{leading}</div>
+            // Rule 6: the leading strip scrolls, it never wraps or runs
+            // under the icon cluster. The CBL page's two stats pills plus
+            // four icons are ~7px wider than a 375px phone's column, and a
+            // `min-w-0` flex child whose content is `shrink-0` otherwise
+            // paints over its neighbour.
+            <div className="flex min-w-0 [scrollbar-width:none] items-center gap-2 overflow-x-auto overflow-y-hidden [&::-webkit-scrollbar]:hidden">
+              {leading}
+            </div>
           ) : null}
           <div className="ml-auto flex shrink-0 items-center gap-1">
             {search ? (

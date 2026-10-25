@@ -632,9 +632,8 @@ function CblViewDetailInner({
           <Button
             type="button"
             variant="outline"
-            size="sm"
+            size="toolbar"
             onClick={scrollToUpNext}
-            className="h-9"
             disabled={jumpTarget != null}
             aria-label="Scroll to Up Next entry"
             title="Scroll to Up Next entry"

@@ -22,6 +22,14 @@ const buttonVariants = cva(
       size: {
         default: "h-9 px-4 py-2",
         sm: "h-8 rounded-md px-3 text-xs",
+        /** Toolbar-row convention (docs/dev/phone-layout.md, rule 9): a
+         *  control that sits in a page's control row beside an `<Input>`
+         *  or `<NativeSelect>` is 36px tall at the base 14px text, so the
+         *  row reads as one band in one type size. `size="sm"` is 32px at
+         *  12px — never pair it with an `h-9` override, which fixes the
+         *  height but leaves the label two sizes smaller than the input
+         *  next to it. */
+        toolbar: "h-9 rounded-md px-3",
         lg: "h-10 rounded-md px-6",
         icon: "h-9 w-9",
       },

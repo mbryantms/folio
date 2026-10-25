@@ -4,7 +4,6 @@ import * as React from "react";
 import { ListChecks, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 /**
  * The page-header entry point into (and out of) multi-select mode,
@@ -41,10 +40,10 @@ export function SelectModeButton({
       ref={ref}
       type="button"
       variant="outline"
-      size="sm"
+      size="toolbar"
       aria-pressed={active}
       onClick={active ? onExit : onEnter}
-      className={cn("h-9", className)}
+      className={className}
     >
       {active ? (
         <>

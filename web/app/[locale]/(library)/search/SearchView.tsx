@@ -1349,8 +1349,7 @@ function SeriesFilterSheet({
         <Button
           type="button"
           variant="outline"
-          size="sm"
-          className="h-9"
+          size="toolbar"
           aria-label={
             activeCount > 0 ? `Filters (${activeCount} active)` : "Filters"
           }
@@ -1495,8 +1494,7 @@ function IssueFilterSheet({
         <Button
           type="button"
           variant="outline"
-          size="sm"
-          className="h-9"
+          size="toolbar"
           aria-label={
             activeCount > 0 ? `Filters (${activeCount} active)` : "Filters"
           }
