@@ -4,16 +4,25 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/admin/PageHeader";
+import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { CreatorDetailView, CreatorRoleRail } from "@/lib/api/types";
 
-/** Hard cap on cards rendered per role rail on the overview page.
- *  Beyond this the rail truncates and a "View all <N> →" link in the
- *  section header takes the user to the per-role grid via `?role=`.
- *  Twelve fits 2 rows on the typical desktop viewport without
- *  pushing the next rail too far down. */
-const RAIL_CAP = 12;
+/** Hard cap on cards mounted per role rail on the overview page.
+ *  The rail is a horizontal scroller, so the cap never shows as a
+ *  ragged edge — it only bounds how far the strip scrolls before the
+ *  trailing "View all" tile (and the header link) hand off to the
+ *  per-role grid via `?role=`. It exists because the detail payload
+ *  carries every series per role as a full `SeriesView`; a prolific
+ *  writer would otherwise mount hundreds of cards. */
+const RAIL_CAP = 24;
+
+/** Fixed per-card width inside the overview rails. Matches the
+ *  drill-in grid's minimum column so a cover is the same size on both
+ *  layouts; the rail shows however many fit the viewport and scrolls
+ *  for the rest, which is what keeps it fluid at every width. */
+const CARD_WIDTH_PX = 180;
 
 /** Canonical role list for the chip row in the header. Mirrors the
  *  backend's ROLE_ORDER so order stays stable between the overview
@@ -166,9 +175,16 @@ function CreatorHeader({
   );
 }
 
-/** One role section on the overview. Truncates at RAIL_CAP and
- *  surfaces a header "View all <N>" link that lands on the per-role
- *  drill-in. Mirrors the search-page rail header. */
+/** One role section on the overview: a horizontal `HorizontalScrollRail`
+ *  of fixed-width series cards, the same strip the home page, search
+ *  categories and the series Related tab use. A fixed card count in an
+ *  `auto-fill` grid (the previous layout) left a ragged last row at
+ *  every column count other than 4 or 6; a scroller shows whatever
+ *  fits and scrolls for the rest. Mounts at most RAIL_CAP cards; when
+ *  the role has more, a header "View all <N>" link and the rail's
+ *  trailing tile both land on the per-role drill-in (the search page
+ *  keeps both too — the tile alone is easy to miss past the first
+ *  screen of cards, especially on touch). */
 function RoleRail({
   rail,
   creatorSlug,
@@ -176,8 +192,10 @@ function RoleRail({
   rail: CreatorRoleRail;
   creatorSlug: string;
 }) {
-  const truncated = rail.series.slice(0, RAIL_CAP);
-  const overflow = rail.series.length - truncated.length;
+  const shown = rail.series.slice(0, RAIL_CAP);
+  const truncated = shown.length < rail.series.length;
+  const viewAllHref = `/creators/${encodeURIComponent(creatorSlug)}?role=${rail.role}`;
+  const roleLabel = formatRole(rail.role).toLowerCase();
   return (
     <section className="space-y-3" data-role={rail.role}>
       <header className="flex flex-wrap items-center gap-2">
@@ -188,9 +206,9 @@ function RoleRail({
             {rail.series.length === 1 ? "series" : "series"}
           </span>
         </h2>
-        {overflow > 0 ? (
+        {truncated ? (
           <Link
-            href={`/creators/${encodeURIComponent(creatorSlug)}?role=${rail.role}`}
+            href={viewAllHref}
             className="text-muted-foreground hover:text-foreground ml-auto inline-flex items-center gap-1 text-xs font-medium"
           >
             View all {rail.series.length}
@@ -198,24 +216,29 @@ function RoleRail({
           </Link>
         ) : null}
       </header>
-      <SeriesGrid series={truncated} />
-      {overflow > 0 ? (
-        <p className="text-muted-foreground text-xs">
-          + {overflow} more —{" "}
-          <Link
-            href={`/creators/${encodeURIComponent(creatorSlug)}?role=${rail.role}`}
-            className="text-foreground/80 hover:text-foreground underline-offset-2 hover:underline"
+      <HorizontalScrollRail
+        as="ul"
+        trackLabel={`Series as ${roleLabel}`}
+        itemWidthPx={CARD_WIDTH_PX}
+        viewAllHref={truncated ? viewAllHref : undefined}
+        viewAllLabel={`View all ${rail.series.length} as ${roleLabel}`}
+      >
+        {shown.map((s) => (
+          <li
+            key={s.id}
+            className="shrink-0"
+            style={{ width: `${CARD_WIDTH_PX}px` }}
           >
-            see all
-          </Link>
-        </p>
-      ) : null}
+            <SeriesCard series={s} size="md" />
+          </li>
+        ))}
+      </HorizontalScrollRail>
     </section>
   );
 }
 
 /** Drill-in view: every series the creator touched in one role, no
- *  per-role cap. Same grid shape as the overview rail body. */
+ *  per-role cap, laid out as a fluid cover grid. */
 function SingleRoleGrid({ rail }: { rail: CreatorRoleRail }) {
   return (
     <section data-role={rail.role}>
@@ -229,8 +252,11 @@ function SeriesGrid({ series }: { series: CreatorRoleRail["series"] }) {
     <ul
       role="list"
       className="grid gap-4"
+      // `min(…, calc(50% - 0.5rem))` keeps two columns on a phone — the
+      // guard every other cover grid uses. A bare 180px minimum
+      // collapsed to one full-width column below ~376px.
       style={{
-        gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+        gridTemplateColumns: `repeat(auto-fill, minmax(min(${CARD_WIDTH_PX}px, calc(50% - 0.5rem)), 1fr))`,
       }}
     >
       {series.map((s) => (
