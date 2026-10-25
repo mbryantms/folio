@@ -612,6 +612,23 @@ body {
     height: max(100%, 44px);
     transform: translateY(-50%);
   }
+  /* A control that *contains* controls — a segmented group such as the
+     library's Series / Issues toggle or the stats range picker — must not
+     grow a tap area of its own: the pseudo-element is painted above the
+     children and takes their taps (on iOS the Issues segment could not
+     be pressed, 2026-10-24). The children carry their own tap areas. */
+  .folio-control:has(
+      button,
+      a,
+      input,
+      select,
+      textarea,
+      [role="button"],
+      [role="radio"],
+      [role="tab"]
+    )::after {
+    content: none;
+  }
   input:not([type="checkbox"]):not([type="radio"]),
   textarea,
   select {

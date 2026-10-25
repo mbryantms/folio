@@ -487,7 +487,7 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
               side="bottom"
               className="rounded-t-lg pb-[max(1.5rem,var(--safe-bottom))]"
             >
-              <SheetHeader className="text-left">
+              <SheetHeader>
                 <SheetTitle>Filters</SheetTitle>
               </SheetHeader>
               <div className="space-y-5">

@@ -35,6 +35,12 @@ describe("touch-target floor", () => {
     // The visible size is shadcn's on every pointer: no floor.
     expect(block).not.toMatch(/min-height:\s*44px/);
     expect(block).not.toMatch(/min-width:\s*44px/);
+    // A control that contains controls (segmented group) gets no tap
+    // area of its own: it would paint above the children and take their
+    // taps (iOS, the Series / Issues toggle, 2026-10-24).
+    expect(block).toMatch(
+      /\.folio-control:has\([\s\S]*?button[\s\S]*?\)::after\s*\{\s*content:\s*none;/,
+    );
   });
 
   it("marks the non-Button toolbar controls with folio-control", () => {
