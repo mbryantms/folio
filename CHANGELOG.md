@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.66.6](https://github.com/mbryantms/folio/compare/v0.66.5...v0.66.6) (2026-10-25)
+
+
+### Fixed
+
+* **web:** control rows pin under the topbar by content, at every width ([#1321](https://github.com/mbryantms/folio/issues/1321)) ([bb33272](https://github.com/mbryantms/folio/commit/bb33272f3905e835b8e3cd26276303200b639fa6))
+
+
+### Dependencies
+
+* update dependency @tanstack/react-virtual to v3.14.22 ([#1319](https://github.com/mbryantms/folio/issues/1319)) ([28be486](https://github.com/mbryantms/folio/commit/28be48617b78e339334327c6288f8a7196e2cc88))
+
 ## [0.66.5](https://github.com/mbryantms/folio/compare/v0.66.4...v0.66.5) (2026-10-25)
 
 
