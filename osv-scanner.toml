@@ -1,13 +1,20 @@
-# osv-scanner configuration for the weekly `Security` workflow's `osv-scan` job.
+# osv-scanner configuration for the daily dependency-health sweep
+# (`.github/workflows/advisories.yml`, job `osv`).
 #
 # OSV aggregates the same RustSec advisories that `cargo audit` and
-# `cargo deny` read, but it does NOT honour `.cargo/audit.toml` or
-# `deny.toml` — so every accepted-risk advisory has to be restated here
-# or the job fails on findings we've already triaged. Keep this list in
-# sync with `.cargo/audit.toml` + `deny.toml` on every dep-bump pass;
-# the two entries unique to this file are called out below.
+# `cargo deny` read, but it does NOT honour `.cargo/audit.toml`,
+# `deny.toml` or `pnpm-workspace.yaml` — so every accepted-risk advisory
+# has to be restated here or the sweep fails on findings triaged weeks
+# earlier (issue #1208, 2026-10-25: the three `zip` <9 ids and
+# `crypto-bigint` were accepted in deny.toml + audit.toml but never
+# mirrored). `scripts/ci/check-advisory-ignores.py` now fails CI when
+# this file and those three drift in either direction, so this list is
+# exactly: every RUSTSEC id in deny.toml ∪ .cargo/audit.toml, plus every
+# GHSA in pnpm-workspace.yaml `auditConfig.ignoreGhsas`. The full
+# rationale and the "delete when…" condition for each live next to the
+# entry in those files; the reasons here are the one-line summary.
 
-# ── Mirrored from .cargo/audit.toml ──────────────────────────────────
+# ── Rust (mirrored from deny.toml + .cargo/audit.toml) ──────────────
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0119"
@@ -19,22 +26,29 @@ reason = "`paste` no longer maintained (build-time proc-macro)."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2023-0071"
-reason = "`rsa 0.9.10` Marvin Attack — transitive via jsonwebtoken; we sign JWTs with Ed25519 only, never call into RSA primitives."
+reason = "`rsa 0.9.10` Marvin Attack — transitive via jsonwebtoken / openidconnect; we sign JWTs with Ed25519 only and RS256 id_token verification is a public-key op. No fixed version exists."
 
 [[IgnoredVulns]]
-id = "RUSTSEC-2026-0235"
-reason = "`rkyv 0.7.46` OOB reads — NOT in the build graph. rust_decimal declares rkyv as an optional dep both ways and no feature we enable turns either on, so it never compiles and never ships; it exists only as a Cargo.lock line, which is all lockfile scanners read."
+id = "RUSTSEC-2026-0387"
+reason = "`crypto-bigint 0.5.5` constant-time variability — patched only in 0.7.6+ (RustCrypto 0.14 train); reaches us via p256/p384 0.13 from jsonwebtoken 11.1 + openidconnect 4.0.1, both latest and pinned to p256 ^0.13. Only ECDSA *verification* of OIDC id_tokens; our tokens are EdDSA. Delete when `cargo tree -i crypto-bigint` shows no 0.5."
 
-# ── Unique to this file ──────────────────────────────────────────────
-# Unmaintained-only advisories. `cargo audit` reports these as allowed
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0367"
+reason = "`zip` <9 SUID/SGID bits preserved on extract — stale transitive pins only: zip 7.4.0 via candle-core 0.9.2 (optional OCR stack) and zip 8.6.0 via tesseract-rs 0.4.0 build.rs; neither calls `extract()`. Folio's own zip is 9.x. Delete when candle and tesseract-rs move to zip 9."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0368"
+reason = "`zip` <9 symlink target escape on extract — same stale candle-core / tesseract-rs pins as RUSTSEC-2026-0367; neither calls `extract()`."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0369"
+reason = "`zip` <9 permissions applied through symlinks on extract — same stale candle-core / tesseract-rs pins as RUSTSEC-2026-0367; neither calls `extract()`."
+
+# Unmaintained-only advisory. `cargo audit` reports these as allowed
 # warnings and exits 0 (the job runs `--deny unsound`, not `--deny
-# warnings`), so they never needed an audit.toml entry. OSV has no
-# warning tier — any finding is a non-zero exit — so they must be
+# warnings`), so it needs no audit.toml entry; deny.toml carries it. OSV
+# has no warning tier — any finding is a non-zero exit — so it must be
 # ignored explicitly here.
-
-[[IgnoredVulns]]
-id = "RUSTSEC-2026-0173"
-reason = "`proc-macro-error2` unmaintained — build-time proc-macro via sea-bae -> sea-orm-macros. Compile-time only, never linked into the shipped binary."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0192"
