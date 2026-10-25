@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.66.8](https://github.com/mbryantms/folio/compare/v0.66.7...v0.66.8) (2026-10-25)
+
+
+### Fixed
+
+* **web:** toolbar buttons match their inputs at 14px; phone bar leading strip never overruns the icons ([#1328](https://github.com/mbryantms/folio/issues/1328)) ([bacf17e](https://github.com/mbryantms/folio/commit/bacf17e5badf321b8ac32151212396e0e9731017))
+
+
+### Dependencies
+
+* update redis:8-alpine docker digest to 0bf6577 ([#1326](https://github.com/mbryantms/folio/issues/1326)) ([bdfb384](https://github.com/mbryantms/folio/commit/bdfb384653f6555f58f7f530d218f86b8bfd0187))
+
 ## [0.66.7](https://github.com/mbryantms/folio/compare/v0.66.6...v0.66.7) (2026-10-25)
 
 
