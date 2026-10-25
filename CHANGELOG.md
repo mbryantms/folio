@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.66.4](https://github.com/mbryantms/folio/compare/v0.66.3...v0.66.4) (2026-10-25)
+
+
+### Fixed
+
+* **web:** creator role sections scroll as rails at every viewport width ([#1313](https://github.com/mbryantms/folio/issues/1313)) ([75b49a6](https://github.com/mbryantms/folio/commit/75b49a6e8f4eb41ba13824a29311f75d2ec506ec))
+
 ## [0.66.3](https://github.com/mbryantms/folio/compare/v0.66.2...v0.66.3) (2026-10-25)
 
 
