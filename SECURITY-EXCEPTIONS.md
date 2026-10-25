@@ -12,6 +12,8 @@ the root [`package.json`](package.json) `pnpm.overrides` block.
 
 Each entry is listed in `pnpm-workspace.yaml` `auditConfig.ignoreGhsas` (the
 `pnpm audit` gates) and mirrored in `osv-scanner.toml` (the daily OSV sweep).
+`scripts/ci/check-advisory-ignores.py` fails CI when the two lists disagree;
+see `docs/dev/dependency-management.md`, "Accepted advisories".
 
 ### GHSA-vfj7-8cjw-p6xm — `braces` <=3.0.3 stack-exhaustion DoS (high)
 

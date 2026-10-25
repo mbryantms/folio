@@ -1,24 +1,24 @@
 # cargo-audit configuration. Mirrors the `ignore` list in `deny.toml`
 # so the CI `cargo audit` step (run separately from `cargo deny check`)
 # doesn't relitigate the same upstream-stuck advisories. Update both
-# files together on every dep-bump pass.
+# files together on every dep-bump pass, and restate every id in
+# `osv-scanner.toml` — `scripts/ci/check-advisory-ignores.py` fails CI
+# when the three lists drift, and the daily sweep flags an entry here
+# whose advisory no longer matches any lockfile version.
+#
+# Pruned 2026-10-25 (stale — the crate left the graph or moved past the
+# patched version; see `cargo tree`): RUSTSEC-2024-0384 (instant),
+# RUSTSEC-2025-0134 (rustls-pemfile), RUSTSEC-2025-0111 (tokio-tar),
+# RUSTSEC-2026-0002 (lru 0.12 → 0.19), RUSTSEC-2026-0186 (memmap2 0.9.10
+# → 0.9.11), RUSTSEC-2026-0235 (rkyv no longer in Cargo.lock),
+# RUSTSEC-2026-0381 (webpki-roots 0.26.11 is explicitly unaffected).
 
 [advisories]
 ignore = [
-    # `instant` unmaintained (transitive; compile-time clock wrapper).
-    "RUSTSEC-2024-0384",
     # `number_prefix` unmaintained (transitive via indicatif).
     "RUSTSEC-2025-0119",
     # `paste` no longer maintained (build-time proc-macro).
     "RUSTSEC-2024-0436",
-    # `rustls-pemfile` unmaintained (dev-only via testcontainers).
-    "RUSTSEC-2025-0134",
-    # `tokio-tar` PAX-header smuggling — dev-only via testcontainers;
-    # CVE-2025-62518. Not in the production binary.
-    "RUSTSEC-2025-0111",
-    # `lru 0.12` IterMut Stacked Borrows soundness; upstream fixed in
-    # 0.13+. Tracked as a follow-up dep-bump.
-    "RUSTSEC-2026-0002",
     # `rsa 0.9.10` Marvin Attack — private-key timing sidechannel. In the
     # graph via openidconnect (public-key RS256 verify only), jsonwebtoken
     # (we sign with Ed25519), and the OIDC test's throwaway mock-OP key.
@@ -31,30 +31,11 @@ ignore = [
     # OIDC id_tokens; our own tokens are EdDSA. deny.toml carries the full
     # rationale and the delete-when condition.
     "RUSTSEC-2026-0387",
-    # `memmap2 0.9.10` unsound "unchecked pointer offset"
-    # (RUSTSEC-2026-0186) — transitive via candle-core in the optional
-    # OCR/ML stack; not reachable from the core reader/scanner request
-    # paths (audit DEP-1, 2026-07-01). Needed now that the weekly job
-    # runs `cargo audit --deny unsound`. Revisit when candle bumps its
-    # memmap2 pin.
-    "RUSTSEC-2026-0186",
-    # `rkyv 0.7.46` out-of-bounds reads on archives containing Rc/Arc
-    # (RUSTSEC-2026-0235). NOT in the build graph: rust_decimal declares
-    # rkyv both ways (`^0.7.46` and `^0.8.13`) as optional deps, and no
-    # feature we enable turns either on — `cargo tree -i rkyv -e normal
-    # --all-features --target all` prints nothing, so it never compiles
-    # and never ships. It exists only as a Cargo.lock line, which is all
-    # cargo-audit reads; cargo-deny's graph is feature-aware and never
-    # sees it, which is why `cargo deny check advisories` stays green on
-    # the same tree. This entry is therefore audit.toml-ONLY — adding it
-    # to deny.toml would just log `advisory-not-detected`.
-    # Revisit when sqlx/rust_decimal drop the 0.7 optional dep.
-    "RUSTSEC-2026-0235",
     # `zip` < 9 extraction advisories (SUID/SGID bits, symlink escape,
     # permissions through symlinks) - all about `ZipArchive::extract()` /
     # `ZipStreamReader::extract()` over attacker-controlled archives.
     # Folio's own zip is 9.x (patched); the stale copies are stuck
-    # transitive pins: `zip 7.2.0` <- candle-core 0.9.2 (`.npz` / `.pt` reads by
+    # transitive pins: `zip 7.4.0` <- candle-core 0.9.2 (`.npz` / `.pt` reads by
     # name/index in the optional OCR stack) and `zip 8.6.0` <-
     # tesseract-rs 0.4.0 build.rs (unpacks pinned tesseract/leptonica
     # source tags at build time). Neither calls `extract()`. deny.toml
@@ -62,11 +43,4 @@ ignore = [
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
-    # `webpki-roots 0.26.11` trusts distrusted emSign intermediates
-    # (RUSTSEC-2026-0381). Fixed only in the 1.x line, which every core
-    # TLS client already uses; the 0.26 copy is reachable solely via
-    # `hf-hub 0.4 → ureq 2` behind the optional OCR crates, which still
-    # pin hf-hub ^0.4. deny.toml carries the same entry. Revisit when
-    # comic-text-detector / manga-ocr move to hf-hub 1.
-    "RUSTSEC-2026-0381",
 ]

@@ -52,9 +52,13 @@ jobs:
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: cargo-deny@0.20.2,cargo-audit
+      # `--format json` so the stale-ignore step below can read the
+      # `advisory-not-detected` diagnostics (one JSON object per line, on
+      # stderr); `tee` keeps them in the job log too. `pipefail` is on in
+      # the default shell, so the step still fails when cargo-deny does.
       - id: deny
         continue-on-error: true
-        run: cargo deny check advisories
+        run: cargo deny --format json check advisories 2>&1 | tee deny.jsonl
       # --deny unsound: bare `cargo audit` exits 0 on unsound/informational
       # advisories, so e.g. RUSTSEC-2026-0186 (memmap2) never failed anything.
       # Accepted-risk unsound advisories live in .cargo/audit.toml with the
@@ -65,12 +69,32 @@ jobs:
         # $CARGO_HOME/advisory-db in its own layout; cargo-audit refuses to
         # clone into a non-empty directory.
         run: cargo audit --deny unsound --db "$RUNNER_TEMP/advisory-db"
+      # The accepted-advisory lists (deny.toml, .cargo/audit.toml,
+      # osv-scanner.toml, pnpm ignoreGhsas) must agree, and an ignore whose
+      # advisory no longer matches anything is a pin that can move. Exit 1 =
+      # drift, 2 = stale; both are their own line in the tracking issue.
+      - id: ignores
+        if: always()
+        continue-on-error: true
+        run: |
+          set +e
+          python3 scripts/ci/check-advisory-ignores.py \
+            --deny-json deny.jsonl --advisory-db "$RUNNER_TEMP/advisory-db"
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit $rc
       - id: summary
         if: always()
         run: |
           f=""
           if [ "${{ steps.deny.outcome }}" = "failure" ]; then f="$f cargo-deny-advisories"; fi
           if [ "${{ steps.audit.outcome }}" = "failure" ]; then f="$f cargo-audit-unsound"; fi
+          case "${{ steps.ignores.outputs.rc }}" in
+            1) f="$f ignore-drift" ;;
+            2) f="$f stale-ignores" ;;
+            0) ;;
+            *) f="$f ignore-drift" ;;
+          esac
           echo "failed=${f# }" >> "$GITHUB_OUTPUT"
 
   web:
@@ -276,7 +300,9 @@ jobs:
                 cargo-deny-advisories) echo "- **cargo-deny advisories** — a RUSTSEC advisory matches a crate in Cargo.lock. Bump the crate if a fixed version co-resolves; otherwise add a documented, dated ignore to \`deny.toml\`." ;;
                 cargo-audit-unsound)   echo "- **cargo-audit (unsound)** — an unsound/informational RUSTSEC advisory. Accepted-risk entries go in \`.cargo/audit.toml\` with the same documented-ignore convention." ;;
                 pnpm-audit)            echo "- **pnpm audit (high+)** — a high-severity npm advisory in the tree (dev deps included). Fix: wait for/merge the Renovate security PR, add a \`pnpm-workspace.yaml\` override onto the patched line, or document the exception in \`SECURITY-EXCEPTIONS.md\`." ;;
-                osv-scanner)           echo "- **OSV scan** — a cross-ecosystem advisory over Cargo.lock / pnpm-lock.yaml that the native tools did not carry. See the run log for the ID." ;;
+                osv-scanner)           echo "- **OSV scan** — a cross-ecosystem advisory over Cargo.lock / pnpm-lock.yaml that the native tools did not carry, or an accepted id that was not mirrored into \`osv-scanner.toml\`. See the run log for the ID." ;;
+                ignore-drift)          echo "- **accepted-advisory lists drifted** — \`deny.toml\`, \`.cargo/audit.toml\`, \`osv-scanner.toml\` and the pnpm \`ignoreGhsas\` no longer agree (\`scripts/ci/check-advisory-ignores.py\`). The run log names each id and which file is missing it." ;;
+                stale-ignores)         echo "- **stale ignores** — an accepted advisory no longer matches any crate in Cargo.lock: the upstream fix landed or the crate left the graph. Delete the entry from every file that carries it and check whether the pin that held it (the \`Revisit when…\` note) can now move. The run log names each id." ;;
                 image-folio)           echo "- **published image \`folio:latest\`** — HIGH/CRITICAL OS-package CVE with an upstream fix. Usually resolved by the base-image digest refresh Renovate opens (auto-merged) + the next release; if distroless itself lags, chase that." ;;
                 image-folio-web)       echo "- **published image \`folio-web:latest\`** — HIGH/CRITICAL OS-package CVE with an upstream fix in the Node image. Same remedy: base-image digest refresh (auto-merged) + next release; chase distroless if it lags." ;;
                 stuck-updates)         echo "- **stuck dependency updates** — Renovate PRs that should have auto-merged but did not:"; echo "$STUCK" | sed 's/^/  /' ;;
