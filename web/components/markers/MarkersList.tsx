@@ -419,19 +419,29 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
           })}
           phoneDescription="hidden"
           actions={headerActions}
-          // Below `sm` the PhoneControlsBar replaces this toolbar.
+          // Below `sm` the whole header goes: the description is already
+          // hidden there and the title rides in the PhoneControlsBar's
+          // leading slot, so title + controls share one sticky row
+          // instead of stacking two bordered bands.
+          className="max-sm:hidden"
           actionsClassName="max-sm:hidden"
         />
       )}
 
       {embedded ? null : (
         <>
-          {/* Phone (< sm): one sticky row — search / filters / ⋯ — in
-              place of the header toolbar + layout toggle + Tags row.
-              The selection toolbar takes its place while selecting
-              (both are sticky under the topbar). */}
+          {/* Phone (< sm): one sticky row — title · search / filters /
+              View options
+              — in place of the page header, its toolbar, the layout
+              toggle and the Tags row. The selection toolbar takes its
+              place while selecting (both are sticky under the topbar). */}
           <PhoneControlsBar
             hidden={selection.selectMode}
+            leading={
+              <h1 className="min-w-0 truncate text-xl font-semibold tracking-tight">
+                Bookmarks
+              </h1>
+            }
             search={{
               value: rawSearch,
               onChange: setRawSearch,

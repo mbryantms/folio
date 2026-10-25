@@ -32,7 +32,6 @@ import {
   ListChecks,
   Play,
   Trash2,
-  LayoutGrid,
 } from "lucide-react";
 
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
@@ -418,12 +417,11 @@ export function CollectionViewDetail({
         // Phone (< sm): the cluster above is hidden. Continue / Start
         // reading — the collection's primary action — stays one tap
         // away as the bar's icon button; the item count takes the
-        // bar's leading slot; card size + Select move into `⋯`.
+        // bar's leading slot; card size + Select move into View options.
         phoneControlsPlacement="inline"
         phoneControls={
           <PhoneControlsBar
             sticky={false}
-            menuIcon={<LayoutGrid className="size-4" />}
             hidden={selection.selectMode}
             leading={
               <p className="text-muted-foreground text-xs tabular-nums">

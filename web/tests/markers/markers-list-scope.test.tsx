@@ -77,9 +77,11 @@ describe("MarkersList scope (WP-5.2)", () => {
     expect(infinite).toHaveBeenCalledWith(
       expect.objectContaining({ issue_id: undefined, series_id: undefined }),
     );
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
-      "Bookmarks",
-    );
+    // Two h1s render in jsdom: the desktop PageHeader's and the phone
+    // bar's (one is hidden per breakpoint by CSS). Both carry the title.
+    const headings = screen.getAllByRole("heading", { level: 1 });
+    expect(headings.length).toBe(2);
+    for (const h of headings) expect(h.textContent).toBe("Bookmarks");
     expect(screen.getByRole("button", { name: /export notes/i })).toBeTruthy();
   });
 });

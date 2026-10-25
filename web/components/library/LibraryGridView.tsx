@@ -375,13 +375,13 @@ export function LibraryGridView({
       </div>
 
       {/* Phone (< sm): one sticky 36px row — mode toggle + search /
-          sort / filters / ⋯ icons. The selection toolbar takes the
+          sort / filters / View options icons. The selection toolbar takes the
           row's place while selecting (both are sticky under the
           topbar). Desktop renders `LibraryGridToolbar` below. */}
       <PhoneControlsBar
         hidden={selection.selectMode}
         // Series mode: inset the icon cluster by the same 8px the grid
-        // reserves for the A–Z rail, so `⋯` doesn't butt against it.
+        // reserves for the A–Z rail, so View options doesn't butt against it.
         className={cn("mb-3", isSeriesMode && "pr-6")}
         leading={<ModeSegmentedToggle mode={mode} onMode={handleMode} />}
         search={{

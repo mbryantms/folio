@@ -25,12 +25,16 @@ import {
 } from "react";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
-import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import {
+  CardSizeFields,
+  CardSizeOptions,
+} from "@/components/library/CardSizeOptions";
 import {
   BulkMarkReadDialog,
   BULK_BACKFILL_PROMPT_THRESHOLD,
 } from "@/components/library/BulkMarkReadDialog";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
+import { PhoneControlsBar } from "@/components/library/PhoneControlsBar";
 import { IssueCard } from "@/components/library/IssueCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
@@ -261,14 +265,35 @@ export function SearchView({
                 onChange={setIssueReadStatus}
               />
             ) : null}
-            <CardSizeOptions
-              cardSize={cardSize}
-              onCardSize={setCardSize}
-              min={CARD_SIZE_MIN}
-              max={CARD_SIZE_MAX}
-              step={CARD_SIZE_STEP}
-              defaultSize={CARD_SIZE_DEFAULT}
-              description="Adjust card size for Series, Issues, and People rails."
+            {/* Desktop: the card-size popover. Phones: the same fields
+             *  in a bottom sheet behind the same four-squares icon,
+             *  inline in the header row (one row, no sticky band — the
+             *  page's own search box is the input below). Matches the
+             *  saved views' inline bar. */}
+            <div className="max-sm:hidden">
+              <CardSizeOptions
+                cardSize={cardSize}
+                onCardSize={setCardSize}
+                min={CARD_SIZE_MIN}
+                max={CARD_SIZE_MAX}
+                step={CARD_SIZE_STEP}
+                defaultSize={CARD_SIZE_DEFAULT}
+                description="Adjust card size for Series, Issues, and People rails."
+              />
+            </div>
+            <PhoneControlsBar
+              sticky={false}
+              menu={() => (
+                <CardSizeFields
+                  cardSize={cardSize}
+                  onCardSize={setCardSize}
+                  min={CARD_SIZE_MIN}
+                  max={CARD_SIZE_MAX}
+                  step={CARD_SIZE_STEP}
+                  defaultSize={CARD_SIZE_DEFAULT}
+                  fieldId="search-phone-card-size"
+                />
+              )}
             />
           </div>
         </div>

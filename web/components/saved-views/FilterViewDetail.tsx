@@ -7,7 +7,6 @@ import {
   FolderPlus,
   ListChecks,
   Sparkles,
-  LayoutGrid,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -252,13 +251,12 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
           </>
         }
         // Phone (< sm): the desktop cluster above is hidden; card size
-        // and Select move into the sticky bar's `⋯` sheet. The bar
+        // and Select move into the sticky bar's View options sheet. The bar
         // yields to `SelectionToolbar` (also sticky) while selecting.
         phoneControlsPlacement="inline"
         phoneControls={
           <PhoneControlsBar
             sticky={false}
-            menuIcon={<LayoutGrid className="size-4" />}
             hidden={selection.selectMode}
             menu={(close) => (
               <>

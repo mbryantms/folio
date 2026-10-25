@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ChevronRight, LayoutGrid, Sparkles } from "lucide-react";
+import { ChevronRight, Sparkles } from "lucide-react";
 
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import {
@@ -174,7 +174,6 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
         </div>
         <PhoneControlsBar
           sticky={false}
-          menuIcon={<LayoutGrid className="size-4" />}
           menu={() => (
             <CardSizeFields
               cardSize={cardSize}

@@ -4,7 +4,7 @@ import * as React from "react";
 import {
   ArrowDownUp,
   Check,
-  Ellipsis,
+  LayoutGrid,
   Search,
   SlidersHorizontal,
 } from "lucide-react";
@@ -28,7 +28,7 @@ export type PhoneSortOption = { value: string; label: string };
  * desktop toolbar folding into six. Every control is an icon button;
  * search expands in place, sort opens a bottom sheet, and everything
  * secondary (card size, Select, Save as view, exports…) lives in the
- * `⋯` "View options" sheet. Pages keep their desktop markup and wrap
+ * four-squares "View options" sheet. Pages keep their desktop markup and wrap
  * it in `max-sm:hidden`, so the two compositions never both render.
  *
  * `sticky` pins the row under the topbar so the controls stay reachable
@@ -72,13 +72,15 @@ export function PhoneControlsBar({
   /** Extra inline icon button(s) that must stay one tap away (CBL's
    *  "Up Next"). Keep it to one. */
   primary?: React.ReactNode;
-  /** Body of the `⋯` sheet. Receives `close` so actions that leave the
+  /** Body of the View options sheet. Receives `close` so actions that leave the
    *  sheet (entering Select mode, opening a dialog) can dismiss it. */
   menu?: (close: () => void) => React.ReactNode;
   menuTitle?: string;
-  /** Icon for the menu trigger. Defaults to `⋯`; pages whose header
-   *  already has a `⋯` actions menu (saved views) pass a card-size /
-   *  layout glyph so the two aren't twins. */
+  /** Icon for the menu trigger. Defaults to the four-squares
+   *  `LayoutGrid` glyph — the same icon `CardSizeOptions` uses on
+   *  desktop — so "View options" looks the same at every width and
+   *  never reads as a second `⋯` beside a header's More-actions menu
+   *  (`⋯` is reserved for action lists, which are dropdowns). */
   menuIcon?: React.ReactNode;
   sticky?: boolean;
   /** Hide the row entirely — the selection toolbar takes its place. */
@@ -202,7 +204,7 @@ export function PhoneControlsBar({
                 onClick={() => setMenuOpen(true)}
                 haspopup="dialog"
               >
-                {menuIcon ?? <Ellipsis className="size-4" />}
+                {menuIcon ?? <LayoutGrid className="size-4" />}
               </IconButton>
             ) : null}
           </div>
@@ -295,7 +297,7 @@ export function PhoneControlsBar({
   );
 }
 
-/** A full-width row button for the `⋯` sheet, so callers' actions
+/** A full-width row button for the View options sheet, so callers' actions
  *  (Select, Save as view, Export…) line up as a tappable list. */
 export function PhoneMenuAction({
   icon,
