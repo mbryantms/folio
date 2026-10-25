@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.66.9](https://github.com/mbryantms/folio/compare/v0.66.8...v0.66.9) (2026-10-25)
+
+
+### Build & CI
+
+* mirror the accepted advisories into the OSV ignore list and gate the four ignore lists against drift ([#1329](https://github.com/mbryantms/folio/issues/1329)) ([2ab7ad0](https://github.com/mbryantms/folio/commit/2ab7ad0f0da368506be0bf7c2c1cc91b8a0a9508))
+
 ## [0.66.8](https://github.com/mbryantms/folio/compare/v0.66.7...v0.66.8) (2026-10-25)
 
 
