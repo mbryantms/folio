@@ -133,7 +133,7 @@ function CreatorHeader({
         </Link>
         <PageHeader
           title={detail.name}
-          description={`${activeRailCount} ${activeRailCount === 1 ? "series" : "series"} · as ${formatRole(activeRole).toLowerCase()}`}
+          description={`${activeRailCount} series · as ${formatRole(activeRole).toLowerCase()}`}
         />
       </div>
     );
@@ -150,7 +150,7 @@ function CreatorHeader({
   return (
     <PageHeader
       title={detail.name}
-      description={`${total} ${total === 1 ? "series" : "series"} across ${detail.rails.length} ${detail.rails.length === 1 ? "role" : "roles"}`}
+      description={`${total} series across ${detail.rails.length} ${detail.rails.length === 1 ? "role" : "roles"}`}
       actions={
         <div className="flex flex-wrap items-center gap-1.5">
           {sortRoles(detail.rails.map((r) => r.role)).map((role) => {
@@ -202,8 +202,7 @@ function RoleRail({
         <h2 className="text-base font-semibold tracking-tight">
           As {formatRole(rail.role).toLowerCase()}
           <span className="text-muted-foreground ml-2 text-xs font-normal">
-            {rail.series.length}{" "}
-            {rail.series.length === 1 ? "series" : "series"}
+            {rail.series.length} series
           </span>
         </h2>
         {truncated ? (
