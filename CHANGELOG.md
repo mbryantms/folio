@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.66.7](https://github.com/mbryantms/folio/compare/v0.66.6...v0.66.7) (2026-10-25)
+
+
+### Fixed
+
+* **web:** CBL reading list keeps its stats pills and overflow menu in the one pinned control row ([#1324](https://github.com/mbryantms/folio/issues/1324)) ([5084bf2](https://github.com/mbryantms/folio/commit/5084bf220c50e7436ee72852d2ed0444eea1cd54))
+* **web:** home and custom pages pin card size and page actions under the topbar ([#1325](https://github.com/mbryantms/folio/issues/1325)) ([a25f1c1](https://github.com/mbryantms/folio/commit/a25f1c159b7e2a2ec6c175e8307426e9423ac687))
+
+
+### Dependencies
+
+* update postgres:18-alpine docker digest to 898c60c ([#1322](https://github.com/mbryantms/folio/issues/1322)) ([50c2af1](https://github.com/mbryantms/folio/commit/50c2af1ef9be94eee483a37fef3dc16b6bce55a2))
+
 ## [0.66.6](https://github.com/mbryantms/folio/compare/v0.66.5...v0.66.6) (2026-10-25)
 
 
