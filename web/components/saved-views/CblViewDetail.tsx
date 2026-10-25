@@ -71,6 +71,8 @@ import { useSelection } from "@/lib/selection/use-selection";
 import type { CblEntryHydratedView, SavedViewView } from "@/lib/api/types";
 import { useCblHideMissing } from "@/lib/cbl/use-hide-missing";
 
+import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
+
 import { ViewHeader } from "./ViewHeader";
 
 // Heavy archive-edit dialog (+dnd) — lazy so it stays out of the CBL view's
@@ -491,68 +493,12 @@ function CblViewDetailInner({
           savedView.custom_year_end,
         )}
         extraActions={
-          <>
-            {/* Same two-pill summary the home rail header carries —
-             *  `size="header"` bumps padding/typography so the pills
-             *  line up with the adjacent `size="sm"` icon button. */}
-            <CblStatsPills cblListId={list.id} size="header" />
-            {upNextPosition != null && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={scrollToUpNext}
-                className="h-9"
-                disabled={jumpTarget != null}
-                aria-label="Scroll to Up Next entry"
-                title="Scroll to Up Next entry"
-              >
-                {jumpTarget != null ? (
-                  <Loader2
-                    className="mr-1.5 h-4 w-4 animate-spin"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <BookOpen className="mr-1.5 h-4 w-4" aria-hidden="true" />
-                )}
-                Up Next
-              </Button>
-            )}
-            {/* Page-local search input. Folded into the header's
-             *  actions row alongside card-size + select so the
-             *  toolbar reads as one cluster. Search is server-side,
-             *  preserving pagination + totals for long CBLs. */}
-            <div className="relative w-56">
-              <SearchIcon
-                aria-hidden="true"
-                className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
-              />
-              <Input
-                type="search"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search this list…"
-                aria-label="Search entries in this list"
-                className="h-9 pl-8"
-              />
-            </div>
-            <CardSizeOptions
-              cardSize={cardSize}
-              onCardSize={setCardSize}
-              min={CARD_SIZE_MIN}
-              max={CARD_SIZE_MAX}
-              step={CARD_SIZE_STEP}
-              defaultSize={CARD_SIZE_DEFAULT}
-            />
-            {(loadedEntries.length > 0 || selection.selectMode) && (
-              <SelectModeButton
-                ref={selectButtonRef}
-                active={selection.selectMode}
-                onEnter={() => selection.enter()}
-                onExit={() => selection.exit()}
-              />
-            )}
-          </>
+          // Same two-pill summary the home rail header carries —
+          // `size="header"` bumps padding/typography so the pills line
+          // up with the adjacent `size="sm"` icon button. The tools
+          // (Up Next, search, card size, Select) live in the pinned
+          // row under the header instead; see below.
+          <CblStatsPills cblListId={list.id} size="header" />
         }
         extraMenuItems={
           <>
@@ -674,6 +620,69 @@ function CblViewDetailInner({
           />
         }
       />
+      {/* `sm` and up: the tools you need while scrolling — Up Next,
+       *  search, card size, Select — in their own row under the header,
+       *  pinned under the topbar while it fits one line (phone-layout
+       *  rule 3). The header row above keeps the stats pills and `⋯`
+       *  and scrolls away like every other title row. */}
+      <StickyToolbarRow enabled={!selection.selectMode}>
+        {upNextPosition != null && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={scrollToUpNext}
+            className="h-9"
+            disabled={jumpTarget != null}
+            aria-label="Scroll to Up Next entry"
+            title="Scroll to Up Next entry"
+          >
+            {jumpTarget != null ? (
+              <Loader2
+                className="mr-1.5 h-4 w-4 animate-spin"
+                aria-hidden="true"
+              />
+            ) : (
+              <BookOpen className="mr-1.5 h-4 w-4" aria-hidden="true" />
+            )}
+            Up Next
+          </Button>
+        )}
+        {/* Page-local search input. Folded into the header's
+         *  actions row alongside card-size + select so the
+         *  toolbar reads as one cluster. Search is server-side,
+         *  preserving pagination + totals for long CBLs. */}
+        <div className="relative w-56">
+          <SearchIcon
+            aria-hidden="true"
+            className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+          />
+          <Input
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search this list…"
+            aria-label="Search entries in this list"
+            className="h-9 pl-8"
+          />
+        </div>
+        <CardSizeOptions
+          cardSize={cardSize}
+          onCardSize={setCardSize}
+          min={CARD_SIZE_MIN}
+          max={CARD_SIZE_MAX}
+          step={CARD_SIZE_STEP}
+          defaultSize={CARD_SIZE_DEFAULT}
+        />
+        {(loadedEntries.length > 0 || selection.selectMode) && (
+          <SelectModeButton
+            ref={selectButtonRef}
+            active={selection.selectMode}
+            onEnter={() => selection.enter()}
+            onExit={() => selection.exit()}
+          />
+        )}
+      </StickyToolbarRow>
       {/* Catalog/source path + import date — useful context on the
        *  desktop detail page, but redundant on mobile where the title
        *  already identifies the list. Hide to save vertical real

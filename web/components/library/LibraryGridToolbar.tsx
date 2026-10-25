@@ -5,6 +5,7 @@ import { BookmarkPlus, Filter, X } from "lucide-react";
 
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import type { LibraryGridMode } from "@/components/library/library-grid-filters";
+import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,9 +18,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { IssueSort, SeriesSort, SortOrder } from "@/lib/api/types";
-import { useStickyToolbar } from "@/lib/ui/use-sticky-toolbar";
-import { cn } from "@/lib/utils";
-import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";
 
 // `random` is excluded — it's a one-shot discovery pick ("Surprise me"),
 // never a user-selectable grid sort. The Exclude keeps this map exhaustive
@@ -181,22 +179,12 @@ export function LibraryGridToolbar({
       lastSent.current = q;
     }
   }, [q]);
-  const { ref, sentinelRef, sticky, stuck } = useStickyToolbar({
-    enabled: !selectMode,
-  });
   return (
     <>
-      <div ref={sentinelRef} aria-hidden="true" className="max-sm:hidden" />
-      <div
-        ref={ref}
+      <StickyToolbarRow
+        enabled={!selectMode}
         data-library-toolbar=""
-        data-sticky={sticky ? "" : undefined}
-        data-stuck={stuck ? "" : undefined}
-        className={cn(
-          "-mx-4 mb-4 flex flex-wrap items-center justify-between gap-2 px-4 py-2 max-sm:hidden md:-mx-8 md:px-8",
-          sticky && "sticky top-(--topbar-h) z-20",
-          stuck && cn(CHROME_BAND_CLASS, "border-b"),
-        )}
+        className="mb-4 justify-between"
       >
         {/* Left controls flow + wrap as a group; the Select + card-size
           group below sits opposite via the container's justify-between —
@@ -355,7 +343,7 @@ export function LibraryGridToolbar({
             defaultSize={cardSizeDefault}
           />
         </div>
-      </div>
+      </StickyToolbarRow>
     </>
   );
 }

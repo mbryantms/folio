@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 /**
- * Series page `<IssuesPanel>` on phones: the heading row carries a
- * `<PhoneControlsBar>` (search / sort / ⋯) next to the "Issues" h2
- * instead of the desktop input + Sort + card-size + Select cluster,
- * which is wrapped in `max-sm:hidden`. The bar is not sticky (it sits
- * mid-page) and goes away in select mode, where the sticky
- * `SelectionToolbar` takes over. Its sort sheet drives the same query
- * as the desktop dropdown.
+ * Series page `<IssuesPanel>` on phones: one `<PhoneControlsBar>`
+ * carries the "Issues" h2 in its leading slot plus search / sort / View
+ * options, instead of the desktop input + Sort + card-size + Select
+ * cluster, which lives in a `StickyToolbarRow` (`max-sm:hidden`). The
+ * bar is sticky (phone-layout rule 3: rows with search or sort pin at
+ * every width; mid-page it engages once scrolled to) and goes away in
+ * select mode, where the sticky `SelectionToolbar` takes over. Its sort
+ * sheet drives the same query as the desktop dropdown.
  */
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -66,17 +67,29 @@ describe("IssuesPanel phone controls", () => {
     vi.stubGlobal("IntersectionObserver", IOStub);
   });
 
-  it("puts search / sort / ⋯ beside the heading and hides the desktop cluster below sm", () => {
+  it("carries the heading with search / sort / View options in one sticky bar and hides the desktop cluster below sm", () => {
     const { container } = render(
       <IssuesPanel seriesSlug="saga" issueCount={12} />,
     );
-    expect(screen.getByRole("heading", { name: "Issues" })).toBeTruthy();
-
     const bar = container.querySelector<HTMLElement>("[data-phone-controls]");
     expect(bar).not.toBeNull();
     expect(bar!.className).toContain("sm:hidden");
-    // Mid-page, so not pinned under the topbar.
-    expect(bar!.className).not.toContain("sticky");
+    // The h2 rides in the bar's leading slot; the desktop heading row
+    // (its own h2 + count) is `max-sm:hidden`, so jsdom sees both.
+    const barHeading = within(bar!).getByRole("heading", {
+      level: 2,
+      name: /Issues/,
+    });
+    expect(barHeading.textContent).toContain("12 issues");
+    const desktopHeading = screen
+      .getAllByRole("heading", { level: 2, name: /Issues/ })
+      .find((h) => h !== barHeading)!;
+    expect(desktopHeading.parentElement!.parentElement!.className).toContain(
+      "max-sm:hidden",
+    );
+    // Pinned under the topbar once scrolled to (rule 3).
+    expect(bar!.className).toContain("sticky");
+    expect(bar!.className).toContain("top-(--topbar-h)");
     expect(
       screen.getByRole("button", { name: "Search issues in this series" }),
     ).toBeTruthy();
@@ -93,7 +106,9 @@ describe("IssuesPanel phone controls", () => {
     const desktopSearch = screen.getByRole("searchbox", {
       name: "Search issues in this series",
     });
-    expect(desktopSearch.parentElement!.className).toContain("max-sm:hidden");
+    const row = desktopSearch.parentElement!;
+    expect(row.className).toContain("max-sm:hidden");
+    expect(row.hasAttribute("data-toolbar-row")).toBe(true);
   });
 
   it("drives the issue query from the phone sort sheet", () => {
