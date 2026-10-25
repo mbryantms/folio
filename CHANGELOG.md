@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.66.3](https://github.com/mbryantms/folio/compare/v0.66.2...v0.66.3) (2026-10-25)
+
+
+### Fixed
+
+* **ui:** segmented groups no longer swallow touch taps; overlay headers left-aligned everywhere ([#1310](https://github.com/mbryantms/folio/issues/1310)) ([6af4005](https://github.com/mbryantms/folio/commit/6af4005dfcdf99c7036e6833b17a5af168ef8240))
+
 ## [0.66.2](https://github.com/mbryantms/folio/compare/v0.66.1...v0.66.2) (2026-10-24)
 
 
