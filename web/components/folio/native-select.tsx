@@ -1,37 +1,36 @@
 "use client";
 
+/* Folio wrapper over the vendored shadcn NativeSelect (components/ui is
+ * pristine): the `options` list + string `onChange` the call sites use,
+ * and full width by default (upstream's wrapper is `w-fit`). The
+ * `<select>` keeps its shadcn size on every pointer; as a wide target it
+ * needs no tap area (phone-layout rule 9). */
 import * as React from "react";
 
+import {
+  NativeSelect as UiNativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import { cn } from "@/lib/utils";
 
-export interface NativeSelectOption {
+export {
+  NativeSelectOptGroup,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+
+export interface NativeSelectOptionItem {
   value: string;
   label: string;
 }
 
 export interface NativeSelectProps extends Omit<
-  React.SelectHTMLAttributes<HTMLSelectElement>,
-  "onChange" | "size"
+  React.ComponentProps<typeof UiNativeSelect>,
+  "onChange" | "children"
 > {
-  options: NativeSelectOption[];
-  /** Called with the selected value (not the raw event). */
+  options: NativeSelectOptionItem[];
   onChange?: (next: string) => void;
-  /** `default` = full-width form control; `sm` = compact inline filter. */
-  size?: "default" | "sm";
 }
 
-const SIZES = {
-  default: "h-9 w-full px-3 py-1 text-sm",
-  sm: "h-8 w-auto px-2 text-xs",
-} as const;
-
-/**
- * The styled native `<select>` that was copy-pasted verbatim in SeriesEditDrawer
- * and IssueActions, plus the home for the divergent raw `<select>`s the audit
- * flagged (F3) — `size="sm"` is the compact inline-filter variant. Forwards
- * standard select props (`id`, `value`, `disabled`, …); `onChange` receives the
- * value string.
- */
 export function NativeSelect({
   options,
   onChange,
@@ -40,22 +39,17 @@ export function NativeSelect({
   ...props
 }: NativeSelectProps) {
   return (
-    <select
-      className={cn(
-        // `folio-control`: the shared touch-target rule
-        // (docs/dev/phone-layout.md rule 9).
-        "folio-control border-input bg-background focus-visible:ring-ring flex rounded-md border shadow-sm transition-colors focus-visible:ring-1 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
-        SIZES[size],
-        className,
-      )}
+    <UiNativeSelect
+      size={size}
+      className={cn(size === "sm" ? "w-auto" : "w-full", className)}
       onChange={onChange ? (e) => onChange(e.target.value) : undefined}
       {...props}
     >
       {options.map((o) => (
-        <option key={o.value} value={o.value}>
+        <NativeSelectOption key={o.value} value={o.value}>
           {o.label}
-        </option>
+        </NativeSelectOption>
       ))}
-    </select>
+    </UiNativeSelect>
   );
 }

@@ -103,16 +103,15 @@ describe("touch-target floor", () => {
         <FilterPill active={false}>Notes</FilterPill>
       </>,
     );
-    expect(
-      screen
-        .getByRole("combobox", { name: "Sort" })
-        .classList.contains("folio-control"),
-    ).toBe(true);
+    // The sort select is the vendored NativeSelect under the Folio
+    // wrapper: a wide target that needs no tap area (rule 9).
+    expect(screen.getByRole("combobox", { name: "Sort" }).dataset.slot).toBe(
+      "native-select",
+    );
     // Both pills carry the floor; on an iPad they sat 36px beside 44px
-    // buttons in the CBL view header.
-    // Select + the two pills carry folio-control; none grows its box.
+    // buttons in the CBL view header; none grows its box.
     const controls = container.querySelectorAll(".folio-control");
-    expect(controls.length).toBeGreaterThanOrEqual(3);
+    expect(controls.length).toBeGreaterThanOrEqual(2);
     for (const el of controls) {
       expect(el.className).not.toMatch(/pointer-coarse:h-/);
     }
