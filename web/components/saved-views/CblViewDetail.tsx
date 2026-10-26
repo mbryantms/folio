@@ -473,10 +473,10 @@ function CblViewDetailInner({
         onSelect={fetchViewMetadata}
         disabled={createBatch.isPending}
       >
-        <Sparkles className="mr-2 h-4 w-4" /> Fetch metadata for view
+        <Sparkles className="mr-2 size-4" /> Fetch metadata for view
       </DropdownMenuItem>
       <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
-        <HardDriveDownload className="mr-2 h-4 w-4" />
+        <HardDriveDownload className="mr-2 size-4" />
         Download for offline…
       </DropdownMenuItem>
       <DropdownMenuItem asChild>
@@ -485,7 +485,7 @@ function CblViewDetailInner({
           download
           title="Download as .cbl"
         >
-          <Download className="mr-2 h-4 w-4" /> Export
+          <Download className="mr-2 size-4" /> Export
         </a>
       </DropdownMenuItem>
       {missingCount > 0 ? (
@@ -496,9 +496,9 @@ function CblViewDetailInner({
           }}
         >
           {hideMissing ? (
-            <Check className="mr-2 h-4 w-4" />
+            <Check className="mr-2 size-4" />
           ) : (
-            <EyeOff className="mr-2 h-4 w-4" />
+            <EyeOff className="mr-2 size-4" />
           )}
           {hideMissing
             ? `Showing matched only (${missingCount} hidden)`
@@ -514,7 +514,7 @@ function CblViewDetailInner({
           disabled={refresh.isPending}
         >
           <RefreshCw
-            className={`mr-2 h-4 w-4 ${refresh.isPending ? "animate-spin" : ""}`}
+            className={`mr-2 size-4 ${refresh.isPending ? "animate-spin" : ""}`}
           />
           Refresh
         </DropdownMenuItem>
@@ -580,11 +580,11 @@ function CblViewDetailInner({
                   >
                     {jumpTarget != null ? (
                       <Loader2
-                        className="h-4 w-4 animate-spin"
+                        className="size-4 animate-spin"
                         aria-hidden="true"
                       />
                     ) : (
-                      <BookOpen className="h-4 w-4" aria-hidden="true" />
+                      <BookOpen className="size-4" aria-hidden="true" />
                     )}
                   </Button>
                 ) : null}
@@ -640,11 +640,11 @@ function CblViewDetailInner({
           >
             {jumpTarget != null ? (
               <Loader2
-                className="mr-1.5 h-4 w-4 animate-spin"
+                className="mr-1.5 size-4 animate-spin"
                 aria-hidden="true"
               />
             ) : (
-              <BookOpen className="mr-1.5 h-4 w-4" aria-hidden="true" />
+              <BookOpen className="mr-1.5 size-4" aria-hidden="true" />
             )}
             Up Next
           </Button>
@@ -811,7 +811,7 @@ function CblViewDetailInner({
           />
           {entriesQuery.isFetchingNextPage ? (
             <p className="text-muted-foreground flex items-center justify-center gap-2 text-xs">
-              <Loader2 className="h-3 w-3 animate-spin" /> Loading more (
+              <Loader2 className="size-3 animate-spin" /> Loading more (
               {loadedEntries.length}
               {filterTotal != null ? ` of ${filterTotal}` : ""})…
             </p>

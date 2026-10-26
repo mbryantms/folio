@@ -202,7 +202,7 @@ export function MetadataPreviewPane({
   if (isLoading) {
     return (
       <div className="text-muted-foreground flex items-center justify-center gap-2 py-12 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Computing preview…
+        <Loader2 className="size-4 animate-spin" /> Computing preview…
       </div>
     );
   }
@@ -211,7 +211,7 @@ export function MetadataPreviewPane({
       <div className="space-y-3 py-4">
         <p className="text-destructive text-sm">{errorMessage}</p>
         <Button variant="outline" size="sm" onClick={onBack}>
-          <ChevronLeft className="mr-1.5 h-4 w-4" /> Back to candidates
+          <ChevronLeft className="mr-1.5 size-4" /> Back to candidates
         </Button>
       </div>
     );
@@ -239,7 +239,7 @@ export function MetadataPreviewPane({
             onClick={onBack}
             disabled={isApplying}
           >
-            <ChevronLeft className="mr-1.5 h-4 w-4" /> Back
+            <ChevronLeft className="mr-1.5 size-4" /> Back
           </Button>
           <div className="text-muted-foreground flex flex-col items-end gap-0.5">
             <p>
@@ -320,7 +320,7 @@ export function MetadataPreviewPane({
                           >
                             {revertingField === row.field ? (
                               <>
-                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                <Loader2 className="mr-1 size-3 animate-spin" />
                                 Reverting
                               </>
                             ) : (
@@ -455,7 +455,7 @@ export function MetadataPreviewPane({
           >
             {isApplying ? (
               <>
-                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Applying
+                <Loader2 className="mr-1.5 size-4 animate-spin" /> Applying
               </>
             ) : (
               `Apply ${selectedFields.size} ${selectedFields.size === 1 ? "change" : "changes"}`

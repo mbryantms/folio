@@ -22,7 +22,7 @@ export function EmailStatusCard({
     <Card>
       <CardHeader>
         <CardTitle className="text-muted-foreground flex items-center gap-2 text-sm font-semibold tracking-wide uppercase">
-          <Mail className="h-4 w-4" />
+          <Mail className="size-4" />
           Status
         </CardTitle>
       </CardHeader>
@@ -65,7 +65,7 @@ export function EmailStatusCard({
               <div
                 className={`flex items-start gap-2 rounded-md border p-2 text-xs ${statusTone("error")}`}
               >
-                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
                 <span className="font-mono">{status.last_error}</span>
               </div>
             )}
@@ -113,13 +113,13 @@ function ResultBadge({ ok }: { ok: boolean | null }) {
   if (ok)
     return (
       <Badge variant="secondary" className={statusTone("success")}>
-        <Check className="mr-1 h-3 w-3" />
+        <Check className="mr-1 size-3" />
         Delivered
       </Badge>
     );
   return (
     <Badge variant="secondary" className={statusTone("error")}>
-      <X className="mr-1 h-3 w-3" />
+      <X className="mr-1 size-3" />
       Failed
     </Badge>
   );

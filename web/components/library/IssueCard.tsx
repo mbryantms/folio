@@ -240,9 +240,9 @@ function IssueCardImpl({
           <span
             aria-label="Read"
             title="Read"
-            className="bg-primary/90 text-primary-foreground absolute top-2 right-2 inline-flex h-6 w-6 items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10"
+            className="bg-primary/90 text-primary-foreground absolute top-2 right-2 inline-flex size-6 items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10"
           >
-            <Check aria-hidden="true" className="h-3.5 w-3.5" />
+            <Check aria-hidden="true" className="size-3.5" />
           </span>
         )}
         {issue.state === "active" && inProgress && (
@@ -308,7 +308,7 @@ export function IssueCardSkeleton({ className }: { className?: string }) {
       <div className="bg-muted aspect-[2/3] w-full animate-pulse rounded-md" />
       <div className="space-y-1.5 px-1">
         <div className="bg-muted h-2 w-1/3 animate-pulse rounded" />
-        <div className="bg-muted h-3 w-3/4 animate-pulse rounded" />
+        <div className="bg-muted size-3/4 animate-pulse rounded" />
       </div>
     </div>
   );

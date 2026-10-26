@@ -372,7 +372,7 @@ export function CollectionViewDetail({
         extraMenuItems={
           <>
             <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
-              <HardDriveDownload className="mr-2 h-4 w-4" />
+              <HardDriveDownload className="mr-2 size-4" />
               Download for offline…
             </DropdownMenuItem>
             {/* Data-liberation (3.3): export the collection as a CBL
@@ -385,7 +385,7 @@ export function CollectionViewDetail({
                 download
                 title="Download as a .cbl reading list"
               >
-                <Download className="mr-2 h-4 w-4" /> Export CBL
+                <Download className="mr-2 size-4" /> Export CBL
               </a>
             </DropdownMenuItem>
           </>
@@ -705,7 +705,7 @@ export function CollectionContinueButton({
     return (
       <Button asChild size="icon" className="h-9 w-9 shrink-0">
         <Link href={href} aria-label={ariaLabel} title={label}>
-          <Play className="h-4 w-4" aria-hidden="true" />
+          <Play className="size-4" aria-hidden="true" />
         </Link>
       </Button>
     );
@@ -714,7 +714,7 @@ export function CollectionContinueButton({
     // Toolbar-row convention: `size="toolbar"` beside CardSizeOptions + Select.
     <Button asChild>
       <Link href={href} aria-label={ariaLabel}>
-        <Play className="mr-1 h-4 w-4" aria-hidden="true" />
+        <Play className="mr-1 size-4" aria-hidden="true" />
         {label}
       </Link>
     </Button>
@@ -828,11 +828,11 @@ function DragHandle({
       // The handle sits at top-right of the card; the kebab is top-left.
       // `touch-none` prevents the page from scrolling while dragging on
       // touch devices.
-      className="bg-background/85 absolute top-2 right-2 z-20 inline-flex h-8 w-8 cursor-grab touch-none items-center justify-center rounded-full opacity-0 shadow-sm ring-1 ring-black/10 backdrop-blur transition group-hover:opacity-100 focus-visible:opacity-100 active:cursor-grabbing dark:ring-white/10"
+      className="bg-background/85 absolute top-2 right-2 z-20 inline-flex size-8 cursor-grab touch-none items-center justify-center rounded-full opacity-0 shadow-sm ring-1 ring-black/10 backdrop-blur transition group-hover:opacity-100 focus-visible:opacity-100 active:cursor-grabbing dark:ring-white/10"
       {...attributes}
       {...listeners}
     >
-      <GripVertical className="h-4 w-4" aria-hidden="true" />
+      <GripVertical className="size-4" aria-hidden="true" />
     </button>
   );
 }
@@ -850,7 +850,7 @@ function MissingEntry({ onRemove }: { onRemove: () => void }) {
         onClick={onRemove}
         className="gap-1"
       >
-        <Trash2 className="h-3.5 w-3.5" /> Remove
+        <Trash2 className="size-3.5" /> Remove
       </Button>
     </div>
   );
@@ -948,7 +948,7 @@ function EditCollectionDialog({
                 className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                 onClick={onDeleteRequest}
               >
-                <Trash2 className="mr-1 h-4 w-4" /> Delete
+                <Trash2 className="mr-1 size-4" /> Delete
               </Button>
             ) : (
               <span />

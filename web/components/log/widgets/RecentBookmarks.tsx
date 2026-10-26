@@ -13,7 +13,7 @@ import { WidgetCard } from "../WidgetCard";
 import type { LogWidgetProps, RecentBookmarksConfig } from "./types";
 
 function KindIcon({ kind }: { kind: string }) {
-  const className = "text-muted-foreground h-3.5 w-3.5 shrink-0";
+  const className = "text-muted-foreground size-3.5 shrink-0";
   if (kind === "favorite")
     return <Star aria-hidden="true" className={className} />;
   if (kind === "note")
@@ -46,7 +46,7 @@ export function RecentBookmarks({
     <WidgetCard widget={widget} title="Recent bookmarks">
       {query.isLoading ? (
         <div className="space-y-2">
-          <Skeleton className="h-3 w-3/4" />
+          <Skeleton className="size-3/4" />
           <Skeleton className="h-3 w-2/3" />
           <Skeleton className="h-3 w-1/2" />
         </div>

@@ -85,7 +85,7 @@ export function CblStatsPillsStatic({
         title={`${matched} of ${total} entries collected in your library`}
         className={cn("text-muted-foreground shrink-0", sizeClass)}
       >
-        <Library aria-hidden="true" className="mr-1 h-3 w-3" />
+        <Library aria-hidden="true" className="mr-1 size-3" />
         {matched} / {total}
       </Badge>
       {matched > 0 && (
@@ -97,7 +97,7 @@ export function CblStatsPillsStatic({
             sizeClass,
           )}
         >
-          <BookCheck aria-hidden="true" className="mr-1 h-3 w-3" />
+          <BookCheck aria-hidden="true" className="mr-1 size-3" />
           {read_count} / {matched}
         </Badge>
       )}

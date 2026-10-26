@@ -301,7 +301,7 @@ export function SeriesRefreshFlow({
       <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
         {status.isError ? (
           <>
-            <AlertCircle className="h-4 w-4" /> Couldn&rsquo;t load this
+            <AlertCircle className="size-4" /> Couldn&rsquo;t load this
             series&rsquo; refresh state.{" "}
             <button
               type="button"
@@ -313,7 +313,7 @@ export function SeriesRefreshFlow({
           </>
         ) : (
           <>
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+            <Loader2 className="size-4 animate-spin" /> Loading…
           </>
         )}
       </div>
@@ -370,7 +370,7 @@ export function SeriesRefreshFlow({
                 <Icon
                   aria-hidden
                   className={cn(
-                    "h-3.5 w-3.5 shrink-0",
+                    "size-3.5 shrink-0",
                     o === "done" && statusToneText("success"),
                   )}
                 />
@@ -721,7 +721,7 @@ function CoverageStep({
     return (
       <div className="space-y-3 text-sm">
         <p className="text-muted-foreground flex items-center gap-2">
-          <Loader2 className="h-4 w-4 animate-spin" />
+          <Loader2 className="size-4 animate-spin" />
           {(view?.trigger ?? job?.trigger ?? "analyze") !== "analyze"
             ? "Checking which issues the series you matched holds, and where the rest live…"
             : "Listing candidate series on ComicVine, Metron and GCD. This can take a minute (provider rate limits)."}
@@ -748,7 +748,7 @@ function CoverageStep({
         <div className="flex flex-wrap gap-2">
           <Button onClick={runAnalysis} disabled={analyze.isPending}>
             {analyze.isPending && (
-              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="mr-1 size-3.5 animate-spin" />
             )}
             Analyze coverage
           </Button>
@@ -1015,9 +1015,9 @@ function CoverageProviderRow({
             aria-label={`Accept ${p.source_label}`}
           >
             {accepting === p.source ? (
-              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="mr-1 size-3.5 animate-spin" />
             ) : (
-              <Check className="mr-1 h-3.5 w-3.5" />
+              <Check className="mr-1 size-3.5" />
             )}
             Accept
           </Button>
@@ -1068,13 +1068,13 @@ function FetchStep({
       <div className="space-y-3 text-sm">
         {!batch ? (
           <p className="text-muted-foreground flex items-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading the batch…
+            <Loader2 className="size-4 animate-spin" /> Loading the batch…
           </p>
         ) : (
           <>
             <div className="flex items-center justify-between gap-2">
               <span className="flex items-center gap-2">
-                {running && <Loader2 className="h-4 w-4 animate-spin" />}
+                {running && <Loader2 className="size-4 animate-spin" />}
                 {running
                   ? batch.status === "awaiting_quota"
                     ? "Waiting for provider quota — the rest resumes on its own."
@@ -1197,7 +1197,7 @@ function FetchStep({
         disabled={createBatch.isPending || (chosen?.issues ?? 0) === 0}
       >
         {createBatch.isPending && (
-          <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+          <Loader2 className="mr-1 size-3.5 animate-spin" />
         )}
         {(chosen?.remainder ?? 0) > 0
           ? `Fetch ${chosen?.issues ?? 0} of ${chosen?.eligible ?? 0} issues`
@@ -1326,7 +1326,7 @@ function ReviewStep({
   if (!batch) {
     return (
       <p className="text-muted-foreground flex items-center gap-2 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading the batch…
+        <Loader2 className="size-4 animate-spin" /> Loading the batch…
       </p>
     );
   }
@@ -1366,7 +1366,7 @@ function ReviewStep({
     <div className="space-y-3 text-sm">
       {batchRunning(batch) && (
         <p className="text-muted-foreground flex items-center gap-2 text-xs">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Loader2 className="size-3.5 animate-spin" />
           Still searching ({a.searched} of {batch.items_total}) — the counts
           update as issues finish.
         </p>
@@ -1400,7 +1400,7 @@ function ReviewStep({
             )
           }
         >
-          {busy && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+          {busy && <Loader2 className="mr-1 size-3.5 animate-spin" />}
           Accept all strong ({strong})
         </Button>
         <Button
@@ -1429,7 +1429,7 @@ function ReviewStep({
           role="status"
           data-testid="review-applying"
         >
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Loader2 className="size-3.5 animate-spin" />
           Applying… {applyingDone} of {applying.count} done. The counts above
           update as each issue lands.
         </p>
@@ -1485,7 +1485,7 @@ function ReviewStep({
         {!batchRunning(batch) && remaining > 0 && (
           <Button onClick={fetchRemaining} disabled={createBatch.isPending}>
             {createBatch.isPending && (
-              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="mr-1 size-3.5 animate-spin" />
             )}
             Fetch the remaining {remaining} issue{remaining === 1 ? "" : "s"}
           </Button>

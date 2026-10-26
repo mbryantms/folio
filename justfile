@@ -580,6 +580,11 @@ audit:
 
 # ───── OpenAPI ─────
 
+# Pull every vendored shadcn item from the registry (same as the weekly
+# shadcn-refresh workflow); review the diff, run `just check`, commit.
+ui-refresh:
+    cd web && pnpm exec shadcn add $(ls components/ui/*.tsx | xargs -n1 basename | sed 's/\.tsx$//' | tr '\n' ' ') --overwrite --yes && pnpm install --no-frozen-lockfile
+
 openapi:
     cargo run --bin server -- --emit-openapi > web/lib/api/openapi.json
     cd web && pnpm run openapi:gen

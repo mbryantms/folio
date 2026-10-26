@@ -66,7 +66,7 @@ export function LogHeader({
               title="Download your full reading log as a CSV"
             >
               <a href="/api/me/reading-log/export" download>
-                <Download aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
+                <Download aria-hidden="true" className="mr-1 size-3.5" />
                 Export CSV
               </a>
             </Button>
@@ -76,7 +76,7 @@ export function LogHeader({
               onClick={() => setResetOpen(true)}
               title="Reset to default layout"
             >
-              <RotateCcw aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
+              <RotateCcw aria-hidden="true" className="mr-1 size-3.5" />
               Reset
             </Button>
           </>

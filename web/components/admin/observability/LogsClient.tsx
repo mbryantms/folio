@@ -123,9 +123,9 @@ export function LogsClient() {
             onClick={() => setTail((v) => !v)}
           >
             {tail ? (
-              <Pause className="mr-1.5 h-3.5 w-3.5" />
+              <Pause className="mr-1.5 size-3.5" />
             ) : (
-              <Play className="mr-1.5 h-3.5 w-3.5" />
+              <Play className="mr-1.5 size-3.5" />
             )}
             {tail ? "Following" : "Paused"}
           </Button>

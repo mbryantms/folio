@@ -34,9 +34,9 @@ export function RowActions({
           variant="ghost"
           size="icon"
           aria-label={label}
-          className="h-8 w-8"
+          className="size-8"
         >
-          <MoreHorizontal className="h-4 w-4" />
+          <MoreHorizontal className="size-4" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-[10rem]">

@@ -107,7 +107,7 @@ function queueLabel(key: string): string {
 function LoaderRow({ label }: { label: string }) {
   return (
     <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-      <Loader2 className="h-4 w-4 animate-spin" /> {label}
+      <Loader2 className="size-4 animate-spin" /> {label}
     </div>
   );
 }
@@ -117,7 +117,7 @@ function QueueOverview() {
   if (q.isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading queue depth…
+        <Loader2 className="size-4 animate-spin" /> Loading queue depth…
       </div>
     );
   }
@@ -177,7 +177,7 @@ function ArchiveOperations() {
   if (q.isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+        <Loader2 className="size-4 animate-spin" /> Loading…
       </div>
     );
   }
@@ -403,7 +403,7 @@ function DeadJobList({ queue }: { queue: string }) {
         <AlertDialog open={confirmPurge} onOpenChange={setConfirmPurge}>
           <AlertDialogTrigger asChild>
             <Button variant="outline" size="sm" disabled={purge.isPending}>
-              <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Clear all
+              <Trash2 className="mr-1.5 size-3.5" /> Clear all
             </Button>
           </AlertDialogTrigger>
           <AlertDialogContent>
@@ -464,7 +464,7 @@ function DeadJobList({ queue }: { queue: string }) {
             disabled={page <= 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
           >
-            <ChevronLeft className="h-3.5 w-3.5" />
+            <ChevronLeft className="size-3.5" />
           </Button>
           <span className="text-muted-foreground text-xs tabular-nums">
             {page} / {totalPages}
@@ -475,7 +475,7 @@ function DeadJobList({ queue }: { queue: string }) {
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >
-            <ChevronRight className="h-3.5 w-3.5" />
+            <ChevronRight className="size-3.5" />
           </Button>
         </div>
       ) : null}
@@ -523,7 +523,7 @@ function DeadJobRow({
               onRetry();
             }}
           >
-            <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+            <RotateCcw className="mr-1.5 size-3.5" />
             {retrying ? "Retrying…" : "Retry"}
           </Button>
         </summary>

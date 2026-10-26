@@ -113,7 +113,7 @@ export function SettingsTab() {
   if (settings.isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading settings…
+        <Loader2 className="size-4 animate-spin" /> Loading settings…
       </div>
     );
   }
@@ -290,7 +290,7 @@ export function SettingsForm({
                 statusTone("warning"),
               )}
             >
-              <RotateCw className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <RotateCw className="mt-0.5 size-3.5 shrink-0" />
               <span>
                 Schedule changes take effect on the next server restart. The
                 enable toggle above applies live.
@@ -518,7 +518,7 @@ export function SettingsForm({
         <Button type="submit" disabled={!dirty || isPending}>
           {isPending ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <Loader2 className="mr-2 size-4 animate-spin" />
               Saving
             </>
           ) : (

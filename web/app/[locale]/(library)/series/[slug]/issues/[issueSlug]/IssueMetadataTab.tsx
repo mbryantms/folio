@@ -72,7 +72,7 @@ export function IssueMetadataTab({
   if (isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <Loader2 className="size-4 animate-spin" />
         Loading metadata…
       </div>
     );
@@ -127,7 +127,7 @@ export function IssueMetadataTab({
                   disabled={setAccepted.isPending}
                   onClick={() => setAccepted.mutate(false)}
                 >
-                  <RotateCcw className="h-3.5 w-3.5" />
+                  <RotateCcw className="size-3.5" />
                   Reopen for metadata
                 </Button>
               </div>
@@ -143,7 +143,7 @@ export function IssueMetadataTab({
                   disabled={setAccepted.isPending}
                   onClick={() => setAccepted.mutate(true)}
                 >
-                  <Check className="h-3.5 w-3.5" />
+                  <Check className="size-3.5" />
                   Mark metadata complete
                 </Button>
               </div>
@@ -275,7 +275,7 @@ export function IssueMetadataTab({
                             statusToneText("success"),
                           )}
                         >
-                          <Check className="h-3 w-3" /> matched ↗
+                          <Check className="size-3" /> matched ↗
                         </a>
                       ) : (
                         <span
@@ -284,7 +284,7 @@ export function IssueMetadataTab({
                             statusToneText("success"),
                           )}
                         >
-                          <Check className="h-3 w-3" /> matched
+                          <Check className="size-3" /> matched
                         </span>
                       )
                     ) : (
@@ -302,7 +302,7 @@ export function IssueMetadataTab({
                 size="sm"
                 onClick={() => setMatchOpen(true)}
               >
-                <Sparkles className="h-3.5 w-3.5" />
+                <Sparkles className="size-3.5" />
                 Find &amp; match metadata
               </Button>
             )}
@@ -407,7 +407,7 @@ function TierPill({ tier }: { tier: string }) {
           statusTone("success"),
         )}
       >
-        <CheckCircle2 className="h-3.5 w-3.5" />
+        <CheckCircle2 className="size-3.5" />
         Complete
       </span>
     );
@@ -423,7 +423,7 @@ function TierPill({ tier }: { tier: string }) {
           statusTone("info"),
         )}
       >
-        <Check className="h-3.5 w-3.5" />
+        <Check className="size-3.5" />
         Accepted
       </span>
     );
@@ -436,7 +436,7 @@ function TierPill({ tier }: { tier: string }) {
           statusTone("warning"),
         )}
       >
-        <AlertCircle className="h-3.5 w-3.5" />
+        <AlertCircle className="size-3.5" />
         Partial
       </span>
     );
@@ -448,7 +448,7 @@ function TierPill({ tier }: { tier: string }) {
         statusTone("error"),
       )}
     >
-      <AlertCircle className="h-3.5 w-3.5" />
+      <AlertCircle className="size-3.5" />
       Needs metadata
     </span>
   );
@@ -459,11 +459,11 @@ function TierPill({ tier }: { tier: string }) {
 function SourceFileRow({ label, state }: { label: string; state: string }) {
   const icon =
     state === "present" ? (
-      <CheckCircle2 className={cn("h-4 w-4", statusToneText("success"))} />
+      <CheckCircle2 className={cn("size-4", statusToneText("success"))} />
     ) : state === "unknown" ? (
-      <HelpCircle className="text-muted-foreground/50 h-4 w-4" />
+      <HelpCircle className="text-muted-foreground/50 size-4" />
     ) : (
-      <MinusCircle className="text-muted-foreground/50 h-4 w-4" />
+      <MinusCircle className="text-muted-foreground/50 size-4" />
     );
   return (
     <li className="flex items-center gap-2">

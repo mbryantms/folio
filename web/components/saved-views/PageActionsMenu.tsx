@@ -87,7 +87,7 @@ export function PageActionsMenu({
             aria-label="Page actions"
             title="Page actions"
           >
-            <MoreHorizontal className="h-4 w-4" />
+            <MoreHorizontal className="size-4" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-[14rem]">
@@ -97,7 +97,7 @@ export function PageActionsMenu({
               setDescOpen(true);
             }}
           >
-            <MessageSquare className="mr-2 h-4 w-4" />
+            <MessageSquare className="mr-2 size-4" />
             {hasDescription ? "Edit description" : "Add description"}
           </DropdownMenuItem>
           {hasDescription ? (
@@ -107,7 +107,7 @@ export function PageActionsMenu({
                 updatePage.mutate({ description: "" });
               }}
             >
-              <X className="mr-2 h-4 w-4" />
+              <X className="mr-2 size-4" />
               Clear description
             </DropdownMenuItem>
           ) : null}
@@ -120,17 +120,17 @@ export function PageActionsMenu({
             >
               {showInSidebar ? (
                 <>
-                  <PanelLeftClose className="mr-2 h-4 w-4" />
+                  <PanelLeftClose className="mr-2 size-4" />
                   Hide from sidebar
                 </>
               ) : (
                 <>
-                  <PanelLeft className="mr-2 h-4 w-4" />
+                  <PanelLeft className="mr-2 size-4" />
                   Show in sidebar
                 </>
               )}
               {showInSidebar ? (
-                <Check className="text-muted-foreground ml-auto h-3.5 w-3.5" />
+                <Check className="text-muted-foreground ml-auto size-3.5" />
               ) : null}
             </DropdownMenuItem>
           )}
@@ -140,7 +140,7 @@ export function PageActionsMenu({
               setPinOpen(true);
             }}
           >
-            <ListChecks className="mr-2 h-4 w-4" />
+            <ListChecks className="mr-2 size-4" />
             Manage rails…
           </DropdownMenuItem>
           {!isSystem && (
@@ -153,7 +153,7 @@ export function PageActionsMenu({
                 }}
                 className="text-destructive focus:text-destructive"
               >
-                <Trash2 className="mr-2 h-4 w-4" />
+                <Trash2 className="mr-2 size-4" />
                 Delete page…
               </DropdownMenuItem>
             </>

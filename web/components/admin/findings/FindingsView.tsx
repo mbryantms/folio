@@ -283,7 +283,7 @@ function HealthIssuesRail({
     return (
       <Card>
         <CardContent className="text-muted-foreground py-12 text-center text-sm">
-          <CheckCircle2 className="text-primary mx-auto mb-2 h-6 w-6" />
+          <CheckCircle2 className="text-primary mx-auto mb-2 size-6" />
           No matching health issues. Your libraries look clean.
         </CardContent>
       </Card>
@@ -306,7 +306,7 @@ function HealthIssuesRail({
           >
             {isFetchingNextPage ? (
               <>
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
                 Loading more…
               </>
             ) : (
@@ -382,17 +382,17 @@ function HealthIssueRow({ row }: { row: CrossLibHealthIssueView }) {
 
 function SeverityIcon({ severity }: { severity: string }) {
   if (severity === "error")
-    return <XCircle className="text-destructive mt-0.5 h-4 w-4 shrink-0" />;
+    return <XCircle className="text-destructive mt-0.5 size-4 shrink-0" />;
   if (severity === "warning")
     // Shares the warning tone the dashboard's `SeverityRow` already
     // uses ([DashboardClient.tsx]) via `statusToneText`. Single
     // palette across the admin shell, no per-page drift.
     return (
       <AlertTriangle
-        className={`mt-0.5 h-4 w-4 shrink-0 ${statusToneText("warning")}`}
+        className={`mt-0.5 size-4 shrink-0 ${statusToneText("warning")}`}
       />
     );
-  return <Info className="text-muted-foreground mt-0.5 h-4 w-4 shrink-0" />;
+  return <Info className="text-muted-foreground mt-0.5 size-4 shrink-0" />;
 }
 
 function ScanRunsRail({
@@ -487,7 +487,7 @@ function ScanRunsRail({
                       href={`/admin/logs?library_id=${encodeURIComponent(row.library_id)}`}
                       className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
                     >
-                      <ScrollText className="h-3.5 w-3.5" aria-hidden="true" />
+                      <ScrollText className="size-3.5" aria-hidden="true" />
                       Logs
                     </Link>
                   </TableCell>
@@ -508,7 +508,7 @@ function ScanRunsRail({
           >
             {isFetchingNextPage ? (
               <>
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
                 Loading more…
               </>
             ) : (
@@ -528,7 +528,7 @@ function StateBadge({ state }: { state: string }) {
   if (state === "running") {
     return (
       <Badge variant="secondary" className="gap-1">
-        <Loader2 className="h-3 w-3 animate-spin" />
+        <Loader2 className="size-3 animate-spin" />
         Running
       </Badge>
     );
@@ -536,7 +536,7 @@ function StateBadge({ state }: { state: string }) {
   if (state === "complete") {
     return (
       <Badge variant="outline" className="text-primary border-primary/40 gap-1">
-        <CheckCircle2 className="h-3 w-3" />
+        <CheckCircle2 className="size-3" />
         Complete
       </Badge>
     );
@@ -544,7 +544,7 @@ function StateBadge({ state }: { state: string }) {
   if (state === "failed") {
     return (
       <Badge variant="destructive" className="gap-1">
-        <XCircle className="h-3 w-3" />
+        <XCircle className="size-3" />
         Failed
       </Badge>
     );
@@ -552,7 +552,7 @@ function StateBadge({ state }: { state: string }) {
   if (state === "cancelled") {
     return (
       <Badge variant="secondary" className="gap-1">
-        <AlertCircle className="h-3 w-3" />
+        <AlertCircle className="size-3" />
         Cancelled
       </Badge>
     );

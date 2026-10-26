@@ -437,7 +437,7 @@ export function GroupedViewsBoard({
                 <div className="relative">
                   <Search
                     aria-hidden="true"
-                    className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2"
+                    className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
                   />
                   <Input
                     type="search"
@@ -476,7 +476,7 @@ export function GroupedViewsBoard({
                     setNewGroupOpen(true);
                   }}
                 >
-                  <FolderPlus className="mr-1.5 h-4 w-4" /> New group
+                  <FolderPlus className="mr-1.5 size-4" /> New group
                 </Button>
               </>
             ) : null}
@@ -674,7 +674,7 @@ function GroupSection({
           aria-label={`Drag to reorder group ${group.name}`}
           className="text-muted-foreground hover:text-foreground focus-visible:ring-ring -ml-1 inline-flex h-8 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded focus-visible:ring-2 focus-visible:outline-none active:cursor-grabbing"
         >
-          <GripVertical className="h-4 w-4" aria-hidden="true" />
+          <GripVertical className="size-4" aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -687,7 +687,7 @@ function GroupSection({
         >
           <ChevronRight
             aria-hidden="true"
-            className={cn("h-4 w-4 transition-transform", open && "rotate-90")}
+            className={cn("size-4 transition-transform", open && "rotate-90")}
           />
         </button>
 
@@ -724,10 +724,10 @@ function GroupSection({
             variant="ghost"
             size="icon"
             aria-label={`Rename ${group.name}`}
-            className="text-muted-foreground hover:text-foreground h-8 w-8 shrink-0"
+            className="text-muted-foreground hover:text-foreground size-8 shrink-0"
             onClick={() => setEditing(true)}
           >
-            <Pencil className="h-3.5 w-3.5" />
+            <Pencil className="size-3.5" />
           </Button>
         ) : null}
         <DropdownMenu>
@@ -737,20 +737,20 @@ function GroupSection({
               variant="ghost"
               size="icon"
               aria-label={`Actions for group ${group.name}`}
-              className="text-muted-foreground hover:text-foreground h-8 w-8 shrink-0"
+              className="text-muted-foreground hover:text-foreground size-8 shrink-0"
             >
-              <MoreHorizontal className="h-4 w-4" />
+              <MoreHorizontal className="size-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuItem onSelect={() => setEditing(true)}>
-              <Pencil className="h-4 w-4" /> Rename
+              <Pencil className="size-4" /> Rename
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onMove(-1)} disabled={isFirst}>
-              <ArrowUp className="h-4 w-4" /> Move up
+              <ArrowUp className="size-4" /> Move up
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onMove(1)} disabled={isLast}>
-              <ArrowDown className="h-4 w-4" /> Move down
+              <ArrowDown className="size-4" /> Move down
             </DropdownMenuItem>
             {menuExtra ? (
               <>
@@ -763,7 +763,7 @@ function GroupSection({
               onSelect={() => setConfirmDelete(true)}
               className="text-destructive focus:text-destructive"
             >
-              <Trash2 className="h-4 w-4" /> Delete group
+              <Trash2 className="size-4" /> Delete group
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -863,14 +863,14 @@ function GroupNameEditor({
         variant="ghost"
         size="icon"
         aria-label="Cancel rename"
-        className="h-8 w-8 shrink-0"
+        className="size-8 shrink-0"
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => {
           committed.current = true;
           onCancel();
         }}
       >
-        <X className="h-4 w-4" />
+        <X className="size-4" />
       </Button>
     </div>
   );
@@ -918,7 +918,7 @@ function UngroupedSection({
     >
       {framed ? (
         <header className="mb-2 flex items-center gap-2 px-1">
-          <Icon className="text-muted-foreground h-4 w-4" aria-hidden="true" />
+          <Icon className="text-muted-foreground size-4" aria-hidden="true" />
           <h3 className="text-muted-foreground text-sm font-semibold">
             Ungrouped
           </h3>
@@ -1070,7 +1070,7 @@ function BoardCard({
           "[@media(pointer:coarse)]:opacity-100",
         )}
       >
-        <GripVertical className="h-4 w-4" aria-hidden="true" />
+        <GripVertical className="size-4" aria-hidden="true" />
       </button>
       {children}
     </li>
@@ -1089,7 +1089,7 @@ function DragGhost({
   return (
     <div className="bg-popover text-popover-foreground border-border flex max-w-xs items-center gap-2 rounded-lg border px-3 py-2 shadow-xl">
       <Icon
-        className="text-muted-foreground h-4 w-4 shrink-0"
+        className="text-muted-foreground size-4 shrink-0"
         aria-hidden="true"
       />
       <span className="truncate text-sm font-medium">{label}</span>

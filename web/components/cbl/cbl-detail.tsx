@@ -103,7 +103,7 @@ function CblDetailInner({
   if (list.isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-12 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading list…
+        <Loader2 className="size-4 animate-spin" /> Loading list…
       </div>
     );
   }
@@ -177,7 +177,7 @@ export function CblInfoRow({ list }: { list: CblDetailView }) {
     if (list.source_kind === "catalog") {
       return (
         <Badge variant="secondary">
-          <GithubIcon className="mr-1 h-3 w-3" />
+          <GithubIcon className="mr-1 size-3" />
           Catalog · {list.catalog_path}
         </Badge>
       );
@@ -185,13 +185,13 @@ export function CblInfoRow({ list }: { list: CblDetailView }) {
     if (list.source_kind === "url") {
       return (
         <Badge variant="secondary">
-          <ExternalLink className="mr-1 h-3 w-3" /> URL
+          <ExternalLink className="mr-1 size-3" /> URL
         </Badge>
       );
     }
     return (
       <Badge variant="secondary">
-        <Upload className="mr-1 h-3 w-3" /> Upload
+        <Upload className="mr-1 size-3" /> Upload
       </Badge>
     );
   })();
@@ -200,7 +200,7 @@ export function CblInfoRow({ list }: { list: CblDetailView }) {
       {sourceBadge}
       {list.parsed_matchers_present ? (
         <Badge variant="outline" className={statusTone("warning")}>
-          <AlertTriangle className="mr-1 h-3 w-3" />
+          <AlertTriangle className="mr-1 size-3" />
           Matcher rules in source — not evaluated
         </Badge>
       ) : null}
@@ -264,7 +264,7 @@ function StatusBadge({ status }: { status: CblMatchStatus }) {
   if (status === "matched") {
     return (
       <Badge variant="secondary" className={statusTone("success")}>
-        <CheckCircle2 className="mr-1 h-3 w-3" />
+        <CheckCircle2 className="mr-1 size-3" />
         Matched
       </Badge>
     );
@@ -272,7 +272,7 @@ function StatusBadge({ status }: { status: CblMatchStatus }) {
   if (status === "manual") {
     return (
       <Badge variant="secondary" className={statusTone("success")}>
-        <Check className="mr-1 h-3 w-3" />
+        <Check className="mr-1 size-3" />
         Manual
       </Badge>
     );
@@ -280,14 +280,14 @@ function StatusBadge({ status }: { status: CblMatchStatus }) {
   if (status === "ambiguous") {
     return (
       <Badge variant="secondary" className={statusTone("warning")}>
-        <HelpCircle className="mr-1 h-3 w-3" />
+        <HelpCircle className="mr-1 size-3" />
         Ambiguous
       </Badge>
     );
   }
   return (
     <Badge variant="secondary" className={statusTone("error")}>
-      <X className="mr-1 h-3 w-3" />
+      <X className="mr-1 size-3" />
       Missing
     </Badge>
   );
@@ -387,7 +387,7 @@ function ReadingOrderTab({
         <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
           {query.isLoading ? (
             <div className="text-muted-foreground flex items-center gap-2 p-4 text-sm">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading entries…
+              <Loader2 className="size-4 animate-spin" /> Loading entries…
             </div>
           ) : items.length === 0 ? (
             <div className="text-muted-foreground p-4 text-sm">
@@ -438,7 +438,7 @@ function ReadingOrderTab({
                         entry={entry}
                         trigger={
                           <Button type="button" size="sm" variant="ghost">
-                            <Pencil className="h-3 w-3" />
+                            <Pencil className="size-3" />
                           </Button>
                         }
                       />
@@ -457,7 +457,7 @@ function ReadingOrderTab({
           </span>
           {query.isFetchingNextPage ? (
             <span className="flex items-center gap-1.5">
-              <Loader2 className="h-3 w-3 animate-spin" /> Loading more…
+              <Loader2 className="size-3 animate-spin" /> Loading more…
             </span>
           ) : null}
         </div>
@@ -576,7 +576,7 @@ function ResolutionTab({
       </div>
       {query.isLoading ? (
         <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading entries…
+          <Loader2 className="size-4 animate-spin" /> Loading entries…
         </div>
       ) : items.length === 0 ? (
         <div className="text-muted-foreground rounded-md border border-dashed p-6 text-sm">
@@ -690,7 +690,7 @@ function HistoryTab({ listId, list }: { listId: string; list: CblDetailView }) {
   if (log.isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading history…
+        <Loader2 className="size-4 animate-spin" /> Loading history…
       </div>
     );
   }
@@ -713,7 +713,7 @@ function HistoryTab({ listId, list }: { listId: string; list: CblDetailView }) {
             onClick={() => refresh.mutate({})}
             disabled={refresh.isPending}
           >
-            <RefreshCw className="mr-1 h-3 w-3" /> Refresh now
+            <RefreshCw className="mr-1 size-3" /> Refresh now
           </Button>
         ) : null}
       </div>
@@ -969,7 +969,7 @@ function SettingsTab({
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button type="button" variant="destructive">
-              <Trash2 className="mr-1 h-4 w-4" />
+              <Trash2 className="mr-1 size-4" />
               Delete
             </Button>
           </AlertDialogTrigger>

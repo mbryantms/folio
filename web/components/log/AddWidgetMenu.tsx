@@ -41,7 +41,7 @@ export function AddWidgetMenu({ current }: { current: LogWidgetView[] }) {
 
           disabled={items.length === 0 || add.isPending}
         >
-          <Plus aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
+          <Plus aria-hidden="true" className="mr-1 size-3.5" />
           Add widget
         </Button>
       </DropdownMenuTrigger>
@@ -70,7 +70,7 @@ export function AddWidgetMenu({ current }: { current: LogWidgetView[] }) {
               >
                 <Icon
                   aria-hidden="true"
-                  className="text-muted-foreground mt-0.5 h-4 w-4 shrink-0"
+                  className="text-muted-foreground mt-0.5 size-4 shrink-0"
                 />
                 <div className="flex min-w-0 flex-col">
                   <span className="text-sm font-medium">{def.displayName}</span>

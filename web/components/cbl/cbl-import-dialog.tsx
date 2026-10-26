@@ -139,13 +139,13 @@ function SourceStep({
     <Tabs defaultValue="catalog">
       <TabsList>
         <TabsTrigger value="catalog">
-          <Library className="mr-1 h-4 w-4" /> Browse catalog
+          <Library className="mr-1 size-4" /> Browse catalog
         </TabsTrigger>
         <TabsTrigger value="url">
-          <Globe className="mr-1 h-4 w-4" /> From URL
+          <Globe className="mr-1 size-4" /> From URL
         </TabsTrigger>
         <TabsTrigger value="upload">
-          <Upload className="mr-1 h-4 w-4" /> Upload file
+          <Upload className="mr-1 size-4" /> Upload file
         </TabsTrigger>
       </TabsList>
       <TabsContent value="catalog">
@@ -176,7 +176,7 @@ function CatalogTab({
   if (sources.isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading sources…
+        <Loader2 className="size-4 animate-spin" /> Loading sources…
       </div>
     );
   }
@@ -331,7 +331,7 @@ function CatalogList({
   if (entries.isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading catalog…
+        <Loader2 className="size-4 animate-spin" /> Loading catalog…
       </div>
     );
   }
@@ -367,7 +367,7 @@ function CatalogList({
   return (
     <div className="flex flex-col gap-3">
       <div className="border-input focus-within:ring-ring flex items-center gap-2 rounded-md border px-3 focus-within:ring-2">
-        <Search className="text-muted-foreground h-4 w-4" />
+        <Search className="text-muted-foreground size-4" />
         <input
           type="text"
           aria-label="Search CBL files by name or path"
@@ -428,7 +428,7 @@ function Breadcrumbs({
       </button>
       {segments.map((seg, i) => (
         <React.Fragment key={i}>
-          <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />
+          <ChevronRight className="size-3 shrink-0" aria-hidden />
           <button
             type="button"
             onClick={() => onNavigate(segments.slice(0, i + 1))}
@@ -473,7 +473,7 @@ function FolderView({
             className="hover:bg-accent/40 flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors"
           >
             <span className="flex min-w-0 items-center gap-2">
-              <Folder className="text-muted-foreground h-4 w-4 shrink-0" />
+              <Folder className="text-muted-foreground size-4 shrink-0" />
               <span className="truncate text-sm font-medium">
                 {folder.name}
               </span>
@@ -482,7 +482,7 @@ function FolderView({
               <span>
                 {folder.fileCount} {folder.fileCount === 1 ? "list" : "lists"}
               </span>
-              <ChevronRight className="h-3 w-3" aria-hidden />
+              <ChevronRight className="size-3" aria-hidden />
             </span>
           </button>
         </li>
@@ -546,7 +546,7 @@ function FileRow({
   return (
     <div className="flex items-center justify-between gap-3 px-3 py-2">
       <div className="flex min-w-0 items-center gap-2">
-        <FileText className="text-muted-foreground h-4 w-4 shrink-0" />
+        <FileText className="text-muted-foreground size-4 shrink-0" />
         <div className="min-w-0">
           <div className="truncate text-sm font-medium" title={entry.name}>
             {entry.name}
@@ -569,7 +569,7 @@ function FileRow({
       >
         {isImporting ? (
           <>
-            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+            <Loader2 className="mr-1 size-3 animate-spin" />
             Importing…
           </>
         ) : (
@@ -627,7 +627,7 @@ function UrlTab({ onImported }: { onImported: (list: CblListView) => void }) {
         <Button type="submit" disabled={create.isPending || url.trim() === ""}>
           {create.isPending ? (
             <>
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Importing…
+              <Loader2 className="mr-1 size-3 animate-spin" /> Importing…
             </>
           ) : (
             "Import"
@@ -683,7 +683,7 @@ function UploadTab({
           dragOver ? "bg-accent" : "bg-muted/30"
         }`}
       >
-        <Upload className="text-muted-foreground h-6 w-6" />
+        <Upload className="text-muted-foreground size-6" />
         {file ? (
           <div className="text-center">
             <div className="font-medium">{file.name}</div>
@@ -720,7 +720,7 @@ function UploadTab({
         <Button type="button" onClick={submit} disabled={submitting || !file}>
           {submitting ? (
             <>
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Uploading…
+              <Loader2 className="mr-1 size-3 animate-spin" /> Uploading…
             </>
           ) : (
             "Upload"
@@ -879,7 +879,7 @@ function SaveStep({
         >
           {create.isPending ? (
             <>
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Saving…
+              <Loader2 className="mr-1 size-3 animate-spin" /> Saving…
             </>
           ) : (
             "Save view"

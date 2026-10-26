@@ -122,14 +122,14 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
         >
           Library
         </Link>
-        <ChevronRight className="h-3 w-3" />
+        <ChevronRight className="size-3" />
         <span className="text-foreground/80">{view.name}</span>
       </nav>
 
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
           <div className="text-muted-foreground inline-flex items-center gap-1.5 text-xs font-medium tracking-wider uppercase max-sm:hidden">
-            <Sparkles className="h-3 w-3" />
+            <Sparkles className="size-3" />
             System rail
           </div>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight max-sm:mt-0 sm:text-3xl">

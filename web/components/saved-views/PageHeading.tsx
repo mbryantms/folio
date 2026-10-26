@@ -103,7 +103,7 @@ export function PageHeading({
           >
             {pageName}
           </h1>
-          <Pencil className="text-muted-foreground/0 group-hover:text-muted-foreground h-4 w-4 shrink-0 transition-colors" />
+          <Pencil className="text-muted-foreground/0 group-hover:text-muted-foreground size-4 shrink-0 transition-colors" />
         </button>
       )}
       <p className="text-muted-foreground mt-1 text-sm">

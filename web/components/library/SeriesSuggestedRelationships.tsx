@@ -89,7 +89,7 @@ export function SeriesSuggestedRelationships({
   return (
     <div className="space-y-2" data-testid="suggested-relationships">
       <h3 className="text-muted-foreground flex items-center gap-1 text-xs font-medium tracking-wider uppercase">
-        <Sparkles aria-hidden className="h-3 w-3" /> Suggested
+        <Sparkles aria-hidden className="size-3" /> Suggested
       </h3>
       <TooltipProvider delayDuration={250}>
         <ul className="flex flex-wrap gap-2">
@@ -147,26 +147,26 @@ function SuggestionChip({
       <Button
         variant="ghost"
         size="icon"
-        className="h-6 w-6"
+        className="size-6"
         disabled={busy}
         aria-label={`Accept: ${label} ${otherName}`}
         onClick={() => accept.mutate({ id: s.id })}
       >
         {accept.isPending ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Loader2 className="size-3.5 animate-spin" />
         ) : (
-          <Check className="h-3.5 w-3.5" />
+          <Check className="size-3.5" />
         )}
       </Button>
       <Button
         variant="ghost"
         size="icon"
-        className="text-muted-foreground h-6 w-6"
+        className="text-muted-foreground size-6"
         disabled={busy}
         aria-label={`Reject: ${label} ${otherName}`}
         onClick={() => reject.mutate({ id: s.id })}
       >
-        <X className="h-3.5 w-3.5" />
+        <X className="size-3.5" />
       </Button>
     </li>
   );

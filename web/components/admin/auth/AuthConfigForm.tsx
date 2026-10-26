@@ -186,7 +186,7 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle className="text-muted-foreground flex items-center gap-2 text-sm font-semibold tracking-wide uppercase">
-              <ShieldCheck className="h-4 w-4" />
+              <ShieldCheck className="size-4" />
               OIDC
               {!oidcEnabled && (
                 <Badge variant="outline" className="ml-2 text-xs">
@@ -222,7 +222,7 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
                     !state.oidc_issuer.trim() || probe.isPending || !oidcEnabled
                   }
                 >
-                  <Search className="mr-1.5 h-3.5 w-3.5" />
+                  <Search className="mr-1.5 size-3.5" />
                   {probe.isPending ? "Probing…" : "Test discovery"}
                 </Button>
                 <DiscoverResult result={discoverResult} />
@@ -296,7 +296,7 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
             </div>
             {state.oidc_trust_unverified_email && (
               <div className="border-destructive/30 bg-destructive/5 text-destructive flex items-start gap-2 rounded-md border p-3 text-xs">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
                 <span>
                   OIDC users with unverified email will be accepted. Any
                   takeover of the IdP&rsquo;s mailer affects this Folio
@@ -332,7 +332,7 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
             </div>
             {state.oidc_link_local_by_verified_email && (
               <div className="border-destructive/30 bg-destructive/5 text-destructive flex items-start gap-2 rounded-md border p-3 text-xs">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
                 <span>
                   Anyone who can sign in at your IdP with a verified email
                   matching a local account will take over that account. Only

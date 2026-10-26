@@ -76,7 +76,7 @@ export function MetadataCompareView({
   if (isLoading) {
     return (
       <div className="text-muted-foreground flex items-center justify-center gap-2 py-12 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Comparing candidates…
+        <Loader2 className="size-4 animate-spin" /> Comparing candidates…
       </div>
     );
   }
@@ -85,7 +85,7 @@ export function MetadataCompareView({
       <div className="space-y-3 py-4">
         <p className="text-destructive text-sm">{errorMessage}</p>
         <Button variant="outline" size="sm" onClick={onBack}>
-          <ArrowLeft className="mr-1.5 h-4 w-4" /> Back to matches
+          <ArrowLeft className="mr-1.5 size-4" /> Back to matches
         </Button>
       </div>
     );
@@ -109,7 +109,7 @@ export function MetadataCompareView({
           onClick={onBack}
           disabled={isApplying}
         >
-          <ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Back to matches
+          <ArrowLeft className="mr-1.5 size-3.5" /> Back to matches
         </Button>
         <span className="text-muted-foreground text-xs">
           Pick the best value per field; remove a candidate to drop its column.
@@ -157,7 +157,7 @@ export function MetadataCompareView({
               title="Remove this candidate from the comparison"
               aria-label={`Remove ${providerLabel(p.source)}`}
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="size-3.5" />
             </button>
           </div>
         ))}
@@ -293,7 +293,7 @@ export function MetadataCompareView({
           onClick={onApply}
           disabled={isApplying || selectedCount === 0 || columns.length === 0}
         >
-          {isApplying && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+          {isApplying && <Loader2 className="mr-1.5 size-4 animate-spin" />}
           Apply merged ({selectedCount} field{selectedCount === 1 ? "" : "s"})
         </Button>
       </div>

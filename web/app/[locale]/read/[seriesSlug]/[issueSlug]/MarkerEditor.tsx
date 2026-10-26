@@ -466,11 +466,11 @@ export function MarkerEditor({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-6 w-6"
+                    className="size-6"
                     onClick={handleCopyText}
                     aria-label="Copy detected text"
                   >
-                    <Copy className="h-3.5 w-3.5" />
+                    <Copy className="size-3.5" />
                   </Button>
                   <button
                     type="button"
@@ -478,7 +478,7 @@ export function MarkerEditor({
                     disabled={ocrPending || update.isPending}
                     className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs disabled:opacity-50"
                   >
-                    <X className="h-3 w-3" />
+                    <X className="size-3" />
                     Clear
                   </button>
                 </span>
@@ -519,7 +519,7 @@ export function MarkerEditor({
                 onClick={handleDetectText}
                 disabled={ocrPending}
               >
-                <Sparkles className="mr-2 h-4 w-4" />
+                <Sparkles className="mr-2 size-4" />
                 {capturedText ? "Re-detect text" : "Detect text (OCR)"}
               </Button>
               {!capturedOpen ? (
@@ -529,7 +529,7 @@ export function MarkerEditor({
                   size="sm"
                   onClick={() => setCapturedOpen(true)}
                 >
-                  <Pencil className="mr-2 h-4 w-4" />
+                  <Pencil className="mr-2 size-4" />
                   Type text
                 </Button>
               ) : null}
@@ -586,7 +586,7 @@ export function MarkerEditor({
               )}
             >
               <Star
-                className={cn("h-4 w-4", isFavorite ? "fill-current" : null)}
+                className={cn("size-4", isFavorite ? "fill-current" : null)}
                 aria-hidden="true"
               />
             </button>
@@ -608,7 +608,7 @@ export function MarkerEditor({
                       aria-label={`Remove ${t}`}
                       className="text-muted-foreground hover:text-foreground"
                     >
-                      <X className="h-3 w-3" />
+                      <X className="size-3" />
                     </button>
                   </span>
                 ))}

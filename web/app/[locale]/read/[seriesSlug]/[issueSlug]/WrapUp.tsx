@@ -74,7 +74,7 @@ export function WrapUpStrip({
             {markerCounts.total}
           </span>
         ) : null}
-        <ChevronRight className="h-4 w-4" aria-hidden="true" />
+        <ChevronRight className="size-4" aria-hidden="true" />
       </Button>
     </div>
   );
@@ -141,7 +141,7 @@ export function WrapUpBody({
           disabled={markerCounts.total === 0}
           className="h-8 shrink-0 whitespace-nowrap"
         >
-          <ListOrdered className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+          <ListOrdered className="mr-1.5 size-3.5" aria-hidden="true" />
           Review
         </Button>
       </div>

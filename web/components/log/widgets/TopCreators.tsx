@@ -44,7 +44,7 @@ export function TopCreators({
     >
       {stats.isLoading ? (
         <div className="space-y-2">
-          <Skeleton className="h-3 w-3/4" />
+          <Skeleton className="size-3/4" />
           <Skeleton className="h-3 w-2/3" />
           <Skeleton className="h-3 w-1/2" />
         </div>

@@ -147,7 +147,7 @@ export function ViewHeader({
                 className="text-muted-foreground bg-muted/40 inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-medium"
                 title="Built-in views can't be edited or deleted"
               >
-                <Lock className="mr-1 h-3 w-3" /> Built-in
+                <Lock className="mr-1 size-3" /> Built-in
               </span>
             ) : null}
             {actions === "inline" ? (

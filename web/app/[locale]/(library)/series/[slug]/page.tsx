@@ -497,19 +497,19 @@ export default async function SeriesPage({
                 label="Issues"
                 value={formatIssueTotal(series)}
                 hint={formatCollectionHint(series)}
-                icon={<BookOpen className="h-4 w-4" />}
+                icon={<BookOpen className="size-4" />}
               />
               <DetailSummaryItem
                 label="Published"
                 value={releasedLabel}
                 hint={status}
-                icon={<Calendar className="h-4 w-4" />}
+                icon={<Calendar className="size-4" />}
               />
               <DetailSummaryItem
                 label="Length"
                 value={formatPageCount(series.total_page_count)}
                 hint={readingTime ? `≈ ${readingTime}` : null}
-                icon={<FileStack className="h-4 w-4" />}
+                icon={<FileStack className="size-4" />}
               />
               <DetailSummaryItem
                 label="Updated"
@@ -517,7 +517,7 @@ export default async function SeriesPage({
                   series.last_issue_updated_at ?? series.updated_at,
                 )}
                 hint="Issue metadata"
-                icon={<Clock className="h-4 w-4" />}
+                icon={<Clock className="size-4" />}
               />
             </DetailSummaryGrid>
 
@@ -746,31 +746,31 @@ function SeriesFactRow({
   const facts: { icon: React.ReactNode; label: string }[] = [];
   if (series.publisher) {
     facts.push({
-      icon: <Building2 className="h-4 w-4" />,
+      icon: <Building2 className="size-4" />,
       label: series.publisher,
     });
   }
   if (series.total_page_count) {
     facts.push({
-      icon: <FileStack className="h-4 w-4" />,
+      icon: <FileStack className="size-4" />,
       label: `${formatCompactPages(series.total_page_count)} pages`,
     });
   }
   if (readingTime) {
     facts.push({
-      icon: <Clock className="h-4 w-4" />,
+      icon: <Clock className="size-4" />,
       label: `~${readingTime}`,
     });
   }
   if (series.year) {
     facts.push({
-      icon: <Calendar className="h-4 w-4" />,
+      icon: <Calendar className="size-4" />,
       label: String(series.year),
     });
   }
   if (series.language_code) {
     facts.push({
-      icon: <Languages className="h-4 w-4" />,
+      icon: <Languages className="size-4" />,
       label: series.language_code.toUpperCase(),
     });
   }

@@ -71,9 +71,9 @@ export function ClampedBody({
         >
           {expanded ? "Less" : "More"}
           {expanded ? (
-            <ChevronUp className="ml-1 h-3 w-3" aria-hidden="true" />
+            <ChevronUp className="ml-1 size-3" aria-hidden="true" />
           ) : (
-            <ChevronDown className="ml-1 h-3 w-3" aria-hidden="true" />
+            <ChevronDown className="ml-1 size-3" aria-hidden="true" />
           )}
         </Button>
       ) : null}
@@ -168,7 +168,7 @@ export function ClosingNoteRow({
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
           <span className="bg-muted text-foreground inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase">
-            <NotebookText className="h-3 w-3" aria-hidden="true" />
+            <NotebookText className="size-3" aria-hidden="true" />
             Closing note
           </span>
           <span
@@ -196,7 +196,7 @@ export function ClosingNoteRow({
                   aria-label={`Actions for closing note on ${label}`}
                   className="folio-tap text-muted-foreground hover:text-foreground hover:bg-muted/50 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors"
                 >
-                  <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                  <MoreVertical className="size-4" aria-hidden="true" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">

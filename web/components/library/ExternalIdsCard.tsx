@@ -235,7 +235,7 @@ export function useExternalIdsEditor(
           >
             {remove.isPending ? (
               <>
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Unlinking
+                <Loader2 className="mr-1 size-3 animate-spin" /> Unlinking
               </>
             ) : (
               "Unlink"
@@ -275,7 +275,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
             onClick={startAdding}
             aria-label="Add identifier"
           >
-            <Plus className="h-3.5 w-3.5" />
+            <Plus className="size-3.5" />
           </Button>
         )}
       </CardHeader>
@@ -286,7 +286,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
       !adding && (
         <div className="flex justify-end">
           <Button variant="ghost" size="sm" onClick={startAdding}>
-            <Plus className="mr-1 h-3.5 w-3.5" /> Add ID
+            <Plus className="mr-1 size-3.5" /> Add ID
           </Button>
         </div>
       )
@@ -299,7 +299,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
       <>
         {editor.isLoading ? (
           <div className="text-muted-foreground flex items-center gap-2 py-3">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+            <Loader2 className="size-4 animate-spin" /> Loading…
           </div>
         ) : rows.length === 0 && !adding ? (
           <div className="text-muted-foreground py-3">
@@ -337,7 +337,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
                   onClick={() => requestRemove(r)}
                   aria-label={`Remove ${r.source_label} link`}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 className="size-3.5" />
                 </Button>
               </li>
             ))}
@@ -358,7 +358,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
       <>
         {editor.isLoading ? (
           <div className="text-muted-foreground flex items-center gap-2 py-3">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+            <Loader2 className="size-4 animate-spin" /> Loading…
           </div>
         ) : rows.length === 0 && !adding ? (
           <p className="text-muted-foreground text-sm">
@@ -397,11 +397,11 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="text-muted-foreground/60 hover:text-foreground h-6 w-6"
+                    className="text-muted-foreground/60 hover:text-foreground size-6"
                     onClick={() => requestRemove(r)}
                     aria-label={`Remove ${r.source_label} link`}
                   >
-                    <Trash2 className="h-3 w-3" />
+                    <Trash2 className="size-3" />
                   </Button>
                 </div>
               </div>

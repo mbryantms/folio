@@ -40,7 +40,7 @@ export function SettingsIndex() {
                 <li key={item.href}>
                   <SettingsCard href={item.href} label={item.label}>
                     <Icon
-                      className="text-muted-foreground h-5 w-5 shrink-0"
+                      className="text-muted-foreground size-5 shrink-0"
                       aria-hidden="true"
                     />
                   </SettingsCard>
@@ -63,7 +63,7 @@ export function SettingsIndex() {
             <li>
               <SettingsCard href="/admin/server" label="About Folio">
                 <Info
-                  className="text-muted-foreground h-5 w-5 shrink-0"
+                  className="text-muted-foreground size-5 shrink-0"
                   aria-hidden="true"
                 />
               </SettingsCard>

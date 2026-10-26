@@ -59,7 +59,7 @@ export function Description({
         <summary className="border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 inline-flex cursor-pointer list-none items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium select-none [&::-webkit-details-marker]:hidden">
           <ChevronDown
             aria-hidden="true"
-            className="h-3 w-3 transition-transform group-open:rotate-180"
+            className="size-3 transition-transform group-open:rotate-180"
           />
           <span className="group-open:hidden">{collapsedLabel}</span>
           <span className="hidden group-open:inline">Hide details</span>

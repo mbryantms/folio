@@ -82,7 +82,7 @@ export function DirectoryPicker({
           {value || placeholder}
         </span>
         <FolderOpen
-          className="text-muted-foreground h-4 w-4 shrink-0"
+          className="text-muted-foreground size-4 shrink-0"
           aria-hidden="true"
         />
       </button>
@@ -153,12 +153,12 @@ function BrowserDialog({
             disabled={atRoot}
             title="Library root"
           >
-            <Home aria-hidden="true" className="h-3 w-3" />
+            <Home aria-hidden="true" className="size-3" />
             <span>root</span>
           </button>
           {segments.map((seg) => (
             <React.Fragment key={seg.path}>
-              <ChevronRight aria-hidden="true" className="h-3 w-3 shrink-0" />
+              <ChevronRight aria-hidden="true" className="size-3 shrink-0" />
               <button
                 type="button"
                 onClick={() => onBrowse(seg.path)}
@@ -198,7 +198,7 @@ function BrowserDialog({
                     >
                       <Folder
                         aria-hidden="true"
-                        className="text-muted-foreground h-4 w-4 shrink-0"
+                        className="text-muted-foreground size-4 shrink-0"
                       />
                       {/* `min-w-0` lets `truncate` actually clip — a
                           flex item defaults to `min-width: auto`

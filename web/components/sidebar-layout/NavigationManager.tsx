@@ -306,7 +306,7 @@ function SidebarSection() {
           type="button"
           onClick={() => setAddOpen(true)}
         >
-          <Plus className="mr-1.5 h-4 w-4" />
+          <Plus className="mr-1.5 size-4" />
           Add
         </Button>
         <Button
@@ -315,7 +315,7 @@ function SidebarSection() {
           type="button"
           onClick={appendHeader}
         >
-          <Heading2 className="mr-1.5 h-4 w-4" />
+          <Heading2 className="mr-1.5 size-4" />
           Header
         </Button>
         <Button
@@ -324,13 +324,13 @@ function SidebarSection() {
           type="button"
           onClick={appendSpacer}
         >
-          <Rows3 className="mr-1.5 h-4 w-4" />
+          <Rows3 className="mr-1.5 size-4" />
           Spacer
         </Button>
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button variant="outline" size="sm" type="button">
-              <RotateCcw className="mr-1.5 h-4 w-4" />
+              <RotateCcw className="mr-1.5 size-4" />
               Reset
             </Button>
           </AlertDialogTrigger>
@@ -437,7 +437,7 @@ function MobileMoveButtons({
         aria-label="Move up"
         className="text-muted-foreground hover:text-foreground flex h-4 w-7 items-center justify-center rounded-sm disabled:opacity-30"
       >
-        <ChevronUp className="h-3 w-3" />
+        <ChevronUp className="size-3" />
       </button>
       <button
         type="button"
@@ -446,7 +446,7 @@ function MobileMoveButtons({
         aria-label="Move down"
         className="text-muted-foreground hover:text-foreground flex h-4 w-7 items-center justify-center rounded-sm disabled:opacity-30"
       >
-        <ChevronDown className="h-3 w-3" />
+        <ChevronDown className="size-3" />
       </button>
     </div>
   );
@@ -544,14 +544,14 @@ function SidebarRow({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         {...(listeners as any)}
       >
-        <GripVertical className="h-4 w-4" />
+        <GripVertical className="size-4" />
       </button>
       {isHeader ? (
-        <Heading2 className="text-muted-foreground h-4 w-4 shrink-0" />
+        <Heading2 className="text-muted-foreground size-4 shrink-0" />
       ) : isSpacer ? (
-        <Rows3 className="text-muted-foreground h-4 w-4 shrink-0" />
+        <Rows3 className="text-muted-foreground size-4 shrink-0" />
       ) : (
-        <Icon className="text-muted-foreground h-4 w-4 shrink-0" />
+        <Icon className="text-muted-foreground size-4 shrink-0" />
       )}
       {isSpacer ? (
         <span className="text-muted-foreground/70 min-w-0 flex-1 text-xs italic">
@@ -592,7 +592,7 @@ function SidebarRow({
         >
           <span className="truncate">{entry.label}</span>
           {renamable ? (
-            <Pencil className="text-muted-foreground/0 group-hover:text-muted-foreground ml-1.5 inline-block h-3 w-3 align-middle transition-colors" />
+            <Pencil className="text-muted-foreground/0 group-hover:text-muted-foreground ml-1.5 inline-block size-3 align-middle transition-colors" />
           ) : null}
         </button>
       )}
@@ -607,9 +607,9 @@ function SidebarRow({
         title="Remove from sidebar"
       >
         {isSpacer ? (
-          <X className="h-3.5 w-3.5" />
+          <X className="size-3.5" />
         ) : (
-          <Trash2 className="h-3.5 w-3.5" />
+          <Trash2 className="size-3.5" />
         )}
       </Button>
     </li>
@@ -891,7 +891,7 @@ function AddToSidebarDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="relative">
-          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2" />
+          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
           <Input
             type="search"
             placeholder="Search items…"
@@ -976,7 +976,7 @@ function AddRow({
         {addRowKindLabel(kind)}
       </Badge>
       <Button type="button" variant="outline" size="sm" onClick={onAdd}>
-        <Plus className="mr-1 h-3.5 w-3.5" />
+        <Plus className="mr-1 size-3.5" />
         Add
       </Button>
     </div>

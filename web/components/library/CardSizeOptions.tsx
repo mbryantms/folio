@@ -52,7 +52,7 @@ export function CardSizeOptions({
           // `docs/dev/search.md`.
           className="px-2.5"
         >
-          <LayoutGrid className="h-4 w-4" />
+          <LayoutGrid className="size-4" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72">

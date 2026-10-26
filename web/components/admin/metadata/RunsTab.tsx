@@ -92,7 +92,7 @@ export function RunsTab() {
 
         {runs.isLoading ? (
           <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+            <Loader2 className="size-4 animate-spin" /> Loading…
           </div>
         ) : rows.length === 0 ? (
           <Card>
@@ -123,7 +123,7 @@ export function RunsTab() {
             role="status"
             className="text-muted-foreground flex items-center justify-center gap-2 text-xs"
           >
-            <Loader2 className="h-3 w-3 animate-spin" /> Loading more runs…
+            <Loader2 className="size-3 animate-spin" /> Loading more runs…
           </p>
         )}
       </div>
@@ -179,7 +179,7 @@ function RunListRow({
                 : "no candidates"}
             </p>
           </div>
-          <ChevronRight className="text-muted-foreground h-4 w-4 shrink-0" />
+          <ChevronRight className="text-muted-foreground size-4 shrink-0" />
         </div>
       </button>
     </li>
@@ -210,7 +210,7 @@ function RunDetailPanel({ id }: { id: string }) {
     return (
       <Card>
         <CardContent className="text-muted-foreground flex items-center gap-2 py-12 text-sm">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          <Loader2 className="size-4 animate-spin" /> Loading…
         </CardContent>
       </Card>
     );

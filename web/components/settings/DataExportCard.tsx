@@ -29,7 +29,7 @@ export function DataExportCard() {
         </p>
         <Button variant="outline" size="sm" asChild className="shrink-0">
           <a href={EXPORT_HREF} download>
-            <Download aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
+            <Download aria-hidden="true" className="mr-1 size-3.5" />
             Export my data
           </a>
         </Button>

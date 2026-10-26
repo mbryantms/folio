@@ -49,7 +49,7 @@ export function AppearancesTab(props: Props) {
   if (q.isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <Loader2 className="size-4 animate-spin" />
         Loading appearances…
       </div>
     );
@@ -77,19 +77,19 @@ export function AppearancesTab(props: Props) {
     <div className="space-y-6">
       <Section
         title="Reading lists"
-        icon={<BookMarked className="h-4 w-4" />}
+        icon={<BookMarked className="size-4" />}
         items={reading_lists}
         variant={props.variant}
       />
       <Section
         title="Collections"
-        icon={<Library className="h-4 w-4" />}
+        icon={<Library className="size-4" />}
         items={collections}
         variant={props.variant}
       />
       <Section
         title="Story arcs"
-        icon={<Layers className="h-4 w-4" />}
+        icon={<Layers className="size-4" />}
         items={arcs}
         variant={props.variant}
       />

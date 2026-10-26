@@ -74,7 +74,7 @@ export function NewPageButton() {
         onClick={() => setOpen(true)}
         title="Add page"
       >
-        <Plus className="mr-1 h-4 w-4" /> New page
+        <Plus className="mr-1 size-4" /> New page
       </Button>
       <Dialog
         open={open}

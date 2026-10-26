@@ -326,9 +326,9 @@ export function SeriesProviderRangesCard({
                 onClick={runAnalyze}
               >
                 {analysing ? (
-                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                  <Loader2 className="mr-1 size-3.5 animate-spin" />
                 ) : (
-                  <Sparkles className="mr-1 h-3.5 w-3.5" />
+                  <Sparkles className="mr-1 size-3.5" />
                 )}
                 Analyze coverage
               </Button>
@@ -337,7 +337,7 @@ export function SeriesProviderRangesCard({
                 size="sm"
                 onClick={() => setAdding(true)}
               >
-                <Plus className="mr-1 h-3.5 w-3.5" /> Add mapping
+                <Plus className="mr-1 size-3.5" /> Add mapping
               </Button>
             </div>
           )}
@@ -345,7 +345,7 @@ export function SeriesProviderRangesCard({
         <CardContent className="space-y-3 text-sm">
           {loading ? (
             <div className="text-muted-foreground flex items-center gap-2 py-3">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+              <Loader2 className="size-4 animate-spin" /> Loading…
             </div>
           ) : blocks.length === 0 && !adding ? (
             <p className="text-muted-foreground text-sm">
@@ -390,11 +390,11 @@ export function SeriesProviderRangesCard({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="text-muted-foreground/60 hover:text-foreground h-6 w-6"
+                    className="text-muted-foreground/60 hover:text-foreground size-6"
                     onClick={() => ids.requestRemove(r)}
                     aria-label={`Remove ${r.source_label} link`}
                   >
-                    <Trash2 className="h-3 w-3" />
+                    <Trash2 className="size-3" />
                   </Button>
                 </span>
               ))
@@ -406,7 +406,7 @@ export function SeriesProviderRangesCard({
                 className="ml-auto"
                 onClick={ids.startAdding}
               >
-                <Plus className="mr-1 h-3.5 w-3.5" /> Add ID
+                <Plus className="mr-1 size-3.5" /> Add ID
               </Button>
             )}
           </div>
@@ -425,7 +425,7 @@ export function SeriesProviderRangesCard({
               >
                 <ChevronRight
                   className={cn(
-                    "text-muted-foreground h-4 w-4 shrink-0 transition-transform",
+                    "text-muted-foreground size-4 shrink-0 transition-transform",
                     showAnalysis && "rotate-90",
                   )}
                   aria-hidden
@@ -433,7 +433,7 @@ export function SeriesProviderRangesCard({
                 <span className="font-medium">Coverage analysis</span>
                 <span className="text-muted-foreground min-w-0 truncate text-xs">
                   {analysing && (
-                    <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />
+                    <Loader2 className="mr-1 inline size-3 animate-spin" />
                   )}
                   {attention.summary}
                 </span>
@@ -441,7 +441,7 @@ export function SeriesProviderRangesCard({
               <CollapsibleContent className="space-y-2 pt-2">
                 {analysing ? (
                   <div className="text-muted-foreground flex items-center gap-2 text-xs">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className="size-3.5 animate-spin" />
                     {analysis.data.trigger === "analyze"
                       ? "Listing candidate series on ComicVine, Metron and GCD. This can take a minute (provider rate limits)."
                       : "Checking which issues the series you matched holds, and where the rest live…"}
@@ -568,7 +568,7 @@ export function SeriesProviderRangesCard({
                 >
                   {add.isPending ? (
                     <>
-                      <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Adding
+                      <Loader2 className="mr-1 size-3 animate-spin" /> Adding
                     </>
                   ) : (
                     "Add"
@@ -615,7 +615,7 @@ export function SeriesProviderRangesCard({
             >
               {remove.isPending ? (
                 <>
-                  <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Removing
+                  <Loader2 className="mr-1 size-3 animate-spin" /> Removing
                 </>
               ) : (
                 "Remove"
@@ -665,7 +665,7 @@ function IdBadge({ row }: { row: ExternalIdRow }) {
         className="hover:bg-secondary/80 cursor-pointer gap-1 font-normal tabular-nums"
       >
         {label}
-        <ExternalLink className="h-3 w-3" aria-hidden />
+        <ExternalLink className="size-3" aria-hidden />
       </Badge>
     </a>
   ) : (
@@ -711,11 +711,11 @@ function ProviderBlockView({
             <Button
               variant="ghost"
               size="icon"
-              className="text-muted-foreground/60 hover:text-foreground h-6 w-6"
+              className="text-muted-foreground/60 hover:text-foreground size-6"
               onClick={() => onUnlinkId(block.id!)}
               aria-label={`Unlink ${block.label}`}
             >
-              <Trash2 className="h-3 w-3" />
+              <Trash2 className="size-3" />
             </Button>
           </>
         ) : (
@@ -804,7 +804,7 @@ function ProviderBlockView({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="text-muted-foreground/60 hover:text-foreground h-6 w-6 shrink-0"
+                    className="text-muted-foreground/60 hover:text-foreground size-6 shrink-0"
                     onClick={() =>
                       onRemoveRange({
                         id: seg.range_id!,
@@ -817,7 +817,7 @@ function ProviderBlockView({
                     }
                     aria-label={`Remove ${block.label} ${formatRange(seg.low, seg.high)} mapping`}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Trash2 className="size-3.5" />
                   </Button>
                 )}
               </li>

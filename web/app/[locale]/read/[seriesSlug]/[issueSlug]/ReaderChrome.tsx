@@ -187,7 +187,7 @@ export function ReaderChrome({
             className={`ml-1 inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium tracking-wider uppercase sm:ml-2 ${statusTone("warning")}`}
             aria-label="Reading in incognito mode — progress and activity will not be saved"
           >
-            <EyeOff className="h-3 w-3" />
+            <EyeOff className="size-3" />
             {/* Icon-only on phones: the word doesn't fit next to the page
                 counter and seven controls at 390pt. */}
             <span className={narrow ? "sr-only" : undefined}>Incognito</span>
@@ -473,7 +473,7 @@ function MarkerMenuItems({ pageIndex }: { pageIndex: number }) {
     <>
       <DropdownMenuItem onSelect={openNote} className="flex-col items-start">
         <span className="flex items-center font-medium">
-          <StickyNote className="mr-2 h-4 w-4" /> Add note
+          <StickyNote className="mr-2 size-4" /> Add note
         </span>
         <span className="text-muted-foreground ml-6 text-xs">
           Page-level markdown note. Optional panel selection.
@@ -485,7 +485,7 @@ function MarkerMenuItems({ pageIndex }: { pageIndex: number }) {
         className="flex-col items-start"
       >
         <span className="flex items-center font-medium">
-          <Square className="mr-2 h-4 w-4" /> Highlight a region
+          <Square className="mr-2 size-4" /> Highlight a region
         </span>
         <span className="text-muted-foreground ml-6 text-xs">
           Drag a rectangle. Saves just the box — fastest.
@@ -496,7 +496,7 @@ function MarkerMenuItems({ pageIndex }: { pageIndex: number }) {
         className="flex-col items-start"
       >
         <span className="flex items-center font-medium">
-          <Type className="mr-2 h-4 w-4" /> Highlight + capture text
+          <Type className="mr-2 size-4" /> Highlight + capture text
         </span>
         <span className="text-muted-foreground ml-6 text-xs">
           Tap a speech bubble, or drag a box. Runs OCR so the text shows up in
@@ -508,7 +508,7 @@ function MarkerMenuItems({ pageIndex }: { pageIndex: number }) {
         className="flex-col items-start"
       >
         <span className="flex items-center font-medium">
-          <ImageIcon className="mr-2 h-4 w-4" /> Highlight + image hash
+          <ImageIcon className="mr-2 size-4" /> Highlight + image hash
         </span>
         <span className="text-muted-foreground ml-6 text-xs">
           Same as &ldquo;Highlight a region&rdquo; plus a fingerprint of the
@@ -549,19 +549,19 @@ function MoreMenuButton({ pageIndex }: { pageIndex: number }) {
         <MarkerMenuItems pageIndex={pageIndex} />
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={togglePageText}>
-          <ScanText className="mr-2 h-4 w-4" />
+          <ScanText className="mr-2 size-4" />
           {pageTextOpen ? "Hide page text" : "Show page text"}
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={toggleDrawer}>
-          <ListOrdered className="mr-2 h-4 w-4" />
+          <ListOrdered className="mr-2 size-4" />
           {drawerOpen ? "Hide markers list" : "Show markers in this issue"}
         </DropdownMenuItem>
         {fullscreen.supported ? (
           <DropdownMenuItem onSelect={fullscreen.toggle}>
             {fullscreen.isFullscreen ? (
-              <Minimize2 className="mr-2 h-4 w-4" />
+              <Minimize2 className="mr-2 size-4" />
             ) : (
-              <Maximize2 className="mr-2 h-4 w-4" />
+              <Maximize2 className="mr-2 size-4" />
             )}
             {fullscreen.isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
           </DropdownMenuItem>

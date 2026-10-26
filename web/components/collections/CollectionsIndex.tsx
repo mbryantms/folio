@@ -45,7 +45,7 @@ export function CollectionsIndex() {
         description="Manual reading lists of mixed series and issues. Use the kebab menu on any cover to add items."
         actions={
           <Button type="button" onClick={() => setCreateOpen(true)}>
-            <Plus className="mr-1 h-4 w-4" /> New collection
+            <Plus className="mr-1 size-4" /> New collection
           </Button>
         }
       />
@@ -84,7 +84,7 @@ function CollectionCard({ collection }: { collection: SavedViewView }) {
     >
       <div className="flex items-start justify-between gap-3">
         <Icon
-          className="text-muted-foreground h-5 w-5 shrink-0"
+          className="text-muted-foreground size-5 shrink-0"
           aria-hidden="true"
         />
         {isWantToRead ? (
@@ -113,7 +113,7 @@ function CollectionCard({ collection }: { collection: SavedViewView }) {
 export function CollectionCardSkeleton() {
   return (
     <div className="border-border/60 flex h-full flex-col gap-2 rounded-lg border p-4">
-      <Skeleton className="h-5 w-5 rounded" />
+      <Skeleton className="size-5 rounded" />
       <div className="space-y-1.5">
         <Skeleton className="h-4 w-2/3" />
         <Skeleton className="h-3 w-full" />
@@ -154,7 +154,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
         collection from any cover&rsquo;s kebab menu.
       </p>
       <Button type="button" className="mt-4" onClick={onCreate}>
-        <Plus className="mr-1 h-4 w-4" /> Create your first collection
+        <Plus className="mr-1 size-4" /> Create your first collection
       </Button>
     </div>
   );

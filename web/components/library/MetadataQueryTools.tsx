@@ -189,7 +189,7 @@ export function MetadataQueryTools({
     <div className="border-border/60 mt-2 space-y-3 border-t pt-2">
       <Collapsible>
         <CollapsibleTrigger className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs [&[data-state=open]>svg]:rotate-90">
-          <ChevronRight className="h-3.5 w-3.5 transition-transform" />
+          <ChevronRight className="size-3.5 transition-transform" />
           Adjust query
         </CollapsibleTrigger>
         <CollapsibleContent>
@@ -297,7 +297,7 @@ export function MetadataQueryTools({
             render={({ field }) => (
               <FormItem>
                 <FormLabel className="text-muted-foreground flex items-center gap-1 text-xs">
-                  <Link2 className="h-3.5 w-3.5" /> Paste provider URL
+                  <Link2 className="size-3.5" /> Paste provider URL
                 </FormLabel>
                 <div className="flex gap-2">
                   <FormControl>

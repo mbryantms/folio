@@ -215,7 +215,7 @@ export function SelectionToolbarBody({
         aria-label="Done — exit select mode"
         className="h-9 w-9"
       >
-        <X className="h-4 w-4" />
+        <X className="size-4" />
       </Button>
 
       <span className="min-w-[5.75rem] text-sm font-medium tabular-nums">
@@ -279,7 +279,7 @@ export function SelectionToolbarBody({
                 }
                 className="h-9 w-9"
               >
-                <MoreHorizontal className="h-4 w-4" />
+                <MoreHorizontal className="size-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -308,7 +308,7 @@ export function SelectionToolbarBody({
                       disabled={a.disabled || actionDisabled}
                       className={a.destructive ? "text-destructive" : undefined}
                     >
-                      {Icon && <Icon className="mr-2 h-4 w-4" />}
+                      {Icon && <Icon className="mr-2 size-4" />}
                       {a.label}
                     </DropdownMenuItem>
                   </React.Fragment>
@@ -332,7 +332,7 @@ export function SelectionToolbarBody({
               disabled={a.disabled || actionDisabled}
               className="min-w-0 flex-1 sm:flex-none"
             >
-              {Icon && <Icon className="mr-1.5 h-4 w-4" />}
+              {Icon && <Icon className="mr-1.5 size-4" />}
               {a.label}
             </Button>
           );
@@ -354,9 +354,9 @@ export function SelectionToolbarBody({
                   disabled={triggerDisabled}
                   className="min-w-0 flex-1 sm:flex-none"
                 >
-                  {GroupIcon && <GroupIcon className="mr-1.5 h-4 w-4" />}
+                  {GroupIcon && <GroupIcon className="mr-1.5 size-4" />}
                   {group.label}
-                  <ChevronDown className="ml-1.5 h-3.5 w-3.5" />
+                  <ChevronDown className="ml-1.5 size-3.5" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -375,7 +375,7 @@ export function SelectionToolbarBody({
                           a.destructive ? "text-destructive" : undefined
                         }
                       >
-                        {Icon && <Icon className="mr-2 h-4 w-4" />}
+                        {Icon && <Icon className="mr-2 size-4" />}
                         {a.label}
                       </DropdownMenuItem>
                     </React.Fragment>
@@ -402,7 +402,7 @@ export function SelectionToolbarBody({
                   onClick={a.onClick}
                   disabled={a.disabled || actionDisabled}
                 >
-                  {Icon && <Icon className="mr-1.5 h-4 w-4" />}
+                  {Icon && <Icon className="mr-1.5 size-4" />}
                   {a.label}
                 </Button>
               );

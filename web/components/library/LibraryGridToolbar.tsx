@@ -284,7 +284,7 @@ export function LibraryGridToolbar({
 
             onClick={onOpenFilters}
           >
-            <Filter className="mr-1 h-3.5 w-3.5" />
+            <Filter className="mr-1 size-3.5" />
             Filters
             {facetCount > 0 ? (
               <Badge
@@ -304,7 +304,7 @@ export function LibraryGridToolbar({
             onClick={onSaveView}
             title="Persist these filters as a new saved view"
           >
-            <BookmarkPlus className="mr-1 h-3.5 w-3.5" />
+            <BookmarkPlus className="mr-1 size-3.5" />
             Save as view…
           </Button>
 
@@ -316,7 +316,7 @@ export function LibraryGridToolbar({
               onClick={onClearFacets}
               className="text-muted-foreground"
             >
-              <X className="mr-1 h-3 w-3" /> Clear filters
+              <X className="mr-1 size-3" /> Clear filters
             </Button>
           ) : null}
         </div>

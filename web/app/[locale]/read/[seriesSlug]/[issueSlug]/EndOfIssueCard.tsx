@@ -219,7 +219,7 @@ export function EndOfIssueCard({
               aria-label="Back to Up Next"
               className="text-muted-foreground hover:text-foreground hover:bg-accent flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors"
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft className="size-4" />
             </button>
             <div className="min-w-0 flex-1">
               <p className="text-muted-foreground text-xs font-medium">
@@ -238,7 +238,7 @@ export function EndOfIssueCard({
               aria-label="Close"
               className="text-muted-foreground hover:text-foreground hover:bg-accent flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors"
             >
-              <X className="h-4 w-4" />
+              <X className="size-4" />
             </button>
           </div>
           <div className="min-h-0 overflow-y-auto">
@@ -298,7 +298,7 @@ export function EndOfIssueCard({
               aria-label="Close"
               className="text-muted-foreground hover:text-foreground hover:bg-accent flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors"
             >
-              <X className="h-4 w-4" />
+              <X className="size-4" />
             </button>
           </div>
 

@@ -265,7 +265,7 @@ export function HorizontalScrollRail({
               <Button asChild variant="outline" size="sm" className="shrink-0">
                 <Link href={viewAllHref} aria-label={viewAllLabel}>
                   <span>{viewAllLabel}</span>
-                  <ArrowRight aria-hidden="true" className="ml-1 h-3.5 w-3.5" />
+                  <ArrowRight aria-hidden="true" className="ml-1 size-3.5" />
                 </Link>
               </Button>
             </ViewAllWrap>
@@ -298,7 +298,7 @@ export function HorizontalScrollRail({
        *  to keep the rail uncluttered when the user isn't engaging. The
        *  buttons sit on top of the edge fades. */}
       {/* Elongated vertical pills (`h-14 w-7 rounded-md`) — distinct
-       *  from the round `h-8 w-8 rounded-full` play overlay so the two
+       *  from the round `size-8 rounded-full` play overlay so the two
        *  affordances never get confused for each other. The vertical
        *  anchor is `top-[42%]` (not `top-1/2`) so the pill centers on
        *  the cover art rather than the whole rail (which extends
@@ -319,7 +319,7 @@ export function HorizontalScrollRail({
             : "pointer-events-none scale-95 opacity-0",
         )}
       >
-        <ChevronLeft aria-hidden="true" className="h-4 w-4" />
+        <ChevronLeft aria-hidden="true" className="size-4" />
       </button>
       <button
         type="button"
@@ -333,7 +333,7 @@ export function HorizontalScrollRail({
             : "pointer-events-none scale-95 opacity-0",
         )}
       >
-        <ChevronRight aria-hidden="true" className="h-4 w-4" />
+        <ChevronRight aria-hidden="true" className="size-4" />
       </button>
     </div>
   );

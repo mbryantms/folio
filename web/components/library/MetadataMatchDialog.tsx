@@ -638,7 +638,7 @@ export function MetadataMatchForm({
           className="text-muted-foreground flex flex-wrap items-center gap-2 py-2 text-sm"
           role="status"
         >
-          <Loader2 className="h-4 w-4 animate-spin" />
+          <Loader2 className="size-4 animate-spin" />
           {applyOverdue ? (
             <span>
               Still applying — the job hasn&apos;t reported back yet. You can
@@ -802,7 +802,7 @@ export function MetadataMatchForm({
             </div>
           ) : isPolling ? (
             <div className="text-muted-foreground flex items-center justify-center gap-2 py-12 text-sm">
-              <Loader2 className="h-4 w-4 animate-spin" /> Searching providers…
+              <Loader2 className="size-4 animate-spin" /> Searching providers…
             </div>
           ) : runStatus === "awaiting_quota" ? (
             <div className="text-muted-foreground py-6 text-sm">
@@ -954,7 +954,7 @@ export function MetadataMatchForm({
           onClick={restart}
           disabled={isPolling || applyIsPending}
         >
-          <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Re-search
+          <RefreshCw className="mr-1.5 size-3.5" /> Re-search
         </Button>
         {!embedded && (
           <Button variant="outline" onClick={closeDialog}>

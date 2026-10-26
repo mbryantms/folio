@@ -164,7 +164,7 @@ function provenanceClass(setBy: string): ProvenanceClass {
 }
 const PROVENANCE_SWATCH: Record<ProvenanceClass, string> = {
   user: "bg-primary",
-  provider: "bg-sky-500",
+  provider: "bg-info",
   file: "bg-muted-foreground/50",
 };
 const PROVENANCE_BADGE: Record<ProvenanceClass, string> = {
@@ -227,7 +227,7 @@ function SummaryStrip({
   if (loading && !overview) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-2 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading metadata…
+        <Loader2 className="size-4 animate-spin" /> Loading metadata…
       </div>
     );
   }
@@ -567,7 +567,7 @@ function Actions({
             disabled={createBatch.isPending}
             onClick={() => fetchMetadata("incomplete")}
           >
-            <Sparkles className="mr-1.5 h-4 w-4" /> Fetch metadata
+            <Sparkles className="mr-1.5 size-4" /> Fetch metadata
             <span className="ml-1 tabular-nums opacity-80">({incomplete})</span>
           </Button>
           <DropdownMenu>
@@ -579,7 +579,7 @@ function Actions({
                 disabled={createBatch.isPending}
                 aria-label="Fetch metadata options"
               >
-                <ChevronDown className="h-4 w-4" />
+                <ChevronDown className="size-4" />
               </Button>
             </DropdownMenuTrigger>
             <FetchMenu
@@ -599,8 +599,8 @@ function Actions({
               disabled={createBatch.isPending}
               aria-label="Fetch metadata options"
             >
-              <Sparkles className="mr-1.5 h-4 w-4" /> Fetch metadata
-              <ChevronDown className="ml-1 h-4 w-4 opacity-70" />
+              <Sparkles className="mr-1.5 size-4" /> Fetch metadata
+              <ChevronDown className="ml-1 size-4 opacity-70" />
             </Button>
           </DropdownMenuTrigger>
           <FetchMenu
@@ -619,7 +619,7 @@ function Actions({
           setMatchOpen(true);
         }}
       >
-        <Search className="mr-1.5 h-4 w-4" /> Match this series…
+        <Search className="mr-1.5 size-4" /> Match this series…
       </Button>
       <Button
         type="button"
@@ -630,7 +630,7 @@ function Actions({
           setRefreshOpen(true);
         }}
       >
-        <ListChecks className="mr-1.5 h-4 w-4" /> Refresh this series…
+        <ListChecks className="mr-1.5 size-4" /> Refresh this series…
       </Button>
       {overview ? (
         <span className="text-muted-foreground text-xs sm:ml-auto">
@@ -820,7 +820,7 @@ function FilesCard({
                 label=""
                 variant="ghost"
                 size="icon"
-                className="text-muted-foreground/60 hover:text-foreground h-6 w-6 shrink-0"
+                className="text-muted-foreground/60 hover:text-foreground size-6 shrink-0"
                 aria-label="Copy folder path"
               />
             </dd>
@@ -879,7 +879,7 @@ function ProvenanceCard({
             count={pinned}
             onClick={() => setPinnedOnly((v) => !v)}
           >
-            <Pin className="h-3 w-3" aria-hidden /> Pinned by you
+            <Pin className="size-3" aria-hidden /> Pinned by you
           </FilterPill>
         ) : null
       }
@@ -1201,7 +1201,7 @@ function IssuesTable({
 
       {q.isLoading && !q.data ? (
         <div className="text-muted-foreground flex items-center gap-2 py-4 text-sm">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading issues…
+          <Loader2 className="size-4 animate-spin" /> Loading issues…
         </div>
       ) : items.length === 0 ? (
         onlyAttentionFilter && q.data ? (
@@ -1399,7 +1399,7 @@ function IssueRow({
           className="text-primary inline-flex items-center gap-0.5 text-xs whitespace-nowrap hover:underline"
         >
           Open
-          <ChevronRight className="h-3 w-3" />
+          <ChevronRight className="size-3" />
         </Link>
       </TableCell>
     </TableRow>

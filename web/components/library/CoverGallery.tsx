@@ -71,7 +71,7 @@ export function CoverGallery({
   if (q.isLoading) {
     const loading = (
       <div className="text-muted-foreground flex items-center gap-2 py-3 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+        <Loader2 className="size-4 animate-spin" /> Loading…
       </div>
     );
     if (chrome === "bare") return loading;

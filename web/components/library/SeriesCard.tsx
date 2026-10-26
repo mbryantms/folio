@@ -317,7 +317,7 @@ export function SeriesCardSkeleton({ size = "md" }: { size?: Size }) {
     <div className={cn("flex shrink-0 flex-col gap-2 p-1", c.wrap)}>
       <div className="bg-muted aspect-[2/3] w-full animate-pulse rounded-md" />
       <div className="space-y-1.5 px-1">
-        <div className="bg-muted h-3 w-3/4 animate-pulse rounded" />
+        <div className="bg-muted size-3/4 animate-pulse rounded" />
         <div className="bg-muted h-2 w-1/2 animate-pulse rounded" />
       </div>
     </div>

@@ -686,7 +686,7 @@ export function MarkerOverlay({
         // whole time, the pill just explains why outlines haven't
         // appeared yet (a cold detector run takes seconds).
         <div className="bg-background/85 text-muted-foreground pointer-events-none absolute top-3 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1 text-xs shadow-md backdrop-blur">
-          <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+          <Loader2 className="size-3 animate-spin" aria-hidden="true" />
           Finding text regions…
         </div>
       ) : null}
@@ -976,7 +976,7 @@ function PagePin({
             }}
             className="text-destructive hover:text-destructive/80 inline-flex items-center gap-1 text-xs"
           >
-            <Trash2 className="h-3 w-3" /> Remove
+            <Trash2 className="size-3" /> Remove
           </button>
         </div>
       </TooltipContent>
@@ -1054,11 +1054,11 @@ function DragPreview({ drag, mode }: { drag: DragState; mode: MarkerMode }) {
 function KindIcon({ kind }: { kind: MarkerKind }) {
   switch (kind) {
     case "bookmark":
-      return <BookmarkCheck className="h-4 w-4" aria-hidden="true" />;
+      return <BookmarkCheck className="size-4" aria-hidden="true" />;
     case "note":
-      return <MessageSquareText className="h-4 w-4" aria-hidden="true" />;
+      return <MessageSquareText className="size-4" aria-hidden="true" />;
     case "highlight":
-      return <Star className="h-4 w-4" aria-hidden="true" />;
+      return <Star className="size-4" aria-hidden="true" />;
   }
 }
 

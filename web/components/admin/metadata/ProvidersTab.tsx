@@ -51,7 +51,7 @@ export function ProvidersTab() {
   if (q.isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+        <Loader2 className="size-4 animate-spin" /> Loading…
       </div>
     );
   }
@@ -158,7 +158,7 @@ function LocalFileStatus({
         >
           {test.isPending ? (
             <>
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Testing
+              <Loader2 className="mr-1 size-3 animate-spin" /> Testing
             </>
           ) : (
             "Test file"
@@ -187,7 +187,7 @@ function LocalFileStatus({
       ) : null}
       {probe?.stale ? (
         <p className={`flex items-start gap-1 ${statusToneText("warning")}`}>
-          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+          <AlertTriangle className="mt-0.5 size-3 shrink-0" />
           <span>
             This file is more than 60 days old; releases newer than its dump
             date are not in it.
@@ -201,17 +201,17 @@ function LocalFileStatus({
       ) : null}
       {local.error ? (
         <p className="text-destructive flex items-start gap-1">
-          <XCircle className="mt-0.5 h-3 w-3 shrink-0" /> {local.error}
+          <XCircle className="mt-0.5 size-3 shrink-0" /> {local.error}
         </p>
       ) : null}
       {test.error ? (
         <p className="text-destructive flex items-start gap-1">
-          <XCircle className="mt-0.5 h-3 w-3 shrink-0" /> {test.error.message}
+          <XCircle className="mt-0.5 size-3 shrink-0" /> {test.error.message}
         </p>
       ) : null}
       {!test.error && test.data?.ok ? (
         <p className={statusToneText("success")}>
-          <CheckCircle2 className="mr-1 inline h-3 w-3" /> File readable —{" "}
+          <CheckCircle2 className="mr-1 inline size-3" /> File readable —{" "}
           {test.data.duration_ms}ms.
         </p>
       ) : null}
@@ -263,7 +263,7 @@ function ProviderCard({ provider }: { provider: ProviderView }) {
         >
           {test.isPending ? (
             <>
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Testing
+              <Loader2 className="mr-1 size-3 animate-spin" /> Testing
             </>
           ) : (
             "Test"
@@ -295,7 +295,7 @@ function ProviderCard({ provider }: { provider: ProviderView }) {
             className="text-destructive flex items-start gap-1 text-xs"
             data-testid="provider-last-error"
           >
-            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+            <AlertTriangle className="mt-0.5 size-3 shrink-0" />
             <span>
               Last error ({formatLastErrorAge(provider.last_error.at, now)}):{" "}
               {provider.last_error.message}
@@ -304,12 +304,12 @@ function ProviderCard({ provider }: { provider: ProviderView }) {
         )}
         {test.error && (
           <div className="text-destructive flex items-center gap-1 text-xs">
-            <XCircle className="h-3 w-3" /> {test.error.message}
+            <XCircle className="size-3" /> {test.error.message}
           </div>
         )}
         {!test.error && lastResult === true && (
           <div className={`text-xs ${statusToneText("success")}`}>
-            <CheckCircle2 className="mr-1 inline h-3 w-3" /> Live —{" "}
+            <CheckCircle2 className="mr-1 inline size-3" /> Live —{" "}
             {test.data?.duration_ms}ms round-trip.
           </div>
         )}
@@ -323,7 +323,7 @@ function ProviderCard({ provider }: { provider: ProviderView }) {
             rel="noreferrer"
             className="text-muted-foreground inline-flex items-center gap-1 text-xs hover:underline"
           >
-            Provider docs <ExternalLink className="h-3 w-3" />
+            Provider docs <ExternalLink className="size-3" />
           </a>
         )}
         {isConfigurableProvider(provider.id) && (

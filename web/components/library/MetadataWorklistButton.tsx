@@ -128,7 +128,7 @@ export function MetadataWorklistButton({
           setIndex(0);
         }}
       >
-        <Sparkles className="h-4 w-4" />
+        <Sparkles className="size-4" />
         Fix metadata ({series.length})
       </Button>
       {current ? (

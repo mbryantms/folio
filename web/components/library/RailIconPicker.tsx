@@ -122,7 +122,7 @@ export function RailIconPicker({
             disabled={usingDefault || setIcon.isPending}
             title="Reset to default"
           >
-            <RotateCcw className="h-3 w-3" />
+            <RotateCcw className="size-3" />
             <span className="ml-1 text-xs">Reset</span>
           </Button>
         </div>
@@ -162,7 +162,7 @@ export function RailIconPicker({
                           : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
                       )}
                     >
-                      <entry.Icon aria-hidden="true" className="h-5 w-5" />
+                      <entry.Icon aria-hidden="true" className="size-5" />
                       {isActive && (
                         <Check className="absolute right-0.5 bottom-0.5 h-2.5 w-2.5" />
                       )}

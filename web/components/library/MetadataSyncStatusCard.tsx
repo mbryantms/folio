@@ -63,14 +63,14 @@ export function MetadataSyncStatusCard({
       <div className="flex items-center justify-between pt-1">
         <span className="text-muted-foreground flex items-center gap-1.5">
           {paused ? (
-            <PauseCircle className="h-4 w-4" />
+            <PauseCircle className="size-4" />
           ) : (
-            <PlayCircle className="h-4 w-4" />
+            <PlayCircle className="size-4" />
           )}
           Auto-sync
         </span>
         <div className="flex items-center gap-2">
-          {pending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          {pending && <Loader2 className="size-3.5 animate-spin" />}
           <Switch
             aria-label={paused ? "Resume auto-sync" : "Pause auto-sync"}
             checked={!paused}

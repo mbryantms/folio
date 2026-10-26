@@ -79,7 +79,7 @@ function OcrModelsCard() {
             ))}
             <li className="border-border/40 mt-2 flex items-baseline justify-between border-t pt-2">
               <span className="text-muted-foreground inline-flex items-center gap-2">
-                <ScanText className="h-3.5 w-3.5" />
+                <ScanText className="size-3.5" />
                 Total on disk
               </span>
               <span className="text-foreground font-mono tabular-nums">
@@ -217,7 +217,7 @@ function BuildCard({ data }: { data: ServerInfoView }) {
                 statusToneText("warning"),
               )}
             >
-              <Sparkles className="h-3.5 w-3.5" aria-hidden />
+              <Sparkles className="size-3.5" aria-hidden />
               {latest.data.tag} available
             </span>
             <a
@@ -227,7 +227,7 @@ function BuildCard({ data }: { data: ServerInfoView }) {
               className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 underline-offset-4 hover:underline"
             >
               release notes
-              <ExternalLink className="h-3 w-3" aria-hidden />
+              <ExternalLink className="size-3" aria-hidden />
             </a>
           </div>
         )}
@@ -348,12 +348,12 @@ function DependenciesCard({ data }: { data: ServerInfoView }) {
       <CardContent>
         <ul className="space-y-2 text-sm">
           <Pill
-            icon={<Database className="h-3.5 w-3.5" />}
+            icon={<Database className="size-3.5" />}
             label="Postgres"
             ok={data.postgres_ok}
           />
           <Pill
-            icon={<HardDrive className="h-3.5 w-3.5" />}
+            icon={<HardDrive className="size-3.5" />}
             label="Redis"
             ok={data.redis_ok}
           />
@@ -374,13 +374,13 @@ function RuntimeCard({ data }: { data: ServerInfoView }) {
       <CardContent>
         <ul className="space-y-2 text-sm">
           <Pill
-            icon={<ListChecks className="h-3.5 w-3.5" />}
+            icon={<ListChecks className="size-3.5" />}
             label="Cron scheduler"
             ok={data.scheduler_running}
           />
           <li className="flex items-center justify-between">
             <span className="text-muted-foreground flex items-center gap-2">
-              <Eye className="h-3.5 w-3.5" />
+              <Eye className="size-3.5" />
               Library file-watchers
             </span>
             <span className="text-foreground font-mono tabular-nums">
@@ -448,9 +448,9 @@ function Row({
           >
             {value}
             {label === "Repository" ? (
-              <GithubIcon className="h-3 w-3" aria-hidden />
+              <GithubIcon className="size-3" aria-hidden />
             ) : (
-              <ExternalLink className="h-3 w-3" aria-hidden />
+              <ExternalLink className="size-3" aria-hidden />
             )}
           </a>
         ) : (
@@ -505,7 +505,7 @@ function ProbeLink({
         className="text-foreground flex items-center gap-1 font-mono underline-offset-4 hover:underline"
       >
         {label}
-        <ExternalLink className="h-3 w-3" />
+        <ExternalLink className="size-3" />
       </a>
     </li>
   );

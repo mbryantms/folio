@@ -47,12 +47,12 @@ export function SelectModeButton({
     >
       {active ? (
         <>
-          <X className="mr-1.5 h-4 w-4" />
+          <X className="mr-1.5 size-4" />
           Cancel
         </>
       ) : (
         <>
-          <ListChecks className="mr-1.5 h-4 w-4" />
+          <ListChecks className="mr-1.5 size-4" />
           Select
         </>
       )}

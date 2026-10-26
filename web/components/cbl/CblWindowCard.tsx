@@ -152,7 +152,7 @@ export function CblWindowCard({
               title="Already read"
               className="bg-primary/90 text-primary-foreground absolute top-2 right-2 inline-flex h-7 w-7 items-center justify-center rounded-full shadow-md ring-2 ring-white/20 backdrop-blur"
             >
-              <Check aria-hidden="true" className="h-4 w-4" />
+              <Check aria-hidden="true" className="size-4" />
             </span>
           )}
           {inProgress && (

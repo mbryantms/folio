@@ -366,9 +366,9 @@ export function CblUpdatesMenu() {
             title={u.statusLine}
           >
             {u.busy ? (
-              <Loader2 className="text-primary h-4 w-4 animate-spin" />
+              <Loader2 className="text-primary size-4 animate-spin" />
             ) : (
-              <RefreshCw className="h-4 w-4" />
+              <RefreshCw className="size-4" />
             )}
             <span className="hidden sm:inline">Updates</span>
             {n > 0 ? (
@@ -379,10 +379,7 @@ export function CblUpdatesMenu() {
                 {n}
               </Badge>
             ) : null}
-            <ChevronDown
-              className="h-3.5 w-3.5 opacity-60"
-              aria-hidden="true"
-            />
+            <ChevronDown className="size-3.5 opacity-60" aria-hidden="true" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-64">
@@ -391,23 +388,23 @@ export function CblUpdatesMenu() {
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem disabled={u.busy} onSelect={u.check}>
-            <RefreshCw className="h-4 w-4" /> Check for updates
+            <RefreshCw className="size-4" /> Check for updates
           </DropdownMenuItem>
           <DropdownMenuItem
             disabled={u.busy}
             onSelect={() => setConfirmOpen(true)}
           >
-            <CloudDownload className="h-4 w-4" /> Update all lists…
+            <CloudDownload className="size-4" /> Update all lists…
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => u.setPanelOpen(!u.panelOpen)}>
             {u.panelOpen ? (
               <>
-                <PanelTopClose className="h-4 w-4" /> Hide updates panel
+                <PanelTopClose className="size-4" /> Hide updates panel
               </>
             ) : (
               <>
-                <PanelTopOpen className="h-4 w-4" /> Show updates panel
+                <PanelTopOpen className="size-4" /> Show updates panel
               </>
             )}
           </DropdownMenuItem>
@@ -497,7 +494,7 @@ export function CblUpdatesPanel() {
             )}
             aria-hidden="true"
           >
-            <RefreshCw className={cn("h-4 w-4", busy && "animate-spin")} />
+            <RefreshCw className={cn("size-4", busy && "animate-spin")} />
           </span>
           <div className="min-w-0">
             <h3 className="text-foreground text-sm font-semibold">
@@ -520,9 +517,9 @@ export function CblUpdatesPanel() {
             onClick={u.check}
           >
             {checking ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="size-4 animate-spin" />
             ) : (
-              <RefreshCw className="h-4 w-4" />
+              <RefreshCw className="size-4" />
             )}
             Check for updates
           </Button>
@@ -538,11 +535,11 @@ export function CblUpdatesPanel() {
             type="button"
             size="icon"
             variant="ghost"
-            className="h-8 w-8"
+            className="size-8"
             aria-label="Hide updates panel"
             onClick={() => u.setPanelOpen(false)}
           >
-            <X className="h-4 w-4" />
+            <X className="size-4" />
           </Button>
         </div>
       </div>
@@ -562,7 +559,7 @@ export function CblUpdatesPanel() {
           {pending.length === 0 && failed.length === 0 ? (
             <p className="text-muted-foreground flex items-center gap-2 text-sm">
               <CheckCircle2
-                className={cn("h-4 w-4", statusToneText("success"))}
+                className={cn("size-4", statusToneText("success"))}
               />
               Everything is up to date.
               {upToDate.length > 0 ? (
@@ -646,7 +643,7 @@ export function CblUpdatesPanel() {
                     >
                       <AlertTriangle
                         className={cn(
-                          "h-4 w-4 shrink-0",
+                          "size-4 shrink-0",
                           statusToneText("warning"),
                         )}
                         aria-hidden="true"
@@ -670,7 +667,7 @@ export function CblUpdatesPanel() {
                         onClick={() => void u.retryCheck(item)}
                       >
                         {retrying.has(item.id) ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          <Loader2 className="size-3.5 animate-spin" />
                         ) : null}
                         Retry
                       </Button>
@@ -682,7 +679,7 @@ export function CblUpdatesPanel() {
               {upToDate.length > 0 ? (
                 <Collapsible>
                   <CollapsibleTrigger className="text-muted-foreground hover:text-foreground group/c inline-flex items-center gap-1 text-xs">
-                    <ChevronRight className="h-3.5 w-3.5 transition-transform group-data-[state=open]/c:rotate-90" />
+                    <ChevronRight className="size-3.5 transition-transform group-data-[state=open]/c:rotate-90" />
                     {upToDate.length} up to date
                   </CollapsibleTrigger>
                   <CollapsibleContent>
@@ -693,7 +690,7 @@ export function CblUpdatesPanel() {
                             variant="outline"
                             className="gap-1 font-normal"
                           >
-                            <Check className="h-3 w-3" aria-hidden="true" />
+                            <Check className="size-3" aria-hidden="true" />
                             {item.name}
                           </Badge>
                         </li>
@@ -848,17 +845,17 @@ function BatchPanel({
         <div className="flex min-w-0 items-center gap-2">
           {running ? (
             <Loader2
-              className="text-primary h-4 w-4 shrink-0 animate-spin"
+              className="text-primary size-4 shrink-0 animate-spin"
               aria-hidden="true"
             />
           ) : summary.failed > 0 ? (
             <AlertTriangle
-              className={cn("h-4 w-4 shrink-0", statusToneText("warning"))}
+              className={cn("size-4 shrink-0", statusToneText("warning"))}
               aria-hidden="true"
             />
           ) : (
             <CheckCircle2
-              className={cn("h-4 w-4 shrink-0", statusToneText("success"))}
+              className={cn("size-4 shrink-0", statusToneText("success"))}
               aria-hidden="true"
             />
           )}
@@ -903,7 +900,7 @@ function BatchPanel({
               className="h-7"
               onClick={batch.cancel}
             >
-              <X className="h-3.5 w-3.5" /> Stop after this one
+              <X className="size-3.5" /> Stop after this one
             </Button>
           ) : (
             <>
@@ -924,7 +921,7 @@ function BatchPanel({
                 aria-label="Dismiss"
                 onClick={batch.clear}
               >
-                <X className="h-4 w-4" />
+                <X className="size-4" />
               </Button>
             </>
           )}
@@ -958,32 +955,32 @@ function BatchRowItem({
       case "running":
         return (
           <Loader2
-            className="text-primary h-4 w-4 animate-spin"
+            className="text-primary size-4 animate-spin"
             aria-label="Updating"
           />
         );
       case "done":
         return summaryChanged(row.summary) ? (
           <CheckCircle2
-            className={cn("h-4 w-4", statusToneText("success"))}
+            className={cn("size-4", statusToneText("success"))}
             aria-label="Updated"
           />
         ) : (
           <Check
-            className="text-muted-foreground h-4 w-4"
+            className="text-muted-foreground size-4"
             aria-label="Already up to date"
           />
         );
       case "failed":
         return (
           <AlertTriangle
-            className={cn("h-4 w-4", statusToneText("error"))}
+            className={cn("size-4", statusToneText("error"))}
             aria-label="Failed"
           />
         );
       case "skipped":
         return (
-          <X className="text-muted-foreground h-4 w-4" aria-label="Skipped" />
+          <X className="text-muted-foreground size-4" aria-label="Skipped" />
         );
       default:
         return (

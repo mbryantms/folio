@@ -287,7 +287,7 @@ export function PageAdjustDialog({
           <div className="bg-muted relative grid place-items-center rounded-md">
             {loading ? (
               <div className="text-muted-foreground flex items-center gap-2 py-12 text-sm">
-                <Loader2 className="h-4 w-4 animate-spin" /> Loading page…
+                <Loader2 className="size-4 animate-spin" /> Loading page…
               </div>
             ) : loadError ? (
               <p className="text-destructive py-12 text-sm">

@@ -94,7 +94,7 @@ function Tile({
     <div className="border-border/60 bg-muted/30 flex min-w-0 flex-col gap-1 rounded-md border p-2.5">
       <meta.Icon
         aria-hidden="true"
-        className="text-muted-foreground h-3.5 w-3.5"
+        className="text-muted-foreground size-3.5"
       />
       <div
         className="truncate text-lg leading-tight font-semibold tabular-nums"
