@@ -255,7 +255,7 @@ export function SearchModal({
                           // over the static subtitle — it shows *why* the
                           // row matched.
                           <span
-                            className="block truncate text-xs opacity-70 [&_mark]:rounded-sm [&_mark]:bg-amber-500/30 [&_mark]:px-0.5 [&_mark]:text-current"
+                            className="[&_mark]:bg-primary/30 block truncate text-xs opacity-70 [&_mark]:rounded-sm [&_mark]:px-0.5 [&_mark]:text-current"
                             dangerouslySetInnerHTML={{
                               __html: renderSearchSnippet(hit.snippet),
                             }}

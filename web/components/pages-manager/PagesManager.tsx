@@ -253,14 +253,14 @@ function PageHeader({ page }: { page: PageView }) {
               title="Click to rename"
             >
               <span className="text-base font-semibold">{page.name}</span>
-              <Pencil className="text-muted-foreground/0 group-hover:text-muted-foreground h-3.5 w-3.5 transition-colors" />
+              <Pencil className="text-muted-foreground/0 group-hover:text-muted-foreground size-3.5 transition-colors" />
             </button>
           )}
           <Link
             href={href}
             className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
           >
-            <ExternalLink className="h-3 w-3" />
+            <ExternalLink className="size-3" />
             Open
           </Link>
         </div>
@@ -276,10 +276,10 @@ function PageHeader({ page }: { page: PageView }) {
             type="button"
             variant="outline"
             size="icon"
-            className="h-8 w-8 shrink-0"
+            className="size-8 shrink-0"
             aria-label="Page actions"
           >
-            <MoreHorizontal className="h-4 w-4" />
+            <MoreHorizontal className="size-4" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-[14rem]">
@@ -289,7 +289,7 @@ function PageHeader({ page }: { page: PageView }) {
               setDescOpen(true);
             }}
           >
-            <MessageSquare className="mr-2 h-4 w-4" />
+            <MessageSquare className="mr-2 size-4" />
             {hasDescription ? "Edit description" : "Add description"}
           </DropdownMenuItem>
           {hasDescription ? (
@@ -299,7 +299,7 @@ function PageHeader({ page }: { page: PageView }) {
                 updatePage.mutate({ description: "" });
               }}
             >
-              <X className="mr-2 h-4 w-4" />
+              <X className="mr-2 size-4" />
               Clear description
             </DropdownMenuItem>
           ) : null}
@@ -312,11 +312,11 @@ function PageHeader({ page }: { page: PageView }) {
             >
               {page.show_in_sidebar ? (
                 <>
-                  <PanelLeftClose className="mr-2 h-4 w-4" /> Hide from sidebar
+                  <PanelLeftClose className="mr-2 size-4" /> Hide from sidebar
                 </>
               ) : (
                 <>
-                  <PanelLeft className="mr-2 h-4 w-4" /> Show in sidebar
+                  <PanelLeft className="mr-2 size-4" /> Show in sidebar
                 </>
               )}
             </DropdownMenuItem>
@@ -331,7 +331,7 @@ function PageHeader({ page }: { page: PageView }) {
                 }}
                 className="text-destructive focus:text-destructive"
               >
-                <Trash2 className="mr-2 h-4 w-4" /> Delete page…
+                <Trash2 className="mr-2 size-4" /> Delete page…
               </DropdownMenuItem>
             </>
           )}
@@ -444,7 +444,7 @@ function PageRailsList({
           onClick={() => setPinOpen(true)}
           disabled={atCap && pinned.length === 0}
         >
-          <Plus className="mr-1 h-3.5 w-3.5" />
+          <Plus className="mr-1 size-3.5" />
           Add view
         </Button>
       </div>
@@ -454,7 +454,7 @@ function PageRailsList({
         </div>
       ) : ordered.length === 0 ? (
         <div className="text-muted-foreground border-border/60 m-3 mt-0 flex flex-col items-center gap-2 rounded-md border border-dashed p-6 text-center text-sm">
-          <ListPlus className="text-muted-foreground/60 h-5 w-5" />
+          <ListPlus className="text-muted-foreground/60 size-5" />
           <p>
             No rails on <span className="text-foreground">{pageName}</span> yet.
           </p>
@@ -464,7 +464,7 @@ function PageRailsList({
             size="sm"
             onClick={() => setPinOpen(true)}
           >
-            <Plus className="mr-1 h-3.5 w-3.5" />
+            <Plus className="mr-1 size-3.5" />
             Add a view
           </Button>
         </div>
@@ -545,7 +545,7 @@ function RailRow({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         {...(listeners as any)}
       >
-        <GripVertical className="h-4 w-4" />
+        <GripVertical className="size-4" />
       </button>
       <span className="text-muted-foreground/70 w-5 shrink-0 text-right text-xs tabular-nums">
         {position}
@@ -581,7 +581,7 @@ function RailRow({
         aria-label="Remove from page"
         title="Remove from page"
       >
-        <X className="h-4 w-4" />
+        <X className="size-4" />
       </Button>
     </li>
   );

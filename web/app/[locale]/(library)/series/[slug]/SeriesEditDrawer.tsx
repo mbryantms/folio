@@ -327,9 +327,7 @@ function EditForm({
           Cancel
         </Button>
         <Button type="submit" disabled={update.isPending}>
-          {update.isPending && (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          )}
+          {update.isPending && <Loader2 className="mr-2 size-4 animate-spin" />}
           Save
         </Button>
       </div>

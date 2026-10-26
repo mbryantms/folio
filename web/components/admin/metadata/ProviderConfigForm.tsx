@@ -115,7 +115,7 @@ export function ProviderConfigForm({
   if (settings.isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-2 text-xs">
-        <Loader2 className="h-3 w-3 animate-spin" /> Loading credentials…
+        <Loader2 className="size-3 animate-spin" /> Loading credentials…
       </div>
     );
   }
@@ -478,13 +478,13 @@ function ProviderForm({
         <div className="flex items-center gap-2">
           {savedFlash && (
             <span className={`text-xs ${statusToneText("success")}`}>
-              <CheckCircle2 className="mr-1 inline h-3 w-3" /> Saved
+              <CheckCircle2 className="mr-1 inline size-3" /> Saved
             </span>
           )}
           <Button type="submit" size="sm" disabled={!dirty || isPending}>
             {isPending ? (
               <>
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Saving
+                <Loader2 className="mr-1 size-3 animate-spin" /> Saving
               </>
             ) : (
               "Save"

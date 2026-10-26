@@ -98,8 +98,8 @@ export function CoverPagePickerDialog({
                       {n + 1}
                     </span>
                     {current ? (
-                      <span className="bg-primary text-primary-foreground absolute top-1 right-1 inline-flex h-6 w-6 items-center justify-center rounded-full">
-                        <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span className="bg-primary text-primary-foreground absolute top-1 right-1 inline-flex size-6 items-center justify-center rounded-full">
+                        <Check className="size-3.5" aria-hidden="true" />
                       </span>
                     ) : null}
                   </button>
@@ -110,7 +110,7 @@ export function CoverPagePickerDialog({
         )}
         {isPending ? (
           <p className="text-muted-foreground flex items-center gap-2 text-xs">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
             Applying…
           </p>
         ) : null}

@@ -74,7 +74,7 @@ export function MatchOutcomeBanner({
           <Button size="sm" onClick={onOneClickApply} disabled={isApplying}>
             {isApplying ? (
               <>
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
                 Applying
               </>
             ) : (
@@ -218,7 +218,7 @@ export function CandidateRow({
           >
             {isApplying ? (
               <>
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Applying
+                <Loader2 className="mr-1 size-3 animate-spin" /> Applying
               </>
             ) : (
               "Preview"
@@ -272,7 +272,7 @@ function CoverageHintLine({
         className="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs"
         data-testid="coverage-hint"
       >
-        <Loader2 className="h-3 w-3 animate-spin" /> Checking coverage…
+        <Loader2 className="size-3 animate-spin" /> Checking coverage…
       </div>
     );
   }

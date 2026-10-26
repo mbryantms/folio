@@ -297,7 +297,7 @@ export function FilterBuilder({
             size="sm"
             onClick={addCondition}
           >
-            <Plus className="mr-1 h-4 w-4" /> Add condition
+            <Plus className="mr-1 size-4" /> Add condition
           </Button>
         </div>
         {state.conditions.length === 0 ? (

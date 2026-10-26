@@ -241,7 +241,7 @@ function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
         className="hover:bg-muted-foreground/20 rounded-sm"
         aria-label={`Remove ${label}`}
       >
-        <X className="h-3 w-3" />
+        <X className="size-3" />
       </button>
     </Badge>
   );

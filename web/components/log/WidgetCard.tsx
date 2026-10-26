@@ -110,11 +110,11 @@ export function WidgetCard({
             "max-md:opacity-100",
           )}
         >
-          <GripVertical aria-hidden="true" className="h-4 w-4" />
+          <GripVertical aria-hidden="true" className="size-4" />
         </button>
         <div className="flex min-w-0 flex-1 items-center gap-2">
           {Icon ? (
-            <Icon className="text-muted-foreground h-4 w-4 shrink-0" />
+            <Icon className="text-muted-foreground size-4 shrink-0" />
           ) : null}
           <div className="min-w-0">
             <CardTitle className="truncate text-base" title={title}>
@@ -124,7 +124,7 @@ export function WidgetCard({
                   className="hover:text-primary inline-flex items-center gap-1 transition-colors"
                 >
                   {title}
-                  <ChevronRight aria-hidden="true" className="h-4 w-4" />
+                  <ChevronRight aria-hidden="true" className="size-4" />
                 </Link>
               ) : (
                 title
@@ -148,7 +148,7 @@ export function WidgetCard({
                 aria-label="Widget options"
                 className="text-muted-foreground/60 hover:text-foreground hover:bg-muted/50 inline-flex h-7 w-7 items-center justify-center rounded transition-colors"
               >
-                <MoreVertical aria-hidden="true" className="h-4 w-4" />
+                <MoreVertical aria-hidden="true" className="size-4" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -164,7 +164,7 @@ export function WidgetCard({
                   setConfigureOpen(true);
                 }}
               >
-                <Settings2 aria-hidden="true" className="mr-2 h-4 w-4" />
+                <Settings2 aria-hidden="true" className="mr-2 size-4" />
                 Configure…
               </DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -177,7 +177,7 @@ export function WidgetCard({
                   setConfirmOpen(true);
                 }}
               >
-                <Trash2 aria-hidden="true" className="mr-2 h-4 w-4" />
+                <Trash2 aria-hidden="true" className="mr-2 size-4" />
                 Remove
               </DropdownMenuItem>
             </DropdownMenuContent>

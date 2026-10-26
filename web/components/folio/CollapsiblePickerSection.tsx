@@ -48,9 +48,9 @@ export function CollapsiblePickerSection({
         )}
       >
         {effectiveOpen ? (
-          <ChevronDown className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+          <ChevronDown className="text-muted-foreground size-3.5 shrink-0" />
         ) : (
-          <ChevronRight className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+          <ChevronRight className="text-muted-foreground size-3.5 shrink-0" />
         )}
         <span className="text-muted-foreground/80 flex-1 text-[10px] font-medium tracking-widest uppercase">
           {label}

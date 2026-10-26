@@ -353,7 +353,7 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
           the row there, and a wrapped row does not pin (rule 3). */}
       <div className="relative w-full sm:max-w-64 sm:min-w-40 sm:flex-1 sm:basis-40">
         <SearchIcon
-          className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2"
+          className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2"
           aria-hidden="true"
         />
         <Input
@@ -1147,7 +1147,7 @@ function SeriesFilter({
           // like the combobox trigger beside it.
           className="folio-button text-muted-foreground hover:text-foreground hover:bg-muted/50 inline-flex h-9 w-9 items-center justify-center rounded-md transition-colors"
         >
-          <X className="h-3.5 w-3.5" aria-hidden="true" />
+          <X className="size-3.5" aria-hidden="true" />
         </button>
       ) : null}
     </div>
@@ -1261,7 +1261,7 @@ function PageNoteRow({
               kindMeta.badge,
             )}
           >
-            <KindIcon className="h-3 w-3" aria-hidden="true" />
+            <KindIcon className="size-3" aria-hidden="true" />
             {kindMeta.shortLabel}
           </span>
           <span
@@ -1273,7 +1273,7 @@ function PageNoteRow({
           {marker.is_favorite ? (
             <Star
               aria-label="Favorite"
-              className="h-3.5 w-3.5 fill-current text-rose-400"
+              className="size-3.5 fill-current text-rose-400"
             />
           ) : null}
           {marker.tags.slice(0, 4).map((t) => (
@@ -1300,7 +1300,7 @@ function PageNoteRow({
                     aria-label={`Actions for note on page ${marker.page_index + 1}`}
                     className="folio-tap text-muted-foreground hover:text-foreground hover:bg-muted/50 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors"
                   >
-                    <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                    <MoreVertical className="size-4" aria-hidden="true" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -1675,7 +1675,7 @@ function MarkerCard({
             kindMeta.badge,
           )}
         >
-          <KindIcon className="h-3 w-3" aria-hidden="true" />
+          <KindIcon className="size-3" aria-hidden="true" />
           {kindMeta.shortLabel}
         </span>
       )}
@@ -1683,9 +1683,9 @@ function MarkerCard({
         <span
           aria-label="Favorite"
           title="Favorite"
-          className="absolute right-2 bottom-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/90 text-rose-50 shadow-sm ring-1 ring-black/20"
+          className="absolute right-2 bottom-2 inline-flex size-5 items-center justify-center rounded-full bg-rose-500/90 text-rose-50 shadow-sm ring-1 ring-black/20"
         >
-          <Star className="h-3 w-3 fill-current" aria-hidden="true" />
+          <Star className="size-3 fill-current" aria-hidden="true" />
         </span>
       ) : null}
       {/* No per-card menu / long-press while selecting — the card click

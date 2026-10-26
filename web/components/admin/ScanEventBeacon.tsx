@@ -76,7 +76,7 @@ export function ScanEventBeacon() {
             aria-label={`queue: ${compactCount(total)} — ${total} background jobs pending${breakdown ? ` (${breakdown})` : ""}. Open background work.`}
             title={breakdown || `${total} pending jobs`}
           >
-            <ListOrdered className="h-3 w-3" />
+            <ListOrdered className="size-3" />
             queue: {compactCount(total)}
           </Link>
           <button
@@ -93,7 +93,7 @@ export function ScanEventBeacon() {
             disabled={clearQueue.isPending}
             onClick={() => setConfirmClear(true)}
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 className="size-3.5" />
           </button>
         </div>
       ) : null}
@@ -108,7 +108,7 @@ export function ScanEventBeacon() {
         >
           <Activity
             className={cn(
-              "h-3 w-3",
+              "size-3",
               status === "open" ? "animate-pulse" : "opacity-60",
             )}
           />

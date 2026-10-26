@@ -132,7 +132,7 @@ export function WebtoonEndFooter({
           >
             {wrapOpen ? "Hide" : "Show"} wrap up
             <ChevronDown
-              className={`h-3.5 w-3.5 transition-transform ${wrapOpen ? "rotate-180" : ""}`}
+              className={`size-3.5 transition-transform ${wrapOpen ? "rotate-180" : ""}`}
               aria-hidden="true"
             />
           </button>

@@ -101,7 +101,7 @@ function BatchPicker({ onPick }: { onPick: (id: string) => void }) {
   if (isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading batches…
+        <Loader2 className="size-4 animate-spin" /> Loading batches…
       </div>
     );
   }
@@ -169,7 +169,7 @@ function BatchSection({
               </div>
               <div className="flex items-center gap-2">
                 <StatusBadge status={b.status} />
-                <ChevronRight className="text-muted-foreground h-4 w-4" />
+                <ChevronRight className="text-muted-foreground size-4" />
               </div>
             </button>
           </li>
@@ -209,7 +209,7 @@ function BatchReview({
   if (isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading batch…
+        <Loader2 className="size-4 animate-spin" /> Loading batch…
       </div>
     );
   }
@@ -299,7 +299,7 @@ function BatchReview({
               onClick={() => apply.mutate({ filter: "all_strong" })}
             >
               {apply.isPending && (
-                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="mr-1 size-3.5 animate-spin" />
               )}
               Accept all strong ({strongRows.length})
             </Button>
@@ -428,7 +428,7 @@ function NeedsReviewSection({
           disabled={disabled}
           onClick={() => runApply("fill_missing")}
         >
-          {busy && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+          {busy && <Loader2 className="mr-1 size-3.5 animate-spin" />}
           Fill missing ({targetCount})
         </Button>
         <Button
@@ -517,9 +517,7 @@ function ChildList({
         const trailing = (
           <div className="flex items-center gap-2">
             <ToneDot tone={tone} />
-            {scope && (
-              <ChevronRight className="text-muted-foreground h-4 w-4" />
-            )}
+            {scope && <ChevronRight className="text-muted-foreground size-4" />}
           </div>
         );
 
@@ -616,14 +614,14 @@ function StatusBadge({ status }: { status: string }) {
   if (status === "completed") {
     return (
       <Badge variant="outline" className={statusTone("success")}>
-        <CheckCircle2 className="mr-1 h-3 w-3" /> Completed
+        <CheckCircle2 className="mr-1 size-3" /> Completed
       </Badge>
     );
   }
   if (status === "awaiting_quota") {
     return (
       <Badge variant="outline" className={statusTone("warning")}>
-        <AlertCircle className="mr-1 h-3 w-3" /> Awaiting quota
+        <AlertCircle className="mr-1 size-3" /> Awaiting quota
       </Badge>
     );
   }
@@ -636,7 +634,7 @@ function StatusBadge({ status }: { status: string }) {
   }
   return (
     <Badge variant="secondary">
-      <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Running
+      <Loader2 className="mr-1 size-3 animate-spin" /> Running
     </Badge>
   );
 }

@@ -41,8 +41,8 @@ export function RatingStars({
   const [hover, setHover] = React.useState<number | null>(null);
   const display = hover ?? value ?? 0;
   const sizes = {
-    sm: { star: "h-3.5 w-3.5", gap: "gap-0.5" },
-    md: { star: "h-5 w-5", gap: "gap-0.5" },
+    sm: { star: "size-3.5", gap: "gap-0.5" },
+    md: { star: "size-5", gap: "gap-0.5" },
     lg: { star: "h-7 w-7", gap: "gap-1" },
   } as const;
   const dim = sizes[size];

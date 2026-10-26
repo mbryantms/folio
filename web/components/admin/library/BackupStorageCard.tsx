@@ -20,13 +20,13 @@ export function BackupStorageCard({ libraryId }: { libraryId: string }) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          <Archive className="h-4 w-4" /> Archive backups (.bak)
+          <Archive className="size-4" /> Archive backups (.bak)
         </CardTitle>
       </CardHeader>
       <CardContent>
         {q.isLoading ? (
           <div className="text-muted-foreground flex items-center gap-2 text-sm">
-            <Loader2 className="h-4 w-4 animate-spin" /> Scanning…
+            <Loader2 className="size-4 animate-spin" /> Scanning…
           </div>
         ) : !q.data ? (
           <p className="text-destructive text-sm">

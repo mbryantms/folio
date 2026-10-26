@@ -50,16 +50,16 @@ export function AddViewButton({
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button type="button">
-            <Plus className="mr-1 h-4 w-4" /> {label}
+            <Plus className="mr-1 size-4" /> {label}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-56" align="end">
           <DropdownMenuItem onSelect={() => setFilterOpen(true)}>
-            <Sparkles className="mr-2 h-4 w-4" />
+            <Sparkles className="mr-2 size-4" />
             New filter view
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setImportOpen(true)}>
-            <Library className="mr-2 h-4 w-4" />
+            <Library className="mr-2 size-4" />
             Import CBL
           </DropdownMenuItem>
         </DropdownMenuContent>

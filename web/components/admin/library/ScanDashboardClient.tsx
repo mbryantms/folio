@@ -118,7 +118,7 @@ function BatchPicker() {
   if (isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading scan batches…
+        <Loader2 className="size-4 animate-spin" /> Loading scan batches…
       </div>
     );
   }
@@ -173,7 +173,7 @@ function BatchView({ batchId }: { batchId: string }) {
   if (isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading batch…
+        <Loader2 className="size-4 animate-spin" /> Loading batch…
       </div>
     );
   }
@@ -223,7 +223,7 @@ function BatchView({ batchId }: { batchId: string }) {
         >
           <span className="flex min-w-0 items-center gap-2">
             <Loader2
-              className="h-4 w-4 shrink-0 animate-spin"
+              className="size-4 shrink-0 animate-spin"
               aria-hidden="true"
             />
             <span>
@@ -346,14 +346,14 @@ function RowIcon({ state }: { state: string }) {
   if (state === "complete")
     return (
       <CheckCircle2
-        className={cn("h-4 w-4 shrink-0", statusToneText("success"))}
+        className={cn("size-4 shrink-0", statusToneText("success"))}
       />
     );
   if (state === "failed" || state === "cancelled")
-    return <XCircle className="text-destructive h-4 w-4 shrink-0" />;
+    return <XCircle className="text-destructive size-4 shrink-0" />;
   if (state === "running")
-    return <Loader2 className="text-primary h-4 w-4 shrink-0 animate-spin" />;
-  return <Clock className="text-muted-foreground h-4 w-4 shrink-0" />;
+    return <Loader2 className="text-primary size-4 shrink-0 animate-spin" />;
+  return <Clock className="text-muted-foreground size-4 shrink-0" />;
 }
 
 // State tones mirror the LogsClient level-chip convention

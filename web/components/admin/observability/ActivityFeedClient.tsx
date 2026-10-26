@@ -25,12 +25,12 @@ const ALL_KINDS: ReadonlyArray<{
   {
     value: "audit",
     label: "Audit",
-    icon: <FileClock className="h-3.5 w-3.5" />,
+    icon: <FileClock className="size-3.5" />,
   },
   {
     value: "reading",
     label: "Reading volume",
-    icon: <BookOpen className="h-3.5 w-3.5" />,
+    icon: <BookOpen className="size-3.5" />,
   },
 ];
 
@@ -165,8 +165,8 @@ function KindBadge({ kind }: { kind: string }) {
 }
 
 const KIND_TONE: Record<string, string> = {
-  audit: "border-violet-500/40 text-violet-300",
-  reading: "border-emerald-500/40 text-emerald-400",
+  audit: "border-primary/40 text-primary",
+  reading: "border-success/40 text-success",
 };
 
 function formatDetail(entry: ActivityEntryView): string | null {

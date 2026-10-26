@@ -64,7 +64,7 @@ function PartialBadge({ rows }: { rows: HealthRow[] }) {
       <Tooltip>
         <TooltipTrigger asChild>
           <Badge variant="outline" className={statusTone("warning")}>
-            <AlertTriangle aria-hidden="true" className="mr-1 h-3 w-3" />
+            <AlertTriangle aria-hidden="true" className="mr-1 size-3" />
             Partial
           </Badge>
         </TooltipTrigger>
@@ -83,7 +83,7 @@ function RecoveredBadge({ rows }: { rows: HealthRow[] }) {
       <Tooltip>
         <TooltipTrigger asChild>
           <Badge variant="secondary">
-            <Wrench aria-hidden="true" className="mr-1 h-3 w-3" />
+            <Wrench aria-hidden="true" className="mr-1 size-3" />
             Recovered
           </Badge>
         </TooltipTrigger>

@@ -74,7 +74,7 @@ export function SelectionCheckbox({
         aria-hidden="true"
         className={cn(visualClasses, "scale-100 opacity-100")}
       >
-        {isSelected && <Check className="h-4 w-4" />}
+        {isSelected && <Check className="size-4" />}
       </span>
     );
   }
@@ -112,7 +112,7 @@ export function SelectionCheckbox({
         "pointer-events-none scale-95 opacity-0 group-hover:pointer-events-auto group-hover:scale-100 group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:scale-100 focus-visible:opacity-100",
       )}
     >
-      {isSelected && <Check className="h-4 w-4" />}
+      {isSelected && <Check className="size-4" />}
     </span>
   );
 }

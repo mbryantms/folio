@@ -134,7 +134,7 @@ function HealthCard({
             Unresolved + undismissed across libraries.
           </p>
         </div>
-        <AlertTriangle className="text-muted-foreground h-4 w-4" />
+        <AlertTriangle className="text-muted-foreground size-4" />
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
         {loading || !data ? (
@@ -246,7 +246,7 @@ function ScansCard({
             Scans across libraries, and every background job pending.
           </p>
         </div>
-        <ListChecks className="text-muted-foreground h-4 w-4" />
+        <ListChecks className="text-muted-foreground size-4" />
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
         {loading || !data ? (
@@ -312,7 +312,7 @@ function RecentScanFailuresCard() {
             Anything in here means a library scan didn&apos;t finish cleanly.
           </p>
         </div>
-        <XCircle className="text-muted-foreground h-4 w-4" />
+        <XCircle className="text-muted-foreground size-4" />
       </CardHeader>
       <CardContent className="space-y-2 pt-2">
         {isLoading ? (
@@ -378,7 +378,7 @@ function LatestScanPerLibraryCard() {
             The 5 libraries that haven&apos;t scanned in the longest.
           </p>
         </div>
-        <Clock className="text-muted-foreground h-4 w-4" />
+        <Clock className="text-muted-foreground size-4" />
       </CardHeader>
       <CardContent className="space-y-2 pt-2">
         {isLoading ? (
@@ -446,7 +446,7 @@ function ReadersCard({
             Active = heartbeat in the last 5 minutes.
           </p>
         </div>
-        <BookOpen className="text-muted-foreground h-4 w-4" />
+        <BookOpen className="text-muted-foreground size-4" />
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
         {loading || !data ? (
@@ -512,7 +512,7 @@ function ReadsSparklineCard({
             Sessions per day across all users.
           </p>
         </div>
-        <Activity className="text-muted-foreground h-4 w-4" />
+        <Activity className="text-muted-foreground size-4" />
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
         {loading || !data ? (
@@ -583,7 +583,7 @@ function ServerHealthCard({
             Live ping of the runtime dependencies.
           </p>
         </div>
-        <Server className="text-muted-foreground h-4 w-4" />
+        <Server className="text-muted-foreground size-4" />
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
         {loading || !data ? (
@@ -591,17 +591,17 @@ function ServerHealthCard({
         ) : (
           <ul className="space-y-1.5 text-sm">
             <Pill
-              icon={<Database className="h-3.5 w-3.5" />}
+              icon={<Database className="size-3.5" />}
               label="Postgres"
               ok={data.postgres_ok}
             />
             <Pill
-              icon={<HardDrive className="h-3.5 w-3.5" />}
+              icon={<HardDrive className="size-3.5" />}
               label="Redis"
               ok={data.redis_ok}
             />
             <Pill
-              icon={<ListChecks className="h-3.5 w-3.5" />}
+              icon={<ListChecks className="size-3.5" />}
               label="Scheduler"
               ok={data.scheduler_running}
             />
@@ -667,17 +667,17 @@ function QuickActionsCard() {
       </CardHeader>
       <CardContent className="space-y-2 pt-2">
         <Action
-          icon={<Library className="h-3.5 w-3.5" />}
+          icon={<Library className="size-3.5" />}
           href={`/admin/libraries`}
           label="Manage libraries"
         />
         <Action
-          icon={<Users className="h-3.5 w-3.5" />}
+          icon={<Users className="size-3.5" />}
           href={`/admin/users`}
           label="Manage users"
         />
         <Action
-          icon={<FileStack className="h-3.5 w-3.5" />}
+          icon={<FileStack className="size-3.5" />}
           // Audit-log entries live on the unified Activity feed —
           // pre-apply the chip so the link lands with audit-only
           // results, then the user can broaden if they want.
@@ -685,7 +685,7 @@ function QuickActionsCard() {
           label="View audit log"
         />
         <Action
-          icon={<Activity className="h-3.5 w-3.5" />}
+          icon={<Activity className="size-3.5" />}
           href={`/admin/stats`}
           label="Open stats"
         />

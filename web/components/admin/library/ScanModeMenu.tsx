@@ -55,12 +55,12 @@ export function ScanModeMenu({
       <DropdownMenuTrigger asChild>
         <Button disabled={blocked} className="gap-2">
           {isPending || isRunning ? (
-            <Gauge className="h-4 w-4 animate-pulse" />
+            <Gauge className="size-4 animate-pulse" />
           ) : (
-            <Play className="h-4 w-4" />
+            <Play className="size-4" />
           )}
           {isRunning ? "Scan running" : isPending ? "Queueing" : "Scan"}
-          <ChevronDown className="h-4 w-4 opacity-70" />
+          <ChevronDown className="size-4 opacity-70" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-80">
@@ -74,7 +74,7 @@ export function ScanModeMenu({
               className="items-start gap-3 py-2"
               onSelect={() => onScan(item.mode)}
             >
-              <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+              <Icon className="mt-0.5 size-4 shrink-0" />
               <span className="min-w-0 space-y-0.5">
                 <span className="flex items-center gap-2">
                   <span className="font-medium">{item.label}</span>

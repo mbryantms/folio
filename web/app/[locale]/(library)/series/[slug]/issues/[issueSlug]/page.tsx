@@ -238,7 +238,7 @@ export default async function IssuePage({
             className="hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
             aria-label={series ? `Back to ${series.name}` : "Back to library"}
           >
-            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            <ChevronLeft className="size-4" aria-hidden="true" />
             <span>{series?.name ?? "Library"}</span>
           </Link>
         </div>
@@ -252,7 +252,7 @@ export default async function IssuePage({
           </Link>
           {series && (
             <>
-              <ChevronRight className="h-3 w-3" />
+              <ChevronRight className="size-3" />
               <Link
                 href={seriesUrl(series)}
                 className="hover:text-foreground underline-offset-2 hover:underline"
@@ -261,7 +261,7 @@ export default async function IssuePage({
               </Link>
             </>
           )}
-          <ChevronRight className="h-3 w-3" />
+          <ChevronRight className="size-3" />
           <span className="text-foreground/80">{heading}</span>
         </div>
       </nav>
@@ -449,25 +449,25 @@ export default async function IssuePage({
                 label="Issue"
                 value={issue.number ? `#${issue.number}` : null}
                 hint={series?.name ?? null}
-                icon={<Hash className="h-4 w-4" />}
+                icon={<Hash className="size-4" />}
               />
               <DetailSummaryItem
                 label="Published"
                 value={publicationDate}
                 hint={seriesStatus}
-                icon={<Calendar className="h-4 w-4" />}
+                icon={<Calendar className="size-4" />}
               />
               <DetailSummaryItem
                 label="Length"
                 value={formatPageCount(issue.page_count)}
                 hint={readingTime ? `≈ ${readingTime}` : null}
-                icon={<FileStack className="h-4 w-4" />}
+                icon={<FileStack className="size-4" />}
               />
               <DetailSummaryItem
                 label="Archive"
                 value={formatFileSize(issue.file_size)}
                 hint={issue.state === "active" ? null : issue.state}
-                icon={<HardDrive className="h-4 w-4" />}
+                icon={<HardDrive className="size-4" />}
               />
             </DetailSummaryGrid>
 
@@ -915,31 +915,31 @@ function IssueFactRow({
   const facts: { icon: React.ReactNode; label: string }[] = [];
   if (publisher) {
     facts.push({
-      icon: <Building2 className="h-4 w-4" />,
+      icon: <Building2 className="size-4" />,
       label: publisher,
     });
   }
   if (issue.page_count) {
     facts.push({
-      icon: <FileStack className="h-4 w-4" />,
+      icon: <FileStack className="size-4" />,
       label: `${issue.page_count} pages`,
     });
   }
   if (readingTime) {
     facts.push({
-      icon: <Clock className="h-4 w-4" />,
+      icon: <Clock className="size-4" />,
       label: `~${readingTime}`,
     });
   }
   if (publicationDate) {
     facts.push({
-      icon: <Calendar className="h-4 w-4" />,
+      icon: <Calendar className="size-4" />,
       label: publicationDate,
     });
   }
   if (issue.language_code) {
     facts.push({
-      icon: <Languages className="h-4 w-4" />,
+      icon: <Languages className="size-4" />,
       label: issue.language_code.toUpperCase(),
     });
   }
@@ -949,7 +949,7 @@ function IssueFactRow({
   const lastReadLabel = formatRelativeDate(lastReadAt);
   if (lastReadLabel) {
     facts.push({
-      icon: <History className="h-4 w-4" />,
+      icon: <History className="size-4" />,
       label:
         timesRead > 1
           ? `Last read ${lastReadLabel} · ${timesRead}×`

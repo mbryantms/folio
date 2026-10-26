@@ -674,7 +674,7 @@ export function RelationshipForm({
           >
             {pending ? (
               <>
-                <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Saving
+                <Loader2 className="mr-1 size-3 animate-spin" /> Saving
               </>
             ) : edit ? (
               "Save"
@@ -888,7 +888,7 @@ export function TargetPicker({
                 </p>
               ) : search.isLoading ? (
                 <p className="text-muted-foreground flex items-center justify-center gap-2 px-3 py-6 text-sm">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching…
+                  <Loader2 className="size-3.5 animate-spin" /> Searching…
                 </p>
               ) : items.length === 0 ? (
                 <p className="text-muted-foreground px-3 py-6 text-center text-sm">

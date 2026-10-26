@@ -10,9 +10,10 @@
  * `statusToneText()` / `statusTone()` (see `lib/ui/status-tone.ts`),
  * which resolve correctly on all three themes.
  *
- * This flags any `text-(emerald|amber|red|green)-(200|300)` that isn't
- * paired with a `dark:` variant on the same line (the presence of
- * `dark:` signals an intentional light-theme fallback was provided).
+ * This flags any raw palette class (`text-emerald-300`, `bg-amber-500`,
+ * `border-violet-500/40`, …) that isn't paired with a `dark:` variant on
+ * the same line (the presence of `dark:` signals an intentional
+ * light-theme fallback was provided).
  *
  * Excluded:
  *   - the status-tone helper itself,
@@ -30,9 +31,23 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = resolve(__dirname, "..");
 const SCAN_DIRS = ["app", "components", "lib"];
-const PATTERN = /text-(?:emerald|amber|red|green)-(?:200|300)\b/;
+// Any raw Tailwind palette class (widened 2026-10-26 from the four
+// dark-tuned shades the first sweep targeted). Tokens — `text-success`,
+// `bg-warning`, `text-info`, `bg-destructive`, `bg-primary/30` — follow
+// every theme; a palette shade follows none of them.
+const PATTERN =
+  /\b(?:text|bg|border|ring|fill|stroke|from|to|via|outline|decoration|shadow)-(?:red|green|emerald|amber|blue|rose|yellow|orange|sky|zinc|gray|slate|neutral|stone|indigo|violet|purple|pink|lime|teal|cyan|fuchsia)-[0-9]{2,3}\b/;
 const READER_PREFIX = join("app", "[locale]", "read") + sep;
-const ALLOWLIST = new Set([join("lib", "ui", "status-tone.ts")]);
+const ALLOWLIST = new Set([
+  // The tone helper itself.
+  join("lib", "ui", "status-tone.ts"),
+  // Accent swatches: each dot IS a palette colour by definition.
+  join("components", "settings", "ThemePicker.tsx"),
+  // Marker colours are a fixed per-marker palette, not status tones.
+  join("components", "markers", "MarkersList.tsx"),
+  // The offline reader is a reader surface (always dark), like app/read.
+  join("app", "[locale]", "downloads", "OfflineReader.tsx"),
+]);
 
 function* walk(dir) {
   for (const name of readdirSync(dir)) {

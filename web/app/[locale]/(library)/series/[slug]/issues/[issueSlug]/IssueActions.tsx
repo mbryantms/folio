@@ -508,7 +508,7 @@ function EditForm({
                 {pinnedFields.size} field
                 {pinnedFields.size === 1 ? " is" : "s are"} protected from
                 scanner / metadata-fetch overwrites. Click the
-                <PinOff className="mx-1 inline h-3 w-3 align-text-bottom" />
+                <PinOff className="mx-1 inline size-3 align-text-bottom" />
                 icon next to a field to release it so future updates can flow
                 through.
               </div>
@@ -946,7 +946,7 @@ function EditForm({
                     size="sm"
                     onClick={onAddLink}
                   >
-                    <Plus className="mr-1 h-4 w-4" />
+                    <Plus className="mr-1 size-4" />
                     Add link
                   </Button>
                 </div>
@@ -982,7 +982,7 @@ function EditForm({
                           onClick={() => onRemoveLink(i)}
                           aria-label="Remove link"
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="size-4" />
                         </Button>
                       </li>
                     ))}
@@ -1003,7 +1003,7 @@ function EditForm({
             Cancel
           </Button>
           <Button type="submit" disabled={isPending}>
-            {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {isPending && <Loader2 className="mr-2 size-4 animate-spin" />}
             Save
           </Button>
         </div>
@@ -1062,13 +1062,13 @@ function Field({
             type="button"
             size="icon"
             variant="ghost"
-            className="text-muted-foreground hover:text-foreground -my-1 h-6 w-6"
+            className="text-muted-foreground hover:text-foreground -my-1 size-6"
             disabled={pin.pending}
             onClick={() => pin.onRelease(pinField)}
             aria-label={`Allow scans and metadata fetches to overwrite ${label}`}
             title={`${label} is locally edited. Click to allow future scans / metadata fetches to overwrite.`}
           >
-            <PinOff className="h-3.5 w-3.5" />
+            <PinOff className="size-3.5" />
           </Button>
         )}
       </div>

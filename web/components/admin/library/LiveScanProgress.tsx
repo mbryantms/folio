@@ -1301,7 +1301,7 @@ function Metric({
   return (
     <Card>
       <CardContent className="flex items-center gap-3 p-4">
-        <Icon className="text-muted-foreground h-4 w-4 shrink-0" />
+        <Icon className="text-muted-foreground size-4 shrink-0" />
         <div className="min-w-0">
           <dt className="text-muted-foreground truncate text-[10px] font-medium tracking-widest uppercase">
             {label}
@@ -1387,11 +1387,7 @@ function ThumbKindBadge({ event }: { event: ScanEvent }) {
         // Categorical (Both/Page/Cover) — not a status, so it keeps a
         // distinct hue rather than a statusTone, but pairs a darker
         // light-theme shade so the label stays legible on light/amber.
-        isBoth
-          ? "text-amber-700 dark:text-amber-300"
-          : isPage
-            ? "text-sky-700 dark:text-sky-300"
-            : "text-emerald-700 dark:text-emerald-300",
+        isBoth ? "text-warning" : isPage ? "text-info" : "text-success",
       )}
     >
       {isBoth ? "Both" : isPage ? "Page" : "Cover"}
@@ -1465,13 +1461,13 @@ function StatusPill({ status }: { status: Status }) {
     >
       <Icon
         className={cn(
-          "h-3.5 w-3.5",
+          "size-3.5",
           status === "running" || status === "queued" ? "animate-spin" : "",
           status === "thumbnailing" ? "animate-spin" : "",
         )}
       />
       {status}
-      {status === "idle" ? <Play className="h-3 w-3 opacity-60" /> : null}
+      {status === "idle" ? <Play className="size-3 opacity-60" /> : null}
     </span>
   );
 }

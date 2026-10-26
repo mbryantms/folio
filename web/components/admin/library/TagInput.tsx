@@ -58,7 +58,7 @@ export function TagInput({
               onClick={() => onChange(value.filter((_, j) => j !== i))}
               className="hover:bg-foreground/10 rounded-full p-0.5"
             >
-              <X className="h-3 w-3" />
+              <X className="size-3" />
             </button>
           </Badge>
         ))}

@@ -330,7 +330,7 @@ export function ProviderCoverageAnalysis({
         >
           {removed.map((note) => (
             <li key={note} className="flex gap-1.5">
-              <Check className="text-primary mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <Check className="text-primary mt-0.5 size-3.5 shrink-0" />
               <span>{note}</span>
             </li>
           ))}
@@ -520,7 +520,7 @@ function ProviderBlock({
             <ul className="space-y-0.5 text-xs">
               {p.conflicts.map((c) => (
                 <li key={c} className="flex gap-1.5">
-                  <AlertTriangle className="text-primary mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <AlertTriangle className="text-primary mt-0.5 size-3.5 shrink-0" />
                   <span>{c}</span>
                 </li>
               ))}
@@ -528,7 +528,7 @@ function ProviderBlock({
                 .filter((r) => r.note)
                 .map((r) => (
                   <li key={`${r.low}-${r.high}`} className="flex gap-1.5">
-                    <AlertTriangle className="text-primary mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <AlertTriangle className="text-primary mt-0.5 size-3.5 shrink-0" />
                     <span>
                       #{r.low}–{r.high} not mapped: {r.note}
                     </span>
@@ -554,11 +554,11 @@ function ProviderBlock({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="text-muted-foreground/60 hover:text-foreground h-6 w-6 shrink-0"
+                    className="text-muted-foreground/60 hover:text-foreground size-6 shrink-0"
                     onClick={() => onRemoveStale(p.source_label, r)}
                     aria-label={`Remove stale ${p.source_label} mapping`}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Trash2 className="size-3.5" />
                   </Button>
                 </li>
               ))}
@@ -594,9 +594,9 @@ function ProviderBlock({
               onClick={() => onAccept(p.source, chosenOther ? chosen : null)}
             >
               {accepting ? (
-                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="mr-1 size-3.5 animate-spin" />
               ) : (
-                <Check className="mr-1 h-3.5 w-3.5" />
+                <Check className="mr-1 size-3.5" />
               )}
               {canAccept ? "Accept" : "Up to date"}
             </Button>
@@ -640,7 +640,7 @@ function SeriesLine({
           className="inline-flex min-w-0 items-center gap-1 hover:underline"
         >
           <span className="truncate">{label}</span>
-          <ExternalLink className="h-3 w-3 shrink-0" />
+          <ExternalLink className="size-3 shrink-0" />
         </a>
       ) : (
         <span className="truncate">{label}</span>

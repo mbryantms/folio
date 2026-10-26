@@ -119,7 +119,7 @@ export function CoverViewer({
             className="focus-visible:ring-ring absolute top-[max(0.75rem,var(--safe-top))] right-[max(0.75rem,var(--safe-right))] inline-flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur transition-colors hover:bg-black/70 focus-visible:ring-2 focus-visible:outline-none"
             aria-label="Close"
           >
-            <X className="h-5 w-5" />
+            <X className="size-5" />
           </DialogPrimitive.Close>
 
           {count > 1 && (
@@ -130,7 +130,7 @@ export function CoverViewer({
                 aria-label="Previous cover"
                 className="focus-visible:ring-ring absolute top-1/2 left-[max(0.5rem,var(--safe-left))] inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur transition-colors hover:bg-black/70 focus-visible:ring-2 focus-visible:outline-none"
               >
-                <ChevronLeft className="h-6 w-6" />
+                <ChevronLeft className="size-6" />
               </button>
               <button
                 type="button"
@@ -138,7 +138,7 @@ export function CoverViewer({
                 aria-label="Next cover"
                 className="focus-visible:ring-ring absolute top-1/2 right-[max(0.5rem,var(--safe-right))] inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur transition-colors hover:bg-black/70 focus-visible:ring-2 focus-visible:outline-none"
               >
-                <ChevronRight className="h-6 w-6" />
+                <ChevronRight className="size-6" />
               </button>
             </>
           )}

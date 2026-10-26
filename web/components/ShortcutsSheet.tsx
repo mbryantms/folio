@@ -137,15 +137,13 @@ export function ShortcutsSheet({
         // default `sm:max-w-sm` (384px) cap. `overflow-y-auto` stays
         // as a defensive guard for very short viewports, but at this
         // width + 2-col layout, scrolling is no longer the default.
-        className="flex w-full flex-col border-neutral-800 bg-neutral-950/95 text-neutral-100 sm:max-w-3xl"
+        className="flex w-full flex-col sm:max-w-3xl"
       >
         <SheetHeader>
-          <SheetTitle className="text-neutral-100">
-            Keyboard shortcuts
-          </SheetTitle>
-          <SheetDescription className="text-neutral-400">
+          <SheetTitle>Keyboard shortcuts</SheetTitle>
+          <SheetDescription>
             Customize any binding under{" "}
-            <span className="text-neutral-200">Settings → Keybinds</span>.
+            <span className="text-foreground">Settings → Keybinds</span>.
           </SheetDescription>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
@@ -182,11 +180,13 @@ function Section({
   // here would double up against the parent gap.
   return (
     <div>
-      <h3 className="mb-2 text-xs font-semibold tracking-wide text-neutral-500 uppercase">
+      <h3 className="text-muted-foreground mb-2 text-xs font-semibold tracking-wide uppercase">
         {title}
       </h3>
       {hint ? (
-        <p className="mb-2 text-xs leading-relaxed text-neutral-400">{hint}</p>
+        <p className="text-muted-foreground mb-2 text-xs leading-relaxed">
+          {hint}
+        </p>
       ) : null}
       <ul className="space-y-2">{children}</ul>
     </div>
@@ -195,13 +195,13 @@ function Section({
 
 function Row({ label, keys }: { label: string; keys: readonly string[] }) {
   return (
-    <li className="flex items-center justify-between gap-3 rounded border border-neutral-800/60 bg-neutral-900/50 px-3 py-2 text-sm">
-      <span className="text-neutral-200">{label}</span>
+    <li className="border-border/60 bg-muted/40 flex items-center justify-between gap-3 rounded border px-3 py-2 text-sm">
+      <span className="text-foreground">{label}</span>
       <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
         {keys.map((k, i) => (
           <Fragment key={i}>
             {i > 0 ? (
-              <span className="text-[10px] text-neutral-500">or</span>
+              <span className="text-muted-foreground text-[10px]">or</span>
             ) : null}
             <Kbd size="md">{k}</Kbd>
           </Fragment>

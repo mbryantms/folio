@@ -44,7 +44,7 @@ export function DashboardTab() {
   if (q.isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+        <Loader2 className="size-4 animate-spin" /> Loading…
       </div>
     );
   }
@@ -63,7 +63,7 @@ export function DashboardTab() {
           label="Series matched"
           value={`${d.series_matched.toLocaleString()} / ${d.series_total.toLocaleString()}`}
           accent={`${matchedPct}%`}
-          icon={<CheckCircle2 className="h-4 w-4" />}
+          icon={<CheckCircle2 className="size-4" />}
         />
         <StatCard
           label="Unmatched"
@@ -71,7 +71,7 @@ export function DashboardTab() {
           accent={
             d.series_unmatched > 0 ? "needs search — open the list" : "none"
           }
-          icon={<XCircle className="h-4 w-4" />}
+          icon={<XCircle className="size-4" />}
           href={
             d.series_unmatched > 0
               ? "/?library=all&provider_match=unmatched"
@@ -134,7 +134,7 @@ function RecentAppliesCard() {
       <CardContent>
         {q.isLoading ? (
           <div className="text-muted-foreground flex items-center gap-2 text-sm">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+            <Loader2 className="size-3.5 animate-spin" /> Loading…
           </div>
         ) : rows.length === 0 ? (
           <p className="text-muted-foreground text-sm">
@@ -241,7 +241,7 @@ function BackfillCard({
         <Button onClick={enqueue} disabled={pending}>
           {pending ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <Loader2 className="mr-2 size-4 animate-spin" />
               Starting…
             </>
           ) : (
@@ -262,7 +262,7 @@ function CoverHashBackfillCard() {
       title="Cover perceptual hashes"
       description="Compute perceptual hashes for covers scanned before pHash matching existed, so cover-similarity matching works on your existing libraries. Runs in the background as a queued job; safe to re-run — it only touches covers that still lack a hash."
       endpoint="/admin/metadata/phash-backfill"
-      icon={<Fingerprint className="mr-2 h-4 w-4" />}
+      icon={<Fingerprint className="mr-2 size-4" />}
       label="Backfill cover hashes"
     />
   );
@@ -274,7 +274,7 @@ function VariantCoverBackfillCard() {
       title="Variant covers"
       description="Re-download provider variant covers whose image file is missing on disk, or that are still kept as hotlinks. Runs in the background as a queued job; safe to re-run. Covers whose provider URL has expired can't be recovered here — re-apply metadata for those issues."
       endpoint="/admin/metadata/variant-cover-backfill"
-      icon={<ImageDown className="mr-2 h-4 w-4" />}
+      icon={<ImageDown className="mr-2 size-4" />}
       label="Re-download missing covers"
     />
   );
@@ -286,7 +286,7 @@ function CoverVariantBackfillCard() {
       title="Cover size variants"
       description="Generate the small (300px) cover variant used by responsive srcset, by downscaling each issue's existing full cover — no archive access. New covers get it automatically; this fills in the back catalogue so small / low-DPR cards download fewer bytes. Runs in the background; safe to re-run."
       endpoint="/admin/metadata/cover-variant-backfill"
-      icon={<Images className="mr-2 h-4 w-4" />}
+      icon={<Images className="mr-2 size-4" />}
       label="Generate cover variants"
     />
   );
@@ -300,7 +300,7 @@ function NameSuffixBackfillCard() {
         'Rebuild credits, characters, teams and locations for issues whose ComicInfo lists a name as "José Marzán, Jr." (older scans split that into "José Marzán" and "Jr.") or with a tagger id glued on ("John Doe [15487]"). Re-derives them from the stored file metadata, leaves anything a provider or you set alone, and removes the orphaned "Jr." / "[15487]" rows. No archive access; safe to re-run.'
       }
       endpoint="/admin/metadata/name-suffix-backfill"
-      icon={<Users className="mr-2 h-4 w-4" />}
+      icon={<Users className="mr-2 size-4" />}
       label="Repair names"
     />
   );
@@ -312,7 +312,7 @@ function CsvCacheBackfillCard() {
       title="Metadata read-cache"
       description="Rewrite every issue's flat credit / character / team / location / genre / tag columns from the normalized tables, so lists, search, OPDS and filters show the same names as the creator and character pages. New scans do this automatically; this fills in the back catalogue. One statement per series; no archive access; safe to re-run."
       endpoint="/admin/metadata/csv-cache-backfill"
-      icon={<RefreshCw className="mr-2 h-4 w-4" />}
+      icon={<RefreshCw className="mr-2 size-4" />}
       label="Rebuild read-cache"
     />
   );
@@ -351,7 +351,7 @@ function MatchQualityCard() {
           <CardTitle className="text-sm font-medium">Match quality</CardTitle>
         </CardHeader>
         <CardContent className="text-muted-foreground flex items-center gap-2 text-sm">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+          <Loader2 className="size-3.5 animate-spin" /> Loading…
         </CardContent>
       </Card>
     );

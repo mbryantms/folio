@@ -191,9 +191,9 @@ export function CblIssueCard({
         <span
           aria-label="Read"
           title="Read"
-          className="bg-primary/90 text-primary-foreground absolute top-2 right-2 inline-flex h-6 w-6 items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10"
+          className="bg-primary/90 text-primary-foreground absolute top-2 right-2 inline-flex size-6 items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10"
         >
-          <Check aria-hidden="true" className="h-3.5 w-3.5" />
+          <Check aria-hidden="true" className="size-3.5" />
         </span>
       )}
       {issue && issue.state === "active" && inProgress && (

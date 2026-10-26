@@ -209,7 +209,7 @@ export function ChronoFeed({
         <div ref={sentinelRef} aria-hidden className="h-px" />
         {query.isFetchingNextPage && (
           <div className="text-muted-foreground mt-4 flex justify-center text-xs">
-            <ChevronDown className="mr-1 h-3 w-3 animate-pulse" />
+            <ChevronDown className="mr-1 size-3 animate-pulse" />
             Loading more…
           </div>
         )}
@@ -399,7 +399,7 @@ function EventRow({ event }: { event: ReadingLogEventView }) {
               KIND_TINT[event.kind as ReadingLogEventKind],
             )}
           >
-            <Icon aria-hidden="true" className="h-3 w-3" />
+            <Icon aria-hidden="true" className="size-3" />
             {KIND_LABEL[event.kind as ReadingLogEventKind]}
           </span>
           <PayloadLine event={event} />
@@ -456,7 +456,7 @@ function RowKebab({ event }: { event: ReadingLogEventView }) {
           "opacity-0 group-hover/event-row:opacity-100",
         )}
       >
-        <MoreVertical aria-hidden="true" className="h-4 w-4" />
+        <MoreVertical aria-hidden="true" className="size-4" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         {isHidden ? (
@@ -464,7 +464,7 @@ function RowKebab({ event }: { event: ReadingLogEventView }) {
             onSelect={() => unhide.mutate({ kind, source_id: sourceId })}
             disabled={pending}
           >
-            <EyeOff className="mr-2 h-4 w-4" aria-hidden="true" />
+            <EyeOff className="mr-2 size-4" aria-hidden="true" />
             Show again
           </DropdownMenuItem>
         ) : (
@@ -472,7 +472,7 @@ function RowKebab({ event }: { event: ReadingLogEventView }) {
             onSelect={() => hide.mutate({ kind, source_id: sourceId })}
             disabled={pending}
           >
-            <EyeOff className="mr-2 h-4 w-4" aria-hidden="true" />
+            <EyeOff className="mr-2 size-4" aria-hidden="true" />
             Hide from activity
           </DropdownMenuItem>
         )}
@@ -539,7 +539,7 @@ function MarkerKindIcon({ kind }: { kind: string }) {
     return (
       <Star
         aria-hidden="true"
-        className="text-muted-foreground mr-1 inline h-3 w-3 align-[-2px]"
+        className="text-muted-foreground mr-1 inline size-3 align-[-2px]"
       />
     );
   }
@@ -547,14 +547,14 @@ function MarkerKindIcon({ kind }: { kind: string }) {
     return (
       <MessageSquare
         aria-hidden="true"
-        className="text-muted-foreground mr-1 inline h-3 w-3 align-[-2px]"
+        className="text-muted-foreground mr-1 inline size-3 align-[-2px]"
       />
     );
   }
   return (
     <BookmarkIcon
       aria-hidden="true"
-      className="text-muted-foreground mr-1 inline h-3 w-3 align-[-2px]"
+      className="text-muted-foreground mr-1 inline size-3 align-[-2px]"
     />
   );
 }

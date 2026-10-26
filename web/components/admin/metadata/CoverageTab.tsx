@@ -73,7 +73,7 @@ export function CoverageTab() {
   if (q.isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+        <Loader2 className="size-4 animate-spin" /> Loading…
       </div>
     );
   }
@@ -104,7 +104,7 @@ export function CoverageTab() {
           disabled={q.isFetching}
         >
           <RefreshCw
-            className={`h-3.5 w-3.5 ${q.isFetching ? "animate-spin" : ""}`}
+            className={`size-3.5 ${q.isFetching ? "animate-spin" : ""}`}
           />
           Recompute
         </Button>
@@ -235,15 +235,12 @@ function CompletenessCard({ d }: { d: MetadataCoverageResp }) {
           aria-label={`Complete ${pct(t.complete)} percent, partial ${pct(t.partial)} percent, needs metadata ${pct(t.needs_metadata)} percent`}
         >
           <div
-            className="bg-emerald-600 dark:bg-emerald-500"
+            className="bg-success"
             style={{ width: `${pct(t.complete)}%` }}
           />
+          <div className="bg-warning" style={{ width: `${pct(t.partial)}%` }} />
           <div
-            className="bg-amber-500"
-            style={{ width: `${pct(t.partial)}%` }}
-          />
-          <div
-            className="bg-red-500 dark:bg-red-400"
+            className="bg-destructive"
             style={{ width: `${pct(t.needs_metadata)}%` }}
           />
         </div>
@@ -322,9 +319,9 @@ function TierPill({
   hint?: string;
 }) {
   const dot = {
-    complete: "bg-emerald-600 dark:bg-emerald-500",
-    partial: "bg-amber-500",
-    needs: "bg-red-500 dark:bg-red-400",
+    complete: "bg-success",
+    partial: "bg-warning",
+    needs: "bg-destructive",
     accepted: "bg-muted-foreground/60",
   }[tone];
   return (
@@ -362,9 +359,7 @@ function FieldBars({
         {rows.map((r) => {
           const pct = Math.min(100, (r.issues / denom) * 100);
           const barTone =
-            tone === "ok" && pct >= 50
-              ? "bg-emerald-600 dark:bg-emerald-500"
-              : "bg-amber-500";
+            tone === "ok" && pct >= 50 ? "bg-success" : "bg-warning";
           return (
             <FieldBarRow
               key={r.field}

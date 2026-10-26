@@ -265,7 +265,7 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
           >
             {isFetchingNextPage ? (
               <>
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
                 Loading more…
               </>
             ) : (

@@ -79,7 +79,7 @@ export function CoverMenuButton({
           className={cn(
             "absolute top-2 left-2 z-10",
             // Fixed visual footprint (32px) — never grows with cover size.
-            "bg-background/85 text-foreground inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10",
+            "bg-background/85 text-foreground inline-flex size-8 cursor-pointer items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10",
             // Hidden by default; revealed on the parent .group's hover/focus.
             // (Touch devices never reach here — the kebab returns null there
             // and the long-press sheet takes over.)
@@ -90,7 +90,7 @@ export function CoverMenuButton({
             className,
           )}
         >
-          <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+          <MoreHorizontal className="size-4" aria-hidden="true" />
         </span>
       </DropdownMenuTrigger>
       <DropdownMenuContent

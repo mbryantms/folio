@@ -73,7 +73,7 @@ export function QuickReadOverlay({
         "absolute right-2 bottom-2 z-10",
         // Fixed 32px footprint — never grows with cover size so it stays
         // out of the way on dense rails and consistent across cards.
-        "bg-primary/90 text-primary-foreground inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full shadow-md ring-2 ring-white/20 backdrop-blur",
+        "bg-primary/90 text-primary-foreground inline-flex size-8 cursor-pointer items-center justify-center rounded-full shadow-md ring-2 ring-white/20 backdrop-blur",
         "scale-90 opacity-0 transition-all duration-150 ease-out",
         "group-hover:scale-100 group-hover:opacity-100",
         "group-focus-within:scale-100 group-focus-within:opacity-100",
@@ -81,7 +81,7 @@ export function QuickReadOverlay({
         className,
       )}
     >
-      <Play className="h-3.5 w-3.5 fill-current pl-0.5" aria-hidden="true" />
+      <Play className="size-3.5 fill-current pl-0.5" aria-hidden="true" />
     </span>
   );
 }
@@ -152,7 +152,7 @@ export function SeriesPlayOverlay({
       }}
       className={cn(
         "absolute right-2 bottom-2 z-10",
-        "bg-primary/90 text-primary-foreground inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full shadow-md ring-2 ring-white/20 backdrop-blur",
+        "bg-primary/90 text-primary-foreground inline-flex size-8 cursor-pointer items-center justify-center rounded-full shadow-md ring-2 ring-white/20 backdrop-blur",
         "scale-90 opacity-0 transition-all duration-150 ease-out",
         "group-hover:scale-100 group-hover:opacity-100",
         "group-focus-within:scale-100 group-focus-within:opacity-100",
@@ -163,7 +163,7 @@ export function SeriesPlayOverlay({
         className,
       )}
     >
-      <Play className="h-3.5 w-3.5 fill-current pl-0.5" aria-hidden="true" />
+      <Play className="size-3.5 fill-current pl-0.5" aria-hidden="true" />
     </span>
   );
 }

@@ -95,7 +95,7 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
   if (isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <Loader2 className="size-4 animate-spin" />
         Loading collection…
       </div>
     );
@@ -417,7 +417,7 @@ function Legend({ showPossibly = false }: { showPossibly?: boolean }) {
         <span key={it.status} className="inline-flex items-center gap-1.5">
           <span
             className={cn(
-              "inline-block h-3 w-3 rounded-sm",
+              "inline-block size-3 rounded-sm",
               STATUS_CLASSES[it.status],
             )}
           />
@@ -520,7 +520,7 @@ function SelectionDetail({
           className="text-primary inline-flex items-center gap-1 text-xs font-medium hover:underline"
         >
           Open issue
-          <ChevronRight className="h-3.5 w-3.5" />
+          <ChevronRight className="size-3.5" />
         </Link>
         {status === "incomplete" ? (
           // Incomplete metadata → the fix lives on the Metadata tab (what is
@@ -530,7 +530,7 @@ function SelectionDetail({
             className="text-primary inline-flex items-center gap-1 text-xs font-medium hover:underline"
           >
             What&rsquo;s missing
-            <ChevronRight className="h-3.5 w-3.5" />
+            <ChevronRight className="size-3.5" />
           </Link>
         ) : null}
       </div>
@@ -560,7 +560,7 @@ function StatePill({ state }: { state: string }) {
           statusTone("success"),
         )}
       >
-        <CheckCircle2 className="h-3.5 w-3.5" />
+        <CheckCircle2 className="size-3.5" />
         Complete
       </span>
     );
@@ -573,7 +573,7 @@ function StatePill({ state }: { state: string }) {
           statusTone("warning"),
         )}
       >
-        <AlertCircle className="h-3.5 w-3.5" />
+        <AlertCircle className="size-3.5" />
         Incomplete
       </span>
     );

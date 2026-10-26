@@ -116,7 +116,7 @@ export function AddToCollectionDialog({
         {mode === "pick" ? (
           <div className="space-y-3">
             <div className="relative">
-              <Search className="text-muted-foreground absolute top-2.5 left-2.5 h-4 w-4" />
+              <Search className="text-muted-foreground absolute top-2.5 left-2.5 size-4" />
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -137,7 +137,7 @@ export function AddToCollectionDialog({
                     onAdded={() => onOpenChange(false)}
                     icon={
                       <BookmarkPlus
-                        className="text-muted-foreground h-4 w-4 shrink-0"
+                        className="text-muted-foreground size-4 shrink-0"
                         aria-hidden="true"
                       />
                     }
@@ -202,7 +202,7 @@ export function AddToCollectionDialog({
               onClick={() => setMode("create")}
               className="w-full justify-start"
             >
-              <Plus className="mr-2 h-4 w-4" />
+              <Plus className="mr-2 size-4" />
               Create new collection
             </Button>
           </div>
@@ -223,7 +223,7 @@ export function AddToCollectionDialog({
 function FolderIcon() {
   return (
     <Folder
-      className="text-muted-foreground h-4 w-4 shrink-0"
+      className="text-muted-foreground size-4 shrink-0"
       aria-hidden="true"
     />
   );
@@ -409,7 +409,7 @@ function CreateForm({
           onClick={onCancel}
           disabled={busy}
         >
-          <ArrowLeft className="mr-1 h-4 w-4" /> Back
+          <ArrowLeft className="mr-1 size-4" /> Back
         </Button>
         <Button type="submit" disabled={busy}>
           Create &amp; add

@@ -135,9 +135,9 @@ export function CoverageAfterMatchPrompt({
                   disabled={acceptingSource !== null}
                 >
                   {accepting ? (
-                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className="mr-1 size-3.5 animate-spin" />
                   ) : (
-                    <Check className="mr-1 h-3.5 w-3.5" />
+                    <Check className="mr-1 size-3.5" />
                   )}
                   Accept
                 </Button>

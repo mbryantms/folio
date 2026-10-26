@@ -135,7 +135,7 @@ export function MarkerDrawer({
                     >
                       <Icon
                         aria-hidden="true"
-                        className="text-muted-foreground mt-0.5 h-4 w-4 shrink-0"
+                        className="text-muted-foreground mt-0.5 size-4 shrink-0"
                       />
                       <span className="min-w-0 flex-1">
                         <span className="block text-sm font-medium">

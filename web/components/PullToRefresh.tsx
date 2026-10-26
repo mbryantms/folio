@@ -75,10 +75,10 @@ function PullToRefreshIndicator({
         )}
       >
         {isRefreshing ? (
-          <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+          <Loader2 className="size-5 animate-spin" aria-hidden="true" />
         ) : (
           <ArrowDown
-            className="h-5 w-5"
+            className="size-5"
             style={{ transform: `rotate(${rotation}deg)` }}
             aria-hidden="true"
           />

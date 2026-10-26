@@ -163,7 +163,7 @@ export function ActivityReportPage() {
       <div ref={sentinelRef} aria-hidden className="h-px" />
       {query.isFetchingNextPage && (
         <div className="text-muted-foreground flex justify-center gap-1 text-sm">
-          <ChevronDown className="h-4 w-4 animate-pulse" />
+          <ChevronDown className="size-4 animate-pulse" />
           Loading more…
         </div>
       )}
@@ -191,13 +191,13 @@ function ReportHeader({
     <header className="flex flex-col gap-3">
       <Button asChild variant="ghost" size="sm" className="-ml-2 w-fit">
         <Link href="/log">
-          <ArrowLeft aria-hidden="true" className="mr-1 h-4 w-4" />
+          <ArrowLeft aria-hidden="true" className="mr-1 size-4" />
           Back to reading log
         </Link>
       </Button>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <ScrollText className="text-muted-foreground h-5 w-5" />
+          <ScrollText className="text-muted-foreground size-5" />
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">
               Activity report
@@ -284,7 +284,7 @@ function StatTile({
   return (
     <Card>
       <CardContent className="flex flex-col gap-1.5 p-4">
-        <Icon aria-hidden="true" className="text-muted-foreground h-4 w-4" />
+        <Icon aria-hidden="true" className="text-muted-foreground size-4" />
         <div className="text-2xl leading-tight font-semibold tabular-nums">
           {value}
         </div>
@@ -358,7 +358,7 @@ function EventCard({ event }: { event: ReadingLogEventView }) {
             KIND_TINT[event.kind as ReadingLogEventKind],
           )}
         >
-          <Icon aria-hidden="true" className="h-3.5 w-3.5" />
+          <Icon aria-hidden="true" className="size-3.5" />
           {KIND_LABEL[event.kind as ReadingLogEventKind]}
         </span>
       </div>

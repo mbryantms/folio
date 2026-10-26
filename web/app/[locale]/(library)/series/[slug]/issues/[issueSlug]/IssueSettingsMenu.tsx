@@ -328,9 +328,9 @@ export function IssueSettingsMenu({
             className="h-12 w-12 shrink-0 place-items-center p-0 sm:h-10 sm:w-10"
           >
             {busy ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="size-4 animate-spin" />
             ) : (
-              <Settings className="h-4 w-4" />
+              <Settings className="size-4" />
             )}
           </Button>
         </DropdownMenuTrigger>
@@ -339,29 +339,29 @@ export function IssueSettingsMenu({
           <DropdownMenuGroup>
             {showReadFromStart && (
               <DropdownMenuItem onSelect={readFromStart}>
-                <RotateCcw className="mr-2 h-4 w-4" />
+                <RotateCcw className="mr-2 size-4" />
                 Read from beginning
               </DropdownMenuItem>
             )}
             {canRead && (
               <DropdownMenuItem onSelect={readIncognito}>
-                <EyeOff className="mr-2 h-4 w-4" />
+                <EyeOff className="mr-2 size-4" />
                 Read in incognito
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onSelect={markRead}>
-              <CheckCircle2 className="mr-2 h-4 w-4" />
+              <CheckCircle2 className="mr-2 size-4" />
               Mark as read
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={markUnread}>
-              <Circle className="mr-2 h-4 w-4" />
+              <Circle className="mr-2 size-4" />
               Mark as unread
             </DropdownMenuItem>
             <DropdownMenuItem
               onSelect={toggleBookmark}
               disabled={createMarker.isPending || deleteMarker.isPending}
             >
-              <Bookmark className="mr-2 h-4 w-4" />
+              <Bookmark className="mr-2 size-4" />
               {existingBookmark ? "Remove bookmark" : "Bookmark"}
             </DropdownMenuItem>
           </DropdownMenuGroup>
@@ -373,11 +373,11 @@ export function IssueSettingsMenu({
               onSelect={addToReadingList}
               disabled={!wtrId || addToWtr.isPending}
             >
-              <BookmarkPlus className="mr-2 h-4 w-4" />
+              <BookmarkPlus className="mr-2 size-4" />
               Add to Want to Read
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setCollectionDialogOpen(true)}>
-              <Folder className="mr-2 h-4 w-4" />
+              <Folder className="mr-2 size-4" />
               Add to collection…
             </DropdownMenuItem>
             <DropdownMenuItem
@@ -385,32 +385,32 @@ export function IssueSettingsMenu({
                 void share.shareOrCopy(issueUrl(issue), issueLabel)
               }
             >
-              <Link2 className="mr-2 h-4 w-4" />
+              <Link2 className="mr-2 size-4" />
               {share.label}
             </DropdownMenuItem>
             {share.canShare && (
               <DropdownMenuItem
                 onSelect={() => void share.copyLink(issueUrl(issue))}
               >
-                <Link2 className="mr-2 h-4 w-4" />
+                <Link2 className="mr-2 size-4" />
                 Copy link
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onSelect={() => setMetadataDialogOpen(true)}>
-              <Sparkles className="mr-2 h-4 w-4" />
+              <Sparkles className="mr-2 size-4" />
               Fetch metadata…
             </DropdownMenuItem>
             {canRead && (
               <DropdownMenuItem asChild>
                 <a href={`/opds/v1/issues/${issue.id}/file`} download>
-                  <Download className="mr-2 h-4 w-4" />
+                  <Download className="mr-2 size-4" />
                   Download
                 </a>
               </DropdownMenuItem>
             )}
             {canRead && (
               <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
-                <HardDriveDownload className="mr-2 h-4 w-4" />
+                <HardDriveDownload className="mr-2 size-4" />
                 Download for offline…
               </DropdownMenuItem>
             )}
@@ -425,25 +425,25 @@ export function IssueSettingsMenu({
                   onSelect={triggerScan}
                   disabled={scan.isPending}
                 >
-                  <RefreshCw className="mr-2 h-4 w-4" />
+                  <RefreshCw className="mr-2 size-4" />
                   Scan issue
                 </DropdownMenuItem>
                 <DropdownMenuResponsiveSub
-                  icon={<Images className="mr-2 h-4 w-4" />}
+                  icon={<Images className="mr-2 size-4" />}
                   label="Thumbnails"
                 >
                   <DropdownMenuItem
                     onSelect={() => regenerateCover.mutate()}
                     disabled={regenerateCover.isPending}
                   >
-                    <ImageIcon className="mr-2 h-4 w-4" />
+                    <ImageIcon className="mr-2 size-4" />
                     Rebuild cover
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onSelect={() => generatePageMap.mutate()}
                     disabled={generatePageMap.isPending}
                   >
-                    <Images className="mr-2 h-4 w-4" />
+                    <Images className="mr-2 size-4" />
                     Fill missing page thumbnails
                   </DropdownMenuItem>
                   {onForceRecreatePageMap && (
@@ -451,20 +451,20 @@ export function IssueSettingsMenu({
                       onSelect={onForceRecreatePageMap}
                       className="text-destructive focus:text-destructive"
                     >
-                      <Images className="mr-2 h-4 w-4" />
+                      <Images className="mr-2 size-4" />
                       Rebuild all page thumbnails
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuResponsiveSub>
                 {onEdit && (
                   <DropdownMenuItem onSelect={onEdit}>
-                    <Pencil className="mr-2 h-4 w-4" />
+                    <Pencil className="mr-2 size-4" />
                     Edit issue
                   </DropdownMenuItem>
                 )}
                 {onChooseCoverPage && (
                   <DropdownMenuItem onSelect={onChooseCoverPage}>
-                    <ImageIcon className="mr-2 h-4 w-4" />
+                    <ImageIcon className="mr-2 size-4" />
                     Choose cover page…
                   </DropdownMenuItem>
                 )}
@@ -477,12 +477,12 @@ export function IssueSettingsMenu({
                   }
                   disabled={setSeriesCover.isPending}
                 >
-                  <Star className="mr-2 h-4 w-4" />
+                  <Star className="mr-2 size-4" />
                   Use as series cover
                 </DropdownMenuItem>
                 {issue.allow_archive_writeback && onEditArchive && canRead && (
                   <DropdownMenuItem onSelect={onEditArchive}>
-                    <Layers className="mr-2 h-4 w-4" />
+                    <Layers className="mr-2 size-4" />
                     Edit archive…
                   </DropdownMenuItem>
                 )}
@@ -493,7 +493,7 @@ export function IssueSettingsMenu({
                       onSelect={onRestoreArchive}
                       className="text-destructive focus:text-destructive"
                     >
-                      <History className="mr-2 h-4 w-4" />
+                      <History className="mr-2 size-4" />
                       Restore from backup…
                     </DropdownMenuItem>
                   )}

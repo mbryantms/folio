@@ -89,7 +89,7 @@ export function BackgroundWorkClient() {
   if (isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading background work…
+        <Loader2 className="size-4 animate-spin" /> Loading background work…
       </div>
     );
   }
@@ -136,9 +136,9 @@ function Summary({ view }: { view: BackgroundWorkView }) {
         role="status"
       >
         {t.busy ? (
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
         ) : (
-          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+          <CheckCircle2 className="size-4" aria-hidden="true" />
         )}
         {t.busy ? "Work in progress" : "Idle — nothing is running or queued"}
       </p>
@@ -297,7 +297,7 @@ function LibraryRow({ lib }: { lib: LibraryWorkView }) {
         </div>
 
         <ArrowRight
-          className="text-muted-foreground hidden h-4 w-4 self-center md:block"
+          className="text-muted-foreground hidden size-4 self-center md:block"
           aria-hidden="true"
         />
       </Link>
@@ -379,9 +379,9 @@ function ScanCell({ lib }: { lib: LibraryWorkView }) {
             )}
           >
             {running ? (
-              <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+              <Loader2 className="size-3 animate-spin" aria-hidden="true" />
             ) : (
-              <Clock className="h-3 w-3" aria-hidden="true" />
+              <Clock className="size-3" aria-hidden="true" />
             )}
             {running ? "Scanning" : "Queued"}
           </Badge>
@@ -463,7 +463,7 @@ function OtherWorkCard({ view }: { view: BackgroundWorkView }) {
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <Loader2
-                    className="text-muted-foreground h-3.5 w-3.5 shrink-0 animate-spin"
+                    className="text-muted-foreground size-3.5 shrink-0 animate-spin"
                     aria-hidden="true"
                   />
                   <span className="truncate">
@@ -548,7 +548,7 @@ function BatchRow({ batch }: { batch: MetadataBatchWorkView }) {
         disabled={cancel.isPending}
         onClick={() => setConfirm(true)}
       >
-        <XCircle className="h-4 w-4" />
+        <XCircle className="size-4" />
       </Button>
       <AlertDialog open={confirm} onOpenChange={setConfirm}>
         <AlertDialogContent>

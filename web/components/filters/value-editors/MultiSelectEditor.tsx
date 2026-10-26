@@ -120,7 +120,7 @@ export function MultiSelectEditor({
                     >
                       <Check
                         className={cn(
-                          "mr-2 h-4 w-4",
+                          "mr-2 size-4",
                           checked ? "opacity-100" : "opacity-0",
                         )}
                       />
@@ -144,7 +144,7 @@ export function MultiSelectEditor({
                 className="hover:bg-muted-foreground/20 rounded-sm"
                 aria-label={`Remove ${labelFor(v)}`}
               >
-                <X className="h-3 w-3" />
+                <X className="size-3" />
               </button>
             </Badge>
           ))}

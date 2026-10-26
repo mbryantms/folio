@@ -257,7 +257,7 @@ function IssueStep({
           className="px-2"
           aria-label="Back to series search"
         >
-          <ArrowLeft className="h-3.5 w-3.5" />
+          <ArrowLeft className="size-3.5" />
         </Button>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{series.name}</div>
@@ -284,9 +284,9 @@ function IssueStep({
             }}
           >
             {bulk.pending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="size-3.5 animate-spin" />
             ) : (
-              <Sparkles className="h-3.5 w-3.5" />
+              <Sparkles className="size-3.5" />
             )}
             Match all by number
           </Button>
@@ -467,7 +467,7 @@ function issueCountLabel(n: number | null | undefined): string {
 function Spinner({ label }: { label: string }) {
   return (
     <div className="text-muted-foreground flex items-center gap-2 p-3 text-xs">
-      <Loader2 className="h-3 w-3 animate-spin" /> {label}
+      <Loader2 className="size-3 animate-spin" /> {label}
     </div>
   );
 }

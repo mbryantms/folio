@@ -186,7 +186,7 @@ function CreatedPanel({
       <p className="text-muted-foreground flex items-start gap-1.5 text-xs text-balance">
         <TriangleAlert
           aria-hidden="true"
-          className="mt-px size-3.5 shrink-0 text-amber-500"
+          className="text-warning mt-px size-3.5 shrink-0"
         />
         <span>
           Copy it now — it won&apos;t be shown again. Share it with the user;

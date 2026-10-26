@@ -239,7 +239,7 @@ function ViewsTabs() {
           icon={Sparkles}
           action={
             <Button type="button" onClick={() => setNewFilterOpen(true)}>
-              <Plus className="mr-1 h-4 w-4" /> New filter view
+              <Plus className="mr-1 size-4" /> New filter view
             </Button>
           }
           renderCard={renderFilterCard}
@@ -270,7 +270,7 @@ function ViewsTabs() {
           icon={Folder}
           action={
             <Button type="button" onClick={() => setNewCollectionOpen(true)}>
-              <Plus className="mr-1 h-4 w-4" /> New collection
+              <Plus className="mr-1 size-4" /> New collection
             </Button>
           }
           renderCard={renderCollectionCard}
@@ -350,7 +350,7 @@ function ReadingListsBoard({
           disabled={ids.length === 0 || busy}
           onSelect={() => startBatch(ids)}
         >
-          <RefreshCw className="h-4 w-4" /> Update{" "}
+          <RefreshCw className="size-4" /> Update{" "}
           {ids.length === 1 ? "this list" : `these ${ids.length} lists`}
         </DropdownMenuItem>
       );
@@ -369,7 +369,7 @@ function ReadingListsBoard({
         <>
           <CblUpdatesMenu />
           <Button type="button" onClick={onImport}>
-            <Plus className="mr-1 h-4 w-4" /> Import CBL
+            <Plus className="mr-1 size-4" /> Import CBL
           </Button>
         </>
       }
@@ -485,7 +485,7 @@ function ViewCard({
     <div className="group hover:bg-accent/40 border-border/60 bg-card flex h-full flex-col gap-2 rounded-lg border p-4 transition-colors">
       <div className="flex items-start justify-between gap-2">
         <Icon
-          className="text-muted-foreground h-5 w-5 shrink-0"
+          className="text-muted-foreground size-5 shrink-0"
           aria-hidden="true"
         />
         <DropdownMenu>
@@ -497,12 +497,12 @@ function ViewCard({
               aria-label={`Actions for ${view.name}`}
               className="text-muted-foreground hover:text-foreground -mt-1 -mr-1 h-7 w-7"
             >
-              <MoreVertical className="h-4 w-4" />
+              <MoreVertical className="size-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuItem onSelect={() => setPinOpen(true)}>
-              <Pin className="h-4 w-4" /> Pin to pages…
+              <Pin className="size-4" /> Pin to pages…
             </DropdownMenuItem>
             <DropdownMenuCheckboxItem
               checked={view.show_in_sidebar}
@@ -514,7 +514,7 @@ function ViewCard({
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuResponsiveSub
-                  icon={<FolderInput className="h-4 w-4" />}
+                  icon={<FolderInput className="size-4" />}
                   label="Move to group"
                 >
                   {board.groups.map((g) => (
@@ -525,7 +525,7 @@ function ViewCard({
                     >
                       <span className="inline-flex w-4 justify-center">
                         {currentGroup === g.id ? (
-                          <Check className="h-4 w-4" aria-hidden="true" />
+                          <Check className="size-4" aria-hidden="true" />
                         ) : null}
                       </span>
                       <span className="truncate">{g.name}</span>
@@ -538,7 +538,7 @@ function ViewCard({
                     >
                       <span className="inline-flex w-4 justify-center">
                         {currentGroup === UNGROUPED_ID ? (
-                          <Check className="h-4 w-4" aria-hidden="true" />
+                          <Check className="size-4" aria-hidden="true" />
                         ) : null}
                       </span>
                       Ungrouped
@@ -548,7 +548,7 @@ function ViewCard({
                   <DropdownMenuItem
                     onSelect={() => board.newGroupWithView(view.id)}
                   >
-                    <FolderPlus className="h-4 w-4" /> New group…
+                    <FolderPlus className="size-4" /> New group…
                   </DropdownMenuItem>
                 </DropdownMenuResponsiveSub>
               </>
@@ -560,7 +560,7 @@ function ViewCard({
                   onSelect={() => setConfirmOpen(true)}
                   className="text-destructive focus:text-destructive"
                 >
-                  <Trash2 className="h-4 w-4" /> Delete
+                  <Trash2 className="size-4" /> Delete
                 </DropdownMenuItem>
               </>
             )}
@@ -589,18 +589,18 @@ function ViewCard({
         <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-1">
           {isBuiltIn ? (
             <Badge variant="outline" className="gap-1 font-normal">
-              <Lock className="h-3 w-3" /> Built-in
+              <Lock className="size-3" /> Built-in
             </Badge>
           ) : null}
           {pinnedCount > 0 ? (
             <Badge variant="secondary" className="gap-1 font-normal">
-              <Pin className="h-3 w-3" /> {pinnedCount}{" "}
+              <Pin className="size-3" /> {pinnedCount}{" "}
               {pinnedCount === 1 ? "page" : "pages"}
             </Badge>
           ) : null}
           {view.show_in_sidebar ? (
             <Badge variant="secondary" className="gap-1 font-normal">
-              <PanelLeft className="h-3 w-3" /> Sidebar
+              <PanelLeft className="size-3" /> Sidebar
             </Badge>
           ) : null}
         </div>

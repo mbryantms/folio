@@ -70,7 +70,7 @@ export function ClosingNoteEditor({
             className="text-muted-foreground h-7 px-2"
             onClick={() => setEditing(true)}
           >
-            <Pencil className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+            <Pencil className="mr-1 size-3.5" aria-hidden="true" />
             Edit
           </Button>
         </div>
@@ -84,7 +84,7 @@ export function ClosingNoteEditor({
         className={cn("text-muted-foreground h-7 px-2", className)}
         onClick={() => setEditing(true)}
       >
-        <Pencil className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+        <Pencil className="mr-1 size-3.5" aria-hidden="true" />
         Add a closing note
       </Button>
     );

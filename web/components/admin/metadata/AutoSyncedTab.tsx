@@ -27,7 +27,7 @@ export function AutoSyncedTab() {
   if (q.isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+        <Loader2 className="size-4 animate-spin" /> Loading…
       </div>
     );
   }
@@ -100,9 +100,9 @@ function AutoSyncedRow({ row }: { row: AutoSyncedSeriesRow }) {
         aria-label={`Stop auto-syncing ${row.name}`}
       >
         {pause.isPending ? (
-          <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+          <Loader2 className="mr-1 size-3.5 animate-spin" />
         ) : (
-          <PauseCircle className="mr-1 h-3.5 w-3.5" />
+          <PauseCircle className="mr-1 size-3.5" />
         )}
         Stop
       </Button>

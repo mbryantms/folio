@@ -279,7 +279,7 @@ export function SeriesRelatedSection({
         </h2>
         {isAdmin && (
           <Button variant="outline" size="sm" onClick={openAdd}>
-            <Plus className="mr-1 h-3.5 w-3.5" /> Add relationship
+            <Plus className="mr-1 size-3.5" /> Add relationship
           </Button>
         )}
       </div>
@@ -451,7 +451,7 @@ export function SeriesRelatedSection({
             >
               {remove.isPending ? (
                 <>
-                  <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Removing
+                  <Loader2 className="mr-1 size-3 animate-spin" /> Removing
                 </>
               ) : (
                 "Remove"
@@ -494,7 +494,7 @@ export function SeriesRelatedSection({
             >
               {removeExternal.isPending ? (
                 <>
-                  <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Removing
+                  <Loader2 className="mr-1 size-3 animate-spin" /> Removing
                 </>
               ) : (
                 "Remove"
@@ -580,11 +580,11 @@ function ExternalRows({
             <Button
               variant="ghost"
               size="icon"
-              className="text-muted-foreground hover:text-foreground h-6 w-6"
+              className="text-muted-foreground hover:text-foreground size-6"
               aria-label={`Remove ${e.kind_label.toLowerCase()} ${externalName(e)}`}
               onClick={() => onRemove(e)}
             >
-              <Trash2 className="h-3.5 w-3.5" />
+              <Trash2 className="size-3.5" />
             </Button>
           )}
         </li>
@@ -617,20 +617,20 @@ function EditRemoveButtons({
       <Button
         variant="ghost"
         size="icon"
-        className="bg-background/80 text-muted-foreground hover:text-foreground h-6 w-6"
+        className="bg-background/80 text-muted-foreground hover:text-foreground size-6"
         aria-label={`Edit ${label}`}
         onClick={onEdit}
       >
-        <Pencil className="h-3.5 w-3.5" />
+        <Pencil className="size-3.5" />
       </Button>
       <Button
         variant="ghost"
         size="icon"
-        className="bg-background/80 text-muted-foreground hover:text-foreground h-6 w-6"
+        className="bg-background/80 text-muted-foreground hover:text-foreground size-6"
         aria-label={`Remove ${label}`}
         onClick={onRemove}
       >
-        <Trash2 className="h-3.5 w-3.5" />
+        <Trash2 className="size-3.5" />
       </Button>
     </div>
   );
@@ -729,7 +729,7 @@ function ReadingOrder({
               {i > 0 && (
                 <ChevronRight
                   aria-hidden
-                  className="text-muted-foreground h-4 w-4 shrink-0"
+                  className="text-muted-foreground size-4 shrink-0"
                   // Centre the chevron on the cover (2:3).
                   style={{ marginTop: coverWidth * 0.75 - 8 }}
                 />
@@ -780,7 +780,7 @@ export function ChainSplits({
           key={`${s.numbers}-${s.target}`}
           className="text-muted-foreground flex gap-1"
         >
-          <CornerDownRight aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+          <CornerDownRight aria-hidden className="mt-0.5 size-3 shrink-0" />
           <span className="min-w-0">
             {s.numbers} {s.verb}{" "}
             {s.local_series ? (

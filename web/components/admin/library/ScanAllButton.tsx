@@ -68,7 +68,7 @@ export function ScanAllButton() {
           disabled={count === 0}
           aria-label="Scan all libraries"
         >
-          <ScanLine className="mr-2 h-4 w-4" aria-hidden="true" />
+          <ScanLine className="mr-2 size-4" aria-hidden="true" />
           Scan all
         </Button>
       </AlertDialogTrigger>
@@ -113,7 +113,7 @@ export function ScanAllButton() {
             {mutate.isPending ? (
               <>
                 <Loader2
-                  className="mr-2 h-4 w-4 animate-spin"
+                  className="mr-2 size-4 animate-spin"
                   aria-hidden="true"
                 />
                 Enqueuing…

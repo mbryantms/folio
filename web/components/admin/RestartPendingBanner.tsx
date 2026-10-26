@@ -44,7 +44,7 @@ export function RestartPendingBanner() {
         statusTone("warning"),
       )}
     >
-      <RotateCw className="mt-0.5 h-4 w-4 shrink-0" />
+      <RotateCw className="mt-0.5 size-4 shrink-0" />
       <div className="min-w-0 space-y-1.5">
         <p className="font-medium">
           {pending.length === 1

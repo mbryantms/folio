@@ -514,7 +514,7 @@ function Section({
             </Badge>
           ) : null}
         </span>
-        <ChevronDown className="text-muted-foreground h-4 w-4 transition-transform group-data-[state=open]:rotate-180" />
+        <ChevronDown className="text-muted-foreground size-4 transition-transform group-data-[state=open]:rotate-180" />
       </CollapsibleTrigger>
       <CollapsibleContent className="space-y-2 px-6 pb-4">
         {children}

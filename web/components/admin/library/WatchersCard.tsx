@@ -43,7 +43,7 @@ export function WatchersCard() {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          <Eye className="h-4 w-4" /> File watchers
+          <Eye className="size-4" /> File watchers
         </CardTitle>
         {data && (
           <span className="text-muted-foreground text-xs">
@@ -55,7 +55,7 @@ export function WatchersCard() {
       <CardContent>
         {isLoading ? (
           <div className="text-muted-foreground flex items-center gap-2 text-sm">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading watchers…
+            <Loader2 className="size-4 animate-spin" /> Loading watchers…
           </div>
         ) : error || !data ? (
           <p className="text-destructive text-sm">

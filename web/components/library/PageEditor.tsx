@@ -212,7 +212,7 @@ export function PageEditor({
           <div className="flex-1 overflow-y-auto px-6 py-4">
             {loadingCount ? (
               <div className="text-muted-foreground flex items-center gap-2 py-12 text-sm">
-                <Loader2 className="h-4 w-4 animate-spin" /> Loading pages…
+                <Loader2 className="size-4 animate-spin" /> Loading pages…
               </div>
             ) : displayCount === 0 ? (
               <p className="text-muted-foreground text-sm">
@@ -315,7 +315,7 @@ export function PageEditor({
               disabled={edit.isPending}
             >
               {edit.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className="mr-2 size-4 animate-spin" />
               )}
               Rewrite archive
             </AlertDialogAction>
@@ -438,7 +438,7 @@ function PageCard({
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           {...(listeners as any)}
         >
-          <GripVertical className="h-4 w-4" />
+          <GripVertical className="size-4" />
         </button>
       </div>
       <div className="flex items-center justify-between gap-1 px-2 py-1.5">
@@ -456,7 +456,7 @@ function PageCard({
             aria-label={`Rotate page ${position}`}
             title="Rotate 90°"
           >
-            <RotateCw className="h-3.5 w-3.5" />
+            <RotateCw className="size-3.5" />
           </Button>
           <Button
             type="button"
@@ -471,7 +471,7 @@ function PageCard({
             aria-label={`Adjust page ${position}`}
             title="Adjust image (brightness, levels, sharpen, crop)"
           >
-            <SlidersHorizontal className="h-3.5 w-3.5" />
+            <SlidersHorizontal className="size-3.5" />
           </Button>
           <Button
             type="button"
@@ -484,9 +484,9 @@ function PageCard({
             title="Replace with an image"
           >
             {uploading ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="size-3.5 animate-spin" />
             ) : (
-              <ImageUp className="h-3.5 w-3.5" />
+              <ImageUp className="size-3.5" />
             )}
           </Button>
           <Button
@@ -504,9 +504,9 @@ function PageCard({
             title={slot.removed ? "Keep page" : "Remove page"}
           >
             {slot.removed ? (
-              <Undo2 className="h-3.5 w-3.5" />
+              <Undo2 className="size-3.5" />
             ) : (
-              <Trash2 className="h-3.5 w-3.5" />
+              <Trash2 className="size-3.5" />
             )}
           </Button>
         </div>
