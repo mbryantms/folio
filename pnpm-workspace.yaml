@@ -1,5 +1,6 @@
 packages:
   - "web"
+  - "web/vendor/*"
 
 # pnpm 11 errors (ERR_PNPM_IGNORED_BUILDS) when a dependency's install
 # script is skipped without an explicit per-package decision, where
