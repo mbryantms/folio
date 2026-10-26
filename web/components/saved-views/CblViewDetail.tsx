@@ -47,7 +47,7 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
+} from "@/components/folio/sheet";
 import {
   Tooltip,
   TooltipContent,
@@ -821,17 +821,18 @@ function CblViewDetailInner({
 
       <Sheet open={editOpen} onOpenChange={setEditOpen}>
         <SheetContent
+          size="5xl"
           ref={setEditPortalContainer}
           side="right"
-          // Wider than the filter-view sheet — the Reading-order tab
-          // hosts a 6-column virtualized table that wants more
-          // horizontal room than the filter builder does. `p-0` so
-          // the header gets its own divider and the body owns its
-          // padding. `overflow-visible` so the manual-match popover
-          // (portaled into this content via PopoverPortalContainer)
-          // can extend past the sheet's edge when collision detection
-          // flips it outward; tab bodies own their own scroll.
-          className="flex w-full flex-col gap-0 overflow-visible p-0 sm:max-w-3xl lg:max-w-4xl xl:max-w-5xl"
+          // `size="5xl"`: the Reading-order tab hosts a 6-column
+          // virtualized table that pairs long list titles with long
+          // series titles. `p-0` so the header gets its own divider and
+          // the body owns its padding. `overflow-visible` so the
+          // manual-match popover (portaled into this content via
+          // PopoverPortalContainer) can extend past the sheet's edge
+          // when collision detection flips it outward; tab bodies own
+          // their own scroll.
+          className="flex w-full flex-col gap-0 overflow-visible p-0"
         >
           <SheetHeader className="border-border/60 border-b px-6 py-4 pr-12">
             <SheetTitle>Manage {savedView.name}</SheetTitle>

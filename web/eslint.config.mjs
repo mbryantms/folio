@@ -76,6 +76,7 @@ export default defineConfig([
             "scroll-area",
             "sonner",
             "sidebar",
+            "sheet",
           ].map((name) => ({
             name: `@/components/ui/${name}`,
             message: `Import from @/components/folio/${name} (Folio wrapper over the vendored file).`,

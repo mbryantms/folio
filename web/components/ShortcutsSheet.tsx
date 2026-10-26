@@ -9,7 +9,7 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
+} from "@/components/folio/sheet";
 import {
   GLOBAL_KEYBIND_ACTIONS,
   KEYBIND_LABELS,
@@ -131,13 +131,14 @@ export function ShortcutsSheet({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
+        size="3xl"
         side="right"
         // `sm:max-w-3xl` (768px) buys room for two columns of rows
         // without crowding the chips. Overrides the Sheet primitive's
         // default `sm:max-w-sm` (384px) cap. `overflow-y-auto` stays
         // as a defensive guard for very short viewports, but at this
         // width + 2-col layout, scrolling is no longer the default.
-        className="flex w-full flex-col sm:max-w-3xl"
+        className="flex w-full flex-col"
       >
         <SheetHeader>
           <SheetTitle>Keyboard shortcuts</SheetTitle>

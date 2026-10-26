@@ -15,7 +15,7 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
+} from "@/components/folio/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { useIssueMarkers, useMarkerTags } from "@/lib/api/queries";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
@@ -444,8 +444,9 @@ export function MarkerEditor({
       }}
     >
       <SheetContent
+        size="md"
         side="right"
-        className="flex w-full flex-col gap-0 sm:max-w-md"
+        className="flex w-full flex-col gap-0"
       >
         <SheetHeader>
           <SheetTitle>{title}</SheetTitle>

@@ -7,7 +7,7 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
+} from "@/components/folio/sheet";
 import { useTouchDevice } from "@/lib/ui/use-coarse-pointer";
 import { cn } from "@/lib/utils";
 

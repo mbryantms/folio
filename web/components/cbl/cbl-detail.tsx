@@ -176,9 +176,15 @@ export function CblInfoRow({ list }: { list: CblDetailView }) {
   const sourceBadge = (() => {
     if (list.source_kind === "catalog") {
       return (
-        <Badge variant="secondary">
+        // `max-w-full` + a truncating span: the catalog path is a long
+        // repository path that otherwise ran past a phone-width sheet.
+        <Badge
+          variant="secondary"
+          className="max-w-full"
+          title={list.catalog_path ?? undefined}
+        >
           <GithubIcon className="mr-1 size-3" />
-          Catalog · {list.catalog_path}
+          <span className="truncate">Catalog · {list.catalog_path}</span>
         </Badge>
       );
     }
@@ -937,13 +943,16 @@ function SettingsTab({
        *  last refreshed timestamp. Refresh schedule isn't listed
        *  again here because the editable Select above is the
        *  authoritative surface for that field. */}
-      <dl className="text-muted-foreground grid grid-cols-[8rem_1fr] gap-y-1 border-t pt-3 text-sm">
+      {/* `minmax(0,1fr)`: a `1fr` track never shrinks below its content,
+       *  so the long source URL / catalog path pushed the grid past the
+       *  sheet on phones; the values wrap instead. */}
+      <dl className="text-muted-foreground grid grid-cols-[8rem_minmax(0,1fr)] gap-y-1 border-t pt-3 text-sm">
         <dt>Source kind</dt>
         <dd className="text-foreground">{list.source_kind}</dd>
         {list.source_url ? (
           <>
             <dt>Source URL</dt>
-            <dd className="text-foreground truncate font-mono text-xs">
+            <dd className="text-foreground font-mono text-xs break-all">
               {list.source_url}
             </dd>
           </>
@@ -951,7 +960,7 @@ function SettingsTab({
         {list.catalog_path ? (
           <>
             <dt>Catalog path</dt>
-            <dd className="text-foreground truncate font-mono text-xs">
+            <dd className="text-foreground font-mono text-xs break-all">
               {list.catalog_path}
             </dd>
           </>

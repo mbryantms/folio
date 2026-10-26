@@ -9,7 +9,7 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
+} from "@/components/folio/sheet";
 import { useIssueMarkers } from "@/lib/api/queries";
 import type { MarkerKind } from "@/lib/api/types";
 import {
@@ -81,8 +81,9 @@ export function MarkerDrawer({
   return (
     <Sheet open={open} onOpenChange={setOpen} modal={false}>
       <SheetContent
+        size="sm"
         side="right"
-        className="flex w-full flex-col gap-0 sm:max-w-sm"
+        className="flex w-full flex-col gap-0"
         onInteractOutside={(e) => e.preventDefault()}
         // Keep the reader keymap's `quitReader` from also firing on Esc.
         onEscapeKeyDown={(e) => e.stopPropagation()}
