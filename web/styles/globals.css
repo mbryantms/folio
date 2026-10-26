@@ -318,6 +318,20 @@ html:has([data-surface="reader"]) {
   --density-page-pad-y: 0.5rem;
 }
 
+/*
+ * PR 6: corner radius and motion preferences (`users.corner_radius`,
+ * `users.motion`; cookies `comic_radius` / `comic_motion`; attributes set on
+ * `<html>` by the root layout). Radius sets the one `--radius` token the
+ * upstream scale derives from, after the density block so the user's
+ * explicit choice wins over compact's tighter default.
+ */
+[data-radius="sharp"] {
+  --radius: 0.25rem;
+}
+[data-radius="round"] {
+  --radius: 0.75rem;
+}
+
 @layer base {
   /* shadcn scaffold defaults: a bare `border` takes the border token
    * instead of currentColor, and outlines take the ring token. */
@@ -629,6 +643,16 @@ body {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+/* The same reset when the user picks "Reduced" motion in Settings,
+ * whatever the OS says. */
+[data-motion="reduced"] *,
+[data-motion="reduced"] *::before,
+[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
 }
 
 /* ── Pristine shadcn overlays: Folio geometry ─────────────────────────

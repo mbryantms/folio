@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { isAccent, isDensity, isTheme, resolvedDataTheme } from "@/lib/theme";
+import {
+  isAccent,
+  isDensity,
+  isMotion,
+  isRadius,
+  isTheme,
+  resolvedDataTheme,
+} from "@/lib/theme";
 
 describe("theme guards", () => {
   it("isTheme accepts the four documented values", () => {
@@ -47,5 +54,15 @@ describe("resolvedDataTheme", () => {
     expect(resolvedDataTheme("system")).toBe("dark");
     expect(resolvedDataTheme(null)).toBe("dark");
     expect(resolvedDataTheme(undefined)).toBe("dark");
+  });
+
+  it("isRadius / isMotion accept the documented values and reject garbage", () => {
+    expect(isRadius("sharp")).toBe(true);
+    expect(isRadius("default")).toBe(true);
+    expect(isRadius("round")).toBe(true);
+    expect(isRadius("pill")).toBe(false);
+    expect(isMotion("system")).toBe(true);
+    expect(isMotion("reduced")).toBe(true);
+    expect(isMotion("none")).toBe(false);
   });
 });

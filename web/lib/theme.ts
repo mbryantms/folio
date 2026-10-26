@@ -16,6 +16,10 @@
 export type Theme = "system" | "dark" | "light" | "amber";
 export type Accent = "amber" | "blue" | "emerald" | "rose";
 export type Density = "comfortable" | "compact";
+/** `--radius` token the whole upstream radius scale derives from (PR 6). */
+export type Radius = "sharp" | "default" | "round";
+/** `reduced` applies the reduced-motion rules regardless of the OS. */
+export type Motion = "system" | "reduced";
 
 export const THEMES: readonly Theme[] = [
   "system",
@@ -33,10 +37,14 @@ export const DENSITIES: readonly Density[] = [
   "comfortable",
   "compact",
 ] as const;
+export const RADII: readonly Radius[] = ["sharp", "default", "round"] as const;
+export const MOTIONS: readonly Motion[] = ["system", "reduced"] as const;
 
 export const THEME_COOKIE = "comic_theme";
 export const ACCENT_COOKIE = "comic_accent";
 export const DENSITY_COOKIE = "comic_density";
+export const RADIUS_COOKIE = "comic_radius";
+export const MOTION_COOKIE = "comic_motion";
 
 /** 1 year — long enough that the FOUC-free path is reliable across visits. */
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
@@ -65,6 +73,12 @@ export function isAccent(v: unknown): v is Accent {
 export function isDensity(v: unknown): v is Density {
   return v === "comfortable" || v === "compact";
 }
+export function isRadius(v: unknown): v is Radius {
+  return v === "sharp" || v === "default" || v === "round";
+}
+export function isMotion(v: unknown): v is Motion {
+  return v === "system" || v === "reduced";
+}
 
 export function writeThemeCookie(theme: Theme | null) {
   writeCookie(THEME_COOKIE, theme);
@@ -74,6 +88,12 @@ export function writeAccentCookie(accent: Accent | null) {
 }
 export function writeDensityCookie(density: Density | null) {
   writeCookie(DENSITY_COOKIE, density);
+}
+export function writeRadiusCookie(radius: Radius | null) {
+  writeCookie(RADIUS_COOKIE, radius);
+}
+export function writeMotionCookie(motion: Motion | null) {
+  writeCookie(MOTION_COOKIE, motion);
 }
 
 function writeCookie(name: string, value: string | null) {

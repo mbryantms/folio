@@ -7878,6 +7878,12 @@ export interface components {
         ContinueReadingView: {
             items: components["schemas"]["ContinueReadingCard"][];
         };
+        /**
+         * @description `sharp` | `default` | `round` — the `--radius` token every corner in
+         *     the UI derives from (shadcn plan PR 6).
+         * @enum {string}
+         */
+        CornerRadius: "sharp" | "default" | "round";
         CountedName: {
             /** Format: int64 */
             count: number;
@@ -9394,6 +9400,7 @@ export interface components {
         ExportPreferences: {
             accent_color?: string | null;
             activity_tracking_enabled: boolean;
+            corner_radius?: string | null;
             default_cover_solo: boolean;
             default_fit_mode?: string | null;
             default_page_animation?: string | null;
@@ -9407,6 +9414,7 @@ export interface components {
             language: string;
             /** Format: int32 */
             max_rails_per_page: number;
+            motion?: string | null;
             opds_progress_glyphs: boolean;
             opds_wtr_reorder: boolean;
             /** Format: int32 */
@@ -11112,6 +11120,7 @@ export interface components {
             accent_color?: components["schemas"]["AccentColor"] | null;
             /** @description M6a: per-user opt-out for reading-activity capture. */
             activity_tracking_enabled: boolean;
+            corner_radius?: components["schemas"]["CornerRadius"] | null;
             csrf_token: string;
             /**
              * @description Default for the reader's "cover stands alone in double-page view"
@@ -11153,6 +11162,7 @@ export interface components {
              *     1..=50 enforced by DB CHECK + PATCH validation. Default 12.
              */
             max_rails_per_page: number;
+            motion?: components["schemas"]["Motion"] | null;
             /** @description True when `/me/account` accepts local password changes for this user. */
             password_editable: boolean;
             /**
@@ -11308,6 +11318,12 @@ export interface components {
              */
             user_pinned_fields: string[];
         };
+        /**
+         * @description `system` | `reduced` — `reduced` applies the reduced-motion rules
+         *     regardless of the OS setting.
+         * @enum {string}
+         */
+        Motion: "system" | "reduced";
         NextInSeriesView: {
             items: components["schemas"]["IssueSummaryView"][];
         };
@@ -11904,6 +11920,7 @@ export interface components {
             accent_color?: components["schemas"]["AccentColor"] | null;
             /** @description M6a: opt-out toggle. `false` disables the client tracker hook. */
             activity_tracking_enabled?: boolean | null;
+            corner_radius?: components["schemas"]["CornerRadius"] | null;
             /** @description Default cover-solo toggle; absent leaves the prior value untouched. */
             default_cover_solo?: boolean | null;
             default_fit_mode?: components["schemas"]["FitMode"] | null;
@@ -11932,6 +11949,7 @@ export interface components {
              *     the prior behaviour for users who never touch this.
              */
             max_rails_per_page?: number | null;
+            motion?: components["schemas"]["Motion"] | null;
             /**
              * Format: int32
              * @description M6a: idle threshold ms (30_000..=1_800_000).

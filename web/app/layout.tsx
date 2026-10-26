@@ -20,9 +20,13 @@ import { Toaster } from "@/components/folio/sonner";
 import {
   ACCENT_COOKIE,
   DENSITY_COOKIE,
+  MOTION_COOKIE,
+  RADIUS_COOKIE,
   THEME_COOKIE,
   isAccent,
   isDensity,
+  isMotion,
+  isRadius,
   isTheme,
   resolvedDataTheme,
 } from "@/lib/theme";
@@ -85,6 +89,10 @@ export default async function RootLayout({
   const theme = isTheme(themeCookie) ? themeCookie : "dark";
   const accent = isAccent(accentCookie) ? accentCookie : "amber";
   const density = isDensity(densityCookie) ? densityCookie : "comfortable";
+  const radiusCookie = jar.get(RADIUS_COOKIE)?.value;
+  const motionCookie = jar.get(MOTION_COOKIE)?.value;
+  const radius = isRadius(radiusCookie) ? radiusCookie : "default";
+  const motion = isMotion(motionCookie) ? motionCookie : "system";
   const dataTheme = resolvedDataTheme(theme);
 
   // Per-request CSP nonce for next-themes' inline no-flash script. The
@@ -117,6 +125,8 @@ export default async function RootLayout({
       data-theme={dataTheme}
       data-accent={accent}
       data-density={density}
+      data-radius={radius}
+      data-motion={motion}
       suppressHydrationWarning
     >
       {/* Static, navigation-stable tags — see the note on `metadata`

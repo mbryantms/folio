@@ -138,6 +138,7 @@ mod m20271020_000001_builtin_views_wave2;
 mod m20271020_000002_rename_recently_finished_issues;
 mod m20271021_000001_user_issue_notes;
 mod m20271024_000001_resolve_base_barcode_findings;
+mod m20271026_000001_user_ui_prefs;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -284,6 +285,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20271020_000002_rename_recently_finished_issues::Migration),
             Box::new(m20271021_000001_user_issue_notes::Migration),
             Box::new(m20271024_000001_resolve_base_barcode_findings::Migration),
+            Box::new(m20271026_000001_user_ui_prefs::Migration),
         ]
     }
 }

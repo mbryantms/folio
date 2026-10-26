@@ -90,6 +90,15 @@ pub struct Model {
     #[sea_orm(nullable)]
     pub density: Option<String>,
 
+    /// Corner radius token — `'sharp' | 'default' | 'round'`. Null means
+    /// `default` (shadcn plan PR 6).
+    #[sea_orm(nullable)]
+    pub corner_radius: Option<String>,
+
+    /// Motion token — `'system' | 'reduced'`. Null means `system`.
+    #[sea_orm(nullable)]
+    pub motion: Option<String>,
+
     /// M4: per-action key overrides for the reader. JSON object of
     /// `{ action_name: key_string }`. Empty object means "use defaults".
     pub keybinds: Json,

@@ -211,7 +211,9 @@ async fn theme_accent_density_round_trip() {
         r#"{
             "theme": "dark",
             "accent_color": "blue",
-            "density": "compact"
+            "density": "compact",
+            "corner_radius": "round",
+            "motion": "reduced"
         }"#,
     )
     .await;
@@ -219,6 +221,8 @@ async fn theme_accent_density_round_trip() {
     assert_eq!(body["theme"], "dark");
     assert_eq!(body["accent_color"], "blue");
     assert_eq!(body["density"], "compact");
+    assert_eq!(body["corner_radius"], "round");
+    assert_eq!(body["motion"], "reduced");
 }
 
 #[tokio::test]
