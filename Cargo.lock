@@ -288,7 +288,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "unrar",
- "zip 9.1.1",
+ "zip 9.1.2",
 ]
 
 [[package]]
@@ -6793,7 +6793,7 @@ dependencies = [
  "webp",
  "wiremock",
  "zeroize",
- "zip 9.1.1",
+ "zip 9.1.2",
 ]
 
 [[package]]
@@ -9121,9 +9121,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.1.1"
+version = "9.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "518b847fd864440c379748ad684c449f293af68978a485a4ff16f7c901c1f7c4"
+checksum = "ec2e3161de27091f18a831d9494e9c53378a34833af5c1dda35ad85849da18d6"
 dependencies = [
  "crc32fast",
  "flate2",
