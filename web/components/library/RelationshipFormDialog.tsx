@@ -54,7 +54,7 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from "@/components/ui/form";
+} from "@/components/folio/form";
 import { Input } from "@/components/ui/input";
 import {
   Popover,
@@ -62,7 +62,7 @@ import {
   PopoverPortalContainer,
   PopoverTrigger,
 } from "@/components/folio/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@/components/folio/scroll-area";
 import {
   Select,
   SelectContent,

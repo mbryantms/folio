@@ -8,7 +8,7 @@
 import { act, render } from "@testing-library/react";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/folio/tabs";
 
 const box = { scrollWidth: 0, clientWidth: 0, scrollLeft: 0 };
 const defs: Array<[string, PropertyDescriptor | undefined]> = [];

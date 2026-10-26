@@ -31,7 +31,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/folio/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/folio/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useCatalogEntries, useCatalogSources } from "@/lib/api/queries";
 import {

@@ -4,7 +4,12 @@ import * as React from "react";
 
 import { PageHeader } from "@/components/admin/PageHeader";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/folio/tabs";
 import { useUser } from "@/lib/api/queries";
 import { AuditTable } from "./AuditTable";
 import { LibraryAccessMatrix } from "./LibraryAccessMatrix";

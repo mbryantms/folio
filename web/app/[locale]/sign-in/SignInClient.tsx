@@ -25,9 +25,14 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from "@/components/ui/form";
+} from "@/components/folio/form";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/folio/tabs";
 import { statusTone } from "@/lib/ui/status-tone";
 import type { PublicAuthConfigView } from "@/lib/api/types";
 

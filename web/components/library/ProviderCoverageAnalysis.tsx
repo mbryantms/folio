@@ -32,7 +32,7 @@ import * as React from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@/components/folio/scroll-area";
 import {
   Select,
   SelectContent,

@@ -16,7 +16,7 @@ import { VisualViewportSync } from "@/components/VisualViewportSync";
 import { InstallEvents } from "@/components/InstallEvents";
 import { SafeAreaProbe } from "@/components/SafeAreaProbe";
 import { ThemeProvider } from "@/components/ThemeProvider";
-import { Toaster } from "@/components/ui/sonner";
+import { Toaster } from "@/components/folio/sonner";
 import {
   ACCENT_COOKIE,
   DENSITY_COOKIE,

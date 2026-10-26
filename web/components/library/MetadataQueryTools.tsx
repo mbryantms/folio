@@ -39,7 +39,7 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from "@/components/ui/form";
+} from "@/components/folio/form";
 import { Input } from "@/components/ui/input";
 import { applyServerErrors } from "@/lib/api/form-errors";
 import {

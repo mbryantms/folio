@@ -4,7 +4,12 @@ import dynamic from "next/dynamic";
 import { useState } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/folio/tabs";
 
 import { StatsClient } from "./StatsClient";
 

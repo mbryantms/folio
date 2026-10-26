@@ -68,6 +68,9 @@ export default defineConfig([
             "popover",
             "hover-card",
             "tooltip",
+            "tabs",
+            "scroll-area",
+            "sonner",
           ].map((name) => ({
             name: `@/components/ui/${name}`,
             message: `Import from @/components/folio/${name} (Folio wrapper over the vendored file).`,

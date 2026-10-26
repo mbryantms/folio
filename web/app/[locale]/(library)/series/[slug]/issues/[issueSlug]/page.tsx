@@ -49,7 +49,7 @@ import { IssueClosingNote } from "@/components/library/IssueClosingNote";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MarkersList } from "@/components/markers/MarkersList";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/folio/tabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
   MarkerListView,
