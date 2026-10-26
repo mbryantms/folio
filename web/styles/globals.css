@@ -674,6 +674,13 @@ body {
     place-items: start;
     text-align: left;
   }
+  /* Plain `:hover` for the mouse on select options: Radix's highlight
+   * tracker inside the Select positioner misses some pointer paths, so the
+   * vendored `focus:` styling alone left a hovered option unlit. */
+  [data-slot="select-item"][data-slot="select-item"]:hover {
+    background-color: var(--accent);
+    color: var(--accent-foreground);
+  }
   /* Every sheet side scrolls its own overflow; an inner scroller keeps
    * working because the outer never overflows at normal heights. */
   [data-slot="sheet-content"][data-slot="sheet-content"] {

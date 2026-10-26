@@ -33,7 +33,7 @@ vi.mock("@/components/ui/dialog", () => ({
     createElement("p", null, children),
 }));
 
-vi.mock("@/components/ui/select", () => ({
+vi.mock("@/components/folio/select", () => ({
   Select: ({ children }: { children: React.ReactNode }) =>
     createElement("div", null, children),
   SelectTrigger: ({ children }: { children: React.ReactNode }) =>

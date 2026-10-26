@@ -70,7 +70,7 @@ import {
   PopoverContent,
   PopoverPortalContainer,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@/components/folio/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   useAcceptRelationshipSuggestion,

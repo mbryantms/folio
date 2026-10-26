@@ -11,7 +11,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 import { useAddLogWidget } from "@/lib/api/mutations";
 import type { LogWidgetKind, LogWidgetView } from "@/lib/api/types";
 

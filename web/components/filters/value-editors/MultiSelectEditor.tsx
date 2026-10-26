@@ -18,7 +18,7 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@/components/folio/popover";
 
 import type { OptionsEndpoint } from "../field-registry";
 import { useFilterOptions } from "../use-filter-options";

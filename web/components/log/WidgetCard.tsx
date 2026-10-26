@@ -27,7 +27,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 import { useRemoveLogWidget } from "@/lib/api/mutations";
 import type { LogWidgetView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";

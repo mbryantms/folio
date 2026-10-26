@@ -27,7 +27,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/folio/tooltip";
 import type { DiffResp, ScalarDiffRow } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";

@@ -12,7 +12,7 @@ import {
 import { PhoneControlsBar } from "@/components/library/PhoneControlsBar";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { useCardSize } from "@/components/library/use-card-size";
-import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
 import { EmptyState } from "@/components/folio/empty-state";
 import { useCreateSavedViewBatch } from "@/lib/api/mutations";
 import { useSavedViewIssueResultsInfinite } from "@/lib/api/queries";

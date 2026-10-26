@@ -21,7 +21,7 @@ import { NativeSelect } from "@/components/folio/native-select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectTrigger, SelectValue } from "@/components/folio/select";
 
 describe("touch-target floor", () => {
   it("grows a 44px tap area under pointer: coarse instead of the box", () => {
@@ -63,9 +63,8 @@ describe("touch-target floor", () => {
     // `data-slot` instead.
     expect(screen.getByLabelText("Search").dataset.slot === "input").toBe(true);
     expect(
-      screen
-        .getByRole("combobox", { name: "Sort" })
-        .classList.contains("folio-control"),
+      screen.getByRole("combobox", { name: "Sort" }).dataset.slot ===
+        "select-trigger",
     ).toBe(true);
     const toggle = screen.getByRole("group", {
       name: "Browse series or issues",

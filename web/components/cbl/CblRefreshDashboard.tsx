@@ -73,7 +73,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 import { Progress } from "@/components/ui/progress";
 import { apiMutate } from "@/lib/api/mutations/_core";
 import { useCheckAllCblLists } from "@/lib/api/mutations";

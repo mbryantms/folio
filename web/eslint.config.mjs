@@ -53,6 +53,30 @@ export default defineConfig([
     },
   },
   {
+    // components/ui is vendored verbatim from the shadcn registry. The
+    // modules below have Folio wrappers in components/folio (safe-area
+    // collision padding on popper content, toaster placement); app code
+    // imports the wrapper so the behaviour is never lost on a refresh.
+    ignores: ["components/folio/**", "components/ui/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            "select",
+            "dropdown-menu",
+            "popover",
+            "hover-card",
+            "tooltip",
+          ].map((name) => ({
+            name: `@/components/ui/${name}`,
+            message: `Import from @/components/folio/${name} (Folio wrapper over the vendored file).`,
+          })),
+        },
+      ],
+    },
+  },
+  {
     files: ["**/*.test.ts", "**/*.test.tsx", "tests/**/*"],
     rules: {
       "no-console": "off",

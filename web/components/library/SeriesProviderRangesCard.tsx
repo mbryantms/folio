@@ -78,7 +78,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/folio/select";
 import { CoverageAfterMatchPrompt } from "@/components/library/CoverageAfterMatchPrompt";
 import { useExternalIdsEditor } from "@/components/library/ExternalIdsCard";
 import {

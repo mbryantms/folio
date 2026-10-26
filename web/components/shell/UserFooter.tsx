@@ -29,7 +29,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 import { useShortcutsSheet } from "@/components/GlobalShortcutsSheet";
 
 /**

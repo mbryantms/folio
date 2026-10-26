@@ -23,7 +23,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/folio/tooltip";
 import {
   useAcceptRelationshipSuggestion,
   useRejectRelationshipSuggestion,

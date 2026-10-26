@@ -42,7 +42,7 @@ vi.mock("@/components/ui/dialog", () => ({
 // instead of through Radix's portal — `renderToStaticMarkup` skips
 // portals, so without this stub the field-name labels inside the
 // dropdown wouldn't appear in the rendered HTML.
-vi.mock("@/components/ui/select", () => ({
+vi.mock("@/components/folio/select", () => ({
   Select: ({ children }: { children: React.ReactNode }) =>
     createElement("div", null, children),
   SelectTrigger: ({ children }: { children: React.ReactNode }) =>

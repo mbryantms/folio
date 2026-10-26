@@ -8,7 +8,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/folio/tooltip";
 import { UserFooter } from "@/components/shell/UserFooter";
 import { useMarkerCount } from "@/lib/api/queries";
 import { useSidebarSectionCollapse } from "@/lib/use-sidebar-section-collapse";

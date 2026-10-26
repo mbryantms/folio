@@ -85,7 +85,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -93,7 +93,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/folio/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   useCreateViewGroup,

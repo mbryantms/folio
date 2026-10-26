@@ -9,7 +9,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/folio/tooltip";
 import { UserFooter } from "@/components/shell/UserFooter";
 import { cn } from "@/lib/utils";
 

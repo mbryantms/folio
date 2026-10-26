@@ -21,7 +21,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/folio/select";
 import { summarizeBulkArchiveSkips } from "@/lib/library/bulk-archive-skips";
 import { useBulkArchiveEditMutation } from "@/lib/api/mutations";
 import type { BulkArchiveOp, BulkEditResponse } from "@/lib/api/types";

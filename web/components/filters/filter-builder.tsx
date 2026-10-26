@@ -12,7 +12,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/folio/select";
 import { Separator } from "@/components/ui/separator";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import {

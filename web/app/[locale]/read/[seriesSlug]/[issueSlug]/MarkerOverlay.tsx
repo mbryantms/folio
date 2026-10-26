@@ -15,7 +15,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/folio/tooltip";
 import { useIssueMarkers, useIssuePageTextRegions } from "@/lib/api/queries";
 import {
   useDeleteMarker,

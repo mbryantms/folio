@@ -8,7 +8,7 @@ import {
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 import { useTouchDevice } from "@/lib/ui/use-coarse-pointer";
 
 /**

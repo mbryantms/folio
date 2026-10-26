@@ -23,7 +23,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/folio/select";
 import { useCreateUser } from "@/lib/api/mutations";
 import type { CreateUserResp } from "@/lib/api/types";
 

@@ -1,52 +1,43 @@
-"use client";
+"use client"
 
-import * as React from "react";
-import { HoverCard as HoverCardPrimitive } from "radix-ui";
+import * as React from "react"
+import { cn } from "cn"
+import { HoverCard as HoverCardPrimitive } from "radix-ui"
 
-import { cn } from "@/lib/utils";
-import { safeAreaCollisionPadding } from "@/components/folio/collision-padding";
+function HoverCard({
+  ...props
+}: React.ComponentProps<typeof HoverCardPrimitive.Root>) {
+  return <HoverCardPrimitive.Root data-slot="hover-card" {...props} />
+}
 
-/**
- * Hover preview primitive (audit 3.7 discovery). Radix HoverCard is
- * pointer-hover-driven and inert on touch / keyboard-only flows by design,
- * so it layers a desktop "peek" on top of a card without changing the
- * card's click/long-press behavior. Portals to `<body>` so the preview
- * escapes the card grid's overflow + stacking context (same reasoning as
- * the tooltip primitive).
- */
-const HoverCard = HoverCardPrimitive.Root;
-const HoverCardTrigger = HoverCardPrimitive.Trigger;
+function HoverCardTrigger({
+  ...props
+}: React.ComponentProps<typeof HoverCardPrimitive.Trigger>) {
+  return (
+    <HoverCardPrimitive.Trigger data-slot="hover-card-trigger" {...props} />
+  )
+}
 
-const HoverCardContent = React.forwardRef<
-  React.ComponentRef<typeof HoverCardPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof HoverCardPrimitive.Content>
->(
-  (
-    { className, align = "center", sideOffset = 8, collisionPadding, ...props },
-    ref,
-  ) => {
-    const pad = React.useMemo(
-      () => collisionPadding ?? safeAreaCollisionPadding(),
-      [collisionPadding],
-    );
-    return (
-      <HoverCardPrimitive.Portal>
-        <HoverCardPrimitive.Content
-          ref={ref}
-          align={align}
-          sideOffset={sideOffset}
-          collisionPadding={pad}
-          className={cn(
-            "border-border bg-popover text-popover-foreground z-50 w-72 origin-[--radix-hover-card-content-transform-origin] rounded-md border p-3 shadow-md outline-none",
-            "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 motion-reduce:transition-none motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none",
-            className,
-          )}
-          {...props}
-        />
-      </HoverCardPrimitive.Portal>
-    );
-  },
-);
-HoverCardContent.displayName = HoverCardPrimitive.Content.displayName;
+function HoverCardContent({
+  className,
+  align = "center",
+  sideOffset = 4,
+  ...props
+}: React.ComponentProps<typeof HoverCardPrimitive.Content>) {
+  return (
+    <HoverCardPrimitive.Portal data-slot="hover-card-portal">
+      <HoverCardPrimitive.Content
+        data-slot="hover-card-content"
+        align={align}
+        sideOffset={sideOffset}
+        className={cn(
+          "z-50 w-64 origin-(--radix-hover-card-content-transform-origin) rounded-lg bg-popover p-4 text-sm text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-hidden duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          className
+        )}
+        {...props}
+      />
+    </HoverCardPrimitive.Portal>
+  )
+}
 
-export { HoverCard, HoverCardTrigger, HoverCardContent };
+export { HoverCard, HoverCardTrigger, HoverCardContent }

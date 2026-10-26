@@ -23,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { FilterPill } from "@/components/folio/filter-pill";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { PopoverPortalContainer } from "@/components/ui/popover";
+import { PopoverPortalContainer } from "@/components/folio/popover";
 import {
   Collapsible,
   CollapsibleContent,
@@ -35,7 +35,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/folio/select";
 import {
   Sheet,
   SheetContent,

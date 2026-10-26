@@ -22,7 +22,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/folio/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useReadingLogInfinite, useReadingStats } from "@/lib/api/queries";
 import { formatTotalHours } from "@/lib/activity";

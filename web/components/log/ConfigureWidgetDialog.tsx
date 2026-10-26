@@ -20,7 +20,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/folio/select";
 import { Textarea } from "@/components/ui/textarea";
 import { usePatchLogWidget } from "@/lib/api/mutations";
 import type {

@@ -57,7 +57,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 import { EmptyState } from "@/components/folio/empty-state";
 import { FilterPill } from "@/components/folio/filter-pill";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -74,7 +74,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/folio/tooltip";
 import {
   useAcceptSeriesIssues,
   useCreateSeriesBatch,
