@@ -16,7 +16,7 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
+} from "@/components/folio/sheet";
 import type { SortOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";

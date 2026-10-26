@@ -63,7 +63,7 @@ import {
   SheetHeader,
   SheetTitle,
   SheetTrigger,
-} from "@/components/ui/sheet";
+} from "@/components/folio/sheet";
 import type { IssueSummaryView, SeriesView } from "@/lib/api/types";
 import {
   useIssuesCrossListInfinite,

@@ -25,7 +25,7 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
+} from "@/components/folio/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useClearIssueFieldPin,
@@ -283,8 +283,9 @@ function EditSheet({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
+        size="xl"
         side="right"
-        className="flex w-full flex-col gap-0 p-0 sm:max-w-xl"
+        className="flex w-full flex-col gap-0 p-0"
       >
         <SheetHeader className="border-border border-b px-6 py-4">
           <SheetTitle>Edit issue</SheetTitle>

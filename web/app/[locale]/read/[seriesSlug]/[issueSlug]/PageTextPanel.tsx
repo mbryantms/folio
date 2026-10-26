@@ -11,7 +11,7 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
+} from "@/components/folio/sheet";
 import { queryKeys, useIssuePageTextRegions } from "@/lib/api/queries";
 import type { TextRegionView } from "@/lib/api/types";
 import type { Direction } from "@/lib/reader/detect";
@@ -59,8 +59,9 @@ export function PageTextPanel({
   return (
     <Sheet open={open} onOpenChange={setOpen} modal={false}>
       <SheetContent
+        size="md"
         side="right"
-        className="flex w-full flex-col gap-0 sm:max-w-md"
+        className="flex w-full flex-col gap-0"
         onInteractOutside={(e) => e.preventDefault()}
         // Radix listens for Esc in the document capture phase; stop it
         // there so the reader keymap's `quitReader` doesn't also fire and

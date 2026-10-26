@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 
 import { AlertDialogHeader } from "@/components/ui/alert-dialog";
 import { DialogHeader } from "@/components/ui/dialog";
-import { SheetHeader } from "@/components/ui/sheet";
+import { SheetHeader } from "@/components/folio/sheet";
 
 describe("overlay headers", () => {
   it.each([

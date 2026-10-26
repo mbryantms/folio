@@ -722,10 +722,21 @@ body {
     padding-bottom: var(--safe-bottom);
     padding-left: var(--safe-left);
   }
-  /* Every sheet side scrolls its own overflow; an inner scroller keeps
-   * working because the outer never overflows at normal heights. */
-  [data-slot="sheet-content"][data-slot="sheet-content"] {
-    overflow-y: auto;
+  /* Side sheets take the width the Folio wrapper's `size` prop sets
+   * (`--sheet-max-w`), outranking upstream's per-side `sm:max-w-sm` cap. */
+  @media (width >= 40rem) {
+    [data-slot="sheet-content"][data-slot="sheet-content"][data-side="left"],
+    [data-slot="sheet-content"][data-slot="sheet-content"][data-side="right"] {
+      max-width: var(--sheet-max-w, var(--container-sm));
+    }
+  }
+  /* Every sheet side scrolls its own overflow (vertical only: a child
+   * wider than a phone must not pan the sheet sideways; wide tables carry
+   * their own scroller). Single selector on purpose: a caller's
+   * `overflow-visible` utility (the CBL sheet, whose manual-match popover
+   * portals into it and may flip past its edge) must still win. */
+  [data-slot="sheet-content"] {
+    overflow: hidden auto;
   }
   /* The close sits clear of the status bar and the rounded corners in
    * the installed app. */

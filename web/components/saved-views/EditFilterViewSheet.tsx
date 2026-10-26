@@ -15,7 +15,7 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
+} from "@/components/folio/sheet";
 import { useUpdateSavedView } from "@/lib/api/mutations";
 import type {
   Condition,
@@ -58,6 +58,7 @@ export function EditFilterViewSheet({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
+        size="2xl"
         ref={setPortalContainer}
         side="right"
         // Override the shadcn default `w-3/4 sm:max-w-sm` — the
@@ -68,7 +69,7 @@ export function EditFilterViewSheet({
         // flips it outward; the inner body div owns long-form scroll.
         // Zero the default `p-6` so the header gets its own divider
         // rule and the scroll body owns its own padding.
-        className="flex w-full flex-col gap-0 overflow-visible p-0 sm:max-w-2xl lg:max-w-3xl xl:max-w-4xl"
+        className="flex w-full flex-col gap-0 overflow-visible p-0 lg:max-w-3xl xl:max-w-4xl"
       >
         <SheetHeader className="border-border/60 border-b px-6 py-4 pr-12">
           <SheetTitle>Edit filter view</SheetTitle>
