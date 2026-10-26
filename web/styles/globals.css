@@ -1,4 +1,10 @@
 @import "tailwindcss";
+/* Enter/exit utilities the vendored shadcn primitives use (`animate-in`,
+ * `fade-in-0`, `zoom-in-95`, `slide-in-from-bottom`, …). Tailwind v4 drops
+ * unknown classes silently, so without this import every Radix open/close
+ * ran as an instant swap (2026-10-26). The reduced-motion block below
+ * still zeroes these durations. */
+@import "tw-animate-css";
 
 @variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
