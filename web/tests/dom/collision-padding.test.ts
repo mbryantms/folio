@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   EDGE_GUTTER,
   safeAreaCollisionPadding,
-} from "@/components/ui/collision-padding";
+} from "@/components/folio/collision-padding";
 
 afterEach(() => {
   document.body.innerHTML = "";

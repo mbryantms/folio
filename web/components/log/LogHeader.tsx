@@ -61,7 +61,7 @@ export function LogHeader({
                 cookie, so no client fetch/auth plumbing is needed. */}
             <Button
               variant="ghost"
-              size="toolbar"
+
               asChild
               title="Download your full reading log as a CSV"
             >
@@ -72,7 +72,7 @@ export function LogHeader({
             </Button>
             <Button
               variant="ghost"
-              size="toolbar"
+
               onClick={() => setResetOpen(true)}
               title="Reset to default layout"
             >

@@ -4,7 +4,7 @@ import * as React from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 
 import { cn } from "@/lib/utils";
-import { safeAreaCollisionPadding } from "@/components/ui/collision-padding";
+import { safeAreaCollisionPadding } from "@/components/folio/collision-padding";
 
 const Popover = PopoverPrimitive.Root;
 const PopoverTrigger = PopoverPrimitive.Trigger;

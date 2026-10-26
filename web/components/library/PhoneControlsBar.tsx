@@ -141,7 +141,7 @@ export function PhoneControlsBar({
           <Button
             type="button"
             variant="ghost"
-            size="toolbar"
+
             className="shrink-0"
             onClick={() => {
               setSearchInput("");

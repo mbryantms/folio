@@ -10,7 +10,7 @@ import {
   offlineReadHref,
 } from "@/components/offline/DownloadsList";
 import { Button } from "@/components/ui/button";
-import { EmptyState } from "@/components/ui/empty-state";
+import { EmptyState } from "@/components/folio/empty-state";
 import { useMe } from "@/lib/api/queries";
 import { getDownloadManager, trackOutboxProgress } from "@/lib/pwa/downloads";
 import {

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 
-import { RatingStars } from "@/components/ui/rating-stars";
+import { RatingStars } from "@/components/folio/rating-stars";
 import { useSetIssueRating, useSetSeriesRating } from "@/lib/api/mutations";
 import { cn } from "@/lib/utils";
 

@@ -49,7 +49,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CollapsiblePickerSection } from "@/components/ui/CollapsiblePickerSection";
+import { CollapsiblePickerSection } from "@/components/folio/CollapsiblePickerSection";
 import { Input } from "@/components/ui/input";
 import { useSidebarLayout } from "@/lib/api/queries";
 import { useUpdateSidebarLayout } from "@/lib/api/mutations";

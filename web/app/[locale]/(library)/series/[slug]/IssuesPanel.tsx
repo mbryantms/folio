@@ -527,7 +527,7 @@ export function IssuesPanel({
         />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="toolbar" disabled={!!debouncedQ}>
+            <Button variant="outline" disabled={!!debouncedQ}>
               Sort: {SORT_LABELS[sort]} ({order === "asc" ? "↑" : "↓"})
             </Button>
           </DropdownMenuTrigger>

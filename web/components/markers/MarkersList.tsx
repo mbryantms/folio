@@ -37,8 +37,8 @@ import { useCardSize } from "@/components/library/use-card-size";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { NotesExportMenu } from "@/components/markers/NotesExportMenu";
-import { FilterPill } from "@/components/ui/filter-pill";
-import { Kbd } from "@/components/ui/kbd";
+import { FilterPill } from "@/components/folio/filter-pill";
+import { Kbd } from "@/components/folio/kbd";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -91,7 +91,7 @@ import type {
   ClosingNoteEntryView,
 } from "@/lib/api/types";
 import { Combobox } from "@/components/folio/combobox";
-import { NativeSelect } from "@/components/ui/native-select";
+import { NativeSelect } from "@/components/folio/native-select";
 import {
   ClampedBody,
   ClosingNoteRow,

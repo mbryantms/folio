@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 
 import { CblStatsPills } from "@/components/cbl/CblStatsPills";
-import { EmptyState } from "@/components/ui/empty-state";
+import { EmptyState } from "@/components/folio/empty-state";
 import { CblWindowCard } from "@/components/cbl/CblWindowCard";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import {

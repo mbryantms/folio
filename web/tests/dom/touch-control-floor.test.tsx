@@ -16,8 +16,8 @@ import { describe, expect, it } from "vitest";
 
 import { CblStatsPillsStatic } from "@/components/cbl/CblStatsPills";
 import { ModeSegmentedToggle } from "@/components/library/LibraryGridToolbar";
-import { FilterPill } from "@/components/ui/filter-pill";
-import { NativeSelect } from "@/components/ui/native-select";
+import { FilterPill } from "@/components/folio/filter-pill";
+import { NativeSelect } from "@/components/folio/native-select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,7 +43,7 @@ describe("touch-target floor", () => {
     );
   });
 
-  it("marks the non-Button toolbar controls with folio-control", () => {
+  it("toolbar controls carry the tap-area hook: data-slot or folio-control", () => {
     render(
       <>
         <Button>Go</Button>
@@ -57,13 +57,11 @@ describe("touch-target floor", () => {
       </>,
     );
     expect(
-      screen
-        .getByRole("button", { name: "Go" })
-        .classList.contains("folio-button"),
+      screen.getByRole("button", { name: "Go" }).dataset.slot === "button",
     ).toBe(true);
-    expect(
-      screen.getByLabelText("Search").classList.contains("folio-control"),
-    ).toBe(true);
+    // Pristine shadcn files carry no Folio class; the CSS hooks their
+    // `data-slot` instead.
+    expect(screen.getByLabelText("Search").dataset.slot === "input").toBe(true);
     expect(
       screen
         .getByRole("combobox", { name: "Sort" })

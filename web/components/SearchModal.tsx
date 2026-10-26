@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowRight, BookOpen, ChevronRight, Clock, X } from "lucide-react";
-import { Kbd } from "@/components/ui/kbd";
+import { Kbd } from "@/components/folio/kbd";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";

@@ -4,7 +4,7 @@ import * as React from "react";
 import { Tooltip as TooltipPrimitive } from "radix-ui";
 
 import { cn } from "@/lib/utils";
-import { safeAreaCollisionPadding } from "@/components/ui/collision-padding";
+import { safeAreaCollisionPadding } from "@/components/folio/collision-padding";
 
 const TooltipProvider = TooltipPrimitive.Provider;
 const Tooltip = TooltipPrimitive.Root;

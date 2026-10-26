@@ -1,7 +1,7 @@
 "use client";
 
 import { Search } from "lucide-react";
-import { Kbd } from "@/components/ui/kbd";
+import { Kbd } from "@/components/folio/kbd";
 import { useEffect, useState } from "react";
 
 import { useSearchModal } from "@/lib/search/use-search-modal";

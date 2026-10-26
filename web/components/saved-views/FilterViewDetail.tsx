@@ -31,7 +31,7 @@ import {
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
-import { EmptyState } from "@/components/ui/empty-state";
+import { EmptyState } from "@/components/folio/empty-state";
 import { apiMutate } from "@/lib/api/mutations";
 import {
   useBulkMarkSeriesProgress,

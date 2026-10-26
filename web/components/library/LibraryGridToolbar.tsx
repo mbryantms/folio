@@ -200,7 +200,7 @@ export function LibraryGridToolbar({
           <Button
             type="button"
             variant={mode === "series" ? "secondary" : "outline"}
-            size="toolbar"
+
             aria-pressed={mode === "series"}
             onClick={() => onMode("series")}
           >
@@ -209,7 +209,7 @@ export function LibraryGridToolbar({
           <Button
             type="button"
             variant={mode === "issues" ? "secondary" : "outline"}
-            size="toolbar"
+
             aria-pressed={mode === "issues"}
             onClick={() => onMode("issues")}
           >
@@ -269,7 +269,7 @@ export function LibraryGridToolbar({
           <Button
             type="button"
             variant="outline"
-            size="toolbar"
+
             disabled={!!trimmedQ}
             onClick={() => onOrder(order === "asc" ? "desc" : "asc")}
             title={`Order: ${order === "asc" ? "Ascending" : "Descending"}`}
@@ -281,7 +281,7 @@ export function LibraryGridToolbar({
           <Button
             type="button"
             variant="outline"
-            size="toolbar"
+
             onClick={onOpenFilters}
           >
             <Filter className="mr-1 h-3.5 w-3.5" />
@@ -299,7 +299,7 @@ export function LibraryGridToolbar({
           <Button
             type="button"
             variant="outline"
-            size="toolbar"
+
             disabled={!canSaveView}
             onClick={onSaveView}
             title="Persist these filters as a new saved view"
@@ -312,7 +312,7 @@ export function LibraryGridToolbar({
             <Button
               type="button"
               variant="ghost"
-              size="toolbar"
+
               onClick={onClearFacets}
               className="text-muted-foreground"
             >

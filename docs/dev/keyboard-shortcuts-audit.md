@@ -126,7 +126,7 @@ Both use `e.preventDefault() + e.stopImmediatePropagation()` so the reader's bub
 
 | Component | Keys | Source |
 |---|---|---|
-| Rating stars | `0`–`5` set value, `Shift+1..5` half-steps, `↑→` `+0.5`, `↓←` `-0.5` | [ui/rating-stars.tsx:72-87](../../web/components/ui/rating-stars.tsx#L72-L87) |
+| Rating stars | `0`–`5` set value, `Shift+1..5` half-steps, `↑→` `+0.5`, `↓←` `-0.5` | [ui/rating-stars.tsx:72-87](../../web/components/folio/rating-stars.tsx#L72-L87) |
 | Admin tag input | `Enter` / `,` add; `Backspace` on empty removes last | [admin/library/TagInput.tsx:73-78, 406-411](../../web/components/admin/library/TagInput.tsx#L73-L78) |
 | Marker tag input | same | [MarkerEditor.tsx:401-412](../../web/app/[locale]/read/[seriesSlug]/[issueSlug]/MarkerEditor.tsx#L401-L412) |
 | `QuickReadOverlay`, `SeriesPlayOverlay`, `CoverMenuButton` | `Enter` / `Space` activate (role="button", tabIndex=0) | [QuickReadOverlay.tsx:66-70](../../web/components/QuickReadOverlay.tsx#L66-L70), [CoverMenuButton.tsx:66-70](../../web/components/CoverMenuButton.tsx#L66-L70) |

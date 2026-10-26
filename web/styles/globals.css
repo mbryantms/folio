@@ -650,7 +650,8 @@ body {
  * overlapping. This is what Apple and Material do themselves (a 32pt
  * segmented control inside a 44pt target; a 40dp button inside 48dp).
  *
- * `.folio-button` is every `<Button>`, `.folio-control` the other inline
+ * `[data-slot="button"]` is every `<Button>` (pristine upstream file, so the
+ * hook is its data-slot, not a class), `.folio-control` the other inline
  * controls (`<Input>`, `<SelectTrigger>`, `NativeSelect`, segmented
  * groups, the CBL header pills), `.folio-tap` the small interactive
  * pieces that are neither (tab triggers, filter pills, segment buttons,
@@ -659,11 +660,31 @@ body {
  * fine. An earlier version floored the box itself at 44px, which made
  * every toolbar taller than the tab strip beside it. */
 @media (pointer: coarse) {
+  /* Pristine shadcn components are matched by their `data-slot`; the
+   * `.folio-*` classes stay for Folio-authored controls. */
+  [data-slot="button"]:not(.absolute, .fixed, .sticky),
+  [data-slot="select-trigger"]:not(.absolute, .fixed, .sticky),
+  [data-slot="tabs-trigger"]:not(.absolute, .fixed, .sticky),
+  [data-slot="toggle"]:not(.absolute, .fixed, .sticky),
+  [data-slot="toggle-group-item"]:not(.absolute, .fixed, .sticky),
+  [data-slot="checkbox"]:not(.absolute, .fixed, .sticky),
+  [data-slot="switch"]:not(.absolute, .fixed, .sticky),
+  [data-slot="radio-group-item"]:not(.absolute, .fixed, .sticky),
+  [data-slot="slider-thumb"]:not(.absolute, .fixed, .sticky),
   .folio-button:not(.absolute, .fixed, .sticky),
   .folio-control:not(.absolute, .fixed, .sticky),
   .folio-tap:not(.absolute, .fixed, .sticky) {
     position: relative;
   }
+  [data-slot="button"]::after,
+  [data-slot="select-trigger"]::after,
+  [data-slot="tabs-trigger"]::after,
+  [data-slot="toggle"]::after,
+  [data-slot="toggle-group-item"]::after,
+  [data-slot="checkbox"]::after,
+  [data-slot="switch"]::after,
+  [data-slot="radio-group-item"]::after,
+  [data-slot="slider-thumb"]::after,
   .folio-button::after,
   .folio-control::after,
   .folio-tap::after {

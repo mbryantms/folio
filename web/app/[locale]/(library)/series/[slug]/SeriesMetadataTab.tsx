@@ -51,15 +51,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { CopyButton } from "@/components/ui/copy-button";
+import { CopyButton } from "@/components/folio/copy-button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { EmptyState } from "@/components/ui/empty-state";
-import { FilterPill } from "@/components/ui/filter-pill";
+import { EmptyState } from "@/components/folio/empty-state";
+import { FilterPill } from "@/components/folio/filter-pill";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Table,

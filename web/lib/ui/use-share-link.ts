@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
-import { useCopyToClipboard } from "@/components/ui/copy-button";
+import { useCopyToClipboard } from "@/components/folio/copy-button";
 
 /**
  * Device-adaptive "share or copy link" affordance (data-liberation 3.3).

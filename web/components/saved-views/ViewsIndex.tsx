@@ -43,7 +43,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { DropdownMenuResponsiveSub } from "@/components/ui/dropdown-menu-responsive-sub";
+import { DropdownMenuResponsiveSub } from "@/components/folio/dropdown-menu-responsive-sub";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CblImportDialog } from "@/components/cbl/cbl-import-dialog";

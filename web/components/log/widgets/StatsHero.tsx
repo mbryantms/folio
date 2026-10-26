@@ -2,7 +2,7 @@
 
 import { BookOpen, FileText, Flame, Gauge, Timer } from "lucide-react";
 
-import { EmptyState } from "@/components/ui/empty-state";
+import { EmptyState } from "@/components/folio/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useReadingStats } from "@/lib/api/queries";
 import { formatTotalHours } from "@/lib/activity";

@@ -6,7 +6,7 @@ const state = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
 }));
-vi.mock("@/components/ui/copy-button", () => ({
+vi.mock("@/components/folio/copy-button", () => ({
   useCopyToClipboard: () => ({ copy: state.copy }),
 }));
 vi.mock("sonner", () => ({

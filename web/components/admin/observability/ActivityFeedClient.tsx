@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FilterPill } from "@/components/ui/filter-pill";
+import { FilterPill } from "@/components/folio/filter-pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDurationMs } from "@/lib/activity";
 import { useAdminActivity } from "@/lib/api/queries";

@@ -50,7 +50,7 @@ import {
 } from "@/components/library/SeriesCard";
 import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
-import { EmptyState } from "@/components/ui/empty-state";
+import { EmptyState } from "@/components/folio/empty-state";
 import {
   useBulkMarkProgress,
   useBulkMarkSeriesProgress,

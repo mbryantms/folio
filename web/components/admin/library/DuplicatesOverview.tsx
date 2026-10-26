@@ -3,7 +3,7 @@
 import * as React from "react";
 
 import { DuplicatesPanel } from "@/components/admin/library/DuplicatesPanel";
-import { NativeSelect } from "@/components/ui/native-select";
+import { NativeSelect } from "@/components/folio/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLibraryList } from "@/lib/api/queries";
 

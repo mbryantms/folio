@@ -4,7 +4,7 @@ import { Check, Pencil, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Kbd } from "@/components/ui/kbd";
+import { Kbd } from "@/components/folio/kbd";
 import { Textarea } from "@/components/ui/textarea";
 import { useUpdateIssue } from "@/lib/api/mutations";
 import { useTouchDevice } from "@/lib/ui/use-coarse-pointer";

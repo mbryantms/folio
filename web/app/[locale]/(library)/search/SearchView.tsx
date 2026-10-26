@@ -96,7 +96,7 @@ import {
   ISSUE_READ_STATUS_OPTIONS,
   issueReadStatusToParam,
 } from "@/lib/search/issue-search-filters";
-import { FilterPill } from "@/components/ui/filter-pill";
+import { FilterPill } from "@/components/folio/filter-pill";
 
 const QUERY_DEBOUNCE_MS = 250;
 
@@ -1349,7 +1349,7 @@ function SeriesFilterSheet({
         <Button
           type="button"
           variant="outline"
-          size="toolbar"
+
           aria-label={
             activeCount > 0 ? `Filters (${activeCount} active)` : "Filters"
           }
@@ -1494,7 +1494,7 @@ function IssueFilterSheet({
         <Button
           type="button"
           variant="outline"
-          size="toolbar"
+
           aria-label={
             activeCount > 0 ? `Filters (${activeCount} active)` : "Filters"
           }

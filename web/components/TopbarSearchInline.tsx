@@ -1,7 +1,7 @@
 "use client";
 
 import { Bookmark, ChevronRight, Clock, Search, X } from "lucide-react";
-import { Kbd } from "@/components/ui/kbd";
+import { Kbd } from "@/components/folio/kbd";
 import { useRouter } from "next/navigation";
 import * as React from "react";
 

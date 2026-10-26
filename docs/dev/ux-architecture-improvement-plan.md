@@ -336,7 +336,7 @@ components.
 
 - **Audit item:** DataTable wires sorting state without exposing operable sort
   controls.
-- **Location:** [data-table.tsx](../../web/components/ui/data-table.tsx)
+- **Location:** [data-table.tsx](../../web/components/folio/data-table.tsx)
 - **Plan:**
   - Add sortable header affordances, `aria-sort`, keyboard support, and visual
     indicators.
@@ -429,7 +429,7 @@ walking.
 - **Audit item:** Large lists rely on fixed limits, manual loading, or full
   client-side arrays.
 - **Locations:** [FindingsView.tsx](../../web/components/admin/findings/FindingsView.tsx),
-  [data-table.tsx](../../web/components/ui/data-table.tsx),
+  [data-table.tsx](../../web/components/folio/data-table.tsx),
   [LibraryGridView.tsx](../../web/components/library/LibraryGridView.tsx)
 - **Plan:**
   - Add virtualization where rows are dense and counts can grow high.
