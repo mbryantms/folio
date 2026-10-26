@@ -411,10 +411,11 @@ re-pointed at the `data-slot` selectors. Five to seven days total.
 ### PR 4b — Automatic upstream refresh
 
 shadcn has no versioned package for the files; a refresh is `add
---overwrite`. Add a weekly GitHub Actions workflow (same shape as the
-advisories sweep) that runs `pnpm dlx shadcn@<pinned major> add <every
-vendored item> --overwrite`, and opens a PR when `git diff --quiet
-web/components/ui` fails. Typecheck, vitest and the docker-smoke
+--overwrite`. `.github/workflows/shadcn-refresh.yml` (Mondays 06:41 UTC,
+or `workflow_dispatch`) runs the pinned CLI over every file under
+`components/ui/` and opens or refreshes one PR on the `shadcn/refresh`
+branch when the diff is non-empty, pushing with `FOLIO_RELEASE_TOKEN` so
+CI runs on it. Typecheck, vitest and the docker-smoke
 Playwright job gate it; an upstream API change shows up as a red PR
 needing a small manual fix, which is the whole maintenance cost. Pin the
 CLI major in the workflow and let Renovate bump it. `radix-ui`, `cmdk`,
