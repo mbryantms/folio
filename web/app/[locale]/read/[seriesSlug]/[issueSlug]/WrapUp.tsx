@@ -20,7 +20,7 @@ import { ChevronRight, ListOrdered } from "lucide-react";
 
 import { ClosingNoteEditor } from "@/components/library/ClosingNoteEditor";
 import { Button } from "@/components/ui/button";
-import { RatingStars } from "@/components/ui/rating-stars";
+import { RatingStars } from "@/components/folio/rating-stars";
 import {
   markerBreakdown,
   markerTotalLabel,

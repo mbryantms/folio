@@ -43,7 +43,7 @@ export function CardSizeOptions({
       <PopoverTrigger asChild>
         <Button
           variant="outline"
-          size="toolbar"
+
           aria-label={triggerLabel}
           title={triggerLabel}
           // Toolbar-row convention: every inline control aligns at

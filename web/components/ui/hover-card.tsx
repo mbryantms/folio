@@ -4,7 +4,7 @@ import * as React from "react";
 import { HoverCard as HoverCardPrimitive } from "radix-ui";
 
 import { cn } from "@/lib/utils";
-import { safeAreaCollisionPadding } from "@/components/ui/collision-padding";
+import { safeAreaCollisionPadding } from "@/components/folio/collision-padding";
 
 /**
  * Hover preview primitive (audit 3.7 discovery). Radix HoverCard is

@@ -14,10 +14,10 @@ import {
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { NativeSelect } from "@/components/ui/native-select";
+import { NativeSelect } from "@/components/folio/native-select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { FilterPill } from "@/components/ui/filter-pill";
+import { FilterPill } from "@/components/folio/filter-pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,

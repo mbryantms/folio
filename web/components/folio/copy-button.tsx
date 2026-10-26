@@ -3,7 +3,9 @@
 import * as React from "react";
 import { Check, Copy } from "lucide-react";
 
-import { Button, type ButtonProps } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
+
+type ButtonProps = React.ComponentProps<typeof Button>;
 import { cn } from "@/lib/utils";
 
 /**

@@ -20,7 +20,7 @@ export function NotesExportMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="toolbar" aria-label="Export notes">
+        <Button variant="outline" aria-label="Export notes">
           <Download aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
           Export
         </Button>

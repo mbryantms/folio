@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { EmptyState } from "@/components/ui/empty-state";
+import { EmptyState } from "@/components/folio/empty-state";
 import { Progress } from "@/components/ui/progress";
 import { formatBytes, formatIssueHeading } from "@/lib/format";
 import { getDownloadManager, type DownloadManager } from "@/lib/pwa/downloads";

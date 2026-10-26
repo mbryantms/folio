@@ -40,7 +40,7 @@ export function SelectModeButton({
       ref={ref}
       type="button"
       variant="outline"
-      size="toolbar"
+
       aria-pressed={active}
       onClick={active ? onExit : onEnter}
       className={className}

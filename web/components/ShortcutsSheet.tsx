@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment } from "react";
-import { Kbd } from "@/components/ui/kbd";
+import { Kbd } from "@/components/folio/kbd";
 
 import {
   Sheet,

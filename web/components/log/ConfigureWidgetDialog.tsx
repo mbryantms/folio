@@ -3,7 +3,7 @@
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
-import { FilterPill } from "@/components/ui/filter-pill";
+import { FilterPill } from "@/components/folio/filter-pill";
 import {
   Dialog,
   DialogContent,

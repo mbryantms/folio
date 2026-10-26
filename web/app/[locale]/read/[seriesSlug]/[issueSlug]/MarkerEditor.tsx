@@ -5,8 +5,8 @@ import { Copy, Pencil, Sparkles, Star, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { useCopyToClipboard } from "@/components/ui/copy-button";
-import { NativeSelect } from "@/components/ui/native-select";
+import { useCopyToClipboard } from "@/components/folio/copy-button";
+import { NativeSelect } from "@/components/folio/native-select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {

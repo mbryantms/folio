@@ -13,7 +13,7 @@ import { PhoneControlsBar } from "@/components/library/PhoneControlsBar";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { useCardSize } from "@/components/library/use-card-size";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { EmptyState } from "@/components/ui/empty-state";
+import { EmptyState } from "@/components/folio/empty-state";
 import { useCreateSavedViewBatch } from "@/lib/api/mutations";
 import { useSavedViewIssueResultsInfinite } from "@/lib/api/queries";
 import type { SavedViewView } from "@/lib/api/types";

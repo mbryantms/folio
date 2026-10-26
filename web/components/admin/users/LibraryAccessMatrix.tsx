@@ -5,7 +5,7 @@ import { Library as LibraryIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { NativeSelect } from "@/components/ui/native-select";
+import { NativeSelect } from "@/components/folio/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AGE_RATING_LADDER } from "@/lib/age-rating";
 import { useLibraryList } from "@/lib/api/queries";

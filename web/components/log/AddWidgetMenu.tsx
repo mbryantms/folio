@@ -38,7 +38,7 @@ export function AddWidgetMenu({ current }: { current: LogWidgetView[] }) {
       <DropdownMenuTrigger asChild>
         <Button
           variant="outline"
-          size="toolbar"
+
           disabled={items.length === 0 || add.isPending}
         >
           <Plus aria-hidden="true" className="mr-1 h-3.5 w-3.5" />

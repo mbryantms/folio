@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { FilterPill } from "@/components/ui/filter-pill";
+import { FilterPill } from "@/components/folio/filter-pill";
 import { useAdminMetadataRun, useAdminMetadataRuns } from "@/lib/api/queries";
 import type { RunRow } from "@/lib/api/types";
 

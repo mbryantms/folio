@@ -6,8 +6,8 @@ import { Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
-import { FilterPill } from "@/components/ui/filter-pill";
+import { DataTable, type DataTableColumn } from "@/components/folio/data-table";
+import { FilterPill } from "@/components/folio/filter-pill";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreateUserDialog } from "@/components/admin/users/CreateUserDialog";

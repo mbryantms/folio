@@ -5,7 +5,7 @@ import { KeyRound, TriangleAlert, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { CopyButton } from "@/components/ui/copy-button";
+import { CopyButton } from "@/components/folio/copy-button";
 import {
   Dialog,
   DialogContent,

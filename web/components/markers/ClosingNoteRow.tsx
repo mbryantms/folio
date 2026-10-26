@@ -20,7 +20,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { RatingStars } from "@/components/ui/rating-stars";
+import { RatingStars } from "@/components/folio/rating-stars";
 import { useSetIssueNote } from "@/lib/api/mutations";
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type { ClosingNoteEntryView } from "@/lib/api/types";

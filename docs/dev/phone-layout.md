@@ -110,10 +110,13 @@ max-sm:line-clamp-2`; `PageHeader` takes `phoneDescription="hidden"`
    shadcn's size on every pointer — 36px toolbar controls and tab strip,
    28px chips — so iPad looks like desktop and no toolbar is taller than
    the tabs beside it. Under `(pointer: coarse)` `globals.css` gives
-   `.folio-button` (every `<Button>`), `.folio-control` (`<Input>`,
-   `<SelectTrigger>`, `NativeSelect`, segmented groups, the CBL header
-   pills) and `.folio-tap` (tab triggers, filter pills, segment buttons,
-   card kebabs) a transparent `::after` tap area 44px tall and 4px wider
+   every pristine shadcn control by its `data-slot` (`button`,
+   `select-trigger`, `tabs-trigger`, `checkbox`, `switch`, …; the files
+   under `components/ui/` are vendored verbatim and never carry a Folio
+   class), plus `.folio-control` (`NativeSelect`, segmented groups, the
+   CBL header pills) and `.folio-tap` (filter pills, segment buttons,
+   card kebabs) on Folio-authored controls, a transparent `::after` tap
+   area 44px tall and 4px wider
    on each side — Apple's 44pt minimum met the way Apple and Material
    meet it, by a hit region larger than the drawn control. The 8px
    toolbar gap keeps neighbouring tap areas from overlapping. A text

@@ -63,8 +63,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { RelationshipKindSelect } from "@/components/library/RelationshipKindSelect";
-import { FilterPill } from "@/components/ui/filter-pill";
-import { NativeSelect } from "@/components/ui/native-select";
+import { FilterPill } from "@/components/folio/filter-pill";
+import { NativeSelect } from "@/components/folio/native-select";
 import {
   Popover,
   PopoverContent,

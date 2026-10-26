@@ -712,7 +712,7 @@ export function CollectionContinueButton({
   }
   return (
     // Toolbar-row convention: `size="toolbar"` beside CardSizeOptions + Select.
-    <Button asChild size="toolbar">
+    <Button asChild>
       <Link href={href} aria-label={ariaLabel}>
         <Play className="mr-1 h-4 w-4" aria-hidden="true" />
         {label}

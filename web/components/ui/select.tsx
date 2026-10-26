@@ -5,7 +5,7 @@ import { Select as SelectPrimitive } from "radix-ui";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { safeAreaCollisionPadding } from "@/components/ui/collision-padding";
+import { safeAreaCollisionPadding } from "@/components/folio/collision-padding";
 
 const Select = SelectPrimitive.Root;
 const SelectGroup = SelectPrimitive.Group;

@@ -20,7 +20,7 @@ import { MultiSelectEditor } from "@/components/filters/value-editors/MultiSelec
 import type { OptionsEndpoint } from "@/components/filters/field-registry";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FilterPill } from "@/components/ui/filter-pill";
+import { FilterPill } from "@/components/folio/filter-pill";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PopoverPortalContainer } from "@/components/ui/popover";

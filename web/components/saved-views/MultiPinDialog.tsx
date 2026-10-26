@@ -4,7 +4,7 @@ import * as React from "react";
 import { Pin, Search } from "lucide-react";
 
 import { Checkbox } from "@/components/ui/checkbox";
-import { CollapsiblePickerSection } from "@/components/ui/CollapsiblePickerSection";
+import { CollapsiblePickerSection } from "@/components/folio/CollapsiblePickerSection";
 import {
   Dialog,
   DialogContent,
