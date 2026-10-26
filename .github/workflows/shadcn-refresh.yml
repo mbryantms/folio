@@ -1,0 +1,105 @@
+# Weekly refresh of the vendored shadcn components.
+#
+# `web/components/ui/` is vendored byte-for-byte from the shadcn registry
+# (docs/dev/shadcn-theming-audit.md, PR 4): the files carry no local edits,
+# Folio behaviour lives in `web/styles/globals.css` (data-slot selectors)
+# and `web/components/folio/` wrappers. That is what makes this possible:
+# re-pulling every item with `shadcn add --overwrite` produces exactly the
+# upstream diff and nothing else.
+#
+# Fits the observe-don't-operate policy in docs/dev/dependency-management.md
+# the same way a Renovate PR does: the job never merges. It opens (or
+# refreshes) ONE pull request on a fixed branch when the registry has moved,
+# and CI on that PR (typecheck, vitest, the docker smoke run) is the gate.
+# An upstream API change shows up as a red refresh PR needing a small
+# manual fix, which is the whole maintenance cost of staying on upstream.
+#
+# The push and the PR use FOLIO_RELEASE_TOKEN (same as release-please):
+# a PR opened with the Actions token would not start CI.
+name: shadcn refresh (weekly)
+
+on:
+  schedule:
+    - cron: "41 6 * * 1" # Mondays, after the advisories sweep (UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: shadcn-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Pull the vendored components from the registry
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BRANCH: shadcn/refresh
+      GH_TOKEN: ${{ secrets.FOLIO_RELEASE_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          token: ${{ secrets.FOLIO_RELEASE_TOKEN }}
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 12.15.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Re-pull every vendored item
+        id: pull
+        working-directory: web
+        run: |
+          set -euo pipefail
+          # The item list IS the directory: every file under components/ui
+          # is a registry item of the same name. The pinned CLI
+          # (devDependency `shadcn`) resolves the style from components.json.
+          items=$(ls components/ui/*.tsx | xargs -n1 basename | sed 's/\.tsx$//' | sort | tr '\n' ' ')
+          echo "items: $items"
+          pnpm exec shadcn add $items --overwrite --yes
+          # A registry dependency may have been added or bumped.
+          pnpm install --no-frozen-lockfile
+          cd ..
+          if git diff --quiet -- web/components/ui web/package.json pnpm-lock.yaml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Registry unchanged; nothing to do."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git --no-pager diff --stat -- web/components/ui web/package.json pnpm-lock.yaml
+          fi
+
+      - name: Open or refresh the pull request
+        if: steps.pull.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          files=$(git diff --name-only -- web/components/ui | sed 's#^web/components/ui/##; s#\.tsx$##' | sort | tr '\n' ' ')
+          git switch -c "$BRANCH"
+          git add web/components/ui web/package.json pnpm-lock.yaml
+          git commit -q -m "chore(web): refresh vendored shadcn components" \
+            -m "Registry pull of $(date -u +%Y-%m-%d): $files"
+          git push --force origin "$BRANCH"
+          body=$(printf '%s\n' \
+            "Weekly registry pull (\`.github/workflows/shadcn-refresh.yml\`)." \
+            "" \
+            "Changed items: $files" \
+            "" \
+            "The files under \`web/components/ui/\` are vendored verbatim; this PR is the upstream diff and nothing else. Folio behaviour lives in \`web/styles/globals.css\` (data-slot selectors) and \`web/components/folio/\`. If CI is red, an upstream API change needs a small fix in a wrapper or at a call site — see docs/dev/shadcn-theming-audit.md §4 PR 4b.")
+          existing=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --body "$body"
+            gh pr comment "$existing" --body "Refreshed from the registry on $(date -u +%Y-%m-%d): $files"
+          else
+            gh pr create --base main --head "$BRANCH" \
+              --title "chore(web): refresh vendored shadcn components" \
+              --body "$body"
+          fi
