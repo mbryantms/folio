@@ -25,7 +25,7 @@
  * mutation hook still toasts the summary.
  */
 
-import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
+import { RadioGroup as RadioGroupPrimitive } from "radix-ui";
 import { Loader2 } from "lucide-react";
 import * as React from "react";
 import { useForm, useFormContext, useWatch, type Path } from "react-hook-form";

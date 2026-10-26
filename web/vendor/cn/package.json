@@ -1,0 +1,14 @@
+{
+  "name": "cn",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Folio's resolution of the `cn` specifier the shadcn registry files import: clsx + tailwind-merge, which the reader bundle gate prefers over the published `cn` package.",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "sideEffects": false,
+  "dependencies": {
+    "clsx": "2.1.1",
+    "tailwind-merge": "3.7.0"
+  }
+}

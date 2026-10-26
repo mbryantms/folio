@@ -69,7 +69,7 @@ export function MultiSelectEditor({
 
   return (
     <div className="flex w-full flex-col gap-1">
-      {/* See web/components/ui/combobox.tsx — the popover relies on
+      {/* See web/components/folio/combobox.tsx — the popover relies on
           `<PopoverPortalContainer>` from the wrapping dialog (when
           there is one) to render inside the dialog tree. */}
       <Popover open={open} onOpenChange={setOpen}>

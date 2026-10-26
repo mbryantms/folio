@@ -3,7 +3,7 @@
 import { Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Combobox } from "@/components/ui/combobox";
+import { Combobox } from "@/components/folio/combobox";
 import {
   Select,
   SelectContent,

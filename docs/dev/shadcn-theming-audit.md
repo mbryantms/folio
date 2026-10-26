@@ -344,8 +344,11 @@ reader e2e timings. Half a day including verification.
 `@radix-ui/react-*` packages, pin `shadcn` as a devDependency so the CLI
 version is reproducible, update `components.json` (`style: radix-vega`,
 `baseColor: neutral` as the nearest valid id, `menuColor`, `rtl: false`).
-Adopt the `cn` package (current registry files import from it; going
-pristine means accepting it — `lib/utils` becomes a one-line re-export).
+The registry files import `cn` from the bare specifier `"cn"`; the
+published `cn` 0.5.0 package weighs ~10.4 KB gzip and landed in two reader
+chunks (bundle gate 143.6 → 152.3 KB), so `web/vendor/cn` is a workspace
+package of the same name on clsx + tailwind-merge that every tool resolves
+through node_modules — no alias config, files stay pristine.
 Move the custom `combobox.tsx` out of `ui/` (e.g. `components/search/`)
 so it no longer shadows a registry item; same for `kbd` / `empty-state` /
 `native-select` once PR 5 replaces them. Half a day.

@@ -90,7 +90,7 @@ import type {
   BookmarksFeedSort,
   ClosingNoteEntryView,
 } from "@/lib/api/types";
-import { Combobox } from "@/components/ui/combobox";
+import { Combobox } from "@/components/folio/combobox";
 import { NativeSelect } from "@/components/ui/native-select";
 import {
   ClampedBody,
