@@ -164,7 +164,7 @@ export default async function RootLayout({
         <div
           id="top-edge"
           aria-hidden="true"
-          className="standalone:block pointer-events-none sticky top-0 z-[9999] -mb-3 hidden h-3 bg-[var(--top-edge-color,hsl(var(--background)))]"
+          className="standalone:block pointer-events-none sticky top-0 z-[9999] -mb-3 hidden h-3 bg-[var(--top-edge-color,var(--background))]"
         />
         <ThemeProvider defaultTheme={theme} nonce={nonce}>
           <NextIntlClientProvider messages={messages}>
