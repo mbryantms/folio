@@ -755,6 +755,8 @@ pub async fn callback(
                 theme: Set(None),
                 accent_color: Set(None),
                 density: Set(None),
+                corner_radius: Set(None),
+                motion: Set(None),
                 keybinds: Set(serde_json::json!({})),
                 activity_tracking_enabled: Set(true),
                 timezone: Set("UTC".into()),

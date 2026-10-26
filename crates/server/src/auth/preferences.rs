@@ -84,6 +84,25 @@ pub enum Density {
     Compact,
 }
 
+/// `sharp` | `default` | `round` — the `--radius` token every corner in
+/// the UI derives from (shadcn plan PR 6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum CornerRadius {
+    Sharp,
+    Default,
+    Round,
+}
+
+/// `system` | `reduced` — `reduced` applies the reduced-motion rules
+/// regardless of the OS setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Motion {
+    System,
+    Reduced,
+}
+
 // Shared `FromStr` impl shape — `serde_plain` would do this for us, but we
 // avoid the extra dep. Manual `FromStr` keeps the parser tied to the
 // canonical wire form one place.
@@ -165,6 +184,19 @@ str_enum!(
     "density must be 'comfortable' or 'compact'",
     Comfortable => "comfortable",
     Compact => "compact",
+);
+str_enum!(
+    CornerRadius,
+    "corner_radius must be 'sharp', 'default', or 'round'",
+    Sharp => "sharp",
+    Default => "default",
+    Round => "round",
+);
+str_enum!(
+    Motion,
+    "motion must be 'system' or 'reduced'",
+    System => "system",
+    Reduced => "reduced",
 );
 
 /// Convenience: project an `Option<String>` from the entity layer to an

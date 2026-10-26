@@ -18021,6 +18021,15 @@
           }
         }
       },
+      "CornerRadius": {
+        "type": "string",
+        "description": "`sharp` | `default` | `round` — the `--radius` token every corner in\nthe UI derives from (shadcn plan PR 6).",
+        "enum": [
+          "sharp",
+          "default",
+          "round"
+        ]
+      },
       "CountedName": {
         "type": "object",
         "required": [
@@ -22209,6 +22218,12 @@
           "activity_tracking_enabled": {
             "type": "boolean"
           },
+          "corner_radius": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "default_cover_solo": {
             "type": "boolean"
           },
@@ -22258,6 +22273,12 @@
           "max_rails_per_page": {
             "type": "integer",
             "format": "int32"
+          },
+          "motion": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "opds_progress_glyphs": {
             "type": "boolean"
@@ -26281,6 +26302,17 @@
             "type": "boolean",
             "description": "M6a: per-user opt-out for reading-activity capture."
           },
+          "corner_radius": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CornerRadius",
+                "description": "Corner radius token (shadcn plan PR 6)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "csrf_token": {
             "type": "string"
           },
@@ -26378,6 +26410,17 @@
             "type": "integer",
             "format": "int32",
             "description": "Per-user override of the home-page rail cap. Replaces the\nprevious hard-coded `MAX_PIN_COUNT = 12` constant. Range\n1..=50 enforced by DB CHECK + PATCH validation. Default 12."
+          },
+          "motion": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Motion",
+                "description": "Motion token (shadcn plan PR 6)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "password_editable": {
             "type": "boolean",
@@ -26715,6 +26758,14 @@
             "description": "`field_provenance` keys carrying a `set_by='user'` row — column\nkeys (`writer`, `number_raw`, …) and the `MetadataField` keys\nthey roll up into (`credits`, `number`, …). Sorted."
           }
         }
+      },
+      "Motion": {
+        "type": "string",
+        "description": "`system` | `reduced` — `reduced` applies the reduced-motion rules\nregardless of the OS setting.",
+        "enum": [
+          "system",
+          "reduced"
+        ]
       },
       "NextInSeriesView": {
         "type": "object",
@@ -27950,6 +28001,16 @@
             ],
             "description": "M6a: opt-out toggle. `false` disables the client tracker hook."
           },
+          "corner_radius": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CornerRadius"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "default_cover_solo": {
             "type": [
               "boolean",
@@ -28039,6 +28100,16 @@
             ],
             "format": "int32",
             "description": "Override the home-page rail cap. 1..=50; validated server-\nside and at the DB CHECK constraint. Default 12 preserves\nthe prior behaviour for users who never touch this."
+          },
+          "motion": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Motion"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "reading_idle_ms": {
             "type": [

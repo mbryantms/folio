@@ -44,7 +44,8 @@ use super::cookies::{
 use super::email_token::{self, TokenPurpose};
 use super::password;
 use super::preferences::{
-    AccentColor, Density, FitMode, PageAnimation, ReadingDirection, Theme, ViewMode, opt_from_db,
+    AccentColor, CornerRadius, Density, FitMode, Motion, PageAnimation, ReadingDirection, Theme,
+    ViewMode, opt_from_db,
 };
 
 use entity::auth_session::{self, ActiveModel as SessionAM, Entity as SessionEntity};
@@ -167,6 +168,12 @@ pub struct MeResp {
     /// M4: density token.
     #[serde(default)]
     pub density: Option<Density>,
+    /// Corner radius token (shadcn plan PR 6).
+    #[serde(default)]
+    pub corner_radius: Option<CornerRadius>,
+    /// Motion token (shadcn plan PR 6).
+    #[serde(default)]
+    pub motion: Option<Motion>,
     /// M4: per-action keybind overrides for the reader. Empty object means
     /// "use defaults".
     #[serde(default)]
@@ -222,6 +229,10 @@ pub struct PreferencesReq {
     pub accent_color: Option<Option<AccentColor>>,
     #[serde(default, deserialize_with = "deserialize_some")]
     pub density: Option<Option<Density>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub corner_radius: Option<Option<CornerRadius>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub motion: Option<Option<Motion>>,
     /// Replace the entire keybinds object. Send `{}` to clear all overrides.
     pub keybinds: Option<serde_json::Value>,
     /// M6a: opt-out toggle. `false` disables the client tracker hook.
@@ -430,6 +441,8 @@ pub async fn register(
         theme: Set(None),
         accent_color: Set(None),
         density: Set(None),
+        corner_radius: Set(None),
+        motion: Set(None),
         keybinds: Set(serde_json::json!({})),
         activity_tracking_enabled: Set(true),
         timezone: Set("UTC".into()),
@@ -1098,6 +1111,12 @@ pub async fn update_preferences(
     if let Some(v) = req.density {
         am.density = Set(v.map(|e| e.as_str().to_owned()));
     }
+    if let Some(v) = req.corner_radius {
+        am.corner_radius = Set(v.map(|e| e.as_str().to_owned()));
+    }
+    if let Some(v) = req.motion {
+        am.motion = Set(v.map(|e| e.as_str().to_owned()));
+    }
     if let Some(v) = req.keybinds {
         am.keybinds = Set(v);
     }
@@ -1689,6 +1708,8 @@ pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp 
         theme: opt_from_db(row.theme.as_deref()),
         accent_color: opt_from_db(row.accent_color.as_deref()),
         density: opt_from_db(row.density.as_deref()),
+        corner_radius: opt_from_db(row.corner_radius.as_deref()),
+        motion: opt_from_db(row.motion.as_deref()),
         keybinds: row.keybinds.clone(),
         activity_tracking_enabled: row.activity_tracking_enabled,
         timezone: row.timezone.clone(),
@@ -1726,6 +1747,8 @@ fn me_resp_from_parts(user: &CurrentUser, csrf_token: String, row: Option<&user:
             theme: None,
             accent_color: None,
             density: None,
+            corner_radius: None,
+            motion: None,
             keybinds: serde_json::json!({}),
             activity_tracking_enabled: true,
             timezone: "UTC".into(),

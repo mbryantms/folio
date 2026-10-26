@@ -9,15 +9,23 @@ import { useUpdatePreferences } from "@/lib/api/mutations";
 import {
   ACCENTS,
   DENSITIES,
+  MOTIONS,
+  RADII,
   THEMES,
   type Accent,
   type Density,
+  type Motion,
+  type Radius,
   type Theme,
   isAccent,
   isDensity,
+  isMotion,
+  isRadius,
   isTheme,
   writeAccentCookie,
   writeDensityCookie,
+  writeMotionCookie,
+  writeRadiusCookie,
   writeThemeCookie,
 } from "@/lib/theme";
 
@@ -39,6 +47,15 @@ const accentOptions: ReadonlyArray<{ value: Accent; label: string }> = [
 const densityOptions: ReadonlyArray<{ value: Density; label: string }> = [
   { value: "comfortable", label: "Comfortable" },
   { value: "compact", label: "Compact" },
+];
+const radiusOptions: ReadonlyArray<{ value: Radius; label: string }> = [
+  { value: "sharp", label: "Sharp" },
+  { value: "default", label: "Default" },
+  { value: "round", label: "Round" },
+];
+const motionOptions: ReadonlyArray<{ value: Motion; label: string }> = [
+  { value: "system", label: "Follow system" },
+  { value: "reduced", label: "Reduced" },
 ];
 
 const ACCENT_DOTS: Record<Accent, string> = {
@@ -64,13 +81,21 @@ export function ThemePicker() {
     const density = isDensity(me.data.density)
       ? me.data.density
       : "comfortable";
+    const radius = isRadius(me.data.corner_radius)
+      ? me.data.corner_radius
+      : "default";
+    const motion = isMotion(me.data.motion) ? me.data.motion : "system";
     setTheme(theme);
     writeThemeCookie(theme);
     writeAccentCookie(accent);
     writeDensityCookie(density);
+    writeRadiusCookie(radius);
+    writeMotionCookie(motion);
     if (typeof document !== "undefined") {
       document.documentElement.setAttribute("data-accent", accent);
       document.documentElement.setAttribute("data-density", density);
+      document.documentElement.setAttribute("data-radius", radius);
+      document.documentElement.setAttribute("data-motion", motion);
     }
   }, [me.data, setTheme]);
 
@@ -86,6 +111,10 @@ export function ThemePicker() {
     ? me.data.accent_color
     : "amber";
   const density = isDensity(me.data.density) ? me.data.density : "comfortable";
+  const radius = isRadius(me.data.corner_radius)
+    ? me.data.corner_radius
+    : "default";
+  const motion = isMotion(me.data.motion) ? me.data.motion : "system";
 
   function pickTheme(next: Theme) {
     writeThemeCookie(next);
@@ -105,6 +134,20 @@ export function ThemePicker() {
       document.documentElement.setAttribute("data-density", next);
     }
     update.mutate({ density: next });
+  }
+  function pickRadius(next: Radius) {
+    writeRadiusCookie(next);
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-radius", next);
+    }
+    update.mutate({ corner_radius: next });
+  }
+  function pickMotion(next: Motion) {
+    writeMotionCookie(next);
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-motion", next);
+    }
+    update.mutate({ motion: next });
   }
 
   return (
@@ -173,11 +216,37 @@ export function ThemePicker() {
         />
       </SettingsSection>
 
+      <SettingsSection
+        title="Corners"
+        description="How rounded controls, cards and menus are. Every corner in the app derives from this one value."
+      >
+        <SegmentedControl
+          value={radius}
+          onChange={pickRadius}
+          options={radiusOptions}
+          ariaLabel="Corner radius"
+          disabled={update.isPending}
+        />
+      </SettingsSection>
+
+      <SettingsSection
+        title="Motion"
+        description="Reduced turns page turns, menus and dialogs into instant swaps, whatever the operating system is set to."
+      >
+        <SegmentedControl
+          value={motion}
+          onChange={pickMotion}
+          options={motionOptions}
+          ariaLabel="Motion"
+          disabled={update.isPending}
+        />
+      </SettingsSection>
+
       {/* Hidden helpers so the lint passes — these keep the import surfaces
           tidy if the option arrays change. */}
       <p className="sr-only" aria-hidden>
         {THEMES.length} themes, {ACCENTS.length} accents, {DENSITIES.length}{" "}
-        densities.
+        densities, {RADII.length} radii, {MOTIONS.length} motion settings.
       </p>
     </div>
   );

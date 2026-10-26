@@ -336,6 +336,8 @@ pub struct ExportPreferences {
     pub theme: Option<String>,
     pub accent_color: Option<String>,
     pub density: Option<String>,
+    pub corner_radius: Option<String>,
+    pub motion: Option<String>,
     /// Reader key overrides — `{ action_name: key_string }`.
     #[schema(value_type = Object)]
     pub keybinds: serde_json::Value,
@@ -729,6 +731,8 @@ async fn build_export(
         theme: user_row.theme.clone(),
         accent_color: user_row.accent_color.clone(),
         density: user_row.density.clone(),
+        corner_radius: user_row.corner_radius.clone(),
+        motion: user_row.motion.clone(),
         keybinds: user_row.keybinds.clone(),
         activity_tracking_enabled: user_row.activity_tracking_enabled,
         timezone: user_row.timezone.clone(),
