@@ -15,3 +15,4 @@ next-env.d.ts
 # exists locally — but `format:check` still walks it and fails.
 public/sw.js
 components/ui/
+lib/hooks/

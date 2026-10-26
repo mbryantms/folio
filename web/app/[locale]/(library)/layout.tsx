@@ -9,7 +9,11 @@ import { mainNav } from "@/components/library/main-nav";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import { getMe } from "@/lib/api/me";
 import type { MeView, SidebarLayoutView } from "@/lib/api/types";
-import { SIDEBAR_COOKIE, parseSidebarState } from "@/lib/sidebar-state";
+import {
+  LEGACY_SIDEBAR_COOKIE,
+  SIDEBAR_COOKIE,
+  parseSidebarOpen,
+} from "@/lib/sidebar-state";
 
 /**
  * Wraps the library / series / issue routes with the persistent left-rail
@@ -53,8 +57,10 @@ export default async function LibraryLayout({
     /* empty */
   }
 
-  const defaultSidebar = parseSidebarState(
-    (await cookies()).get(SIDEBAR_COOKIE)?.value,
+  const sidebarJar = await cookies();
+  const defaultSidebarOpen = parseSidebarOpen(
+    sidebarJar.get(SIDEBAR_COOKIE)?.value,
+    sidebarJar.get(LEGACY_SIDEBAR_COOKIE)?.value,
   );
 
   return (
@@ -66,7 +72,7 @@ export default async function LibraryLayout({
         user={me}
         sections={mainNav("", layout)}
         homeHref={`/`}
-        defaultSidebar={defaultSidebar}
+        defaultSidebarOpen={defaultSidebarOpen}
         showMarkerCount={me.show_marker_count}
       >
         <RouteChangeReset />

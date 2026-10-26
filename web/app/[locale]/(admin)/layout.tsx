@@ -7,7 +7,11 @@ import { adminNav } from "@/components/admin/nav";
 import { ApiError } from "@/lib/api/fetch";
 import { getMe } from "@/lib/api/me";
 import type { MeView } from "@/lib/api/types";
-import { SIDEBAR_COOKIE, parseSidebarState } from "@/lib/sidebar-state";
+import {
+  LEGACY_SIDEBAR_COOKIE,
+  SIDEBAR_COOKIE,
+  parseSidebarOpen,
+} from "@/lib/sidebar-state";
 
 export default async function AdminLayout({
   children,
@@ -33,8 +37,10 @@ export default async function AdminLayout({
     label: "Settings",
     items: [{ href: `/settings`, label: "Settings", icon: "Settings" }],
   });
-  const defaultSidebar = parseSidebarState(
-    (await cookies()).get(SIDEBAR_COOKIE)?.value,
+  const sidebarJar = await cookies();
+  const defaultSidebarOpen = parseSidebarOpen(
+    sidebarJar.get(SIDEBAR_COOKIE)?.value,
+    sidebarJar.get(LEGACY_SIDEBAR_COOKIE)?.value,
   );
   return (
     <AdminShell
@@ -44,7 +50,7 @@ export default async function AdminLayout({
       homeHref={`/`}
       showScanBeacon
       showRestartBanner
-      defaultSidebar={defaultSidebar}
+      defaultSidebarOpen={defaultSidebarOpen}
     >
       {children}
     </AdminShell>

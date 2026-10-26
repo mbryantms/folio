@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/folio/dropdown-menu";
 import { useShortcutsSheet } from "@/components/GlobalShortcutsSheet";
+import { cn } from "@/lib/utils";
 
 /**
  * Sidebar footer: user identity + dropdown of account actions. Replaces the
@@ -93,7 +94,14 @@ export function UserFooter({
   }
 
   return (
-    <div className="border-border/60 border-t px-2 py-2">
+    <div
+      className={cn(
+        "border-border/60 border-t py-2",
+        // The upstream icon rail is 3rem wide: 8px side padding + the 36px
+        // avatar button overflowed it (the old rail was 3.5rem).
+        collapsed ? "px-1.5" : "px-2",
+      )}
+    >
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           {collapsed ? (

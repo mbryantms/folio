@@ -681,6 +681,23 @@ body {
     background-color: var(--accent);
     color: var(--accent-foreground);
   }
+  /* Upstream makes the icon rail's content overflow-hidden (so the
+   * clipped labels cannot scroll it sideways), which also stops a long
+   * menu — the admin rail has ~20 rows — from scrolling at all on a short
+   * window. Keep the horizontal clip, let it scroll vertically, and hide
+   * the bar (the thin themed one is wider than the rail wants). */
+  [data-slot="sidebar"][data-collapsible="icon"]
+    [data-slot="sidebar-content"][data-slot="sidebar-content"] {
+    overflow: hidden auto;
+    scrollbar-width: none;
+  }
+  /* The sidebar's phone sheet clears the status bar, the home indicator
+   * and the rounded left corner in the installed app. */
+  [data-slot="sidebar"][data-mobile="true"] {
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bottom);
+    padding-left: var(--safe-left);
+  }
   /* Every sheet side scrolls its own overflow; an inner scroller keeps
    * working because the outer never overflows at normal heights. */
   [data-slot="sheet-content"][data-slot="sheet-content"] {
