@@ -24,7 +24,7 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from "@/components/ui/form";
+} from "@/components/folio/form";
 import { Input } from "@/components/ui/input";
 
 const schema = z

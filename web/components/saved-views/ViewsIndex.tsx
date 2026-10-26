@@ -45,7 +45,12 @@ import {
 } from "@/components/folio/dropdown-menu";
 import { DropdownMenuResponsiveSub } from "@/components/folio/dropdown-menu-responsive-sub";
 import { Progress } from "@/components/ui/progress";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/folio/tabs";
 import { CblImportDialog } from "@/components/cbl/cbl-import-dialog";
 import {
   CblUpdatesMenu,

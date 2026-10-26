@@ -19,7 +19,12 @@ import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/folio/tabs";
 
 import { DashboardTab } from "./DashboardTab";
 

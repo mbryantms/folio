@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/collapsible";
 import { DataTable, type DataTableColumn } from "@/components/folio/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/folio/tabs";
 import { useScanRunsInfinite } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 import type { ScanRunKind, ScanRunView } from "@/lib/api/types";

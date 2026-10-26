@@ -4,7 +4,7 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/folio/tabs";
 import { useSeriesRelationships } from "@/lib/api/queries";
 
 /** Every tab the series page can show, in strip order. */

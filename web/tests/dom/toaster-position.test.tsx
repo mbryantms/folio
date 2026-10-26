@@ -19,7 +19,7 @@ vi.mock("sonner", () => ({
 
 vi.mock("next-themes", () => ({ useTheme: () => ({ theme: "dark" }) }));
 
-import { Toaster } from "@/components/ui/sonner";
+import { Toaster } from "@/components/folio/sonner";
 
 function stubViewport(matches: boolean) {
   Object.defineProperty(window, "matchMedia", {

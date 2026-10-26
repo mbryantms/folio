@@ -179,7 +179,7 @@ vi.mock("@/lib/api/scan-events", () => ({
   useScanEvents: () => ({ status: "open" as const, events: [] }),
 }));
 
-vi.mock("@/components/ui/scroll-area", () => ({
+vi.mock("@/components/folio/scroll-area", () => ({
   ScrollArea: ({ children }: { children: React.ReactNode }) =>
     createElement("div", null, children),
 }));

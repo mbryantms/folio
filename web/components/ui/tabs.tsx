@@ -1,124 +1,89 @@
-"use client";
+"use client"
 
-import * as React from "react";
-import { Tabs as TabsPrimitive } from "radix-ui";
+import * as React from "react"
+import { cva, type VariantProps } from "class-variance-authority"
+import { cn } from "cn"
+import { Tabs as TabsPrimitive } from "radix-ui"
 
-import { cn } from "@/lib/utils";
-
-const Tabs = TabsPrimitive.Root;
-
-type EdgeFade = "" | "left" | "right" | "both";
-
-/** Which edges of a horizontally scrolling strip hide more content. iOS
- *  draws no scrollbar until a swipe starts, so a clipped last tab read
- *  as a layout bug; a short gradient mask on the overflowing edge says
- *  "more this way" and goes away once scrolled to that end. */
-function useEdgeFade<T extends HTMLElement>(): [
-  React.RefObject<T | null>,
-  EdgeFade,
-] {
-  const ref = React.useRef<T | null>(null);
-  const [fade, setFade] = React.useState<EdgeFade>("");
-  React.useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const update = () => {
-      const left = el.scrollLeft > 1;
-      const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
-      setFade(left && right ? "both" : left ? "left" : right ? "right" : "");
-    };
-    update();
-    el.addEventListener("scroll", update, { passive: true });
-    window.addEventListener("resize", update);
-    const ro =
-      typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
-    ro?.observe(el);
-    return () => {
-      el.removeEventListener("scroll", update);
-      window.removeEventListener("resize", update);
-      ro?.disconnect();
-    };
-  }, []);
-  return [ref, fade];
-}
-
-const TabsList = React.forwardRef<
-  React.ComponentRef<typeof TabsPrimitive.List>,
-  React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>
->(({ className, ...props }, ref) => {
-  const [inner, fade] = useEdgeFade<HTMLDivElement>();
-  React.useImperativeHandle(ref, () => inner.current as HTMLDivElement);
+function Tabs({
+  className,
+  orientation = "horizontal",
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.Root>) {
   return (
-    <TabsPrimitive.List
-      ref={inner}
-      data-fade={fade || undefined}
+    <TabsPrimitive.Root
+      data-slot="tabs"
+      data-orientation={orientation}
       className={cn(
-        // Mobile: full-width row that scrolls horizontally rather than
-        //   overflowing the viewport (the prior `inline-flex` blew out the
-        //   layout on phones with >3 tabs — see screenshot in the
-        //   runtime-config-admin work). md+: content-width like before.
-        // `justify-[safe_center]` is the CSS "safe center" keyword pair —
-        //   center the children when they fit, fall back to start when
-        //   they overflow. Without `safe`, an overflowing strip centers
-        //   the row in place, clipping both ends equally and burying the
-        //   first tab; with `safe`, overflow scrolls from the leading
-        //   edge as users expect. A plain `justify-start` would always
-        //   left-align, which broke the centered 2-tab sign-in form.
-        // `[&>*]:shrink-0` keeps each trigger at its intrinsic width so
-        //   long labels ("Cast & Setting") stay readable inside the
-        //   scrollable strip.
-        // md+: content-width, but capped at the parent and still scrollable
-        //   — a long strip (the series page's 7-8 tabs beside the sidebar
-        //   at 768px) otherwise pushed the whole page into horizontal
-        //   scroll. The `p-1` leaves room for the triggers' focus ring
-        //   (ring-2 + offset-2) inside the scroller.
-        // `overflow-y-hidden`: `overflow-x-auto` alone makes the strip a
-        //   scroll container on both axes, and on touch each trigger's
-        //   invisible 44px tap area (`.folio-tap::after`, globals.css)
-        //   pokes 4px past the 36px strip — iOS then lets a finger drag
-        //   the labels up and down inside the bar. Hidden keeps the strip
-        //   horizontal-only and hands vertical swipes to the page.
-        "bg-muted text-muted-foreground justify-[safe_center] flex h-9 w-full max-w-full items-center overflow-x-auto overflow-y-hidden rounded-md p-1 md:inline-flex md:w-fit",
-        "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0",
-        // Edge fade (see `useEdgeFade`): a 2rem gradient mask on whichever
-        //   side still hides tabs. Never a scrollbar.
-        "data-[fade=both]:mask-x-from-[calc(100%-2rem)] data-[fade=left]:mask-l-from-[calc(100%-2rem)] data-[fade=right]:mask-r-from-[calc(100%-2rem)]",
-        className,
+        "group/tabs flex gap-2 data-horizontal:flex-col",
+        className
       )}
       {...props}
     />
-  );
-});
-TabsList.displayName = TabsPrimitive.List.displayName;
+  )
+}
 
-const TabsTrigger = React.forwardRef<
-  React.ComponentRef<typeof TabsPrimitive.Trigger>,
-  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Trigger>
->(({ className, ...props }, ref) => (
-  <TabsPrimitive.Trigger
-    ref={ref}
-    className={cn(
-      "folio-tap ring-offset-background focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:text-foreground inline-flex items-center justify-center rounded-sm px-3 py-1 text-sm font-medium whitespace-nowrap transition-all focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 data-[state=active]:shadow",
-      className,
-    )}
-    {...props}
-  />
-));
-TabsTrigger.displayName = TabsPrimitive.Trigger.displayName;
+const tabsListVariants = cva(
+  "group/tabs-list inline-flex w-fit items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-9 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",
+  {
+    variants: {
+      variant: {
+        default: "bg-muted",
+        line: "gap-1 bg-transparent",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+    },
+  }
+)
 
-const TabsContent = React.forwardRef<
-  React.ComponentRef<typeof TabsPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>
->(({ className, ...props }, ref) => (
-  <TabsPrimitive.Content
-    ref={ref}
-    className={cn(
-      "ring-offset-background focus-visible:ring-ring mt-4 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none",
-      className,
-    )}
-    {...props}
-  />
-));
-TabsContent.displayName = TabsPrimitive.Content.displayName;
+function TabsList({
+  className,
+  variant = "default",
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.List> &
+  VariantProps<typeof tabsListVariants>) {
+  return (
+    <TabsPrimitive.List
+      data-slot="tabs-list"
+      data-variant={variant}
+      className={cn(tabsListVariants({ variant }), className)}
+      {...props}
+    />
+  )
+}
 
-export { Tabs, TabsList, TabsTrigger, TabsContent };
+function TabsTrigger({
+  className,
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+  return (
+    <TabsPrimitive.Trigger
+      data-slot="tabs-trigger"
+      className={cn(
+        "relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-sm font-medium whitespace-nowrap text-foreground/60 transition-all group-data-vertical/tabs:w-full group-data-vertical/tabs:justify-start hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 dark:text-muted-foreground dark:hover:text-foreground group-data-[variant=default]/tabs-list:data-active:shadow-sm group-data-[variant=line]/tabs-list:data-active:shadow-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:data-active:bg-transparent dark:group-data-[variant=line]/tabs-list:data-active:border-transparent dark:group-data-[variant=line]/tabs-list:data-active:bg-transparent",
+        "data-active:bg-background data-active:text-foreground dark:data-active:border-input dark:data-active:bg-input/30 dark:data-active:text-foreground",
+        "after:absolute after:bg-foreground after:opacity-0 after:transition-opacity group-data-horizontal/tabs:after:inset-x-0 group-data-horizontal/tabs:after:bottom-[-5px] group-data-horizontal/tabs:after:h-0.5 group-data-vertical/tabs:after:inset-y-0 group-data-vertical/tabs:after:-right-1 group-data-vertical/tabs:after:w-0.5 group-data-[variant=line]/tabs-list:data-active:after:opacity-100",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function TabsContent({
+  className,
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.Content>) {
+  return (
+    <TabsPrimitive.Content
+      data-slot="tabs-content"
+      className={cn("flex-1 text-sm outline-none", className)}
+      {...props}
+    />
+  )
+}
+
+export { Tabs, TabsList, TabsTrigger, TabsContent, tabsListVariants }

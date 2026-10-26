@@ -56,7 +56,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/folio/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/folio/tabs";
 import {
   useDeletePage,
   useReorderSavedViews,

@@ -60,7 +60,7 @@ import {
 } from "@/components/folio/dropdown-menu";
 import { EmptyState } from "@/components/folio/empty-state";
 import { FilterPill } from "@/components/folio/filter-pill";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@/components/folio/scroll-area";
 import {
   Table,
   TableBody,

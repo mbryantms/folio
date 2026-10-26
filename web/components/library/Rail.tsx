@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollBar } from "@/components/folio/scroll-area";
 import { cn } from "@/lib/utils";
 
 /**

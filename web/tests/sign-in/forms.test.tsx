@@ -31,7 +31,7 @@ vi.mock("next/link", () => ({
 // want both the login *and* register form HTML in the output so we can
 // assert both have method/action. Replace each Tabs primitive with a
 // transparent fragment that renders all children.
-vi.mock("@/components/ui/tabs", () => {
+vi.mock("@/components/folio/tabs", () => {
   const passthrough = ({ children }: { children: React.ReactNode }) =>
     React.createElement(React.Fragment, null, children);
   return {

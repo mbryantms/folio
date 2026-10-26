@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-import { TabsContent } from "@/components/ui/tabs";
+import { TabsContent } from "@/components/folio/tabs";
 import { cn } from "@/lib/utils";
 
 const STACKED_PANEL_CLASS = "col-start-1 row-start-1 pt-6";

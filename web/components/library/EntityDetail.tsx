@@ -10,7 +10,12 @@ import {
 } from "@/components/library/EntityProfile";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { SeriesCard } from "@/components/library/SeriesCard";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/folio/tabs";
 import { useRefreshEntityProfile } from "@/lib/api/mutations";
 import {
   useArcTieInsInfinite,

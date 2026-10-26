@@ -11,7 +11,12 @@ import {
   parseBrowseTab,
   type BrowseTab,
 } from "@/components/library/browse-tabs";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/folio/tabs";
 import { ENTITY_KINDS } from "@/lib/entities";
 
 function tabLabel(tab: BrowseTab): string {

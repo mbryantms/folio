@@ -30,7 +30,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/folio/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@/components/folio/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRelationshipKinds } from "@/lib/api/queries";
 import type { RelationshipKind } from "@/lib/api/types";

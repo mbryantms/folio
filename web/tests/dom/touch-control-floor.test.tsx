@@ -18,7 +18,7 @@ import { CblStatsPillsStatic } from "@/components/cbl/CblStatsPills";
 import { ModeSegmentedToggle } from "@/components/library/LibraryGridToolbar";
 import { FilterPill } from "@/components/folio/filter-pill";
 import { NativeSelect } from "@/components/folio/native-select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/folio/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue } from "@/components/folio/select";
@@ -118,9 +118,8 @@ describe("touch-target floor", () => {
     }
     // Tab triggers and filter pills get the tap area too.
     expect(
-      screen
-        .getByRole("tab", { name: "Credits" })
-        .classList.contains("folio-tap"),
+      screen.getByRole("tab", { name: "Credits" }).dataset.slot ===
+        "tabs-trigger",
     ).toBe(true);
     // The strip around them scrolls horizontally only: with
     // `overflow-x-auto` alone the tap areas poking past the 36px strip

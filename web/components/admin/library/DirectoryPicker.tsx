@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@/components/folio/scroll-area";
 import { useAdminFsList } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 
