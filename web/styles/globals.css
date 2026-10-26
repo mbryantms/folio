@@ -5,6 +5,9 @@
  * ran as an instant swap (2026-10-26). The reduced-motion block below
  * still zeroes these durations. */
 @import "tw-animate-css";
+/* Variants (`data-open:`, `data-checked:`, …) and utilities the current
+ * shadcn registry components are written against; same package as the CLI. */
+@import "shadcn/tailwind.css";
 
 @variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
@@ -20,9 +23,10 @@
 @custom-variant standalone (@media (display-mode: standalone));
 
 /*
- * Token system (M1):
- * - HSL channels stored as CSS vars so Tailwind utilities (`bg-card` etc.) read
- *   them through `@theme`.
+ * Token system (M1, converted to the shadcn v4 scaffold 2026-10-26):
+ * - Complete oklch colours stored as CSS vars; Tailwind utilities (`bg-card`
+ *   etc.) read them through `@theme inline`. The values are the exact
+ *   conversions of the HSL triplets they replaced — convert, don't retune.
  * - Dark is canonical (per plan §"Out of scope"). Light scaffolding exists so
  *   M4 can flip themes without re-plumbing variables, but dark is the default.
  * - Accent is amber to match the reader chrome in Phase 3.
@@ -37,46 +41,65 @@
    * the same signal for the pre-CSS paint. */
   color-scheme: dark;
 
-  --background: 222 22% 6%;
-  --foreground: 210 20% 96%;
+  --background: oklch(0.1636 0.0105 266.93);
+  --foreground: oklch(0.9686 0.0035 247.86);
 
-  --card: 222 18% 9%;
-  --card-foreground: 210 20% 96%;
+  --card: oklch(0.1971 0.0123 266.95);
+  --card-foreground: oklch(0.9686 0.0035 247.86);
 
-  --popover: 222 22% 8%;
-  --popover-foreground: 210 20% 96%;
+  --popover: oklch(0.185 0.0136 266.84);
+  --popover-foreground: oklch(0.9686 0.0035 247.86);
 
-  --primary: 38 92% 55%;
-  --primary-foreground: 26 30% 10%;
+  --primary: oklch(0.789 0.1592 74.08);
+  --primary-foreground: oklch(0.2196 0.0186 59);
 
-  --secondary: 217 14% 16%;
-  --secondary-foreground: 210 20% 96%;
+  --secondary: oklch(0.2733 0.0145 259.91);
+  --secondary-foreground: oklch(0.9686 0.0035 247.86);
 
-  --muted: 217 14% 14%;
-  --muted-foreground: 215 16% 65%;
+  --muted: oklch(0.253 0.013 259.92);
+  --muted-foreground: oklch(0.7127 0.0278 256.77);
 
-  --accent: 38 92% 55%;
-  --accent-foreground: 26 30% 10%;
+  --accent: oklch(0.789 0.1592 74.08);
+  --accent-foreground: oklch(0.2196 0.0186 59);
 
-  --destructive: 0 70% 50%;
-  --destructive-foreground: 210 20% 98%;
+  --destructive: oklch(0.5714 0.2121 27.25);
+  --destructive-foreground: oklch(0.9843 0.0017 247.84);
 
   /* Semantic status tokens (F1). success/warning/info pair with their
    * `-foreground` (text on the solid color); error reuses `--destructive`.
    * `--rating` is the gold star tint, kept distinct from `--warning`'s
    * orange. Tuned for WCAG AA per theme; consume via `statusTone()` in
    * `lib/ui/status-tone.ts`, never hardcoded `text-emerald-400` etc. */
-  --success: 152 55% 48%;
-  --success-foreground: 152 40% 10%;
-  --warning: 40 92% 55%;
-  --warning-foreground: 38 40% 10%;
-  --info: 210 90% 62%;
-  --info-foreground: 210 40% 10%;
-  --rating: 42 95% 58%;
+  --success: oklch(0.7135 0.1476 158.32);
+  --success-foreground: oklch(0.2383 0.0325 162.33);
+  --warning: oklch(0.8019 0.1596 78.06);
+  --warning-foreground: oklch(0.2323 0.0255 80.62);
+  --info: oklch(0.6866 0.1537 251.08);
+  --info-foreground: oklch(0.211 0.0252 249.1);
+  --rating: oklch(0.8313 0.1596 82.98);
 
-  --border: 217 14% 18%;
-  --input: 217 14% 18%;
-  --ring: 38 92% 55%;
+  --border: oklch(0.2932 0.0161 259.91);
+  --input: oklch(0.2932 0.0161 259.91);
+  --ring: oklch(0.789 0.1592 74.08);
+
+  /* Chart series. 1–3 ride the accent + status hues so a palette or
+   * accent change carries through; 4–5 are fixed magenta / violet. */
+  --chart-1: var(--primary);
+  --chart-2: var(--info);
+  --chart-3: var(--success);
+  --chart-4: oklch(0.72 0.19 350);
+  --chart-5: oklch(0.7 0.17 300);
+
+  /* Sidebar tokens the upstream Sidebar component reads. References, not
+   * values, so they follow whichever theme / accent block is active. */
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--secondary);
+  --sidebar-accent-foreground: var(--secondary-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
 
   --radius: 0.5rem;
 
@@ -87,40 +110,42 @@
    * loading skeleton both consume `--reader-bg` so the fallback can
    * never drift from the live background (the iPad white-flash fix).
    * `--reader-chrome` matches the translucent top bar / page strip. */
-  --reader-bg: 0 0% 0%;
-  --reader-chrome: 0 0% 4%;
+  --reader-bg: oklch(0 0 0);
+  --reader-chrome: oklch(0.1457 0 0);
 }
 
 [data-theme="light"] {
   color-scheme: light;
 
-  --background: 0 0% 100%;
-  --foreground: 222 47% 11%;
-  --card: 0 0% 100%;
-  --card-foreground: 222 47% 11%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 222 47% 11%;
-  --primary: 38 92% 50%;
-  --primary-foreground: 26 30% 10%;
-  --secondary: 210 40% 96%;
-  --secondary-foreground: 222 47% 11%;
-  --muted: 210 40% 96%;
-  --muted-foreground: 215 16% 47%;
-  --accent: 38 92% 50%;
-  --accent-foreground: 26 30% 10%;
-  --destructive: 0 84% 60%;
-  --destructive-foreground: 210 20% 98%;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.2064 0.0388 265.55);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2064 0.0388 265.55);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2064 0.0388 265.55);
+  --primary: oklch(0.7697 0.1645 70.61);
+  --primary-foreground: oklch(0.2196 0.0186 59);
+  --secondary: oklch(0.9676 0.007 247.9);
+  --secondary-foreground: oklch(0.2064 0.0388 265.55);
+  --muted: oklch(0.9676 0.007 247.9);
+  --muted-foreground: oklch(0.5564 0.0398 256.82);
+  --accent: oklch(0.7697 0.1645 70.61);
+  --accent-foreground: oklch(0.2196 0.0186 59);
+  --destructive: oklch(0.6356 0.2082 25.38);
+  --destructive-foreground: oklch(0.9843 0.0017 247.84);
   /* Status tokens darkened for AA contrast on white. */
-  --success: 152 60% 33%;
-  --success-foreground: 0 0% 100%;
-  --warning: 32 90% 38%;
-  --warning-foreground: 0 0% 100%;
-  --info: 214 84% 45%;
-  --info-foreground: 0 0% 100%;
-  --rating: 38 92% 42%;
-  --border: 214 32% 91%;
-  --input: 214 32% 91%;
-  --ring: 38 92% 50%;
+  --success: oklch(0.5535 0.1169 157.98);
+  --success-foreground: oklch(1 0 0);
+  --warning: oklch(0.5936 0.137 59.54);
+  --warning-foreground: oklch(1 0 0);
+  --info: oklch(0.5292 0.1845 258.06);
+  --info-foreground: oklch(1 0 0);
+  --rating: oklch(0.6764 0.1439 71);
+  --border: oklch(0.9258 0.0132 255.03);
+  --input: oklch(0.9258 0.0132 255.03);
+  --ring: oklch(0.7697 0.1645 70.61);
+  --chart-4: oklch(0.55 0.21 350);
+  --chart-5: oklch(0.52 0.2 300);
 }
 
 /*
@@ -134,33 +159,35 @@
 [data-theme="amber"] {
   color-scheme: light;
 
-  --background: 38 35% 93%;
-  --foreground: 28 30% 15%;
-  --card: 38 45% 96%;
-  --card-foreground: 28 30% 15%;
-  --popover: 38 45% 96%;
-  --popover-foreground: 28 30% 15%;
-  --primary: 28 70% 38%;
-  --primary-foreground: 38 35% 96%;
-  --secondary: 36 28% 86%;
-  --secondary-foreground: 28 30% 15%;
-  --muted: 36 28% 86%;
-  --muted-foreground: 28 16% 38%;
-  --accent: 28 70% 38%;
-  --accent-foreground: 38 35% 96%;
-  --destructive: 0 60% 45%;
-  --destructive-foreground: 38 35% 96%;
+  --background: oklch(0.953 0.0116 81.51);
+  --foreground: oklch(0.2775 0.0263 62.6);
+  --card: oklch(0.9742 0.0085 81.51);
+  --card-foreground: oklch(0.2775 0.0263 62.6);
+  --popover: oklch(0.9742 0.0085 81.51);
+  --popover-foreground: oklch(0.2775 0.0263 62.6);
+  --primary: oklch(0.5496 0.1197 56.64);
+  --primary-foreground: oklch(0.9732 0.0066 81.51);
+  --secondary: oklch(0.9015 0.0184 78.24);
+  --secondary-foreground: oklch(0.2775 0.0263 62.6);
+  --muted: oklch(0.9015 0.0184 78.24);
+  --muted-foreground: oklch(0.5004 0.0309 63.22);
+  --accent: oklch(0.5496 0.1197 56.64);
+  --accent-foreground: oklch(0.9732 0.0066 81.51);
+  --destructive: oklch(0.5181 0.1747 25.76);
+  --destructive-foreground: oklch(0.9732 0.0066 81.51);
   /* Status tokens warm-shifted + darkened for AA on cream paper. */
-  --success: 150 45% 30%;
-  --success-foreground: 38 35% 96%;
-  --warning: 30 78% 36%;
-  --warning-foreground: 38 35% 96%;
-  --info: 214 65% 40%;
-  --info-foreground: 38 35% 96%;
-  --rating: 35 80% 40%;
-  --border: 32 20% 80%;
-  --input: 32 20% 80%;
-  --ring: 28 70% 38%;
+  --success: oklch(0.4877 0.0894 158.54);
+  --success-foreground: oklch(0.9732 0.0066 81.51);
+  --warning: oklch(0.5462 0.1218 58.7);
+  --warning-foreground: oklch(0.9732 0.0066 81.51);
+  --info: oklch(0.4825 0.1345 256.6);
+  --info-foreground: oklch(0.9732 0.0066 81.51);
+  --rating: oklch(0.6164 0.1297 67.62);
+  --border: oklch(0.852 0.0183 71.25);
+  --input: oklch(0.852 0.0183 71.25);
+  --ring: oklch(0.5496 0.1197 56.64);
+  --chart-4: oklch(0.5 0.17 350);
+  --chart-5: oklch(0.48 0.16 300);
 }
 
 /*
@@ -169,25 +196,25 @@
  * (no `data-accent` attribute set).
  */
 [data-accent="blue"] {
-  --primary: 217 91% 60%;
-  --primary-foreground: 222 47% 11%;
-  --accent: 217 91% 60%;
-  --accent-foreground: 222 47% 11%;
-  --ring: 217 91% 60%;
+  --primary: oklch(0.6261 0.1859 259.6);
+  --primary-foreground: oklch(0.2064 0.0388 265.55);
+  --accent: oklch(0.6261 0.1859 259.6);
+  --accent-foreground: oklch(0.2064 0.0388 265.55);
+  --ring: oklch(0.6261 0.1859 259.6);
 }
 [data-accent="emerald"] {
-  --primary: 158 64% 52%;
-  --primary-foreground: 158 30% 10%;
-  --accent: 158 64% 52%;
-  --accent-foreground: 158 30% 10%;
-  --ring: 158 64% 52%;
+  --primary: oklch(0.7733 0.1523 163.3);
+  --primary-foreground: oklch(0.2324 0.0237 169.13);
+  --accent: oklch(0.7733 0.1523 163.3);
+  --accent-foreground: oklch(0.2324 0.0237 169.13);
+  --ring: oklch(0.7733 0.1523 163.3);
 }
 [data-accent="rose"] {
-  --primary: 350 89% 60%;
-  --primary-foreground: 350 30% 10%;
-  --accent: 350 89% 60%;
-  --accent-foreground: 350 30% 10%;
-  --ring: 350 89% 60%;
+  --primary: oklch(0.6437 0.2159 16.81);
+  --primary-foreground: oklch(0.2037 0.0259 8.72);
+  --accent: oklch(0.6437 0.2159 16.81);
+  --accent-foreground: oklch(0.2037 0.0259 8.72);
+  --ring: oklch(0.6437 0.2159 16.81);
 }
 
 /*
@@ -291,38 +318,68 @@ html:has([data-surface="reader"]) {
   --density-page-pad-y: 0.5rem;
 }
 
+@layer base {
+  /* shadcn scaffold defaults: a bare `border` takes the border token
+   * instead of currentColor, and outlines take the ring token. */
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
 @theme inline {
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --color-success: hsl(var(--success));
-  --color-success-foreground: hsl(var(--success-foreground));
-  --color-warning: hsl(var(--warning));
-  --color-warning-foreground: hsl(var(--warning-foreground));
-  --color-info: hsl(var(--info));
-  --color-info-foreground: hsl(var(--info-foreground));
-  --color-rating: hsl(var(--rating));
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
-  --color-reader-bg: hsl(var(--reader-bg));
-  --color-reader-chrome: hsl(var(--reader-chrome));
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-rating: var(--rating);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-reader-bg: var(--reader-bg);
+  --color-reader-chrome: var(--reader-chrome);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  /* Upstream scale: every step derives from `--radius`, so the compact
+   * density's smaller radius reaches `rounded-xl` and up as well. */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-sm: calc(var(--radius) - 4px);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
 /*
@@ -669,6 +726,6 @@ body {
 @layer base {
   * {
     scrollbar-width: thin;
-    scrollbar-color: hsl(var(--border)) transparent;
+    scrollbar-color: var(--border) transparent;
   }
 }

@@ -108,7 +108,7 @@ describe("iOS 26 scroll edge effect", () => {
     // (in a browser tab it clipped the header search field).
     const src = read("app/layout.tsx");
     expect(src).toMatch(
-      /id="top-edge"[\s\S]{0,200}className="standalone:block pointer-events-none sticky top-0 z-\[9999\] -mb-3 hidden h-3 bg-\[var\(--top-edge-color,hsl\(var\(--background\)\)\)\]"/,
+      /id="top-edge"[\s\S]{0,200}className="standalone:block pointer-events-none sticky top-0 z-\[9999\] -mb-3 hidden h-3 bg-\[var\(--top-edge-color,var\(--background\)\)\]"/,
     );
     expect(src.indexOf('id="top-edge"')).toBeLessThan(
       src.indexOf("<ThemeProvider"),
