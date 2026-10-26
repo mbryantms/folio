@@ -13,6 +13,36 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.67.0](https://github.com/mbryantms/folio/compare/v0.66.9...v0.67.0) (2026-10-26)
+
+
+### Added
+
+* **web:** corner radius and motion preferences ([#1350](https://github.com/mbryantms/folio/issues/1350)) ([430d3ad](https://github.com/mbryantms/folio/commit/430d3ad0573c2b0f92625ae5f1acbc1537d8ef79))
+
+
+### Fixed
+
+* **web:** import tw-animate-css so the shadcn open/close animations run ([#1337](https://github.com/mbryantms/folio/issues/1337)) ([0748362](https://github.com/mbryantms/folio/commit/074836227974dc65d9632f271482a2abe5b7f8c4))
+* **web:** sheets take their caller's width again and pad their body ([#1351](https://github.com/mbryantms/folio/issues/1351)) ([ffb09ff](https://github.com/mbryantms/folio/commit/ffb09ff2bd20e895dd3e2bf6b7caf92acf30b46b))
+
+
+### Dependencies
+
+* lock file maintenance ([#1332](https://github.com/mbryantms/folio/issues/1332)) ([a203030](https://github.com/mbryantms/folio/commit/a203030fc60f16d7c063424adab3751bdd38d0fa))
+* lock file maintenance ([#1335](https://github.com/mbryantms/folio/issues/1335)) ([caf96ed](https://github.com/mbryantms/folio/commit/caf96ed99c878820167e660873dadf0d5194cecd))
+* lock file maintenance ([#1336](https://github.com/mbryantms/folio/issues/1336)) ([f13b9cb](https://github.com/mbryantms/folio/commit/f13b9cb863349bc95b2d8216305024486294beb3))
+* update alpine:3 docker digest to be26560 ([#1334](https://github.com/mbryantms/folio/issues/1334)) ([6171525](https://github.com/mbryantms/folio/commit/61715253b07ba0cba4a82bbb334cebb6876366fd))
+* update dependency next to v16.4.3 ([#1352](https://github.com/mbryantms/folio/issues/1352)) ([9ce7eed](https://github.com/mbryantms/folio/commit/9ce7eed645fcdcadecdd60beb2758b1ff7bc1cd0))
+* update docker/login-action digest to 81c6f93 ([#1353](https://github.com/mbryantms/folio/issues/1353)) ([271cfa0](https://github.com/mbryantms/folio/commit/271cfa054d44b60674f4a8c1766f8f0dbbd68975))
+* update nextjs monorepo to v16.4.3 ([#1349](https://github.com/mbryantms/folio/issues/1349)) ([6b640ab](https://github.com/mbryantms/folio/commit/6b640abe7cf5e87f3c0dca3c5bb5450cc17b4a9e))
+* update web-dev-tooling (weekly) ([#1331](https://github.com/mbryantms/folio/issues/1331)) ([0b72973](https://github.com/mbryantms/folio/commit/0b7297396bd80c9dc9a8dffa68ad973fc0e1b0d9))
+
+
+### Build & CI
+
+* weekly refresh of the vendored shadcn components ([#1345](https://github.com/mbryantms/folio/issues/1345)) ([7d2eac7](https://github.com/mbryantms/folio/commit/7d2eac7bc17cd3d32517ab0d46bc9977f3a25ab5))
+
 ## [0.66.9](https://github.com/mbryantms/folio/compare/v0.66.8...v0.66.9) (2026-10-25)
 
 
