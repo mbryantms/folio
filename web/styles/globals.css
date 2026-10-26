@@ -631,6 +631,63 @@ body {
   }
 }
 
+/* ── Pristine shadcn overlays: Folio geometry ─────────────────────────
+ * `components/ui/*` is vendored verbatim, so the phone bottom-sheet dialog
+ * (audit UX-8: anchored to the bottom edge, full width, top corners
+ * rounded, capped height with its own scroll, clear of the keyboard and
+ * the home indicator), the short-window height cap and the safe-area-
+ * aware sheet close live here, keyed on `data-slot`. The doubled
+ * attribute selector outranks the files' single-class utilities inside
+ * the same cascade layer; callers override desktop geometry with `sm:`
+ * classes exactly as before. Tailwind v4 translates with the `translate`
+ * property, and tw-animate-css reads the `--tw-enter-*` / `--tw-exit-*`
+ * variables, so the slide replaces the zoom here. */
+@layer utilities {
+  @media (width < 40rem) {
+    [data-slot="dialog-content"][data-slot="dialog-content"] {
+      inset: auto 0 var(--keyboard-inset, 0px) 0;
+      max-width: none;
+      max-height: calc(var(--visual-height, 100dvh) * 0.85);
+      overflow-y: auto;
+      translate: none;
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+      --tw-enter-scale: 1;
+      --tw-exit-scale: 1;
+      --tw-enter-translate-y: 100%;
+      --tw-exit-translate-y: 100%;
+    }
+  }
+  @media (width >= 40rem) {
+    /* A modal taller than a short window (iPad landscape, a small laptop)
+     * used to run off both edges with no way to reach its footer. */
+    [data-slot="dialog-content"][data-slot="dialog-content"],
+    [data-slot="alert-dialog-content"][data-slot="alert-dialog-content"] {
+      max-height: calc(100dvh - 2rem);
+      overflow-y: auto;
+    }
+  }
+  /* Overlay headers are left-aligned at every width. Upstream centres the
+   * alert-dialog header under `sm` (it centred phone titles over their
+   * own description); dialog and sheet headers carry no alignment. */
+  [data-slot="alert-dialog-header"][data-slot="alert-dialog-header"] {
+    place-items: start;
+    text-align: left;
+  }
+  /* Every sheet side scrolls its own overflow; an inner scroller keeps
+   * working because the outer never overflows at normal heights. */
+  [data-slot="sheet-content"][data-slot="sheet-content"] {
+    overflow-y: auto;
+  }
+  /* The close sits clear of the status bar and the rounded corners in
+   * the installed app. */
+  [data-slot="sheet-content"]
+    > [data-slot="sheet-close"][data-slot="sheet-close"] {
+    top: max(1rem, calc(var(--safe-top) + 0.5rem));
+    right: max(1rem, var(--safe-right));
+  }
+}
+
 /* Shared mobile chrome geometry. Portalled overlays inherit these values. */
 :root {
   --keyboard-inset: 0px;
@@ -671,6 +728,8 @@ body {
   [data-slot="switch"]:not(.absolute, .fixed, .sticky),
   [data-slot="radio-group-item"]:not(.absolute, .fixed, .sticky),
   [data-slot="slider-thumb"]:not(.absolute, .fixed, .sticky),
+  [data-slot="dialog-close"]:not(.absolute, .fixed, .sticky),
+  [data-slot="sheet-close"]:not(.absolute, .fixed, .sticky),
   .folio-button:not(.absolute, .fixed, .sticky),
   .folio-control:not(.absolute, .fixed, .sticky),
   .folio-tap:not(.absolute, .fixed, .sticky) {
@@ -685,6 +744,8 @@ body {
   [data-slot="switch"]::after,
   [data-slot="radio-group-item"]::after,
   [data-slot="slider-thumb"]::after,
+  [data-slot="dialog-close"]::after,
+  [data-slot="sheet-close"]::after,
   .folio-button::after,
   .folio-control::after,
   .folio-tap::after {
