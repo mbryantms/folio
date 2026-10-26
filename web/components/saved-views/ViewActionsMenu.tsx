@@ -17,7 +17,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 import { useSidebarSavedView } from "@/lib/api/mutations";
 import type { SavedViewView } from "@/lib/api/types";
 

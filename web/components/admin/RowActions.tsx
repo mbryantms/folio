@@ -10,7 +10,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 
 export type RowAction = {
   label: string;

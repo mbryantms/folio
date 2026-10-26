@@ -40,7 +40,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 import { DropdownMenuResponsiveSub } from "@/components/folio/dropdown-menu-responsive-sub";
 import {
   useAddCollectionEntry,

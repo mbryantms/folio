@@ -20,7 +20,7 @@ import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
-} from "@/components/ui/hover-card";
+} from "@/components/folio/hover-card";
 import { Badge } from "@/components/ui/badge";
 import { jsonFetch } from "@/lib/api/queries";
 import { useUpsertSeriesProgress } from "@/lib/api/mutations";

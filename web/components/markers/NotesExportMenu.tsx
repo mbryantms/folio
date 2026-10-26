@@ -8,7 +8,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 import { notesExportHref } from "@/lib/urls";
 
 /** "Export" menu on the /bookmarks header (roadmap WP-5.1). Both entries

@@ -30,18 +30,18 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@/components/folio/popover";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/folio/tooltip";
 import { useReaderWakeLock } from "@/lib/reader/use-wake-lock";
 import { usePageTextPanel } from "@/lib/reader/page-text";
 // Lazy: the settings body (sliders, switches, segmented controls) only

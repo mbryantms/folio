@@ -11,7 +11,7 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@/components/folio/popover";
 import { apiFetch } from "@/lib/api/auth-refresh";
 import { apiMutate } from "@/lib/api/mutations";
 import { queryKeys, useLibraryList } from "@/lib/api/queries";

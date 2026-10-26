@@ -61,7 +61,7 @@ import {
   PopoverContent,
   PopoverPortalContainer,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@/components/folio/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -69,7 +69,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/folio/select";
 import { applyServerErrors } from "@/lib/api/form-errors";
 import {
   useCreateExternalRelationship,

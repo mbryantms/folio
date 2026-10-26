@@ -21,7 +21,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/folio/select";
 import { useUpdateSettings } from "@/lib/api/mutations";
 import { useUnsavedChangesGuard } from "@/lib/ui/use-unsaved-changes-guard";
 

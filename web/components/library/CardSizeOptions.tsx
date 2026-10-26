@@ -8,7 +8,7 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@/components/folio/popover";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { useCoverCollectionDot } from "@/components/library/use-cover-collection-dot";

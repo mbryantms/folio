@@ -7,7 +7,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/folio/select";
 
 import { MultiSelectEditor } from "./MultiSelectEditor";
 

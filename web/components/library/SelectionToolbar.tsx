@@ -12,7 +12,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";
 

@@ -34,7 +34,7 @@ import {
   Trash2,
 } from "lucide-react";
 
-import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
 import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";

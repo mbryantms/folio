@@ -55,7 +55,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/folio/select";
 import {
   Sheet,
   SheetContent,

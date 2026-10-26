@@ -17,7 +17,7 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@/components/folio/popover";
 
 export type ComboboxOption = {
   value: string;

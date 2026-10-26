@@ -37,7 +37,7 @@ import {
   useBulkMarkSeriesProgress,
   useCreateSavedViewBatch,
 } from "@/lib/api/mutations";
-import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
 import { useSavedViewResultsInfinite } from "@/lib/api/queries";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";

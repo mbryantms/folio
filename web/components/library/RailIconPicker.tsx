@@ -8,7 +8,7 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@/components/folio/popover";
 import { useSetSavedViewIcon } from "@/lib/api/mutations";
 import type { SavedViewKind, SavedViewView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";

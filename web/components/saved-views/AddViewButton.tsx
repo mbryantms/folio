@@ -23,9 +23,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 import { kindForEntity } from "@/components/filters/field-registry";
-import { PopoverPortalContainer } from "@/components/ui/popover";
+import { PopoverPortalContainer } from "@/components/folio/popover";
 import { useCreateSavedView, usePinSavedView } from "@/lib/api/mutations";
 
 /** "Add view" picker — opens either the FilterBuilder dialog or the

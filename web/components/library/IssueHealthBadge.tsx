@@ -9,7 +9,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/folio/tooltip";
 import { useIssueHealth } from "@/lib/api/queries";
 import { statusTone } from "@/lib/ui/status-tone";
 

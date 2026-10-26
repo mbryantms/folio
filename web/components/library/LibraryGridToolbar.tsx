@@ -16,7 +16,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/folio/select";
 import type { IssueSort, SeriesSort, SortOrder } from "@/lib/api/types";
 
 // `random` is excluded — it's a one-shot discovery pick ("Surprise me"),

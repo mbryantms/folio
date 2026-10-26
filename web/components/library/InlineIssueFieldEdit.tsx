@@ -10,14 +10,14 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+} from "@/components/folio/popover";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/folio/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useUpdateIssue } from "@/lib/api/mutations";
 import { useMe } from "@/lib/api/queries";

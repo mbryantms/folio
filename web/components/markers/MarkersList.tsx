@@ -101,7 +101,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/folio/dropdown-menu";
 
 type KindFilter = BookmarksFeedKind | "all" | "favorite";
 

@@ -8,7 +8,7 @@ import {
   type FilterBuilderState,
 } from "@/components/filters/filter-builder";
 import { entityForKind } from "@/components/filters/field-registry";
-import { PopoverPortalContainer } from "@/components/ui/popover";
+import { PopoverPortalContainer } from "@/components/folio/popover";
 import {
   Sheet,
   SheetContent,

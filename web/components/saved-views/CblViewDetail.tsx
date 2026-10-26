@@ -38,9 +38,9 @@ import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
-import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { PopoverPortalContainer } from "@/components/ui/popover";
+import { PopoverPortalContainer } from "@/components/folio/popover";
 import {
   Sheet,
   SheetContent,
@@ -53,7 +53,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/folio/tooltip";
 import {
   useCblList,
   useCblListEntriesInfinite,

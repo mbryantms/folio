@@ -22,7 +22,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/folio/tooltip";
 
 /** "favorite" is a star flag on any kind, not a kind itself — but for
  *  the dot palette we treat it as a synthetic dot so users still see a

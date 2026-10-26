@@ -35,7 +35,7 @@ vi.mock("@/components/ui/checkbox", () => ({
     }),
 }));
 
-vi.mock("@/components/ui/tooltip", () => ({
+vi.mock("@/components/folio/tooltip", () => ({
   TooltipProvider: ({ children }: { children: React.ReactNode }) =>
     createElement("div", null, children),
   Tooltip: ({ children }: { children: React.ReactNode }) =>
