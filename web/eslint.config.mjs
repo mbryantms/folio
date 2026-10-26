@@ -25,6 +25,10 @@ export default defineConfig([
       // each production build; it's generated, not source.
       "public/sw.js",
       "public/swe-worker-*.js",
+      // Vendored verbatim from the shadcn registry (`shadcn add
+      // --overwrite`): never hand-edited, so never linted or formatted.
+      "components/ui/**",
+      "lib/hooks/**",
     ],
   },
   {
@@ -71,6 +75,7 @@ export default defineConfig([
             "tabs",
             "scroll-area",
             "sonner",
+            "sidebar",
           ].map((name) => ({
             name: `@/components/ui/${name}`,
             message: `Import from @/components/folio/${name} (Folio wrapper over the vendored file).`,

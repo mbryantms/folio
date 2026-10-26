@@ -9,3 +9,4 @@ web/lib/api/types.generated.ts linguist-generated=true
 # Vendored verbatim from the shadcn registry (`shadcn add --overwrite`); never hand-edited.
 # Folio behaviour lives in styles/globals.css (data-slot selectors) and components/folio/.
 web/components/ui/** linguist-vendored=true
+web/lib/hooks/** linguist-vendored=true
