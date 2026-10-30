@@ -14,7 +14,7 @@
 # both as compose services fronted by an operator-owned reverse proxy.
 
 # ───── Stage 1: build the standalone bundle ─────
-FROM node:24-bookworm-slim@sha256:8579e5fce559544b50072d05cc5d3b84b6a14d0989ae56c331d9e983a36a21f1 AS builder
+FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS builder
 WORKDIR /work
 
 # pnpm is fast + matches what the repo uses locally. The exact version is
