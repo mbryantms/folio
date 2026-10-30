@@ -50,6 +50,14 @@ auditConfig:
     # @next/eslint-plugin-next > fast-glob > micromatch > braces. Accepted
     # 2026-10-03; delete when braces ships a fix.
     - GHSA-vfj7-8cjw-p6xm
+    # deepmerge <=4.3.1 prototype poisoning in mergeObject() (low,
+    # CVE-2026-93753). No patched release exists (4.3.1 is the latest).
+    # Dev-only: shadcn 4.22.1 CLI > @shadcn/registry > deepmerge, run by
+    # developers and the weekly shadcn-refresh.yml over the shadcn
+    # registry's own JSON. Below the audit gate's level, but the daily OSV
+    # sweep has no threshold. Accepted 2026-10-30; delete when deepmerge
+    # ships a fix or shadcn drops it.
+    - GHSA-gcqx-w48m-w2h4
 
 overrides:
   # GHSA-mrhx-c7xc-m3w5 zod <4.6.6 memory exhaustion on oversized

@@ -43,4 +43,11 @@ ignore = [
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
+    # No entry for the 2026-10-29 `zip` GHSA batch (GHSA-m665-v7pm-7grj,
+    # -q7v9-x93c-xqv3, -hjqx-j4rw-g7xv, -8hxf-qr8p-62x4, -9hj8-73fh-9963) or
+    # for `block-buffer 0.10.4` GHSA-qwgh-2vcv-g2f7: the RustSec db has no
+    # id for any of them (2026-10-30), so cargo-audit never reports them and
+    # an unknown id here would read as stale. They are accepted on the
+    # `osv-only:` lines in deny.toml and mirrored in osv-scanner.toml; add
+    # the RUSTSEC id here and in deny.toml once the db assigns one.
 ]

@@ -16,12 +16,20 @@ daily OSV sweep goes red on a finding that was triaged weeks earlier
 (issue #1208: the three `zip` <9 ids and `crypto-bigint`). This script is
 the gate that drift used to slip through.
 
+A Rust advisory the RustSec db has no id for yet (GitHub-only, as the
+2026-10-29 `zip` batch and `block-buffer` were) cannot go in deny.toml's
+or audit.toml's `ignore` array: an id the db does not know only warns as
+`advisory-not-detected` and reads as stale. Its GHSA goes on a comment
+line `# osv-only: GHSA-…` in deny.toml, under the full rationale, and in
+osv-scanner.toml; that line is what backs the osv entry here.
+
 Checks
-  mirror   every RUSTSEC id in deny.toml or audit.toml, and every GHSA in
+  mirror   every RUSTSEC id in deny.toml or audit.toml, every GHSA on an
+           `osv-only:` line in deny.toml, and every GHSA in
            pnpm-workspace.yaml, appears in osv-scanner.toml; and every id
            in osv-scanner.toml is backed by one of those sources (an
-           osv-only id has no rationale on file and is stale by
-           construction).                                  exit 1 on drift
+           osv-only id with no such line has no rationale on file and is
+           stale by construction).                         exit 1 on drift
   stale    (daily sweep only) an ignored id that no longer matches
            anything: cargo-deny's `advisory-not-detected` diagnostics
            (`--deny-json`, from `cargo deny --format json`), and, for the
@@ -30,6 +38,9 @@ Checks
            RustSec checkout cargo-audit uses). A stale ignore means the
            upstream fix landed or the crate left the graph: delete the
            entry, and check whether the pin that held it can now move.
+           Also (same db) an `osv-only:` GHSA that the RustSec db now
+           lists as an alias: move it into the `ignore` arrays under its
+           RUSTSEC id, or cargo-deny starts failing on it.
                                                            exit 2 if stale
 
 Usage
@@ -74,6 +85,23 @@ def ids_in_ignore_array(path: pathlib.Path) -> set[str]:
 def ids_in_osv(path: pathlib.Path) -> set[str]:
     text = strip_comments(path.read_text())
     return set(re.findall(r'^\s*id\s*=\s*"([^"]+)"', text, re.M))
+
+
+def osv_only_in_deny(path: pathlib.Path) -> set[str]:
+    """GHSA ids on `# osv-only: …` comment lines in deny.toml: Rust
+    advisories the RustSec db has no id for yet, accepted with their
+    rationale in deny.toml but reportable only by osv-scanner."""
+    return set(GHSA.findall(" ".join(re.findall(r"^\s*#\s*osv-only:(.*)$", path.read_text(), re.M))))
+
+
+def rustsec_aliases(db: pathlib.Path) -> dict[str, str]:
+    """GHSA alias -> RUSTSEC id, over every advisory in the RustSec checkout."""
+    out: dict[str, str] = {}
+    for md in (db / "crates").glob("*/RUSTSEC-*.md"):
+        m = re.search(r"^aliases\s*=\s*\[(.*?)\]", md.read_text(), re.M | re.S)
+        for ghsa in GHSA.findall(m.group(1)) if m else []:
+            out[ghsa] = md.stem
+    return out
 
 
 def ghsas_in_pnpm(path: pathlib.Path) -> set[str]:
@@ -154,28 +182,33 @@ def main() -> int:
 
     deny = ids_in_ignore_array(ROOT / "deny.toml")
     audit = ids_in_ignore_array(ROOT / ".cargo" / "audit.toml")
+    osv_only = osv_only_in_deny(ROOT / "deny.toml")
     osv = ids_in_osv(ROOT / "osv-scanner.toml")
     npm = ghsas_in_pnpm(ROOT / "pnpm-workspace.yaml")
-    sources = deny | audit | npm
+    sources = deny | audit | osv_only | npm
 
     problems: list[str] = []
     for i in sorted((deny | audit) - osv):
         where = " + ".join(n for n, s in (("deny.toml", deny), (".cargo/audit.toml", audit)) if i in s)
         problems.append(f"{i} is accepted in {where} but missing from osv-scanner.toml")
+    for i in sorted(osv_only - osv):
+        problems.append(f"{i} is on an `osv-only:` line in deny.toml but missing from osv-scanner.toml")
     for i in sorted(npm - osv):
         problems.append(f"{i} is in pnpm-workspace.yaml ignoreGhsas but missing from osv-scanner.toml")
     for i in sorted(osv - sources):
-        problems.append(f"{i} is in osv-scanner.toml only — no deny.toml / audit.toml / pnpm rationale backs it")
+        problems.append(f"{i} is in osv-scanner.toml only — no deny.toml / audit.toml / osv-only / pnpm rationale backs it")
 
     if problems:
         print("advisory ignore lists have drifted:")
         for p in problems:
             print(f"  - {p}")
-        print("\nRule: osv-scanner.toml mirrors deny.toml + .cargo/audit.toml + pnpm-workspace.yaml "
-              "ignoreGhsas exactly (see docs/dev/dependency-management.md, Accepted advisories).")
+        print("\nRule: osv-scanner.toml mirrors deny.toml (ignore array + `osv-only:` lines) + "
+              ".cargo/audit.toml + pnpm-workspace.yaml ignoreGhsas exactly "
+              "(see docs/dev/dependency-management.md, Accepted advisories).")
         return 1
 
-    print(f"ignore lists in sync: {len(deny)} deny, {len(audit)} audit, {len(npm)} npm, {len(osv)} osv")
+    print(f"ignore lists in sync: {len(deny)} deny, {len(audit)} audit, "
+          f"{len(osv_only)} osv-only, {len(npm)} npm, {len(osv)} osv")
 
     stale: list[str] = []
     if args.deny_json and args.deny_json.exists():
@@ -209,13 +242,22 @@ def main() -> int:
                 stale.append(f"{i}: audit.toml ignore for `{crate}`, which is no longer in Cargo.lock")
             elif not any(affected(v, patched, unaffected) for v in versions):
                 stale.append(f"{i}: audit.toml ignore for `{crate}` {versions}, none of which the advisory still affects")
+        # A GitHub-only id the RustSec db has caught up with: cargo-deny now
+        # reports it under the RUSTSEC id, which nothing ignores yet.
+        aliases = rustsec_aliases(args.advisory_db)
+        for i in sorted(osv_only):
+            if i in aliases:
+                stale.append(f"{i}: `osv-only:` in deny.toml, but the RustSec db now has it as {aliases[i]} — "
+                             f"move it into the deny.toml / audit.toml ignore arrays under that id")
 
     if stale:
         print("\nstale ignores (the fix landed upstream or the crate left the graph):")
         for s in stale:
             print(f"  - {s}")
         print("\nDelete the entry from every file that carries it, and check whether the pin "
-              "that held the advisory in place can now move (the `Revisit when…` note on the entry).")
+              "that held the advisory in place can now move (the `Revisit when…` note on the entry). "
+              "An `osv-only:` id the RustSec db caught up with moves instead: into the deny.toml / "
+              "audit.toml ignore arrays under its RUSTSEC id, keeping its osv-scanner.toml entry.")
         return 2
     if args.deny_json or args.advisory_db:
         print("no stale ignores")
