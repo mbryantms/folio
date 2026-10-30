@@ -94,6 +94,68 @@ ignore = [
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
+    # --- `zip` < 9, 2026-10-29 batch: five GitHub advisories, patched in
+    # 9.0.5 / 9.0.0. The RustSec db carries none of them (re-checked
+    # 2026-10-30), so cargo-deny has nothing to match — a RUSTSEC-less id
+    # in this array only warns as `advisory-not-detected` (the memmap2 gap
+    # above) and reads as stale to the daily sweep. They are recorded on
+    # the `osv-only:` lines below instead: osv-scanner is the one scanner
+    # that reports them (it reads osv-scanner.toml), and
+    # scripts/ci/check-advisory-ignores.py takes these lines as the
+    # rationale of record behind that file's GHSA entries. Same two stale
+    # copies as RUSTSEC-2026-0367..0369 (Folio's own zip is 9.1.2, patched
+    # for all five): `zip 7.4.0` <- candle-core 0.9.2 and `zip 8.6.0` <-
+    # tesseract-rs 0.4.0 build.rs. Both pull zip with
+    # `default-features = false` (candle adds nothing, tesseract-rs adds
+    # `deflate`), so `aes-crypto` and `legacy-zip` are not compiled in.
+    #  - GHSA-m665-v7pm-7grj (CVE-2026-115905, <= 9.0.4, "zip cloaking"):
+    #    the central-directory reader (`ZipArchive`) and the local-header
+    #    reader (`ZipStreamReader`) disagree on an entry's name/contents,
+    #    so a filesystem extract can write a path the inspecting reader
+    #    never showed. Neither copy uses `ZipStreamReader` or `extract()`:
+    #    candle opens `.npz` / `.pt` tensor files by name/index through
+    #    `ZipArchive`, and the detector Folio ships loads an ONNX model
+    #    through `ort`, so candle's zip reader is never even reached;
+    #    tesseract-rs iterates `by_index` + `io::copy` over the pinned
+    #    leptonica 1.87.0 / tesseract 5.5.2 GitHub tag archives at build
+    #    time, and nothing from it ships in the binary.
+    #  - GHSA-q7v9-x93c-xqv3 (CVE-2026-115909): unbounded symlink-target
+    #    allocation in `ZipArchive::extract()`. Not called by either copy.
+    #  - GHSA-hjqx-j4rw-g7xv (CVE-2026-115908): lexical symlink-target
+    #    validation in `extract()`. Same.
+    #  - GHSA-8hxf-qr8p-62x4 (CVE-2026-115906): AES-entry HMAC skipped on
+    #    premature EOF. Needs `aes-crypto`, which neither copy enables.
+    #  - GHSA-9hj8-73fh-9963 (CVE-2026-115907): Shrink/Reduce/Implode
+    #    capacity-overflow panic in `extract()`. Needs `legacy-zip`, which
+    #    neither copy enables.
+    # Delete when candle and tesseract-rs move to zip 9 (the condition on
+    # the three RUSTSEC entries above). Move an id into the array the day
+    # the RustSec db gains an entry for it — the daily sweep's stale check
+    # names it.
+    # osv-only: GHSA-m665-v7pm-7grj GHSA-q7v9-x93c-xqv3 GHSA-hjqx-j4rw-g7xv
+    # osv-only: GHSA-8hxf-qr8p-62x4 GHSA-9hj8-73fh-9963
+    # `block-buffer 0.10.4` — a caught panic inside a hasher's compress
+    # callback can leave the buffer's cursor out of bounds, and later use
+    # of that same buffer reads/writes past the block (GHSA-qwgh-2vcv-g2f7,
+    # moderate, 2026-08-19; no RustSec id as of 2026-10-30, so osv-only
+    # like the zip batch). Patched only in 0.12.1, i.e. the `digest 0.11`
+    # release train; 0.10.4 is pinned by `digest 0.10.7`, the train every
+    # hashing dependency we have is still on — axum (`sha1`, WebSocket
+    # handshake), axum-extra's `cookie` (`hmac` / `sha2`), sea-orm -> sqlx
+    # (`sha2` / `hmac` / `md-5`, Postgres SCRAM), `curve25519-dalek 4` /
+    # `ecdsa 0.16` <- jsonwebtoken 11.1 and openidconnect 4.0.1, and the
+    # OCR stack — all at their latest releases, so no bump on our side can
+    # clear it (the same shape as RUSTSEC-2026-0387 above). The exploit
+    # needs code that catches a panic raised *inside* a hash update and
+    # then keeps using that hasher: Folio has no `catch_unwind` of its own,
+    # the two panic boundaries it runs under (tower-http's
+    # `CatchPanicLayer` in `app.rs` and the tokio task boundary) drop the
+    # unwound request's state, so a hasher never survives a panic to be
+    # reused, and the sha1 / sha2 / hmac compress functions are branch-free
+    # arithmetic over fixed-size blocks with no panic path of their own.
+    # Delete when `cargo tree -i block-buffer@0.10.4` is empty (the
+    # digest 0.10 consumers move to digest 0.11).
+    # osv-only: GHSA-qwgh-2vcv-g2f7
 ]
 
 [licenses]

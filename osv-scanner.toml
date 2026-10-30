@@ -10,9 +10,11 @@
 # mirrored). `scripts/ci/check-advisory-ignores.py` now fails CI when
 # this file and those three drift in either direction, so this list is
 # exactly: every RUSTSEC id in deny.toml ∪ .cargo/audit.toml, plus every
-# GHSA in pnpm-workspace.yaml `auditConfig.ignoreGhsas`. The full
-# rationale and the "delete when…" condition for each live next to the
-# entry in those files; the reasons here are the one-line summary.
+# GHSA on an `osv-only:` line in deny.toml (a Rust advisory the RustSec db
+# has no id for yet, so only this scanner reports it), plus every GHSA in
+# pnpm-workspace.yaml `auditConfig.ignoreGhsas`. The full rationale and
+# the "delete when…" condition for each live next to the entry in those
+# files; the reasons here are the one-line summary.
 
 # ── Rust (mirrored from deny.toml + .cargo/audit.toml) ──────────────
 
@@ -54,9 +56,45 @@ reason = "`zip` <9 permissions applied through symlinks on extract — same stal
 id = "RUSTSEC-2026-0192"
 reason = "`ttf-parser` unmaintained — transitive via owned_ttf_parser -> ab_glyph -> imageproc -> comic-text-detector, i.e. the optional OCR/ML stack's debug-image text rendering. Not reachable from the core reader/scanner request paths."
 
+# ── Rust, GitHub-advisory-only (mirrored from the `osv-only:` lines in ──
+# deny.toml). The RustSec db has no id for these yet, so cargo-deny and
+# cargo-audit cannot be told about them; this is the one scanner that
+# reports them. Full rationale sits above the `osv-only:` line in
+# deny.toml. When RustSec assigns an id, move the entry up into the Rust
+# section under that id (osv-scanner filters aliases too) and move the
+# id from the `osv-only:` line into deny.toml's `ignore` array.
+
+[[IgnoredVulns]]
+id = "GHSA-m665-v7pm-7grj"
+reason = "`zip` <=9.0.4 \"zip cloaking\" parser differential between ZipArchive and ZipStreamReader on filesystem extract — stale transitive pins only: zip 7.4.0 via candle-core 0.9.2 (optional OCR stack; the shipped detector loads ONNX through ort, so candle's zip reader is never reached) and zip 8.6.0 via tesseract-rs 0.4.0 build.rs (by_index + io::copy over pinned source tags at build time). Neither uses ZipStreamReader or extract(). Folio's own zip is 9.1.2. Delete when candle and tesseract-rs move to zip 9."
+
+[[IgnoredVulns]]
+id = "GHSA-q7v9-x93c-xqv3"
+reason = "`zip` <9 unbounded symlink-target allocation in ZipArchive::extract() — same stale candle-core / tesseract-rs pins as GHSA-m665-v7pm-7grj; neither calls extract()."
+
+[[IgnoredVulns]]
+id = "GHSA-hjqx-j4rw-g7xv"
+reason = "`zip` <9 lexical symlink-target validation in ZipArchive::extract() — same stale candle-core / tesseract-rs pins as GHSA-m665-v7pm-7grj; neither calls extract()."
+
+[[IgnoredVulns]]
+id = "GHSA-8hxf-qr8p-62x4"
+reason = "`zip` <9 AES-entry HMAC skipped on premature EOF — needs the `aes-crypto` feature, which neither stale copy enables (both pull zip with default-features = false); same candle-core / tesseract-rs pins as GHSA-m665-v7pm-7grj."
+
+[[IgnoredVulns]]
+id = "GHSA-9hj8-73fh-9963"
+reason = "`zip` <9 Shrink/Reduce/Implode capacity-overflow panic in extract() — needs the `legacy-zip` feature, which neither stale copy enables, and neither calls extract(); same candle-core / tesseract-rs pins as GHSA-m665-v7pm-7grj."
+
+[[IgnoredVulns]]
+id = "GHSA-qwgh-2vcv-g2f7"
+reason = "`block-buffer 0.10.4` cursor corruption after a caught panic inside a hasher's compress callback — patched only in 0.12.1 (digest 0.11 train); 0.10.4 is pinned by digest 0.10.7, which every hashing dependency we have (axum, axum-extra/cookie, sea-orm/sqlx, jsonwebtoken, openidconnect, the OCR stack) is still on at its latest release. Folio never catches a panic and keeps using the hasher (no catch_unwind; CatchPanicLayer / tokio drop the unwound state). Delete when `cargo tree -i block-buffer@0.10.4` is empty."
+
 # ── npm (mirrored from pnpm-workspace.yaml auditConfig.ignoreGhsas) ──
 # Rationale for each lives in SECURITY-EXCEPTIONS.md.
 
 [[IgnoredVulns]]
 id = "GHSA-vfj7-8cjw-p6xm"
 reason = "`braces` <=3.0.3 stack-exhaustion DoS — no patched release exists (3.0.3 is the latest). Dev-only lint toolchain path (eslint-config-next / @next/eslint-plugin-next > fast-glob > micromatch > braces); never in the shipped images. Delete when braces ships a fix."
+
+[[IgnoredVulns]]
+id = "GHSA-gcqx-w48m-w2h4"
+reason = "`deepmerge` <=4.3.1 prototype poisoning in mergeObject() (low) — no patched release exists. Dev-only: the shadcn 4.22.1 CLI > @shadcn/registry > deepmerge, run by developers and the weekly shadcn-refresh.yml over the shadcn registry's own JSON; never in the shipped images. Delete when deepmerge ships a fix or shadcn drops it."

@@ -29,6 +29,22 @@ see `docs/dev/dependency-management.md`, "Accepted advisories".
   from both files and let the lockfile pick it up, adding an override if a
   consumer's range pins the old version).
 
+### GHSA-gcqx-w48m-w2h4 — `deepmerge` <=4.3.1 prototype poisoning (low)
+
+- **Accepted:** 2026-10-30 (CVE-2026-93753; Dependabot alert 9).
+- **What:** `mergeObject()` does not filter `__proto__`-style keys, so a
+  crafted *source* object can plant properties on the returned object's
+  prototype. No patched release exists; 4.3.1 is the latest `deepmerge`.
+- **Reach:** dev dependencies only — the `shadcn` 4.22.1 CLI >
+  `@shadcn/registry` > `deepmerge`. It runs when a developer, or the weekly
+  `shadcn-refresh.yml` workflow, pulls component sources from the shadcn
+  registry, and merges that registry's own item JSON; it never sees user
+  input and is not in the production images (`pnpm audit --prod` is clean).
+  Below `pnpm audit`'s `--audit-level=high` gate, but the daily OSV sweep
+  has no threshold, so it needs the ignore to stay green.
+- **Delete when:** `deepmerge` ships a patched release, or `shadcn` /
+  `@shadcn/registry` stops depending on it (`pnpm why deepmerge` empty).
+
 ## Resolved
 
 The `brace-expansion` DoS pair (GHSA-mh99-v99m-4gvg, and GHSA-rgw5-rvv9-x895

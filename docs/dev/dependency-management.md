@@ -220,6 +220,18 @@ an unsound/lockfile-only id, or `SECURITY-EXCEPTIONS.md` + `ignoreGhsas`
 for npm), restate it in osv-scanner.toml, run the script, and say in the
 PR what has to change upstream for the entry to go away.
 
+A Rust advisory the RustSec db has no id for yet — GitHub-only, as the
+2026-10-29 `zip` batch (GHSA-m665-v7pm-7grj and four siblings) and
+`block-buffer` GHSA-qwgh-2vcv-g2f7 were — cannot go in either `ignore`
+array: an id the db does not know only warns as `advisory-not-detected`
+and reads as stale, while osv-scanner, which ingests GitHub's advisories
+directly, keeps reporting it. Write the rationale in deny.toml as usual
+and put the GHSA on a comment line `# osv-only: GHSA-…` under it, plus
+the osv-scanner.toml entry; the drift gate backs that entry from the
+`osv-only:` line, and the daily stale check reports the day the RustSec
+db lists the GHSA as an alias, which is when the id moves into the
+`ignore` arrays under its new RUSTSEC id.
+
 ## Adding a dependency
 
 - Prefer crates/packages at `>=1.0` — everything below it needs a human for
