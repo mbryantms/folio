@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.67.2](https://github.com/mbryantms/folio/compare/v0.67.1...v0.67.2) (2026-10-30)
+
+
+### Dependencies
+
+* update dependency pnpm to v12.16.1 ([#1370](https://github.com/mbryantms/folio/issues/1370)) ([b2edfc6](https://github.com/mbryantms/folio/commit/b2edfc6a2d64d8bfa43a88c661276bfd1c61c3e9))
+
+
+### Build & CI
+
+* **deny:** accept the 2026-10-29 zip / block-buffer / deepmerge advisories ([#1368](https://github.com/mbryantms/folio/issues/1368)) ([0fca173](https://github.com/mbryantms/folio/commit/0fca173f474b4709c393b9cf3ed9a5c9745d4a93))
+
 ## [0.67.1](https://github.com/mbryantms/folio/compare/v0.67.0...v0.67.1) (2026-10-30)
 
 
