@@ -13,6 +13,27 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.67.1](https://github.com/mbryantms/folio/compare/v0.67.0...v0.67.1) (2026-10-30)
+
+
+### Fixed
+
+* **web:** accent underline for active tabs, themed toast buttons ([#1367](https://github.com/mbryantms/folio/issues/1367)) ([9fd77eb](https://github.com/mbryantms/folio/commit/9fd77eb86c74e991a9b319c27f95bd0d9ca1f998))
+
+
+### Dependencies
+
+* update dependency browserslist@&lt;4.28.9 to v4.29.5 ([#1361](https://github.com/mbryantms/folio/issues/1361)) ([301f679](https://github.com/mbryantms/folio/commit/301f6792d0e478f1dc8809861296fd413932c695))
+* update dependency lucide-react to v1.62.0 ([#1365](https://github.com/mbryantms/folio/issues/1365)) ([1081d9b](https://github.com/mbryantms/folio/commit/1081d9b9fd65c74d766c4e4d554a11c7e6b13bdd))
+* update dependency node to v26 ([#1356](https://github.com/mbryantms/folio/issues/1356)) ([369faae](https://github.com/mbryantms/folio/commit/369faae876ecd0de66e84b587331bcbfaba0834c))
+* update dependency pnpm to v12.16.0 ([#1363](https://github.com/mbryantms/folio/issues/1363)) ([2d8426d](https://github.com/mbryantms/folio/commit/2d8426db79b2d887a3b33318da7b7e5613af81eb))
+* update dependency postcss@&lt;8.5.10 to v8.5.32 ([#1362](https://github.com/mbryantms/folio/issues/1362)) ([7b40522](https://github.com/mbryantms/folio/commit/7b405229ae1369ef6f238da6983d267830e40d74))
+* update dependency react-hook-form to v7.91.0 ([#1354](https://github.com/mbryantms/folio/issues/1354)) ([275389f](https://github.com/mbryantms/folio/commit/275389ff1c30f46541c838e7002349f79a916e7f))
+* update node.js to 8579e5f ([#1357](https://github.com/mbryantms/folio/issues/1357)) ([cb9bf37](https://github.com/mbryantms/folio/commit/cb9bf3744de6b040b826d14b2a0fd2642c65dca1))
+* update postgres:18-alpine docker digest to 10a5c69 ([#1359](https://github.com/mbryantms/folio/issues/1359)) ([a2304a5](https://github.com/mbryantms/folio/commit/a2304a52742b0893b9daf114d9d2dfe12fe941c8))
+* update rust crate rustix to v1.1.6 ([#1364](https://github.com/mbryantms/folio/issues/1364)) ([5c456df](https://github.com/mbryantms/folio/commit/5c456df8d43ea29227c72b7df8030aba3a47aeb0))
+* update tanstack ([#1360](https://github.com/mbryantms/folio/issues/1360)) ([31e7e6b](https://github.com/mbryantms/folio/commit/31e7e6b78438f2d880e92fbd678bd1d531035dd2))
+
 ## [0.67.0](https://github.com/mbryantms/folio/compare/v0.66.9...v0.67.0) (2026-10-26)
 
 
