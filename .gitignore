@@ -107,3 +107,6 @@ crates/server/openapi.json.tmp
 web/tests/e2e/.library/
 # Shared Playwright admin session (web/tests/e2e/admin.setup.ts)
 web/playwright/.auth/
+
+# Python bytecode caches (scripts/ci/*.py, fixtures/*.py)
+__pycache__/
