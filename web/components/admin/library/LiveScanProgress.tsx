@@ -489,7 +489,7 @@ export function LiveScanProgress({ libraryId }: { libraryId: string }) {
       </dl>
 
       <Tabs defaultValue="activity" className="space-y-4">
-        <TabsList className="flex w-full justify-start overflow-x-auto md:w-fit">
+        <TabsList>
           <TabsTrigger value="activity">Activity</TabsTrigger>
           <TabsTrigger value="health">Health</TabsTrigger>
           <TabsTrigger value="thumbnails">Thumbnails</TabsTrigger>

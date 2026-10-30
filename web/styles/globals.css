@@ -705,6 +705,38 @@ body {
     background-color: var(--accent);
     color: var(--accent-foreground);
   }
+  /* Tabs. Line variant (the Folio `TabsList` default — section
+   * navigation): the 2px indicator takes the accent instead of upstream's
+   * foreground bar (shadcn's theming table gives `--primary` the
+   * "selected states and active accents" job) and overlaps the strip's
+   * hairline (`bottom: -4px` inside the 3px padding; the strip clips its
+   * overflow, so upstream's `-5px` would be cut off). Default variant
+   * (mode pickers: sign-in, CBL import source, scan-run filter): the
+   * selected segment is a solid primary pill, the idiom `SegmentedControl`
+   * already uses. Upstream's `border-input` + `bg-input/30` was a 0.01 L
+   * step on Folio's opaque dark `--input` (2026-10-30). */
+  [data-slot="tabs-list"][data-variant="line"]
+    [data-slot="tabs-trigger"][data-slot="tabs-trigger"] {
+    /* Upstream's `flex-1` sized the triggers for a `w-fit` strip; on the
+     * full-width one it spread seven labels across the column. */
+    flex: 0 0 auto;
+  }
+  [data-slot="tabs-list"][data-variant="line"]
+    [data-slot="tabs-trigger"][data-slot="tabs-trigger"]::after {
+    bottom: -4px;
+    background-color: var(--primary);
+  }
+  [data-slot="tabs-list"][data-variant="line"]
+    [data-slot="tabs-trigger"][data-slot="tabs-trigger"][data-state="active"] {
+    color: var(--foreground);
+  }
+  [data-slot="tabs-list"][data-variant="default"]
+    [data-slot="tabs-trigger"][data-slot="tabs-trigger"][data-state="active"] {
+    border-color: transparent;
+    background-color: var(--primary);
+    color: var(--primary-foreground);
+    box-shadow: none;
+  }
   /* Upstream makes the icon rail's content overflow-hidden (so the
    * clipped labels cannot scroll it sideways), which also stops a long
    * menu — the admin rail has ~20 rows — from scrolling at all on a short
@@ -757,6 +789,55 @@ body {
     --overlay-bottom: calc(var(--bottom-tab-h) + var(--safe-bottom) + 16px);
   }
 }
+/* Toast buttons. Sonner injects its own stylesheet at runtime, unlayered,
+ * and paints the action button with the toast's colours inverted (white on
+ * the dark themes) and the cancel button with a hard-coded white veil;
+ * descriptions get a fixed grey. Give them the Button palette instead —
+ * action = default (primary), cancel = secondary — with the token radius
+ * and focus ring. These rules must stay unlayered too (a layered rule never
+ * beats an unlayered one) and carry one more attribute than Sonner's own
+ * selectors so they win on specificity rather than source order. */
+[data-sonner-toaster]
+  [data-sonner-toast][data-styled="true"]
+  [data-button]:not([data-cancel]) {
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  transition:
+    background-color 150ms,
+    box-shadow 200ms;
+}
+[data-sonner-toaster]
+  [data-sonner-toast][data-styled="true"]
+  [data-button]:not([data-cancel]):hover {
+  background: color-mix(in oklab, var(--primary) 90%, transparent);
+}
+[data-sonner-toaster]
+  [data-sonner-toast][data-styled="true"]
+  [data-button][data-button][data-cancel] {
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  transition:
+    background-color 150ms,
+    box-shadow 200ms;
+}
+[data-sonner-toaster]
+  [data-sonner-toast][data-styled="true"]
+  [data-button][data-button][data-cancel]:hover {
+  background: color-mix(in oklab, var(--secondary) 80%, transparent);
+}
+[data-sonner-toaster]
+  [data-sonner-toast][data-styled="true"]
+  [data-button][data-button]:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent);
+}
+[data-sonner-toaster]
+  [data-sonner-toast][data-styled="true"]
+  [data-description][data-description] {
+  color: var(--muted-foreground);
+}
+
 /* Touch target. The visible control keeps shadcn's size on every pointer
  * (36px toolbar controls and tab strip, 28px chips) — the same on iPad as
  * on desktop. Under `(pointer: coarse)` each interactive control instead
@@ -794,9 +875,13 @@ body {
   .folio-tap:not(.absolute, .fixed, .sticky) {
     position: relative;
   }
+  /* Tab triggers take the tap area on `::before`: upstream's line
+   * variant draws its active indicator with `::after`, and the tap box
+   * would otherwise inherit the indicator's background and paint a 44px
+   * block over the active tab on iPad. */
   [data-slot="button"]::after,
   [data-slot="select-trigger"]::after,
-  [data-slot="tabs-trigger"]::after,
+  [data-slot="tabs-trigger"]::before,
   [data-slot="toggle"]::after,
   [data-slot="toggle-group-item"]::after,
   [data-slot="checkbox"]::after,
