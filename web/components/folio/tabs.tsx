@@ -1,12 +1,17 @@
 "use client";
 
 /* Folio wrapper over the vendored shadcn file (components/ui is pristine).
- * `TabsList` scrolls horizontally when the triggers overflow (phones, the
- * series page's seven tabs), hides its scrollbar, and fades the edge that
- * has more tabs behind it (`data-fade`). It scrolls on the x axis only:
- * with `overflow-x-auto` alone the 44px tap areas poking past the 36px
- * strip gave it a vertical scroll range that iOS panned (2026-10-24). App
- * code imports from here, never from components/ui (ESLint enforces it). */
+ * `TabsList` defaults to upstream's `line` variant — section navigation
+ * (series, issue, admin pages) is a full-width strip on a hairline with
+ * the accent underline from `globals.css`; mode pickers (sign-in, CBL
+ * import source, scan-run filter) pass `variant="default"` for the
+ * segmented pill, whose selected segment is solid primary there. It
+ * scrolls horizontally when the triggers overflow (phones, the series
+ * page's seven tabs), hides its scrollbar, and fades the edge that has
+ * more tabs behind it (`data-fade`). It scrolls on the x axis only: with
+ * `overflow-x-auto` alone the 44px tap areas poking past the 36px strip
+ * gave it a vertical scroll range that iOS panned (2026-10-24). App code
+ * imports from here, never from components/ui (ESLint enforces it). */
 import * as React from "react";
 
 import { TabsList as UiTabsList } from "@/components/ui/tabs";
@@ -48,6 +53,7 @@ function useEdgeFade<T extends HTMLElement>(): [
 export function TabsList({
   className,
   ref,
+  variant = "line",
   ...props
 }: React.ComponentProps<typeof UiTabsList>) {
   const [inner, fade] = useEdgeFade<HTMLDivElement>();
@@ -55,11 +61,15 @@ export function TabsList({
   return (
     <UiTabsList
       ref={inner}
+      variant={variant}
       data-fade={fade || undefined}
       className={cn(
         "justify-[safe_center] flex w-full max-w-full overflow-x-auto overflow-y-hidden md:inline-flex md:w-fit",
         "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0",
         "data-[fade=both]:mask-x-from-[calc(100%-2rem)] data-[fade=left]:mask-l-from-[calc(100%-2rem)] data-[fade=right]:mask-r-from-[calc(100%-2rem)]",
+        // Navigation strips span their column and start at its left edge.
+        variant === "line" &&
+          "border-border justify-start border-b md:flex md:w-full",
         className,
       )}
       {...props}

@@ -32,6 +32,13 @@ describe("touch-target floor", () => {
     expect(block).toMatch(
       /\.folio-button::after,\s*\.folio-control::after,\s*\.folio-tap::after\s*\{[^}]*height:\s*max\(100%,\s*44px\);/,
     );
+    // Tab triggers take the tap area on `::before`: upstream's line
+    // variant draws its active indicator with `::after`, which the tap
+    // box would otherwise repaint as a 44px block (2026-10-30).
+    expect(block).toMatch(
+      /\[data-slot="tabs-trigger"\]::before,[\s\S]*?\{[^}]*height:\s*max\(100%,\s*44px\);/,
+    );
+    expect(block).not.toMatch(/\[data-slot="tabs-trigger"\]::after/);
     // The visible size is shadcn's on every pointer: no floor.
     expect(block).not.toMatch(/min-height:\s*44px/);
     expect(block).not.toMatch(/min-width:\s*44px/);

@@ -137,7 +137,8 @@ function SourceStep({
 }) {
   return (
     <Tabs defaultValue="catalog">
-      <TabsList>
+      {/* Picks the import source, so the segmented variant. */}
+      <TabsList variant="default">
         <TabsTrigger value="catalog">
           <Library className="mr-1 size-4" /> Browse catalog
         </TabsTrigger>

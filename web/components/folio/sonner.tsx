@@ -6,8 +6,10 @@
  * clear the safe areas and the bottom tab bar; the amber theme maps to
  * Sonner's light palette (its theme union has no "amber"). The vendored
  * file resolves the next-themes theme first and then spreads our props, so
- * the mapping here wins. App code imports from here, never from
- * components/ui (ESLint enforces it). */
+ * the mapping here wins. The action / cancel buttons inside a toast are
+ * styled from `globals.css` (Sonner's injected stylesheet is unlayered, so
+ * `toastOptions.classNames` utilities could not beat it). App code imports
+ * from here, never from components/ui (ESLint enforces it). */
 import { useTheme } from "next-themes";
 import * as React from "react";
 import type { ToasterProps } from "sonner";
@@ -29,6 +31,18 @@ export function Toaster(props: ToasterProps) {
       position={phone ? "top-center" : "bottom-right"}
       style={
         {
+          // Restated from the vendored file: it spreads our props after its
+          // own `style`, so this object replaces upstream's token mapping
+          // instead of adding to it. Without these Sonner falls back to its
+          // own palette (black / white toasts, 8px corners).
+          "--normal-bg": "var(--popover)",
+          "--normal-text": "var(--popover-foreground)",
+          "--normal-border": "var(--border)",
+          "--border-radius": "var(--radius)",
+          // The close button's dark-theme hover pair (Sonner hard-codes
+          // near-black otherwise).
+          "--normal-bg-hover": "var(--muted)",
+          "--normal-border-hover": "var(--border)",
           "--offset-bottom": "var(--overlay-bottom)",
           "--offset-top": "max(16px, var(--safe-top, 0px))",
           "--offset-right": "max(16px, var(--safe-right))",

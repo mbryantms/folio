@@ -147,7 +147,8 @@ export function ScanRunsTable({ libraryId }: { libraryId: string }) {
         onValueChange={(v) => setFilter(v as Filter)}
         className="w-fit"
       >
-        <TabsList>
+        {/* A status filter, so the segmented variant. */}
+        <TabsList variant="default">
           {FILTERS.map((f) => (
             <TabsTrigger key={f.value} value={f.value}>
               {f.label}

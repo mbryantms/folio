@@ -9,10 +9,12 @@ import { render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const positions: string[] = [];
+const styles: Record<string, string>[] = [];
 
 vi.mock("sonner", () => ({
-  Toaster: (props: { position?: string }) => {
+  Toaster: (props: { position?: string; style?: Record<string, string> }) => {
     positions.push(props.position ?? "");
+    styles.push(props.style ?? {});
     return null;
   },
 }));
@@ -40,6 +42,7 @@ function stubViewport(matches: boolean) {
 
 afterEach(() => {
   positions.length = 0;
+  styles.length = 0;
 });
 
 describe("Toaster position", () => {
@@ -53,5 +56,25 @@ describe("Toaster position", () => {
     stubViewport(true);
     render(<Toaster />);
     expect(positions.at(-1)).toBe("top-center");
+  });
+});
+
+/**
+ * The vendored Toaster spreads our props after its own `style`, so the
+ * wrapper's style object replaces upstream's token mapping. Keep the
+ * popover / border / radius tokens on it, or Sonner paints its own black
+ * and white palette with fixed 8px corners (2026-10-30).
+ */
+describe("Toaster theme tokens", () => {
+  it("maps Sonner's palette onto the theme tokens", () => {
+    stubViewport(false);
+    render(<Toaster />);
+    const style = styles.at(-1) ?? {};
+    expect(style["--normal-bg"]).toBe("var(--popover)");
+    expect(style["--normal-text"]).toBe("var(--popover-foreground)");
+    expect(style["--normal-border"]).toBe("var(--border)");
+    expect(style["--border-radius"]).toBe("var(--radius)");
+    // The safe-area offsets the wrapper exists for are still there.
+    expect(style["--offset-bottom"]).toBe("var(--overlay-bottom)");
   });
 });
