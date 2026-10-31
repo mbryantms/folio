@@ -1341,3 +1341,92 @@ async fn entries_hide_removed_and_revoked_targets() {
         (vec![e_issue_a, e_issue_b, e_series_b], Some(3))
     );
 }
+
+/// Audit 2026-11 N-A4: the create / rename bodies validate through
+/// `Validated<T>`, so a rule failure is a 422 whose `error.details` names
+/// the field (the dialog binds it to the input) while `message` stays a
+/// complete summary. Malformed JSON is still a plain 400.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_and_rename_validation_name_the_field() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "coll-garde@example.com").await;
+
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/collections",
+        Some(&auth),
+        Some(serde_json::json!({ "name": "   " })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+    assert_eq!(body["error"]["code"], "validation");
+    assert_eq!(body["error"]["message"], "name: name required");
+    assert_eq!(body["error"]["details"][0]["field"], "name");
+    assert_eq!(body["error"]["details"][0]["message"], "name required");
+
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/collections",
+        Some(&auth),
+        Some(serde_json::json!({ "name": "x".repeat(201) })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+    assert_eq!(body["error"]["details"][0]["field"], "name");
+    assert_eq!(
+        body["error"]["details"][0]["message"],
+        "name must be 200 chars or fewer"
+    );
+
+    // Rename shares the rule and the field name.
+    let (status, created) = http(
+        &app,
+        Method::POST,
+        "/api/me/collections",
+        Some(&auth),
+        Some(serde_json::json!({ "name": "Keep" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created:#?}");
+    let id = created["id"].as_str().unwrap();
+    let (status, body) = http(
+        &app,
+        Method::PATCH,
+        &format!("/api/me/collections/{id}"),
+        Some(&auth),
+        Some(serde_json::json!({ "name": "" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+    assert_eq!(body["error"]["details"][0]["field"], "name");
+    assert_eq!(body["error"]["details"][0]["message"], "name required");
+
+    // Parse-shape failure stays 400 (no field to bind).
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/me/collections")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={}; __Host-comic_csrf={}",
+                        auth.session, auth.csrf
+                    ),
+                )
+                .header("X-CSRF-Token", &auth.csrf)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{not json"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "validation");
+    assert!(body["error"]["details"].is_null(), "{body:#?}");
+}

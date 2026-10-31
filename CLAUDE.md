@@ -699,6 +699,18 @@ Default admin (first registered user becomes admin):
   `saved_views::validate_create`) stay as free functions; every
   semantic-validation failure returns 422 (the parse-shape errors —
   malformed UUID, malformed RFC3339, malformed JSON — stay 400).
+  A JSON body that has a rule goes through `Validated<T>` — the
+  audit-2026-11 E2 pass moved collection create/rename, issue PATCH,
+  external-id add and CBL create (bulk-metadata's `manga` check is
+  still inline, tracked debt). **Reviewer heuristic:** a `Json<T>` handler that checks
+  `trim().is_empty()`, a range or an allowed-values list by hand is
+  the smell — its message can never reach `error.details`, so the
+  form cannot bind it. Garde `custom(...)` closures (see
+  `issues.rs::in_range`) keep an existing message string when a
+  built-in rule would change it. Web forms that keep values in
+  component state bind the same details via
+  [`collectServerErrors`](web/lib/api/form-errors.ts) (react-hook-form
+  forms keep using `applyServerErrors`).
 - **Admin-action audit enforcement** (audit-remediation M10.2): the
   `audit-check` binary at `crates/tools/audit-check/` walks every
   handler under `crates/server/src/api/` and fails CI if any

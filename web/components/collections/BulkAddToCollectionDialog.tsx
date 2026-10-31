@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { collectServerErrors } from "@/lib/api/form-errors";
 import { queryKeys, useCollections } from "@/lib/api/queries";
 import {
   apiMutate,
@@ -295,6 +296,8 @@ function BulkCreateForm({
   const create = useCreateCollection({ silent: true });
   const [name, setName] = React.useState(initialName);
   const [busy, setBusy] = React.useState(false);
+  // Server 422 `name` error (`error.details`), shown under the input.
+  const [nameError, setNameError] = React.useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -303,6 +306,7 @@ function BulkCreateForm({
       toast.error(TOAST.NAME_REQUIRED);
       return;
     }
+    setNameError(null);
     setBusy(true);
     try {
       const created = await create.mutateAsync({ name: trimmed });
@@ -347,6 +351,7 @@ function BulkCreateForm({
       });
       onCreated();
     } catch (err) {
+      setNameError(collectServerErrors(err, ["name"]).name ?? null);
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
@@ -365,7 +370,19 @@ function BulkCreateForm({
           autoFocus
           required
           maxLength={200}
+          aria-invalid={nameError ? true : undefined}
+          aria-describedby={
+            nameError ? "bulk-new-collection-name-error" : undefined
+          }
         />
+        {nameError ? (
+          <p
+            id="bulk-new-collection-name-error"
+            className="text-destructive text-sm"
+          >
+            {nameError}
+          </p>
+        ) : null}
       </div>
       <DialogFooter className="flex items-center justify-between gap-2 sm:justify-between">
         <Button

@@ -6062,6 +6062,7 @@ export interface components {
             ref_id: string;
         };
         AddExternalIdReq: {
+            /** @description Non-empty after trimming. */
             external_id: string;
             /**
              * @description Optional override; defaults to the canonical URL template for
@@ -8096,6 +8097,16 @@ export interface components {
             github_owner: string;
             github_repo: string;
         };
+        /**
+         * @description Body for `POST /me/cbl-lists`. The `kind` discriminator picks the
+         *     variant; the one required-when rule (a URL list needs `url`, a catalog
+         *     list needs `catalog_path`) is expressed per variant so a 422 names the
+         *     field in `error.details`. The URL's scheme / host policy stays with
+         *     the SSRF guard at fetch time (`invalid_url`, 400) — that is a
+         *     parse-shape rejection, not a form rule. `refresh_schedule` is not
+         *     validated here on purpose: the refresh sweep falls back to weekly for
+         *     an unrecognised token so a typo never disables refresh.
+         */
         CreateCblListReq: {
             description?: string | null;
             /** @enum {string} */
@@ -8115,6 +8126,7 @@ export interface components {
         };
         CreateCollectionReq: {
             description?: string | null;
+            /** @description Non-empty after trimming; at most 200 bytes (UTF-8). */
             name: string;
         };
         CreateDismissalReq: {
@@ -14789,6 +14801,7 @@ export interface components {
              *     an explicit `null`; omitting the field leaves it unchanged.
              */
             description?: string | null;
+            /** @description When present: non-empty after trimming; at most 200 bytes (UTF-8). */
             name?: string | null;
         };
         UpdateEntryReq: {
@@ -21201,7 +21214,7 @@ export interface operations {
                     "application/json": components["schemas"]["CblListView"];
                 };
             };
-            /** @description per-user URL/catalog list limit reached */
+            /** @description missing url / catalog_path (field-level `details`), or the per-user URL/catalog list limit reached */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -24482,7 +24495,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssueDetailView"];
                 };
             };
-            /** @description validation error */
+            /** @description malformed JSON body */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -24498,6 +24511,13 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation error (field-level `details`) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25236,7 +25256,7 @@ export interface operations {
                     "application/json": components["schemas"]["ExternalIdRow"];
                 };
             };
-            /** @description invalid source */
+            /** @description malformed JSON body */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -25252,6 +25272,13 @@ export interface operations {
             };
             /** @description series not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown source or empty external_id (field-level `details`) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25488,7 +25515,7 @@ export interface operations {
                     "application/json": components["schemas"]["ExternalIdRow"];
                 };
             };
-            /** @description invalid source */
+            /** @description malformed JSON body */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -25504,6 +25531,13 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown source or empty external_id (field-level `details`) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

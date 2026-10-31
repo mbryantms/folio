@@ -6164,7 +6164,7 @@
             }
           },
           "422": {
-            "description": "per-user URL/catalog list limit reached"
+            "description": "missing url / catalog_path (field-level `details`), or the per-user URL/catalog list limit reached"
           },
           "429": {
             "description": "per-user CBL import quota exceeded"
@@ -9891,13 +9891,16 @@
             }
           },
           "400": {
-            "description": "validation error"
+            "description": "malformed JSON body"
           },
           "403": {
             "description": "admin only"
           },
           "404": {
             "description": "issue not found"
+          },
+          "422": {
+            "description": "validation error (field-level `details`)"
           }
         }
       }
@@ -10723,13 +10726,16 @@
             }
           },
           "400": {
-            "description": "invalid source"
+            "description": "malformed JSON body"
           },
           "403": {
             "description": "library access denied"
           },
           "404": {
             "description": "series not found"
+          },
+          "422": {
+            "description": "unknown source or empty external_id (field-level `details`)"
           }
         }
       }
@@ -10974,13 +10980,16 @@
             }
           },
           "400": {
-            "description": "invalid source"
+            "description": "malformed JSON body"
           },
           "403": {
             "description": "library access denied"
           },
           "404": {
             "description": "issue not found"
+          },
+          "422": {
+            "description": "unknown source or empty external_id (field-level `details`)"
           }
         }
       }
@@ -13937,7 +13946,8 @@
         ],
         "properties": {
           "external_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Non-empty after trimming."
           },
           "external_url": {
             "type": [
@@ -18620,7 +18630,8 @@
               }
             }
           }
-        ]
+        ],
+        "description": "Body for `POST /me/cbl-lists`. The `kind` discriminator picks the\nvariant; the one required-when rule (a URL list needs `url`, a catalog\nlist needs `catalog_path`) is expressed per variant so a 422 names the\nfield in `error.details`. The URL's scheme / host policy stays with\nthe SSRF guard at fetch time (`invalid_url`, 400) — that is a\nparse-shape rejection, not a form rule. `refresh_schedule` is not\nvalidated here on purpose: the refresh sweep falls back to weekly for\nan unrecognised token so a typo never disables refresh."
       },
       "CreateCollectionReq": {
         "type": "object",
@@ -18635,7 +18646,8 @@
             ]
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Non-empty after trimming; at most 200 bytes (UTF-8)."
           }
         }
       },
@@ -34856,7 +34868,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "When present: non-empty after trimming; at most 200 bytes (UTF-8)."
           }
         }
       },

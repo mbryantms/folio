@@ -33,6 +33,7 @@ use crate::middleware::RequestContext;
 use crate::state::AppState;
 
 use super::error;
+use super::extractors::Validated;
 use super::series::{IssueDetailView, IssueLink, IssueSummaryView, READ_STATUSES, split_csv};
 use server_macros::handler;
 
@@ -603,94 +604,183 @@ async fn build_issue_junction_lists(app: &AppState, issue_id: &str) -> IssueJunc
 /// `field_provenance` row; the scanner skips pinned columns on rescan, so
 /// DB edits are sticky. (In a writeback library the edit is also pushed
 /// into the archive's sidecars — WP-2.10.)
-#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Default, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct UpdateIssueReq {
     // Identity / publication
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub title: Option<Option<String>>,
     /// Maps to the entity's `number_raw` column (e.g. "1", "1.5", "Annual 2").
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub number: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(custom(|v, _| in_range(v, 0..=9999, "volume out of range")))]
     pub volume: Option<Option<i32>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(custom(|v, _| in_range(v, 1800..=2999, "year out of range")))]
     pub year: Option<Option<i32>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(custom(|v, _| in_range(v, 1..=12, "month must be 1..=12")))]
     pub month: Option<Option<i32>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(custom(|v, _| in_range(v, 1..=31, "day must be 1..=31")))]
     pub day: Option<Option<i32>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub summary: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub notes: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub publisher: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub imprint: Option<Option<String>>,
 
     // Credits
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub writer: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub penciller: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub inker: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub colorist: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub letterer: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub cover_artist: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub editor: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub translator: Option<Option<String>>,
 
     // Cast / setting / story
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub characters: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub teams: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub locations: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub alternate_series: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub story_arc: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub story_arc_number: Option<Option<String>>,
 
     // Classification
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub genre: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub tags: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(custom(language_code_len))]
     pub language_code: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub age_rating: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub format: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub black_and_white: Option<Option<bool>>,
     /// One of `Yes`, `YesAndRightToLeft`, `No`, or null.
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(custom(manga_value))]
     pub manga: Option<Option<String>>,
 
     // Ordering / external
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(custom(finite_sort_number))]
     pub sort_number: Option<Option<f64>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub web_url: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub gtin: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub comicvine_id: Option<Option<i64>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub metron_id: Option<Option<i64>>,
 
     /// Replace-all. Each link must have a non-empty `url`.
+    #[garde(custom(links_have_urls))]
     pub additional_links: Option<Vec<IssueLink>>,
+}
+
+// ── garde rules for `UpdateIssueReq` ──
+//
+// Every field is tri-state (`None` absent / `Some(None)` clear /
+// `Some(Some(v))` set); a rule only fires on the set case. The messages
+// are the ones the handler used to return inline; running them through
+// `Validated<T>` puts each under its field in `error.details` so the
+// issue editor can bind it to the input (audit 2026-11 N-A4).
+
+fn in_range(
+    value: &Option<Option<i32>>,
+    range: std::ops::RangeInclusive<i32>,
+    message: &'static str,
+) -> garde::Result {
+    match value {
+        Some(Some(v)) if !range.contains(v) => Err(garde::Error::new(message)),
+        _ => Ok(()),
+    }
+}
+
+fn finite_sort_number(value: &Option<Option<f64>>, _: &()) -> garde::Result {
+    match value {
+        Some(Some(f)) if !f.is_finite() => Err(garde::Error::new("sort_number must be finite")),
+        _ => Ok(()),
+    }
+}
+
+fn manga_value(value: &Option<Option<String>>, _: &()) -> garde::Result {
+    match value {
+        Some(Some(s)) if !matches!(s.trim(), "Yes" | "YesAndRightToLeft" | "No") => Err(
+            garde::Error::new("manga must be Yes, YesAndRightToLeft, or No"),
+        ),
+        _ => Ok(()),
+    }
+}
+
+fn language_code_len(value: &Option<Option<String>>, _: &()) -> garde::Result {
+    match value {
+        Some(Some(s)) if s.len() > 16 => Err(garde::Error::new("language_code too long")),
+        _ => Ok(()),
+    }
+}
+
+/// No URL parsing — accept anything non-empty so the user can store
+/// internal notes like "wiki:foo". Downstream renderers treat the value
+/// as plain text if it's not a valid href.
+fn links_have_urls(value: &Option<Vec<IssueLink>>, _: &()) -> garde::Result {
+    if value.iter().flatten().any(|l| l.url.trim().is_empty()) {
+        return Err(garde::Error::new("each link needs a non-empty url"));
+    }
+    Ok(())
 }
 
 fn deserialize_some<'de, T, D>(d: D) -> Result<Option<Option<T>>, D::Error>
@@ -740,7 +830,8 @@ fn log_external_id_skip(
     request_body = UpdateIssueReq,
     responses(
         (status = 200, body = IssueDetailView),
-        (status = 400, description = "validation error"),
+        (status = 400, description = "malformed JSON body"),
+        (status = 422, description = "validation error (field-level `details`)"),
         (status = 403, description = "admin only"),
         (status = 404, description = "issue not found"),
     )
@@ -751,7 +842,7 @@ pub async fn update(
     RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     AxPath((series_slug, issue_slug)): AxPath<(String, String)>,
-    Json(req): Json<UpdateIssueReq>,
+    Validated(req): Validated<UpdateIssueReq>,
 ) -> impl IntoResponse {
     let row = match find_by_slugs(&app.db, &series_slug, &issue_slug).await {
         Ok(r) => r,
@@ -760,87 +851,6 @@ pub async fn update(
     let id = row.id.clone();
     if !access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
-    }
-
-    // ── pre-write validation (everything that can reject up front, before
-    // any active model writes) ──
-    if let Some(links) = req.additional_links.as_ref() {
-        for l in links {
-            if l.url.trim().is_empty() {
-                return error(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "validation.additional_links",
-                    "each link needs a non-empty url",
-                );
-            }
-            // No URL parsing — accept anything non-empty so the user can
-            // store internal notes like "wiki:foo". Downstream renderers
-            // treat the value as plain text if it's not a valid href.
-        }
-    }
-    if let Some(Some(f)) = req.sort_number
-        && !f.is_finite()
-    {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "validation.sort_number",
-            "sort_number must be finite",
-        );
-    }
-    if let Some(Some(y)) = req.year
-        && !(1800..=2999).contains(&y)
-    {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "validation.year",
-            "year out of range",
-        );
-    }
-    if let Some(Some(m)) = req.month
-        && !(1..=12).contains(&m)
-    {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "validation.month",
-            "month must be 1..=12",
-        );
-    }
-    if let Some(Some(d)) = req.day
-        && !(1..=31).contains(&d)
-    {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "validation.day",
-            "day must be 1..=31",
-        );
-    }
-    if let Some(Some(v)) = req.volume
-        && !(0..=9999).contains(&v)
-    {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "validation.volume",
-            "volume out of range",
-        );
-    }
-    if let Some(Some(ref s)) = req.manga {
-        let t = s.trim();
-        if !matches!(t, "Yes" | "YesAndRightToLeft" | "No") {
-            return error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "validation.manga",
-                "manga must be Yes, YesAndRightToLeft, or No",
-            );
-        }
-    }
-    if let Some(Some(ref s)) = req.language_code
-        && s.len() > 16
-    {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "validation.language_code",
-            "language_code too long",
-        );
     }
 
     // Column keys this call writes — each becomes a user pin
