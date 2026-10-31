@@ -388,18 +388,25 @@ the rewrite.
 
 Hand edits take the same path as provider applies. When a library has both
 writeback flags on, `PATCH /series/{slug}/issues/{issue_slug}`, the bulk
-metadata endpoint, and `PATCH /series/{slug}` (identity fields only: name,
-year, volume, publisher, imprint, age rating, issue count, language) call
+metadata endpoint, `PATCH /series/{slug}` (identity fields — name, year,
+volume, publisher, imprint, age rating, issue count, language — and the
+legacy `comicvine_id` / `metron_id` fields) and the external-id endpoints
+(`POST` / `DELETE …/external-ids[/{source}]` on an issue or a series —
+the ids ride in ComicInfo's typed id elements and MetronInfo's `<ID>`;
+audit 2026-11 N-M5) call
 [`metadata::manual_writeback`](../../crates/server/src/metadata/manual_writeback.rs)
-after their row + provenance transaction commits:
+after their row + provenance transaction commits (the series PATCH writes
+its row and its `user` pins in one transaction, like the issue PATCH — a
+pin that cannot be written rolls the edit back; audit 2026-11 N-M6):
 
 - the sidecars are composed from the **database alone** (empty provider
   payload — the composer's DB-wins path, shared with the drift flush);
 - one `RewriteIssueSidecarsJob` is queued per issue with `post_apply =
   None` (the handler already wrote the user pins) and the editor as the
-  audit actor; the series edit fans out one job per active issue with
-  `skip_rescan = true` and then coalesces a single series-scoped rescan,
-  exactly like `apply_series_via_sidecar`;
+  audit actor; a series edit — identity field or series-level id — fans
+  out one job per active issue with `skip_rescan = true` and then
+  coalesces a single series-scoped rescan, exactly like
+  `apply_series_via_sidecar`;
 - `sidecar_refusal` (CBR without conversion, unsupported formats) skips the
   file; the database keeps the edit and drift surfacing covers the gap;
 - the handler never fails on an enqueue error — the outcome lands on the
@@ -744,6 +751,12 @@ When reviewing PRs that touch the metadata apply path:
   `SIDECAR_ISSUE_PROVENANCE_FIELDS` — the XML can't say "ComicVine set
   this", so the apply records it; the scanner's own file-tier writes
   are guarded and won't downgrade those rows on the follow-up rescan).
+  The set is "what the composer writes from the provider and the scanner
+  ingests back", including `Number`, `Notes` and `WebUrl` (audit 2026-11
+  N-M8); the preview pane's `selected_fields` only gates the rows the
+  pane shows (`masked_when_unselected`, the same predicate the payload
+  mask uses) — a field the composer writes regardless gets its row
+  regardless.
 - **Composing a series-level provider record into an issue**: reject.
   A series-scope apply hands each issue
   `sidecar_compose::series_payload_for_issue(&series_detail, issue)`,

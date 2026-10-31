@@ -1982,6 +1982,106 @@ async fn patch_series_pins_summary_and_status_so_apply_keeps_them() {
     assert_eq!(row.status, "ended");
 }
 
+/// The pins used to be written after the row update, outside any
+/// transaction, with a failure logged as non-fatal (audit 2026-11 N-M6):
+/// the edit landed unpinned and the next provider apply undid it. Row and
+/// pins now commit together, so a pin that cannot be written rolls the
+/// edit back and the request fails with the canonical envelope.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn patch_series_rolls_back_the_edit_when_a_pin_cannot_be_written() {
+    use sea_orm::ConnectionTrait;
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let db = &app.state().db;
+    let lib_id = LibrarySeed::new(dir.path()).insert(db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .with_publisher("Wrong Publisher")
+        .insert(db)
+        .await;
+    let slug = series::Entity::find_by_id(series_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+        .slug;
+
+    // Make the `publisher` pin fail at the database, after the row update
+    // and the `title` pin have already run inside the same transaction.
+    db.execute_unprepared(
+        "CREATE FUNCTION series_pin_boom() RETURNS trigger AS $$ \
+         BEGIN \
+           IF NEW.entity_type = 'series' AND NEW.field = 'publisher' THEN \
+             RAISE EXCEPTION 'injected field_provenance insert failure'; \
+           END IF; \
+           RETURN NEW; \
+         END $$ LANGUAGE plpgsql",
+    )
+    .await
+    .unwrap();
+    db.execute_unprepared(
+        "CREATE TRIGGER series_pin_boom BEFORE INSERT ON field_provenance \
+         FOR EACH ROW EXECUTE FUNCTION series_pin_boom()",
+    )
+    .await
+    .unwrap();
+
+    let (status, body) = patch_series(
+        &app,
+        &auth,
+        &slug,
+        json!({ "name": "Saga Deluxe", "publisher": "Image Comics" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["error"]["code"], "internal", "{body}");
+
+    let row = series::Entity::find_by_id(series_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.name, "Saga", "the edit rolled back with the pin");
+    assert_eq!(row.publisher.as_deref(), Some("Wrong Publisher"));
+    let pins = field_provenance::Entity::find()
+        .filter(field_provenance::Column::EntityType.eq("series"))
+        .filter(field_provenance::Column::EntityId.eq(series_id.to_string()))
+        .all(db)
+        .await
+        .unwrap();
+    assert!(pins.is_empty(), "no pin survives the rollback: {pins:?}");
+
+    // Without the fault the same edit lands with both pins.
+    db.execute_unprepared("DROP TRIGGER series_pin_boom ON field_provenance")
+        .await
+        .unwrap();
+    let (status, body) = patch_series(
+        &app,
+        &auth,
+        &slug,
+        json!({ "name": "Saga Deluxe", "publisher": "Image Comics" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let row = series::Entity::find_by_id(series_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.name, "Saga Deluxe");
+    for field in ["title", "publisher"] {
+        let prov = field_provenance::Entity::find()
+            .filter(field_provenance::Column::EntityType.eq("series"))
+            .filter(field_provenance::Column::EntityId.eq(series_id.to_string()))
+            .filter(field_provenance::Column::Field.eq(field))
+            .one(db)
+            .await
+            .unwrap()
+            .unwrap_or_else(|| panic!("series PATCH must pin {field}"));
+        assert_eq!(prov.set_by, "user");
+    }
+}
+
 // ───────── series identity edits (roadmap WP-2.3) ─────────
 
 /// `PATCH /series/{slug}` accepts the identity fields, writes them, pins

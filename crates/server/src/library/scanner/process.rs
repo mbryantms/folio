@@ -1090,7 +1090,7 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         // apply overwrites the row, so the follow-up writeback rescan
         // ingests the overridden value instead of deadlocking on a
         // stale pin). Columns without a `MetadataField` slot
-        // (sort_number, web_url, alternate_series, black_and_white) and
+        // (sort_number, alternate_series, black_and_white) and
         // `number_raw` are pinned under their column key —
         // `writers::ISSUE_COLUMN_PIN_KEYS` (WP-3.7 retired the
         // legacy per-issue JSON pin list those keys used to live in).
@@ -1183,7 +1183,10 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         if !user_pinned("sort_number") {
             am.sort_number = Set(sort_number);
         }
-        if !user_pinned("number_raw") && !user_pinned(&F::Number.key()) {
+        // `number_raw` is pinned under its column key by a PATCH; the
+        // `number` slot is what a provider apply records (audit 2026-11
+        // N-M8), so both are honoured through the tier gate.
+        if !user_pinned("number_raw") && !protected(F::Number) {
             am.number_raw = Set(number_raw);
         }
         // ComicInfo `<Volume>` and MetronInfo carry the same Mylar3
@@ -1283,7 +1286,9 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         // `review` has no MetadataField slot and no provider writes it;
         // it stays file-owned.
         am.review = Set(info.review.clone());
-        if !user_pinned("web_url") {
+        // `web_url` is the `WebUrl` slot's key, so the PATCH pin and a
+        // provider apply's row both go through the tier gate.
+        if !protected(F::WebUrl) {
             am.web_url = Set(info.web.clone());
         }
         // External-ID writes (CV / Metron / GTIN from ComicInfo) move
@@ -2386,10 +2391,14 @@ fn merge_metron_into_comicinfo(
 /// sidecar XML no longer carries (candidates for the guarded prune).
 ///
 /// Scope notes:
-/// - Only fields with a [`MetadataField`] slot appear — `number_raw`,
-///   `web_url`, `black_and_white`, `alternate_series`, `sort_number`
-///   have no provenance vocabulary (same holes as the PATCH handler's
-///   `patch_field_key_to_metadata_field`).
+/// - Only fields with a [`MetadataField`] slot appear — `black_and_white`,
+///   `alternate_series`, `sort_number` have no provenance vocabulary
+///   (same holes as the PATCH handler's
+///   `patch_field_key_to_metadata_field`). `Number` and `WebUrl` have a
+///   slot but no file-tier row: `number_raw` may come from the filename
+///   and `<Web>` is bookkeeping, so neither is attributed to the file;
+///   their provider rows (sidecar apply, audit 2026-11 N-M8) still gate
+///   the rescan.
 /// - `PageCount` is excluded on purpose: the stored count comes from
 ///   the archive's real image entries, not the XML's claim.
 /// - Issue summary is recorded under [`MetadataField::Description`],

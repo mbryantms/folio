@@ -1185,12 +1185,18 @@ pub(crate) async fn apply_issue_via_sidecar(
         {
             continue;
         }
+        // Only a field the mask can blank is subject to the selection:
+        // the composer writes every other provider value regardless, so
+        // its provenance must say so (`masked_when_unselected`).
         if let Some(sel) = &args.selected_fields
+            && masked_when_unselected(field)
             && !sel.contains(&field.key())
         {
             continue;
         }
-        if !args.override_user_edits && sidecar_pin_matches(&issue_user_pins, field) {
+        if !args.override_user_edits
+            && sidecar_pin_matches(&issue_user_pins, &series_user_pins, field)
+        {
             continue;
         }
         let prov = resolver.resolve(&field.key());
@@ -2537,9 +2543,18 @@ fn active_i32(v: &ActiveValue<i32>) -> i32 {
 /// but not yet scanner-ingested), `PageCount` (ingested from the
 /// archive's real image entries, not the XML's claim), and the covers
 /// (no provenance rows on the DB-direct branch either).
+///
+/// `Number` (`<Number>` → `number_raw`), `Notes` (`<Notes>`, the
+/// provider's notes under the Folio audit line) and `WebUrl` (`<Web>`
+/// from the provider's `source_url`) are in the set (audit 2026-11
+/// N-M8): without their rows a later non-writeback scan or
+/// `fill_missing` read the applied values as file-tier and unowned.
 const SIDECAR_ISSUE_PROVENANCE_FIELDS: &[MetadataField] = &[
     MetadataField::Title,
+    MetadataField::Number,
     MetadataField::Description,
+    MetadataField::Notes,
+    MetadataField::WebUrl,
     MetadataField::AgeRating,
     MetadataField::CoverDate,
     MetadataField::LanguageCode,
@@ -2587,13 +2602,38 @@ fn mask_unselected_issue_fields(
     detail
 }
 
+/// Whether [`mask_unselected_issue_fields`] blanks `field` when the
+/// preview pane left it unticked — i.e. whether it is a row the pane
+/// shows. The provenance loop consults the same predicate so a field the
+/// composer writes regardless of the selection (language, format,
+/// publisher, number, notes, web URL, …) gets its provider row.
+fn masked_when_unselected(field: MetadataField) -> bool {
+    crate::metadata::merge::scope_fields(crate::metadata::merge::MergeScope::Issue).contains(&field)
+}
+
 /// Composer pin vocabulary per field: `summary`/`description` alias
 /// the same issue-summary column (PATCH pins write `summary`, provider
-/// applies write `description`); everything else pins under its own
-/// [`MetadataField::key`]. Mirrors `compose_comicinfo`'s check.
-fn sidecar_pin_matches(pins: &std::collections::HashSet<String>, field: MetadataField) -> bool {
-    pins.contains(&field.key())
-        || (matches!(field, MetadataField::Description) && pins.contains("summary"))
+/// applies write `description`); `number` is pinned as `number_raw`;
+/// publisher, imprint and volume are composed from the *series* row and
+/// honour the series' pins; everything else pins under its own
+/// [`MetadataField::key`] on the issue. Mirrors the composer's checks so
+/// a provider row is written exactly when the provider's value went into
+/// the XML.
+fn sidecar_pin_matches(
+    issue_pins: &std::collections::HashSet<String>,
+    series_pins: &std::collections::HashSet<String>,
+    field: MetadataField,
+) -> bool {
+    match field {
+        MetadataField::Publisher | MetadataField::Imprint | MetadataField::Volume => {
+            series_pins.contains(&field.key())
+        }
+        MetadataField::Description => {
+            issue_pins.contains(&field.key()) || issue_pins.contains("summary")
+        }
+        MetadataField::Number => issue_pins.contains("number_raw"),
+        _ => issue_pins.contains(&field.key()),
+    }
 }
 
 /// Walk every `applied_fields` entry and emit a `field_provenance`

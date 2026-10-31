@@ -8,6 +8,12 @@
 //! `field_provenance` via `set_external_id`'s built-in user-precedence
 //! guard, so an explicit unlink + re-add via this API correctly marks
 //! the row `set_by='user'` and protects it from non-user overwrites.
+//!
+//! The ids ride in both sidecars (ComicInfo's typed id elements and
+//! `<Notes>` tokens, MetronInfo's `<ID source=…>`), so in a writeback
+//! library every add / unlink enqueues the same rewrite a `PATCH` does
+//! (`metadata::manual_writeback`, audit 2026-11 N-M5); a series-level id
+//! fans out over the series like a series identity edit.
 
 use axum::{
     Extension, Json,
@@ -21,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
+use uuid::Uuid;
 
 use super::error;
 use crate::audit::{self, AuditEntry};
@@ -369,6 +376,7 @@ async fn upsert_user_identifier(
             );
         }
     }
+    let sidecar_rewrite = manual_rewrite(app, user, ctx, entity_type, entity_id).await;
     audit::record(
         &app.db,
         AuditEntry {
@@ -385,6 +393,7 @@ async fn upsert_user_identifier(
             payload: serde_json::json!({
                 "source": source.as_str(),
                 "external_id": identifier.id,
+                "sidecar_rewrite": sidecar_rewrite,
             }),
             ip: ctx.ip_string(),
             user_agent: ctx.user_agent.clone(),
@@ -438,6 +447,7 @@ async fn delete_identifier(
         tracing::warn!(error = %e, "delete_external_id failed");
         return error(StatusCode::BAD_GATEWAY, "internal", "delete failed");
     }
+    let sidecar_rewrite = manual_rewrite(app, user, ctx, entity_type, entity_id).await;
     audit::record(
         &app.db,
         AuditEntry {
@@ -451,13 +461,77 @@ async fn delete_identifier(
                 _ => "issue",
             }),
             target_id: Some(entity_id.to_owned()),
-            payload: serde_json::json!({ "source": source.as_str() }),
+            payload: serde_json::json!({
+                "source": source.as_str(),
+                "sidecar_rewrite": sidecar_rewrite,
+            }),
             ip: ctx.ip_string(),
             user_agent: ctx.user_agent.clone(),
         },
     )
     .await;
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// WP-2.10 for identifier edits (audit 2026-11 N-M5): push the committed
+/// id change into the archive's sidecars when the library is in writeback
+/// mode. An issue id queues one rewrite with its own scoped rescan; a
+/// series id fans out one rewrite per active issue plus a single
+/// series-scoped rescan, exactly like the series PATCH. Never fails the
+/// request — the database already holds the edit; the outcome lands on
+/// the audit row (`enqueued`, `not_writeback`, `refused: …`). Libraries
+/// without writeback get `not_writeback` and no file is touched.
+async fn manual_rewrite(
+    app: &AppState,
+    user: &CurrentUser,
+    ctx: &RequestContext,
+    entity_type: &str,
+    entity_id: &str,
+) -> String {
+    use crate::metadata::manual_writeback::{
+        Actor, IssueEnqueue, enqueue_issue_rewrite, enqueue_series_rewrite,
+    };
+    let actor = Actor {
+        id: Some(user.id),
+        ip: ctx.ip_string(),
+        user_agent: ctx.user_agent.clone(),
+    };
+    if entity_type == "series" {
+        let Ok(series_id) = Uuid::parse_str(entity_id) else {
+            return "gone".into();
+        };
+        return match enqueue_series_rewrite(app, series_id, &actor).await {
+            Ok(outcome) => outcome.label(),
+            Err(e) => {
+                tracing::error!(
+                    series_id = entity_id,
+                    error = %e,
+                    "external id edit: sidecar rewrite enqueue failed"
+                );
+                format!("enqueue failed: {e}")
+            }
+        };
+    }
+    match enqueue_issue_rewrite(app, entity_id, &actor, false).await {
+        Ok(outcome) => {
+            if let IssueEnqueue::Refused(reason) = &outcome {
+                tracing::warn!(
+                    issue_id = entity_id,
+                    reason,
+                    "external id edit: sidecar rewrite refused"
+                );
+            }
+            outcome.label()
+        }
+        Err(e) => {
+            tracing::error!(
+                issue_id = entity_id,
+                error = %e,
+                "external id edit: sidecar rewrite enqueue failed"
+            );
+            format!("enqueue failed: {e}")
+        }
+    }
 }
 
 async fn find_series_issue(

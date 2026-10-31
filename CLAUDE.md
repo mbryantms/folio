@@ -384,11 +384,14 @@ Default admin (first registered user becomes admin):
   and the Folio-managed sidecars are dropped; `CoMet.xml` / `.txt` /
   `.json` and any other foreign entry stream through byte-for-byte.
   Manual edits follow the same rule (WP-2.10): the issue PATCH,
-  bulk-metadata, and series PATCH handlers call
+  bulk-metadata, series PATCH and external-id (`…/external-ids`
+  add / unlink, issue and series) handlers call
   `metadata::manual_writeback` after their row + provenance transaction
-  commits; it composes both sidecars from the DB (empty provider payload)
-  and enqueues the same job with `post_apply = None`. Non-writeback
-  libraries get `NotWriteback` and no file is touched.
+  commits (issue and series PATCH both write row + `user` pins in ONE
+  transaction; a pin failure rolls the edit back); it composes both
+  sidecars from the DB (empty provider payload) and enqueues the same
+  job with `post_apply = None`. Non-writeback libraries get
+  `NotWriteback` and no file is touched.
 
   **When adding a new metadata field**, the changeset must touch:
   1. The Rust struct in `crates/parsers/src/comicinfo.rs` (and/or
