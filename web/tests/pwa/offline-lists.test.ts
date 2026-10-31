@@ -9,6 +9,10 @@ import {
   offlineListRows,
   offlineListSummary,
   offlineNextUp,
+  offlinePrevUp,
+  offlineSeriesNextUp,
+  offlineSeriesPrevUp,
+  prevInOfflineList,
 } from "@/lib/pwa/offline-lists";
 import type { DownloadRecord, OfflineList } from "@/lib/pwa/offline-store";
 
@@ -131,5 +135,69 @@ describe("offline Up Next", () => {
     expect(view.collection_position).toBe(10);
     expect(view.collection_total).toBe(4);
     expect(offlineNextUp(coll, records, "d")).toEqual({ source: "none" });
+  });
+});
+
+describe("offline previous issue in a list", () => {
+  it("walks back to the nearest stored entry, finished or not", () => {
+    // Before d: c is still downloading → b (finished a would also count).
+    expect(prevInOfflineList(list, records, "d")?.issueId).toBe("b");
+    expect(prevInOfflineList(list, records, "b")?.issueId).toBe("a");
+    expect(prevInOfflineList(list, records, "a")).toBeNull();
+    expect(prevInOfflineList(list, records, "zz")).toBeNull();
+  });
+
+  it("mirrors the server's CBL answer", () => {
+    const view = offlinePrevUp(list, records, "d");
+    expect(view.source).toBe("cbl");
+    expect(view.target?.id).toBe("b");
+    expect(view.cbl_position).toBe(6);
+    expect(offlinePrevUp(list, records, "a")).toEqual({ source: "none" });
+  });
+});
+
+describe("offline series Up Next and previous (no list)", () => {
+  const series = [
+    rec("x1", {
+      sortNumber: 1,
+      progress: { page: 19, finished: true, run: 0 },
+    }),
+    rec("x2", { sortNumber: 2 }),
+    rec("x3", { sortNumber: 3, status: "paused" }),
+    rec("x10", { sortNumber: 10 }),
+    rec("y1", { sortNumber: 1, seriesId: "other" }),
+  ];
+
+  it("next is the first complete, unfinished sibling strictly after, in sort order", () => {
+    expect(offlineSeriesNextUp(series[0]!, series)).toEqual({
+      source: "series",
+      target: expect.objectContaining({ id: "x2", sort_number: 2 }),
+    });
+    // x3 is not readable offline → x10.
+    expect(offlineSeriesNextUp(series[1]!, series).target?.id).toBe("x10");
+    expect(offlineSeriesNextUp(series[3]!, series)).toEqual({
+      source: "none",
+    });
+  });
+
+  it("previous is sequential and does not skip finished siblings", () => {
+    expect(offlineSeriesPrevUp(series[3]!, series).target?.id).toBe("x2");
+    expect(offlineSeriesPrevUp(series[1]!, series).target?.id).toBe("x1");
+    expect(offlineSeriesPrevUp(series[0]!, series)).toEqual({
+      source: "none",
+    });
+  });
+
+  it("orders records without a stored sort number by their issue number", () => {
+    const legacy = [
+      rec("a", { number: "9" }),
+      rec("b", { number: "10" }),
+      rec("c", { number: "8" }),
+      rec("d", { number: "Annual" }),
+    ];
+    expect(offlineSeriesNextUp(legacy[0]!, legacy).target?.id).toBe("b");
+    expect(offlineSeriesPrevUp(legacy[0]!, legacy).target?.id).toBe("c");
+    // Unparseable numbers sort last.
+    expect(offlineSeriesNextUp(legacy[1]!, legacy).target?.id).toBe("d");
   });
 });

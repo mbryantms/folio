@@ -7,6 +7,8 @@
  *   rolled back if the server rejects the write. No success toast — the
  *   re-paired spread is the feedback.
  * - `DELETE` resets the issue to automatic pairing (toasts on success).
+ * - Both write through to the issue's offline download record, when
+ *   there is one, so the offline reader pairs with the change (N-R7).
  */
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -16,6 +18,17 @@ import type { PageOverridesView } from "../types";
 import { useApiMutation } from "./_core";
 
 type Snapshot = { previous?: PageOverridesView };
+
+/** Best-effort write-through to the download record (no-op when the
+ *  issue is not downloaded or offline storage is unavailable). */
+async function storeOffline(issueId: string, view: PageOverridesView) {
+  try {
+    const { getDownloadManager } = await import("@/lib/pwa/downloads");
+    await getDownloadManager().noteOverrides(issueId, view);
+  } catch {
+    /* The live cache already has the change. */
+  }
+}
 
 function useOptimisticWrite(issueId: string) {
   const qc = useQueryClient();
@@ -60,7 +73,10 @@ export function useSetIssuePageOverrides(issueId: string) {
     {
       onMutate: (input) => cache.apply(input),
       onError: (_err, _input, snapshot) => cache.rollback(snapshot),
-      onSuccess: (data) => cache.settle(data),
+      onSuccess: (data) => {
+        cache.settle(data);
+        if (data) void storeOffline(issueId, data);
+      },
     },
   );
 }
@@ -81,6 +97,14 @@ export function useResetIssuePageOverrides(issueId: string) {
           single_pages: [],
         }),
       onError: (_err, _input, snapshot) => cache.rollback(snapshot),
+      onSuccess: () =>
+        void storeOffline(issueId, {
+          issue_id: issueId,
+          shift_pairing: false,
+          spread_pages: [],
+          single_pages: [],
+          updated_at: null,
+        }),
     },
   );
 }

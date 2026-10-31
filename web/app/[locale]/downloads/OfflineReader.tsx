@@ -12,7 +12,12 @@ import {
   type OfflineResume,
   type ProgressLike,
 } from "@/lib/pwa/downloads";
-import { offlineNextUp } from "@/lib/pwa/offline-lists";
+import {
+  offlineNextUp,
+  offlinePrevUp,
+  offlineSeriesNextUp,
+  offlineSeriesPrevUp,
+} from "@/lib/pwa/offline-lists";
 import {
   OFFLINE_SHELL_PATH,
   type DownloadRecord,
@@ -76,10 +81,13 @@ async function serverProgress(issueId: string): Promise<ProgressLike | null> {
  * The regular reader, fed from IndexedDB instead of SSR (WP-4.6 offline
  * shell). Page and thumbnail requests from this document are answered by
  * the service worker from the downloaded copy; progress and reading
- * sessions go through the durable outbox exactly as online. Opened from
- * an offline reading list, Up Next is the next downloaded, unfinished
- * issue of that list in its reading order — resolved from the device,
- * never the server.
+ * sessions go through the durable outbox exactly as online. Up Next and
+ * the previous issue are always resolved from the device, never the
+ * server: opened from an offline reading list, Up Next is the next
+ * downloaded, unfinished issue of that list in its reading order; opened
+ * on its own, the next downloaded, unfinished sibling in series order
+ * (audit N-R8). The account's spread overrides stored with the download
+ * pair the pages as online did (N-R7).
  */
 export function OfflineReader({
   record,
@@ -95,8 +103,18 @@ export function OfflineReader({
   const issueId = record.issueId;
   const downloads = useDownloads(manager);
   const nextUp = useMemo(
-    () => (list ? offlineNextUp(list, downloads, issueId) : undefined),
-    [list, downloads, issueId],
+    () =>
+      list
+        ? offlineNextUp(list, downloads, issueId)
+        : offlineSeriesNextUp(record, downloads),
+    [list, downloads, issueId, record],
+  );
+  const prevUp = useMemo(
+    () =>
+      list
+        ? offlinePrevUp(list, downloads, issueId)
+        : offlineSeriesPrevUp(record, downloads),
+    [list, downloads, issueId, record],
   );
   const listId = list?.id ?? null;
   const openNext = useCallback(
@@ -190,8 +208,10 @@ export function OfflineReader({
       readingMinActiveMs={prefs.reading_min_active_ms ?? 30_000}
       readingMinPages={prefs.reading_min_pages ?? 3}
       readingIdleMs={prefs.reading_idle_ms ?? 180_000}
+      storedPageOverrides={record.overrides ?? null}
       nextUpOverride={nextUp}
-      onNextIssue={list ? openNext : undefined}
+      prevUpOverride={prevUp}
+      onNextIssue={openNext}
     />
   );
 }

@@ -783,3 +783,85 @@ describe("reading list download", () => {
     expect(again.lists()).toHaveLength(0);
   });
 });
+
+describe("spread overrides travel with the download (audit N-R7)", () => {
+  const view = {
+    issue_id: "i1",
+    shift_pairing: true,
+    spread_pages: [4],
+    single_pages: [],
+    updated_at: "2026-10-01T00:00:00Z",
+  };
+  const withOverrides = async (path: string) =>
+    path === "/me/issues/i1/page-overrides"
+      ? new Response(JSON.stringify(view))
+      : path.startsWith("/progress")
+        ? new Response(JSON.stringify({ records: [] }))
+        : new Response("{}", { status: 404 });
+
+  it("stores the account's page overrides and the series order", async () => {
+    const m = manager({ api: withOverrides });
+    await m.setAccount("alice");
+    await m.downloadIssue(
+      { ...issue("i1"), sort_number: 7 } as IssueDetailView,
+      1080,
+    );
+    const record = await settled(m, "i1");
+    expect(record.status).toBe("complete");
+    expect(record.overrides).toEqual(view);
+    expect(record.sortNumber).toBe(7);
+    // Persisted, not only in memory: a reload reads the same copy.
+    const stored = (await db.all()).find((r) => r.issueId === "i1");
+    expect(stored?.overrides).toEqual(view);
+  });
+
+  it("a failing overrides endpoint does not fail the download", async () => {
+    const m = manager();
+    await m.setAccount("alice");
+    await m.downloadIssue(issue("i1"), 1080);
+    const record = await settled(m, "i1");
+    expect(record.status).toBe("complete");
+    expect(record.overrides).toBeUndefined();
+  });
+
+  it("a dropped connection leaves the field unset; the retry fetches it", async () => {
+    let serverUp = false;
+    const m = manager({
+      fetch: async () => {
+        if (!serverUp) throw new TypeError("Failed to fetch");
+        return image();
+      },
+      api: async (path) => {
+        if (!serverUp) throw new TypeError("Failed to fetch");
+        return withOverrides(path);
+      },
+    });
+    await m.setAccount("alice");
+    await m.downloadIssue(issue("i1"), 1080);
+    let record = await settled(m, "i1");
+    expect(record.status).toBe("error");
+    expect(record.overrides).toBeUndefined();
+    serverUp = true;
+    await m.resume("i1");
+    await vi.waitFor(() => expect(m.get("i1")?.status).toBe("complete"));
+    record = m.get("i1")!;
+    expect(record.overrides).toEqual(view);
+  });
+
+  it("noteOverrides writes an online change through to the stored copy", async () => {
+    const m = manager({ api: withOverrides });
+    await m.setAccount("alice");
+    await m.downloadIssue(issue("i1"), 1080);
+    await settled(m, "i1");
+    const changed = { ...view, shift_pairing: false, single_pages: [2] };
+    await m.noteOverrides("i1", changed);
+    expect(m.get("i1")?.overrides).toEqual(changed);
+    expect((await db.all()).find((r) => r.issueId === "i1")?.overrides).toEqual(
+      changed,
+    );
+    // Not downloaded: nothing is created.
+    await m.noteOverrides("not-downloaded", changed);
+    expect(m.get("not-downloaded")).toBeUndefined();
+    expect((await db.all()).map((r) => r.issueId)).toEqual(["i1"]);
+  });
+});

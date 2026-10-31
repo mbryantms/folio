@@ -10,6 +10,12 @@
  * same cache entry. Returns `null` while nothing is known (first load
  * without an SSR prefetch, or a failed fetch): automatic pairing is the
  * safe fallback.
+ *
+ * `stored` is the device's copy from the issue's download record (the
+ * offline reader): it stands in while the fetch is pending or failed,
+ * and the live answer wins when it arrives — so an offline open pairs
+ * the pages as it did online instead of re-pairing automatically
+ * (audit N-R7).
  */
 import { useMemo } from "react";
 
@@ -20,17 +26,19 @@ import type { SpreadOverrides } from "@/lib/reader/spreads";
 export function useSpreadOverrides(
   issueId: string,
   initial?: PageOverridesView | null,
+  stored?: PageOverridesView | null,
 ): SpreadOverrides | null {
   const { data } = useIssuePageOverrides(issueId, initial);
+  const view = data ?? stored ?? null;
   return useMemo(
     () =>
-      data
+      view
         ? {
-            shift_pairing: data.shift_pairing,
-            spread_pages: data.spread_pages,
-            single_pages: data.single_pages,
+            shift_pairing: view.shift_pairing,
+            spread_pages: view.spread_pages,
+            single_pages: view.single_pages,
           }
         : null,
-    [data],
+    [view],
   );
 }

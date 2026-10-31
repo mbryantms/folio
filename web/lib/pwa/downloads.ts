@@ -43,6 +43,7 @@ import type {
   IssueSummaryView,
   MeView,
   PageInfo,
+  PageOverridesView,
 } from "@/lib/api/types";
 import { PROGRESS_OUTBOX_KIND } from "@/lib/reader/progress-writer";
 import { pageBytesUrl, pageVariantUrl, withContentVersion } from "@/lib/urls";
@@ -144,6 +145,11 @@ export interface DownloadManager {
   /** Fold a progress write (live or queued) into the downloaded issue's
    *  offline resume position. No-op for issues that are not downloaded. */
   noteProgress(body: ProgressLike): Promise<void>;
+  /** Keep a downloaded issue's stored spread overrides in step with the
+   *  account's write (the reader's spread controls), so the offline
+   *  reader pairs with the change. No-op for issues that are not
+   *  downloaded. */
+  noteOverrides(issueId: string, overrides: PageOverridesView): Promise<void>;
 }
 
 /** A reading list or collection to download from. */
@@ -562,24 +568,39 @@ export function createDownloadManager(
       }))!;
       if (!record) return;
     }
-    if (!record.progress) {
-      const progress = await fetchJson<{
-        records: {
-          issue_id: string;
-          page: number;
-          finished: boolean;
-          run?: number;
-        }[];
-      }>(`/progress?issue_id=${encodeURIComponent(issueId)}`).catch(() => null);
-      const mine = progress?.records.find((p) => p.issue_id === issueId);
-      if (mine)
-        record = (await write(issueId, {
-          progress: {
-            page: mine.page,
-            finished: mine.finished,
-            run: mine.run ?? 0,
-          },
-        }))!;
+    // The resume seed and the account's manual spread controls (WP-4.3;
+    // the offline reader pairs pages as online did, audit N-R7) are
+    // independent: one round trip for both. A failed fetch leaves its
+    // field unset, so a resume or retry asks again.
+    const [mine, overrides] = await Promise.all([
+      record.progress
+        ? null
+        : fetchJson<{
+            records: {
+              issue_id: string;
+              page: number;
+              finished: boolean;
+              run?: number;
+            }[];
+          }>(`/progress?issue_id=${encodeURIComponent(issueId)}`)
+            .then((p) => p.records.find((r) => r.issue_id === issueId) ?? null)
+            .catch(() => null),
+      record.overrides === undefined
+        ? fetchJson<PageOverridesView>(
+            `/me/issues/${encodeURIComponent(issueId)}/page-overrides`,
+          ).catch(() => undefined)
+        : undefined,
+    ]);
+    const seed: Partial<DownloadRecord> = {};
+    if (mine)
+      seed.progress = {
+        page: mine.page,
+        finished: mine.finished,
+        run: mine.run ?? 0,
+      };
+    if (overrides) seed.overrides = overrides;
+    if (seed.progress || seed.overrides) {
+      record = (await write(issueId, seed))!;
       if (!record) return;
     }
     const target = await cache();
@@ -1141,6 +1162,11 @@ export function createDownloadManager(
         progress: foldProgress(r.progress, body),
       }));
     },
+    async noteOverrides(issueId, overrides) {
+      if (loaded) await loaded;
+      if (!records.has(issueId)) return;
+      await write(issueId, { overrides });
+    },
     async usage() {
       const s = storage();
       try {
@@ -1183,6 +1209,7 @@ function detailFields(issue: IssueDetailView): Partial<DownloadRecord> {
     title: issue.title ?? null,
     number: issue.number ?? null,
     contentVersion: issue.last_rewrite_at ?? null,
+    sortNumber: issue.sort_number ?? null,
     manga: issue.manga ?? null,
     seriesReadingDirection: issue.series_reading_direction ?? null,
     libraryDefaultReadingDirection:

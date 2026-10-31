@@ -135,12 +135,14 @@ export function Reader({
   readingMinPages,
   readingIdleMs,
   initialPageOverrides = null,
+  storedPageOverrides = null,
   seriesSlug = null,
   issueSlug = null,
   issueLabel = "This issue",
   initialUserRating = null,
   initialUserNote = null,
   nextUpOverride,
+  prevUpOverride,
   onNextIssue,
 }: {
   issueId: string;
@@ -160,8 +162,13 @@ export function Reader({
    *  the server (`null` = nothing next). When set, the next-up / prev-up
    *  queries do not run. */
   nextUpOverride?: NextUpView | null;
-  /** With `nextUpOverride`: opens the next issue (the offline shell
-   *  navigates within its own document rather than to `/read/…`). */
+  /** The offline reader's previous issue (`Shift+P`), resolved from the
+   *  device (`null` = at the first issue). When set, the prev-up query
+   *  does not run. */
+  prevUpOverride?: NextUpView | null;
+  /** With `nextUpOverride` / `prevUpOverride`: opens the resolved issue
+   *  (the offline shell navigates within its own document rather than
+   *  to `/read/…`). */
   onNextIssue?: (target: IssueSummaryView) => void;
   /** Saved-view id of the CBL the user is reading through. When set,
    *  the next-up resolver picks from that list instead of the parent
@@ -230,6 +237,10 @@ export function Reader({
   /** SSR prefetch of the user's manual spread controls (WP-4.3) so the
    *  first paint already pairs with them applied. */
   initialPageOverrides?: PageOverridesView | null;
+  /** The device's stored copy of the spread controls (the offline
+   *  reader's download record): stands in while the live fetch is
+   *  pending or failed, so an offline open pairs as online did. */
+  storedPageOverrides?: PageOverridesView | null;
 }) {
   const router = useRouter();
   const init = useReaderStore((s) => s.init);
@@ -435,13 +446,23 @@ export function Reader({
   // Symmetric to useNextUp for the `Shift+P` keybind. Pure sequential
   // back-navigation (no finished-state filter); the resolver returns
   // source=none when the user is already at the first issue.
-  const prevUp = usePrevUp(issueId, listContext, { enabled: !overridden });
+  const prevOverridden = prevUpOverride !== undefined;
+  const livePrevUp = usePrevUp(issueId, listContext, {
+    enabled: !overridden && !prevOverridden,
+  });
+  const prevUpData = prevOverridden
+    ? (prevUpOverride ?? NO_NEXT_UP)
+    : livePrevUp.data;
   const goPrevIssue = useCallback(() => {
-    const data = prevUp.data;
+    const data = prevUpData;
     if (!data || !data.target) {
       if (data && data.source === "none") {
         toast.message("Already at the first issue.");
       }
+      return;
+    }
+    if (onNextIssue) {
+      onNextIssue(data.target);
       return;
     }
     router.push(
@@ -450,7 +471,7 @@ export function Reader({
         collection: data.source === "collection" ? collectionId : null,
       }),
     );
-  }, [cblSavedViewId, collectionId, prevUp.data, router]);
+  }, [cblSavedViewId, collectionId, onNextIssue, prevUpData, router]);
 
   // End-of-issue side panel. Opens only when the user *attempts to
   // advance past* the last page (e.g., right-arrow / spacebar / swipe
@@ -676,7 +697,11 @@ export function Reader({
   // for navigation as before.
   // WP-4.3: the user's manual spread controls win over `double_page` +
   // aspect detection.
-  const spreadOverrides = useSpreadOverrides(issueId, initialPageOverrides);
+  const spreadOverrides = useSpreadOverrides(
+    issueId,
+    initialPageOverrides,
+    storedPageOverrides,
+  );
   const groups = useMemo<ReadonlyArray<SpreadGroup>>(
     () =>
       computeSpreadGroups(pages, {

@@ -2270,11 +2270,18 @@ export function useIssueMarkers(issueId: string) {
  *  spread / force single / shift pairing). `initialData` is the SSR
  *  prefetch from the read page so the first paint already pairs with
  *  the overrides applied; `staleTime: Infinity` because only this user's
- *  own mutations change it, and those write the cache directly. */
+ *  own mutations change it, and those write the cache directly.
+ *
+ *  Offline (audit N-R11) the one request is still fired — the offline
+ *  reader's stored copy answers when it fails — but never retried: the
+ *  default `online` network mode would park the query and the default
+ *  retry would back off three times before the fallback could apply. */
 export function useIssuePageOverrides(
   issueId: string,
   initialData?: PageOverridesView | null,
 ) {
+  const offline =
+    typeof navigator !== "undefined" && navigator.onLine === false;
   return useQuery({
     queryKey: queryKeys.issuePageOverrides(issueId),
     queryFn: () =>
@@ -2282,6 +2289,7 @@ export function useIssuePageOverrides(
     enabled: !!issueId,
     initialData: initialData ?? undefined,
     staleTime: Infinity,
+    ...(offline ? { retry: false, networkMode: "offlineFirst" as const } : {}),
   });
 }
 
