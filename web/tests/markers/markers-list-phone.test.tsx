@@ -101,8 +101,14 @@ describe("MarkersList phone chrome", () => {
     expect(desktopHeader?.className).toContain("max-sm:hidden");
     // Desktop header toolbar is still rendered (desktop) but carries
     // the phone-hide hook; so do the inline layout toggle + Tags row.
-    const exportBtn = screen.getByRole("button", { name: /export notes/i });
-    expect(exportBtn.parentElement?.className).toContain("max-sm:hidden");
+    // Both widths render a `⋯` (export): the desktop one sits in the
+    // sticky row's right cluster, which carries the phone-hide hook.
+    const desktopMore = screen
+      .getAllByRole("button", { name: "More actions" })
+      .find((b) => !(bar as HTMLElement).contains(b));
+    expect(desktopMore?.closest("[data-toolbar-row]")?.className).toContain(
+      "max-sm:hidden",
+    );
     const inlineLayout = screen
       .getAllByRole("group", { name: "Marker layout" })
       .find((g) => g.className.includes("ml-auto"));
@@ -153,23 +159,32 @@ describe("MarkersList phone chrome", () => {
     expect(screen.queryByRole("dialog", { name: "Filters" })).toBeNull();
   });
 
-  it("⋯ sheet carries card size and the two export links", () => {
+  it("View options holds card size; export is behind the bar's ⋯ (rule 11)", () => {
     render(<MarkersList />);
     const bar = document.querySelector("[data-phone-controls]") as HTMLElement;
+    // ⋯ is the last control in the bar, after View options.
+    const buttons = within(bar)
+      .getAllByRole("button")
+      .map((b) => b.getAttribute("aria-label"));
+    expect(buttons.slice(-2)).toEqual(["View options", "More actions"]);
     fireEvent.click(within(bar).getByRole("button", { name: "View options" }));
     const sheet = screen.getByRole("dialog", { name: "View options" });
     expect(within(sheet).getByText("Card size")).toBeTruthy();
     expect(within(sheet).getByRole("slider")).toBeTruthy();
-    const md = within(sheet).getByRole("link", {
+    expect(within(sheet).queryByRole("link", { name: /export/i })).toBeNull();
+    // No markers loaded → no Select row.
+    expect(within(sheet).queryByRole("button", { name: "Select" })).toBeNull();
+    fireEvent.keyDown(within(sheet).getByText("Card size"), { key: "Escape" });
+    const more = within(bar).getByRole("button", { name: "More actions" });
+    fireEvent.keyDown(more, { key: "Enter" });
+    const md = screen.getByRole("menuitem", {
       name: /export notes as markdown/i,
     });
-    const json = within(sheet).getByRole("link", {
+    const json = screen.getByRole("menuitem", {
       name: /export notes as json/i,
     });
     expect(md.getAttribute("href")).toContain("format=md");
     expect(json.getAttribute("href")).toContain("format=json");
     expect(md.hasAttribute("download")).toBe(true);
-    // No markers loaded → no Select row.
-    expect(within(sheet).queryByRole("button", { name: "Select" })).toBeNull();
   });
 });

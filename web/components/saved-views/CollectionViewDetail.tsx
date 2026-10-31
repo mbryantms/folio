@@ -392,18 +392,10 @@ export function CollectionViewDetail({
         }
         extraActions={
           <>
-            <CollectionContinueButton collectionId={savedView.id} />
             <Badge variant="secondary">
               {total} item{total === 1 ? "" : "s"}
             </Badge>
-            <CardSizeOptions
-              cardSize={cardSize}
-              onCardSize={setCardSize}
-              min={CARD_SIZE_MIN}
-              max={CARD_SIZE_MAX}
-              step={CARD_SIZE_STEP}
-              defaultSize={CARD_SIZE_DEFAULT}
-            />
+            <CollectionContinueButton collectionId={savedView.id} />
             {(orderedEntries.length > 0 || selection.selectMode) && (
               <SelectModeButton
                 ref={selectButtonRef}
@@ -412,6 +404,14 @@ export function CollectionViewDetail({
                 onExit={() => selection.exit()}
               />
             )}
+            <CardSizeOptions
+              cardSize={cardSize}
+              onCardSize={setCardSize}
+              min={CARD_SIZE_MIN}
+              max={CARD_SIZE_MAX}
+              step={CARD_SIZE_STEP}
+              defaultSize={CARD_SIZE_DEFAULT}
+            />
           </>
         }
         // Phone (< sm): the cluster above is hidden. Continue / Start

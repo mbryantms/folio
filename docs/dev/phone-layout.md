@@ -169,6 +169,29 @@ px of vertical scroll, and iOS lets a finger drag the labels up and down
 inside the bar. Inside a strip the tap area is bounded by the strip's
 height (36px); the horizontal +4px each side still applies.
 
+11. **One control order, every width.** Reading left to right, a
+    control row is _what you are looking at_, then _how it is narrowed_,
+    then _what you can do_:
+
+    - **Left, in flow:** scope (the Series / Issues toggle, the phone
+      title, a CBL's stats pills, a collection's item count) → search →
+      sort (+ order) → Filters → the buttons filters produce (Save as
+      view, Clear filters, active chips).
+    - **Right, `ml-auto`, in this fixed order:** the page's primary action
+      (Up Next, Continue) → Select → ▦ View options → `⋯` More actions.
+      `⋯` is always the rightmost control and ▦ always sits beside it;
+      Select sits before ▦ because ▦'s sheet is where Select lives on
+      phones. Export, Fetch metadata, Download, Edit and Pin are `⋯`
+      items, never standalone buttons (rule 2).
+
+    `PhoneControlsBar` renders the same order on its own: `leading`
+    (scope) on the left, then 🔍 · ⇅ · ⚲ · `primary` · ▦ · `more` on the
+    right. Pass the `⋯` menu as `more`, never as `primary`, so it lands
+    after ▦ as it does on desktop. A `ViewHeader` title row keeps the
+    order too: `extraActions` are `[count] [primary] [Select] [▦]` and
+    the header appends `[Built-in] [⋯]`. Standardised 2026-10-31
+    (bookmarks, library, home and custom pages, CBL, saved views).
+
 ## Primitives
 
 | Piece                      | File                                         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -217,8 +240,10 @@ height (36px); the horizontal +4px each side still applies.
   `StickyToolbarRow`. `SeriesTabs`' `scroll-mt` clears the pinned row.
 - **Bookmarks**: no separate header — the title rides in the sticky
   bar's leading slot beside search, a Filters sheet (layout toggle,
-  tags, match mode) and View options (card size, Select, export); the
-  bar is the page's top bar (rule 0); kind pills scroll horizontally. From `sm` up the header keeps the title and
+  sort, series, tags, match mode), View options (card size, Select)
+  and `⋯` (export); the bar is the page's top bar (rule 0); kind pills
+  scroll horizontally. From `sm` up: search · sort · series on the
+  left, Select · ▦ · `⋯` on the right. From `sm` up the header keeps the title and
   description and the toolbar is a `StickyToolbarRow` beneath it.
 - **Search**, **Browse**, **entity / creator indexes**: description
   hidden, tab strip scrolls, indexes use the scrubber. Search keeps

@@ -49,12 +49,12 @@ describe("toolbar row height", () => {
       H9,
     );
     expect(
-      screen.getByRole("button", { name: "Export notes" }).className,
+      screen.getByRole("button", { name: "More actions" }).className,
     ).toMatch(H9);
     expect(
       screen.getByRole("button", { name: "View options" }).className,
     ).toMatch(H9);
-    for (const name of ["Select", "Export notes", "View options"]) {
+    for (const name of ["Select", "More actions", "View options"]) {
       const cls = screen.getByRole("button", { name }).className;
       expect(cls).toMatch(/\btext-sm\b/);
       expect(cls).not.toMatch(XS);
