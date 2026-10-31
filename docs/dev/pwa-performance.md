@@ -50,6 +50,7 @@ neither are lazy `next/dynamic` chunks.
 | 2026-09-30, `main` before WP-4.4       | 191.20 KB            | 20     | 195 KB  | 150 KB |
 | 2026-09-30, WP-4.4 (reader code-split) | 117.45 KB            | 13     | 130 KB  | 120 KB |
 | 2026-10-15, post-audit T4.4 (account per-series prefs) | 130.13 KB | 14 | 145 KB | 120 KB |
+| 2026-10-31, audit C2 (strip pill a11y, OCR alt, RECENTER hoist) | 141.66 KB | 15 | 145 KB | 120 KB |
 
 The ceiling is measured + 10% (117.45 × 1.1 = 129.2 → 130 KB; 130.13 × 1.1 =
 143.1 → 145 KB). Going over the ceiling fails CI; going over the target only
@@ -62,7 +63,18 @@ was measured and rejected — the dynamic-import stub costs more than the
 import it hides, since `mutations/_core` is already in the reader chunk.
 The target is unchanged; the route is 10 KB over it and the next reader
 feature should be code-split per `lazy.tsx` rather than lift the ceiling
-again. Re-measure after each
+again. The 2026-10-31 row: `main` stood at 141.47 KB before audit C2 (the
+2026-10-15 → 10-31 creep is the reader work in between: offline overrides,
+wrap-up, end-of-issue nav). C2 itself adds ~0.2 KB (`usePageAltText` + the
+page-text store slot, the `lang` prop on `PageImage`). It first measured
+145.91 KB because dropping the four `react-hooks/exhaustive-deps`
+suppressions in `Reader.tsx` (N-R12) let the React Compiler compile the
+1k-line `Reader` component for the first time — the compiler skips any
+function carrying a suppression of a `react-hooks/*` rule — and its
+memo-cache code cost 4.3 KB gzip in the reader chunk. `Reader` now opts
+out explicitly with `"use no memo"` (same runtime as before, stated rather
+than accidental); the page views and hooks in the file stay compiled.
+Re-measure after each
 reader-feature WP (4.2 zoom/fit, 4.3 spreads/strip, 4.8 page-text panel) and
 record the new row here; raise the ceiling only with a justification in this
 table.

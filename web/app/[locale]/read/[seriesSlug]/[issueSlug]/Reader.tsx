@@ -240,6 +240,14 @@ export function Reader({
    *  first paint already pairs with them applied. */
   initialPageOverrides?: PageOverridesView | null;
 }) {
+  // Not compiled by the React Compiler. Until audit N-R12 the four
+  // `exhaustive-deps` suppressions below made the compiler skip this
+  // component silently; compiling it adds ~4.3 KB gzip of memo-cache code
+  // to the reader's first-load chunk (141.5 → 145.9 KB, over the 145 KB
+  // ceiling in `scripts/check-bundle-size.mjs`) for a component whose
+  // hot paths are already memoized by hand. The page views below stay
+  // compiled.
+  "use no memo";
   const router = useRouter();
   const init = useReaderStore((s) => s.init);
   const currentPage = useReaderStore((s) => s.currentPage);
