@@ -165,12 +165,15 @@ takes pre-serialized XML strings and performs the atomic swap:
 1. **Mutex**: Redis `SET NX EX` on `archive:rewrite:<issue_id>` (TTL
    120s) so a concurrent edit can't race the apply. **Busy** → the job
    re-enqueues itself with `attempt + 1` after a 5 s pace, up to 40
-   attempts (well past the longest lock TTL), then gives up with an
-   `archive.errored` library event — the same policy as the page editor's
-   `requeue_busy`. **Redis error** → the handler returns `Err` so apalis
-   retries it (`JOB_MAX_ATTEMPTS`) and dead-letters it if Redis stays
-   down. Pre-fix both cases returned `Ok` and silently dropped the write
-   (audit DI-13). While the rewrite runs, a
+   attempts (well past the longest lock TTL) through the shared
+   [`jobs::busy_requeue`](../../crates/server/src/jobs/busy_requeue.rs)
+   helper, then gives up with an `archive.errored` library event and —
+   when the job came from a metadata run — marks that run `failed` (the
+   same policy as the page editor and the apply job). **Redis error** →
+   the handler returns `Err` so apalis retries it (`JOB_MAX_ATTEMPTS`)
+   and dead-letters it if Redis stays down. Pre-fix both cases returned
+   `Ok` and silently dropped the write (audit DI-13). While the rewrite
+   runs, a
    [`mutex::Heartbeat`](../../crates/server/src/archive_rewrite/mutex.rs)
    re-arms the TTL every 30 s (compare-and-`EXPIRE` on the claim token),
    so a slow NAS rewrite can't lose the lock mid-swap; the TTL is only
@@ -337,6 +340,49 @@ WHERE fp.entity_type = 'issue'
 Steps 2–5 cover the two failure classes that used to be silent: a
 refused format never reaches the job, and a failed rewrite is audited
 (`archive.errored` library event) without any of step 10.
+
+### Failure handling: retry or refuse
+
+The handler's return value is apalis's only signal, so it is chosen per
+error class (`FailureDisposition` in `rewrite_sidecars.rs`, audit N-M7):
+
+| Error | Handler returns | What the operator sees |
+|---|---|---|
+| **Refusal** — `WritebackError::UnsupportedFormat` (`sidecar_refusal`: CBR / CB7 without conversion, unknown extension), `WritebackDisabled` (library master toggle off), `IssueGone` | `Ok` — retrying cannot change the answer | one `archive.errored` event (`error`), run untouched (the dispatch gate already reported the refusal on `ApplyOutcome`) |
+| **Transient** — I/O, archive write / validation, CBR conversion, DB (`Rewrite`, `Archive`, `Convert`, `Db`) with budget left | `Err` — apalis reschedules the task | one `archive.errored` event per attempt at `warning` severity ("retrying (attempt n of 5)") |
+| **Transient on attempt `JOB_MAX_ATTEMPTS`** | `Err` — `with_retry_budget_attempt` turns it into an `AbortError`, the task is dead-lettered | `archive.errored` at `error` ("failed after 5 attempts"); when `triggering_run_id` is set the run is marked `failed` with the error in `error_summary` and `metadata.failed` is emitted, so the batch view and the match dialog stop showing it as applied |
+| **Busy lock budget spent** (40 requeues) | `Ok` | `archive.errored` ("rewrite lock busy") + run marked `failed` |
+| **Requeue push failed** | `Err` — apalis retries the original task | nothing dropped |
+
+The handler takes the task's `Attempt` for this (registered with the
+`attempt:` arm of `JobRuntime::run`'s `register!`), which is why the
+integration tests call it as `handle(job, Data(state), Attempt::new_with_value(n))`.
+Pre-fix every failure returned `Ok`: a NAS hiccup consumed the apply's
+deferred writes with no retry, and the run stayed `completed`. Guards:
+`writeback_job_retry.rs`.
+
+The **apply job** (`jobs/metadata_apply.rs`) follows the same rule for its
+own per-entity mutex (`metadata:apply:{series|issue}:<id>`): a busy lock
+requeues the job through `busy_requeue` with the job's `attempt` counter
+(the job names the stored candidate by `run_id` + `ordinal`, and the
+detail comes from `metadata_cache`, so a requeue re-spends no provider
+quota); once the 40-requeue budget is spent the run is marked `failed`
+("apply lock still held"), a `metadata.errored` event is written and
+`metadata.failed` is emitted. A Redis error on the claim returns `Err` for
+apalis to retry, and an `ApplyError` from the apply itself now also marks
+the run `failed` (it stays `Ok` to apalis: the error is audited and a
+provider fault must not re-spend quota on a blind retry). Pre-fix the busy
+path returned `Ok` with a log line saying "caller will retry" — no caller
+did, so a batch child whose series was still held by an earlier apply was
+dropped with its run left looking complete.
+
+A run the rewrite job marked `failed` is **recovered** when a later
+attempt of the same rewrite lands (the operator's Retry from Background
+work, or a requeued copy): the job recognises its own `error_summary`
+prefix (`sidecar rewrite …`) and sets the run back to `completed`; a
+search failure is never touched. The batch review counts a `failed` run as
+not applied even though the apply bumped `items_applied` when it queued
+the rewrite.
 
 ## Manual edits (roadmap WP-2.10)
 
@@ -671,7 +717,8 @@ sweep of every archive in the library.
 | **Crash between the two renames loses the file** (WP-2.6 a, OP-8) | There are no longer two renames: the original is hard-linked (or copied) into `.bak` *while still at the target*, then the staging file is `rename(2)`d over it atomically. `startup_cleanup` can only ever reap a `.tmp` whose bytes are also at the target or superseded. Test: `archive_rewrite::crash_at_every_step_leaves_target_readable`. |
 | **Foreign sidecars dropped on rewrite** (WP-2.6 b, DI-11) | One `archive::rewrite_policy` for the sidecar rewrite, page editor and CBR converter: only junk + the Folio pair are dropped; `CoMet.xml` / `.txt` / `.json` / anything else streams through byte-for-byte and the validator requires it to survive. Tests: `cbz_write::rebuild_preserves_foreign_sidecars_and_drops_junk`, `archive_edit::page_edit_preserves_foreign_sidecars_cbz_and_cbt`. |
 | **Unmodelled XML elements deleted by the composer** (WP-2.6 c+d, DI-11) | `issues.metron_info_raw` persists the parsed MetronInfo so its `raw` map passes through (`<MangaVolume>`, vendor `<X-…>`); `MainCharacterOrTeam` / `AlternateNumber` / `AlternateCount` carry through from `comic_info_raw`. Tests: `sidecar_compose::compose_metroninfo_passes_unknown_elements_through`, `compose_carries_unmodelled_comicinfo_fields_through`, `processing::scan_persists_metron_info_raw_with_unmodelled_elements`. |
-| **Lock-busy job silently dropped** (WP-2.6 e, DI-13) | Busy → bounded requeue with `attempt` counter + 5 s pace (40 attempts), then a loud `archive.errored` event; Redis error → `Err` to apalis for retry / dead-letter. Same policy in the page editor. Test: `metadata_apply_sidecar::sidecar_job_requeues_when_rewrite_lock_is_busy`. |
+| **Lock-busy job silently dropped** (WP-2.6 e, DI-13; apply job: N-M7) | Busy → bounded requeue with `attempt` counter + 5 s pace (40 attempts, `jobs::busy_requeue`), then a loud `archive.errored` / `metadata.errored` event and the triggering run marked `failed`; Redis error → `Err` to apalis for retry / dead-letter. Same policy in the page editor and the metadata apply job. Tests: `metadata_apply_sidecar::sidecar_job_requeues_when_rewrite_lock_is_busy`, `writeback_job_retry::apply_job_requeues_while_the_mutex_is_held_and_completes_after_release`, `writeback_job_retry::apply_job_with_an_exhausted_busy_budget_marks_the_run_failed`. |
+| **Failed rewrite never retried, run left "complete"** (N-M7) | Transient failures (I/O, archive write, conversion, DB) return `Err` so apalis retries under `JOB_MAX_ATTEMPTS`; the last attempt marks the run `failed` and writes an `error` event before the task is dead-lettered; refusals (`sidecar_refusal`, writeback off, issue gone) stay `Ok` and never retry. Tests: `writeback_job_retry::transient_rewrite_failure_is_retried_and_succeeds_once_the_fault_clears`, `rewrite_failure_on_the_last_attempt_marks_the_run_failed_and_aborts`, `sidecar_refusal_returns_ok_and_is_not_retried`. |
 | **CBR/CBT apply fails at open after the run was marked applied** (WP-2.6 f, DI-10) | Format gate at dispatch (`sidecar_refusal`): CBT rewrites in place, CBR converts first when `auto_convert_cbr_on_scan` allows it, otherwise the apply falls back DB-direct with the reason on the outcome. Provenance / variants / `last_metadata_sync_at` are deferred to the job and written only after a successful rewrite. Tests: `sidecar_rewrite_handles_cbt_in_place`, `sidecar_rewrite_converts_cbr_when_library_allows`, `apply_issue_cbr_without_conversion_falls_back_to_db_direct`, `failed_rewrite_writes_no_provenance_variants_or_sync_stamp`. |
 | **Mutex stuck after worker crash**      | TTL on the Redis key (120s sidecar / 180s edit). Worker also releases explicitly on every exit path.                                                 |
 | **Slow rewrite outlives the lock TTL** (WP-2.6 h, DI-13) | `mutex::Heartbeat` re-arms the TTL every 30 s (compare-and-`EXPIRE` on the claim token, never resurrects a lost lock) for as long as the blocking rewrite runs, in the sidecar job, the page editor and the series fan-out. A crashed holder stops beating and the TTL reaps the key as before. |

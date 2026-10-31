@@ -437,6 +437,16 @@ Default admin (first registered user becomes admin):
     (`skip_rescan = false`); the series-scope apply overrides with
     `skip_rescan = true` and fires one series-scoped rescan after the
     fan-out completes. Library-wide rescans here would O(N²) the work.
+  - Return `Ok(())` from a writeback job handler on a failure it did not
+    resolve (audit N-M7). `rewrite_sidecars::handle` returns `Err` for
+    transient faults (I/O, archive write, conversion, DB) so apalis
+    applies `JOB_MAX_ATTEMPTS`, and marks the triggering run `failed` on
+    the last attempt; only a `WritebackError::is_refusal()` (format gate,
+    writeback off, issue gone) is `Ok`. A busy per-entity mutex — in the
+    rewrite job, the page editor and `metadata_apply` — goes through
+    `jobs::busy_requeue` (bounded self-requeue, then run failed + library
+    event), never a bare `return Ok(())` with "the caller will retry".
+    Guards: `crates/server/tests/writeback_job_retry.rs`.
 
   See [`docs/dev/metadata-sidecar-writeback.md`](docs/dev/metadata-sidecar-writeback.md)
   for the architecture, migration recipe, and risk matrix. The M7

@@ -76,14 +76,32 @@ async fn queued_rewrite_jobs(app: &TestApp) -> Vec<RewriteIssueSidecarsJob> {
 
 /// Run every queued sidecar job through the worker entry point (mutex,
 /// rewrite, audit, rescan enqueue, deferred metadata writes) and clear the
-/// queue so a second call only sees newer jobs.
+/// queue so a second call only sees newer jobs. Every job must succeed;
+/// use [`drain_queued_rewrite_jobs`] when a failure is the point.
 async fn run_queued_rewrite_jobs(app: &TestApp) -> usize {
+    let results = drain_queued_rewrite_jobs(app).await;
+    for r in &results {
+        r.as_ref().expect("rewrite job handle");
+    }
+    results.len()
+}
+
+/// Like [`run_queued_rewrite_jobs`] but returns each job's handler result
+/// (as the error string) instead of asserting success. Jobs run as apalis
+/// attempt 1, so a transient failure is an `Err` the worker would retry.
+async fn drain_queued_rewrite_jobs(app: &TestApp) -> Vec<Result<(), String>> {
     let jobs = queued_rewrite_jobs(app).await;
-    let n = jobs.len();
+    let mut results = Vec::with_capacity(jobs.len());
     for job in jobs {
-        server::jobs::rewrite_sidecars::handle(job, apalis::prelude::Data::new(app.state()))
+        results.push(
+            server::jobs::rewrite_sidecars::handle(
+                job,
+                apalis::prelude::Data::new(app.state()),
+                apalis::prelude::Attempt::new_with_value(1),
+            )
             .await
-            .expect("rewrite job handle");
+            .map_err(|e| e.to_string()),
+        );
     }
     let storage = app.state().jobs.rewrite_issue_sidecars_storage.clone();
     let data_hash = storage.get_config().job_data_hash();
@@ -93,7 +111,7 @@ async fn run_queued_rewrite_jobs(app: &TestApp) -> usize {
         .query_async(&mut conn)
         .await
         .unwrap();
-    n
+    results
 }
 
 fn args(run_id: Uuid, ordinal: i32, mode: ApplyMode, override_user: bool) -> ApplyArgs {
@@ -1780,6 +1798,7 @@ async fn sidecar_job_requeues_when_rewrite_lock_is_busy() {
     server::jobs::rewrite_sidecars::handle(
         sidecar_job(&issue_id),
         apalis::prelude::Data::new(app.state()),
+        apalis::prelude::Attempt::new_with_value(1),
     )
     .await
     .expect("busy lock is not an error");
@@ -1858,6 +1877,7 @@ async fn sidecar_rewrite_handles_cbt_in_place() {
     server::jobs::rewrite_sidecars::handle(
         sidecar_job(&issue_id),
         apalis::prelude::Data::new(app.state()),
+        apalis::prelude::Attempt::new_with_value(1),
     )
     .await
     .unwrap();
@@ -1912,6 +1932,7 @@ async fn sidecar_rewrite_converts_cbr_when_library_allows() {
     server::jobs::rewrite_sidecars::handle(
         sidecar_job(&issue_id),
         apalis::prelude::Data::new(app.state()),
+        apalis::prelude::Attempt::new_with_value(1),
     )
     .await
     .unwrap();
@@ -2063,6 +2084,7 @@ async fn sidecar_rewrite_converts_cb7_when_library_allows() {
     server::jobs::rewrite_sidecars::handle(
         sidecar_job(&issue_id),
         apalis::prelude::Data::new(app.state()),
+        apalis::prelude::Attempt::new_with_value(1),
     )
     .await
     .unwrap();
@@ -2217,9 +2239,16 @@ async fn failed_rewrite_writes_no_provenance_variants_or_sync_stamp() {
     .expect("apply_issue");
     assert!(outcome.enqueued_rewrite);
 
-    // The job runs, fails at open, and is audited — not retried, and
-    // none of the deferred writes land.
-    assert_eq!(run_queued_rewrite_jobs(&app).await, 1);
+    // The job runs, fails at open and is audited; the failure is handed
+    // back to apalis as `Err` (a transient class — see
+    // `writeback_job_retry.rs` for the retry contract) and none of the
+    // deferred writes land.
+    let results = drain_queued_rewrite_jobs(&app).await;
+    assert_eq!(results.len(), 1);
+    assert!(
+        results[0].is_err(),
+        "a failed rewrite is an Err for apalis to retry: {results:?}"
+    );
 
     assert!(
         issue_prov(&app, &issue_id).await.is_empty(),

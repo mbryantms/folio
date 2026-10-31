@@ -371,9 +371,13 @@ async fn run_pipeline(f: &Fixture) {
             .await;
     assert_eq!(rewrites.len(), 1, "one sidecar rewrite queued");
     for job in rewrites {
-        server::jobs::rewrite_sidecars::handle(job, data())
-            .await
-            .unwrap();
+        server::jobs::rewrite_sidecars::handle(
+            job,
+            data(),
+            apalis::prelude::Attempt::new_with_value(1),
+        )
+        .await
+        .unwrap();
     }
     let scan_hash = state.jobs.scan_series_storage.get_config().job_data_hash();
     let scans = drain::<server::jobs::scan_series::Job>(&f.app, scan_hash).await;

@@ -45,6 +45,8 @@
 
 use crate::archive_rewrite::{self, RewriteError, mutex};
 use crate::audit::{self, AuditEntry};
+use crate::jobs::JOB_MAX_ATTEMPTS;
+use crate::jobs::busy_requeue::{self, Requeue};
 use crate::library::event_log::{self, Action, Category, NewEvent, Severity};
 use crate::state::AppState;
 use apalis::prelude::*;
@@ -52,7 +54,7 @@ use archive::ArchiveLimits;
 use archive::cbz::Cbz;
 use archive::cbz_write::{RebuildPlan, RebuildSummary, rebuild};
 use chrono::Utc;
-use entity::issue;
+use entity::{issue, metadata_run};
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -148,9 +150,49 @@ pub struct PostRewriteWrites {
     pub reprints_source_external_id: Option<String>,
 }
 
+/// How the handler treated a failed rewrite. Decides the apalis return
+/// value and the severity of the library event, and whether the
+/// triggering metadata run is marked failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureDisposition {
+    /// A deliberate refusal — `sidecar_refusal` (CBR / CB7 without
+    /// conversion, unknown extension), the library's master writeback
+    /// toggle off, or the issue row gone. Retrying can't change the
+    /// answer, so the handler returns `Ok` and the task completes.
+    Refused,
+    /// A transient failure (I/O, archive write, CBR conversion, DB) on an
+    /// attempt with budget left: the handler returns `Err` and apalis
+    /// reschedules the task.
+    Retrying { attempt: usize },
+    /// A transient failure on the last budgeted attempt
+    /// ([`JOB_MAX_ATTEMPTS`]): apalis dead-letters the task after this
+    /// `Err`, so the handler records the drop first (error-severity event,
+    /// run marked failed).
+    Final { attempts: usize },
+}
+
+impl FailureDisposition {
+    fn for_error(err: &WritebackError, attempt: usize) -> Self {
+        if err.is_refusal() {
+            Self::Refused
+        } else if attempt >= JOB_MAX_ATTEMPTS {
+            Self::Final { attempts: attempt }
+        } else {
+            Self::Retrying { attempt }
+        }
+    }
+}
+
+/// `attempt` is apalis's own counter for this task (1-based, already
+/// incremented for the running attempt); the worker registration passes it
+/// through [`crate::jobs::with_retry_budget_attempt`]. Transient failures
+/// return `Err` so that budget applies — pre-fix every failed rewrite
+/// returned `Ok`, so a NAS hiccup or a locked file was never retried and
+/// the apply's deferred writes were silently lost (audit N-M7).
 pub async fn handle(
     job: RewriteIssueSidecarsJob,
     state: Data<AppState>,
+    attempt: Attempt,
 ) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
 
@@ -163,8 +205,7 @@ pub async fn handle(
             // line claiming "the caller will re-enqueue" — nothing did, so
             // the write was silently dropped (audit DI-13). Requeue with
             // backoff, same as the page editor.
-            requeue_busy(&state, &job).await;
-            return Ok(());
+            return requeue_busy(&state, &job).await;
         }
         Err(e) => {
             // Redis itself failed. Surface it to apalis so the job is
@@ -198,14 +239,53 @@ pub async fn handle(
     let mut redis = state.jobs.redis.clone();
     mutex::release(&mut redis, &job.issue_id, &token).await;
 
-    audit_writeback(&state, &job, &outcome).await;
-
-    let Ok(ref result) = outcome else {
-        // Failed rewrite: no rescan (it would just re-ingest the original
-        // file) and — crucially — none of the deferred metadata writes.
-        // The DB keeps describing the file as it actually is.
-        return Ok(());
+    let result = match &outcome {
+        Ok(r) => {
+            audit_writeback(&state, &job, &outcome, None).await;
+            r
+        }
+        Err(e) => {
+            // Failed rewrite: no rescan (it would just re-ingest the
+            // original file) and — crucially — none of the deferred
+            // metadata writes. The DB keeps describing the file as it
+            // actually is. What happens next depends on the error:
+            let disposition = FailureDisposition::for_error(e, attempt.current());
+            audit_writeback(&state, &job, &outcome, Some(disposition)).await;
+            let message = format!("sidecar writeback for {}: {e}", job.issue_id);
+            return match disposition {
+                FailureDisposition::Refused => Ok(()),
+                FailureDisposition::Retrying { attempt } => {
+                    tracing::warn!(
+                        issue_id = %job.issue_id,
+                        attempt,
+                        error = %e,
+                        "sidecar writeback: rewrite failed; returning Err for apalis retry",
+                    );
+                    Err(message.into())
+                }
+                FailureDisposition::Final { attempts } => {
+                    tracing::error!(
+                        issue_id = %job.issue_id,
+                        attempts,
+                        error = %e,
+                        "sidecar writeback: rewrite failed on the last attempt; giving up",
+                    );
+                    fail_triggering_run(
+                        &state,
+                        &job,
+                        &format!("{RUN_ERROR_PREFIX} failed after {attempts} attempts: {e}"),
+                    )
+                    .await;
+                    Err(message.into())
+                }
+            };
+        }
     };
+
+    // This may be the operator's Retry of a dead-lettered job (Background
+    // work re-enqueues a fresh copy) after an earlier attempt marked the run
+    // failed: the write has now landed, so the run is complete again.
+    clear_triggering_run_failure(&state, &job).await;
 
     // Best-effort scan enqueue after success. The series-scope apply
     // path sets `skip_rescan=true` because it already enqueued a single
@@ -237,63 +317,126 @@ pub async fn handle(
 
 /// The rewrite mutex is shared with the page editor, so a sidecar job can
 /// land while an edit of the same issue is in flight. Requeue with a
-/// short pacing delay and give up loudly (library event) only after the
-/// retry budget comfortably outlasts the longest mutex TTL. Mirrors
-/// `archive_edit::requeue_busy`.
-const BUSY_MAX_ATTEMPTS: u32 = 40;
-const BUSY_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
-
-async fn requeue_busy(state: &AppState, job: &RewriteIssueSidecarsJob) {
+/// short pacing delay ([`busy_requeue`]) and give up loudly — library
+/// event + the triggering run marked failed — only after the retry budget
+/// comfortably outlasts the longest mutex TTL. A busy lock is not an
+/// error, so the handler returns `Ok` after requeueing; only a failed push
+/// becomes `Err` so apalis retries the original task instead of losing it.
+async fn requeue_busy(state: &AppState, job: &RewriteIssueSidecarsJob) -> Result<(), BoxDynError> {
     use apalis::prelude::TaskSink;
-    if job.attempt >= BUSY_MAX_ATTEMPTS {
-        tracing::error!(
-            issue_id = %job.issue_id,
-            attempts = job.attempt,
-            "sidecar writeback: rewrite lock still busy after retry budget; dropping write",
-        );
-        if let Ok(Some(row)) = issue::Entity::find_by_id(job.issue_id.clone())
-            .one(&state.db)
-            .await
-        {
-            event_log::record(
-                &state.db,
-                NewEvent::new(
-                    row.library_id,
-                    Category::Archive,
-                    Action::Errored,
-                    Severity::Error,
-                    format!(
-                        "Sidecar writeback dropped for {}: rewrite lock busy",
-                        row.slug
-                    ),
-                )
-                .entity("issue", row.id.clone(), Some(row.slug.clone()))
-                .detail(serde_json::json!({
-                    "attempts": job.attempt,
-                    "triggering_run_id": job.triggering_run_id,
-                })),
+    let storage = state.jobs.rewrite_issue_sidecars_storage.clone();
+    let outcome =
+        busy_requeue::requeue_busy("sidecar writeback", &job.issue_id, job.attempt, |attempt| {
+            let mut next = job.clone();
+            next.attempt = attempt;
+            let mut storage = storage.clone();
+            async move {
+                storage
+                    .push(next)
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            }
+        })
+        .await?;
+    let Requeue::Exhausted { attempts } = outcome else {
+        return Ok(());
+    };
+    if let Ok(Some(row)) = issue::Entity::find_by_id(job.issue_id.clone())
+        .one(&state.db)
+        .await
+    {
+        event_log::record(
+            &state.db,
+            NewEvent::new(
+                row.library_id,
+                Category::Archive,
+                Action::Errored,
+                Severity::Error,
+                format!(
+                    "Sidecar writeback dropped for {}: rewrite lock busy",
+                    row.slug
+                ),
             )
-            .await;
-        }
-        return;
+            .entity("issue", row.id.clone(), Some(row.slug.clone()))
+            .detail(serde_json::json!({
+                "attempts": attempts,
+                "triggering_run_id": job.triggering_run_id,
+            })),
+        )
+        .await;
     }
-    // Pace the retry so a held lock isn't hammered.
-    tokio::time::sleep(BUSY_RETRY_DELAY).await;
-    let mut next = job.clone();
-    next.attempt += 1;
-    let mut storage = state.jobs.rewrite_issue_sidecars_storage.clone();
-    if let Err(e) = storage.push(next).await {
-        tracing::error!(
+    fail_triggering_run(
+        state,
+        job,
+        &format!("{RUN_ERROR_PREFIX} dropped: archive lock still busy after {attempts} requeues"),
+    )
+    .await;
+    Ok(())
+}
+
+/// Every `error_summary` this job writes starts with this, so a later
+/// success can tell its own failure apart from a search failure.
+const RUN_ERROR_PREFIX: &str = "sidecar rewrite";
+
+/// Mark the metadata run that queued this rewrite `failed` (status +
+/// `error_summary`) and tell any client waiting on it. Without this the
+/// batch view kept showing a dropped write as a complete, applied run
+/// (audit N-M7). No-op for jobs with no run (drift flush, manual edits).
+async fn fail_triggering_run(state: &AppState, job: &RewriteIssueSidecarsJob, error: &str) {
+    let Some(run_id) = job.triggering_run_id else {
+        return;
+    };
+    if let Err(e) = crate::metadata::orchestrator::fail_run(&state.db, run_id, error).await {
+        tracing::warn!(
+            run_id = %run_id,
             issue_id = %job.issue_id,
             error = %e,
-            "sidecar writeback: busy requeue push failed; write lost",
+            "sidecar writeback: could not mark the triggering run failed",
+        );
+    }
+    crate::metadata::apply::emit_failed_for_run(state, run_id, error).await;
+}
+
+/// Undo [`fail_triggering_run`] once a later attempt of the same rewrite
+/// succeeds. Only a run whose `error_summary` this job wrote
+/// ([`RUN_ERROR_PREFIX`]) is touched — a search failure stays failed.
+async fn clear_triggering_run_failure(state: &AppState, job: &RewriteIssueSidecarsJob) {
+    use crate::metadata::orchestrator::status;
+    let Some(run_id) = job.triggering_run_id else {
+        return;
+    };
+    let row = match metadata_run::Entity::find_by_id(run_id)
+        .one(&state.db)
+        .await
+    {
+        Ok(Some(row)) => row,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::warn!(run_id = %run_id, error = %e, "sidecar writeback: run lookup failed");
+            return;
+        }
+    };
+    let ours = row
+        .error_summary
+        .as_deref()
+        .is_some_and(|s| s.starts_with(RUN_ERROR_PREFIX));
+    if row.status != status::FAILED || !ours {
+        return;
+    }
+    let mut am: metadata_run::ActiveModel = row.into();
+    am.status = Set(status::COMPLETED.to_owned());
+    am.error_summary = Set(None);
+    am.finished_at = Set(Some(Utc::now().fixed_offset()));
+    if let Err(e) = am.update(&state.db).await {
+        tracing::warn!(
+            run_id = %run_id,
+            issue_id = %job.issue_id,
+            error = %e,
+            "sidecar writeback: could not clear the run's earlier failure",
         );
     } else {
-        tracing::info!(
-            issue_id = %job.issue_id,
-            attempt = job.attempt + 1,
-            "sidecar writeback: mutex busy; requeued",
-        );
+        tracing::info!(run_id = %run_id, issue_id = %job.issue_id, "sidecar writeback: retried rewrite landed; run completed again");
     }
 }
 
@@ -414,6 +557,21 @@ pub(crate) enum WritebackError {
     Db(#[from] sea_orm::DbErr),
     #[error("archive: {0}")]
     Archive(#[from] archive::ArchiveError),
+}
+
+impl WritebackError {
+    /// A refusal is an answer, not a failure: the archive can't take a
+    /// sidecar (format gate), the library forbids archive writes, or the
+    /// issue no longer exists. Retrying returns the same answer, so the
+    /// job completes instead of consuming the apalis budget. Everything
+    /// else — conversion, the rewrite itself, DB round-trips — may be a
+    /// transient NAS / disk / connection fault and is retried.
+    pub(crate) fn is_refusal(&self) -> bool {
+        matches!(
+            self,
+            Self::IssueGone(_) | Self::WritebackDisabled(_) | Self::UnsupportedFormat(_)
+        )
+    }
 }
 
 /// Why the sidecar path can't take `file_path` in `lib`, or `None` when it
@@ -807,14 +965,16 @@ async fn enqueue_scoped_rescan(
     Ok(())
 }
 
+/// `disposition` is `Some` exactly when `outcome` is `Err`.
 async fn audit_writeback(
     state: &AppState,
     job: &RewriteIssueSidecarsJob,
     outcome: &Result<RewriteResult, WritebackError>,
+    disposition: Option<FailureDisposition>,
 ) {
     // Library stream (observability-split M3b): durable manifest row for the
     // sidecar rewrite, independent of the audit trail below.
-    record_writeback_manifest(state, job, outcome).await;
+    record_writeback_manifest(state, job, outcome, disposition).await;
 
     let payload = match outcome {
         Ok(r) => serde_json::json!({
@@ -829,6 +989,7 @@ async fn audit_writeback(
         Err(e) => serde_json::json!({
             "issue_id": job.issue_id,
             "error": e.to_string(),
+            "disposition": disposition.map(|d| format!("{d:?}")),
             "triggering_run_id": job.triggering_run_id,
             "triggering_run_ordinal": job.triggering_run_ordinal,
         }),
@@ -861,10 +1022,15 @@ async fn audit_writeback(
 /// Emit an `archive` library-event for a sidecar writeback. `triggering_run_id`
 /// is a metadata-run id (not a scan run), so it goes in `detail` rather than
 /// the `scan_run_id` FK column; the event carries no scan link.
+///
+/// A failure's severity follows its [`FailureDisposition`]: an attempt
+/// apalis will retry is a `warning`; a refusal and the last budgeted
+/// attempt — the two cases where the write is really gone — are `error`.
 async fn record_writeback_manifest(
     state: &AppState,
     job: &RewriteIssueSidecarsJob,
     outcome: &Result<RewriteResult, WritebackError>,
+    disposition: Option<FailureDisposition>,
 ) {
     match outcome {
         Ok(r) => {
@@ -900,18 +1066,39 @@ async fn record_writeback_manifest(
                 return;
             };
             let series = series_name(state, row.series_id).await;
+            let (severity, summary) = match disposition {
+                Some(FailureDisposition::Retrying { attempt }) => (
+                    Severity::Warning,
+                    format!(
+                        "Sidecar writeback failed for {}; retrying (attempt {attempt} of {JOB_MAX_ATTEMPTS})",
+                        row.slug
+                    ),
+                ),
+                Some(FailureDisposition::Final { attempts }) => (
+                    Severity::Error,
+                    format!(
+                        "Sidecar writeback failed for {} after {attempts} attempts",
+                        row.slug
+                    ),
+                ),
+                Some(FailureDisposition::Refused) | None => (
+                    Severity::Error,
+                    format!("Sidecar writeback refused for {}", row.slug),
+                ),
+            };
             event_log::record(
                 &state.db,
                 NewEvent::new(
                     row.library_id,
                     Category::Archive,
                     Action::Errored,
-                    Severity::Error,
-                    format!("Sidecar writeback failed for {}", row.slug),
+                    severity,
+                    summary,
                 )
                 .entity("issue", row.id.clone(), Some(row.slug.clone()))
                 .detail(serde_json::json!({
                     "error": e.to_string(),
+                    "disposition": disposition.map(|d| format!("{d:?}")),
                     "series": series,
                     "path": row.file_path,
                     "triggering_run_id": job.triggering_run_id,

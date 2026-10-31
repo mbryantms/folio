@@ -679,8 +679,18 @@ drop the legacy DB-direct apply branch — flag a maintainer.
 - **Rewrite stuck on a busy archive**: per-issue Redis mutex
   `archive:rewrite:<issue_id>` with 120s TTL. A crashed worker
   releases on TTL; a still-running rewrite holds the lock until it
-  finishes. Subsequent applies for the same issue skip with
-  `archive busy (mutex)` in `ApplyOutcome.sidecar_skip_reasons`.
+  finishes. A series fan-out skips a locked issue with
+  `archive busy (mutex)` in `ApplyOutcome.sidecar_skip_reasons`; a
+  queued rewrite or apply job instead requeues itself every 5 s for up
+  to 40 tries and, if the lock never frees, drops the write with an
+  `error` row in Library activity and the run marked **failed**.
+- **Rewrite failed (NAS offline, disk full, read-only share)**: the
+  job is retried up to 5 times by the queue; each attempt leaves a
+  `warning` row in Library activity. After the last one the run shows
+  **failed** with the error, the row is `error`, and the job sits in
+  the queue's dead set on `/admin/background-work`, where **Retry**
+  re-runs it once the share is back. A CBR / CB7 the library may not
+  convert is refused, not retried.
 
 ### Coverage after series matches (`/admin/metadata` → Settings)
 
