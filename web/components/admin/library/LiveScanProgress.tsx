@@ -446,7 +446,7 @@ export function LiveScanProgress({ libraryId }: { libraryId: string }) {
             </span>
           </div>
           {determinate || displayStatus === "idle" ? (
-            <Progress value={displayPct} />
+            <Progress value={displayPct} aria-label="Scan progress" />
           ) : (
             <div className="bg-muted h-2 w-full overflow-hidden rounded-full">
               <div className="bg-primary h-full w-1/3 animate-pulse rounded-full" />
@@ -457,7 +457,9 @@ export function LiveScanProgress({ libraryId }: { libraryId: string }) {
         </CardContent>
       </Card>
 
-      <dl className="grid grid-cols-2 gap-3 text-xs md:grid-cols-4">
+      {/* A list, not a <dl>: each tile is a Card, and a description list
+          allows only dt/dd groups (or one div) as direct children. */}
+      <ul role="list" className="grid grid-cols-2 gap-3 text-xs md:grid-cols-4">
         <Metric
           icon={Activity}
           label="Series scanned"
@@ -486,7 +488,7 @@ export function LiveScanProgress({ libraryId }: { libraryId: string }) {
           label="Health issues"
           value={metricValues.health}
         />
-      </dl>
+      </ul>
 
       <Tabs defaultValue="activity" className="space-y-4">
         <TabsList>
@@ -853,7 +855,10 @@ function ThumbnailWorkPanel({
                   / {d.total}
                 </span>
               </span>
-              <Progress value={percent} />
+              <Progress
+                value={percent}
+                aria-label="Cover thumbnails progress"
+              />
             </div>
           </div>
 
@@ -887,7 +892,10 @@ function ThumbnailWorkPanel({
                   / {pageTotal}
                 </span>
               </span>
-              <Progress value={pagePercent} />
+              <Progress
+                value={pagePercent}
+                aria-label="Page thumbnails progress"
+              />
               <p className="text-muted-foreground text-xs">
                 {!coversReady && pageTotal > 0
                   ? "Waiting for covers to finish before page thumbnail work."
@@ -1299,19 +1307,21 @@ function Metric({
   value: number | string;
 }) {
   return (
-    <Card>
-      <CardContent className="flex items-center gap-3 p-4">
-        <Icon className="text-muted-foreground size-4 shrink-0" />
-        <div className="min-w-0">
-          <dt className="text-muted-foreground truncate text-[10px] font-medium tracking-widest uppercase">
-            {label}
-          </dt>
-          <dd className="text-foreground text-base font-semibold tabular-nums">
-            {value}
-          </dd>
-        </div>
-      </CardContent>
-    </Card>
+    <li>
+      <Card>
+        <CardContent className="flex items-center gap-3 p-4">
+          <Icon className="text-muted-foreground size-4 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-muted-foreground truncate text-[10px] font-medium tracking-widest uppercase">
+              {label}
+            </p>
+            <p className="text-foreground text-base font-semibold tabular-nums">
+              {value}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    </li>
   );
 }
 

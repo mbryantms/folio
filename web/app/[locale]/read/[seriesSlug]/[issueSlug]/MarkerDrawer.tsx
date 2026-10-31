@@ -68,7 +68,7 @@ export function MarkerDrawer({
   const itemRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
   const activeIdx = Math.min(active, Math.max(0, items.length - 1));
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLUListElement>) => {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
     if (!DRAWER_NAV_KEYS.has(e.key)) return;
     e.stopPropagation();
     const next = nextDrawerIndex(e.key, activeIdx, items.length);
@@ -109,11 +109,7 @@ export function MarkerDrawer({
               No markers on this issue yet.
             </p>
           ) : (
-            <ul
-              aria-label="Markers in this issue"
-              className="space-y-1 px-2"
-              onKeyDown={onKeyDown}
-            >
+            <ul aria-label="Markers in this issue" className="space-y-1 px-2">
               {items.map((m, i) => {
                 const Icon = KIND_ICON[m.kind];
                 const snippet = drawerSnippet(m);
@@ -128,6 +124,7 @@ export function MarkerDrawer({
                       tabIndex={i === activeIdx ? 0 : -1}
                       aria-current={here ? "page" : undefined}
                       onFocus={() => setActive(i)}
+                      onKeyDown={onKeyDown}
                       onClick={() => onJump(m.page_index)}
                       className={cn(
                         "hover:bg-accent/40 focus-visible:ring-ring flex w-full items-start gap-3 rounded-md px-3 py-2 text-left focus-visible:ring-2 focus-visible:outline-none",

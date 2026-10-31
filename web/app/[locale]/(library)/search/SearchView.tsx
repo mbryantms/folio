@@ -316,6 +316,9 @@ export function SearchView({
             onChange={(e) => setRaw(e.target.value)}
             placeholder="Search series, issues, people, characters, places…"
             aria-label="Search the library"
+            // The page is the search box: focus lands where every search
+            // engine puts it, and on phones that is what opens the keyboard.
+            // eslint-disable-next-line jsx-a11y/no-autofocus
             autoFocus
             className="placeholder:text-muted-foreground w-full bg-transparent text-sm focus:outline-none"
           />

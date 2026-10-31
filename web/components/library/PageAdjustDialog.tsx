@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
+import { Slider } from "@/components/folio/slider";
 import { applyChain, type RgbaImage } from "@/lib/image-transforms";
 import type { TransformStep } from "@/lib/api/types";
 
@@ -344,6 +344,7 @@ export function PageAdjustDialog({
                 min={0}
                 max={255}
                 step={1}
+                thumbLabel={["Black point", "White point"]}
                 onValueChange={([a, b]) => {
                   if (a === undefined || b === undefined) return;
                   setLo(Math.min(a, b));
@@ -436,6 +437,7 @@ function AdjustSlider({
         min={min}
         max={max}
         step={step}
+        thumbLabel={label}
         onValueChange={([v]) => {
           if (v !== undefined) onChange(v);
         }}

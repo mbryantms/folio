@@ -429,13 +429,15 @@ function MobileMoveButtons({
   onDown?: () => void;
 }) {
   return (
+    // 24px tall each (WCAG 2.5.8 minimum target size); the pair stacks
+    // inside the row's height.
     <div className="flex shrink-0 flex-col gap-0.5 sm:hidden">
       <button
         type="button"
         onClick={onUp}
         disabled={!onUp}
         aria-label="Move up"
-        className="text-muted-foreground hover:text-foreground flex h-4 w-7 items-center justify-center rounded-sm disabled:opacity-30"
+        className="text-muted-foreground hover:text-foreground flex h-6 w-7 items-center justify-center rounded-sm disabled:opacity-30"
       >
         <ChevronUp className="size-3" />
       </button>
@@ -444,7 +446,7 @@ function MobileMoveButtons({
         onClick={onDown}
         disabled={!onDown}
         aria-label="Move down"
-        className="text-muted-foreground hover:text-foreground flex h-4 w-7 items-center justify-center rounded-sm disabled:opacity-30"
+        className="text-muted-foreground hover:text-foreground flex h-6 w-7 items-center justify-center rounded-sm disabled:opacity-30"
       >
         <ChevronDown className="size-3" />
       </button>

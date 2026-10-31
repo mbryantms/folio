@@ -42,6 +42,9 @@ export type ComboboxProps = {
   triggerClassName?: string;
   contentClassName?: string;
   disabled?: boolean;
+  /** Accessible name of the trigger. `role="combobox"` takes no name from
+   *  its content, so a combobox outside a labelled form field needs one. */
+  "aria-label"?: string;
 };
 
 export function Combobox({
@@ -56,6 +59,7 @@ export function Combobox({
   triggerClassName,
   contentClassName,
   disabled,
+  "aria-label": ariaLabel,
 }: ComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const selected = options.find((opt) => opt.value === value);
@@ -73,6 +77,7 @@ export function Combobox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
+          aria-label={ariaLabel}
           disabled={disabled}
           className={cn(
             "w-full justify-between font-normal",

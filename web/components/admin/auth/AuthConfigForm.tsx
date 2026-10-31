@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { AlertTriangle, Search, ShieldCheck } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +35,8 @@ export type AuthConfigInitial = {
 type FormState = AuthConfigInitial & { oidc_client_secret_input: string };
 
 export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
+  // Prefix for the switch ids their labels point at.
+  const ids = useId();
   const [state, setState] = useState<FormState>({
     ...initial,
     oidc_client_secret_input: "",
@@ -165,13 +167,16 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between">
               <div>
-                <Label className="text-sm">Self-serve registration</Label>
+                <Label htmlFor={`${ids}-registration`} className="text-sm">
+                  Self-serve registration
+                </Label>
                 <p className="text-muted-foreground text-xs">
                   When off, the sign-up form is hidden. New users must be
                   invited or provisioned by an admin.
                 </p>
               </div>
               <Switch
+                id={`${ids}-registration`}
                 checked={state.registration_open}
                 onCheckedChange={(v) =>
                   setState((s) => ({ ...s, registration_open: v }))
@@ -275,7 +280,9 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
               className={`flex items-center justify-between rounded-md border p-3 ${statusTone("warning")}`}
             >
               <div>
-                <Label className="text-sm">Trust unverified email</Label>
+                <Label htmlFor={`${ids}-trust-email`} className="text-sm">
+                  Trust unverified email
+                </Label>
                 <p className={`text-xs ${statusToneText("warning")}`}>
                   When ON, accept the `email` claim even if{" "}
                   <code>email_verified</code> is false. Materially weakens
@@ -284,6 +291,7 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
                 </p>
               </div>
               <Switch
+                id={`${ids}-trust-email`}
                 checked={state.oidc_trust_unverified_email}
                 onCheckedChange={(v) =>
                   setState((s) => ({
@@ -309,7 +317,7 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
               className={`flex items-center justify-between rounded-md border p-3 ${statusTone("warning")}`}
             >
               <div>
-                <Label className="text-sm">
+                <Label htmlFor={`${ids}-auto-link`} className="text-sm">
                   Auto-link local accounts by verified email
                 </Label>
                 <p className={`text-xs ${statusToneText("warning")}`}>
@@ -320,6 +328,7 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
                 </p>
               </div>
               <Switch
+                id={`${ids}-auto-link`}
                 checked={state.oidc_link_local_by_verified_email}
                 onCheckedChange={(v) =>
                   setState((s) => ({

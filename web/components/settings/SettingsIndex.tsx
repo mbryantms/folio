@@ -27,7 +27,7 @@ export function SettingsIndex() {
 
       {sections.map((section) => (
         <section key={section.label} className="space-y-3">
-          <h2 className="text-muted-foreground/70 text-[11px] font-medium tracking-widest uppercase">
+          <h2 className="text-muted-foreground text-[11px] font-medium tracking-widest uppercase">
             {section.label}
           </h2>
           <ul
@@ -53,7 +53,7 @@ export function SettingsIndex() {
 
       {isAdmin ? (
         <section className="space-y-3">
-          <h2 className="text-muted-foreground/70 text-[11px] font-medium tracking-widest uppercase">
+          <h2 className="text-muted-foreground text-[11px] font-medium tracking-widest uppercase">
             About
           </h2>
           <ul

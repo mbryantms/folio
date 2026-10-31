@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -17,7 +17,7 @@ import {
   FormMessage,
 } from "@/components/folio/form";
 import { Input } from "@/components/ui/input";
-import { Slider } from "@/components/ui/slider";
+import { Slider } from "@/components/folio/slider";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TagInput } from "./TagInput";
@@ -393,6 +393,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                       min={0}
                       max={365}
                       step={1}
+                      thumbLabel="Soft-delete window, days"
                       value={[field.value ?? 7]}
                       onValueChange={(v) => field.onChange(v[0])}
                     />
@@ -435,7 +436,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                 <FormItem
                   className={cn(
                     "flex items-start justify-between gap-6",
-                    mountReadOnly && !field.value && "opacity-60",
+                    mountReadOnly && !field.value && "opacity-80",
                   )}
                 >
                   <div className="space-y-1">
@@ -464,7 +465,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                   <FormItem
                     className={cn(
                       "flex items-start justify-between gap-6",
-                      masterOff && "opacity-60",
+                      masterOff && "opacity-80",
                     )}
                   >
                     <div className="space-y-1">
@@ -498,7 +499,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                   <FormItem
                     className={cn(
                       "flex items-start justify-between gap-6",
-                      masterOff && "opacity-60",
+                      masterOff && "opacity-80",
                     )}
                   >
                     <div className="space-y-1">
@@ -534,7 +535,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                   <FormItem
                     className={cn(
                       "flex items-start justify-between gap-6",
-                      masterOff && "opacity-60",
+                      masterOff && "opacity-80",
                     )}
                   >
                     <div className="space-y-1">
@@ -825,6 +826,7 @@ function ThumbnailSettingsCard({
   onCoverQualityChange: (quality: number) => void;
   onPageQualityChange: (quality: number) => void;
 }) {
+  const enabledLabelId = useId();
   if (loading) return <Skeleton className="h-48 w-full" />;
 
   return (
@@ -847,7 +849,10 @@ function ThumbnailSettingsCard({
 
         <div className="flex items-start justify-between gap-6">
           <div className="space-y-1">
-            <p className="text-foreground text-sm font-medium">
+            <p
+              id={enabledLabelId}
+              className="text-foreground text-sm font-medium"
+            >
               Generate thumbnails
             </p>
             <p className="text-muted-foreground text-sm">
@@ -856,6 +861,7 @@ function ThumbnailSettingsCard({
             </p>
           </div>
           <Switch
+            aria-labelledby={enabledLabelId}
             checked={enabled}
             disabled={disabled}
             onCheckedChange={onEnabledChange}
@@ -885,7 +891,7 @@ function ThumbnailSettingsCard({
                     active
                       ? "border-primary bg-primary/5 text-foreground"
                       : "border-border bg-background text-muted-foreground hover:text-foreground",
-                    (disabled || !enabled) && "opacity-60",
+                    (disabled || !enabled) && "opacity-80",
                   )}
                 >
                   <div className="font-medium tracking-wide uppercase">
@@ -966,6 +972,7 @@ function ThumbnailQualitySlider({
         min={0}
         max={100}
         step={1}
+        thumbLabel={label}
         value={[draft]}
         disabled={disabled}
         onValueChange={(next) => setDraft(next[0] ?? 0)}

@@ -129,6 +129,14 @@ Default admin (first registered user becomes admin):
   first-user admin role. Fixture series come from
   `web/tests/e2e/fixtures/make-library.mjs` (bump `FIXTURE_SERIES` in
   `support/admin.ts` when adding one).
+  **a11y gates:** [`a11y.spec.ts`](web/tests/e2e/a11y.spec.ts) runs axe
+  (WCAG 2.2 AA tags, `support/axe.ts`) over every HTML route at desktop
+  and phone width — a new page is one line in its `ROUTES` table; a
+  violation that needs a design decision is excluded per route (an
+  `exclude` selector or `disableRules`) with the finding named, never by
+  loosening the tags.
+  `eslint-plugin-jsx-a11y` (`recommended`) is the static half; its
+  configured rules carry their justification in `eslint.config.mjs`.
 - CBR tests run against the committed `fixtures/synthetic-3page.cbr`
   (RAR5, stored entries, written by `fixtures/make-cbr-fixture.py`);
   drop any real `.cbr` under `fixtures/` to exercise compressed archives.
