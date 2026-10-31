@@ -1511,7 +1511,7 @@ uncached ⇒ note and no fetch); the links (created, deduplicated against
   or they drift.
 
 - **Touching the matcher weights?** The `metadata.auto_apply_threshold`
-  setting (default 95) is calibrated against the current weight
+  setting (default 80) is calibrated against the current weight
   table. Rebalancing weights without revisiting the threshold breaks
   HIGH-bucket semantics across every existing `metadata_run_candidate`
   row.

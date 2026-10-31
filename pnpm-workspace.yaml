@@ -45,11 +45,6 @@ pmOnFail: ignore
 # osv-scanner.toml for the daily OSV sweep). Revisit every dep-bump pass.
 auditConfig:
   ignoreGhsas:
-    # braces <=3.0.3 stack-exhaustion DoS (high). No patched release exists
-    # (3.0.3 is the latest). Dev-only: eslint-config-next /
-    # @next/eslint-plugin-next > fast-glob > micromatch > braces. Accepted
-    # 2026-10-03; delete when braces ships a fix.
-    - GHSA-vfj7-8cjw-p6xm
     # deepmerge <=4.3.1 prototype poisoning in mergeObject() (low,
     # CVE-2026-93753). No patched release exists (4.3.1 is the latest).
     # Dev-only: shadcn 4.22.1 CLI > @shadcn/registry > deepmerge, run by

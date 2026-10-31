@@ -455,8 +455,12 @@ Default admin (first registered user becomes admin):
   issue page renders those. **Reviewer heuristic:** reject a web change
   that splits `issue.writer` / `characters` / … client-side (use the
   lists), and a server change that reads a CSV column as the source
-  for anything a junction table holds. `split_csv` (server) and
-  `lib/metadata/csv.ts` (web, list views only) must stay twins.
+  for anything a junction table holds. The one CSV-column splitter is
+  `metadata_rollup::split_csv` (semicolon-aware, strips tagger ids,
+  reattaches generational suffixes such as `, Jr.`); the sidecar
+  composer's private bare-comma copy in `sidecar_compose.rs` is a known
+  violation that remediation WP A1 removes — don't add another. (The
+  `split_csv` in `api/series.rs` splits query-param lists, not metadata.)
 
 - **Cover-image perceptual hashes** (metadata-providers-1.0 M9):
   every new cover (provider-applied or scanner-extracted) gets

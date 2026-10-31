@@ -164,7 +164,7 @@ Exit: any scanner mistake is fixable in-app; hand edits reach the archive safely
 
 Exit: a 50k-issue NAS library imports in a predictable time, new files appear without cron, mismatches and duplicates are findings you can act on, and the hot list queries have measured plans.
 
-**Status (2026-09-30): all eight WPs merged.** PRs: 3.1 #902 · 3.2 #903 · 3.3 #900 · 3.4 #897 · 3.5 #898 (purge off by default) · 3.6 #904 · 3.7 #901 (`breaking-change`: `issue.user_edited` removed; `field_provenance` is the only pin store) · 3.8 #899, plus the cover-slot uniqueness fix #905 found along the way. #903's post-hash dedupe respects `dedupe_by_content`, made live by #900.
+**Status (2026-09-30): all eight WPs merged.** PRs: 3.1 #902 · 3.2 #903 · 3.3 #900 · 3.4 #897 · 3.5 #898 (hard purge on by default: a confirmed removal is purged after `soft_delete_days` × `library.hard_purge_multiplier` = 30 × 2 = 60 days; multiplier `0` turns it off) · 3.6 #904 · 3.7 #901 (`breaking-change`: `issue.user_edited` removed; `field_provenance` is the only pin store) · 3.8 #899, plus the cover-slot uniqueness fix #905 found along the way. #903's post-hash dedupe respects `dedupe_by_content`, made live by #900.
 
 | WP | Title | Effort | Audit | Scope | Files | Done when |
 |---|---|---|---|---|---|---|

@@ -74,6 +74,25 @@ through `/admin/metadata` → **Settings** tab (or via
 as first-boot env bootstraps like the other provider keys (the DB value
 wins once saved).
 
+### Local database files (`/admin/metadata` → Providers → Local file)
+
+| Setting | Type | Default | Notes |
+|---|---|---|---|
+| `metadata.gcd.local_path` | string | — | Path to the operator's SQLite copy of the GCD dump. Folio opens it read-only and never downloads one. |
+| `metadata.gcd.local_mode` | string | `off` | `off` \| `prefer_local` \| `local_only` — how the GCD provider is meant to use the file. |
+| `metadata.comicvine.local_path` | string | — | Path to an operator-supplied "Local ComicVine" SQLite file. |
+| `metadata.comicvine.local_mode` | string | `off` | Same three values, for ComicVine. |
+
+These four are stored, shown and probed (`POST
+/admin/metadata/providers/{id}/local/test` reports whether the file opens
+and what it holds), but **no provider reads them yet**: searches and
+applies still go to the live APIs whatever the mode says. The GCD and
+ComicVine local backends are the next slices of
+[local-metadata-databases.md](local-metadata-databases.md) (M2 / M3).
+`COMIC_GCD_LOCAL_PATH` / `COMIC_GCD_LOCAL_MODE` /
+`COMIC_COMICVINE_LOCAL_PATH` / `COMIC_COMICVINE_LOCAL_MODE` are the env
+bootstraps.
+
 ### Weekly refresh + staleness (`/admin/metadata` → Settings)
 
 | Setting | Type | Default | Notes |
@@ -116,6 +135,15 @@ Review tab. Nothing is written without your review, **unless** the
 library's existing *auto-apply strong matches* rule applies (a single
 strong match, from a non-manual run — the refresh runs as
 `bulk_action` / `weekly_refresh`).
+
+### Matching thresholds, cover fetching, merge order (`/admin/metadata` → Settings)
+
+| Setting | Type | Default | Notes |
+|---|---|---|---|
+| `metadata.auto_apply_threshold` | uint | 80 | Text-fallback score (0–100) at or above which a candidate is bucketed HIGH. Only consulted when neither side has a cover hash — cover pHash decides first ([matching-accuracy.md](matching-accuracy.md)). |
+| `metadata.match_medium_threshold` | uint | 60 | Text-fallback score at or above which a candidate short of HIGH is bucketed MEDIUM; below it is LOW. |
+| `metadata.alternate_cover_fetch_cap` | uint | 3 | Alternate-cover URLs fetched and hashed per candidate on top of the primary cover; `0` hashes primaries only. **No UI field** — set it with `PATCH /api/admin/settings` or the `COMIC_METADATA_ALTERNATE_COVER_FETCH_CAP` env bootstrap. |
+| `metadata.merge.provider_preference` | string | — | Comma-separated provider order (`metron,comicvine,gcd`) used as the tiebreaker when several providers offer a value for the same field in a composite merge; empty = Metron, ComicVine, GCD. Sets only the default per-field source — the compare view still overrides per field. **No UI field** — `PATCH /api/admin/settings` or `COMIC_METADATA_MERGE_PROVIDER_PREFERENCE`. |
 
 ## Operations
 

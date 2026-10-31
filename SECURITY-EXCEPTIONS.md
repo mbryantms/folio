@@ -15,20 +15,6 @@ Each entry is listed in `pnpm-workspace.yaml` `auditConfig.ignoreGhsas` (the
 `scripts/ci/check-advisory-ignores.py` fails CI when the two lists disagree;
 see `docs/dev/dependency-management.md`, "Accepted advisories".
 
-### GHSA-vfj7-8cjw-p6xm — `braces` <=3.0.3 stack-exhaustion DoS (high)
-
-- **Accepted:** 2026-10-03.
-- **Why no fix:** no patched release exists; 3.0.3 is the latest `braces`, so
-  there is nothing to pin an override to.
-- **Reach:** dev dependencies only —
-  `eslint-config-next` / `@next/eslint-plugin-next` > `fast-glob` >
-  `micromatch` > `braces`. It runs during linting over the repository's own
-  glob patterns, never on user input, and is not in the production images
-  (`pnpm audit --prod` is clean).
-- **Delete when:** `braces` ships a patched release (then remove the ignore
-  from both files and let the lockfile pick it up, adding an override if a
-  consumer's range pins the old version).
-
 ### GHSA-gcqx-w48m-w2h4 — `deepmerge` <=4.3.1 prototype poisoning (low)
 
 - **Accepted:** 2026-10-30 (CVE-2026-93753; Dependabot alert 9).
@@ -46,6 +32,14 @@ see `docs/dev/dependency-management.md`, "Accepted advisories".
   `@shadcn/registry` stops depending on it (`pnpm why deepmerge` empty).
 
 ## Resolved
+
+The `braces` <=3.0.3 stack-exhaustion advisory (GHSA-vfj7-8cjw-p6xm, high) was
+accepted on 2026-10-03 because no patched release existed (dev-only reach:
+`eslint-config-next` / `@next/eslint-plugin-next` > `fast-glob` > `micromatch`
+> `braces`). GitHub **withdrew the advisory on 2026-10-23**
+(`gh api /advisories/GHSA-vfj7-8cjw-p6xm` reports `withdrawn_at`). A withdrawn
+advisory matches nothing, so the ignore left `pnpm-workspace.yaml` and
+`osv-scanner.toml` on 2026-10-31; `braces` stays at 3.0.3 on the lint path.
 
 The `brace-expansion` DoS pair (GHSA-mh99-v99m-4gvg, and GHSA-rgw5-rvv9-x895
 which bypasses the first one's mitigation) was accepted for the 1.1.x / 2.1.x

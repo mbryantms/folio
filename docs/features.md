@@ -88,9 +88,12 @@ A one-tap per-series toggle in the reader overrides the whole chain.
   to first/last, and vim users get `g g` / `Shift+G`. `Shift+N` /
   `Shift+P` move between issues.
 - On touch: swipe to turn, tap zones (left / chrome-toggle center / right),
-  and native pinch zoom — Folio deliberately hands zoom to the browser so
-  you can magnify lettering, and suppresses swipe-to-turn while zoomed so
-  panning a zoomed page never accidentally flips it.
+  and pinch zoom. Today Folio hands pinch to the browser so you can
+  magnify lettering, and suppresses swipe-to-turn while zoomed so panning
+  a zoomed page never accidentally flips it; the fixed chrome scales with
+  the page. Planned (remediation WP C5): pinch as a transform zoom that
+  leaves the chrome where it is, and chrome shown on the first open on
+  touch devices — hide it once and the choice sticks.
 - The page strip (`m`) is a horizontal thumbnail mini-map: click any page
   to jump, with the current page ringed and kept in view.
 
@@ -150,13 +153,17 @@ Finish an issue and a small card slides in from the page-turn edge (never
 covering the page) with the next thing to read. The resolver is
 context-aware, in priority order:
 
-1. **Reading list context** — if you entered the reader from a CBL list,
+1. **Collection context** — if you entered the reader from one of your
+   collections, next is the next *unfinished issue after this one in the
+   collection's order* (a series entry stands for its issues). A
+   collection edited mid-read falls through to the next branch.
+2. **Reading list context** — if you entered the reader from a CBL list,
    next is the next *unfinished entry in that list*, even if it jumps
    publishers and series (with "Issue 12 of 87 in DC Year One" shown on
    the card). That's the difference between reading a crossover event in
    list order and being dumped back into a series you weren't following.
-2. **Series order** — otherwise, the next unread issue in the series.
-3. **Caught up** — a friendly empty state when there's nothing left.
+3. **Series order** — otherwise, the next unread issue in the series.
+4. **Caught up** — a friendly empty state when there's nothing left.
 
 ---
 
@@ -168,12 +175,13 @@ context-aware, in priority order:
 |---|---|
 | `.cbz` (ZIP) | Full read + write |
 | `.cbt` (TAR) | Full read + write |
-| `.cbr` (RAR) | Read; converts to CBZ when edited (RAR can't be written) |
-| `.cb7` (7z) | Read; converted to CBZ on scan when the library opts in (7z can't be written); otherwise flagged in library health |
+| `.cbr` (RAR) | Converted to CBZ on scan when the library opts in (RAR can't be written); otherwise flagged in library health and left untouched |
+| `.cb7` (7z) | Converted to CBZ on scan when the library opts in (7z can't be written); otherwise flagged in library health and left untouched |
 
 Inside archives: JPEG, PNG, WebP, AVIF, GIF, and JPEG-XL pages.
-Password-protected archives are detected and flagged rather than silently
-skipped.
+Password-protected archives are detected — they ingest as page-less
+issues rather than abort the scan — and a library health finding that
+names them is planned (remediation WP B2).
 
 ### The scanner repairs archives other readers reject
 
@@ -208,14 +216,14 @@ been both moved *and* retagged still resolves to the same issue.
 
 - Flat (`Library/Series/`) and publisher-nested (`Library/Publisher/Series/`)
   layouts, auto-detected and mixable.
-- Per-library cron schedules, scan-on-startup, manual and scoped scans,
+- Per-library cron schedules, manual and scoped scans,
   ignore globs, and full scan history.
 - Optional per-library **file watching**: inotify on local disks, a light
   directory-mtime poll on NAS mounts (NFS / SMB / FUSE). Changes collapse
   into one scan of just the changed folders; the scan dashboard shows each
   library's watch mode and last trigger.
-- Twelve typed **library health issues** (malformed archive, empty folder,
-  unsupported format, encrypted archive, …) with automatic resolution when
+- Nineteen typed **library health issues** (malformed archive, empty folder,
+  unsupported format, duplicate content, …) with automatic resolution when
   the underlying problem is fixed.
 - Deleted files are **soft-deleted** with automatic restore if the file
   reappears — an unmounted NAS share doesn't wipe your read states.
@@ -227,14 +235,18 @@ been both moved *and* retagged still resolves to the same issue.
 
 ## Metadata
 
-### Two providers that stack, matched by cover art
+### Three providers that stack, matched by cover art
 
-Folio fetches from **ComicVine** and **Metron**, fanned out in priority
-order and merged — a search can show both providers' take on the same
-series so you choose which provenance to trust. Grand Comics Database,
-Marvel, and League of Comic Geeks IDs found in MetronInfo sidecars or
-folder tags (`[cv-12345]`, `[metron-67890]`, `[gcd-…]`) are ingested as
-external IDs, so a pre-tagged library lands already matched.
+Folio fetches from **ComicVine**, **Metron**, and the **Grand Comics
+Database**, fanned out in priority order and merged — a search can show
+each provider's take on the same series so you choose which provenance
+to trust. An operator can also register local database files (a GCD
+dump or a Local ComicVine SQLite file) on the providers page; Folio
+probes and reports on them today, and the providers answer from them in
+the next local-database slice. IDs found in MetronInfo sidecars
+(ComicVine, Metron, GCD, Marvel, League of Comic Geeks) or folder tags
+(`[cv-12345]`, `[metron-67890]`, `[gcd-…]`) are ingested as external
+IDs, so a pre-tagged library lands already matched.
 
 The matcher's primary signal is the **cover itself**. Every cover gets
 three 64-bit perceptual hashes, and candidate matching uses ComicTagger's
@@ -413,15 +425,16 @@ per-list opt-out to preserve curated orders).
   current and longest reading **streaks**, day-of-week and time-of-day
   patterns, reading pace, re-read counts, and most-read creators.
 - **Reading sessions** are captured with lightweight heartbeats and
-  sensible thresholds (a 5-second accidental open doesn't count), with a
-  full opt-out for the privacy-minded — and incognito mode for one-off
-  private reads.
+  sensible thresholds (a session counts once it has run 30 seconds and
+  turned 3 distinct pages — both per-user settings — so a short
+  accidental open doesn't), with a full opt-out for the privacy-minded —
+  and incognito mode for one-off private reads.
 - The **Reading Log** unifies finishes, completed sessions, and new
   bookmarks/notes into one reverse-chronological timeline.
 - **Series completion** is collector-aware: "Caught up — series ongoing"
-  is distinct from "Complete", and annuals/specials only count toward
-  completion if you want them to (per-user format preference, per-series
-  override).
+  is distinct from "Complete", and annuals/specials don't count toward
+  completion of the main run. Planned (remediation WP B9): a per-user
+  preference to count them, with a per-series override.
 
 ## Multi-user and self-hosting
 
@@ -430,7 +443,7 @@ per-list opt-out to preserve curated orders).
   Kids' libraries stay invisible, not just hidden, to accounts without
   access (denied lookups 404 so nothing leaks).
 - Local accounts (argon2id) and **OIDC/SSO** (Authentik, Dex, etc.), with
-  refresh-token rotation and reuse detection.
+  refresh-token rotation; a replayed refresh token is rejected.
 - **App passwords** per device/app, individually revocable, with
   last-used tracking.
 - A complete admin area: users, libraries, scan monitoring with live
@@ -444,10 +457,11 @@ per-list opt-out to preserve curated orders).
   guide, Prometheus metrics at `/metrics`, and backup docs.
 - The web app is an installable **PWA**, and the reader's first-load
   JavaScript is gated in CI so it stays fast on an iPad over Wi-Fi:
-  about 117 KB gzip of reader-route JS on top of the shared framework
-  runtime, with a 130 KB ceiling. Everything not needed to paint the
-  first page (chrome, settings, page strip, markers, end-of-issue card)
-  loads after it. Details in `docs/dev/pwa-performance.md`.
+  130.13 KB gzip of reader-route JS on top of the shared framework
+  runtime (measured 2026-10-15) under a 145 KB ceiling. Everything not
+  needed to paint the first page (chrome, settings, page strip, markers,
+  end-of-issue card) loads after it. Details and the budget table in
+  `docs/dev/pwa-performance.md`.
 
 ---
 
@@ -561,7 +575,7 @@ For the follow-up image/video pass, these are the moments that demo best:
 
 ---
 
-*Numbers and behavior current as of v0.27.x (July 2026). Performance
+*Numbers and behavior current as of v0.70 (2026-10-31). Performance
 figures are from the repository's measured baseline
 (`docs/dev/scanner-perf.md`) on developer hardware; your absolute numbers
 will vary with disk and CPU.*

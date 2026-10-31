@@ -274,6 +274,13 @@ The gate is now timestamp-aware in writeback libraries (both flags on):
 Non-writeback libraries are untouched: any provider row protects, as
 before. Tests: `crates/server/tests/writeback_provider_ingest.rs`.
 
+One column sits outside the gate on purpose: `issues.review` has no
+`MetadataField` slot and no provider writes it, so every scan re-reads it
+from the file (`process.rs`, `am.review = Set(info.review.clone())`) in
+every library, writeback or not. The archive's `<Review>` is its only
+source; a value written into the database by hand is replaced on the
+next scan.
+
 The preview pane's per-field opt-in is applied to the payload before
 composing (`mask_unselected_issue_fields`): an unticked row is blanked so
 the composer keeps the issue's own value for it. An absent or empty
@@ -281,7 +288,16 @@ the composer keeps the issue's own value for it. An absent or empty
 as before. The composite path's merged payload already carries only the
 kept fields. `mode` (fill-missing vs replace-all) is still not consulted
 by the composer — a ticked field is written even when the issue already
-has a value.
+has a value (remediation WP A6).
+
+**Primary cover (open gap, remediation WP A6).** The sidecar apply path
+does not apply the primary cover: `apply_cover` is honoured only by the
+DB-direct path (`apply.rs`, the `// Cover.` block after
+`bump_issue_sync`), and `PostRewriteWrites` carries provenance, variant
+covers, reprints and the sync stamp only. On a writeback library "Apply
+cover" therefore changes nothing for the primary cover today; WP A6 rides
+it on `PostRewriteWrites` so it lands with the other metadata-only rows
+after the rewrite has succeeded.
 
 **Stuck issues from before the fix.** An issue applied on an affected
 release has the provider value in its archive and the old one in its
