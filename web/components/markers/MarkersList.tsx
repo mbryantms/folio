@@ -1114,6 +1114,9 @@ function SeriesFilter({
       <Combobox
         value={value}
         onChange={(v) => onChange(v === value ? "" : v)}
+        aria-label={
+          active ? `Filter by series: ${active.name}` : "Filter by series"
+        }
         placeholder="Series"
         searchPlaceholder="Filter series…"
         emptyText="No series with markers."
@@ -1225,6 +1228,11 @@ function PageNoteRow({
     </div>
   );
   return (
+    // In select mode the whole row is an enlarged hit area for the
+    // SelectionCheckbox on the thumb, which is the keyboard / AT path;
+    // the row itself stays an <article> because it still holds the
+    // More / Less button and must not become a nested control.
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/click-events-have-key-events
     <article
       data-page-note-row=""
       data-selected={inSelect && selectMode?.isSelected ? "" : undefined}

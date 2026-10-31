@@ -6,6 +6,12 @@
  * additions. Violations are reduced to `{id, impact, help, targets}` before
  * the assertion so a failure diff names the rule and the offending
  * selectors instead of dumping axe's full result objects.
+ *
+ * `exclude` (CSS selectors) and `disableRules` (rule ids) are the
+ * per-surface escape hatches for a violation that needs a design decision:
+ * the caller names the finding next to the entry, every other element and
+ * rule on the surface stays checked, and nothing changes elsewhere. Prefer
+ * `exclude` — it leaves every rule running on the rest of the page.
  */
 import { expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
@@ -21,6 +27,7 @@ export const WCAG_TAGS = [
 export async function expectNoAxeViolations(
   page: Page,
   label: string,
+  options: { exclude?: string[]; disableRules?: string[] } = {},
 ): Promise<void> {
   // Let entry transitions (popover / dialog fade + zoom, tab slide) finish:
   // axe reads computed colours, and a half-faded element reports a
@@ -34,7 +41,14 @@ export async function expectNoAxeViolations(
           a.effect?.getTiming().iterations === Infinity,
       ),
   );
-  const results = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
+  let builder = new AxeBuilder({ page }).withTags(WCAG_TAGS);
+  for (const selector of options.exclude ?? []) {
+    builder = builder.exclude(selector);
+  }
+  if (options.disableRules?.length) {
+    builder = builder.disableRules(options.disableRules);
+  }
+  const results = await builder.analyze();
   const violations = results.violations.map((v) => ({
     id: v.id,
     impact: v.impact,

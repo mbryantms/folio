@@ -266,7 +266,9 @@ function LibraryRow({ lib }: { lib: LibraryWorkView }) {
         href={`/admin/libraries/${lib.slug}/scan`}
         className={cn(
           "hover:bg-muted/40 focus-visible:ring-ring -mx-2 grid gap-x-6 gap-y-3 rounded-md px-2 py-3 transition-colors focus-visible:ring-2 focus-visible:outline-none md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1.4fr)_auto]",
-          !lib.busy && "opacity-70",
+          // 80, not 70: the row's muted 12px text sits on a card and
+          // drops under 4.5:1 any dimmer.
+          !lib.busy && "opacity-80",
         )}
       >
         <div className="min-w-0">

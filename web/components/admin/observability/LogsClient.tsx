@@ -143,7 +143,14 @@ export function LogsClient() {
         ) : logs.error ? (
           <p className="text-destructive p-4 text-sm">Failed to load logs.</p>
         ) : logs.data && logs.data.entries.length > 0 ? (
-          <div className="max-h-[70vh] overflow-y-auto">
+          <div
+            role="region"
+            aria-label="Log entries"
+            // A scroll container needs focus to be scrollable from the
+            // keyboard (axe `scrollable-region-focusable`).
+            tabIndex={0}
+            className="focus-visible:ring-ring max-h-[70vh] overflow-y-auto rounded-md focus-visible:ring-2 focus-visible:outline-none"
+          >
             <ol className="divide-border divide-y">
               {/* Newest at the top mirrors a tail's natural reading order. */}
               {[...logs.data.entries].reverse().map((entry) => (

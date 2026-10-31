@@ -294,6 +294,9 @@ function PageJumpDisplay({
             min={1}
             max={totalPages}
             step={1}
+            // Inline editor opened by the page-counter button: focus moves
+            // into the field the user just asked for.
+            // eslint-disable-next-line jsx-a11y/no-autofocus
             autoFocus
             value={draft}
             onChange={(e) => setDraft(e.target.value)}

@@ -178,7 +178,9 @@ function BindingList({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                aria-label={`Change binding for ${KEYBIND_LABELS[action]}`}
+                // The visible chord leads the name (WCAG 2.5.3), then
+                // what pressing the button does.
+                aria-label={`${formatKey(current)}: change binding for ${KEYBIND_LABELS[action]}`}
                 onClick={() => onEdit(action)}
                 className="border-input bg-background hover:bg-secondary rounded border px-3 py-1.5 text-sm font-medium"
               >

@@ -626,6 +626,38 @@ direction · search 2.0 (typo tolerance, facets everywhere, entity palette).
 
 ## E. Accessibility
 
+> **a11y gates (2026-10-31, audit N-A9 / AC-5).** Two automated checks
+> guard this section's fixes. *Rendered:* `web/tests/e2e/a11y.spec.ts`
+> runs axe-core (WCAG 2.0/2.1 A+AA and 2.2 AA tags, `support/axe.ts`)
+> over every HTML route — home, browse, series and issue detail with
+> their tabs, search, bookmarks, downloads, collections, log, saved
+> views (system rail and a filter view), the entity indexes, every
+> settings page, every admin page, and the signed-out sign-in /
+> register / forgot / reset pages — once at desktop width and once at
+> phone width (375 px, touch, mobile UA), with the phone nav / sort /
+> view-options sheets opened as extra entries. The three reader states
+> live in `reader-flow.spec.ts` and the relationship surfaces in
+> `relationship-review.spec.ts`. Adding a route is one line in the
+> spec's `ROUTES` table (`PUBLIC_ROUTES` for a page that renders signed
+> out); dynamic segments come from the scanned fixture library, never a
+> hard-coded slug. A violation that needs a design decision is excluded
+> per route — an `exclude` selector for the element, or `disableRules`
+> for a rule — with the finding named in a comment, never by loosening
+> the tag set. It runs in CI inside `docker-smoke`
+> (`chromium-admin` project, the shared admin session from
+> `admin.setup.ts`); locally `just docker-build && just docker-e2e`
+> (`SMOKE_APP_PORT=18080` while `just dev` holds :8080), or
+> `PLAYWRIGHT_BASE_URL=http://localhost:18080 pnpm --filter web exec
+> playwright test a11y` against an already-running smoke stack.
+> *Static:* `eslint-plugin-jsx-a11y` (`recommended`) in
+> `web/eslint.config.mjs`, run by `pnpm --filter web run lint`; the four
+> rules configured there (`no-redundant-roles` for `<ul role="list">`,
+> `no-autofocus` ignoring the dialog-only `Input` / `Textarea` wrappers,
+> `label-has-associated-control` knowing `NativeSelect`,
+> `no-noninteractive-tabindex` allowing the `role="region"` scroll
+> containers) carry their justification in the config comment. Vendored `components/ui/*` is
+> never edited for either gate — fix the Folio wrapper or the usage.
+
 **E1. [High] [Accessibility] Hidden reader surfaces stay in the tab order (aria-hidden over focusable content)**
 - *Problem:* `ReaderChrome` (header, 6+ buttons), `PageStrip` (potentially
   *hundreds* of page-thumbnail buttons), `EndOfIssueCard`, and `TapZones`

@@ -43,7 +43,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/folio/sheet";
-import { Slider } from "@/components/ui/slider";
+import { Slider } from "@/components/folio/slider";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "any", label: "Any status" },
@@ -245,6 +245,7 @@ export function FilterSheet({
                   min={RATING_MIN}
                   max={RATING_MAX}
                   step={RATING_STEP}
+                  thumbLabel={["Minimum rating", "Maximum rating"]}
                   value={ratingDraft}
                   onValueChange={(v) => {
                     if (

@@ -9,7 +9,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/folio/popover";
-import { Slider } from "@/components/ui/slider";
+import { Slider } from "@/components/folio/slider";
 import { Switch } from "@/components/ui/switch";
 import { useCoverCollectionDot } from "@/components/library/use-cover-collection-dot";
 
@@ -115,12 +115,13 @@ export function CardSizeFields({
           min={min}
           max={max}
           step={step}
+          thumbLabel="Card size"
           value={[cardSize]}
           onValueChange={(v) => {
             if (v[0] !== undefined) onCardSize(v[0]);
           }}
         />
-        <div className="text-muted-foreground/70 flex justify-between text-[10px] tracking-wider uppercase">
+        <div className="text-muted-foreground flex justify-between text-[10px] tracking-wider uppercase">
           <span>Compact</span>
           <span>Roomy</span>
         </div>

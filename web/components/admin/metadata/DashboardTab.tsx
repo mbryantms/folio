@@ -460,10 +460,12 @@ function StatCard({
   );
   if (!href) return <Card>{body}</Card>;
   return (
+    // Named from its content (label, value, accent) — an aria-label
+    // repeating them in another order fails WCAG 2.5.3 (visible text must
+    // be part of the name).
     <Link
       href={href}
       className="focus-visible:ring-ring block rounded-xl focus-visible:ring-2 focus-visible:outline-none"
-      aria-label={`${label}: ${value} — open the list`}
     >
       <Card className="hover:bg-muted/40 transition-colors">{body}</Card>
     </Link>

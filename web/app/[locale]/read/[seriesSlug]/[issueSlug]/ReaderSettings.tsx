@@ -8,7 +8,7 @@ import { useReaderStore, type FitMode } from "@/lib/reader/store";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
 import { SegmentedControl } from "@/components/settings/SegmentedControl";
 import { Separator } from "@/components/ui/separator";
-import { Slider } from "@/components/ui/slider";
+import { Slider } from "@/components/folio/slider";
 import { Switch } from "@/components/ui/switch";
 import {
   hasSeriesOverrides,
@@ -199,7 +199,7 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
             onValueChange={([next]) =>
               typeof next === "number" ? setBrightness(next) : undefined
             }
-            aria-label="Brightness"
+            thumbLabel="Brightness"
           />
         </div>
         <div className="space-y-1">
@@ -215,7 +215,7 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
             onValueChange={([next]) =>
               typeof next === "number" ? setSepia(next) : undefined
             }
-            aria-label="Sepia"
+            thumbLabel="Sepia"
           />
         </div>
         {brightness !== 1 || sepia !== 0 ? (

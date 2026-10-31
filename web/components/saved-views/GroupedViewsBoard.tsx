@@ -1029,50 +1029,60 @@ function BoardCard({
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn("group/card relative", isDragging && "opacity-40")}
-      // Native anchor/image drag would fight the pointer sensor.
-      onDragStart={(e) => e.preventDefault()}
-      onPointerDown={(e) => {
-        // Buttons / menu items keep plain clicks; everything else starts
-        // a drag after the sensor's distance threshold.
-        const el = e.target as Element;
-        if (el.closest("button, [role=menuitem], input, select, textarea"))
-          return;
-        pointerListeners.onPointerDown?.(e);
-      }}
-      onMouseDown={(e) => {
-        const el = e.target as Element;
-        if (el.closest("button, [role=menuitem], input, select, textarea"))
-          return;
-        pointerListeners.onMouseDown?.(e);
-      }}
-      onTouchStart={(e) => {
-        const el = e.target as Element;
-        if (el.closest("button, [role=menuitem], input, select, textarea"))
-          return;
-        pointerListeners.onTouchStart?.(e);
-      }}
-      onClickCapture={(e) => {
-        if (Date.now() < suppressClickUntil.current) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }}
     >
-      <button
-        type="button"
-        ref={setActivatorNodeRef}
-        {...attributes}
-        onKeyDown={onKeyDown}
-        aria-label={`Drag ${view.name}`}
-        className={cn(
-          "text-muted-foreground hover:text-foreground bg-background/80 focus-visible:ring-ring absolute top-2 left-1 z-10 inline-flex h-7 w-5 cursor-grab touch-none items-center justify-center rounded opacity-0 backdrop-blur transition-opacity group-hover/card:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none active:cursor-grabbing",
-          // Always visible on touch — there is no hover to reveal it.
-          "[@media(pointer:coarse)]:opacity-100",
-        )}
+      {/* The whole card is a pointer drag surface (the grip button is the
+          keyboard / AT path, `attributes` + `onKeyDown` below). The
+          listeners sit on a presentational wrapper so the list item keeps
+          its semantics; `contents` keeps the grip's absolute positioning
+          relative to the item. */}
+      <div
+        role="presentation"
+        className="contents"
+        // Native anchor/image drag would fight the pointer sensor.
+        onDragStart={(e) => e.preventDefault()}
+        onPointerDown={(e) => {
+          // Buttons / menu items keep plain clicks; everything else starts
+          // a drag after the sensor's distance threshold.
+          const el = e.target as Element;
+          if (el.closest("button, [role=menuitem], input, select, textarea"))
+            return;
+          pointerListeners.onPointerDown?.(e);
+        }}
+        onMouseDown={(e) => {
+          const el = e.target as Element;
+          if (el.closest("button, [role=menuitem], input, select, textarea"))
+            return;
+          pointerListeners.onMouseDown?.(e);
+        }}
+        onTouchStart={(e) => {
+          const el = e.target as Element;
+          if (el.closest("button, [role=menuitem], input, select, textarea"))
+            return;
+          pointerListeners.onTouchStart?.(e);
+        }}
+        onClickCapture={(e) => {
+          if (Date.now() < suppressClickUntil.current) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
       >
-        <GripVertical className="size-4" aria-hidden="true" />
-      </button>
-      {children}
+        <button
+          type="button"
+          ref={setActivatorNodeRef}
+          {...attributes}
+          onKeyDown={onKeyDown}
+          aria-label={`Drag ${view.name}`}
+          className={cn(
+            "text-muted-foreground hover:text-foreground bg-background/80 focus-visible:ring-ring absolute top-2 left-1 z-10 inline-flex h-7 w-5 cursor-grab touch-none items-center justify-center rounded opacity-0 backdrop-blur transition-opacity group-hover/card:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none active:cursor-grabbing",
+            // Always visible on touch — there is no hover to reveal it.
+            "[@media(pointer:coarse)]:opacity-100",
+          )}
+        >
+          <GripVertical className="size-4" aria-hidden="true" />
+        </button>
+        {children}
+      </div>
     </li>
   );
 }

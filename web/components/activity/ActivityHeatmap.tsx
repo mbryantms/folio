@@ -63,7 +63,12 @@ export function ActivityHeatmap({
     <figure className="space-y-2">
       <div
         ref={scrollRef}
-        className="max-w-full [scrollbar-width:thin] overflow-x-auto"
+        role="region"
+        aria-label="Reading heatmap, scrolls sideways"
+        // Overflows sideways on phones; focusable so the keyboard can scroll
+        // it (axe `scrollable-region-focusable`).
+        tabIndex={0}
+        className="focus-visible:ring-ring max-w-full [scrollbar-width:thin] overflow-x-auto rounded-md focus-visible:ring-2 focus-visible:outline-none"
       >
         <svg
           viewBox={`0 0 ${width} ${height}`}

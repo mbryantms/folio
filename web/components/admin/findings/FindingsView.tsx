@@ -239,7 +239,7 @@ function LibraryFilter({
   onChange: (v: string) => void;
 }) {
   return (
-    <div className="flex items-center gap-1.5">
+    <label className="flex items-center gap-1.5">
       <span className="text-muted-foreground mr-1 text-xs uppercase">
         Library
       </span>
@@ -252,7 +252,7 @@ function LibraryFilter({
           ...libraries.map((l) => ({ value: l.id, label: l.name })),
         ]}
       />
-    </div>
+    </label>
   );
 }
 
