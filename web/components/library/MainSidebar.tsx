@@ -4,16 +4,19 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ChevronDown, ChevronRight, Sparkles } from "lucide-react";
 
+import { ScanEventBeacon } from "@/components/admin/ScanEventBeacon";
 import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarHeader,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
   useSidebarCollapsed,
 } from "@/components/folio/sidebar";
 import { UserFooter } from "@/components/shell/UserFooter";
@@ -43,11 +46,23 @@ export function MainSidebar({
   const search = useSearchParams();
   const activeLibrary = search?.get("library") ?? null;
   const collapsed = useSidebarCollapsed();
+  const { isMobile } = useSidebar();
   const markerCount = useMarkerCount({ enabled: showMarkerCount });
   const sectionCollapse = useSidebarSectionCollapse();
 
   return (
     <>
+      {/* The scan beacon lives in the topbar from md up; below md the
+          library shell has no topbar (phone-layout rule 0), so the nav
+          sheet carries it for admins. Gated on `isMobile`, not a class:
+          each beacon opens its own socket, and the desktop rail must not
+          add a second one. The header pads only while a pill is showing
+          (the beacon renders an empty row at idle). */}
+      {isMobile && user.role === "admin" ? (
+        <SidebarHeader className="p-0 [&:has(div>*)]:p-2">
+          <ScanEventBeacon />
+        </SidebarHeader>
+      ) : null}
       <SidebarContent>
         <nav aria-label="Library navigation" className="flex flex-col gap-2">
           {sections.map((section, sectionIdx) => {

@@ -275,6 +275,21 @@
   --reader-top: var(--safe-top);
 }
 
+/* Phones and the sheet widths: the library shell has no topbar
+ * (`data-phone-topbar="hidden"` on its root, phone-chrome-1.0). The page's
+ * own control row is the top bar, so `--topbar-h` is just the status-bar
+ * inset and every `top-(--topbar-h)` row (PhoneControlsBar,
+ * StickyToolbarRow, SeriesTabs, the selection toolbar, AtoZScrubber) pins
+ * at the top of the viewport without a change of its own. Scoped to the
+ * shell so the admin / settings shell, which keeps its topbar below md,
+ * is unaffected. 48rem is Tailwind's `md`, the bottom tab bar's
+ * breakpoint. */
+@media (width < 48rem) {
+  [data-phone-topbar="hidden"] {
+    --topbar-h: var(--safe-top);
+  }
+}
+
 /* Installed app: content never sits inside the root layout's 12px
  * #top-edge bar, which is above every header and overlay there.
  * `TOP_EDGE_PX` in lib/safe-area.ts is the same floor for the value
