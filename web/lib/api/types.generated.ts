@@ -7513,13 +7513,27 @@ export interface components {
             series_slug?: string | null;
             updated_at: string;
         };
+        /**
+         * @description One page of a collection's entries. Only entries whose target the
+         *     caller can currently see are listed: a series entry needs a live
+         *     series (`removed_at IS NULL`) inside the caller's library grant and
+         *     age cap, an issue entry an active, not soft-removed issue whose parent
+         *     series is live, under the same grant and cap. Entries pointing at
+         *     removed or revoked content stay in the collection (restoring the
+         *     series, the file or the grant brings them back in their stored slot)
+         *     but are absent from `items`, not counted in `total`, and tolerated by
+         *     the reorder endpoint. This is the collections twin of
+         *     the marker rule (DI-20) and of the "removed series never render as an
+         *     empty card" invariant.
+         */
         CollectionEntriesView: {
             items: components["schemas"]["CollectionEntryView"][];
             next_cursor?: string | null;
             /**
              * Format: int64
-             * @description First-page total (entries belong to one collection, so this is a
-             *     cheap COUNT). Useful for "N items" headers without re-fetching.
+             * @description First-page total of the *visible* entries (one COUNT under the
+             *     same visibility predicate the page uses), so "N items" headers
+             *     agree with what a full walk returns.
              */
             total?: number | null;
         };

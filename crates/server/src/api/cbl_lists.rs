@@ -872,7 +872,10 @@ pub async fn entries(
     // Batch-hydrate matched issues. One query for issues, one for
     // their parent series, then we build the view for entries the
     // caller can see. Unmatched entries are returned with
-    // `issue: None` so the UI still renders the row.
+    // `issue: None` so the UI still renders the row. A soft-removed
+    // match (`removed_at` set, file gone from disk) reads the same way:
+    // the entry keeps its `matched_issue_id` so the card comes back if
+    // the file does, but no live card is painted for a link that 404s.
     let issue_ids: Vec<String> = page_rows
         .iter()
         .filter_map(|e| e.matched_issue_id.clone())
@@ -882,6 +885,7 @@ pub async fn entries(
     } else {
         match entity::issue::Entity::find()
             .filter(entity::issue::Column::Id.is_in(issue_ids))
+            .filter(entity::issue::Column::RemovedAt.is_null())
             .into_partial_model::<IssueCardRow>()
             .all(&app.db)
             .await
@@ -1876,6 +1880,7 @@ pub async fn issues(
     }
     let issues = match entity::issue::Entity::find()
         .filter(entity::issue::Column::Id.is_in(issue_ids.clone()))
+        .filter(entity::issue::Column::RemovedAt.is_null())
         .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
@@ -2456,6 +2461,7 @@ pub async fn reading_window(
         .collect();
     let issues = match entity::issue::Entity::find()
         .filter(entity::issue::Column::Id.is_in(slice_issue_ids))
+        .filter(entity::issue::Column::RemovedAt.is_null())
         .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
@@ -2793,6 +2799,7 @@ pub async fn reading_window_paginated(
     } else {
         match entity::issue::Entity::find()
             .filter(entity::issue::Column::Id.is_in(slice_issue_ids))
+            .filter(entity::issue::Column::RemovedAt.is_null())
             .into_partial_model::<IssueCardRow>()
             .all(&app.db)
             .await

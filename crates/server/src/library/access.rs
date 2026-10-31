@@ -27,7 +27,7 @@ use crate::library::age_rating;
 use crate::state::AppState;
 use entity::{issue, library_user_access, series};
 use sea_orm::sea_query::{Condition, Expr, ExprTrait, Func, SimpleExpr};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, Value};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, QueryTrait, Value};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -258,6 +258,46 @@ pub fn active_series() -> SimpleExpr {
 /// starting point for any series listing.
 pub fn active_series_select() -> sea_orm::Select<series::Entity> {
     series::Entity::find().filter(active_series())
+}
+
+/// Series the caller can currently see: [`active_series`] plus the
+/// caller's library grant and age cap ([`VisibleLibraries::series_filter`]).
+/// The starting point for any series lookup a personal list hydrates
+/// (collection entries, …).
+pub fn visible_series_select(acl: &VisibleLibraries) -> sea_orm::Select<series::Entity> {
+    let mut select = active_series_select();
+    if let Some(cond) = acl.series_filter() {
+        select = select.filter(cond);
+    }
+    select
+}
+
+/// Issues the caller can currently open: `issue.removed_at IS NULL`, a
+/// live parent series (a removed series must not surface through its
+/// issues either), and the caller's grant + cap
+/// ([`VisibleLibraries::issue_filter`], own rating first, series rating as
+/// fallback). One predicate for every personal-list surface that keys on
+/// an issue (collection entries, reading sessions; markers carry the same
+/// rule in `api::markers::visible_marker_condition`). Scan `state` is
+/// left to the caller: list surfaces add `state = 'active'`, history
+/// surfaces do not.
+pub fn visible_issues_select(acl: &VisibleLibraries) -> sea_orm::Select<issue::Entity> {
+    let live_parent = series::Entity::find()
+        .select_only()
+        .column(series::Column::Id)
+        .filter(active_series())
+        .filter(
+            Expr::col((series::Entity, series::Column::Id))
+                .equals((issue::Entity, issue::Column::SeriesId)),
+        )
+        .into_query();
+    let mut select = issue::Entity::find()
+        .filter(issue::Column::RemovedAt.is_null())
+        .filter(Expr::exists(live_parent));
+    if let Some(cond) = acl.issue_filter() {
+        select = select.filter(cond);
+    }
+    select
 }
 
 pub async fn for_user(app: &AppState, user: &CurrentUser) -> VisibleLibraries {

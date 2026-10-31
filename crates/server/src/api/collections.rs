@@ -27,8 +27,11 @@ use axum::{
 use chrono::Utc;
 use entity::{collection_entry, external_id, issue, saved_view, series, user_view_pin};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, ModelTrait,
-    QueryFilter, QueryOrder, Statement, TransactionTrait,
+    ActiveModelTrait,
+    ActiveValue::Set,
+    ColumnTrait, ConnectionTrait, EntityTrait, ModelTrait, QueryFilter, QueryOrder, QueryTrait,
+    Statement, TransactionTrait,
+    sea_query::{Condition, Expr},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -77,24 +80,40 @@ pub struct CollectionEntryView {
     /// `'series'` or `'issue'`.
     pub entry_kind: String,
     pub added_at: String,
-    /// Populated when `entry_kind = 'series'`. `None` when the
-    /// underlying series was cascade-deleted between the entry insert
-    /// and this read. Hydrated to the full `SeriesView` shape so the
-    /// home rail + collection detail page can reuse `<SeriesCard>`
-    /// without a synthesize-defaults dance.
+    /// Populated when `entry_kind = 'series'`. Hydrated to the full
+    /// `SeriesView` shape so the home rail + collection detail page can
+    /// reuse `<SeriesCard>` without a synthesize-defaults dance. A listed
+    /// entry always carries its target: an entry whose series is
+    /// soft-removed or outside the caller's library grant / age cap is
+    /// left out of `items` altogether (see `CollectionEntriesView`), so
+    /// `None` only appears on the `POST …/entries` echo when the target
+    /// vanished between the insert and the read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub series: Option<SeriesView>,
-    /// Populated when `entry_kind = 'issue'`.
+    /// Populated when `entry_kind = 'issue'`; same omission rule as
+    /// `series`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue: Option<IssueSummaryView>,
 }
 
+/// One page of a collection's entries. Only entries whose target the
+/// caller can currently see are listed: a series entry needs a live
+/// series (`removed_at IS NULL`) inside the caller's library grant and
+/// age cap, an issue entry an active, not soft-removed issue whose parent
+/// series is live, under the same grant and cap. Entries pointing at
+/// removed or revoked content stay in the collection (restoring the
+/// series, the file or the grant brings them back in their stored slot)
+/// but are absent from `items`, not counted in `total`, and tolerated by
+/// the reorder endpoint. This is the collections twin of
+/// the marker rule (DI-20) and of the "removed series never render as an
+/// empty card" invariant.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CollectionEntriesView {
     pub items: Vec<CollectionEntryView>,
     pub next_cursor: Option<String>,
-    /// First-page total (entries belong to one collection, so this is a
-    /// cheap COUNT). Useful for "N items" headers without re-fetching.
+    /// First-page total of the *visible* entries (one COUNT under the
+    /// same visibility predicate the page uses), so "N items" headers
+    /// agree with what a full walk returns.
     pub total: Option<i64>,
 }
 
@@ -700,8 +719,15 @@ pub async fn list_entries(
     // already unique.
     let after = q.cursor.as_deref().and_then(decode_position_cursor);
 
+    // Visibility is applied in SQL (not after the fetch) so a page is
+    // never short or empty while a `next_cursor` says more follows, and
+    // so `total` counts exactly what a full walk returns.
+    let acl = access::for_user(&app, &user).await;
+    let visible = visible_entry_condition(&acl);
+
     let mut select = collection_entry::Entity::find()
         .filter(collection_entry::Column::SavedViewId.eq(id))
+        .filter(visible.clone())
         .order_by_asc(collection_entry::Column::Position);
     if let Some(pos) = after {
         select = select.filter(collection_entry::Column::Position.gt(pos));
@@ -718,6 +744,7 @@ pub async fn list_entries(
     let total = if total_only_on_first_page {
         collection_entry::Entity::find()
             .filter(collection_entry::Column::SavedViewId.eq(id))
+            .filter(visible)
             .count(&app.db)
             .await
             .ok()
@@ -734,7 +761,7 @@ pub async fn list_entries(
         None
     };
 
-    let items = hydrate_entries(&app, rows, user.id).await;
+    let items = hydrate_entries(&app, rows, &acl, user.id).await;
     Json(CollectionEntriesView {
         items,
         next_cursor,
@@ -1013,7 +1040,11 @@ pub async fn add_entry(
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
 
-    let hydrated = hydrate_entries(&app, vec![entry], user.id).await;
+    // The echo goes through the same visibility pass as the list; a
+    // target the caller cannot see hydrates to nothing and the bare
+    // entry row is returned instead.
+    let acl = access::for_user(&app, &user).await;
+    let hydrated = hydrate_entries(&app, vec![entry], &acl, user.id).await;
     let first = hydrated.into_iter().next().unwrap_or(CollectionEntryView {
         id: entry_id.to_string(),
         position: next_pos,
@@ -1421,6 +1452,7 @@ pub async fn reorder_entries(
 
     let existing = match collection_entry::Entity::find()
         .filter(collection_entry::Column::SavedViewId.eq(id))
+        .order_by_asc(collection_entry::Column::Position)
         .all(&app.db)
         .await
     {
@@ -1433,7 +1465,15 @@ pub async fn reorder_entries(
     let by_id: HashMap<Uuid, collection_entry::Model> =
         existing.iter().map(|e| (e.id, e.clone())).collect();
 
-    // Validate every requested id belongs to this collection.
+    // Validate every requested id belongs to this collection, once.
+    let requested: HashSet<Uuid> = req.entry_ids.iter().copied().collect();
+    if requested.len() != req.entry_ids.len() {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "entry_ids must not repeat an entry",
+        );
+    }
     for entry_id in &req.entry_ids {
         if !by_id.contains_key(entry_id) {
             return error(
@@ -1443,15 +1483,49 @@ pub async fn reorder_entries(
             );
         }
     }
-    // Require a full reorder — partial reorders are ambiguous against
-    // the deferrable position uniqueness constraint.
-    if req.entry_ids.len() != existing.len() {
+    // Require a full reorder of what the caller can see — partial
+    // reorders are ambiguous against the deferrable position uniqueness
+    // constraint. Entries hidden from the list (removed or revoked
+    // target, see `CollectionEntriesView`) cannot be sent by a client
+    // that never received them, so they are not required; each keeps
+    // its slot and the requested ids fill the remaining slots in order.
+    let acl = access::for_user(&app, &user).await;
+    let visible_ids: Vec<Uuid> = match collection_entry::Entity::find()
+        .filter(collection_entry::Column::SavedViewId.eq(id))
+        .filter(visible_entry_condition(&acl))
+        .select_only()
+        .column(collection_entry::Column::Id)
+        .into_tuple()
+        .all(&app.db)
+        .await
+    {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::error!(error = %e, "collections: reorder visibility fetch failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    if visible_ids.iter().any(|v| !requested.contains(v)) {
         return error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
             "entry_ids must include every current entry",
         );
     }
+    // `existing` is in position order: a hidden entry keeps its slot, a
+    // requested one yields its slot to the next requested id. Every
+    // requested id is in `existing` exactly once, so the two counts match.
+    let mut next_requested = req.entry_ids.iter().copied();
+    let order: Vec<Uuid> = existing
+        .iter()
+        .map(|e| {
+            if requested.contains(&e.id) {
+                next_requested.next().unwrap_or(e.id)
+            } else {
+                e.id
+            }
+        })
+        .collect();
 
     let txn = match app.db.begin().await {
         Ok(t) => t,
@@ -1461,8 +1535,8 @@ pub async fn reorder_entries(
     // positions land in one pass — Postgres defers the check to
     // commit, so intermediate row states with duplicate positions
     // never trip the constraint.
-    for (i, entry_id) in req.entry_ids.iter().enumerate() {
-        let row = by_id.get(entry_id).cloned().unwrap();
+    for (i, entry_id) in order.into_iter().enumerate() {
+        let row = by_id.get(&entry_id).cloned().unwrap();
         let mut am: collection_entry::ActiveModel = row.into();
         am.position = Set(i as i32);
         if let Err(e) = am.update(&txn).await {
@@ -1478,11 +1552,67 @@ pub async fn reorder_entries(
     StatusCode::NO_CONTENT.into_response()
 }
 
+// ───── visibility ─────
+
+/// Series the caller can currently see as collection targets
+/// (`access::visible_series_select`: live, inside the grant, under the cap).
+fn visible_series_select(acl: &access::VisibleLibraries) -> sea_orm::Select<series::Entity> {
+    access::visible_series_select(acl)
+}
+
+/// Issues the caller can currently open as collection targets:
+/// `access::visible_issues_select` (not soft-removed, live parent series,
+/// inside the grant, under the cap) plus `state = 'active'` — the rule
+/// `collection_sequence` applies to the reading order, so the entries page
+/// and the Continue button agree.
+fn visible_issues_select(acl: &access::VisibleLibraries) -> sea_orm::Select<issue::Entity> {
+    access::visible_issues_select(acl).filter(issue::Column::State.eq("active"))
+}
+
+/// `collection_entries` rows whose target the caller can currently see
+/// (see `CollectionEntriesView`). Shared by the entries page, its
+/// first-page `total`, and the reorder validation so the three agree;
+/// `hydrate_entries` applies the same two selects to the target rows.
+/// Each leg is a correlated `EXISTS` (one primary-key probe per entry)
+/// rather than `IN (SELECT id …)`, which Postgres cannot turn into a
+/// semi-join under an `OR` and would otherwise hash every visible issue
+/// and series on each page.
+fn visible_entry_condition(acl: &access::VisibleLibraries) -> Condition {
+    // Scoped: at module level `ExprTrait::max` shadows `Ord::max` on ints.
+    use sea_orm::sea_query::ExprTrait;
+    let series_hit = visible_series_select(acl)
+        .select_only()
+        .column(series::Column::Id)
+        .filter(
+            Expr::col((series::Entity, series::Column::Id))
+                .equals((collection_entry::Entity, collection_entry::Column::SeriesId)),
+        )
+        .into_query();
+    let issue_hit = visible_issues_select(acl)
+        .select_only()
+        .column(issue::Column::Id)
+        .filter(
+            Expr::col((issue::Entity, issue::Column::Id))
+                .equals((collection_entry::Entity, collection_entry::Column::IssueId)),
+        )
+        .into_query();
+    Condition::any()
+        .add(Expr::exists(series_hit))
+        .add(Expr::exists(issue_hit))
+}
+
 // ───── hydration + cursor helpers ─────
 
+/// Hydrate entry rows into cards. Targets are read through the caller's
+/// visibility selects, and an entry whose target does not hydrate
+/// (removed, revoked, capped, or gone) is omitted — a listed entry always
+/// carries its card. `list_entries` already filters rows in SQL, so this
+/// only bites on the `add_entry` echo and on a target that vanished
+/// between the two reads.
 async fn hydrate_entries(
     app: &AppState,
     rows: Vec<collection_entry::Model>,
+    acl: &access::VisibleLibraries,
     viewer: Uuid,
 ) -> Vec<CollectionEntryView> {
     if rows.is_empty() {
@@ -1498,7 +1628,7 @@ async fn hydrate_entries(
     let series_rows: Vec<series::Model> = if series_ids.is_empty() {
         Vec::new()
     } else {
-        series::Entity::find()
+        visible_series_select(acl)
             .filter(series::Column::Id.is_in(series_ids))
             .all(&app.db)
             .await
@@ -1515,7 +1645,7 @@ async fn hydrate_entries(
     let issue_rows: Vec<IssueCardRow> = if issue_ids.is_empty() {
         Vec::new()
     } else {
-        issue::Entity::find()
+        visible_issues_select(acl)
             .filter(issue::Column::Id.is_in(issue_ids.clone()))
             .into_partial_model::<IssueCardRow>()
             .all(&app.db)
@@ -1539,7 +1669,7 @@ async fn hydrate_entries(
         issue_rows.into_iter().map(|i| (i.id.clone(), i)).collect();
 
     rows.into_iter()
-        .map(|r| {
+        .filter_map(|r| {
             let series = r.series_id.and_then(|sid| series_by_id.get(&sid).cloned());
             let issue = r.issue_id.as_deref().and_then(|iid| {
                 issue_by_id.get(iid).map(|m| {
@@ -1555,14 +1685,19 @@ async fn hydrate_entries(
                     }
                 })
             });
-            CollectionEntryView {
+            // No card, no entry: the target is removed, revoked, capped
+            // or gone, and the row waits for it to come back.
+            if series.is_none() && issue.is_none() {
+                return None;
+            }
+            Some(CollectionEntryView {
                 id: r.id.to_string(),
                 position: r.position,
                 entry_kind: r.entry_kind,
                 added_at: r.added_at.to_rfc3339(),
                 series,
                 issue,
-            }
+            })
         })
         .collect()
 }
