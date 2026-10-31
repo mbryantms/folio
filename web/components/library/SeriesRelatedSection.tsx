@@ -14,7 +14,10 @@
  *  - **Related series** — direct relationships grouped by UI group
  *    (Story · Publication history · Editions & contents · Advanced) and
  *    display label ("Sequel to", "Collected in", …), with ranges /
- *    coverage / qualifier / note as secondary text.
+ *    coverage / qualifier / note as secondary text. The chain-kind
+ *    relationships the Reading-order strip already shows move onto that
+ *    strip while it renders (`splitChainDuplicates`): a row under the
+ *    step's card carries their kind, scope and admin Edit / Remove.
  *  - **Part of event** — the series → story-arc edges with their role
  *    ("Tie-in to Secret Wars", "Prelude to …").
  *  - **Not in your library** (WP-7.8) — links to provider series the
@@ -155,6 +158,51 @@ export function groupRelationships(
     .filter((g) => g.kinds.length > 0);
 }
 
+/** The kinds the server's reading-order chain walks (`CHAIN_BEFORE` /
+ *  `CHAIN_AFTER` in `relationships/mod.rs`): narrative sequels and
+ *  publication continuity, both directions. A narrative `prequel_of` is
+ *  not part of the chain and keeps its own group. */
+const CHAIN_KINDS: ReadonlySet<RelationshipKind> = new Set<RelationshipKind>([
+  "sequel_of",
+  "has_sequel",
+  "continues",
+  "continued_by",
+]);
+
+/** Split the direct relationships into the ones the grouped list shows
+ *  and the ones the Reading-order strip already stands in for. When the
+ *  chain renders (more than one entry), a "Sequel to" / "Has sequel" /
+ *  "Continues" / "Continued by" card whose series is a step of that chain
+ *  repeats the strip one heading lower, so it moves out of the grouped
+ *  list and onto that step (`hidden`, keyed by the series it points at:
+ *  the strip lists its kind, scope and badge under the card and gives
+ *  admins Edit / Remove there). Relationships of other kinds, chain-kind
+ *  links to a series outside the chain, and external (not-in-library)
+ *  rows stay in the list. Pure, so the component and tests share one
+ *  rule. */
+export function splitChainDuplicates(
+  rels: SeriesRelationshipView[],
+  chain: SeriesChainEntry[],
+): {
+  shown: SeriesRelationshipView[];
+  hidden: ReadonlyMap<string, SeriesRelationshipView[]>;
+} {
+  const hidden = new Map<string, SeriesRelationshipView[]>();
+  if (chain.length <= 1) return { shown: rels, hidden };
+  const inChain = new Set(chain.map((c) => c.series.id));
+  const shown: SeriesRelationshipView[] = [];
+  for (const r of rels) {
+    if (CHAIN_KINDS.has(r.kind) && inChain.has(r.series.id)) {
+      const list = hidden.get(r.series.id) ?? [];
+      list.push(r);
+      hidden.set(r.series.id, list);
+    } else {
+      shown.push(r);
+    }
+  }
+  return { shown: hidden.size === 0 ? rels : shown, hidden };
+}
+
 /** "Read before" / "This series" / "Read after" caption for a chain slot. */
 export function chainCaption(position: number): string {
   if (position === 0) return "This series";
@@ -241,7 +289,11 @@ export function SeriesRelatedSection({
   const arcs = query.data?.arcs ?? [];
   const chain = query.data?.chain ?? [];
   const externals = query.data?.external ?? [];
-  const groups = groupRelationships(rels, catalogue.data, externals);
+  const { shown: shownRels, hidden: chainEdges } = splitChainDuplicates(
+    rels,
+    chain,
+  );
+  const groups = groupRelationships(shownRels, catalogue.data, externals);
 
   if (query.isLoading) return <RelatedSkeleton coverWidth={coverWidth} />;
   if (query.isError) {
@@ -289,6 +341,16 @@ export function SeriesRelatedSection({
           chain={chain}
           currentId={seriesId}
           coverWidth={coverWidth}
+          edges={chainEdges}
+          canEdit={isAdmin}
+          onEdit={(r) => openEdit(editableFromSeries(r))}
+          onRemove={(r) =>
+            askRemove({
+              id: r.id,
+              otherSlug: r.series.slug,
+              label: `${r.kind_label} ${r.series.name}`,
+            })
+          }
         />
       )}
 
@@ -699,10 +761,22 @@ function ReadingOrder({
   chain,
   currentId,
   coverWidth,
+  edges,
+  canEdit,
+  onEdit,
+  onRemove,
 }: {
   chain: SeriesChainEntry[];
   currentId: string;
   coverWidth: number;
+  /** The direct relationships the grouped list leaves to this strip,
+   *  keyed by the series they point at (`splitChainDuplicates`). Each is
+   *  a row under that step's card — kind, scope, Suggested — with Edit /
+   *  Remove for admins, so nothing the hidden card carried is lost. */
+  edges: ReadonlyMap<string, SeriesRelationshipView[]>;
+  canEdit: boolean;
+  onEdit: (r: SeriesRelationshipView) => void;
+  onRemove: (r: SeriesRelationshipView) => void;
 }) {
   return (
     <div className="space-y-3">
@@ -719,6 +793,7 @@ function ReadingOrder({
       >
         {chain.map((entry, i) => {
           const current = entry.series.id === currentId;
+          const direct = edges.get(entry.series.id) ?? [];
           return (
             <li
               key={entry.series.id}
@@ -741,6 +816,15 @@ function ReadingOrder({
                   highlight={current}
                   caption={chainCaption(entry.position)}
                 />
+                {direct.length > 0 && (
+                  <ChainEdges
+                    rels={direct}
+                    width={coverWidth}
+                    canEdit={canEdit}
+                    onEdit={onEdit}
+                    onRemove={onRemove}
+                  />
+                )}
                 {entry.provider_splits.length > 0 && (
                   <ChainSplits
                     splits={entry.provider_splits}
@@ -753,6 +837,62 @@ function ReadingOrder({
         })}
       </HorizontalScrollRail>
     </div>
+  );
+}
+
+/**
+ * The direct relationships a reading-order step stands in for, one row
+ * each under its card: kind label, scope caption and Suggested badge —
+ * what the hidden grouped card showed — plus Edit / Remove for admins.
+ * Outside the card's link (no nested interactive content).
+ */
+function ChainEdges({
+  rels,
+  width,
+  canEdit,
+  onEdit,
+  onRemove,
+}: {
+  rels: SeriesRelationshipView[];
+  width: number;
+  canEdit: boolean;
+  onEdit: (r: SeriesRelationshipView) => void;
+  onRemove: (r: SeriesRelationshipView) => void;
+}) {
+  return (
+    <ul
+      className="space-y-1 px-0.5 text-xs"
+      style={{ width: `${width}px` }}
+      data-testid="chain-edges"
+    >
+      {rels.map((r) => {
+        const caption = scopeCaption(r);
+        return (
+          <li
+            key={r.id}
+            className="text-muted-foreground flex items-start justify-between gap-1"
+          >
+            <span className="min-w-0" title={caption || undefined}>
+              {r.kind_label}
+              {caption ? ` · ${caption}` : null}
+              {r.source === "suggested" && (
+                <Badge variant="secondary" className="ml-1 font-normal">
+                  Suggested
+                </Badge>
+              )}
+            </span>
+            {canEdit && (
+              <EditRemoveButtons
+                floating={false}
+                label={`${r.kind_label.toLowerCase()} ${r.series.name}`}
+                onEdit={() => onEdit(r)}
+                onRemove={() => onRemove(r)}
+              />
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

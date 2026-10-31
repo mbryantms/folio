@@ -95,7 +95,7 @@ the rest.
 
 Typing `>` as the first character of the modal or inline input
 hides every content category and shows only the action registry.
-27 entries today across Settings, Library, and Admin groups; admin
+30 entries today across Settings, Library, and Admin groups; admin
 entries are filtered out for non-admin users.
 
 Implementation: `parseCommandPrefix(raw)` returns

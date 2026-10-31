@@ -1067,6 +1067,16 @@ tab strip directly; nothing relationship-related renders in the page body.
   **Suggested** chips, the grouped relationships, **Part of event**), then
   **Same universe** (`SameUniverseSection`), then **Similar series**
   (`SimilarSeriesRail`, see `similar-series.md`).
+- **No repeats.** When the strip renders (more than one chain entry), the
+  direct relationships it already shows — chain kinds (`sequel_of` /
+  `has_sequel` / `continues` / `continued_by`) whose series is a step of
+  the chain — leave the grouped list and become a row under that step's
+  card (`splitChainDuplicates`, `ChainEdges`): kind label, scope caption,
+  Suggested badge, and Edit / Remove for admins, so nothing the card
+  carried is lost. Other kinds, chain-kind links to series off the chain
+  (a branch the strip's path did not take) and external rows stay in the
+  list; a `prequel_of` is never on the chain and keeps its group. The
+  kind set mirrors the server's `CHAIN_BEFORE` / `CHAIN_AFTER` by hand.
 - **Cover size.** Every cover in the tab — reading-order strip, relationship
   cards, same-universe and similar rails — renders at the issue grid's
   effective column width for the page's card-size slider. The slider stays

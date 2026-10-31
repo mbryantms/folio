@@ -266,7 +266,24 @@ same `compile_issues` root as `…/issue-results` (ACL, age-rating cap,
 the view's sort) capped at the view's `result_limit`, like the series
 feed. Another user's view is a 404 on both protocols.
 
+## Multi-select on the detail pages
+
+Both filter-view detail pages carry the shared `useSelection` +
+`SelectionToolbar` wiring (`web/components/saved-views/FilterViewDetail.tsx`,
+`IssueFilterViewDetail.tsx`; the latter since the 2026-11 audit, N-O4).
+Select sits before the card-size icon in the title row and in the phone
+bar's View options sheet (phone-layout rule 11); the bar yields to the
+sticky toolbar while selecting. The series view's actions are
+series-shaped (every selected series expands to its issues server-side:
+Mark read / Mark unread, Add to collection, Fetch metadata); the issue
+view's are issue-shaped (`/me/progress/bulk` Mark read / Mark unread with
+the shared backfill prompt at `BULK_BACKFILL_PROMPT_THRESHOLD`, Add to
+collection). Only the loaded pages are selectable, as on every other
+saved-view surface. `web/tests/dom/issue-filter-view-select.test.tsx`
+covers the issue view.
+
 ## Not (yet) covered
 
-- The issue-view detail page has no multi-select toolbar (the series
-  view's bulk actions are series-shaped).
+- A "Hidden from rails" settings list for `POST /me/rail-dismissals`
+  (`useRestoreRailItem` exists; the server has no `GET` to list a user's
+  dismissals yet, so the restore surface waits on that endpoint).

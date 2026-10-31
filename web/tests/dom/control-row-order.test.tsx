@@ -120,6 +120,17 @@ describe("control row order (rule 11)", () => {
       ascending(orderOf(fx, ["<SelectModeButton", "<CardSizeOptions"])),
     ).toBe(true);
 
+    const issueFilter = read(
+      "components/saved-views/IssueFilterViewDetail.tsx",
+    );
+    const ix = issueFilter.slice(
+      issueFilter.indexOf("extraActions={"),
+      issueFilter.indexOf("phoneControlsPlacement"),
+    );
+    expect(
+      ascending(orderOf(ix, ["<SelectModeButton", "<CardSizeOptions"])),
+    ).toBe(true);
+
     const coll = read("components/saved-views/CollectionViewDetail.tsx");
     const cx = coll.slice(
       coll.indexOf("extraActions={"),

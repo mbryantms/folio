@@ -7,6 +7,10 @@
  * affordances (add / edit / remove), shows an empty state, and shows a
  * skeleton — never the raw group key — before the kind catalogue loads.
  * WP-7.8: external ("not in your library") links in their kind's group.
+ * Audit 2026-11 N-O4: a rendered chain (> 1 entry) moves the "Sequel to"
+ * / "Continued by" cards that repeat it onto the strip (a row under the
+ * step's card with kind, scope and admin Edit / Remove); a chain of one
+ * keeps them in their groups.
  */
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -51,6 +55,7 @@ import {
   SeriesRelatedSection,
   chainCaption,
   groupRelationships,
+  splitChainDuplicates,
 } from "@/components/library/SeriesRelatedSection";
 
 function series(id: string, name: string, year: number): SeriesView {
@@ -137,6 +142,13 @@ const full: SeriesRelationshipsResp = {
   external: [],
 };
 
+/** Same relationships, but no chain beyond this series: every direct
+ *  relationship renders in its group. */
+const single: SeriesRelationshipsResp = {
+  ...full,
+  chain: [{ position: 0, series: vol2, provider_splits: [] }],
+};
+
 const CATALOGUE = {
   groups: [
     { group: "story", label: "Story" },
@@ -193,8 +205,14 @@ describe("<SeriesRelatedSection>", () => {
     catalogue = CATALOGUE;
     data = full;
     const html = render(213.5);
-    // 3 chain cards + 3 relationship cards, all at the given width.
+    // 3 chain cards + the one relationship card the chain doesn't already
+    // show (Collected in) + the two edge-row lists under the chain cards,
+    // all at the given width.
     expect(html.match(/width:213\.5px/g)?.length).toBe(6);
+    expect(html.match(/data-testid="related-card"/g)?.length).toBe(4);
+    data = single;
+    // No chain strip: the three relationship cards.
+    expect(render(213.5).match(/width:213\.5px/g)?.length).toBe(3);
   });
 
   it("shows a skeleton, not the raw group key, before the catalogue loads", () => {
@@ -221,18 +239,21 @@ describe("<SeriesRelatedSection>", () => {
     expect(i2).toBeLessThan(i3);
     expect(html).toContain('aria-current="true"');
     expect(html).toContain("This series");
-    // Direct relationships grouped under UI groups and kind labels.
-    expect(html).toContain("Story");
-    expect(html).toContain("Publication history");
+    // Direct relationships the strip already shows (Sequel to Vol 1,
+    // Continued by Vol 3) are not repeated one heading lower: their kind
+    // and scope ride under the strip's cards instead, and only the rest
+    // stay grouped under UI groups and kind labels.
+    expect(html).not.toContain(">Story<");
+    expect(html).not.toContain("Publication history");
+    expect(html.match(/data-testid="chain-edges"/g)?.length).toBe(2);
+    expect(html).toContain(">Sequel to<");
+    expect(html).toContain("Continued by · Relaunch");
     expect(html).toContain("Editions &amp; contents");
-    expect(html).toContain("Sequel to");
     expect(html).toContain("Collected in");
-    expect(html).toContain("Continued by");
     // Scope as secondary text.
     expect(html).toContain("#1-6");
     expect(html).toContain("partial coverage");
     expect(html).toContain("Deluxe");
-    expect(html).toContain("Relaunch");
     // Arc tie-ins: "Part of event", linking the arc with its role.
     expect(html).toContain("Part of event");
     expect(html).toContain("Prelude to");
@@ -245,10 +266,70 @@ describe("<SeriesRelatedSection>", () => {
     expect(html).not.toContain("Edit ");
   });
 
-  it("shows edit + remove buttons to admins, arcs included", () => {
+  it("keeps the Sequel to / Continued by groups when there is no chain to repeat", () => {
+    role = "user";
+    catalogue = CATALOGUE;
+    data = single;
+    const html = render();
+    expect(html).not.toContain("Reading order");
+    expect(html).toContain("Story");
+    expect(html).toContain("Sequel to");
+    expect(html).toContain("Publication history");
+    expect(html).toContain("Continued by");
+    expect(html).toContain("Relaunch");
+    expect(html).toContain("Collected in");
+  });
+
+  it("splitChainDuplicates moves only chain-kind links to series on the chain", () => {
+    const offChain = {
+      ...full.relationships[0]!,
+      id: "r9",
+      series: omnibus,
+    };
+    const prequel = {
+      ...full.relationships[0]!,
+      id: "r8",
+      kind: "prequel_of" as const,
+      kind_label: "Prequel to",
+      series: vol1,
+    };
+    const rels = [...full.relationships, offChain, prequel];
+    const { shown, hidden } = splitChainDuplicates(rels, full.chain);
+    expect(shown.map((r) => r.id)).toEqual(["r2", "r9", "r8"]);
+    expect(
+      [...hidden.entries()].map(([k, v]) => [k, v.map((r) => r.id)]),
+    ).toEqual([
+      ["s1", ["r1"]],
+      ["s3", ["r3"]],
+    ]);
+    expect(splitChainDuplicates(rels, single.chain).shown).toBe(rels);
+    expect(splitChainDuplicates(rels, []).shown).toBe(rels);
+    // Nothing to move: the input array comes back as-is.
+    expect(splitChainDuplicates([offChain], full.chain).shown).toEqual([
+      offChain,
+    ]);
+  });
+
+  it("admins keep Edit / Remove for the moved chain edges under the strip's cards", () => {
     role = "admin";
     catalogue = CATALOGUE;
     data = full;
+    const html = render();
+    expect(html).toContain('aria-label="Edit sequel to Saga Vol 1"');
+    expect(html).toContain('aria-label="Remove sequel to Saga Vol 1"');
+    expect(html).toContain('aria-label="Edit continued by Saga Vol 3"');
+    expect(html).toContain('aria-label="Remove continued by Saga Vol 3"');
+    // Readers see the rows but no buttons.
+    role = "user";
+    const reader = render();
+    expect(reader).toContain("Continued by · Relaunch");
+    expect(reader).not.toContain("Remove continued by");
+  });
+
+  it("shows edit + remove buttons to admins, arcs included", () => {
+    role = "admin";
+    catalogue = CATALOGUE;
+    data = single;
     const html = render();
     expect(html).toContain('aria-label="Edit sequel to Saga Vol 1"');
     expect(html).toContain('aria-label="Remove sequel to Saga Vol 1"');
@@ -306,8 +387,9 @@ describe("<SeriesRelatedSection> external links (WP-7.8)", () => {
     // A resolved user link points at the local series instead.
     expect(html).toContain('href="/series/saga-annual"');
     expect(html).toContain("in your library");
-    // Compact rows: no extra covers (6 cards as before).
+    // Compact rows: no extra covers (4 cards + 2 edge-row lists as before).
     expect(html.match(/width:100px/g)?.length).toBe(6);
+    expect(html.match(/data-testid="related-card"/g)?.length).toBe(4);
     expect(html.match(/data-testid="external-relationship"/g)?.length).toBe(2);
     // Readers can't remove them.
     expect(html).not.toContain("Remove continued by Saga (2018)");
