@@ -25,7 +25,7 @@ use entity::{
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QueryOrder,
-    QuerySelect, Set, Statement, Value,
+    QuerySelect, QueryTrait, Set, Statement, Value,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -610,8 +610,18 @@ pub async fn list(
     Query(q): Query<ListQuery>,
 ) -> Response {
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    // Sessions surface only while their issue is live and still visible
+    // to the caller (library grant + age cap) — the rule markers and the
+    // reading log apply (`markers::visible_marker_condition`). A revoked
+    // grant or a soft-removed issue hides the row without deleting it;
+    // the stats and the account export still count it.
+    let acl = crate::library::access::for_user(&app, &user).await;
+    let visible_issues = crate::library::access::visible_issues_select(&acl)
+        .select_only()
+        .column(issue::Column::Id);
     let mut query = ReadingSessionEntity::find()
         .filter(reading_session::Column::UserId.eq(user.id))
+        .filter(reading_session::Column::IssueId.in_subquery(visible_issues.into_query()))
         .order_by_desc(reading_session::Column::StartedAt)
         .order_by_desc(reading_session::Column::Id)
         .limit(Some(limit + 1));

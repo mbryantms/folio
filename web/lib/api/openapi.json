@@ -17240,6 +17240,7 @@
       },
       "CollectionEntriesView": {
         "type": "object",
+        "description": "One page of a collection's entries. Only entries whose target the\ncaller can currently see are listed: a series entry needs a live\nseries (`removed_at IS NULL`) inside the caller's library grant and\nage cap, an issue entry an active, not soft-removed issue whose parent\nseries is live, under the same grant and cap. Entries pointing at\nremoved or revoked content stay in the collection (restoring the\nseries, the file or the grant brings them back in their stored slot)\nbut are absent from `items`, not counted in `total`, and tolerated by\nthe reorder endpoint. This is the collections twin of\nthe marker rule (DI-20) and of the \"removed series never render as an\nempty card\" invariant.",
         "required": [
           "items"
         ],
@@ -17262,7 +17263,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "First-page total (entries belong to one collection, so this is a\ncheap COUNT). Useful for \"N items\" headers without re-fetching."
+            "description": "First-page total of the *visible* entries (one COUNT under the\nsame visibility predicate the page uses), so \"N items\" headers\nagree with what a full walk returns."
           }
         }
       },
@@ -17289,7 +17290,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/IssueSummaryView",
-                "description": "Populated when `entry_kind = 'issue'`."
+                "description": "Populated when `entry_kind = 'issue'`; same omission rule as\n`series`."
               },
               {
                 "type": "null"
@@ -17304,7 +17305,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/SeriesView",
-                "description": "Populated when `entry_kind = 'series'`. `None` when the\nunderlying series was cascade-deleted between the entry insert\nand this read. Hydrated to the full `SeriesView` shape so the\nhome rail + collection detail page can reuse `<SeriesCard>`\nwithout a synthesize-defaults dance."
+                "description": "Populated when `entry_kind = 'series'`. Hydrated to the full\n`SeriesView` shape so the home rail + collection detail page can\nreuse `<SeriesCard>` without a synthesize-defaults dance. A listed\nentry always carries its target: an entry whose series is\nsoft-removed or outside the caller's library grant / age cap is\nleft out of `items` altogether (see `CollectionEntriesView`), so\n`None` only appears on the `POST …/entries` echo when the target\nvanished between the insert and the read."
               },
               {
                 "type": "null"

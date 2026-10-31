@@ -9,11 +9,14 @@ use axum::{
 use chrono::Utc;
 use common::TestApp;
 use entity::{
+    collection_entry,
     issue::ActiveModel as IssueAM,
-    library,
+    library, library_user_access,
     series::{ActiveModel as SeriesAM, normalize_name},
 };
-use sea_orm::{ActiveModelTrait, Database, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Database, EntityTrait, PaginatorTrait, QueryFilter, Set,
+};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -1138,4 +1141,203 @@ async fn cbl_export_expands_series_entries_to_issues() {
     assert!(body.contains("<Name>Export Me</Name>"), "body:\n{body}");
     // 1 issue entry + 1 series-expansion (the series' single active issue).
     assert_eq!(body.matches("<Book ").count(), 2, "body:\n{body}");
+}
+
+// ───────── N-O1: visibility invariant on the entries page ─────────
+
+async fn grant_library(app: &TestApp, user_id: Uuid, library_id: Uuid) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    library_user_access::ActiveModel {
+        user_id: Set(user_id),
+        library_id: Set(library_id),
+        age_rating_max: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+}
+
+async fn revoke_library(app: &TestApp, user_id: Uuid, library_id: Uuid) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    library_user_access::Entity::delete_by_id((library_id, user_id))
+        .exec(&db)
+        .await
+        .unwrap();
+}
+
+async fn set_issue_removed(app: &TestApp, issue_id: &str, removed: bool) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let row = entity::issue::Entity::find_by_id(issue_id.to_owned())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::issue::ActiveModel = row.into();
+    am.removed_at = Set(removed.then(|| Utc::now().fixed_offset()));
+    am.update(&db).await.unwrap();
+}
+
+async fn set_series_removed(app: &TestApp, series_id: Uuid, removed: bool) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let row = entity::series::Entity::find_by_id(series_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::series::ActiveModel = row.into();
+    am.removed_at = Set(removed.then(|| Utc::now().fixed_offset()));
+    am.update(&db).await.unwrap();
+}
+
+async fn add_entry(app: &TestApp, auth: &Authed, cid: Uuid, kind: &str, ref_id: &str) -> String {
+    let (status, e) = http(
+        app,
+        Method::POST,
+        &format!("/api/me/collections/{cid}/entries"),
+        Some(auth),
+        Some(serde_json::json!({ "entry_kind": kind, "ref_id": ref_id })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "add {kind}: {e:#?}");
+    e["id"].as_str().unwrap().to_owned()
+}
+
+/// `(entry ids in position order, first-page total)`.
+async fn list_entry_ids(app: &TestApp, auth: &Authed, cid: Uuid) -> (Vec<String>, Option<i64>) {
+    let (status, body) = http(
+        app,
+        Method::GET,
+        &format!("/api/me/collections/{cid}/entries"),
+        Some(auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    let ids = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .inspect(|e| {
+            assert!(
+                e["series"].is_object() || e["issue"].is_object(),
+                "a listed entry always carries its card: {e:#?}"
+            );
+        })
+        .map(|e| e["id"].as_str().unwrap().to_owned())
+        .collect();
+    (ids, body["total"].as_i64())
+}
+
+/// A soft-removed issue or series, or one from a library the caller lost
+/// access to, leaves the entries page (and its `total`) while the entry
+/// row stays, so restoring the file or the grant brings the card back.
+/// Reorder accepts the visible set and keeps hidden entries behind it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entries_hide_removed_and_revoked_targets() {
+    let app = TestApp::spawn().await;
+    // First registration is the admin (unrestricted); the reader below
+    // is the ACL subject.
+    let admin = register(&app, "entries-admin@example.com").await;
+    let reader = register(&app, "entries-reader@example.com").await;
+    let (lib_a, _series_a, issue_a) = seed_series_with_issue(&app, "vis-a").await;
+    let (lib_b, series_b, issue_b) = seed_series_with_issue(&app, "vis-b").await;
+    grant_library(&app, reader.user_id, lib_a).await;
+    grant_library(&app, reader.user_id, lib_b).await;
+
+    let cid = create_collection(&app, &reader, "Visibility").await;
+    let e_issue_a = add_entry(&app, &reader, cid, "issue", &issue_a).await;
+    let e_series_b = add_entry(&app, &reader, cid, "series", &series_b.to_string()).await;
+    let e_issue_b = add_entry(&app, &reader, cid, "issue", &issue_b).await;
+    assert_eq!(
+        list_entry_ids(&app, &reader, cid).await,
+        (
+            vec![e_issue_a.clone(), e_series_b.clone(), e_issue_b.clone()],
+            Some(3)
+        )
+    );
+
+    // Soft-removed issue: gone from the page and from `total`; the row stays.
+    set_issue_removed(&app, &issue_a, true).await;
+    assert_eq!(
+        list_entry_ids(&app, &reader, cid).await,
+        (vec![e_series_b.clone(), e_issue_b.clone()], Some(2))
+    );
+    let db = Database::connect(&app.db_url).await.unwrap();
+    assert_eq!(
+        collection_entry::Entity::find()
+            .filter(collection_entry::Column::SavedViewId.eq(cid))
+            .count(&db)
+            .await
+            .unwrap(),
+        3,
+        "hiding never deletes the entry row"
+    );
+
+    // Removal hides for every role: the admin's own collection too.
+    let admin_cid = create_collection(&app, &admin, "Admin pile").await;
+    add_entry(&app, &admin, admin_cid, "issue", &issue_a).await;
+    assert_eq!(
+        list_entry_ids(&app, &admin, admin_cid).await,
+        (vec![], Some(0))
+    );
+
+    // Reorder with exactly the visible entries is a full reorder; the
+    // hidden entry keeps its slot.
+    let reorder_url = format!("/api/me/collections/{cid}/entries/reorder");
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &reorder_url,
+        Some(&reader),
+        Some(serde_json::json!({ "entry_ids": [e_issue_b, e_series_b] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body:#?}");
+    assert_eq!(
+        list_entry_ids(&app, &reader, cid).await,
+        (vec![e_issue_b.clone(), e_series_b.clone()], Some(2))
+    );
+    let hidden = collection_entry::Entity::find_by_id(Uuid::parse_str(&e_issue_a).unwrap())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(hidden.position, 0, "hidden entry keeps its slot");
+    // Omitting a visible entry is still a partial reorder.
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        &reorder_url,
+        Some(&reader),
+        Some(serde_json::json!({ "entry_ids": [e_series_b] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Revoked library: both entries pointing into it leave the page.
+    revoke_library(&app, reader.user_id, lib_b).await;
+    assert_eq!(list_entry_ids(&app, &reader, cid).await, (vec![], Some(0)));
+    grant_library(&app, reader.user_id, lib_b).await;
+    assert_eq!(
+        list_entry_ids(&app, &reader, cid).await,
+        (vec![e_issue_b.clone(), e_series_b.clone()], Some(2))
+    );
+
+    // Soft-removed series: the series entry goes, and so does the issue
+    // entry whose parent it is (a removed series never surfaces through
+    // its issues either).
+    set_series_removed(&app, series_b, true).await;
+    assert_eq!(list_entry_ids(&app, &reader, cid).await, (vec![], Some(0)));
+
+    // Everything back: every entry returns in its stored slot — the
+    // hidden issue A kept position 0 through the reorder above.
+    set_series_removed(&app, series_b, false).await;
+    set_issue_removed(&app, &issue_a, false).await;
+    assert_eq!(
+        list_entry_ids(&app, &reader, cid).await,
+        (vec![e_issue_a, e_issue_b, e_series_b], Some(3))
+    );
 }

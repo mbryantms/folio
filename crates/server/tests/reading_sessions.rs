@@ -14,8 +14,8 @@ use chrono::{Duration, Utc};
 use common::TestApp;
 use entity::{
     issue::ActiveModel as IssueAM,
-    library,
-    reading_session::Entity as ReadingSessionEntity,
+    library, library_user_access,
+    reading_session::{self, Entity as ReadingSessionEntity},
     series::{ActiveModel as SeriesAM, normalize_name},
 };
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
@@ -910,4 +910,110 @@ async fn timezone_validation_rejects_unknown_zone() {
     )
     .await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "body={body}");
+}
+
+// ───────── N-O3: visibility invariant on the session list ─────────
+
+async fn grant_library(app: &TestApp, user_id: Uuid, library_id: Uuid) {
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    library_user_access::ActiveModel {
+        user_id: Set(user_id),
+        library_id: Set(library_id),
+        age_rating_max: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+}
+
+async fn set_issue_removed(app: &TestApp, issue_id: &str, removed: bool) {
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let row = entity::issue::Entity::find_by_id(issue_id.to_owned())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::issue::ActiveModel = row.into();
+    am.removed_at = Set(removed.then(|| Utc::now().fixed_offset()));
+    am.update(&db).await.unwrap();
+}
+
+async fn listed_issue_ids(app: &TestApp, auth: &Authed) -> Vec<String> {
+    let (s, body) = get(app, auth, "/api/me/reading-sessions").await;
+    assert_eq!(s, StatusCode::OK, "{body:#?}");
+    body["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["issue_id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// Sessions on a soft-removed issue, or on an issue from a library the
+/// caller lost access to, leave `/me/reading-sessions` (the markers rule).
+/// The rows are untouched, so a restore brings them back.
+#[tokio::test]
+async fn list_hides_sessions_on_removed_and_revoked_issues() {
+    let app = TestApp::spawn().await;
+    // First registration is the admin (unrestricted); the reader is the
+    // ACL subject.
+    let admin = register(&app, "sessions-admin@example.com").await;
+    let reader = register(&app, "sessions-reader@example.com").await;
+    let (lib_a, _series_a, issue_a) = seed_one(&app, "vis-a").await;
+    let (lib_b, _series_b, issue_b) = seed_one(&app, "vis-b").await;
+    grant_library(&app, reader.user_id, lib_a).await;
+    grant_library(&app, reader.user_id, lib_b).await;
+
+    let started = (Utc::now() - Duration::seconds(120)).to_rfc3339();
+    for (auth, client, issue) in [
+        (&reader, "reader-a", &issue_a),
+        (&reader, "reader-b", &issue_b),
+        (&admin, "admin-a", &issue_a),
+    ] {
+        let (s, body) = post(
+            &app,
+            auth,
+            "/api/me/reading-sessions",
+            &upsert_body(client, issue, &started),
+        )
+        .await;
+        assert!(s.is_success(), "{client}: {body:#?}");
+    }
+    assert_eq!(listed_issue_ids(&app, &reader).await.len(), 2);
+    assert_eq!(
+        listed_issue_ids(&app, &admin).await,
+        std::slice::from_ref(&issue_a)
+    );
+
+    // Soft-removed issue: hidden for every role.
+    set_issue_removed(&app, &issue_a, true).await;
+    assert_eq!(
+        listed_issue_ids(&app, &reader).await,
+        std::slice::from_ref(&issue_b)
+    );
+    assert!(listed_issue_ids(&app, &admin).await.is_empty());
+
+    // Revoked library: the reader's remaining session goes too.
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    library_user_access::Entity::delete_by_id((lib_b, reader.user_id))
+        .exec(&db)
+        .await
+        .unwrap();
+    assert!(listed_issue_ids(&app, &reader).await.is_empty());
+
+    // Nothing was deleted: the rows wait for the file / grant to return.
+    let kept = ReadingSessionEntity::find()
+        .filter(reading_session::Column::UserId.eq(reader.user_id))
+        .all(&db)
+        .await
+        .unwrap();
+    assert_eq!(kept.len(), 2);
+
+    set_issue_removed(&app, &issue_a, false).await;
+    grant_library(&app, reader.user_id, lib_b).await;
+    assert_eq!(listed_issue_ids(&app, &reader).await.len(), 2);
+    assert_eq!(listed_issue_ids(&app, &admin).await, [issue_a]);
 }

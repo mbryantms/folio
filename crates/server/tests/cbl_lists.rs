@@ -1557,3 +1557,91 @@ async fn remote_list_cap_rejects_new_url_import_without_fetching() {
     let (status, body) = upload_cbl(&app, &user, "probe.cbl", TINY_CBL.as_bytes()).await;
     assert_eq!(status, StatusCode::CREATED, "{body:#?}");
 }
+
+/// N-O2: a matched issue that was soft-removed reads as unmatched on the
+/// entries page. The row keeps its `matched_issue_id` so the card returns
+/// with the file, but no live card is painted for a link that would 404.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entries_hide_card_of_removed_matched_issue() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "removed-match@example.com").await;
+    let _lib = seed_matchable_issues(&app).await;
+    let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    let list_id = view["id"].as_str().unwrap();
+    let url = format!("/api/me/cbl-lists/{list_id}/entries?status=matched");
+
+    let (status, body) = http(&app, Method::GET, &url, Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+    assert!(items.iter().all(|i| i["issue"].is_object()));
+    let gone_entry_id = items[0]["id"].as_str().unwrap().to_owned();
+    let gone_issue_id = items[0]["matched_issue_id"].as_str().unwrap().to_owned();
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let set_removed = |removed: bool| {
+        let db = db.clone();
+        let id = gone_issue_id.clone();
+        async move {
+            let row = entity::issue::Entity::find_by_id(id)
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap();
+            let mut am: entity::issue::ActiveModel = row.into();
+            am.removed_at = Set(removed.then(|| Utc::now().fixed_offset()));
+            am.update(&db).await.unwrap();
+        }
+    };
+
+    set_removed(true).await;
+    let (status, body) = http(&app, Method::GET, &url, Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3, "the entry row itself stays: {body:#?}");
+    for item in items {
+        if item["id"].as_str() == Some(gone_entry_id.as_str()) {
+            assert!(
+                item["issue"].is_null(),
+                "removed match has no card: {item:#?}"
+            );
+            assert_eq!(
+                item["matched_issue_id"].as_str(),
+                Some(gone_issue_id.as_str()),
+                "the match itself is kept"
+            );
+        } else {
+            assert!(item["issue"].is_object(), "live matches keep their card");
+        }
+    }
+
+    // The issues feed behind Continue / offline downloads drops it too.
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}/issues"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let ids: Vec<&str> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids.len(), 2, "{body:#?}");
+    assert!(!ids.contains(&gone_issue_id.as_str()));
+
+    // File back, card back.
+    set_removed(false).await;
+    let (_, body) = http(&app, Method::GET, &url, Some(&auth), None).await;
+    assert!(
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["issue"].is_object())
+    );
+}
