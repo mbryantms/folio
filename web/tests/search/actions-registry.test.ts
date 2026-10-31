@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SEARCH_ACTIONS,
   parseCommandPrefix,
   rankSearchActions,
 } from "@/lib/search/actions-registry";
@@ -37,18 +38,73 @@ describe("parseCommandPrefix", () => {
   });
 });
 
+describe("SEARCH_ACTIONS registry", () => {
+  it("has 30 actions: 16 for every user + 14 admin-gated, unique ids", () => {
+    const ids = SEARCH_ACTIONS.map((a) => a.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(SEARCH_ACTIONS.length).toBe(30);
+    expect(SEARCH_ACTIONS.filter((a) => a.role === undefined).length).toBe(16);
+    expect(SEARCH_ACTIONS.filter((a) => a.role === "admin").length).toBe(14);
+    // Every `admin-*` id is gated and nothing else is.
+    for (const a of SEARCH_ACTIONS) {
+      expect(a.role === "admin", a.id).toBe(a.id.startsWith("admin-"));
+    }
+  });
+
+  it("covers Browse, the saved-views index, the log and both admin pages (N-O6)", () => {
+    const byId = new Map(SEARCH_ACTIONS.map((a) => [a.id, a]));
+    expect(byId.get("go-browse")?.href).toBe("/browse");
+    expect(byId.get("go-views")?.href).toBe("/settings/views");
+    expect(byId.get("go-log")?.href).toBe("/log");
+    expect(byId.get("admin-relationships")).toMatchObject({
+      href: "/admin/relationships",
+      role: "admin",
+    });
+    expect(byId.get("admin-background-work")).toMatchObject({
+      href: "/admin/background-work",
+      role: "admin",
+    });
+  });
+});
+
 describe("rankSearchActions", () => {
   it("returns every visible action for an empty needle", () => {
     const out = rankSearchActions("", "admin");
-    expect(out.length).toBeGreaterThan(0);
+    expect(out.length).toBe(SEARCH_ACTIONS.length);
     // Admin entries appear for admin role
     expect(out.some((a) => a.id === "admin-libraries")).toBe(true);
+    expect(out.some((a) => a.id === "admin-relationships")).toBe(true);
+    expect(out.some((a) => a.id === "admin-background-work")).toBe(true);
   });
 
   it("hides admin entries from non-admin users", () => {
     const out = rankSearchActions("", undefined);
+    expect(out.length).toBe(16);
     expect(out.every((a) => a.id !== "admin-libraries")).toBe(true);
     expect(out.every((a) => !a.id.startsWith("admin-"))).toBe(true);
+    // The user-facing additions stay visible without a role.
+    for (const id of ["go-browse", "go-views", "go-log"]) {
+      expect(
+        out.some((a) => a.id === id),
+        id,
+      ).toBe(true);
+    }
+  });
+
+  it("the new admin pages are reachable by label and keyword, admins only", () => {
+    expect(rankSearchActions("background", "admin")[0]?.id).toBe(
+      "admin-background-work",
+    );
+    expect(rankSearchActions("jobs", undefined)).toEqual([]);
+    expect(
+      rankSearchActions("jobs", "admin").some(
+        (a) => a.id === "admin-background-work",
+      ),
+    ).toBe(true);
+    expect(rankSearchActions("relationship", "admin")[0]?.id).toBe(
+      "admin-relationships",
+    );
+    expect(rankSearchActions("relationship", undefined)).toEqual([]);
   });
 
   it("prefix match on label scores higher than keyword match", () => {

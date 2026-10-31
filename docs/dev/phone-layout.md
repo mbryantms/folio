@@ -238,8 +238,9 @@ height (36px); the horizontal +4px each side still applies.
 - **Saved views** (filter / issue filter / collection / CBL / system):
   `ViewHeader` title row with the card-size icon and `⋯`, clamped
   description. Filter, issue-filter, collection and system views place
-  the bar inline in the title row (one row total); collection shows
-  the item count in `leading` and Continue as `primary`. CBL's title
+  the bar inline in the title row (one row total), with card size and
+  Select in its View options sheet; collection shows the item count in
+  `leading` and Continue as `primary`. CBL's title
   row is title-only (`actions="none"`): everything else rides in the
   one pinned control row at every width — the stats pills in
   `leading`, search, Up Next and the `⋯` (`ViewActionsMenu`) as
