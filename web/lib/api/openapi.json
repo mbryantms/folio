@@ -15473,6 +15473,7 @@
           "issues_restored",
           "series_created",
           "files_malformed",
+          "files_encrypted",
           "files_duplicate"
         ],
         "properties": {
@@ -15484,6 +15485,12 @@
           "files_duplicate": {
             "type": "integer",
             "format": "int64",
+            "minimum": 0
+          },
+          "files_encrypted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Password-protected archives met this batch. Each one ingests as a\npage-less `encrypted` issue and raises an `EncryptedArchive` health\nfinding (audit 2026-11 N-L1).",
             "minimum": 0
           },
           "files_malformed": {

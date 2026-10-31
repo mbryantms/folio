@@ -312,12 +312,13 @@ without per-library configuration.
        YACreader / ComicRack / Komga open it
      - blocking BLAKE3 hash + ComicInfo + MetronInfo parse on a
        semaphore-protected pool
-       ([process.rs:197–210](../../crates/server/src/library/scanner/process.rs#L197-L210))
+       ([process.rs `parse_archive_for_ingest`](../../crates/server/src/library/scanner/process.rs))
      - archive-outcome dispatch: `Ok` / `MissingComicInfo` /
-       `Encrypted` / `Malformed` (ComicInfo didn't parse →
+       `Encrypted` (password-protected → `EncryptedArchive` +
+       `files_encrypted`) / `Malformed` (ComicInfo didn't parse →
        `MalformedComicInfo`) / `MalformedArchive` (the file isn't a
        readable container → `MalformedArchive`) / `Unreadable`
-       ([process.rs:211–250](../../crates/server/src/library/scanner/process.rs#L211-L250))
+       ([process.rs `match archive_outcome`](../../crates/server/src/library/scanner/process.rs))
      - ComicInfo PageCount storage as metadata only; mismatches with
        archive image count are ignored because the tag is frequently
        unreliable
@@ -742,10 +743,7 @@ opaque JSON so adding variants doesn't need a migration.
 | `RecoveredArchive` | info | The CBZ only opened after a repair — `technique` is `unicode-path-crc-strip` (a bad Info-ZIP Unicode-Path extra was stripped) or `cdfh-offset-rebuild` (central-directory offsets pointed at garbage; the index was rebuilt by scanning the data area for each local header). Pages ingest normally; the row records that the file depends on a recovery branch. | [process.rs](../../crates/server/src/library/scanner/process.rs) (translates `Cbz::recovery_used()`) | `{ path, technique }` | Nothing required; repack the archive if a strict reader must open it. |
 | `UnreadablePage` | warning | A page entry could not be read or decoded end-to-end. Emitted only by the opt-in deep validation (`POST /libraries/{slug}/validate-deeply`), which decodes every page of every issue; the scanner itself never decodes pages. | [deep_validate.rs](../../crates/server/src/library/deep_validate.rs) | `{ path, page_index, error }` | Replace the archive, or re-save the page and repack. |
 | `NoPages` | warning | A structurally valid archive with zero image entries after sniffing — it used to ingest as a silent 0-page issue that opened in the reader and never turned. Raised only for an `active` parse state (encrypted and malformed files have their own outcome). | [process.rs](../../crates/server/src/library/scanner/process.rs) (`actual_pages == 0`) | `{ path }` | Repack the archive with its pages, or remove it. |
-
-Planned: `EncryptedArchive` (remediation WP B2). Today a password-protected
-archive is counted in the scan run's `files_encrypted` and ingested as an
-`encrypted`-state issue with no pages; no health row is raised for it.
+| `EncryptedArchive` | error | The archive is a password-protected ZIP (ZipCrypto or AES — the CBZ reader refuses it as `ArchiveError::Encrypted`). Folio holds no passwords, so the file ingests as a page-less `encrypted`-state issue; this row is what explains the coverless card (audit 2026-11 N-L1, remediation WP B2). An encrypted `.cbr` / `.cb7` never reaches this branch: it goes through the conversion path and surfaces as `UnsupportedArchiveFormat` (conversion failed). Also counted in the run's `files_encrypted` stat, the batch summary's "Password-protected" tile and the `folio_scan_files_total{action="encrypted"}` counter. Resolves through the normal lifecycle: an unchanged file keeps it open via touch-on-skip, a readable replacement at the same path re-ingests as `active` and the sweep closes it, a deleted file closes it too. Fixture: `fixtures/synthetic-encrypted.cbz` (`fixtures/make-encrypted-cbz-fixture.py`). | [process.rs `ArchiveOutcome::Encrypted`](../../crates/server/src/library/scanner/process.rs) | `{ path }` | Repack the archive without a password, or replace it from an unencrypted copy; rescan. |
 
 ### Folder consistency checks (WP-3.4)
 

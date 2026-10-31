@@ -16,6 +16,7 @@ import {
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
+import { issueStateHint, issueStateLabel } from "@/lib/library/issue-state";
 import { issueUrl, readerUrl, seriesUrl } from "@/lib/urls";
 import { IssueActivityTab } from "@/components/activity/IssueActivityTab";
 import { Cover } from "@/components/Cover";
@@ -282,7 +283,11 @@ export default async function IssuePage({
                   : null
               }
               alt={heading}
-              fallback={issue.state === "active" ? "Cover" : issue.state}
+              fallback={
+                issue.state === "active"
+                  ? "Cover"
+                  : issueStateLabel(issue.state)
+              }
             />
           </div>
           {/* Read CTA + a small gear for actions, always side by side —
@@ -296,8 +301,11 @@ export default async function IssuePage({
                 </Link>
               </Button>
             ) : (
-              <p className="border-border text-muted-foreground flex h-12 flex-1 items-center justify-center rounded-md border border-dashed px-4 text-center text-xs sm:h-10">
-                Cannot read — issue state: {issue.state}
+              <p
+                className="border-border text-muted-foreground flex h-12 flex-1 items-center justify-center rounded-md border border-dashed px-4 text-center text-xs sm:h-10"
+                title={issueStateHint(issue.state)}
+              >
+                Cannot read — {issueStateLabel(issue.state).toLowerCase()}
               </p>
             )}
             <IssueActions
@@ -362,7 +370,12 @@ export default async function IssuePage({
               )}
               {issue.black_and_white && <Badge variant="secondary">B/W</Badge>}
               {issue.state !== "active" && (
-                <Badge variant="destructive">{issue.state}</Badge>
+                <Badge
+                  variant="destructive"
+                  title={issueStateHint(issue.state)}
+                >
+                  {issueStateLabel(issue.state)}
+                </Badge>
               )}
               <IssueHealthBadge seriesSlug={seriesSlug} issueSlug={issueSlug} />
               {issue.metadata_completeness &&
@@ -466,7 +479,9 @@ export default async function IssuePage({
               <DetailSummaryItem
                 label="Archive"
                 value={formatFileSize(issue.file_size)}
-                hint={issue.state === "active" ? null : issue.state}
+                hint={
+                  issue.state === "active" ? null : issueStateLabel(issue.state)
+                }
                 icon={<HardDrive className="size-4" />}
               />
             </DetailSummaryGrid>
@@ -1215,7 +1230,9 @@ function MoreInSeriesIssueCard({ issue }: { issue: IssueSummaryView }) {
       <Cover
         src={issue.cover_url}
         alt={issue.title ?? `Issue ${issue.number ?? ""}`}
-        fallback={issue.state === "active" ? "Cover" : issue.state}
+        fallback={
+          issue.state === "active" ? "Cover" : issueStateLabel(issue.state)
+        }
         className="group-focus-visible:ring-ring transition duration-200 group-hover:scale-[1.02] group-focus-visible:ring-2"
       />
       <div className="min-w-0">

@@ -180,8 +180,9 @@ context-aware, in priority order:
 
 Inside archives: JPEG, PNG, WebP, AVIF, GIF, and JPEG-XL pages.
 Password-protected archives are detected — they ingest as page-less
-issues rather than abort the scan — and a library health finding that
-names them is planned (remediation WP B2).
+issues rather than abort the scan — and raise a `Password-protected
+archive` library health finding that names the file; the issue card and
+page say why there is no cover, and the scan summary counts them.
 
 ### The scanner repairs archives other readers reject
 

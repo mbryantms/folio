@@ -251,7 +251,7 @@ function BatchView({ batchId }: { batchId: string }) {
               Summary — what changed
             </CardTitle>
           </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <Stat label="Issues added" value={batch.totals.files_added} />
             <Stat label="Issues updated" value={batch.totals.files_updated} />
             <Stat label="Series created" value={batch.totals.series_created} />
@@ -262,6 +262,11 @@ function BatchView({ batchId }: { batchId: string }) {
               label="Malformed"
               value={batch.totals.files_malformed}
               warn={batch.totals.files_malformed > 0}
+            />
+            <Stat
+              label="Password-protected"
+              value={batch.totals.files_encrypted}
+              warn={batch.totals.files_encrypted > 0}
             />
             <Stat label="Events recorded" value={batch.event_count} />
           </CardContent>

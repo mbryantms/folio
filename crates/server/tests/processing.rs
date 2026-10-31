@@ -1603,6 +1603,138 @@ async fn corrupt_archive_surfaces_malformed_archive_not_comicinfo() {
     );
 }
 
+/// The committed password-protected CBZ (ZipCrypto, one PNG-signature page;
+/// see `fixtures/make-encrypted-cbz-fixture.py`).
+fn encrypted_cbz_fixture() -> std::path::PathBuf {
+    let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/synthetic-encrypted.cbz");
+    assert!(
+        p.is_file(),
+        "fixtures/synthetic-encrypted.cbz is committed — see fixtures/make-encrypted-cbz-fixture.py"
+    );
+    p
+}
+
+/// Audit 2026-11 N-L1: a password-protected archive used to become a
+/// coverless `encrypted`-state card with no explanation anywhere. The scan
+/// must still tolerate it, but now it also counts in `files_encrypted` and
+/// raises an error-severity `EncryptedArchive` health row naming the file.
+#[tokio::test]
+async fn encrypted_archive_raises_health_finding_and_scan_stat() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Locked (2025)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let locked = folder.join("Locked 001.cbz");
+    std::fs::copy(encrypted_cbz_fixture(), &locked).unwrap();
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    let stats = scanner::scan_library(&state, lib_id)
+        .await
+        .expect("scan succeeds");
+    assert_eq!(stats.files_encrypted, 1, "{stats:?}");
+    assert_eq!(
+        stats.files_malformed, 0,
+        "encrypted is not malformed: {stats:?}"
+    );
+
+    let issue = IssueEntity::find()
+        .one(&state.db)
+        .await
+        .unwrap()
+        .expect("the encrypted file still ingests as an issue");
+    assert_eq!(issue.state, "encrypted");
+    assert_eq!(issue.page_count.unwrap_or(0), 0);
+
+    let rows = HealthEntity::find().all(&state.db).await.unwrap();
+    let kinds: Vec<&str> = rows.iter().map(|r| r.kind.as_str()).collect();
+    let row = rows
+        .iter()
+        .find(|r| r.kind == "EncryptedArchive")
+        .unwrap_or_else(|| panic!("expected an EncryptedArchive row: {kinds:?}"));
+    assert_eq!(row.severity, "error");
+    assert!(row.resolved_at.is_none());
+    assert_eq!(
+        row.payload["data"]["path"].as_str(),
+        Some(locked.to_str().unwrap()),
+        "{}",
+        row.payload
+    );
+    assert!(
+        !kinds.contains(&"NoPages") && !kinds.contains(&"MalformedArchive"),
+        "the encrypted outcome owns the file; no secondary rows: {kinds:?}"
+    );
+}
+
+/// The finding follows the file: once the archive at that path is readable
+/// again (replaced with an unencrypted copy), the next scan re-ingests it
+/// as an active issue and auto-resolves the `EncryptedArchive` row.
+#[tokio::test]
+async fn encrypted_archive_finding_resolves_when_file_becomes_readable() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Unlocked (2025)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("Unlocked 001.cbz");
+    std::fs::copy(encrypted_cbz_fixture(), &path).unwrap();
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let open = HealthEntity::find()
+        .filter(entity::library_health_issue::Column::Kind.eq("EncryptedArchive"))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(open.len(), 1, "{open:?}");
+    assert!(open[0].resolved_at.is_none());
+
+    // An unchanged file keeps the row open (touch-on-skip): the archive is
+    // not re-opened — the folder fast-path or the per-file one skips it —
+    // so the emitter never fires, and the sweep must not mistake that for
+    // "fixed".
+    let stats = scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(
+        stats.files_unchanged + stats.series_skipped_unchanged,
+        1,
+        "second scan skips the unchanged file: {stats:?}"
+    );
+    assert_eq!(stats.files_encrypted, 0, "{stats:?}");
+    let still = HealthEntity::find_by_id(open[0].id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(still.resolved_at.is_none(), "unchanged file keeps the row");
+
+    // Replace it with a readable CBZ (different size + mtime → re-ingest).
+    write_cbz_with_xml(
+        &path,
+        7,
+        3,
+        Some("<?xml version=\"1.0\"?><ComicInfo><Series>Unlocked</Series></ComicInfo>"),
+        None,
+    );
+    let stats = scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(stats.files_encrypted, 0, "{stats:?}");
+    assert_eq!(stats.files_updated, 1, "{stats:?}");
+
+    let issue = IssueEntity::find().one(&state.db).await.unwrap().unwrap();
+    assert_eq!(issue.state, "active");
+    assert_eq!(issue.page_count, Some(3));
+
+    let resolved = HealthEntity::find_by_id(open[0].id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        resolved.resolved_at.is_some(),
+        "readable file resolves the finding: {resolved:?}"
+    );
+}
+
 /// CQ-TEST-3 (audit 2026-07): the tolerate-and-surface contract for the
 /// most common corruption — a malformed `ComicInfo.xml` — verified through
 /// a REAL scan: the scan succeeds (other files ingest), the broken file

@@ -69,6 +69,17 @@ pub enum IssueKind {
         path: PathBuf,
         error: String,
     },
+    /// The archive is a password-protected ZIP (ZipCrypto or AES; the
+    /// reader refuses it as `ArchiveError::Encrypted`). Folio holds no
+    /// passwords, so the file ingests as a page-less `encrypted`-state
+    /// issue and this row says why the card has no cover (audit 2026-11
+    /// N-L1). An encrypted `.cbr` / `.cb7` never reaches this branch: those
+    /// go through the conversion path and fail as
+    /// [`Self::UnsupportedArchiveFormat`]. Resolves when a later scan finds
+    /// the file readable (replaced with an unencrypted copy) or gone.
+    EncryptedArchive {
+        path: PathBuf,
+    },
     /// The series folder's name disagrees with the ComicInfo `<Series>`
     /// its archives carry (spec §7.1: ComicInfo wins, the discrepancy is
     /// logged). Both sides are reduced to a comparison key first — bracket
@@ -228,6 +239,7 @@ impl IssueKind {
             Self::MissingComicInfo { .. } => "MissingComicInfo",
             Self::MalformedComicInfo { .. } => "MalformedComicInfo",
             Self::MalformedArchive { .. } => "MalformedArchive",
+            Self::EncryptedArchive { .. } => "EncryptedArchive",
             Self::FolderNameMismatch { .. } => "FolderNameMismatch",
             Self::MixedSeriesInFolder { .. } => "MixedSeriesInFolder",
             Self::DuplicateContent { .. } => "DuplicateContent",
@@ -248,7 +260,8 @@ impl IssueKind {
             | Self::UnreadableFolder { .. }
             | Self::UnreadableArchive { .. }
             | Self::MalformedComicInfo { .. }
-            | Self::MalformedArchive { .. } => Severity::Error,
+            | Self::MalformedArchive { .. }
+            | Self::EncryptedArchive { .. } => Severity::Error,
 
             Self::FileAtRoot { .. }
             | Self::EmptyFolder { .. }
@@ -284,6 +297,7 @@ impl IssueKind {
             Self::MalformedArchive { path, .. } => {
                 format!("MalformedArchive:{}", path.display())
             }
+            Self::EncryptedArchive { path } => format!("EncryptedArchive:{}", path.display()),
             Self::FolderNameMismatch { folder, .. } => format!("FolderNameMismatch:{folder}"),
             Self::MixedSeriesInFolder { folder, .. } => {
                 format!("MixedSeriesInFolder:{}", folder.display())
@@ -370,6 +384,7 @@ impl IssueKind {
             | Self::MissingComicInfo { path }
             | Self::MalformedComicInfo { path, .. }
             | Self::MalformedArchive { path, .. }
+            | Self::EncryptedArchive { path }
             | Self::UnsupportedArchiveFormat { path, .. }
             | Self::RecoveredArchive { path, .. }
             | Self::SkippedArchiveEntries { path, .. }
