@@ -88,12 +88,13 @@ A one-tap per-series toggle in the reader overrides the whole chain.
   to first/last, and vim users get `g g` / `Shift+G`. `Shift+N` /
   `Shift+P` move between issues.
 - On touch: swipe to turn, tap zones (left / chrome-toggle center / right),
-  and pinch zoom. Today Folio hands pinch to the browser so you can
-  magnify lettering, and suppresses swipe-to-turn while zoomed so panning
-  a zoomed page never accidentally flips it; the fixed chrome scales with
-  the page. Planned (remediation WP C5): pinch as a transform zoom that
-  leaves the chrome where it is, and chrome shown on the first open on
-  touch devices — hide it once and the choice sticks.
+  and pinch zoom. A pinch is the reader's own zoom (1×–3×, about your
+  fingers, pan with both fingers together) in single and double view, so
+  the fixed controls stay where they are instead of scaling with the
+  page; webtoon keeps the browser's native pinch. Swipe-to-turn is
+  suppressed while zoomed so panning a zoomed page never accidentally
+  flips it. On touch devices the controls are shown the first time the
+  reader opens — hide them once and the choice sticks.
 - The page strip (`m`) is a horizontal thumbnail mini-map: click any page
   to jump, with the current page ringed and kept in view.
 

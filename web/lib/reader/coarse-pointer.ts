@@ -24,8 +24,25 @@
  * path.
  */
 export function primaryPointerIsCoarse(): boolean {
+  return matches("(pointer: coarse)");
+}
+
+/**
+ * Any coarse pointer at all — a touchscreen laptop as well as a phone.
+ * The touch *pinch* (`pinch-zoom.ts`) binds on this rather than on the
+ * primary pointer: a pinch is touch-only whatever the primary input is,
+ * and the gesture container drops `pinch-zoom` from its `touch-action`
+ * for every device, so every touch-capable device must get the reader's
+ * zoom in return.
+ */
+export function anyPointerIsCoarse(): boolean {
+  return matches("(any-pointer: coarse)");
+}
+
+function matches(query: string): boolean {
   return (
     typeof window !== "undefined" &&
-    window.matchMedia("(pointer: coarse)").matches
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(query).matches
   );
 }

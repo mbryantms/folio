@@ -157,6 +157,11 @@ type ReaderGestureOpts = {
   onPanStart: () => void;
   /** Movement (px, from drag start) while panning. */
   onPan: (dx: number, dy: number) => void;
+  /** True while a two-finger pinch owns the touch, and until the next
+   *  single-finger touch begins (`use-pinch-zoom.ts`). The drag binding
+   *  tracks the first finger through a pinch, so without this the lift
+   *  would read the pinch as a swipe (or drag a stale pan). */
+  isPinching?: () => boolean;
 };
 
 /**
@@ -193,6 +198,7 @@ export function useReaderGestures(opts: ReaderGestureOpts): void {
     panActive,
     onPanStart,
     onPan,
+    isPinching,
   } = opts;
   // Standalone-PWA WebKit wedge: bind through touch events on
   // coarse-pointer devices (see lib/reader/coarse-pointer.ts). With
@@ -209,10 +215,15 @@ export function useReaderGestures(opts: ReaderGestureOpts): void {
         if (panActive) onPanStart();
       },
       onDrag: ({ event, movement: [mx, my] }) => {
+        // A pinch owns both fingers; its own pan is applied in
+        // pinch-zoom.ts, and the drag's start offset is stale by now.
+        if (isPinching?.()) return;
         if (panActive && !startedInIgnoredChrome(event)) onPan(mx, my);
       },
       onDragEnd: ({ event, movement: [mx], cancel }) => {
         if (startedInIgnoredChrome(event)) return;
+        // The lift that ends a pinch is not a swipe.
+        if (isPinching?.()) return;
         // Panning consumed the drag; the offset is already applied.
         if (panActive) return;
         if (viewMode === "webtoon") {
@@ -312,10 +323,17 @@ export function useReaderGestures(opts: ReaderGestureOpts): void {
       if (!g || e.pointerId !== g.id) return;
       // Touch stream is alive → the primary binding owns this drag.
       if (g.sawTouchMove || g.ignored) return;
-      const { enabled, viewMode, direction, panActive, onNext, onPrev } =
-        optsRef.current;
+      const {
+        enabled,
+        viewMode,
+        direction,
+        panActive,
+        onNext,
+        onPrev,
+        isPinching,
+      } = optsRef.current;
       if (!enabled || panActive || viewMode === "webtoon") return;
-      if (pinchZoomedNow()) return;
+      if (isPinching?.() || pinchZoomedNow()) return;
       const dx = e.clientX - g.x;
       const dy = e.clientY - g.y;
       // Vertical intent belongs to native scroll.

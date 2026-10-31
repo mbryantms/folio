@@ -11,11 +11,13 @@
  */
 import { create } from "zustand";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
+import { primaryPointerIsCoarse } from "@/lib/reader/coarse-pointer";
 import {
   DEFAULT_SCOPE,
   readerPrefGet,
   readerPrefSet,
 } from "@/lib/reader/prefs-storage";
+import { DOUBLE_TAP_MS } from "@/lib/reader/zoom";
 import {
   mirrorServerPrefs,
   pendingAdoption,
@@ -71,7 +73,8 @@ type PersistedSlice =
   | "markersHidden"
   | "brightness"
   | "sepia"
-  | "zoomPersist";
+  | "zoomPersist"
+  | "chromeDismissed";
 
 const isFitMode = (v: unknown): v is FitMode =>
   v === "width" || v === "height" || v === "original" || v === "contain";
@@ -131,6 +134,55 @@ export const loadMarkersHidden = (): boolean => {
  *  about one series. Defaults to off — zoom is transient per page. */
 export const loadZoomPersist = (): boolean =>
   load("zoomPersist", null, isBoolFlag) === "true";
+
+/** Whether the user has ever hidden the reader chrome on purpose (a tap
+ *  on the page, the `t` key, Esc). Global, like {@link loadMarkersHidden}. */
+export const loadChromeDismissed = (): boolean =>
+  load("chromeDismissed", null, isBoolFlag) === "true";
+
+/**
+ * Chrome visibility when the reader opens (audit N-R3 / AC-2, remediation
+ * C5). Touch devices have no `t` key and the tap zones are invisible, so
+ * on a coarse primary pointer the chrome starts **shown** until the user
+ * hides it once — that first explicit hide is persisted and every later
+ * open starts hidden, as before. Fine-pointer devices keep today's
+ * pure-image first paint (the first-run overlay and the skip link say how
+ * to reveal the controls). The 4 s idle auto-hide is not a choice and
+ * never persists.
+ */
+export function initialChromeVisible(
+  coarse: boolean = primaryPointerIsCoarse(),
+): boolean {
+  return coarse && !loadChromeDismissed();
+}
+
+// The tap-zone double-tap (zoom) toggles the chrome optimistically on the
+// first tap and toggles it straight back on the second (`TapZones`), in
+// either order — hide-then-show when the chrome was up, show-then-hide
+// when it was down. So a hide counts as the user's choice only once it
+// has outlived the double-tap window, and a hide that *follows* a toggle
+// inside that window is the second half of a double-tap, not a choice.
+// `dismissChrome` (Esc) records at once.
+let pendingDismiss: ReturnType<typeof setTimeout> | null = null;
+let lastChromeToggleAt = Number.NEGATIVE_INFINITY;
+const CHROME_DISMISS_SETTLE_MS = DOUBLE_TAP_MS + 50;
+function recordChromeDismissed() {
+  save("chromeDismissed", null, "true");
+}
+function noteChromeToggle(hidden: boolean) {
+  const now = Date.now();
+  const insideDoubleTap = now - lastChromeToggleAt <= CHROME_DISMISS_SETTLE_MS;
+  lastChromeToggleAt = now;
+  if (pendingDismiss) {
+    clearTimeout(pendingDismiss);
+    pendingDismiss = null;
+  }
+  if (!hidden || insideDoubleTap) return;
+  pendingDismiss = setTimeout(() => {
+    pendingDismiss = null;
+    recordChromeDismissed();
+  }, CHROME_DISMISS_SETTLE_MS);
+}
 
 // Vision-adjustment bounds, shared by the setters and the loaders so a
 // persisted value can never re-hydrate outside the slider's range.
@@ -215,6 +267,9 @@ export interface ReaderState {
   setViewMode: (m: ViewMode) => void;
   setDirection: (d: Direction) => void;
   toggleChrome: () => void;
+  /** Hide the chrome as an explicit choice (Esc): recorded at once, so
+   *  later opens on a touch device start hidden. */
+  dismissChrome: () => void;
   setChromeVisible: (v: boolean) => void;
   setChromeAutoHide: (v: boolean) => void;
   setChromePinned: (v: boolean) => void;
@@ -263,8 +318,8 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   fitMode: "width",
   viewMode: "single",
   direction: "ltr",
-  // Default to chrome-off on first open so the reader lands on a pure
-  // image surface. Tapping the page (or pressing `f`) toggles it on.
+  // Resolved per mount in `init` (`initialChromeVisible`): hidden on fine
+  // pointers, shown on touch until the user hides it once.
   chromeVisible: false,
   chromeAutoHide: true,
   chromePinned: false,
@@ -318,9 +373,24 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   // strip, hiding it (auto-hide or manual toggle) fades both at the same
   // frequency. The `m` keybind hits `togglePageStrip` instead, so users can
   // still flip the strip independently when chrome is hidden.
+  // A toggle is always the user's doing (tap on the page, the `t` key, the
+  // chrome button): hiding records the choice once it has settled past
+  // the double-tap window (`noteChromeToggle`). `setChromeVisible` is the
+  // programmatic path (auto-hide, the skip link) and records nothing.
   toggleChrome: () => {
     const next = !get().chromeVisible;
+    noteChromeToggle(!next);
     set({ chromeVisible: next, pageStripVisible: next });
+  },
+  // Esc closes whatever is up; it is a chrome choice only when the chrome
+  // itself was showing (not when only the `m` page strip was).
+  dismissChrome: () => {
+    if (get().chromeVisible) {
+      if (pendingDismiss) clearTimeout(pendingDismiss);
+      pendingDismiss = null;
+      recordChromeDismissed();
+    }
+    set({ chromeVisible: false, pageStripVisible: false });
   },
   setChromeVisible: (v: boolean) =>
     set({ chromeVisible: v, pageStripVisible: v }),
@@ -408,10 +478,11 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       fitMode: fit,
       viewMode: loadViewMode(seriesId) ?? initialViewMode,
       direction: loadDirection(seriesId) ?? initialDirection,
-      // Reader opens with chrome hidden so each new issue lands on
-      // a pure-image surface. The user reveals chrome with a tap
-      // (onChromeZone) or the `f` keybind.
-      chromeVisible: false,
+      // Fine pointers open with chrome hidden so each new issue lands on
+      // a pure-image surface (a tap on the page or `t` reveals it). Touch
+      // devices start with it shown until the user has hidden it once —
+      // see `initialChromeVisible`.
+      chromeVisible: initialChromeVisible(),
       chromeAutoHide: get().chromeAutoHide,
       chromePinned: false,
       pageStripVisible: initialPageStripVisible ?? false,

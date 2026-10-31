@@ -42,7 +42,8 @@ type GestureEventLike = Event & {
  * Safari: trackpad pinch arrives as `gesturestart` / `gesturechange`
  * (cumulative `scale` since gesture start) rather than ctrl+wheel. Those
  * are handled only on fine-pointer devices — on iOS the same events fire
- * for a two-finger *touch* pinch, which stays native pinch-zoom there.
+ * for a two-finger *touch* pinch, which `pinch-zoom.ts` drives from the
+ * touch events instead (audit N-R9).
  */
 export function useWheelZoom(opts: WheelZoomOpts): void {
   const optsRef = useRef(opts);

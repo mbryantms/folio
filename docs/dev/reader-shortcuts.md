@@ -92,9 +92,17 @@ WP-4.8 (audit AC-2..AC-5) — what a keyboard or screen-reader user gets:
 - **Skip links.** The first two Tab stops in the reader are visually hidden
   until focused: *Show reader controls (T)* reveals the chrome and moves
   focus onto its first button; *Show page text (R)* opens the page-text
-  panel. The chrome itself stays hidden and `inert` by default, so these
-  are the discoverable way in. The first-run overlay also says, in words,
-  that `t` (or a tap in the center) brings the controls back.
+  panel. On a fine pointer the chrome starts hidden and `inert`, so these
+  are the discoverable way in. On a coarse pointer (phone / tablet, no
+  `t` key, invisible tap zones) the chrome starts **shown** the first
+  time the reader opens and on every open until the user hides it once —
+  a tap on the page, `t`, or Esc; that first explicit hide is persisted
+  (`reader.v1:chromeDismissed:_default`) and later opens start hidden
+  as on desktop (remediation C5, audit N-R3 / AC-2;
+  `store.ts::initialChromeVisible`). The 4 s idle auto-hide and the
+  double-tap's optimistic toggle are not choices and persist nothing.
+  The first-run overlay also says, in words, that `t` (or a tap in the
+  center) shows or hides the controls.
 - **Page-text panel** (`r`, or the chrome's *Show page text* button). A
   non-modal side sheet listing the visible page's text in reading order
   (rows top to bottom; within a row left-to-right, or right-to-left for
@@ -146,18 +154,21 @@ owns the interaction there).
 | Drag while zoomed              | Pan the zoomed page / spread (clamped to its edges)           |
 | Double-tap / double-click      | Toggle 2× reader zoom at the tap point (single + double view) |
 | `Ctrl` + wheel, trackpad pinch | Reader zoom anchored at the pointer (desktop)                 |
-| Touch pinch (phone / tablet)   | Native browser zoom (reads small letterer text)               |
+| Touch pinch (phone / tablet)   | Reader zoom about the fingers' midpoint, 1×–3×; both fingers together pan (single + double view; native browser zoom in webtoon) |
 
 Threshold for swipe = 30 px horizontal movement. The `prefers-reduced-motion`
 media query disables gesture rubber-banding (still discrete page changes).
 
-**Pinch behavior change (v0.3.21+):** pinch used to cycle fit modes;
-touch pinch now defers to native browser pinch-to-zoom so users can
-zoom in on small text. The fit-mode cycle stays bound to the `f` key
-and the chrome toggle button. While the page is natively zoomed
-(`visualViewport.scale > 1`) the swipe-to-turn handler is
-suppressed so single-finger pans go to the browser viewport
-instead of accidentally turning pages.
+**Pinch history.** Pinch cycled fit modes until v0.3.21, then deferred
+to native browser pinch-to-zoom so users could read small lettering —
+at the cost of the fixed chrome, page strip and status-bar backing
+scaling with the page (audit N-R9). Since remediation C5 a two-finger
+pinch in single and double view is the reader's own transform zoom
+(see [Zoom](#zoom)); the fit-mode cycle stays on the `f` key and the
+chrome button. Webtoon keeps native pinch, and there the
+swipe-to-turn handler is still suppressed while the page is natively
+zoomed (`visualViewport.scale > 1`, corroborated by the layout /
+visual width ratio) so single-finger pans go to the browser viewport.
 
 ### Zoom
 
@@ -174,8 +185,41 @@ construction; ctrl+wheel falls through to the browser there).
   with the art — and instead zoom the page continuously (1×–3×,
   exponential in the wheel delta, one mouse notch ≈ ×1.28) keeping
   the content under the pointer stationary. `gesture*` events are
-  only handled on fine-pointer devices; on iOS they also fire for a
-  two-finger touch pinch, which stays native.
+  only read on fine-pointer devices; on iOS they also fire for a
+  two-finger touch pinch, which the touch path below drives instead.
+- **Touch pinch (remediation C5, audit N-R9).**
+  [`pinch-zoom.ts`](../../web/lib/reader/pinch-zoom.ts), loaded lazily
+  on touch-capable devices only (`any-pointer: coarse`,
+  `use-pinch-zoom.ts`), binds touch events on the gesture container —
+  touch, not pointer, events, for the same standalone-iOS
+  pointer-stream wedge every other reader drag surface dodges
+  (`coarse-pointer.ts`). When a second finger lands it cancels the
+  `touchstart` / `touchmove`, snapshots the zoom, the surface box and
+  the fingers' midpoint + distance, and on every move applies
+  `applyPinch`: `zoomAboutPoint` to `startScale × dist / startDist`
+  about the *starting* midpoint, then the midpoint's travel as a pan,
+  clamped by `clampZoomPan`. The gesture is cumulative from its start
+  so the 1× snap can't swallow a slow zoom-in. Lifting leaves the page
+  at the final scale; pinching in past 1× lands on the exact identity.
+  If the first finger had already started a native `pan-y` scroll when
+  the second landed (the browser then delivers uncancelable moves) the
+  pinch stands down rather than fight the scroll. The drag layer
+  (`useReaderGestures` `isPinching`) ignores the finger that outlives
+  a pinch, so the lift never turns a page or drags a stale pan; the
+  next single-finger touch starts clean. On coarse-primary devices the
+  module also owns WebKit's `gesture*` events (`use-wheel-zoom.ts`
+  reads them only on fine pointers): cancelling them is what stops iOS
+  Safari's native zoom (it ignores `user-scalable=no`), and a gesture
+  with no touch pinch behind it — an iPad trackpad — drives the zoom
+  from its cumulative `scale` like a desktop trackpad does. The
+  container's `touch-action` (`readerTouchAction`) drops `pinch-zoom`
+  while the reader's pinch is live (single / double view, marker mode
+  idle) so the browser never scales the fixed chrome, and keeps
+  `pan-y pinch-zoom` in webtoon and while drawing a marker. The
+  viewport meta is unchanged app-wide (`user-scalable=yes`; axe's
+  wcag2aa `meta-viewport` rule runs on the reader in docker-smoke).
+  Nothing animates — the transform tracks the fingers 1:1 — so
+  `prefers-reduced-motion` has nothing to disable.
 - **Keep zoom between pages.** Off by default: zoom resets to 1× on
   every page turn. With **Reader settings → Display → Keep zoom
   between pages** on (persisted globally in localStorage as

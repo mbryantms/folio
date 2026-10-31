@@ -217,6 +217,25 @@ export function zoomAfterPageTurn(
   };
 }
 
+/**
+ * `touch-action` for the reader's gesture container. While a drag pans
+ * (zoomed, or an overflowing page) the JS gesture owns every axis. At
+ * rest the browser keeps native vertical scroll and the horizontal axis
+ * is left for swipe-to-turn. While the reader's own pinch is live
+ * (`readerPinch`: single / double view, no marker being drawn —
+ * `pinch-zoom.ts`, audit N-R9) `pinch-zoom` is dropped so the browser
+ * never scales the fixed chrome along with the art; otherwise native
+ * pinch stays — in webtoon (a scrolling strip with a mount window, where
+ * a transform zoom is not safe) and while drawing a marker.
+ */
+export function readerTouchAction(
+  panActive: boolean,
+  readerPinch: boolean,
+): string {
+  if (panActive) return "none";
+  return readerPinch ? "pan-y" : "pan-y pinch-zoom";
+}
+
 /** Structural equality for zoom states (skip no-op `setState`s). */
 export function sameZoom(a: ZoomState, b: ZoomState): boolean {
   return (

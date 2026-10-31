@@ -51,6 +51,7 @@ neither are lazy `next/dynamic` chunks.
 | 2026-09-30, WP-4.4 (reader code-split) | 117.45 KB            | 13     | 130 KB  | 120 KB |
 | 2026-10-15, post-audit T4.4 (account per-series prefs) | 130.13 KB | 14 | 145 KB | 120 KB |
 | 2026-10-31, audit C2 (strip pill a11y, OCR alt, RECENTER hoist) | 141.66 KB | 15 | 145 KB | 120 KB |
+| 2026-10-31, audit C5 (touch pinch zoom, first-open chrome on touch) | 142.66 KB | 15 | 145 KB | 120 KB |
 
 The ceiling is measured + 10% (117.45 × 1.1 = 129.2 → 130 KB; 130.13 × 1.1 =
 143.1 → 145 KB). Going over the ceiling fails CI; going over the target only
@@ -74,6 +75,11 @@ function carrying a suppression of a `react-hooks/*` rule — and its
 memo-cache code cost 4.3 KB gzip in the reader chunk. `Reader` now opts
 out explicitly with `"use no memo"` (same runtime as before, stated rather
 than accidental); the page views and hooks in the file stay compiled.
+The C5 row: +1.0 KB for the `usePinchZoom` shim, the swipe layer's
+`isPinching` gate, `readerTouchAction` and the store's first-open chrome
+resolution; the pinch handlers themselves (`lib/reader/pinch-zoom.ts`)
+are a dynamic import taken only on touch-capable devices, so they are
+not in the first-load chunk.
 Re-measure after each
 reader-feature WP (4.2 zoom/fit, 4.3 spreads/strip, 4.8 page-text panel) and
 record the new row here; raise the ceiling only with a justification in this
