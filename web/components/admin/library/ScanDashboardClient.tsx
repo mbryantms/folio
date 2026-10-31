@@ -8,6 +8,7 @@ import { Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
 import { LibraryEventsList } from "@/components/admin/library/LibraryEventsList";
 import { WatchersCard } from "@/components/admin/library/WatchersCard";
 import { useScanBatch, useScanBatches } from "@/lib/api/queries";
@@ -112,9 +113,13 @@ export function ScanDashboardClient() {
   return <BatchView batchId={batchId} />;
 }
 
-/** No batch selected — show recent batches to drill into. */
-function BatchPicker() {
-  const { data, isLoading } = useScanBatches();
+/** No batch selected — list every "Scan all" batch, newest first, to drill
+ *  into. The list is an infinite query: an IntersectionObserver sentinel
+ *  walks `next_cursor`, so older batches never fall off a first-page cap.
+ *  Exported for the jsdom paging test. */
+export function BatchPicker() {
+  const query = useScanBatches();
+  const { data, isLoading } = query;
   if (isLoading) {
     return (
       <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
@@ -122,7 +127,7 @@ function BatchPicker() {
       </div>
     );
   }
-  const batches = data?.items ?? [];
+  const batches = data?.pages.flatMap((p) => p.items) ?? [];
   if (batches.length === 0) {
     return (
       <p className="text-muted-foreground text-sm">
@@ -132,28 +137,31 @@ function BatchPicker() {
     );
   }
   return (
-    <ul className="space-y-2">
-      {batches.map((b) => (
-        <li key={b.id}>
-          <Link
-            href={`?batch=${b.id}`}
-            className="border-border bg-card hover:bg-muted/40 flex items-center justify-between rounded-md border px-4 py-3 transition-colors"
-          >
-            <span className="flex items-center gap-3">
-              <BatchStateBadge state={b.state} />
-              <span className="text-sm">
-                {b.library_count}{" "}
-                {b.library_count === 1 ? "library" : "libraries"}
-                {b.force ? " · content-verify" : ""}
+    <>
+      <ul className="space-y-2">
+        {batches.map((b) => (
+          <li key={b.id}>
+            <Link
+              href={`?batch=${b.id}`}
+              className="border-border bg-card hover:bg-muted/40 flex items-center justify-between rounded-md border px-4 py-3 transition-colors"
+            >
+              <span className="flex items-center gap-3">
+                <BatchStateBadge state={b.state} />
+                <span className="text-sm">
+                  {b.library_count}{" "}
+                  {b.library_count === 1 ? "library" : "libraries"}
+                  {b.force ? " · content-verify" : ""}
+                </span>
               </span>
-            </span>
-            <span className="text-muted-foreground text-xs">
-              {new Date(b.started_at).toLocaleString()}
-            </span>
-          </Link>
-        </li>
-      ))}
-    </ul>
+              <span className="text-muted-foreground text-xs">
+                {new Date(b.started_at).toLocaleString()}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+      <InfiniteSentinel query={query} label="Loading older batches…" />
+    </>
   );
 }
 

@@ -48,7 +48,7 @@ import {
 import {
   useHealthIssues,
   useLibrary,
-  useScanRuns,
+  useLatestScanRun,
   useThumbnailsSettings,
   useThumbnailsStatus,
 } from "@/lib/api/queries";
@@ -219,7 +219,7 @@ function reduceEvent(state: LiveState, evt: ScanEvent): LiveState {
 
 export function LiveScanProgress({ libraryId }: { libraryId: string }) {
   const library = useLibrary(libraryId);
-  const runs = useScanRuns(libraryId);
+  const latestRun = useLatestScanRun(libraryId);
   const healthIssues = useHealthIssues(libraryId);
   const thumbnailSettings = useThumbnailsSettings(libraryId);
   const thumbnailStatus = useThumbnailsStatus(libraryId, { intervalMs: 2_000 });
@@ -231,7 +231,7 @@ export function LiveScanProgress({ libraryId }: { libraryId: string }) {
     libraryId: eventLibraryId,
     maxBuffer: 500,
   });
-  const lastRun = runs.data?.[0];
+  const lastRun = latestRun.data ?? undefined;
   const [state, dispatch] = React.useReducer(
     liveScanReducer,
     lastRun,

@@ -94,7 +94,13 @@ terminal state (`complete` / `partial_failed` / `failed`) is derived in
 `scanner::maybe_finalize_batch` once every member run finishes. The Scan
 dashboard reads `GET /admin/scan-batches[/{id}]` for the rollup and overlays
 live `/ws/scan-events` (tagged with `batch_id` on `Started`/`Completed`/
-`Failed`; `Progress` is correlated by `library_id`).
+`Failed`; `Progress` is correlated by `library_id`). The batch list, the
+per-library scan history and the cross-library findings feed are all
+cursor-paginated (`limit` default 50, max 200) and the admin pages walk them
+with `useInfiniteQuery` + an IntersectionObserver sentinel — there is no
+first-page cap on what an operator can scroll to; `scan.started` /
+`scan.completed` / `scan.failed` invalidate the batch list and
+`scan.health_issue` the findings feed, so an open table refreshes itself.
 
 ## In-flight work (Background work page)
 

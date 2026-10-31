@@ -3,19 +3,17 @@
 import * as React from "react";
 import Link from "next/link";
 
-import { Loader2 } from "lucide-react";
-
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { DataTable, type DataTableColumn } from "@/components/folio/data-table";
+import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/folio/tabs";
-import { useScanRunsInfinite } from "@/lib/api/queries";
+import { useScanRuns } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 import type { ScanRunKind, ScanRunView } from "@/lib/api/types";
 
@@ -78,14 +76,8 @@ function resultsFromStats(stats: unknown): {
 
 export function ScanRunsTable({ libraryId }: { libraryId: string }) {
   const [filter, setFilter] = React.useState<Filter>("all");
-  const {
-    data,
-    isLoading,
-    error,
-    hasNextPage,
-    isFetchingNextPage,
-    fetchNextPage,
-  } = useScanRunsInfinite(libraryId, { kind: filter });
+  const query = useScanRuns(libraryId, { kind: filter });
+  const { data, isLoading, error } = query;
   const items = React.useMemo(
     () => data?.pages.flatMap((p) => p.items) ?? [],
     [data],
@@ -164,26 +156,7 @@ export function ScanRunsTable({ libraryId }: { libraryId: string }) {
         }
         renderExpanded={(row) => <ScanRunDetails run={row.original} />}
       />
-      {hasNextPage ? (
-        <div className="flex justify-center">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => void fetchNextPage()}
-            disabled={isFetchingNextPage}
-          >
-            {isFetchingNextPage ? (
-              <>
-                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                Loading more…
-              </>
-            ) : (
-              "Load older"
-            )}
-          </Button>
-        </div>
-      ) : null}
+      <InfiniteSentinel query={query} label="Loading older scans…" />
     </div>
   );
 }

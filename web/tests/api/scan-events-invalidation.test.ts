@@ -27,7 +27,12 @@ const SCAN = "scan-1";
 const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
   {
     evt: { type: "scan.started", library_id: LIB, scan_id: SCAN, at: "t" },
-    expected: [queryKeys.scanRunsAll(LIB), queryKeys.backgroundWork],
+    expected: [
+      queryKeys.scanRunsAll(LIB),
+      queryKeys.backgroundWork,
+      queryKeys.adminScanRunsAll,
+      queryKeys.adminScanBatchesAll,
+    ],
   },
   {
     evt: {
@@ -42,15 +47,23 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
     expected: [
       queryKeys.scanRunsAll(LIB),
       queryKeys.backgroundWork,
+      queryKeys.adminScanRunsAll,
+      queryKeys.adminScanBatchesAll,
       queryKeys.library(LIB),
       queryKeys.health(LIB),
+      queryKeys.adminHealthIssuesAll,
       queryKeys.removed(LIB),
       ["series"],
     ],
   },
   {
     evt: { type: "scan.failed", library_id: LIB, scan_id: SCAN, error: "x" },
-    expected: [queryKeys.scanRunsAll(LIB), queryKeys.backgroundWork],
+    expected: [
+      queryKeys.scanRunsAll(LIB),
+      queryKeys.backgroundWork,
+      queryKeys.adminScanRunsAll,
+      queryKeys.adminScanBatchesAll,
+    ],
   },
   {
     evt: {
@@ -61,7 +74,7 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
       severity: "warning",
       path: null,
     },
-    expected: [queryKeys.health(LIB)],
+    expected: [queryKeys.health(LIB), queryKeys.adminHealthIssuesAll],
   },
   {
     evt: {
@@ -252,5 +265,71 @@ describe("toast copy", () => {
     expect(done("cover_variant", 0)).toBe(
       "Cover-size backfill complete — nothing to do.",
     );
+  });
+});
+
+describe("infinite-query keys sit under the prefixes the WS reducer invalidates", () => {
+  // The admin scanner / health hooks are `useInfiniteQuery` (audit 2026-11
+  // N-O7). TanStack invalidates by key prefix, so each hook's key must
+  // start with the prefix `invalidationsForEvent` emits or a finished scan
+  // would never refresh the open table.
+  const startsWith = (key: readonly unknown[], prefix: readonly unknown[]) =>
+    prefix.every((part, i) => JSON.stringify(key[i]) === JSON.stringify(part));
+
+  it("per-library scan history (any kind filter) + newest-run probe under scanRunsAll", () => {
+    for (const kind of ["all", "library", "series", "issue"]) {
+      expect(
+        startsWith(queryKeys.scanRuns(LIB, kind), queryKeys.scanRunsAll(LIB)),
+      ).toBe(true);
+    }
+    expect(
+      startsWith(queryKeys.latestScanRun(LIB), queryKeys.scanRunsAll(LIB)),
+    ).toBe(true);
+  });
+
+  it("cross-library scan-run cards and the findings rail under adminScanRunsAll", () => {
+    const filters = { state: "failed", limit: 50 };
+    expect(
+      startsWith(queryKeys.adminScanRuns(filters), queryKeys.adminScanRunsAll),
+    ).toBe(true);
+    expect(
+      startsWith(
+        queryKeys.adminScanRunsInfinite(filters),
+        queryKeys.adminScanRunsAll,
+      ),
+    ).toBe(true);
+    expect(
+      startsWith(
+        queryKeys.adminLatestScanPerLibrary,
+        queryKeys.adminScanRunsAll,
+      ),
+    ).toBe(true);
+  });
+
+  it("scan-all batch list (any state) and detail under adminScanBatchesAll", () => {
+    expect(
+      startsWith(queryKeys.adminScanBatches(), queryKeys.adminScanBatchesAll),
+    ).toBe(true);
+    expect(
+      startsWith(
+        queryKeys.adminScanBatches("running"),
+        queryKeys.adminScanBatchesAll,
+      ),
+    ).toBe(true);
+    expect(
+      startsWith(
+        queryKeys.adminScanBatch("b-1"),
+        queryKeys.adminScanBatchesAll,
+      ),
+    ).toBe(true);
+  });
+
+  it("cross-library findings (any filter set) under adminHealthIssuesAll", () => {
+    expect(
+      startsWith(
+        queryKeys.adminHealthIssues({ severity: "error", limit: 50 }),
+        queryKeys.adminHealthIssuesAll,
+      ),
+    ).toBe(true);
   });
 });

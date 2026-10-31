@@ -304,6 +304,11 @@ export function useScanAllLibraries() {
             queryKey: queryKeys.scanPreview(item.library_id),
           });
         }
+        // The new batch and its runs must show up even while the WS is
+        // reconnecting (the batch picker only polls once it sees a running
+        // batch).
+        qc.invalidateQueries({ queryKey: queryKeys.adminScanBatchesAll });
+        qc.invalidateQueries({ queryKey: queryKeys.adminScanRunsAll });
       },
     },
   );
@@ -770,6 +775,8 @@ export function useDismissHealthIssue(libraryId: string) {
       successMessage: "Issue dismissed",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.health(libraryId) });
+        // The cross-library findings page dismisses through this hook too.
+        qc.invalidateQueries({ queryKey: queryKeys.adminHealthIssuesAll });
       },
     },
   );
