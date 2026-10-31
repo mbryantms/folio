@@ -69,11 +69,7 @@ import {
   downloadMarkerImage,
   markerCropFilename,
 } from "@/lib/marker-crop";
-import {
-  markerPermalink,
-  pageBytesUrl,
-  readerUrl,
-} from "@/lib/urls";
+import { markerPermalink, pageBytesUrl, readerUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 import {
   useBookmarkCounts,
