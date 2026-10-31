@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.69.0](https://github.com/mbryantms/folio/compare/v0.68.0...v0.69.0) (2026-10-31)
+
+
+### Added
+
+* **web:** one control-row order on every list surface, at every width ([#1377](https://github.com/mbryantms/folio/issues/1377)) ([08e7dfe](https://github.com/mbryantms/folio/commit/08e7dfebb454a71ee7e5faaf056a338c1f529950))
+
 ## [0.68.0](https://github.com/mbryantms/folio/compare/v0.67.2...v0.68.0) (2026-10-31)
 
 
