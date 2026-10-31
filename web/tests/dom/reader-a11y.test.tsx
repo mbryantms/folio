@@ -69,7 +69,7 @@ import { MarkerOverlay } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/Mark
 import { PageTextPanel } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/PageTextPanel";
 import { ReaderSkipLinks } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/ReaderSkipLinks";
 import { useReaderStore } from "@/lib/reader/store";
-import { usePageTextPanel } from "@/lib/reader/page-text";
+import { usePageAltText, usePageTextPanel } from "@/lib/reader/page-text";
 
 // Two bubbles on one row (given right-then-left), one on the next row, and
 // a line box nested in the first bubble that must not become its own stop.
@@ -107,7 +107,7 @@ beforeEach(() => {
     chromeVisible: false,
     chromePinned: false,
   } as never);
-  usePageTextPanel.setState({ open: false });
+  usePageTextPanel.setState({ open: false, firstText: {} });
 });
 afterEach(() => {
   ocr.mockReset();
@@ -264,6 +264,57 @@ describe("PageTextPanel", () => {
     );
     // Nested line box is never OCR'd on its own.
     expect(ocr).toHaveBeenCalledTimes(3);
+  });
+
+  // Audit N-R4 / AC-3: once the panel has read a page, the page image's
+  // alt quotes the first line of the first block in reading order.
+  it("feeds the page image alt once the page's text is read", async () => {
+    ocr.mockImplementation(
+      async (input: { region: { x: number; y: number } }) => ({
+        text:
+          input.region.x === 10 && input.region.y === 11
+            ? "FIRST LINE\nsecond line of the first bubble"
+            : "OTHER",
+        confidence: 0.8,
+        refinedBbox: null,
+        lang: "manga",
+      }),
+    );
+    // Stands in for `PageImage` (the Reader passes the hook's `alt` and
+    // `lang` straight through; a source guard pins that wiring).
+    function AltProbe() {
+      const { alt, lang } = usePageAltText("issue-1", 0);
+      return (
+        <output data-testid="alt" lang={lang}>
+          {alt}
+        </output>
+      );
+    }
+    render(withQueryClient(<AltProbe />));
+    expect(screen.getByTestId("alt").textContent).toBe("Page 1");
+    expect(screen.getByTestId("alt").getAttribute("lang")).toBeNull();
+
+    renderPanel();
+    act(() => usePageTextPanel.getState().setOpen(true));
+    await waitFor(() =>
+      expect(screen.getByTestId("alt").textContent).toBe("Page 1: FIRST LINE"),
+    );
+    // The quoted line keeps its recognizer language, like the panel rows.
+    expect(screen.getByTestId("alt").getAttribute("lang")).toBe("ja");
+    expect(usePageTextPanel.getState().firstText).toEqual({
+      "issue-1:0": { line: "FIRST LINE", lang: "ja" },
+    });
+  });
+
+  it("leaves the plain alt when the page has no readable text", async () => {
+    regionsState.current = {
+      data: { page_w: 10, page_h: 10, regions: [] },
+      isSuccess: true,
+    };
+    renderPanel();
+    act(() => usePageTextPanel.getState().setOpen(true));
+    await screen.findByRole("dialog", { name: "Page text" });
+    expect(usePageTextPanel.getState().firstText).toEqual({});
   });
 
   it("announces when the page has no detected text", async () => {

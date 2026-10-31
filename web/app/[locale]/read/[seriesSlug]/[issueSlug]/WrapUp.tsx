@@ -68,7 +68,7 @@ export function WrapUpStrip({
         Wrap up
         {markerCounts.total > 0 ? (
           <span
-            className="bg-muted text-muted-foreground inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1.5 text-[11px]"
+            className="bg-muted text-muted-foreground inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1.5 text-xs"
             aria-label={`${markerCounts.total} markers in this issue`}
           >
             {markerCounts.total}

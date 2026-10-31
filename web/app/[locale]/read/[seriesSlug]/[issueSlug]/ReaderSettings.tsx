@@ -2,7 +2,7 @@
 
 import { useWakePreference } from "@/lib/reader/use-wake-lock";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Keyboard, RotateCcw } from "lucide-react";
 import { useReaderStore, type FitMode } from "@/lib/reader/store";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
@@ -38,6 +38,23 @@ const FIT_OPTIONS: ReadonlyArray<{ value: FitMode; label: string }> = [
   { value: "contain", label: "Screen" },
 ];
 
+/** Webtoon is width-fit by construction, so the reader renders `contain`
+ *  as `width` there (audit N-R10). The option stays visible but greyed
+ *  out, with the reason under the control, rather than silently doing
+ *  something else. */
+export const WEBTOON_CONTAIN_HINT =
+  "Webtoon always fits the page to the width; Screen fit applies in single and double view.";
+const FIT_OPTIONS_WEBTOON: ReadonlyArray<{
+  value: FitMode;
+  label: string;
+  disabled?: boolean;
+  title?: string;
+}> = FIT_OPTIONS.map((o) =>
+  o.value === "contain"
+    ? { ...o, disabled: true, title: WEBTOON_CONTAIN_HINT }
+    : o,
+);
+
 const DIRECTION_OPTIONS: ReadonlyArray<{ value: Direction; label: string }> = [
   { value: "ltr", label: "LTR" },
   { value: "rtl", label: "RTL" },
@@ -71,6 +88,7 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
   const setCoverSolo = useReaderStore((s) => s.setCoverSolo);
   const setMarkersHidden = useReaderStore((s) => s.setMarkersHidden);
   const setZoomPersist = useReaderStore((s) => s.setZoomPersist);
+  const fitHintId = useId();
 
   return (
     <div className="space-y-4 text-sm">
@@ -91,12 +109,24 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
         </Field>
         <Field label="Fit">
           <SegmentedControl
-            value={fitMode}
+            // Webtoon shows the fit the reader actually applies: a stored
+            // `contain` renders as width there, so Width is the pressed pill.
+            value={
+              viewMode === "webtoon" && fitMode === "contain"
+                ? "width"
+                : fitMode
+            }
             onChange={setFitMode}
-            options={FIT_OPTIONS}
+            options={viewMode === "webtoon" ? FIT_OPTIONS_WEBTOON : FIT_OPTIONS}
             ariaLabel="Fit mode"
+            ariaDescribedBy={viewMode === "webtoon" ? fitHintId : undefined}
           />
         </Field>
+        {viewMode === "webtoon" ? (
+          <p id={fitHintId} className="text-xs text-neutral-400">
+            {WEBTOON_CONTAIN_HINT}
+          </p>
+        ) : null}
         <SwitchRow
           label="Keep zoom between pages"
           description="Turning the page keeps your zoom level and starts at the top corner of the next page."
@@ -310,7 +340,7 @@ function IssueSpreadOverrides() {
           type="button"
           onClick={() => resetOverrides.mutate()}
           disabled={resetOverrides.isPending}
-          className="inline-flex items-center gap-2 text-[11px] text-neutral-500 underline-offset-4 hover:text-neutral-200 hover:underline disabled:opacity-50"
+          className="inline-flex items-center gap-2 text-xs text-neutral-500 underline-offset-4 hover:text-neutral-200 hover:underline disabled:opacity-50"
         >
           <RotateCcw className="size-3" />
           Reset spread overrides for this issue

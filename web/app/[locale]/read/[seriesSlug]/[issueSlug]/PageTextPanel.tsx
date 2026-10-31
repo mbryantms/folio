@@ -168,6 +168,18 @@ function PageTextSection({
     .filter((t): t is { key: string; result: OcrResult } => !!t.result?.text);
   const reading = ordered.length > 0 && settled < ordered.length;
 
+  // Once every region has settled, hand the first block (reading order)
+  // to the panel store so the page image's `alt` can quote its opening
+  // line (audit N-R4). A page with no readable text clears the slot.
+  const setFirstText = usePageTextPanel((s) => s.setFirstText);
+  const firstText = texts[0]?.result.text ?? null;
+  const firstLang = texts[0]?.result.lang ?? null;
+  const settledAll = !!data && !reading;
+  React.useEffect(() => {
+    if (!settledAll) return;
+    setFirstText(issueId, page, firstText, firstLang);
+  }, [settledAll, firstText, firstLang, issueId, page, setFirstText]);
+
   // Status copy only changes at phase boundaries, so the polite live
   // region announces "finding → reading → done" rather than every region.
   let status: string;

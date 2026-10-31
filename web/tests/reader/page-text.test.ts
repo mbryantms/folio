@@ -7,9 +7,13 @@
 import { describe, expect, it } from "vitest";
 import type { TextRegionView } from "@/lib/api/types";
 import {
+  PAGE_ALT_MAX_CHARS,
+  firstLineOf,
   ocrLangTag,
+  pageAltText,
   readingOrderRegions,
   runInOrderPool,
+  usePageTextPanel,
 } from "@/lib/reader/page-text";
 import {
   KEYBIND_DEFAULTS,
@@ -106,6 +110,52 @@ describe("ocrLangTag", () => {
     expect(ocrLangTag("manga")).toBe("ja");
     expect(ocrLangTag("western")).toBe("en");
     expect(ocrLangTag(null)).toBeUndefined();
+  });
+});
+
+// Audit N-R4 / AC-3: the page image's alt quotes the first OCR line once
+// the page-text panel has read the page.
+describe("page alt text", () => {
+  it("takes the first non-empty line, whitespace collapsed", () => {
+    expect(firstLineOf("\n  \nHELLO   THERE\nsecond line")).toBe("HELLO THERE");
+    expect(firstLineOf("   \n\t")).toBe("");
+  });
+
+  it("cuts a long first line at the alt budget with an ellipsis", () => {
+    const long = "word ".repeat(60).trim();
+    const line = firstLineOf(long);
+    expect(line.length).toBeLessThanOrEqual(PAGE_ALT_MAX_CHARS);
+    expect(line.endsWith("…")).toBe(true);
+    expect(firstLineOf("x".repeat(PAGE_ALT_MAX_CHARS))).toHaveLength(
+      PAGE_ALT_MAX_CHARS,
+    );
+  });
+
+  it("labels a page plainly until text is known, then prefixes it", () => {
+    expect(pageAltText(0, undefined)).toBe("Page 1");
+    expect(pageAltText(4, "")).toBe("Page 5");
+    expect(pageAltText(4, "I AM THE LAW")).toBe("Page 5: I AM THE LAW");
+  });
+
+  it("stores one first line per issue page and clears it on empty text", () => {
+    const { setFirstText, clearFirstText } = usePageTextPanel.getState();
+    setFirstText("issue-1", 2, "first\nsecond", "western");
+    setFirstText("issue-2", 2, "other", null);
+    expect(usePageTextPanel.getState().firstText).toEqual({
+      "issue-1:2": { line: "first", lang: "en" },
+      "issue-2:2": { line: "other" },
+    });
+    const before = usePageTextPanel.getState().firstText;
+    setFirstText("issue-1", 2, "first\nchanged tail", "western");
+    // Same first line and language → same object, no re-render churn.
+    expect(usePageTextPanel.getState().firstText).toBe(before);
+    setFirstText("issue-1", 2, null);
+    expect(usePageTextPanel.getState().firstText).toEqual({
+      "issue-2:2": { line: "other" },
+    });
+    // The reader drops everything on unmount.
+    clearFirstText();
+    expect(usePageTextPanel.getState().firstText).toEqual({});
   });
 });
 

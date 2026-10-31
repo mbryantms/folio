@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useReaderStore } from "@/lib/reader/store";
 import {
   computeSpreadGroups,
@@ -16,6 +23,7 @@ import { useSetIssuePageOverrides } from "@/lib/api/mutations";
 import type { Direction } from "@/lib/reader/detect";
 import type { MarkerKind, PageInfo } from "@/lib/api/types";
 import { SWIPE_IGNORE_ATTR } from "@/lib/reader/use-swipe";
+import { primaryPointerIsCoarse } from "@/lib/reader/coarse-pointer";
 import { withContentVersion } from "@/lib/urls";
 import {
   Tooltip,
@@ -172,6 +180,11 @@ export function PageStrip({
   }, [issueMarkers.data, markersHidden]);
   const activeRef = useRef<HTMLButtonElement>(null);
   const stripRef = useRef<HTMLOListElement>(null);
+  // Touch has no hover, so the hover-revealed spread pills would be
+  // unreachable there: on a coarse primary pointer every pill is shown
+  // (audit N-R11). Read once — the strip is a `ssr: false` chunk, so
+  // there is no server snapshot to disagree with.
+  const coarsePointer = useMemo(() => primaryPointerIsCoarse(), []);
   // Tracks whether we've already centered the active thumb for the current
   // open. The first scroll after the strip becomes visible runs synchronously
   // (no smooth-scroll animation), so the user sees the strip slide in already
@@ -407,7 +420,7 @@ export function PageStrip({
                 onClick={() => setPage(i)}
                 aria-label={`Jump to page ${i + 1}${isDouble ? " (double-page)" : ""}`}
                 aria-current={isActive ? "page" : undefined}
-                className={`group relative block origin-bottom overflow-visible transition-transform duration-200 ease-out motion-reduce:transition-none ${
+                className={`group focus-visible:ring-accent relative block origin-bottom overflow-visible rounded-lg transition-transform duration-200 ease-out focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950 focus-visible:outline-none motion-reduce:transition-none ${
                   isActive ? "scale-[1.6]" : ""
                 }`}
               >
@@ -471,35 +484,76 @@ export function PageStrip({
                   nextActive ? "mr-7" : "mr-5"
                 }`;
             return (
-              <li
+              <ThumbSlot
                 key={i}
                 className={`group/thumb relative shrink-0 transition-[margin] duration-200 ease-out motion-reduce:transition-none ${liMarginClass}`}
               >
-                {viewMode === "double" && shouldLoad ? (
-                  <SpreadModeToggle
-                    page={i}
-                    mode={spreadMode}
-                    active={isActive}
-                    onCycle={cycleSpreadMode}
-                  />
-                ) : null}
-                {shouldLoad ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>{button}</TooltipTrigger>
-                    <TooltipContent side="top" sideOffset={8}>
-                      Page {i + 1}
-                      {isDouble ? " · double-page" : ""}
-                    </TooltipContent>
-                  </Tooltip>
-                ) : (
-                  button
+                {(focused) => (
+                  <>
+                    {shouldLoad ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>{button}</TooltipTrigger>
+                        <TooltipContent side="top" sideOffset={8}>
+                          Page {i + 1}
+                          {isDouble ? " · double-page" : ""}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      button
+                    )}
+                    {/* After the thumb in DOM order (positioned over it),
+                     * so Tab from a focused thumb lands on that page's
+                     * pill. Rendered for every thumb, not just the loaded
+                     * window: it is one small button, and an overridden
+                     * page's pill must be a tab stop wherever the strip
+                     * is scrolled. */}
+                    {viewMode === "double" ? (
+                      <SpreadModeToggle
+                        page={i}
+                        mode={spreadMode}
+                        active={isActive}
+                        focused={focused}
+                        coarsePointer={coarsePointer}
+                        onCycle={cycleSpreadMode}
+                      />
+                    ) : null}
+                  </>
                 )}
-              </li>
+              </ThumbSlot>
             );
           })}
         </ol>
       </nav>
     </TooltipProvider>
+  );
+}
+
+/**
+ * One strip slot. Owns the "does this thumb (or its pill) hold focus"
+ * flag so a keyboard user Tabbing along the strip re-renders one slot at
+ * a time, not every thumbnail; the render-prop child receives the flag.
+ */
+function ThumbSlot({
+  className,
+  children,
+}: {
+  className: string;
+  children: (focused: boolean) => ReactNode;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <li
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => {
+        // Focus moving between the thumb and its own pill stays inside
+        // the slot; only a departure clears the flag.
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setFocused(false);
+      }}
+      className={className}
+    >
+      {children(focused)}
+    </li>
   );
 }
 
@@ -518,29 +572,47 @@ const SPREAD_MODE_DESCRIPTION: Record<PageSpreadMode, string> = {
 /**
  * WP-4.3 strip affordance: a small pill over a thumbnail's bottom-left
  * corner that cycles the page's manual spread mode
- * (auto → spread → single → auto). Double-page view only. Always shown
- * on overridden pages and on the pages currently on screen (so touch
- * users can reach it by navigating there); otherwise revealed on
- * hover. Only the on-screen pages' pills are tab stops, so the strip
- * doesn't double its tab order.
+ * (auto → spread → single → auto). Double-page view only.
+ *
+ * Shown on overridden pages, on the pages currently on screen, and on
+ * every page when the primary pointer is coarse (touch has no hover to
+ * reveal it with); otherwise revealed on hover or focus. Tab stops are
+ * the overridden and on-screen pages' pills plus the pill of whichever
+ * thumb holds focus — so every page's pairing is one Tab away from its
+ * thumb without the strip doubling its tab order (audit N-R11). The
+ * `aria-label` carries the current and the next state.
+ *
+ * `folio-tap` gives touch the standard 44px tap area (phone-layout rule
+ * 9) without growing the pill. That area reaches ~13px past the pill
+ * into the thumb's lower-left corner — a visible control claiming the
+ * space next to it, on a 96×164px thumb that stays easy to hit
+ * elsewhere; the alternative, a 20px-tall target, fails the rule.
  */
 function SpreadModeToggle({
   page,
   mode,
   active,
+  focused,
+  coarsePointer,
   onCycle,
 }: {
   page: number;
   mode: PageSpreadMode;
   active: boolean;
+  /** The page's thumb or pill holds keyboard focus. */
+  focused: boolean;
+  /** Primary pointer is coarse (touch): always show the pill. */
+  coarsePointer: boolean;
   onCycle: (page: number) => void;
 }) {
   const next = nextPageSpreadMode(mode);
-  const pinned = mode !== "auto" || active;
+  const overridden = mode !== "auto";
+  const shown = overridden || active || coarsePointer;
+  const tabbable = overridden || active || focused;
   return (
     <button
       type="button"
-      tabIndex={active ? 0 : -1}
+      tabIndex={tabbable ? 0 : -1}
       onClick={(e) => {
         e.stopPropagation();
         onCycle(page);
@@ -548,11 +620,15 @@ function SpreadModeToggle({
       aria-label={`Page ${page + 1} pairing: ${SPREAD_MODE_DESCRIPTION[mode]}. Change to ${SPREAD_MODE_DESCRIPTION[next]}.`}
       title={`Pairing: ${SPREAD_MODE_DESCRIPTION[mode]} — click for ${SPREAD_MODE_LABEL[next].toLowerCase()}`}
       data-spread-mode={mode}
-      className={`focus-visible:ring-accent absolute bottom-7 left-1 z-20 rounded-md px-1.5 py-0.5 text-[10px] leading-none font-medium ring-1 transition-opacity duration-150 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none motion-reduce:transition-none ${
+      className={`folio-tap focus-visible:ring-accent absolute bottom-7 left-1 z-20 rounded-md px-1.5 py-0.5 text-xs leading-none font-medium ring-1 transition-opacity duration-150 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none motion-reduce:transition-none ${
         mode === "auto"
           ? "bg-neutral-950/80 text-neutral-300 ring-neutral-700"
           : "bg-accent text-accent-foreground ring-accent"
-      } ${pinned ? "opacity-100" : "opacity-0 group-hover/thumb:opacity-100"}`}
+      } ${
+        shown
+          ? "opacity-100"
+          : "opacity-0 group-focus-within/thumb:opacity-100 group-hover/thumb:opacity-100"
+      }`}
     >
       {SPREAD_MODE_LABEL[mode]}
     </button>

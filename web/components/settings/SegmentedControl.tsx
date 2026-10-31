@@ -15,13 +15,25 @@ export function SegmentedControl<T extends string>({
   onChange,
   options,
   ariaLabel,
+  ariaDescribedBy,
   disabled,
   className,
 }: {
   value: T;
   onChange: (next: T) => void;
-  options: ReadonlyArray<{ value: T; label: string }>;
+  /** `disabled` greys one option out while the rest stay live (the
+   *  caller explains why beside the control); `title` is its hover
+   *  text. */
+  options: ReadonlyArray<{
+    value: T;
+    label: string;
+    disabled?: boolean;
+    title?: string;
+  }>;
   ariaLabel: string;
+  /** Id of an element explaining the group (e.g. why an option is
+   *  disabled); set as `aria-describedby` on the group. */
+  ariaDescribedBy?: string;
   disabled?: boolean;
   /** Extra classes on the group wrapper — e.g. `h-9` when the control
    *  sits in a toolbar row beside `<Button>` / `<Input>` siblings. */
@@ -31,6 +43,7 @@ export function SegmentedControl<T extends string>({
     <div
       role="group"
       aria-label={ariaLabel}
+      aria-describedby={ariaDescribedBy}
       // `max-w-full` + `overflow-x-auto` keep a long option set (e.g. the
       // per-series ranking dimensions: Writers…Cover artists + Genres + Tags)
       // from spilling off-screen on mobile — it scrolls within the control
@@ -51,7 +64,8 @@ export function SegmentedControl<T extends string>({
             key={opt.value}
             aria-pressed={active}
             type="button"
-            disabled={disabled}
+            disabled={disabled || opt.disabled}
+            title={opt.title}
             onClick={() => onChange(opt.value)}
             className={cn(
               "folio-tap relative rounded px-3 py-1.5 text-sm font-medium transition-colors",
