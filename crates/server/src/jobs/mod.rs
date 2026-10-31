@@ -68,6 +68,7 @@ pub mod archive_edit;
 pub mod archive_transforms;
 pub mod backfill;
 pub mod backup_prune;
+pub mod busy_requeue;
 pub mod close_dangling_sessions;
 pub mod entity_enrich;
 pub mod hard_purge;
@@ -413,8 +414,19 @@ impl JobRuntime {
         // only available once the backend type is known); the middleware
         // stack is then concurrency (outermost) → Data → metrics, and the
         // handler is wrapped by [`with_retry_budget`].
+        //
+        // The `attempt:` arm is for handlers that take the task's `Attempt`
+        // themselves (to do last-attempt bookkeeping before the budget
+        // kills the task); it must come first so the literal token is
+        // tried before `$handler:expr` commits to parsing.
         macro_rules! register {
-            ($monitor:expr, $name:literal, $storage:expr, $concurrency:expr, $handler:expr) => {{
+            ($monitor:expr, $name:literal, $storage:expr, $concurrency:expr, attempt: $handler:expr) => {
+                register!(@build $monitor, $name, $storage, $concurrency, with_retry_budget_attempt($handler))
+            };
+            ($monitor:expr, $name:literal, $storage:expr, $concurrency:expr, $handler:expr) => {
+                register!(@build $monitor, $name, $storage, $concurrency, with_retry_budget($handler))
+            };
+            (@build $monitor:expr, $name:literal, $storage:expr, $concurrency:expr, $wrapped:expr) => {{
                 let storage = $storage.clone();
                 let state = state.clone();
                 $monitor.register(move |_runs: usize| {
@@ -425,7 +437,7 @@ impl JobRuntime {
                         .concurrency($concurrency)
                         .data(state.clone())
                         .layer(metrics_layer::JobMetricsLayer::new($name))
-                        .build(with_retry_budget($handler))
+                        .build($wrapped)
                 })
             }};
         }
@@ -505,13 +517,15 @@ impl JobRuntime {
         // Sidecar writeback workers — concurrency=2 because the work
         // is mostly zip stream-copy + filesystem rename; per-issue
         // serialization is enforced by the rewrite mutex inside the
-        // handler, so two workers won't race on the same archive.
+        // handler, so two workers won't race on the same archive. The
+        // handler reads the task's `Attempt` so the last budgeted failure
+        // marks the triggering run failed before apalis dead-letters it.
         let monitor = register!(
             monitor,
             "rewrite_issue_sidecars",
             self.rewrite_issue_sidecars_storage,
             2,
-            rewrite_sidecars::handle
+            attempt: rewrite_sidecars::handle
         );
         // Page-byte edits — concurrency=1. Re-encoding pages on a large
         // archive can be CPU-heavy; serializing keeps host load bounded
@@ -781,8 +795,29 @@ where
     H: Fn(Args, Data<D>) -> Fut + Clone + Send + 'static,
     Fut: std::future::Future<Output = Result<(), BoxDynError>> + Send + 'static,
 {
+    with_retry_budget_attempt(move |job, state, _attempt: Attempt| handler(job, state))
+}
+
+/// [`with_retry_budget`] for a handler that wants the task's own
+/// [`Attempt`] — a job that must record "this was the last try" itself
+/// (mark a metadata run failed, write the library event) before the
+/// wrapper turns the error into an [`AbortError`]. `attempt.current() >=
+/// JOB_MAX_ATTEMPTS` inside the handler is the same test the wrapper
+/// applies afterwards.
+pub fn with_retry_budget_attempt<Args, D, H, Fut>(
+    handler: H,
+) -> impl FnMut(Args, Data<D>, Attempt) -> futures::future::BoxFuture<'static, Result<(), BoxDynError>>
++ Clone
++ Send
++ 'static
+where
+    Args: Send + 'static,
+    D: Clone + Send + Sync + 'static,
+    H: Fn(Args, Data<D>, Attempt) -> Fut + Clone + Send + 'static,
+    Fut: std::future::Future<Output = Result<(), BoxDynError>> + Send + 'static,
+{
     move |job, state, attempt| {
-        let fut = handler(job, state);
+        let fut = handler(job, state, attempt.clone());
         Box::pin(async move {
             match fut.await {
                 Ok(()) => Ok(()),

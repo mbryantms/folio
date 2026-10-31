@@ -492,6 +492,7 @@ fn apply_job(run_id: Uuid, series_id: Uuid, ordinal: i32, actor: Uuid) -> ApplyS
         is_auto: false,
         composite: None,
         bulk: false,
+        attempt: 0,
     }
 }
 

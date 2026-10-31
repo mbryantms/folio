@@ -1952,6 +1952,7 @@ pub async fn apply_series(
             is_auto: false,
             composite: None,
             bulk: false,
+            attempt: 0,
         })
         .await
     {
@@ -2288,6 +2289,7 @@ pub async fn apply_issue(
                 .collect(),
             is_auto: false,
             composite: None,
+            attempt: 0,
         })
         .await
     {
@@ -3737,7 +3739,9 @@ pub async fn batch_status(
     let mut any_unfinished = false;
     for r in &runs {
         let outcome = outcomes.get(&r.id).cloned();
-        let applied = r.items_applied > 0;
+        // A writeback apply counts itself applied when it queues the
+        // rewrite; a run the rewrite job then marked `failed` did not land.
+        let applied = r.items_applied > 0 && r.status != orchestrator::status::FAILED;
         match r.status.as_str() {
             "awaiting_quota" => {
                 agg.awaiting_quota += 1;
@@ -4221,6 +4225,7 @@ pub async fn batch_apply(
                     is_auto: false,
                     composite: composite.clone(),
                     bulk: true,
+                    attempt: 0,
                 })
                 .await
                 .is_ok()
@@ -4242,6 +4247,7 @@ pub async fn batch_apply(
                     override_external_id_sources: std::collections::HashSet::new(),
                     is_auto: false,
                     composite,
+                    attempt: 0,
                 })
                 .await
                 .is_ok()

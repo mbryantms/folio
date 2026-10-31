@@ -154,9 +154,13 @@ async fn run_queued_rewrite_jobs(app: &TestApp) -> usize {
     let jobs = queued_rewrite_jobs(app).await;
     let n = jobs.len();
     for job in jobs {
-        server::jobs::rewrite_sidecars::handle(job, apalis::prelude::Data::new(app.state()))
-            .await
-            .expect("rewrite job handle");
+        server::jobs::rewrite_sidecars::handle(
+            job,
+            apalis::prelude::Data::new(app.state()),
+            apalis::prelude::Attempt::new_with_value(1),
+        )
+        .await
+        .expect("rewrite job handle");
     }
     let storage = app.state().jobs.rewrite_issue_sidecars_storage.clone();
     let data_hash = storage.get_config().job_data_hash();

@@ -17,6 +17,7 @@
 //! Runs feed (M6) can render per-item drill-downs without re-fetching.
 
 use crate::audit::{self, AuditEntry};
+use crate::jobs::busy_requeue::{self, Requeue};
 use crate::library::event_log::{self, Action, Category, NewEvent, Severity};
 use crate::metadata::apply::{self, ApplyArgs, ApplyError, ApplyMode, ApplyOutcome};
 use crate::metadata::composite::{self, AutoCompositeArgs};
@@ -106,13 +107,123 @@ pub async fn try_claim_issue_mutex(
     Ok(set.is_some())
 }
 
-async fn release_series_mutex(state: &AppState, series_id: Uuid) {
+/// Release the series apply mutex. `pub` so integration tests can play the
+/// other claimant (hold, then release) around a worker call.
+pub async fn release_series_mutex(state: &AppState, series_id: Uuid) {
     let mut conn = state.jobs.redis.clone();
     let _: Result<(), _> = conn.del::<_, ()>(series_mutex_key(series_id)).await;
 }
-async fn release_issue_mutex(state: &AppState, issue_id: &str) {
+pub async fn release_issue_mutex(state: &AppState, issue_id: &str) {
     let mut conn = state.jobs.redis.clone();
     let _: Result<(), _> = conn.del::<_, ()>(issue_mutex_key(issue_id)).await;
+}
+
+// ───────── busy-mutex requeue ─────────
+
+/// The identity an apply job needs for its busy-lock bookkeeping.
+struct BusyJob {
+    run_id: Uuid,
+    attempt: u32,
+    /// `"series"` | `"issue"` — the event's entity type and the audit kind.
+    kind: &'static str,
+    target_id: String,
+}
+
+/// Found the per-entity apply mutex held: push a copy of the job back with
+/// its `attempt` bumped ([`busy_requeue`], 5 s pace, 40 requeues), and once
+/// that budget is spent mark the run `failed` with a clear
+/// `error_summary`, write a `metadata.errored` library event and tell any
+/// waiting client — so the batch review shows the dropped child instead of
+/// a silently complete batch.
+///
+/// The apply mutex is claimed only by apply workers (one per queue), so a
+/// busy claim means a second replica applying the same entity, an inline
+/// apply, or a key a crashed worker left behind (TTL 90 s); the 200 s
+/// budget outlasts all three.
+///
+/// Provider quota is never re-spent by a requeue: the job carries only
+/// `run_id` + `ordinal`, which name the candidate the search already
+/// stored on `metadata_run_candidate`; the detail fetch happens inside
+/// `apply_*` (cache first), which this path never reaches.
+async fn requeue_busy<P, Fut>(state: &AppState, job: BusyJob, push: P) -> Result<(), BoxDynError>
+where
+    P: FnOnce(u32) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
+    let BusyJob {
+        run_id,
+        attempt,
+        kind,
+        target_id,
+    } = job;
+    let outcome = busy_requeue::requeue_busy("metadata apply", &target_id, attempt, push).await?;
+    let Requeue::Exhausted { attempts } = outcome else {
+        return Ok(());
+    };
+    let error =
+        format!("metadata apply dropped: {kind} apply lock still held after {attempts} requeues");
+    fail_run(state, run_id, &error).await;
+    record_busy_dropped(state, kind, &target_id, run_id, attempts, &error).await;
+    Ok(())
+}
+
+/// Mark the run `failed` with `error` and tell any client waiting on it.
+/// Used for a spent busy budget and for an `ApplyError` from the apply
+/// itself — pre-fix the latter only emitted the WS event, so the run stayed
+/// `completed` with nothing applied and nothing persistent said why.
+async fn fail_run(state: &AppState, run_id: Uuid, error: &str) {
+    if let Err(e) = crate::metadata::orchestrator::fail_run(&state.db, run_id, error).await {
+        tracing::warn!(run_id = %run_id, error = %e, "metadata_apply: could not mark the run failed");
+    }
+    apply::emit_failed_for_run(state, run_id, error).await;
+}
+
+/// `metadata.errored` library event for an apply dropped on a busy lock.
+/// Resolves the library from the target row; skipped when it is gone.
+async fn record_busy_dropped(
+    state: &AppState,
+    kind: &'static str,
+    target_id: &str,
+    run_id: Uuid,
+    attempts: u32,
+    error: &str,
+) {
+    let (library_id, label, path) = match kind {
+        "series" => {
+            let Ok(id) = target_id.parse::<Uuid>() else {
+                return;
+            };
+            match entity::series::Entity::find_by_id(id).one(&state.db).await {
+                Ok(Some(s)) => (s.library_id, s.name, s.folder_path),
+                _ => return,
+            }
+        }
+        _ => match entity::issue::Entity::find_by_id(target_id.to_owned())
+            .one(&state.db)
+            .await
+        {
+            Ok(Some(i)) => (i.library_id, i.slug, Some(i.file_path)),
+            _ => return,
+        },
+    };
+    event_log::record(
+        &state.db,
+        NewEvent::new(
+            library_id,
+            Category::Metadata,
+            Action::Errored,
+            Severity::Error,
+            format!("Metadata apply dropped for {kind} {label}: lock busy"),
+        )
+        .entity(kind, target_id.to_owned(), Some(label))
+        .detail(serde_json::json!({
+            "error": error,
+            "attempts": attempts,
+            "run_id": run_id,
+            "path": path,
+        })),
+    )
+    .await;
 }
 
 // ───────── series job ─────────
@@ -153,10 +264,64 @@ pub struct ApplySeriesJob {
     /// `#[serde(default)]` for queued-job back-compat.
     #[serde(default)]
     pub bulk: bool,
+    /// Busy-mutex requeue counter ([`crate::jobs::busy_requeue`]). New
+    /// enqueues leave it 0; the worker bumps it each time it finds the
+    /// series' apply mutex held and pushes itself back. `#[serde(default)]`
+    /// so queued pre-upgrade jobs still deserialize.
+    #[serde(default)]
+    pub attempt: u32,
 }
 
 pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
+
+    // Cancelled before the apply ran (queue cleared / batch cancelled):
+    // nothing to write.
+    if crate::metadata::orchestrator::run_is_cancelled(&state.db, job.run_id).await {
+        tracing::info!(run_id = %job.run_id, "metadata_apply: run cancelled; skipping");
+        return Ok(());
+    }
+    let claimed = match try_claim_series_mutex(&state, job.series_id).await {
+        Ok(b) => b,
+        Err(e) => {
+            // Redis itself failed: hand the task back to apalis for a retry
+            // (`JOB_MAX_ATTEMPTS`, then the dead set on Background work)
+            // rather than quietly leaving the row unapplied.
+            tracing::error!(error = %e, "metadata_apply series: mutex claim failed; returning Err for apalis retry");
+            return Err(e.into());
+        }
+    };
+    if !claimed {
+        // Another apply holds the series (or a crashed worker's key has
+        // not expired). Pre-fix this returned `Ok` with a log line saying
+        // "caller will retry" — no caller did, so a batch child whose
+        // series was busy was dropped with its run left looking complete
+        // (audit N-M7). Requeue with backoff instead.
+        let storage = state.jobs.metadata_apply_series_storage.clone();
+        return requeue_busy(
+            &state,
+            BusyJob {
+                run_id: job.run_id,
+                attempt: job.attempt,
+                kind: "series",
+                target_id: job.series_id.to_string(),
+            },
+            |attempt| {
+                let mut next = job.clone();
+                next.attempt = attempt;
+                let mut storage = storage.clone();
+                async move {
+                    storage
+                        .push(next)
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| e.to_string())
+                }
+            },
+        )
+        .await;
+    }
+
     let ApplySeriesJob {
         run_id,
         ordinal,
@@ -173,25 +338,8 @@ pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result
         is_auto,
         composite,
         bulk,
+        attempt: _,
     } = job;
-
-    // Cancelled before the apply ran (queue cleared / batch cancelled):
-    // nothing to write.
-    if crate::metadata::orchestrator::run_is_cancelled(&state.db, run_id).await {
-        tracing::info!(run_id = %run_id, "metadata_apply: run cancelled; skipping");
-        return Ok(());
-    }
-    let claimed = match try_claim_series_mutex(&state, series_id).await {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::error!(error = %e, "metadata_apply series: mutex claim failed");
-            return Ok(()); // soft-fail; the row stays unapplied + the user can retry
-        }
-    };
-    if !claimed {
-        tracing::info!(series_id = %series_id, "metadata_apply series: mutex busy; skipping (caller will retry)");
-        return Ok(());
-    }
 
     let outcome = match composite {
         Some(spec) => {
@@ -243,7 +391,7 @@ pub async fn handle_series(job: ApplySeriesJob, state: Data<AppState>) -> Result
     release_series_mutex(&state, series_id).await;
 
     if let Err(e) = &outcome {
-        apply::emit_failed_for_run(&state, run_id, &e.to_string()).await;
+        fail_run(&state, run_id, &e.to_string()).await;
     }
     if outcome.is_ok() {
         // Persist the matched provider series ids onto the series'
@@ -356,10 +504,55 @@ pub struct ApplyIssueJob {
     /// `None` → single-candidate apply on `ordinal`.
     #[serde(default)]
     pub composite: Option<CompositeSpec>,
+    /// Busy-mutex requeue counter ([`crate::jobs::busy_requeue`]); see
+    /// [`ApplySeriesJob::attempt`].
+    #[serde(default)]
+    pub attempt: u32,
 }
 
 pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
+
+    // Cancelled before the apply ran (queue cleared / batch cancelled):
+    // nothing to write.
+    if crate::metadata::orchestrator::run_is_cancelled(&state.db, job.run_id).await {
+        tracing::info!(run_id = %job.run_id, "metadata_apply: run cancelled; skipping");
+        return Ok(());
+    }
+    let claimed = match try_claim_issue_mutex(&state, &job.issue_id).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!(error = %e, "metadata_apply issue: mutex claim failed; returning Err for apalis retry");
+            return Err(e.into());
+        }
+    };
+    if !claimed {
+        // Same requeue-with-backoff as the series job; see there.
+        let storage = state.jobs.metadata_apply_issue_storage.clone();
+        return requeue_busy(
+            &state,
+            BusyJob {
+                run_id: job.run_id,
+                attempt: job.attempt,
+                kind: "issue",
+                target_id: job.issue_id.clone(),
+            },
+            |attempt| {
+                let mut next = job.clone();
+                next.attempt = attempt;
+                let mut storage = storage.clone();
+                async move {
+                    storage
+                        .push(next)
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| e.to_string())
+                }
+            },
+        )
+        .await;
+    }
+
     let ApplyIssueJob {
         run_id,
         ordinal,
@@ -375,25 +568,8 @@ pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(
         override_external_id_sources,
         is_auto,
         composite,
+        attempt: _,
     } = job;
-
-    // Cancelled before the apply ran (queue cleared / batch cancelled):
-    // nothing to write.
-    if crate::metadata::orchestrator::run_is_cancelled(&state.db, run_id).await {
-        tracing::info!(run_id = %run_id, "metadata_apply: run cancelled; skipping");
-        return Ok(());
-    }
-    let claimed = match try_claim_issue_mutex(&state, &issue_id).await {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::error!(error = %e, "metadata_apply issue: mutex claim failed");
-            return Ok(());
-        }
-    };
-    if !claimed {
-        tracing::info!(issue_id, "metadata_apply issue: mutex busy; skipping");
-        return Ok(());
-    }
 
     let outcome = match composite {
         Some(spec) => {
@@ -444,7 +620,7 @@ pub async fn handle_issue(job: ApplyIssueJob, state: Data<AppState>) -> Result<(
     .await;
     release_issue_mutex(&state, &issue_id).await;
     if let Err(e) = &outcome {
-        apply::emit_failed_for_run(&state, run_id, &e.to_string()).await;
+        fail_run(&state, run_id, &e.to_string()).await;
     }
     Ok(())
 }

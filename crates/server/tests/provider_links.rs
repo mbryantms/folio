@@ -467,9 +467,13 @@ async fn run_rewrite_jobs(app: &TestApp) -> usize {
         .collect();
     let n = jobs.len();
     for job in jobs {
-        server::jobs::rewrite_sidecars::handle(job, apalis::prelude::Data::new(app.state()))
-            .await
-            .unwrap();
+        server::jobs::rewrite_sidecars::handle(
+            job,
+            apalis::prelude::Data::new(app.state()),
+            apalis::prelude::Attempt::new_with_value(1),
+        )
+        .await
+        .unwrap();
     }
     let _: i64 = redis::cmd("DEL")
         .arg(&data_hash)

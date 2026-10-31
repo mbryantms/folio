@@ -747,6 +747,7 @@ async fn maybe_auto_apply_series(
             is_auto: true,
             composite: None,
             bulk: false,
+            attempt: 0,
         })
         .await;
     match push_result {
@@ -809,6 +810,7 @@ async fn maybe_auto_apply_issue(
             override_external_id_sources: Default::default(),
             is_auto: true,
             composite: None,
+            attempt: 0,
         })
         .await;
     match push_result {
