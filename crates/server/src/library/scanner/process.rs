@@ -636,30 +636,44 @@ async fn dedupe_by_content_hash<C: ConnectionTrait>(
     stats: &mut ScanStats,
 ) -> anyhow::Result<DedupeOutcome> {
     let path_str = path.to_string_lossy();
+    // Project the two columns this decision needs (scanner-perf F-5): this
+    // runs once per *new* file, and the full `issue::Model` carries
+    // `comic_info_raw` — kilobytes per row that nothing here reads. The
+    // moved-file branch below is the only one that needs the whole row,
+    // and it is rare enough to pay a second, by-primary-key SELECT.
     let prior = IssueEntity::find()
         .filter(issue::Column::LibraryId.eq(lib.id))
         .filter(issue::Column::ContentHash.eq(content_hash))
         .order_by_asc(issue::Column::Id)
+        .select_only()
+        .columns([issue::Column::Id, issue::Column::FilePath])
+        .into_tuple::<(String, String)>()
         .one(db)
         .await?;
-    let Some(prior) = prior else {
+    let Some((prior_id, prior_path)) = prior else {
         return Ok(DedupeOutcome::NotDuplicate);
     };
-    let previous_path = std::path::Path::new(&prior.file_path);
-    if prior.file_path != path_str && !previous_path.exists() {
+    let previous_path = std::path::Path::new(&prior_path);
+    if prior_path != path_str && !previous_path.exists() {
+        // The caller updates the moved row in place, so hand it the full
+        // model. Load it before recording the old path: a row that
+        // vanished in between (hard purge) is simply not a prior.
+        let Some(prior) = IssueEntity::find_by_id(&prior_id).one(db).await? else {
+            return Ok(DedupeOutcome::NotDuplicate);
+        };
         remember_moved_issue_path(db, &prior.id, &prior.file_path, &path_str).await?;
         Ok(DedupeOutcome::Moved(Box::new(prior)))
     } else if !lib.dedupe_by_content {
         Ok(DedupeOutcome::NotDuplicate)
     } else {
         health.emit(IssueKind::DuplicateContent {
-            path_a: std::path::PathBuf::from(&prior.file_path),
+            path_a: std::path::PathBuf::from(&prior_path),
             path_b: path.to_path_buf(),
         });
         stats.files_duplicate += 1;
         tracing::info!(
             series_id = %series_id,
-            kept = %prior.file_path,
+            kept = %prior_path,
             duplicate = %path.display(),
             "scanner: skipping duplicate (same content hash as existing issue)",
         );

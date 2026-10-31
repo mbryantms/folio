@@ -254,6 +254,9 @@ pub async fn clear_queue(
         QueueClearTarget::All | QueueClearTarget::Thumbnails
     ) {
         app.clear_thumb_job_marks().await;
+        // With the marks gone no finishing job will flush for the others;
+        // write the buffered cover stamps now instead of on the timer.
+        crate::jobs::post_scan::flush_done_stamps(&app).await;
     }
 
     // The jobs that would have started the `queued` scan runs are gone;

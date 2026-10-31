@@ -377,28 +377,62 @@ where the bigger wins are**: force-rescan wall dropped 9.2 % (14.8 s
 acquisitions dropped 74 % (472 ms → 128 ms) on cold scans because
 fewer junction-table writes mean fewer parent-row lock acquisitions.
 
-### F-4 (unchanged) — Post-scan thumbnail worker UPDATEs are per-issue
+### F-4 ✅ SHIPPED (2026-10-31) — Post-scan thumbnail worker UPDATEs are per-issue
 
-`UPDATE issues SET … thumbnails_* …` 1395 calls / 262 ms total. Off
-the scan critical path entirely (the `scan.completed` event fired
-at 15 s; thumbnail completions roll in over the following minutes
-on 2 workers). Not visible in the flamegraph because the post-scan
-worker runs after the perf-record window closed.
+Was: `UPDATE issues SET … thumbnails_* …` 1395 calls / 262 ms total,
+one `ActiveModel::update` (with `RETURNING` of the whole row) per
+successful cover job. Off the scan critical path entirely (the
+`scan.completed` event fired at 15 s; thumbnail completions roll in
+over the following minutes on 2 workers).
 
-Could batch into 50-100 ID UPDATEs per chunk. Doesn't speed up the
-"scan complete" wall clock; does free DB buffer cache for concurrent
-reads from the UI.
+**Shipped (audit 2026-11 N-L5):** the cover job is still one apalis
+job per issue, so there is no natural chunk to batch over; instead
+`stamp_done` pushes the issue id onto a process-local buffer
+([`jobs/post_scan.rs`](../../crates/server/src/jobs/post_scan.rs),
+`ThumbStampBuffer`) and the buffer is written with **one
+`update_many … WHERE id IN (…)`** when any of three things happens:
+the buffer reaches 64 ids, the in-flight job set drains (the job that
+finishes last flushes for everyone), or a 1 s safety timer fires
+after the first buffered stamp. The failure stamp (`stamp_error`)
+stays immediate — it is rare and carries a per-issue message.
 
-### F-5 (unchanged) — `find_by_id` for dedupe-by-content runs even on hash-unique inserts
+New count: a run of N cover jobs issues `ceil(N / 64)` stamp UPDATEs
+(1395 issues → 22 statements instead of 1395; a 12-issue test library
+→ 1 instead of 12, guarded by
+`perf_regressions.rs::scan_dedupe_lookup_is_projected_and_cover_stamps_are_batched`).
+The `UPDATE` no longer returns the row either, so each statement moves
+~0 bytes back instead of the full issue row. What changes for a
+reader: `thumbnails_generated_at` can lag a successful job by up to
+~1 s (or by up to 63 sibling jobs while a batch is running), and a
+process that is killed with stamps buffered re-runs those cover jobs on
+the next scan (the encoder no-ops on an existing file, so only the
+stamp is redone; a graceful shutdown and the admin queue-clear flush
+first). Two orderings the per-issue write used to guarantee are kept
+explicitly: `enqueue_thumb_job` refuses a cover job for an issue whose
+stamp is still buffered (the row still reads `NULL`, so a sweep would
+otherwise re-decode it), and `stamp_error` drops the issue's buffered
+success before it writes, so the flush cannot clear the error it
+records.
 
-Same impact as before: 1 of the 3 SELECTs per archive comes from
-[`process.rs:312`](../../crates/server/src/library/scanner/process.rs#L312)
-checking for a content-hash collision before INSERT. On a fresh DB
-with all-unique hashes, the check always returns None.
+### F-5 ✅ SHIPPED (2026-10-31) — `find_by_id` for dedupe-by-content loaded the whole row
 
-Could be elided when (a) the file_path manifest had no row at this
-path AND (b) we're confident no in-flight worker has staged this hash.
-Real-data impact: ~80 ms wall, 0.5 %. Same priority as F-1.
+Was: 1 of the 3 SELECTs per archive comes from `dedupe_by_content_hash`
+in [`process.rs`](../../crates/server/src/library/scanner/process.rs)
+checking for a content-hash collision before INSERT, and it selected
+the full `issue::Model` — `comic_info_raw` included — for every new
+file, only to read `id` and `file_path` off it.
+
+**Shipped (audit 2026-11 N-L5):** the lookup projects `(id, file_path)`
+with `select_only().columns([..]).into_tuple()`. The query count is
+unchanged by design (one indexed SELECT per new file: the check is
+what makes a moved or duplicated file a `Moved` / `Duplicate` instead
+of a second row), but the row it returns shrank from the whole issue
+to two short strings. Only the rare *moved-file* path loads the full
+model, and it does so by primary key just before handing the row to
+the in-place update. The perf guard above asserts the dedupe SELECT
+never names `comic_info_raw` again. Eliding the lookup altogether
+(when the path manifest had no row and no in-flight worker staged the
+hash) remains possible but is no longer worth the bookkeeping.
 
 ### F-6 ✅ SHIPPED — Phase timings are summed across workers, hiding wall
 
@@ -478,14 +512,13 @@ Priority order, real-data weighted:
    if/when the IO ceiling moves and DB-side cost becomes
    first-order again.
 3. **F-3 — `lib` re-fetch elimination**. Tiny win, mechanical.
-4. **F-4 — Thumbnail batch UPDATEs**. Off the critical path; only
-   relevant if the UI's "thumbnailing" indicator stalls become a
-   support burden.
-5. **F-5 — Dedupe-by-content elision**. Tiny win.
 
 Shipped in the 2026-05-09 DB-write throughput plan: **F-1, F-2, F-6,
 F-10, F-12**. Combined cold-scan wall improvement: -1.8 %; force-rescan
-improvement: -9.2 %.
+improvement: -9.2 %. Shipped 2026-10-31 (audit 2026-11, N-L5): **F-4**
+(batched cover stamps, `ceil(N / 64)` UPDATEs per run instead of N)
+and **F-5** (projected dedupe lookup — same count, two columns instead
+of the whole row).
 
 ## Repro footer
 

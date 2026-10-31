@@ -30,6 +30,8 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, EntityTrait, QueryFilter, QuerySelect, Set,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Generate one thumbnail job for an issue. Cover jobs stamp the issue row
@@ -112,7 +114,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
         Ok(Some(r)) => r,
         Ok(None) => {
             tracing::debug!(issue_id = %job.issue_id, "thumbs job: issue gone");
-            app.unmark_thumb_job_queued(&dedupe_key).await;
+            release_thumb_job(&app, &dedupe_key).await;
             return Ok(());
         }
         Err(e) => {
@@ -132,7 +134,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
             soft_removed = row.removed_at.is_some(),
             "thumbs job: skipping non-active or soft-removed issue",
         );
-        app.unmark_thumb_job_queued(&dedupe_key).await;
+        release_thumb_job(&app, &dedupe_key).await;
         return Ok(());
     }
 
@@ -147,7 +149,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
         Ok(Some(l)) => l,
         Ok(None) => {
             tracing::debug!(library_id = %row.library_id, "thumbs job: library gone");
-            app.unmark_thumb_job_queued(&dedupe_key).await;
+            release_thumb_job(&app, &dedupe_key).await;
             return Ok(());
         }
         Err(e) => {
@@ -157,7 +159,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
     };
     if !lib.thumbnails_enabled {
         tracing::debug!(library_id = %lib.id, "thumbs job: library has thumbnails disabled, skipping");
-        app.unmark_thumb_job_queued(&dedupe_key).await;
+        release_thumb_job(&app, &dedupe_key).await;
         return Ok(());
     }
     let format = ThumbFormat::parse(&lib.thumbnail_format).unwrap_or_default();
@@ -304,7 +306,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
         Err(e) => {
             tracing::warn!(issue_id = %row.id, error = %e, "thumbs job: archive semaphore closed");
             stamp_error(&app, &row, "archive work unavailable".to_owned()).await;
-            app.unmark_thumb_job_queued(&dedupe_key).await;
+            release_thumb_job(&app, &dedupe_key).await;
             return Ok(());
         }
     };
@@ -372,7 +374,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                 kind: job.kind.as_str().to_owned(),
                 pages: o.total_pages as u64,
             });
-            app.unmark_thumb_job_queued(&dedupe_key).await;
+            release_thumb_job(&app, &dedupe_key).await;
             // Optional thumbnail byte budget (WP-3.8): throttled, no-op
             // when `cache.thumbs_budget_mb` is 0.
             let cfg = app.cfg();
@@ -405,7 +407,7 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                 kind: job.kind.as_str().to_owned(),
                 error: msg,
             });
-            app.unmark_thumb_job_queued(&dedupe_key).await;
+            release_thumb_job(&app, &dedupe_key).await;
             Ok(())
         }
         Err(e) => {
@@ -419,13 +421,21 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                 kind: job.kind.as_str().to_owned(),
                 error: msg,
             });
-            app.unmark_thumb_job_queued(&dedupe_key).await;
+            release_thumb_job(&app, &dedupe_key).await;
             Err(e.into())
         }
     }
 }
 
 pub async fn enqueue_thumb_job(app: &AppState, job: ThumbsJob) -> bool {
+    // A cover job whose success stamp is still buffered would pass the
+    // `needs_cover_work_filter` sweep (the row still reads NULL) and redo
+    // the archive open + decode for nothing; the flush is at most one
+    // timer period away.
+    if !matches!(job.kind, ThumbsJobKind::Strip) && app.thumb_stamps.contains(&job.issue_id) {
+        tracing::debug!(issue_id = %job.issue_id, kind = ?job.kind, "thumbs enqueue: stamp pending, suppressed");
+        return false;
+    }
     let key = job.dedupe_key();
     if !app.try_mark_thumb_job_queued(key.clone()).await {
         tracing::debug!(issue_id = %job.issue_id, kind = ?job.kind, "thumbs enqueue: duplicate suppressed");
@@ -434,7 +444,7 @@ pub async fn enqueue_thumb_job(app: &AppState, job: ThumbsJob) -> bool {
 
     let mut storage = app.jobs.post_scan_thumbs_storage.clone();
     if let Err(e) = storage.push(job.clone()).await {
-        app.unmark_thumb_job_queued(&key).await;
+        release_thumb_job(app, &key).await;
         tracing::warn!(
             issue_id = %job.issue_id,
             kind = ?job.kind,
@@ -446,15 +456,123 @@ pub async fn enqueue_thumb_job(app: &AppState, job: ThumbsJob) -> bool {
     true
 }
 
+/// Successful cover-job stamps waiting to be written (scanner-perf F-4).
+///
+/// Cover jobs are one apalis job per issue, so there is no natural chunk
+/// to batch the `thumbnails_generated_at` / `thumbnail_version` success
+/// stamp over; instead each job parks its issue id here and the buffer is
+/// written as **one** `UPDATE … WHERE id IN (…)` when any of these fires:
+///
+/// - the buffer holds [`THUMB_STAMP_BATCH`] ids ([`stamp_done`]);
+/// - the job that finishes last flushes for everyone — the inflight set
+///   drained ([`release_thumb_job`]), so a lone job (admin regenerate,
+///   the tests) still stamps immediately;
+/// - a [`THUMB_STAMP_MAX_AGE`] timer armed by the first buffered stamp,
+///   so a stale inflight mark can never hold stamps back indefinitely.
+///
+/// What this trades: `thumbnails_generated_at` may lag a job's completion
+/// by up to one timer period (or up to `THUMB_STAMP_BATCH - 1` sibling
+/// jobs while a batch is running), and a process that dies with stamps
+/// buffered redoes those cover jobs on the next scan — the encoder no-ops
+/// on an existing file, so only the stamp is repeated (a graceful shutdown
+/// flushes first). While a stamp is buffered the row still reads as
+/// needing work, so [`enqueue_thumb_job`] refuses cover jobs for those
+/// issues rather than re-decode them. The failure stamp (`stamp_error`)
+/// stays per-issue — it is rare and carries a message — and drops the
+/// issue's buffered success first so the flush cannot overwrite it.
+#[derive(Default)]
+pub struct ThumbStampBuffer {
+    ids: std::sync::Mutex<Vec<String>>,
+    timer_armed: AtomicBool,
+}
+
+impl ThumbStampBuffer {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<String>> {
+        self.ids.lock().expect("thumb stamp buffer poisoned")
+    }
+
+    /// Is a success stamp for this issue waiting to be written?
+    pub fn contains(&self, issue_id: &str) -> bool {
+        self.lock().iter().any(|id| id == issue_id)
+    }
+
+    /// Drop a buffered success stamp. [`stamp_error`] calls this before it
+    /// writes, so a later flush cannot wipe the error it is about to record
+    /// (a `CoverAndStrip` job whose cover succeeded but whose strip pages
+    /// failed, or a strip job failing after a buffered cover success).
+    fn forget(&self, issue_id: &str) {
+        self.lock().retain(|id| id != issue_id);
+    }
+}
+
+/// Buffered stamps written per `UPDATE`. 1395 issues → 22 statements
+/// instead of 1395.
+pub const THUMB_STAMP_BATCH: usize = 64;
+/// Longest a buffered stamp waits before the safety timer writes it.
+const THUMB_STAMP_MAX_AGE: Duration = Duration::from_secs(1);
+
 async fn stamp_done(app: &AppState, row: &issue::Model) {
+    let full_batch = {
+        let mut ids = app.thumb_stamps.lock();
+        ids.push(row.id.clone());
+        (ids.len() >= THUMB_STAMP_BATCH).then(|| std::mem::take(&mut *ids))
+    };
+    match full_batch {
+        Some(ids) => write_done_stamps(app, ids).await,
+        None => arm_stamp_timer(app),
+    }
+}
+
+/// Write every buffered stamp now. Public so the worker shutdown and the
+/// admin queue-clear can drain the buffer without waiting for the timer.
+pub async fn flush_done_stamps(app: &AppState) {
+    let ids = std::mem::take(&mut *app.thumb_stamps.lock());
+    if !ids.is_empty() {
+        write_done_stamps(app, ids).await;
+    }
+}
+
+fn arm_stamp_timer(app: &AppState) {
+    if app.thumb_stamps.timer_armed.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let app = app.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(THUMB_STAMP_MAX_AGE).await;
+        // Disarm before the flush so a stamp that arrives during the
+        // write arms the next timer instead of being left behind.
+        app.thumb_stamps.timer_armed.store(false, Ordering::Release);
+        flush_done_stamps(&app).await;
+    });
+}
+
+async fn write_done_stamps(app: &AppState, ids: Vec<String>) {
+    let count = ids.len();
     let now = chrono::Utc::now().fixed_offset();
-    let mut am: issue::ActiveModel = row.clone().into();
-    am.thumbnails_generated_at = Set(Some(now));
-    am.thumbnail_version = Set(THUMBNAIL_VERSION);
-    am.thumbnails_error = Set(None);
-    am.updated_at = Set(now);
-    if let Err(e) = am.update(&app.db).await {
-        tracing::warn!(issue_id = %row.id, error = %e, "thumbs job: stamp_done update failed");
+    let res = issue::Entity::update_many()
+        .col_expr(issue::Column::ThumbnailsGeneratedAt, Expr::value(Some(now)))
+        .col_expr(
+            issue::Column::ThumbnailVersion,
+            Expr::value(THUMBNAIL_VERSION),
+        )
+        .col_expr(
+            issue::Column::ThumbnailsError,
+            Expr::value(Option::<String>::None),
+        )
+        .col_expr(issue::Column::UpdatedAt, Expr::value(now))
+        .filter(issue::Column::Id.is_in(ids))
+        .exec(&app.db)
+        .await;
+    if let Err(e) = res {
+        tracing::warn!(count, error = %e, "thumbs job: batched stamp_done update failed");
+    }
+}
+
+/// Drop the job's inflight mark; the last job out flushes the stamp buffer
+/// (see [`ThumbStampBuffer`]).
+async fn release_thumb_job(app: &AppState, key: &str) {
+    if app.unmark_thumb_job_queued(key).await {
+        flush_done_stamps(app).await;
     }
 }
 
@@ -495,6 +613,9 @@ async fn reconcile_page_count(app: &AppState, row: &issue::Model, archive_pages:
 }
 
 async fn stamp_error(app: &AppState, row: &issue::Model, msg: String) {
+    // A buffered success stamp for this issue would clear the error below
+    // when it flushes; this write stamps `generated_at` + `version` itself.
+    app.thumb_stamps.forget(&row.id);
     let now = chrono::Utc::now().fixed_offset();
     let mut am: issue::ActiveModel = row.clone().into();
     am.thumbnails_error = Set(Some(msg));

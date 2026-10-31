@@ -20,9 +20,10 @@
 //! Caveats on the count-based assertion:
 //!
 //! - The subscriber is installed once per test process via a
-//!   `OnceLock`. perf_regressions.rs has a single `#[tokio::test]`
-//!   function so the global subscriber doesn't conflict with
-//!   anything. Adding a second test in this file requires care.
+//!   `OnceLock`, and the counter is process-wide, so the tests in this
+//!   file take the `SERIAL` lock and run one at a time (under nextest
+//!   each test is its own process and the lock is uncontended). A new
+//!   test here must take the lock too.
 //! - The shared test harness turns sqlx statement logging off on the
 //!   app pool (noise), so this file spawns via
 //!   `TestApp::spawn_with_query_logging()`. If the app pool's logging
@@ -49,18 +50,31 @@ use entity::{
     library, library_user_access, progress_record, saved_view,
     series::{ActiveModel as SeriesAM, normalize_name},
 };
-use sea_orm::{ActiveModelTrait, ConnectionTrait, Database, Set, Statement};
-use std::sync::Arc;
-use std::sync::OnceLock;
+use image::{ImageBuffer, ImageFormat, Rgba};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, Database, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set, Statement,
+};
+use server::jobs::post_scan::{ThumbsJob, handle_thumbs};
+use server::library::scanner;
+use std::io::{Cursor, Write};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tower::ServiceExt;
 use tracing::Subscriber;
+use tracing::field::{Field, Visit};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 use uuid::Uuid;
+
+/// Serialises the tests in this file: the query counter and statement
+/// log are process-wide, so two tests running at once would read each
+/// other's statements.
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Process-wide counter of sqlx::query events. Installed once via the
 /// `QUERY_COUNTER` `OnceLock` on first test entry. Sea-ORM defers to
@@ -68,12 +82,21 @@ use uuid::Uuid;
 /// at INFO level on `target: "sqlx::query"` for every statement.
 static QUERY_COUNTER: OnceLock<Arc<AtomicU64>> = OnceLock::new();
 
+/// Statement log behind the same layer: `Some(vec)` while a test is
+/// recording, `None` otherwise. Lets a guard look at *what* ran, not
+/// only how many — the dedupe-projection check below needs the SQL.
+static STATEMENT_LOG: OnceLock<Arc<Mutex<Option<Vec<String>>>>> = OnceLock::new();
+
 fn install_query_counter() -> Arc<AtomicU64> {
     QUERY_COUNTER
         .get_or_init(|| {
             let counter = Arc::new(AtomicU64::new(0));
+            let statements = STATEMENT_LOG
+                .get_or_init(|| Arc::new(Mutex::new(None)))
+                .clone();
             let layer = QueryCountingLayer {
                 count: counter.clone(),
+                statements,
             };
             // EnvFilter at INFO lets sqlx::query through; setting it
             // explicitly so a developer's `RUST_LOG=warn` doesn't
@@ -90,6 +113,7 @@ fn install_query_counter() -> Arc<AtomicU64> {
 
 struct QueryCountingLayer {
     count: Arc<AtomicU64>,
+    statements: Arc<Mutex<Option<Vec<String>>>>,
 }
 
 impl<S> Layer<S> for QueryCountingLayer
@@ -97,10 +121,57 @@ where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
-        if event.metadata().target() == "sqlx::query" {
-            self.count.fetch_add(1, Ordering::Relaxed);
+        if event.metadata().target() != "sqlx::query" {
+            return;
+        }
+        self.count.fetch_add(1, Ordering::Relaxed);
+        let mut log = self.statements.lock().expect("statement log poisoned");
+        if let Some(buf) = log.as_mut() {
+            let mut visitor = StatementVisitor::default();
+            event.record(&mut visitor);
+            // sqlx puts the full SQL in `db.statement` only when it had to
+            // shorten `summary`; a short statement arrives as the summary.
+            if let Some(sql) = visitor.statement.or(visitor.summary) {
+                buf.push(sql);
+            }
         }
     }
+}
+
+#[derive(Default)]
+struct StatementVisitor {
+    statement: Option<String>,
+    summary: Option<String>,
+}
+
+impl Visit for StatementVisitor {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        match field.name() {
+            "db.statement" if !value.trim().is_empty() => self.statement = Some(value.to_owned()),
+            "summary" => self.summary = Some(value.to_owned()),
+            _ => {}
+        }
+    }
+    fn record_debug(&mut self, _field: &Field, _value: &dyn std::fmt::Debug) {}
+}
+
+/// Start recording statements; returns the handle to stop with.
+fn start_statement_log() -> Arc<Mutex<Option<Vec<String>>>> {
+    install_query_counter();
+    let log = STATEMENT_LOG
+        .get()
+        .expect("statement log installed with the counter")
+        .clone();
+    *log.lock().expect("statement log poisoned") = Some(Vec::new());
+    log
+}
+
+/// Stop recording and hand back everything that ran since the start.
+fn stop_statement_log(log: &Mutex<Option<Vec<String>>>) -> Vec<String> {
+    log.lock()
+        .expect("statement log poisoned")
+        .take()
+        .unwrap_or_default()
 }
 
 /// RAII reset + read of the query counter — wraps a single endpoint
@@ -657,6 +728,7 @@ const MAX_QUERIES_SIMILAR_WARM: u64 = 15; // observed 9 (+1 progress batch)
 
 #[tokio::test]
 async fn realistic_dataset_endpoints_respond_correctly() {
+    let _serial = SERIAL.lock().await;
     let counter = install_query_counter();
     let app = TestApp::spawn_with_query_logging().await;
     let user = register(&app, "perf@example.com").await;
@@ -1024,5 +1096,176 @@ fn assert_query_count(observed: u64, max: u64, path: &str) {
         "{path} fired {observed} queries (>{max}); investigate for N+1 regressions. \
          Lower the threshold in perf_regressions.rs if the new value is a deliberate \
          improvement.",
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Scanner write paths (audit 2026-11, N-L5 / scanner-perf F-4 + F-5)
+// ─────────────────────────────────────────────────────────────────────
+
+/// Files in the scanned fixture series. Big enough that a per-file
+/// stamp loop (the pre-F-4 shape) is unmistakable against the single
+/// batched UPDATE.
+const SCAN_FILE_COUNT: usize = 12;
+
+fn solid_png(color: [u8; 4]) -> Vec<u8> {
+    let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_fn(32, 32, |_, _| Rgba(color));
+    let mut buf: Vec<u8> = Vec::new();
+    img.write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
+        .unwrap();
+    buf
+}
+
+/// A two-page CBZ whose pages decode (the cover job must succeed to reach
+/// `stamp_done`) and whose bytes differ per `n` so each file is its own
+/// issue under dedupe-by-content.
+fn build_cbz(path: &Path, n: usize) {
+    let f = std::fs::File::create(path).unwrap();
+    let mut zw = zip::ZipWriter::new(f);
+    let opts: zip::write::SimpleFileOptions =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for page in 0..2u8 {
+        zw.start_file(format!("page-{page:03}.png"), opts).unwrap();
+        zw.write_all(&solid_png([(n * 17) as u8, page * 90, 200, 255]))
+            .unwrap();
+    }
+    zw.finish().unwrap();
+}
+
+async fn seed_scan_library(app: &TestApp, root: &Path) -> Uuid {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    let lib_id = Uuid::now_v7();
+    library::ActiveModel {
+        id: Set(lib_id),
+        name: Set("Perf scan".into()),
+        root_path: Set(root.to_string_lossy().into_owned()),
+        default_language: Set("en".into()),
+        default_reading_direction: Set("ltr".into()),
+        dedupe_by_content: Set(true),
+        slug: Set(lib_id.to_string()),
+        scan_schedule_cron: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        last_scan_at: Set(None),
+        ignore_globs: Set(serde_json::json!([])),
+        report_missing_comicinfo: Set(false),
+        file_watch_enabled: Set(false),
+        soft_delete_days: Set(30),
+        thumbnails_enabled: Set(true),
+        thumbnail_format: Set("webp".to_owned()),
+        thumbnail_cover_quality: Set(server::library::thumbnails::DEFAULT_COVER_QUALITY as i32),
+        thumbnail_page_quality: Set(server::library::thumbnails::DEFAULT_STRIP_QUALITY as i32),
+        generate_page_thumbs_on_scan: Set(false),
+        allow_archive_writeback: Set(false),
+        metadata_writeback_enabled: Set(false),
+        archive_backup_retain_count: Set(1),
+        archive_backup_retain_days: Set(30),
+        archive_writeback_jpeg_quality: Set(92),
+        cbr_convert_confirmed_at: Set(None),
+        metadata_publisher_blacklist: Set(serde_json::json!([])),
+        filename_ignore_leading_numbers: Set(false),
+        filename_assume_issue_one: Set(false),
+        metadata_auto_apply_strong_matches: Set(false),
+        auto_convert_cbr_on_scan: Set(false),
+        auto_convert_cb7_on_scan: Set(false),
+        trust_fingerprint_on_first_import: Set(false),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    lib_id
+}
+
+/// The dedupe-by-content lookup the scanner runs for every new file is
+/// one indexed SELECT per file by design; what must not come back with it
+/// is the full `issue` row — `comic_info_raw` alone is kilobytes per file
+/// (F-5). And once the post-scan cover jobs finish, the `thumbnails_*`
+/// success stamp must land as one batched UPDATE for the run, not one
+/// UPDATE per issue (F-4).
+#[tokio::test]
+async fn scan_dedupe_lookup_is_projected_and_cover_stamps_are_batched() {
+    let _serial = SERIAL.lock().await;
+    install_query_counter();
+    let app = TestApp::spawn_with_query_logging().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Flat Series (2020)");
+    std::fs::create_dir_all(&folder).unwrap();
+    for n in 0..SCAN_FILE_COUNT {
+        build_cbz(&folder.join(format!("Flat Series {n:03}.cbz")), n);
+    }
+    let lib_id = seed_scan_library(&app, tmp.path()).await;
+    let state = app.state();
+
+    // ── F-5: the per-file dedupe lookup projects (id, file_path) only.
+    let log = start_statement_log();
+    let stats = scanner::scan_library(&state, lib_id).await.expect("scan");
+    let statements = stop_statement_log(&log);
+    assert_eq!(stats.files_added as usize, SCAN_FILE_COUNT, "{stats:?}");
+    let dedupe: Vec<&String> = statements
+        .iter()
+        .filter(|s| {
+            s.contains(r#""issues"."content_hash" ="#) && s.contains(r#""issues"."library_id" ="#)
+        })
+        .collect();
+    assert!(
+        dedupe.len() >= SCAN_FILE_COUNT,
+        "expected one dedupe lookup per new file, saw {} (statement shape changed?)",
+        dedupe.len(),
+    );
+    for sql in &dedupe {
+        assert!(
+            !sql.contains("comic_info_raw"),
+            "dedupe-by-content lookup loads the full issue row (F-5 regression):\n{sql}",
+        );
+    }
+
+    // ── F-4: run the cover jobs the scan enqueued (one per issue; the
+    // worker is not running in the harness, so drive the handler inline
+    // in the order a single worker would) and count the success stamps.
+    let ids: Vec<String> = entity::issue::Entity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .order_by_asc(entity::issue::Column::Id)
+        .select_only()
+        .column(entity::issue::Column::Id)
+        .into_tuple()
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(ids.len(), SCAN_FILE_COUNT);
+    let log = start_statement_log();
+    for id in &ids {
+        handle_thumbs(
+            ThumbsJob::cover(id.clone()),
+            apalis::prelude::Data::new(state.clone()),
+        )
+        .await
+        .expect("cover job");
+    }
+    let statements = stop_statement_log(&log);
+    let stamps = statements
+        .iter()
+        .filter(|s| s.contains(r#"UPDATE "issues" SET"#) && s.contains("thumbnails_generated_at"))
+        .count();
+    // One batched UPDATE when the last job drains the inflight set. The
+    // buffer's 1 s safety timer may add one more on a slow debug build, so
+    // the bound is "a handful", not "exactly one" — the pre-F-4 shape was
+    // one per issue (SCAN_FILE_COUNT).
+    assert!(
+        (1..=3).contains(&stamps),
+        "expected the {SCAN_FILE_COUNT} cover stamps to land as a batched UPDATE (1-3 \
+         statements), saw {stamps}",
+    );
+    let stamped = entity::issue::Entity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .filter(entity::issue::Column::ThumbnailsGeneratedAt.is_not_null())
+        .filter(entity::issue::Column::ThumbnailsError.is_null())
+        .all(&state.db)
+        .await
+        .unwrap()
+        .len();
+    assert_eq!(
+        stamped, SCAN_FILE_COUNT,
+        "every issue carries the success stamp"
     );
 }
