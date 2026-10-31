@@ -664,6 +664,12 @@ async fn finalize_run(
     // similar-series cache. Every scan kind funnels through here.
     if result.is_err() || stats.mutated() {
         state.similarity.invalidate_all();
+        // Audit 2026-11 N-L3 / N-L4: the Duplicates page memo and the
+        // health page's stored `.bak` tally both describe this library's
+        // files, which just changed. Every archive rewrite ends in a
+        // scoped rescan, so this is the one hook that sees them all.
+        state.duplicates.invalidate(lib.id);
+        crate::library::backup_stats::mark_stale(&state.db, lib.id).await;
     }
     stats.elapsed_ms = started.elapsed().as_millis() as u64;
     stats.finalize_rates();

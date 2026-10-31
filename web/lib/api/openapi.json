@@ -14893,12 +14893,17 @@
       },
       "BackupStorageView": {
         "type": "object",
-        "description": "Rolled-up `.bak` backup-file footprint for a library (archive-rewrite M7).\nSurfaced as a storage card on the library health page so operators can see\nhow much disk the edit/restore safety backups consume.",
+        "description": "Rolled-up `.bak` backup-file footprint for a library (archive-rewrite M7).\nSurfaced as a storage card on the library health page so operators can see\nhow much disk the edit/restore safety backups consume.\n\nServed from the stored `library_backup_stats` row (audit 2026-11,\nN-L4), not from a walk of the library root per request — see\n[`crate::library::backup_stats`] for when the row is (re)counted.",
         "required": [
           "file_count",
-          "total_bytes"
+          "total_bytes",
+          "computed_at"
         ],
         "properties": {
+          "computed_at": {
+            "type": "string",
+            "description": "RFC 3339 — when the filesystem was last counted. The daily backup\nsweep and the first request for a library count; a scan that changed\nthe library schedules a recount on the next request after ten\nminutes."
+          },
           "file_count": {
             "type": "integer",
             "format": "int64",

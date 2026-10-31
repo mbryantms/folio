@@ -236,6 +236,9 @@ fi
 USER_ID=$(psqlq -tAc "select id from users where email = '$EMAIL'")
 log "seeding per-user activity for $USER_ID"
 psqlq -v user_id="$USER_ID" -f scripts/perf/seed_activity.sql >/dev/null
+# Duplicate issue rows so the Duplicates page has groups to page through
+# (audit 2026-11 N-L3); catalogue rows only, no file is written.
+psqlq -f scripts/perf/seed_duplicates.sql >/dev/null
 psqlq -c "vacuum analyze" >/dev/null
 
 # ── explain run ─────────────────────────────────────────────────────────
@@ -249,6 +252,7 @@ VIEW_ID=$(psqlq -tAc "select id from saved_views where user_id='$USER_ID' and ki
 CBL_ID=$(psqlq -tAc "select id from cbl_lists where parsed_name='perf: event reading order' limit 1")
 COLLECTION_ID=$(psqlq -tAc "select id from saved_views where user_id='$USER_ID' and kind='collection' and name='perf: collection' limit 1")
 LIB_ID=$(psqlq -tAc "select id from libraries where root_path = '$FIXTURE'")
+LIB_SLUG=$(psqlq -tAc "select slug from libraries where root_path = '$FIXTURE'")
 
 # Only this run's log lines — a reused container still holds earlier runs.
 LOG_SINCE=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
@@ -285,6 +289,7 @@ drive_endpoints() {
         url=${url//\{cbl_id\}/$CBL_ID}
         url=${url//\{collection_id\}/$COLLECTION_ID}
         url=${url//\{library_id\}/$LIB_ID}
+        url=${url//\{library_slug\}/$LIB_SLUG}
         url=${url//\{large_slug\}/${LARGE_SLUG:-}}
         url=${url//\{typical_slug\}/${TYPICAL_SLUG:-}}
         url=${url//\{chain_slug\}/${CHAIN_SLUG:-}}

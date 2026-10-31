@@ -122,7 +122,10 @@ against the same database.
 ## The top ten
 
 These are the most-hit list, filter and sort surfaces, plus variants that
-exercise a second plan shape (1b, 6b, 10b). The rows in `endpoints.txt`
+exercise a second plan shape (1b, 6b, 10b). Since the 2026-11 audit the
+file also carries the admin per-library pages (Duplicates and the health
+page; see [below](#admin-per-library-pages-at-50000-issues-audit-2026-11-wp-b4)).
+The rows in `endpoints.txt`
 below the top ten are secondary list paths, recorded for completeness.
 
 | # | label | request |
@@ -506,6 +509,115 @@ No index was missing, so this WP adds no migration.
   wrapping the server binary, so with `PERF_KEEP=1` the old server
   survived. On the next run it consumed jobs from the reused Redis. The
   binary is now `exec`ed.
+
+## Admin per-library pages at 50,000 issues (audit 2026-11, WP B4)
+
+The 2026-11 audit (N-L3, N-L4) found two admin pages that did O(library)
+work per request and were not on the harness. Both are now in
+[`endpoints.txt`](../../scripts/perf/endpoints.txt) under "admin
+per-library pages", driven after the secondary list paths:
+
+- **Duplicates** — `duplicates-cold` (memo miss, `cold` column so there is
+  no warm-up request), `duplicates-warm` (same first page), `duplicates-page2`
+  (keyset page from `duplicates-warm`'s cursor), `duplicates-number`
+  (`?kind=number`). The stress fixture has no duplicate files, so
+  [`seed_duplicates.sql`](../../scripts/perf/seed_duplicates.sql) copies
+  issue #1 of every 10th series as a second row (250 `number` groups, 50 of
+  them also `hash` groups) — catalogue rows only, nothing is written to the
+  fixture.
+- **Health page** — `health-issues` (the table) and `backup-storage-cold` /
+  `backup-storage-warm` (the `.bak` card: first request for the library,
+  then the second).
+
+### What changed
+
+**Duplicates** (`api/duplicates.rs`). Grouping is three whole-library
+statements (`count(*) OVER (PARTITION BY …)` candidates, the per-series
+cover self-join, the decisions) plus the cover clustering, and the old
+handler ran all of it on every page, then applied the cursor and
+`take(limit)` in memory and recomputed `total` for pages that never
+serialize it. The result is now memoised per library in
+`AppState::duplicates` (`DuplicateGroupsCache`: 16 libraries, 10-minute
+TTL): one sorted `Vec<Group>` plus four index listings (all-kinds with
+subset suppression, `hash`, `number`, `cover`) and the per-kind counts.
+A page request binary-searches the listing for its cursor and hydrates
+one page — four statements whatever the library size (auth lookup,
+library lookup, the page's issues, the page's series), guarded by
+`tests/perf_duplicates_health.rs`. The memo is dropped by a scan that
+changed the library (`scanner::finalize_run`, which every archive
+rewrite's scoped rescan goes through), by a duplicate decision (after its
+last write, so a list that recomputed mid-handler cannot store the
+pre-write state), by a Removed-tab issue or series restore, by a
+committed issue edit (`issues::manual_rewrite_after_edit`) and by the
+cover-pHash backfill drain; the TTL backstops the rest (first-import lazy
+hash backfill, a pHash persisted by the thumbnail worker).
+
+The memo miss itself still seq-scans `issues`: `WHERE library_id = $1`
+over the one library *is* the whole table at this scale, and a window
+function over every live issue has no narrower plan. That is the reviewed
+exception `duplicates-cold | issues` in
+[`expected_seqscans.txt`](../../scripts/perf/expected_seqscans.txt); the
+gate still fires if the warm page or a deeper page ever runs it again.
+
+**Backup-storage card** (`api/health_issues.rs::backup_storage`). The
+old handler `walkdir`ed the library root per request to count `.bak`
+files — about 65 ms here on NVMe for 50,000 files, seconds on a NAS. The
+tally now lives in the `library_backup_stats` table
+(`library::backup_stats`, migration `m20271031_000001`): the daily
+`backup_prune` sweep stores it for every library from the walk it already
+does (non-writeback libraries get a read-only walk — it never deletes
+there), the first request for a library without a row counts and stores,
+and a catalogue-changing scan flags the row `stale` so the next request
+after ten minutes recounts once. An unreadable root (unmounted share)
+keeps the stored count instead of zeroing it. The response gained
+`computed_at`, which the card shows.
+
+### Results
+
+Same seeded database (50,250 issues after the duplicate seed, 2,500
+series), debug build, `PERF_M7=0`. "Before" is the pre-change binary run
+with `PERF_SERVER_BIN`; "after" is the working tree against the kept
+containers. The duplicates seed shows up as two spilt groups per page
+(hash + the number group it suppresses), and `health-issues` is
+unchanged — it is listed for completeness, not because it had a finding.
+
+| endpoint | before: stmts | before: Σ SQL ms | before: wall ms | before: gate | after: stmts | after: Σ SQL ms | after: wall ms | after: gate |
+|---|---:|---:|---:|---|---:|---:|---:|---|
+| duplicates-cold | 7 | 166.9 | 242 | **issues** | 7 | 118.1 | 168 | issues [expected] |
+| duplicates-warm | 7 | 133.1 | 160 | **issues** | 4 | 1.4 | 17 | — |
+| duplicates-page2 | 7 | 136.2 | 168 | **issues** | 4 | 3.2 | 51 | — |
+| duplicates-number | 7 | 177.5 | 210 | **issues** | 4 | 1.1 | 22 | — |
+| health-issues | 8 | 0.1 | 32 | — | 8 | 0.3 | 59 | — |
+| backup-storage-cold | 2 | 0.1 | 86 | — | 5 | 0.3 | 69 | — |
+| backup-storage-warm | 2 | 0.1 | 67 | — | 3 | 0.1 | 38 | — |
+
+Reading the table:
+
+- Before, every Duplicates page — including page 2 and the `?kind=`
+  filter — ran the same three whole-library statements (130–180 ms of
+  SQL, all of it the window-function scan of `issues`). After, only the
+  memo miss does (118 ms, the `[expected]` row); the warm first page and
+  every deeper page are four statements and 1–3 ms of SQL, which is the
+  hydrate of 50 groups. The wall-clock gap (160–210 ms → 17–51 ms) is the
+  rest of the in-memory grouping and sort that no longer runs per page.
+- `backup-storage-warm` was two statements before as well — the 67 ms
+  was the `walkdir` over 50,000 files, which the SQL column cannot
+  show. After, the cold request is the one walk (plus the upsert that
+  stores it) and the warm request is a one-row read; on this NVMe host the
+  walk is cheap enough that only the wall column moves (67 → 38 ms), on a
+  NAS it is the difference between seconds and milliseconds.
+- The two `series` info-level scans on the Duplicates rows are the
+  hydrate's `series` join (2,500 rows); the planner's call, same as the
+  other list pages.
+- This rerun against the kept database also showed gate-level
+  `progress_records` seq scans on the series list endpoints
+  (`series-browse-*`, `series-filter-sort`, `series-recent`,
+  `series-search`, `saved-view-results`, `collection-entries`) that the
+  baseline run minutes earlier did not. Those handlers are untouched by
+  this change; the activity seed deletes and re-inserts every
+  `progress_records` row on each run, so the second pass planned against
+  freshly rewritten statistics. Recorded here so the next full run can
+  confirm it is a rerun artefact rather than a regression.
 
 ## AR-1: the `issue::Entity::find()` audit
 

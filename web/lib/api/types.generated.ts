@@ -6491,8 +6491,19 @@ export interface components {
          * @description Rolled-up `.bak` backup-file footprint for a library (archive-rewrite M7).
          *     Surfaced as a storage card on the library health page so operators can see
          *     how much disk the edit/restore safety backups consume.
+         *
+         *     Served from the stored `library_backup_stats` row (audit 2026-11,
+         *     N-L4), not from a walk of the library root per request — see
+         *     [`crate::library::backup_stats`] for when the row is (re)counted.
          */
         BackupStorageView: {
+            /**
+             * @description RFC 3339 — when the filesystem was last counted. The daily backup
+             *     sweep and the first request for a library count; a scan that changed
+             *     the library schedules a recount on the next request after ten
+             *     minutes.
+             */
+            computed_at: string;
             /** Format: int64 */
             file_count: number;
             newest_modified_at?: string | null;
