@@ -41,13 +41,16 @@
 //! Existing `<Notes>` content is preserved (concatenated with a blank
 //! line). Pure ComicInfo-derived applies (no CV/Metron) skip the line.
 
+use crate::library::scanner::metadata_rollup::split_csv;
 use crate::metadata::identifier::{Identifier, Source};
-use crate::metadata::provider::GenericMetadata;
+use crate::metadata::provider::{GenericMetadata, canonical_credit_role, canonicalize_role};
 use chrono::Datelike;
 use entity::{external_id, field_provenance, issue, series};
 use parsers::comicinfo::{ComicInfo, PageInfo};
 use parsers::metroninfo::MetronInfo;
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use sea_orm::{
+    ColumnTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter, Statement,
+};
 use std::collections::{BTreeMap, HashSet};
 
 /// Read-only inputs assembled by the caller (usually the apply worker)
@@ -71,6 +74,14 @@ pub struct ComposeContext<'a> {
     pub issue_user_pins: &'a HashSet<String>,
     /// Same shape, for the parent series row.
     pub series_user_pins: &'a HashSet<String>,
+    /// The issue's junction-table content (credits per role, characters,
+    /// teams, locations, story arcs, genres, tags), loaded by
+    /// [`load_issue_junctions`]. Junctions are the truth for every list
+    /// field; the comma-joined read-cache columns on `issue` are only the
+    /// fallback for a row whose junctions were never derived. Audit
+    /// 2026-11 N-M2: reading the columns split a cached
+    /// `"Mike Deodato, Jr."` into two creators in the written XML.
+    pub issue_junctions: &'a IssueJunctions,
 }
 
 impl ComposeContext<'_> {
@@ -151,10 +162,17 @@ pub fn merge_provider_identifiers(
 ///   not replace the issue's `<Web>`). Those come only from an
 ///   issue-scope apply. The series description reaches `series.summary`
 ///   through `apply::write_series_scalar_fields`, not through the XML.
-pub fn series_payload_for_issue(series: &GenericMetadata, issue: &issue::Model) -> GenericMetadata {
+pub fn series_payload_for_issue(
+    series: &GenericMetadata,
+    issue: &issue::Model,
+    junctions: &IssueJunctions,
+) -> GenericMetadata {
     fn issue_lacks(v: Option<&str>) -> bool {
         v.is_none_or(|s| s.trim().is_empty())
     }
+    // Genres are a junction: the issue has some when `issue_genres` has
+    // rows, and only a never-derived row is judged by its column.
+    let issue_lacks_genres = junctions.genres.is_empty() && issue_lacks(issue.genre.as_deref());
     GenericMetadata {
         series_name: series.series_name.clone(),
         series_sort_name: series.series_sort_name.clone(),
@@ -179,7 +197,7 @@ pub fn series_payload_for_issue(series: &GenericMetadata, issue: &issue::Model) 
             .age_rating
             .clone()
             .filter(|_| issue_lacks(issue.age_rating.as_deref())),
-        genres: if issue_lacks(issue.genre.as_deref()) {
+        genres: if issue_lacks_genres {
             series.genres.clone()
         } else {
             Vec::new()
@@ -196,6 +214,7 @@ pub fn series_payload_for_issue(series: &GenericMetadata, issue: &issue::Model) 
 
 /// Produce a fresh `ComicInfo` ready for [`parsers::comicinfo::serialize`].
 pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
+    let junctions = ctx.issue_junctions;
     let mut info = ComicInfo {
         // Series-level fields. Title at the series level == `<Series>`
         // in ComicInfo. The Anansi schema fuses series+issue into one
@@ -333,9 +352,13 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
         // Read-only: a ComicTagger notes trace supplies it at scan time;
         // the composed sidecar carries GCD ids in MetronInfo instead.
         gcd_id: None,
-        // Junctions / CSV-shaped lists.
+        // Lists: the junction rows, joined the way the read-cache rebuild
+        // joins them (`; ` when a name carries a comma), so a DB-only
+        // compose reproduces the column byte for byte while a stale or
+        // hand-edited column never reaches the file.
         characters: compose_csv_field(
             ctx.is_issue_pinned("characters"),
+            &junctions.characters(),
             ctx.issue.characters.as_deref(),
             &ctx.provider
                 .characters
@@ -345,6 +368,7 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
         ),
         teams: compose_csv_field(
             ctx.is_issue_pinned("teams"),
+            &junctions.teams(),
             ctx.issue.teams.as_deref(),
             &ctx.provider
                 .teams
@@ -354,6 +378,7 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
         ),
         locations: compose_csv_field(
             ctx.is_issue_pinned("locations"),
+            &junctions.locations(),
             ctx.issue.locations.as_deref(),
             &ctx.provider
                 .locations
@@ -363,6 +388,7 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
         ),
         tags: compose_csv_field(
             ctx.is_issue_pinned("tags"),
+            &junctions.tags(),
             ctx.issue.tags.as_deref(),
             &ctx.provider
                 .tags
@@ -372,6 +398,7 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
         ),
         genre: compose_csv_field(
             ctx.is_issue_pinned("genres"),
+            &junctions.genres(),
             ctx.issue.genre.as_deref(),
             &ctx.provider
                 .genres
@@ -381,6 +408,7 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
         ),
         story_arc: compose_csv_field(
             ctx.is_issue_pinned("story_arcs"),
+            &junctions.story_arcs(),
             ctx.issue.story_arc.as_deref(),
             &ctx.provider
                 .story_arcs
@@ -389,21 +417,17 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
                 .collect::<Vec<_>>(),
         ),
         story_arc_number: ctx.issue.story_arc_number.clone(),
-        // Per-role credits. ComicInfo's flat columns map 1:1 with the
-        // role-tagged junction; we always go through the DB column
-        // (the apply path's existing CSV-rebuild step keeps the column
-        // in sync with the junction). For non-pinned issues we
-        // re-derive from the provider's role tags so the new XML
-        // immediately reflects the provider data without waiting for
-        // a rescan.
-        writer: compose_role(ctx, "writer", "Writer", |i| i.writer.as_deref()),
-        penciller: compose_role(ctx, "writer", "Penciller", |i| i.penciller.as_deref()),
-        inker: compose_role(ctx, "writer", "Inker", |i| i.inker.as_deref()),
-        colorist: compose_role(ctx, "writer", "Colorist", |i| i.colorist.as_deref()),
-        letterer: compose_role(ctx, "writer", "Letterer", |i| i.letterer.as_deref()),
-        cover_artist: compose_role(ctx, "writer", "CoverArtist", |i| i.cover_artist.as_deref()),
-        editor: compose_role(ctx, "writer", "Editor", |i| i.editor.as_deref()),
-        translator: compose_role(ctx, "writer", "Translator", |i| i.translator.as_deref()),
+        // Per-role credits: the provider's role-tagged credits when it
+        // has any for the role and the user hasn't pinned credits, else
+        // the `issue_credits` rows for that role.
+        writer: compose_role(ctx, "Writer", |i| i.writer.as_deref()),
+        penciller: compose_role(ctx, "Penciller", |i| i.penciller.as_deref()),
+        inker: compose_role(ctx, "Inker", |i| i.inker.as_deref()),
+        colorist: compose_role(ctx, "Colorist", |i| i.colorist.as_deref()),
+        letterer: compose_role(ctx, "Letterer", |i| i.letterer.as_deref()),
+        cover_artist: compose_role(ctx, "CoverArtist", |i| i.cover_artist.as_deref()),
+        editor: compose_role(ctx, "Editor", |i| i.editor.as_deref()),
+        translator: compose_role(ctx, "Translator", |i| i.translator.as_deref()),
         // Pages: forward the scanner's existing per-page metadata
         // verbatim so the strip thumbnail pipeline + reader UI keep
         // working. The internal `double_page_inferred` field is
@@ -436,27 +460,33 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
 
 /// Produce a fresh `MetronInfo` ready for [`parsers::metroninfo::serialize`].
 pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
+    let junctions = ctx.issue_junctions;
     let mut credits: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // Provider credits — already structured as (role, name) pairs.
-    // User pins on `credits` flip this to read from the issue row's
-    // per-role columns instead, mirroring the ComicInfo path. So does a
-    // provider with no credits at all (the DB-only compose of a manual
+    // User pins on `credits` flip this to read from the issue's
+    // `issue_credits` rows instead, mirroring the ComicInfo path. So does
+    // a provider with no credits at all (the DB-only compose of a manual
     // edit / drift flush): pre-WP-6.4 that path wrote a MetronInfo with
     // no `<Credits>` while ComicInfo (`compose_role`'s DB fallback) kept
     // them, so the two sidecars of one archive disagreed.
     if ctx.is_issue_pinned("credits") || ctx.provider.credits.is_empty() {
-        push_role_csv(&mut credits, "Writer", ctx.issue.writer.as_deref());
-        push_role_csv(&mut credits, "Penciller", ctx.issue.penciller.as_deref());
-        push_role_csv(&mut credits, "Inker", ctx.issue.inker.as_deref());
-        push_role_csv(&mut credits, "Colorist", ctx.issue.colorist.as_deref());
-        push_role_csv(&mut credits, "Letterer", ctx.issue.letterer.as_deref());
-        push_role_csv(
-            &mut credits,
-            "CoverArtist",
-            ctx.issue.cover_artist.as_deref(),
-        );
-        push_role_csv(&mut credits, "Editor", ctx.issue.editor.as_deref());
-        push_role_csv(&mut credits, "Translator", ctx.issue.translator.as_deref());
+        credits = junctions.credits_by_role_label();
+        if credits.is_empty() {
+            // Legacy row whose junctions were never derived: the per-role
+            // columns, split with the scanner's own splitter.
+            push_role_csv(&mut credits, "Writer", ctx.issue.writer.as_deref());
+            push_role_csv(&mut credits, "Penciller", ctx.issue.penciller.as_deref());
+            push_role_csv(&mut credits, "Inker", ctx.issue.inker.as_deref());
+            push_role_csv(&mut credits, "Colorist", ctx.issue.colorist.as_deref());
+            push_role_csv(&mut credits, "Letterer", ctx.issue.letterer.as_deref());
+            push_role_csv(
+                &mut credits,
+                "CoverArtist",
+                ctx.issue.cover_artist.as_deref(),
+            );
+            push_role_csv(&mut credits, "Editor", ctx.issue.editor.as_deref());
+            push_role_csv(&mut credits, "Translator", ctx.issue.translator.as_deref());
+        }
     } else {
         for c in &ctx.provider.credits {
             credits
@@ -541,6 +571,7 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
         ),
         story_arcs: compose_list(
             ctx.is_issue_pinned("story_arcs"),
+            &junctions.story_arcs(),
             ctx.issue.story_arc.as_deref(),
             ctx.provider
                 .story_arcs
@@ -550,6 +581,7 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
         ),
         characters: compose_list(
             ctx.is_issue_pinned("characters"),
+            &junctions.characters(),
             ctx.issue.characters.as_deref(),
             ctx.provider
                 .characters
@@ -559,11 +591,13 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
         ),
         teams: compose_list(
             ctx.is_issue_pinned("teams"),
+            &junctions.teams(),
             ctx.issue.teams.as_deref(),
             ctx.provider.teams.iter().map(|t| t.name.clone()).collect(),
         ),
         locations: compose_list(
             ctx.is_issue_pinned("locations"),
+            &junctions.locations(),
             ctx.issue.locations.as_deref(),
             ctx.provider
                 .locations
@@ -573,11 +607,13 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
         ),
         tags: compose_list(
             ctx.is_issue_pinned("tags"),
+            &junctions.tags(),
             ctx.issue.tags.as_deref(),
             ctx.provider.tags.clone(),
         ),
         genres: compose_list(
             ctx.is_issue_pinned("genres"),
+            &junctions.genres(),
             ctx.issue.genre.as_deref(),
             ctx.provider.genres.clone(),
         ),
@@ -855,19 +891,26 @@ fn prefer_external_id_str(
 }
 
 /// Build a `<Characters>foo, bar</Characters>`-shaped CSV. User-pinned
-/// fields use the DB value (already CSV); otherwise we synthesize from
-/// the provider's structured Vec. Provider order is preserved; an
-/// empty result yields `None` so the serializer omits the element.
+/// fields use the issue's junction rows; otherwise we synthesize from
+/// the provider's structured Vec, falling back to the junction rows when
+/// the provider has none. Order is preserved (the junction's ordinal, the
+/// provider's sequence); an empty result yields `None` so the serializer
+/// omits the element. `db` — the read-cache column — is read only for a
+/// row with no junction rows at all (never derived), verbatim.
 fn compose_csv_field(
     user_pinned: bool,
+    junction: &[&str],
     db: Option<&str>,
     provider_names: &[&str],
 ) -> Option<String> {
-    if user_pinned {
-        return db.map(str::to_owned).filter(|s| !s.trim().is_empty());
-    }
-    if provider_names.is_empty() {
-        return db.map(str::to_owned).filter(|s| !s.trim().is_empty());
+    let from_db = || {
+        if junction.is_empty() {
+            return db.map(str::to_owned).filter(|s| !s.trim().is_empty());
+        }
+        Some(join_unambiguous_csv(junction.iter().copied()))
+    };
+    if user_pinned || provider_names.is_empty() {
+        return from_db();
     }
     Some(join_unambiguous_csv(provider_names.iter().copied()))
 }
@@ -891,34 +934,34 @@ fn join_unambiguous_csv<'a, I: IntoIterator<Item = &'a str>>(names: I) -> String
 }
 
 /// MetronInfo list variant — same logic as the CSV path but emits a
-/// `Vec<String>` (the schema uses container/leaf form, not CSV).
+/// `Vec<String>` (the schema uses container/leaf form, not CSV). The
+/// never-derived fallback splits the column with the scanner's
+/// [`split_csv`], so the file and the DB agree on what one name is.
 fn compose_list(
     user_pinned: bool,
+    junction: &[&str],
     db_csv: Option<&str>,
     provider_names: Vec<String>,
 ) -> Vec<String> {
-    if user_pinned {
-        return split_csv(db_csv);
+    let from_db = || {
+        if junction.is_empty() {
+            return split_csv_opt(db_csv);
+        }
+        junction.iter().map(|s| (*s).to_owned()).collect()
+    };
+    if user_pinned || provider_names.is_empty() {
+        return from_db();
     }
-    if !provider_names.is_empty() {
-        return provider_names;
-    }
-    split_csv(db_csv)
+    provider_names
 }
 
-fn split_csv(csv: Option<&str>) -> Vec<String> {
-    csv.map(|s| {
-        s.split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-            .collect()
-    })
-    .unwrap_or_default()
+/// [`split_csv`] over a nullable column.
+fn split_csv_opt(csv: Option<&str>) -> Vec<String> {
+    csv.map(split_csv).unwrap_or_default()
 }
 
 fn push_role_csv(map: &mut BTreeMap<String, Vec<String>>, role: &str, csv: Option<&str>) {
-    let names = split_csv(csv);
+    let names = split_csv_opt(csv);
     if !names.is_empty() {
         map.entry(role.to_owned()).or_default().extend(names);
     }
@@ -929,26 +972,33 @@ fn push_role_csv(map: &mut BTreeMap<String, Vec<String>>, role: &str, csv: Optio
 /// Pinning lookup is two-tier:
 ///
 ///   - `"credits"` — the apply path's canonical bucket; if set, *every*
-///     role reads from its DB column (the writer-helper CSV rebuild
-///     keeps each column in sync).
+///     role reads from the issue's `issue_credits` rows.
 ///   - `role_label.to_ascii_lowercase()` — legacy per-column keys
 ///     (`"writer"`, `"penciller"`, …); pin a single role without
 ///     affecting the rest.
 ///
-/// `role_label` matches the provider's role tag (e.g. `"CoverArtist"`)
-/// for the provider-fallback filter.
+/// `role_label` is the ComicInfo spelling (`"CoverArtist"`): it names the
+/// provider's role tag for the provider filter and, through
+/// [`canonical_credit_role`], the junction's storage key. `db_column` — the
+/// read-cache column — is read only for a row with no `issue_credits` rows
+/// at all.
 fn compose_role<F: Fn(&issue::Model) -> Option<&str>>(
     ctx: &ComposeContext,
-    _unused: &str,
     role_label: &str,
     db_column: F,
 ) -> Option<String> {
+    let from_db = || {
+        if ctx.issue_junctions.credits.is_empty() {
+            return db_column(ctx.issue)
+                .map(str::to_owned)
+                .filter(|s| !s.trim().is_empty());
+        }
+        let names = ctx.issue_junctions.credits_for_role(role_label);
+        (!names.is_empty()).then(|| join_unambiguous_csv(names))
+    };
     let role_pin = role_label.to_ascii_lowercase();
-    let pinned = ctx.is_issue_pinned("credits") || ctx.is_issue_pinned(&role_pin);
-    if pinned {
-        return db_column(ctx.issue)
-            .map(str::to_owned)
-            .filter(|s| !s.trim().is_empty());
+    if ctx.is_issue_pinned("credits") || ctx.is_issue_pinned(&role_pin) {
+        return from_db();
     }
     // Filter provider credits by role label.
     let names: Vec<String> = ctx
@@ -959,9 +1009,7 @@ fn compose_role<F: Fn(&issue::Model) -> Option<&str>>(
         .map(|c| c.name.clone())
         .collect();
     if names.is_empty() {
-        return db_column(ctx.issue)
-            .map(str::to_owned)
-            .filter(|s| !s.trim().is_empty());
+        return from_db();
     }
     Some(join_unambiguous_csv(names.iter().map(String::as_str)))
 }
@@ -1068,6 +1116,212 @@ pub async fn load_user_pins(
         .all(db)
         .await?;
     Ok(rows.into_iter().map(|r| r.field).collect())
+}
+
+/// One `issue_credits` row: the storage role key (`writer`,
+/// `cover_artist`, …), the creator's name (the `person` row's when linked,
+/// else the junction's own text) and the person's landing-page slug.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JunctionCredit {
+    pub role: String,
+    pub person: String,
+    pub slug: Option<String>,
+}
+
+/// One cast / setting / arc row: the entity's name (the entity row's when
+/// linked, else the junction's own text) and its landing-page slug.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JunctionRef {
+    pub name: String,
+    pub slug: Option<String>,
+}
+
+/// An issue's junction-table content — the truth for every list field
+/// (CLAUDE.md "Junctions are the truth, CSV columns are derived"). Read by
+/// [`load_issue_junctions`] for the composer and the issue detail endpoint
+/// alike, in the order the read-cache rebuild
+/// (`writers::rebuild_issue_csv_cache`) joins the columns in, so joining a
+/// list back reproduces the column byte for byte.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IssueJunctions {
+    /// Ordered by role, then the stored ordinal, then name.
+    pub credits: Vec<JunctionCredit>,
+    pub characters: Vec<JunctionRef>,
+    pub teams: Vec<JunctionRef>,
+    pub locations: Vec<JunctionRef>,
+    /// Ordered by `position_in_arc` (nulls last), then name.
+    pub story_arcs: Vec<JunctionRef>,
+    pub genres: Vec<String>,
+    pub tags: Vec<String>,
+}
+
+impl IssueJunctions {
+    fn names(refs: &[JunctionRef]) -> Vec<&str> {
+        refs.iter().map(|r| r.name.as_str()).collect()
+    }
+
+    pub fn characters(&self) -> Vec<&str> {
+        Self::names(&self.characters)
+    }
+
+    pub fn teams(&self) -> Vec<&str> {
+        Self::names(&self.teams)
+    }
+
+    pub fn locations(&self) -> Vec<&str> {
+        Self::names(&self.locations)
+    }
+
+    pub fn story_arcs(&self) -> Vec<&str> {
+        Self::names(&self.story_arcs)
+    }
+
+    pub fn genres(&self) -> Vec<&str> {
+        self.genres.iter().map(String::as_str).collect()
+    }
+
+    pub fn tags(&self) -> Vec<&str> {
+        self.tags.iter().map(String::as_str).collect()
+    }
+
+    /// The creators credited under one role, in stored order. `role` may be
+    /// spelled any way [`canonical_credit_role`] understands (`"Writer"`,
+    /// `"CoverArtist"`, `"cover_artist"`).
+    pub fn credits_for_role(&self, role: &str) -> Vec<&str> {
+        let Some(key) = canonical_credit_role(role) else {
+            return Vec::new();
+        };
+        self.credits
+            .iter()
+            .filter(|c| c.role == key)
+            .map(|c| c.person.as_str())
+            .collect()
+    }
+
+    /// Every credit grouped by role, keyed by the ComicInfo role label
+    /// (`Writer`, `CoverArtist`, …; a role outside the ComicInfo set keeps
+    /// its storage key), names in stored order — the shape
+    /// [`MetronInfo::credits`] takes.
+    pub fn credits_by_role_label(&self) -> BTreeMap<String, Vec<String>> {
+        let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for c in &self.credits {
+            out.entry(comicinfo_role_label(&c.role))
+                .or_default()
+                .push(c.person.clone());
+        }
+        out
+    }
+}
+
+/// `writer` → `Writer`, `cover_artist` → `CoverArtist`; a role with no
+/// ComicInfo column (`journalist`) stays as stored.
+fn comicinfo_role_label(key: &str) -> String {
+    canonicalize_role(key).map_or_else(|| key.to_owned(), str::to_owned)
+}
+
+/// Load the issue's junction-table content (see [`IssueJunctions`]). A read
+/// failure is an error, not an empty list: a composer handed empty lists
+/// would write a file without them and the rescan would then drop the rows.
+pub async fn load_issue_junctions(
+    db: &DatabaseConnection,
+    issue_id: &str,
+) -> Result<IssueJunctions, sea_orm::DbErr> {
+    #[derive(Debug, FromQueryResult)]
+    struct CreditRow {
+        role: String,
+        person: String,
+        slug: Option<String>,
+    }
+    #[derive(Debug, FromQueryResult)]
+    struct RefRow {
+        name: String,
+        slug: Option<String>,
+    }
+    #[derive(Debug, FromQueryResult)]
+    struct ValueRow {
+        value: String,
+    }
+    let backend = db.get_database_backend();
+    let stmt = |sql: &str| Statement::from_sql_and_values(backend, sql, [issue_id.into()]);
+    let refs = async |sql: &str| -> Result<Vec<JunctionRef>, sea_orm::DbErr> {
+        Ok(RefRow::find_by_statement(stmt(sql))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|r| JunctionRef {
+                name: r.name,
+                slug: r.slug,
+            })
+            .collect())
+    };
+    let values = async |sql: &str| -> Result<Vec<String>, sea_orm::DbErr> {
+        Ok(ValueRow::find_by_statement(stmt(sql))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|r| r.value)
+            .collect())
+    };
+
+    // LEFT JOIN + COALESCE, as the read-cache rebuild does: a row whose
+    // entity id the series rollup hasn't linked yet still contributes its
+    // own stored name.
+    let credits = async {
+        Ok::<_, sea_orm::DbErr>(
+            CreditRow::find_by_statement(stmt(
+                "SELECT ic.role AS role, COALESCE(p.name, ic.person) AS person, p.slug AS slug \
+                   FROM issue_credits ic LEFT JOIN person p ON p.id = ic.person_id \
+                  WHERE ic.issue_id = $1 \
+                  ORDER BY ic.role, ic.ordinal, COALESCE(p.name, ic.person)",
+            ))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|r| JunctionCredit {
+                role: r.role,
+                person: r.person,
+                slug: r.slug,
+            })
+            .collect::<Vec<_>>(),
+        )
+    };
+    // Seven independent reads; the series fan-out runs this per issue.
+    let (credits, characters, teams, locations, story_arcs, genres, tags) = tokio::try_join!(
+        credits,
+        refs(
+            "SELECT COALESCE(c.name, ic.\"character\") AS name, c.slug AS slug \
+               FROM issue_characters ic LEFT JOIN character c ON c.id = ic.character_id \
+              WHERE ic.issue_id = $1 ORDER BY ic.ordinal, 1",
+        ),
+        refs(
+            "SELECT COALESCE(t.name, it.team) AS name, t.slug AS slug \
+               FROM issue_teams it LEFT JOIN team t ON t.id = it.team_id \
+              WHERE it.issue_id = $1 ORDER BY it.ordinal, 1",
+        ),
+        refs(
+            "SELECT COALESCE(l.name, il.location) AS name, l.slug AS slug \
+               FROM issue_locations il LEFT JOIN location l ON l.id = il.location_id \
+              WHERE il.issue_id = $1 ORDER BY il.ordinal, 1",
+        ),
+        refs(
+            "SELECT sa.name AS name, sa.slug AS slug \
+               FROM issue_arcs ia JOIN story_arc sa ON sa.id = ia.arc_id \
+              WHERE ia.issue_id = $1 ORDER BY ia.position_in_arc NULLS LAST, sa.name",
+        ),
+        values(
+            "SELECT genre AS value FROM issue_genres WHERE issue_id = $1 ORDER BY ordinal, genre",
+        ),
+        values("SELECT tag AS value FROM issue_tags WHERE issue_id = $1 ORDER BY ordinal, tag"),
+    )?;
+    Ok(IssueJunctions {
+        credits,
+        characters,
+        teams,
+        locations,
+        story_arcs,
+        genres,
+        tags,
+    })
 }
 
 /// List of field keys whose composer output WOULD differ from the
@@ -1328,6 +1582,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         assert_eq!(
             compose_comicinfo(&ctx).series.as_deref(),
@@ -1395,6 +1650,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
 
         let ci = compose_comicinfo(&ctx);
@@ -1433,6 +1689,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &pins,
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(ci.title.as_deref(), Some("My Custom Title"));
@@ -1457,6 +1714,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(ci.title.as_deref(), Some("DB Title"));
@@ -1480,6 +1738,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let ci = compose_comicinfo(&ctx);
         let notes = ci
@@ -1512,6 +1771,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let ci = compose_comicinfo(&ctx);
         let notes = ci.notes.unwrap();
@@ -1542,6 +1802,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &pins,
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(
@@ -1579,6 +1840,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let ci = compose_comicinfo(&ctx);
         let notes = ci.notes.unwrap();
@@ -1624,6 +1886,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let ci = compose_comicinfo(&ctx);
         let notes = ci.notes.unwrap();
@@ -1656,6 +1919,7 @@ mod tests {
             series_external_ids: &sids,
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(ci.comicvine_id, Some(12345));
@@ -1684,6 +1948,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(
@@ -1728,6 +1993,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(ci.main_character_or_team.as_deref(), Some("Alana"));
@@ -1784,6 +2050,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let mi = compose_metroninfo(&ctx);
         assert_eq!(mi.raw.get("MangaVolume").map(String::as_str), Some("3"));
@@ -1835,6 +2102,7 @@ mod tests {
             series_external_ids: &sids,
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let mi = compose_metroninfo(&ctx);
         // Issue-level CV ID lands in MetronInfo.
@@ -1865,6 +2133,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let mi = compose_metroninfo(&ctx);
         assert_eq!(mi.title.as_deref(), Some("The Boy from Mars"));
@@ -1902,6 +2171,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &pins,
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let mi = compose_metroninfo(&ctx);
         assert_eq!(
@@ -1940,6 +2210,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &pins,
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(ci.writer.as_deref(), Some("My Pinned Writer"));
@@ -1964,6 +2235,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let ci = compose_comicinfo(&ctx);
         let xml = parsers::comicinfo::serialize(&ci);
@@ -1989,6 +2261,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let ci = compose_comicinfo(&ctx);
         // No notes anywhere — no provider notes, no DB notes, GCD source.
@@ -2099,6 +2372,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         assert_eq!(compose_comicinfo(&ctx).notes, issue.notes);
         assert_eq!(compose_metroninfo(&ctx).notes, issue.notes);
@@ -2123,6 +2397,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &pins,
             series_user_pins: &pins,
+            issue_junctions: &IssueJunctions::default(),
         };
         assert_eq!(compose_comicinfo(&ctx).volume, Some(2021));
 
@@ -2154,6 +2429,7 @@ mod tests {
             series_external_ids: &empty_ids(),
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let mi = compose_metroninfo(&ctx);
         assert_eq!(mi.writer().as_deref(), Some("Wanda Writer, Second Scribe"));
@@ -2177,7 +2453,7 @@ mod tests {
         record.genres = vec!["Science Fiction".into()];
         record.language_code = Some("en".into());
 
-        let p = series_payload_for_issue(&record, &issue);
+        let p = series_payload_for_issue(&record, &issue, &IssueJunctions::default());
         assert_eq!(p.description, None);
         assert_eq!(p.title, None);
         assert_eq!(p.notes, None);
@@ -2199,6 +2475,7 @@ mod tests {
             series_external_ids: &ids,
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(ci.summary.as_deref(), Some("Own summary."));
@@ -2210,8 +2487,173 @@ mod tests {
         assert_eq!(mi.summary.as_deref(), Some("Own summary."));
 
         issue.genre = None;
-        let p = series_payload_for_issue(&record, &issue);
+        let p = series_payload_for_issue(&record, &issue, &IssueJunctions::default());
         assert_eq!(p.genres, vec!["Science Fiction".to_owned()]);
+        // The junction, not the column, says whether the issue has genres.
+        let with_rows = IssueJunctions {
+            genres: vec!["Horror".into()],
+            ..Default::default()
+        };
+        let p = series_payload_for_issue(&record, &issue, &with_rows);
+        assert!(p.genres.is_empty(), "issue_genres rows block the fill");
+    }
+    // ───── junctions are the truth (audit 2026-11 N-M2) ─────
+
+    fn credit(role: &str, person: &str) -> JunctionCredit {
+        JunctionCredit {
+            role: role.into(),
+            person: person.into(),
+            slug: None,
+        }
+    }
+
+    fn named(name: &str) -> JunctionRef {
+        JunctionRef {
+            name: name.into(),
+            slug: None,
+        }
+    }
+
+    /// With junction rows present the read-cache columns are never read:
+    /// a stale column loses to the junction in both sidecars, and a
+    /// comma-bearing creator name stays one creator.
+    #[test]
+    fn compose_db_only_reads_the_junctions_not_the_csv_columns() {
+        let series = make_series("Saga");
+        let mut issue = make_issue("X");
+        issue.writer = Some("Stale Writer".into());
+        issue.penciller = Some("Mike Deodato, Jr.".into());
+        issue.characters = Some("Stale Character".into());
+        issue.genre = Some("Stale Genre".into());
+        let junctions = IssueJunctions {
+            credits: vec![
+                credit("penciller", "Mike Deodato, Jr."),
+                credit("penciller", "Pat Penciller"),
+                credit("writer", "Wanda Writer"),
+            ],
+            characters: vec![named("Alana"), named("Marko")],
+            genres: vec!["Science Fiction".into(), "Romance".into()],
+            ..Default::default()
+        };
+        let provider = GenericMetadata::default();
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &empty_ids(),
+            series_external_ids: &empty_ids(),
+            issue_user_pins: &empty_pins(),
+            series_user_pins: &empty_pins(),
+            issue_junctions: &junctions,
+        };
+        let ci = compose_comicinfo(&ctx);
+        assert_eq!(ci.writer.as_deref(), Some("Wanda Writer"));
+        // Two pencillers, one with a comma: the `; ` joiner keeps the
+        // boundary the scanner's splitter recovers.
+        assert_eq!(
+            ci.penciller.as_deref(),
+            Some("Mike Deodato, Jr.; Pat Penciller")
+        );
+        assert_eq!(ci.characters.as_deref(), Some("Alana, Marko"));
+        assert_eq!(ci.genre.as_deref(), Some("Science Fiction, Romance"));
+        assert_eq!(ci.teams, None, "no junction rows and no column → omitted");
+
+        let mi = compose_metroninfo(&ctx);
+        assert_eq!(
+            mi.credits.get("Penciller").map(Vec::as_slice),
+            Some(["Mike Deodato, Jr.".to_string(), "Pat Penciller".into()].as_slice())
+        );
+        assert_eq!(
+            mi.credits.get("Writer").map(Vec::as_slice),
+            Some(["Wanda Writer".to_string()].as_slice())
+        );
+        assert_eq!(mi.characters, ["Alana", "Marko"]);
+        assert_eq!(mi.genres, ["Science Fiction", "Romance"]);
+        let xml = parsers::metroninfo::serialize(&mi);
+        assert_eq!(xml.matches("<Credit>").count(), 3, "{xml}");
+        assert!(!xml.contains("<Creator>Jr.</Creator>"), "{xml}");
+    }
+
+    /// A user pin on `credits` reads the junction too — the pin says
+    /// "keep the DB's value", and the junction is the DB's value.
+    #[test]
+    fn compose_credits_pin_reads_the_junction_over_the_provider() {
+        let series = make_series("Saga");
+        let issue = make_issue("X");
+        let junctions = IssueJunctions {
+            credits: vec![credit("writer", "Hand-fixed Writer")],
+            ..Default::default()
+        };
+        let mut pins = empty_pins();
+        pins.insert("credits".into());
+        let provider = make_provider();
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &empty_ids(),
+            series_external_ids: &empty_ids(),
+            issue_user_pins: &pins,
+            series_user_pins: &empty_pins(),
+            issue_junctions: &junctions,
+        };
+        let ci = compose_comicinfo(&ctx);
+        assert_eq!(ci.writer.as_deref(), Some("Hand-fixed Writer"));
+        assert_eq!(ci.penciller, None, "pinned, and the junction has none");
+        let mi = compose_metroninfo(&ctx);
+        assert_eq!(mi.writer().as_deref(), Some("Hand-fixed Writer"));
+        assert_eq!(mi.penciller(), None);
+    }
+
+    /// A row whose junctions were never derived falls back to the columns,
+    /// split with the scanner's splitter: a comma-bearing suffix is one
+    /// person there too.
+    #[test]
+    fn compose_without_junction_rows_splits_the_columns_like_the_scanner() {
+        let series = make_series("Saga");
+        let mut issue = make_issue("X");
+        issue.inker = Some("J. P. Mayer, Mike Deodato, Jr.".into());
+        issue.teams = Some("Capes, Inc.; Avengers".into());
+        let provider = GenericMetadata::default();
+        let ctx = ComposeContext {
+            provider: &provider,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &empty_ids(),
+            series_external_ids: &empty_ids(),
+            issue_user_pins: &empty_pins(),
+            series_user_pins: &empty_pins(),
+            issue_junctions: &IssueJunctions::default(),
+        };
+        let mi = compose_metroninfo(&ctx);
+        assert_eq!(
+            mi.credits.get("Inker").map(Vec::as_slice),
+            Some(["J. P. Mayer".to_string(), "Mike Deodato Jr.".into()].as_slice())
+        );
+        assert_eq!(mi.teams, ["Capes, Inc.", "Avengers"]);
+        // ComicInfo keeps the column verbatim on this path.
+        let ci = compose_comicinfo(&ctx);
+        assert_eq!(ci.inker.as_deref(), Some("J. P. Mayer, Mike Deodato, Jr."));
+    }
+
+    #[test]
+    fn junction_credits_group_by_comicinfo_role_label() {
+        let junctions = IssueJunctions {
+            credits: vec![
+                credit("cover_artist", "Cover Carl"),
+                credit("journalist", "Jo"),
+                credit("writer", "Wanda"),
+            ],
+            ..Default::default()
+        };
+        let by_role = junctions.credits_by_role_label();
+        assert_eq!(
+            by_role.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["CoverArtist", "Writer", "journalist"]
+        );
+        assert_eq!(junctions.credits_for_role("CoverArtist"), ["Cover Carl"]);
+        assert_eq!(junctions.credits_for_role("cover_artist"), ["Cover Carl"]);
+        assert!(junctions.credits_for_role("").is_empty());
     }
 }
 
@@ -2250,6 +2692,7 @@ mod archive_series_name_tests {
             series_external_ids: &ids,
             issue_user_pins: &pins,
             series_user_pins: &pins,
+            issue_junctions: &IssueJunctions::default(),
         };
         assert_eq!(
             compose_comicinfo(&ctx).series.as_deref(),
@@ -2279,6 +2722,7 @@ mod archive_series_name_tests {
             series_external_ids: &ids,
             issue_user_pins: &pins,
             series_user_pins: &pins,
+            issue_junctions: &IssueJunctions::default(),
         };
         assert_eq!(
             compose_comicinfo(&ctx).series.as_deref(),
@@ -2295,6 +2739,7 @@ mod archive_series_name_tests {
             series_external_ids: &ids,
             issue_user_pins: &pins,
             series_user_pins: &pinned,
+            issue_junctions: &IssueJunctions::default(),
         };
         assert_eq!(compose_comicinfo(&ctx).series.as_deref(), Some("Firestorm"));
         // A mere variant of the series name normalises to it.
@@ -2307,6 +2752,7 @@ mod archive_series_name_tests {
             series_external_ids: &ids,
             issue_user_pins: &pins,
             series_user_pins: &pins,
+            issue_junctions: &IssueJunctions::default(),
         };
         assert_eq!(compose_comicinfo(&ctx).series.as_deref(), Some("Firestorm"));
     }

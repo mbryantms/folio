@@ -304,6 +304,163 @@ async fn issue_patch_in_writeback_library_lands_in_the_archive() {
     );
 }
 
+/// A hand edit of a list column writes the junction rows it rolls up into
+/// through the audited writers, in the same transaction as the row and its
+/// pins, so the composer (which reads the junctions, audit 2026-11 N-M2)
+/// writes the edit into the file — spelled the way the scanner normalises
+/// it: `"Mike Deodato, Jr."` is one person, not `Mike Deodato` + `Jr.`.
+/// Roles the edit did not touch keep their rows, including one ComicInfo
+/// has no column for.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_patch_of_a_credit_column_rederives_the_junction_and_the_file_carries_it() {
+    use entity::{issue_arc, issue_credit};
+    use server::metadata::identifier::Source;
+    use server::metadata::writers::{self, CsvRebuildBatch, SetBy};
+
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let (_lib, _series, series_slug, issues) = seed(&app, dir.path(), true, 1, "cbz").await;
+    let (issue_id, issue_slug, path) = issues.into_iter().next().unwrap();
+    let db = &app.state().db;
+
+    // A provider apply left an editor and a journalist (no ComicInfo column).
+    let set_by = SetBy::Provider(Source::Metron);
+    let editor = writers::upsert_person(db, "Eddie Editor", &[], set_by)
+        .await
+        .unwrap();
+    let journalist = writers::upsert_person(db, "Jo Journalist", &[], set_by)
+        .await
+        .unwrap();
+    let batch = CsvRebuildBatch::new();
+    writers::set_issue_credits(
+        db,
+        &issue_id,
+        vec![
+            (editor, "editor".into(), 0),
+            (journalist, "journalist".into(), 0),
+        ],
+        set_by,
+        None,
+        &batch,
+    )
+    .await
+    .unwrap();
+    batch.flush(db).await.unwrap();
+
+    let (status, body) = patch(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/{issue_slug}"),
+        serde_json::json!({
+            "writer": "Hand Writer",
+            "penciller": "Mike Deodato, Jr.",
+            "characters": "Alana, Marko",
+            "story_arc": "Origins",
+            "story_arc_number": "2"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // The response already carries the rebuilt (normalised) columns.
+    assert_eq!(body["penciller"], "Mike Deodato Jr.");
+    assert_eq!(body["editor"], "Eddie Editor");
+
+    // The edited roles hold the edit; the untouched ones keep their rows.
+    let rows = issue_credit::Entity::find()
+        .filter(issue_credit::Column::IssueId.eq(issue_id.as_str()))
+        .all(db)
+        .await
+        .unwrap();
+    let mut credits: Vec<(String, String)> = rows
+        .iter()
+        .map(|r| (r.role.clone(), r.person.clone()))
+        .collect();
+    credits.sort();
+    assert_eq!(
+        credits,
+        vec![
+            ("editor".to_string(), "Eddie Editor".to_string()),
+            ("journalist".to_string(), "Jo Journalist".to_string()),
+            ("penciller".to_string(), "Mike Deodato Jr.".to_string()),
+            ("writer".to_string(), "Hand Writer".to_string()),
+        ]
+    );
+    assert!(
+        rows.iter().all(|r| r.person_id.is_some()),
+        "every credit is linked to its person row: {rows:?}"
+    );
+    let arcs = issue_arc::Entity::find()
+        .filter(issue_arc::Column::IssueId.eq(issue_id.as_str()))
+        .all(db)
+        .await
+        .unwrap();
+    assert_eq!(arcs.len(), 1, "{arcs:?}");
+    assert_eq!(arcs[0].position_in_arc, Some(2));
+
+    // …and the composed sidecars carry it as one creator.
+    let jobs = queued_rewrite_jobs(&app).await;
+    assert_eq!(jobs.len(), 1, "{jobs:?}");
+    let job = &jobs[0];
+    assert!(
+        job.comic_info_xml.contains("<Writer>Hand Writer</Writer>"),
+        "{}",
+        job.comic_info_xml
+    );
+    assert!(
+        job.comic_info_xml
+            .contains("<Penciller>Mike Deodato Jr.</Penciller>"),
+        "{}",
+        job.comic_info_xml
+    );
+    assert!(
+        job.comic_info_xml
+            .contains("<Characters>Alana, Marko</Characters>"),
+        "{}",
+        job.comic_info_xml
+    );
+    assert!(
+        job.comic_info_xml.contains("<StoryArc>Origins</StoryArc>"),
+        "{}",
+        job.comic_info_xml
+    );
+    assert!(
+        job.comic_info_xml.contains("<Editor>Eddie Editor</Editor>"),
+        "{}",
+        job.comic_info_xml
+    );
+    assert_eq!(
+        job.metron_info_xml.matches("<Credit>").count(),
+        4,
+        "editor, journalist, penciller, writer\n{}",
+        job.metron_info_xml
+    );
+    assert!(
+        job.metron_info_xml
+            .contains("<Creator>Mike Deodato Jr.</Creator>"),
+        "{}",
+        job.metron_info_xml
+    );
+    assert!(
+        job.metron_info_xml
+            .contains("<Creator>Jo Journalist</Creator>"),
+        "{}",
+        job.metron_info_xml
+    );
+    assert!(
+        !job.metron_info_xml.contains("<Creator>Jr.</Creator>"),
+        "{}",
+        job.metron_info_xml
+    );
+
+    assert_eq!(run_queued_rewrite_jobs(&app).await, 1);
+    let xml = read_comicinfo(&path);
+    assert!(
+        xml.contains("<Penciller>Mike Deodato Jr.</Penciller>"),
+        "{xml}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue_patch_in_non_writeback_library_enqueues_nothing() {
     let app = TestApp::spawn().await;

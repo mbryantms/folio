@@ -514,7 +514,9 @@ async fn bulk_metadata_multifield_patch() {
         assert_eq!(r.format.as_deref(), Some("Annual"));
         assert_eq!(r.age_rating.as_deref(), Some("Teen"));
         assert_eq!(r.genre.as_deref(), Some("Action"));
-        assert_eq!(r.tags.as_deref(), Some("shonen,manga"));
+        // List columns are rebuilt from the junctions after the edit, so
+        // the raw `"shonen,manga"` reads back in the scan-normalised form.
+        assert_eq!(r.tags.as_deref(), Some("shonen, manga"));
         assert_eq!(r.story_arc.as_deref(), Some("Origin"));
     }
 }

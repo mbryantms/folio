@@ -26,15 +26,19 @@ mod common;
 
 use archive::ArchiveLimits;
 use common::TestApp;
-use common::seed::LibrarySeed;
+use common::seed::{IssueSeed, LibrarySeed, SeriesSeed};
 use entity::issue;
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use server::jobs::rewrite_sidecars::RewriteIssueSidecarsJob;
 use server::library::scanner;
+use server::library::scanner::metadata_rollup;
+use server::metadata::identifier::Source;
 use server::metadata::manual_writeback::{self, Actor, IssueEnqueue};
+use server::metadata::writers::{self, CsvRebuildBatch, SetBy};
 use std::collections::BTreeMap;
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 
 const CT_VERSION: &str = "1.5.5";
@@ -297,8 +301,9 @@ async fn scan_and_rewrite(app: &TestApp, lib_id: uuid::Uuid, path: &Path) -> (St
 /// content, optional `id`) and a `<Roles>` of `<Role>` values from the
 /// `roleValues` enumeration. No Rust XSD validator is a dependency, so
 /// this is the schema's credit grammar spelled out over a raw quick-xml
-/// walk (not Folio's parser, which also accepts the legacy shape).
-fn assert_metron_credit_shape(xml: &str) {
+/// walk (not Folio's parser, which also accepts the legacy shape). Returns
+/// the number of `<Credit>` elements.
+fn assert_metron_credit_shape(xml: &str) -> usize {
     let mut reader = Reader::from_str(xml);
     let mut path: Vec<String> = Vec::new();
     let mut credits = 0;
@@ -371,7 +376,7 @@ fn assert_metron_credit_shape(xml: &str) {
             _ => {}
         }
     }
-    assert!(credits >= 7, "every ComicTagger credit is present\n{xml}");
+    credits
 }
 
 // ───────── the test ─────────
@@ -498,7 +503,10 @@ async fn folio_rewrite_of_a_comictagger_file_agrees_on_every_shared_field() {
     );
     assert_eq!(mi.editor().as_deref(), Some(f["Editor"].as_str()));
     // …in the MetronInfo schema's credit shape (WP-8.1).
-    assert_metron_credit_shape(&metron_xml);
+    assert!(
+        assert_metron_credit_shape(&metron_xml) >= 7,
+        "every ComicTagger credit is present\n{metron_xml}"
+    );
 
     // 5. Golden pin of Folio's rewrite (reviewable diff on any composer /
     //    serializer change; input to `make-fixture.py verify`).
@@ -510,4 +518,232 @@ async fn folio_rewrite_of_a_comictagger_file_agrees_on_every_shared_field() {
     let (again_ci, again_mi) = scan_and_rewrite(&app, lib_id, &path).await;
     assert_eq!(again_ci, folio_xml, "second ComicInfo rewrite drifted");
     assert_eq!(again_mi, metron_xml, "second MetronInfo rewrite drifted");
+}
+
+// ───────── junctions are the truth (audit 2026-11 N-M2) ─────────
+
+/// A one-page CBZ with a real PNG signature so the rewrite job treats it
+/// as an archive with a page, not an empty one.
+fn one_page_cbz() -> Vec<u8> {
+    let mut buf = Cursor::new(Vec::new());
+    {
+        let mut zw = zip::ZipWriter::new(&mut buf);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("page-001.png", opts).unwrap();
+        zw.write_all(b"\x89PNG\r\n\x1a\njunction-fixture").unwrap();
+        zw.finish().unwrap();
+    }
+    buf.into_inner()
+}
+
+/// Writeback library + series + one seeded issue (no scan: the junctions
+/// are written directly, as a provider apply would). Returns
+/// `(issue_id, archive path)`.
+async fn seed_writeback_issue(app: &TestApp, dir: &Path) -> (String, PathBuf) {
+    let db = &app.state().db;
+    let lib_id = LibrarySeed::new(dir)
+        .with_sidecar_writeback()
+        .insert(db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga").insert(db).await;
+    let path = dir.join("saga-1.cbz");
+    let cbz = one_page_cbz();
+    let issue_id = IssueSeed::new(lib_id, series_id, &path, &cbz, 1.0)
+        .insert(db)
+        .await;
+    (issue_id, path)
+}
+
+/// Rewrite the issue's sidecars from the database alone (the manual-edit /
+/// drift-flush compose) and return the ComicInfo.xml + MetronInfo.xml that
+/// landed in the archive.
+async fn rewrite_from_db(app: &TestApp, issue_id: &str, path: &Path) -> (String, String) {
+    let state = app.state();
+    let outcome =
+        manual_writeback::enqueue_issue_rewrite(&state, issue_id, &Actor::default(), true)
+            .await
+            .unwrap();
+    assert_eq!(outcome, IssueEnqueue::Enqueued);
+    assert_eq!(run_queued_rewrite_jobs(app).await, 1);
+    let ci = String::from_utf8(read_entry(path, "ComicInfo.xml").expect("ComicInfo.xml")).unwrap();
+    let mi =
+        String::from_utf8(read_entry(path, "MetronInfo.xml").expect("MetronInfo.xml")).unwrap();
+    (ci, mi)
+}
+
+/// A creator whose name carries a generational suffix with a comma
+/// (`"Mike Deodato, Jr."`) is one person in the junction and must stay one
+/// creator in both sidecars. Pre-fix the composer read the read-cache
+/// column and split it on every comma, so MetronInfo carried
+/// `<Creator>Mike Deodato</Creator>` + `<Creator>Jr.</Creator>`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn suffixed_creator_name_is_one_creator_in_both_sidecars() {
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (issue_id, path) = seed_writeback_issue(&app, dir.path()).await;
+    let db = &app.state().db;
+
+    let set_by = SetBy::Provider(Source::Metron);
+    let writer = writers::upsert_person(db, "Wanda Writer", &[], set_by)
+        .await
+        .unwrap();
+    let penciller = writers::upsert_person(db, "Mike Deodato, Jr.", &[], set_by)
+        .await
+        .unwrap();
+    let batch = CsvRebuildBatch::new();
+    writers::set_issue_credits(
+        db,
+        &issue_id,
+        vec![
+            (writer, "Writer".into(), 0),
+            (penciller, "Penciller".into(), 0),
+        ],
+        set_by,
+        None,
+        &batch,
+    )
+    .await
+    .unwrap();
+    batch.flush(db).await.unwrap();
+    // The derived column carries the comma-bearing name verbatim — the
+    // very string the old composer split.
+    let row = issue::Entity::find_by_id(issue_id.clone())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.penciller.as_deref(), Some("Mike Deodato, Jr."));
+
+    let (ci_xml, mi_xml) = rewrite_from_db(&app, &issue_id, &path).await;
+
+    assert!(ci_xml.contains("<Writer>Wanda Writer</Writer>"), "{ci_xml}");
+    assert!(
+        ci_xml.contains("<Penciller>Mike Deodato, Jr.</Penciller>"),
+        "{ci_xml}"
+    );
+    assert_eq!(
+        mi_xml.matches("<Credit>").count(),
+        2,
+        "one <Credit> per creator\n{mi_xml}"
+    );
+    assert_eq!(
+        mi_xml
+            .matches("<Creator>Mike Deodato, Jr.</Creator>")
+            .count(),
+        1,
+        "{mi_xml}"
+    );
+    assert!(!mi_xml.contains("<Creator>Jr.</Creator>"), "{mi_xml}");
+    assert!(
+        !mi_xml.contains("<Creator>Mike Deodato</Creator>"),
+        "{mi_xml}"
+    );
+    assert_eq!(assert_metron_credit_shape(&mi_xml), 2);
+
+    // Round trip: both parsers hand back the same two credits.
+    let mi = parsers::metroninfo::parse(mi_xml.as_bytes()).expect("MetronInfo parses");
+    assert_eq!(
+        mi.credits.get("Writer").map(Vec::as_slice),
+        Some(["Wanda Writer".to_string()].as_slice())
+    );
+    assert_eq!(
+        mi.credits.get("Penciller").map(Vec::as_slice),
+        Some(["Mike Deodato, Jr.".to_string()].as_slice())
+    );
+    assert_eq!(mi.credits.len(), 2);
+    let ci = parsers::comicinfo::parse(ci_xml.as_bytes()).expect("ComicInfo parses");
+    assert_eq!(ci.writer.as_deref(), Some("Wanda Writer"));
+    assert_eq!(ci.penciller.as_deref(), Some("Mike Deodato, Jr."));
+    // …and the scanner's own splitter re-ingests the penciller as one
+    // person, spelled the way the junction normalises it.
+    assert_eq!(
+        metadata_rollup::split_csv(ci.penciller.as_deref().unwrap()),
+        vec!["Mike Deodato Jr.".to_string()]
+    );
+}
+
+/// The junction rows are the truth; a read-cache column that disagrees
+/// with them (stale, or hand-written around the writers) never reaches
+/// the file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn junction_rows_win_over_a_stale_csv_column() {
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (issue_id, path) = seed_writeback_issue(&app, dir.path()).await;
+    let db = &app.state().db;
+
+    let set_by = SetBy::Provider(Source::ComicVine);
+    let batch = CsvRebuildBatch::new();
+    let writer = writers::upsert_person(db, "Wanda Writer", &[], set_by)
+        .await
+        .unwrap();
+    writers::set_issue_credits(
+        db,
+        &issue_id,
+        vec![(writer, "Writer".into(), 0)],
+        set_by,
+        None,
+        &batch,
+    )
+    .await
+    .unwrap();
+    let alana = writers::upsert_character(db, "Alana", &[], set_by)
+        .await
+        .unwrap();
+    let marko = writers::upsert_character(db, "Marko", &[], set_by)
+        .await
+        .unwrap();
+    writers::set_issue_characters(
+        db,
+        &issue_id,
+        vec![(alana, true, false), (marko, false, false)],
+        set_by,
+        None,
+        &batch,
+    )
+    .await
+    .unwrap();
+    writers::set_issue_genres(
+        db,
+        &issue_id,
+        vec!["Science Fiction".into(), "Romance".into()],
+        set_by,
+        None,
+        &batch,
+    )
+    .await
+    .unwrap();
+    batch.flush(db).await.unwrap();
+
+    // Stale the read-cache columns behind the writers' back.
+    let mut am: issue::ActiveModel = issue::Entity::find_by_id(issue_id.clone())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    am.writer = Set(Some("Stale Writer".into()));
+    am.characters = Set(Some("Stale Character".into()));
+    am.genre = Set(Some("Stale Genre".into()));
+    am.update(db).await.unwrap();
+
+    let (ci_xml, mi_xml) = rewrite_from_db(&app, &issue_id, &path).await;
+
+    assert!(ci_xml.contains("<Writer>Wanda Writer</Writer>"), "{ci_xml}");
+    assert!(
+        ci_xml.contains("<Characters>Alana, Marko</Characters>"),
+        "{ci_xml}"
+    );
+    assert!(
+        ci_xml.contains("<Genre>Science Fiction, Romance</Genre>"),
+        "{ci_xml}"
+    );
+    assert!(!ci_xml.contains("Stale"), "{ci_xml}");
+
+    let mi = parsers::metroninfo::parse(mi_xml.as_bytes()).expect("MetronInfo parses");
+    assert_eq!(mi.writer().as_deref(), Some("Wanda Writer"));
+    assert_eq!(mi.characters, ["Alana", "Marko"]);
+    assert_eq!(mi.genres, ["Science Fiction", "Romance"]);
+    assert!(!mi_xml.contains("Stale"), "{mi_xml}");
 }
