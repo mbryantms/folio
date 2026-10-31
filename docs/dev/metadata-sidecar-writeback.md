@@ -770,7 +770,93 @@ What this does **not** cover: the provider-apply path (it replaces
 the provider, not the file) and a ComicTagger 1.6.x fixture. ComicTagger
 1.5.5 doesn't read MetronInfo; the test checks Folio's MetronInfo
 against the ComicInfo values and validates the document against the
-MetronInfo v1.2 XSD (see "MetronInfo schema" above).
+MetronInfo v1.2 XSD (see "MetronInfo schema" above). The tools
+themselves run in the interop check below.
+
+## Interop check (audit 2026-11 WP A5)
+
+The parity test is hermetic: it compares XML against a golden and an XSD,
+but no other program ever opens the archive. The Slice A exit criterion of
+the 2026-11 audit is that a Folio-written archive round-trips through
+ComicTagger and Metron-Tagger with no diff on shared fields, **verified by
+CI**. The `sidecar-interop` job in `ci.yml` does that in two steps:
+
+1. **Producer** —
+   [`crates/server/tests/sidecar_interop_emit.rs`](../../crates/server/tests/sidecar_interop_emit.rs)
+   seeds one rich issue in a writeback library (credits incl. the
+   comma-suffixed `Mike Deodato, Jr.`, three characters, teams, locations,
+   an arc with a number, genres, tags, a universe, a reprint, ComicVine /
+   Metron / GCD issue ids, the series' Metron id, a UPC with a leading
+   zero and an ISBN, cover + store date, `Mature 17+`, a primary URL and
+   a ComicVine link), writes a three-page CBZ through the real
+   `RewriteIssueSidecarsJob`, and — when `FOLIO_INTEROP_OUT` names a
+   directory — copies `issue.cbz`, both XML files and `expected.json`
+   (what Folio meant, in both sidecars' vocabularies) there. Without the
+   variable it still runs as an ordinary test, so the producer can't rot.
+2. **Readers** —
+   [`scripts/ci/sidecar_interop.py`](../../scripts/ci/sidecar_interop.py)
+   (stdlib + the two tools, `python3 -I`) opens the CBZ three ways —
+   ComicTagger's `comicapi` on ComicInfo.xml, Metron-Tagger's `darkseid`
+   on ComicInfo.xml and on MetronInfo.xml — and diffs each reading
+   against `expected.json`: series (name, sort name, years, count, status,
+   format, Metron id), number, title, cover / store date, publisher,
+   imprint, language, summary, notes, page count, credits by role,
+   characters, teams, locations, arcs (with numbers on the MetronInfo
+   side), genres, tags, universes, reprints, ids + primary, GTIN, age
+   rating, URLs. darkseid also validates MetronInfo.xml against its
+   bundled XSD **1.1** (the `<xs:assert>`s xmllint skips) and the script
+   requires `Metron Info V1.2`. Any difference not covered by a *named*
+   normalisation below fails the job with a readable diff; the archive,
+   both sidecars, `expected.json` and the report are uploaded as the
+   `sidecar-interop` artifact.
+
+Tool versions are pinned in
+[`scripts/ci/sidecar-interop-requirements.txt`](../../scripts/ci/sidecar-interop-requirements.txt)
+(ComicTagger **1.6.0b9** — the audit's 1.6 target; 1.5.5 is the last
+stable and its `comicapi` predates the `tags` API — Metron-Tagger
+**5.0.0** and its reader darkseid **9.1.0**); the script refuses other
+versions, so only a pin bump can move the comparison. The job runs on the
+Rust path filter plus `fixtures/**` and the script / pins. It is **not a
+required check yet**: promote it in branch protection once it has been
+green on `main` for a week (the job's own comment says the same).
+
+Locally, `just sidecar-interop` runs both steps against throwaway
+Postgres + Redis containers (own names and ports, never the dev services)
+and leaves the output directory for inspection.
+
+**Tolerated normalisations** (the script's `TOLERATED` table; each is
+printed when it fires):
+
+| Name | What the tool does | How the comparison copes |
+| --- | --- | --- |
+| `cover_artist_role_is_cover` | comicapi and darkseid both report ComicInfo `<CoverArtist>` (and MetronInfo's `<Role>Cover</Role>`) as the role `Cover`. | Compared as Folio's `CoverArtist`. |
+| `comicinfo_csv_comma_name` | A name with a comma makes Folio join the ComicInfo field with `; ` (`Fiona Staples; Mike Deodato, Jr.`). comicapi splits CSV fields on `,` only; darkseid splits credit columns on `;` and `,` and resource columns on `,`. The name arrives as fragments either way. | Expected = the tool's own split of Folio's join. **Known gap**, not fixable in the composer: ComicInfo has no lossless spelling for `Name, Jr.` (ComicTagger's own writer has the same problem). MetronInfo's `<Creator>` carries the name whole, and Folio's scanner re-joins the suffix on rescan (`split_csv`). Follow-up: consider writing the suffix without the comma in ComicInfo only. |
+| `issue_number_leading_zeros` | darkseid passes `<Number>` through `IssueString`, which drops leading zeros (`003` → `3`). | Compared after the same normalisation (not exercised by the fixture's `1`). |
+| `gtin_as_int` | darkseid parses `<GTIN><UPC>` / `<ISBN>` as integers, so a leading zero is lost (`07098530047000111` → `7098530047000111`). | Compared as integers. |
+| `ids_numeric_as_int` | darkseid parses an all-digit `<ID>` and `<Series id>` as integers, so a leading zero is lost. | Both sides compared after the same integer round-trip. |
+
+**Not compared** because the reader does not read it: from ComicInfo.xml
+neither comicapi 1.6 nor darkseid reads `<Tags>`, `<GTIN>`,
+`<Translator>`, `<StoryArcNumber>` or the `<ComicVineID>` / `<MetronID>`
+extension elements, and ComicInfo has no universes or reprints; those
+fields are checked on the MetronInfo reading only. Two of them are also
+**composer gaps the check cannot see** (follow-up, not interop
+failures): `compose_comicinfo` writes `<GTIN>` only from a `gtin`-source
+external id, so the fixture's `upc` / `isbn` rows reach MetronInfo's
+`<GTIN>` but not ComicInfo's; and `<StoryArcNumber>` comes from the flat
+`issue.story_arc_number` column, which a junction-only write (a provider
+apply) leaves empty although `<Arcs><Arc><Number>` is written from the
+junction. A ComicInfo-only reader (ComicRack, Kavita) therefore gets
+neither. Values
+that legitimately differ *per sidecar* travel in `expected.json` under
+their own keys rather than as exceptions: the age rating (`Mature 17+` in
+ComicInfo, the schema's `Mature` in MetronInfo) and the series format /
+status (`Single Issue` / `Completed`, MetronInfo only). darkseid's
+ComicInfo schema check is printed but informational: it bundles the
+ComicInfo v1 / v2 XSDs only, and Folio writes the v2.1 draft vocabulary
+plus the extension elements. Implementation note: a darkseid `Comic`
+caches one parsed metadata object for both formats, so the script opens a
+fresh `Comic` per format.
 
 ## Migration recipe
 
@@ -877,4 +963,6 @@ branch from `apply_issue` / `apply_series` once the
 | [`server/metadata/drift.rs`](../../crates/server/src/metadata/drift.rs) | M6 drift query: count issues where `pin.set_at > last_rewrite_at`.  |
 | [`server/metadata/writeback_progress.rs`](../../crates/server/src/metadata/writeback_progress.rs) | M7 rollout gauge: count libraries with writeback disabled.          |
 | [`fixtures/comictagger/make-fixture.py`](../../fixtures/comictagger/make-fixture.py) | Regenerates the ComicTagger parity fixture (`build`) and runs the reverse check with ComicTagger's parser (`verify`). |
+| [`server/tests/sidecar_interop_emit.rs`](../../crates/server/tests/sidecar_interop_emit.rs) | Interop producer: writes a rich Folio-authored CBZ + `expected.json` to `FOLIO_INTEROP_OUT` (CI job `sidecar-interop`, `just sidecar-interop`). |
+| [`scripts/ci/sidecar_interop.py`](../../scripts/ci/sidecar_interop.py) | Interop readers: ComicTagger (`comicapi`) + Metron-Tagger (`darkseid`) read that CBZ; diff against `expected.json`; pins in `sidecar-interop-requirements.txt`. |
 | [`server/api/health_issues.rs`](../../crates/server/src/api/health_issues.rs) — `flush_metadata_drift` | M6 flush endpoint: composer-only re-emit of DB state to XML.        |
