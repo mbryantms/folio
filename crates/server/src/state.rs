@@ -152,6 +152,10 @@ pub struct Inner {
     /// burst of archive opens starts at most one task per issue. See
     /// [`crate::reading::page_hash_backfill`].
     pub page_hash_backfill_inflight: Arc<std::sync::Mutex<HashSet<String>>>,
+    /// Per-library memo of the Duplicates page's groups (audit 2026-11,
+    /// N-L3). Invalidated by catalogue-changing scans, duplicate decisions
+    /// and Removed-tab restores. See [`crate::api::duplicates`].
+    pub duplicates: Arc<crate::api::duplicates::DuplicateGroupsCache>,
 }
 
 impl AppState {
@@ -244,6 +248,7 @@ impl AppState {
             watchers: Arc::new(crate::library::watcher::WatcherRegistry::new()),
             similarity: Arc::new(crate::similarity::SimilarityCache::new()),
             page_hash_backfill_inflight: Arc::new(std::sync::Mutex::new(HashSet::new())),
+            duplicates: Arc::new(crate::api::duplicates::DuplicateGroupsCache::new()),
         }))
     }
 

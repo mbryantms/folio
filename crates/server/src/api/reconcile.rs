@@ -526,6 +526,7 @@ pub async fn restore_issue(
             "the file is still missing on disk; restore the file first",
         );
     }
+    let library_id = row.library_id;
     let mut am: issue::ActiveModel = row.into();
     am.removed_at = Set(None);
     am.removal_confirmed_at = Set(None);
@@ -533,6 +534,8 @@ pub async fn restore_issue(
         tracing::error!(error = %e, issue_id = %id, "restore issue failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
+    // A restored issue is live again and may rejoin a duplicate group.
+    app.duplicates.invalidate(library_id);
     // An explicit restore overrides a Duplicates-page soft-remove (WP-3.3):
     // drop the pin so the next scan's reconcile treats the issue normally.
     if let Err(e) = entity::issue_duplicate_decision::Entity::delete_by_id(id.clone())
@@ -704,9 +707,13 @@ pub async fn restore_series(
             .await
         {
             tracing::error!(error = %e, series_id = %row.id, "restore series: issue restore failed");
+            // Earlier chunks may have landed.
+            app.duplicates.invalidate(row.library_id);
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     }
+    // Restored issues are live again and may rejoin duplicate groups.
+    app.duplicates.invalidate(row.library_id);
 
     let series_id = row.id;
     let mut am: series::ActiveModel = row.into();

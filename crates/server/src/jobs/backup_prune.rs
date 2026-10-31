@@ -12,14 +12,22 @@
 //!
 //! Best-effort, like the thumbnail orphan sweep: a per-file delete error
 //! is counted and logged, and the walk continues. Libraries without
-//! writeback can't have produced backups through Folio, so they are
-//! skipped rather than walked — a stray `*.bak` an operator left on a
+//! writeback can't have produced backups through Folio, so nothing is
+//! ever deleted under them — a stray `*.bak` an operator left on a
 //! read-only mount is not ours to delete.
+//!
+//! The same walk is the source of the health page's backup-storage card
+//! (audit 2026-11, N-L4): the files that survive the sweep are tallied
+//! and stored in `library_backup_stats` via
+//! [`crate::library::backup_stats`], for every library — the
+//! non-writeback ones get a read-only walk so their card is a stored
+//! value too, instead of a walk per request.
 
+use crate::library::backup_stats::{self, Tally};
 use crate::library::event_log::{self, Action, Category, NewEvent, Severity};
 use crate::state::AppState;
 use entity::library;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::EntityTrait;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -32,7 +40,8 @@ pub struct PruneStats {
     pub bytes: u64,
     /// Files that matched the age cut-off but could not be deleted.
     pub errors: usize,
-    /// Libraries that were walked (writeback on, retain_days > 0).
+    /// Libraries that were pruned (writeback on, retain_days > 0). Every
+    /// library is tallied; only these are candidates for deletion.
     pub libraries: usize,
 }
 
@@ -45,25 +54,34 @@ impl PruneStats {
     }
 }
 
-/// Run one sweep over every eligible library. Emits one `archive.removed`
+/// Run one sweep over every library. Prunes the eligible ones, stores a
+/// fresh backup tally for all of them, and emits one `archive.removed`
 /// library event per library that had at least one backup pruned.
 pub async fn run(state: &AppState) -> anyhow::Result<PruneStats> {
-    let libs = library::Entity::find()
-        .filter(library::Column::AllowArchiveWriteback.eq(true))
-        .filter(library::Column::ArchiveBackupRetainDays.gt(0))
-        .all(&state.db)
-        .await?;
+    let libs = library::Entity::find().all(&state.db).await?;
 
     let now = SystemTime::now();
     let mut total = PruneStats::default();
     for lib in libs {
         let root = std::path::PathBuf::from(&lib.root_path);
-        let retain_days = lib.archive_backup_retain_days;
+        // Only a writeback library is pruned; `0` on either side means
+        // the walk is read-only and only refreshes the stored tally.
+        let retain_days = if lib.allow_archive_writeback {
+            lib.archive_backup_retain_days
+        } else {
+            0
+        };
         // Walk off the async runtime — a large library has many dirents.
-        let stats = tokio::task::spawn_blocking(move || prune_library(&root, retain_days, now))
-            .await
-            .map_err(|e| anyhow::anyhow!("backup prune walk join failed: {e}"))?;
+        let (stats, tally) =
+            tokio::task::spawn_blocking(move || prune_library(&root, retain_days, now))
+                .await
+                .map_err(|e| anyhow::anyhow!("backup prune walk join failed: {e}"))?;
         total.absorb(stats);
+        if let Some(tally) = tally
+            && let Err(e) = backup_stats::store(&state.db, lib.id, &tally, chrono::Utc::now()).await
+        {
+            tracing::warn!(library_id = %lib.id, error = %e, "archive backup prune: tally store failed");
+        }
         if stats.removed == 0 && stats.errors == 0 {
             continue;
         }
@@ -104,41 +122,38 @@ pub async fn run(state: &AppState) -> anyhow::Result<PruneStats> {
     Ok(total)
 }
 
-/// Walk `root` and delete every `.bak` / `.bak.N` file whose mtime is
-/// more than `retain_days` days before `now`. `retain_days <= 0` is a
-/// no-op (returns an empty [`PruneStats`] with `libraries = 0`).
+/// Walk `root` once: delete every `.bak` / `.bak.N` file whose mtime is
+/// more than `retain_days` days before `now`, and tally the ones that
+/// stay. `retain_days <= 0` deletes nothing (an empty [`PruneStats`] with
+/// `libraries = 0`) but still tallies. An unreadable root (unmounted
+/// share) prunes nothing and yields no tally, so the stored count is left
+/// alone rather than zeroed.
 ///
 /// Pure filesystem — no DB — so tests and the sweep share it.
-pub fn prune_library(root: &Path, retain_days: i32, now: SystemTime) -> PruneStats {
+pub fn prune_library(
+    root: &Path,
+    retain_days: i32,
+    now: SystemTime,
+) -> (PruneStats, Option<Tally>) {
     let mut stats = PruneStats::default();
-    if retain_days <= 0 {
-        return stats;
+    if let Err(e) = std::fs::read_dir(root) {
+        tracing::warn!(root = %root.display(), error = %e, "backup prune: root unreadable, skipped");
+        return (stats, None);
     }
-    stats.libraries = 1;
-    let cutoff = now - Duration::from_secs(u64::from(retain_days.unsigned_abs()) * 86_400);
+    let mut tally = Tally::default();
+    let cutoff = (retain_days > 0).then(|| {
+        stats.libraries = 1;
+        now - Duration::from_secs(u64::from(retain_days.unsigned_abs()) * 86_400)
+    });
 
-    for entry in walkdir::WalkDir::new(root)
-        .into_iter()
-        .filter_map(|e| match e {
-            Ok(e) => Some(e),
-            Err(err) => {
-                tracing::warn!(root = %root.display(), error = %err, "backup prune: walk error");
-                None
-            }
-        })
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        if !crate::archive_rewrite::is_backup_name(&entry.file_name().to_string_lossy()) {
-            continue;
-        }
-        let Ok(meta) = entry.metadata() else { continue };
-        let Ok(modified) = meta.modified() else {
-            continue;
+    backup_stats::for_each_backup(root, |entry, meta| {
+        let expired = match (cutoff, meta.modified()) {
+            (Some(cutoff), Ok(modified)) => modified < cutoff,
+            _ => false,
         };
-        if modified >= cutoff {
-            continue;
+        if !expired {
+            tally.add(meta);
+            return;
         }
         match std::fs::remove_file(entry.path()) {
             Ok(()) => {
@@ -148,11 +163,12 @@ pub fn prune_library(root: &Path, retain_days: i32, now: SystemTime) -> PruneSta
             }
             Err(e) => {
                 stats.errors += 1;
+                tally.add(meta);
                 tracing::warn!(path = %entry.path().display(), error = %e, "backup prune: remove failed");
             }
         }
-    }
-    stats
+    });
+    (stats, Some(tally))
 }
 
 #[cfg(test)]
@@ -167,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn prunes_only_old_backups() {
+    fn prunes_only_old_backups_and_tallies_the_rest() {
         let dir = tempfile::tempdir().unwrap();
         let now = SystemTime::now();
         let day = Duration::from_secs(86_400);
@@ -180,23 +196,38 @@ mod tests {
         touch(&young, 5 * day, now);
         touch(&not_backup, 400 * day, now);
 
-        let stats = prune_library(dir.path(), 30, now);
+        let (stats, tally) = prune_library(dir.path(), 30, now);
+        let tally = tally.expect("readable root");
         assert_eq!(stats.removed, 2);
         assert_eq!(stats.errors, 0);
         assert!(!old.exists());
         assert!(!old_slot.exists());
         assert!(young.exists());
         assert!(not_backup.exists(), "non-backup files are never touched");
+        assert_eq!(
+            tally.file_count, 1,
+            "the survivor is what the health card shows"
+        );
+        assert_eq!(tally.total_bytes, 1);
     }
 
     #[test]
-    fn zero_retain_days_is_a_no_op() {
+    fn zero_retain_days_is_a_no_op_that_still_tallies() {
         let dir = tempfile::tempdir().unwrap();
         let now = SystemTime::now();
         let old = dir.path().join("a.cbz.bak");
         touch(&old, Duration::from_secs(400 * 86_400), now);
-        let stats = prune_library(dir.path(), 0, now);
+        let (stats, tally) = prune_library(dir.path(), 0, now);
         assert_eq!(stats, PruneStats::default());
         assert!(old.exists());
+        assert_eq!(tally.expect("readable root").file_count, 1);
+    }
+
+    #[test]
+    fn unreadable_root_yields_no_tally() {
+        let dir = tempfile::tempdir().unwrap();
+        let (stats, tally) = prune_library(&dir.path().join("unmounted"), 30, SystemTime::now());
+        assert_eq!(stats, PruneStats::default());
+        assert_eq!(tally, None, "a missing root must not zero the stored count");
     }
 }

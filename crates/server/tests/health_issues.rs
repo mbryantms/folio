@@ -1223,3 +1223,132 @@ async fn per_library_health_status_filter_and_validation() {
         );
     }
 }
+
+async fn backup_storage(app: &TestApp, auth: &Authed, lib_id: Uuid) -> serde_json::Value {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/api/libraries/{lib_id}/backup-storage"))
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={}", auth.session),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    body_json(resp.into_body()).await
+}
+
+/// Audit 2026-11 N-L4: the backup-storage card is a stored tally, not a
+/// walk per request. The first request counts and stores; after that the
+/// library root is not read — even when it no longer exists — until a
+/// scan flags the row stale *and* the stored tally is older than the
+/// recount guard.
+#[tokio::test]
+async fn backup_storage_card_is_served_from_the_stored_tally() {
+    use entity::library_backup_stats::{self, Entity as Stats};
+    use server::library::backup_stats;
+
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Omega (2020)");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("Omega 001.cbz.bak"), b"0123456789").unwrap();
+    std::fs::write(folder.join("Omega 001.cbz.bak.1"), b"01234").unwrap();
+    std::fs::write(folder.join("Omega 002.cbz"), b"not a backup").unwrap();
+    let lib_id = create_library(&app, tmp.path(), false).await;
+    let db = app.state().db.clone();
+
+    // No row yet → the first request counts the files and stores the row.
+    assert!(Stats::find_by_id(lib_id).one(&db).await.unwrap().is_none());
+    let first = backup_storage(&app, &auth, lib_id).await;
+    assert_eq!(first["file_count"], 2, "{first}");
+    assert_eq!(first["total_bytes"], 15);
+    assert!(first["oldest_modified_at"].is_string());
+    let stored = Stats::find_by_id(lib_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("row stored");
+    assert_eq!(stored.file_count, 2);
+    assert!(!stored.stale);
+
+    // Make the root unreadable by pointing the library at a path that does
+    // not exist. A walk would now count zero; the stored tally says two.
+    let gone = tmp.path().join("unmounted");
+    LibraryAM {
+        id: Set(lib_id),
+        root_path: Set(gone.to_string_lossy().into_owned()),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+    let second = backup_storage(&app, &auth, lib_id).await;
+    assert_eq!(second["file_count"], 2, "served without a walk: {second}");
+    assert_eq!(second["computed_at"], first["computed_at"]);
+
+    // Stale but fresh (a scan just landed) → still the stored row.
+    backup_stats::mark_stale(&db, lib_id).await;
+    assert!(
+        Stats::find_by_id(lib_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap()
+            .stale
+    );
+    let third = backup_storage(&app, &auth, lib_id).await;
+    assert_eq!(
+        third["file_count"], 2,
+        "stale within the guard is not recounted: {third}"
+    );
+
+    // Stale and older than the guard → a recount is due, but the root is
+    // unreadable (the share is unmounted): the stored count is kept, not
+    // zeroed, and the row stays stale so the next request tries again.
+    let old = chrono::Utc::now()
+        - chrono::Duration::from_std(backup_stats::RECOUNT_STALE_AFTER).unwrap()
+        - chrono::Duration::seconds(1);
+    library_backup_stats::ActiveModel {
+        library_id: Set(lib_id),
+        computed_at: Set(old.fixed_offset()),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+    let fourth = backup_storage(&app, &auth, lib_id).await;
+    assert_eq!(
+        fourth["file_count"], 2,
+        "an unreadable root keeps the stored count: {fourth}"
+    );
+    let stored = Stats::find_by_id(lib_id).one(&db).await.unwrap().unwrap();
+    assert!(stored.stale, "still stale: nothing was recounted");
+
+    // The share comes back (empty) → recounted from disk.
+    std::fs::create_dir_all(&gone).unwrap();
+    let fifth = backup_storage(&app, &auth, lib_id).await;
+    assert_eq!(
+        fifth["file_count"], 0,
+        "recounted against the empty root: {fifth}"
+    );
+    assert!(fifth["oldest_modified_at"].is_null());
+    assert_ne!(fifth["computed_at"], first["computed_at"]);
+    let stored = Stats::find_by_id(lib_id).one(&db).await.unwrap().unwrap();
+    assert!(!stored.stale, "a recount clears the flag");
+
+    // A library delete takes the row with it (ON DELETE CASCADE).
+    entity::library::Entity::delete_by_id(lib_id)
+        .exec(&db)
+        .await
+        .unwrap();
+    assert!(Stats::find_by_id(lib_id).one(&db).await.unwrap().is_none());
+}

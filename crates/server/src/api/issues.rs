@@ -3188,6 +3188,10 @@ pub(crate) async fn manual_rewrite_after_edit(
     // similar-series scores read. Every committed issue edit (PATCH and
     // bulk) passes through here.
     app.similarity.invalidate_all();
+    // A number or format edit can form or dissolve a `number` duplicate
+    // group; in a writeback library the rescan would drop the memo, in a
+    // DB-direct one nothing else does.
+    app.duplicates.invalidate_all();
     let actor = Actor {
         id: Some(user.id),
         ip: ctx.ip_string(),

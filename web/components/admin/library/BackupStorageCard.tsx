@@ -26,7 +26,7 @@ export function BackupStorageCard({ libraryId }: { libraryId: string }) {
       <CardContent>
         {q.isLoading ? (
           <div className="text-muted-foreground flex items-center gap-2 text-sm">
-            <Loader2 className="size-4 animate-spin" /> Scanning…
+            <Loader2 className="size-4 animate-spin" /> Loading…
           </div>
         ) : !q.data ? (
           <p className="text-destructive text-sm">
@@ -50,6 +50,12 @@ export function BackupStorageCard({ libraryId }: { libraryId: string }) {
             />
           </dl>
         )}
+        {q.data ? (
+          <p className="text-muted-foreground mt-2 text-xs">
+            Counted {formatDateTime(q.data.computed_at)}; the daily backup sweep
+            recounts.
+          </p>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -78,4 +84,8 @@ function formatBytes(bytes: number): string {
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString();
+}
+
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString();
 }
