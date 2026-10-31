@@ -262,8 +262,10 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
             ctx.issue.title.as_deref(),
             ctx.provider.title.as_deref(),
         ),
+        // Same pin as MetronInfo's `<Number>`: the scanner merges the two
+        // elements, so a title pin must not keep one and release the other.
         number: prefer_user_opt_str(
-            ctx.is_issue_pinned("title") /* same pin */ || ctx.is_issue_pinned("number_raw"),
+            ctx.is_issue_pinned("number_raw"),
             ctx.issue.number_raw.as_deref(),
             ctx.provider.issue_number.as_deref(),
         ),
@@ -337,11 +339,11 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
             ctx.issue.scan_information.as_deref(),
             ctx.provider.scan_information.as_deref(),
         ),
-        web: ctx
-            .provider
-            .source_url
-            .clone()
-            .or_else(|| ctx.issue.web_url.clone()),
+        web: prefer_user_opt_str(
+            ctx.is_issue_pinned("web_url"),
+            ctx.issue.web_url.as_deref(),
+            ctx.provider.source_url.as_deref(),
+        ),
         // CV / Metron IDs land in their dedicated typed fields. Issue
         // is the canonical scope for IDs we expose to other readers
         // (ComicTagger / Mylar / Komga).
@@ -1345,6 +1347,7 @@ pub fn enumerate_suppressed_pins(ctx: &ComposeContext) -> Vec<String> {
         "age_rating",
         "community_rating",
         "scan_information",
+        "web_url",
         "characters",
         "teams",
         "locations",

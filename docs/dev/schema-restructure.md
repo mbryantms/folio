@@ -335,8 +335,8 @@ column was dropped by
   `credits`, `genre` → `genres`, `number_raw` → `number`,
   `year`/`month`/`day` → `cover_date`, `story_arc` → `story_arcs`,
   `gtin` → `external_id.gtin`, … (keys equal for `title`, `tags`,
-  `language_code`, …). Columns with no `MetadataField` slot
-  (`sort_number`, `black_and_white`, `alternate_series`, `web_url`)
+  `language_code`, `web_url`, …). Columns with no `MetadataField` slot
+  (`sort_number`, `black_and_white`, `alternate_series`)
   get the column key only. Both families are closed sets:
   `MetadataField::key()` and
   [`writers::ISSUE_COLUMN_PIN_KEYS`](../../crates/server/src/metadata/writers.rs)
@@ -345,9 +345,13 @@ column was dropped by
   column update.
 - **Who reads which key.** The composer / apply / drift paths read the
   `MetadataField` keys (plus `number_raw`). The scanner's rescan gates
-  use `protected(MetadataField)` for slotted columns and the column key
-  for `sort_number`, `black_and_white`, `alternate_series`, `web_url`
-  and `number_raw` (which also honours a `number` user pin). The issue
+  use `protected(MetadataField)` for slotted columns — `number_raw`
+  through the `number` slot (plus its own column-key user pin) and
+  `web_url` through the `web_url` slot, whose key is the column key —
+  and the column key alone for `sort_number`, `black_and_white` and
+  `alternate_series`. A sidecar apply records provider rows for
+  `number`, `notes` and `web_url` (audit 2026-11 N-M8), so those gates
+  protect provider values too. The issue
   detail view exposes the column keys as `user_pinned_columns` (the
   edit form's per-field release icons); the metadata overview exposes
   every user-pinned key as `user_pinned_fields`.

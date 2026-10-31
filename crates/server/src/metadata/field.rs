@@ -54,6 +54,10 @@ pub enum MetadataField {
     Status,
     Publisher,
     Imprint,
+    /// Provider web page for the issue (`issues.web_url`, ComicInfo
+    /// `<Web>`; the composer fills it from the provider's `source_url`).
+    /// Issue-only. Its key is the column key the PATCH pins already use.
+    WebUrl,
 
     // ── Junction sets (one provenance row covers the whole set) ──
     Credits,
@@ -114,6 +118,7 @@ const SCALAR_FIELDS: &[MetadataField] = &[
     MetadataField::Status,
     MetadataField::Publisher,
     MetadataField::Imprint,
+    MetadataField::WebUrl,
     MetadataField::Credits,
     MetadataField::Characters,
     MetadataField::Teams,
@@ -179,6 +184,7 @@ impl MetadataField {
             MetadataField::Status => "status".into(),
             MetadataField::Publisher => "publisher".into(),
             MetadataField::Imprint => "imprint".into(),
+            MetadataField::WebUrl => "web_url".into(),
             MetadataField::Credits => "credits".into(),
             MetadataField::Characters => "characters".into(),
             MetadataField::Teams => "teams".into(),
@@ -290,7 +296,7 @@ mod tests {
         let all: Vec<MetadataField> = MetadataField::iter().collect();
         let unique: HashSet<String> = all.iter().map(MetadataField::key).collect();
         assert_eq!(all.len(), unique.len(), "duplicate keys in iter()");
-        // Sanity: 41 scalar + 13 external_id sources = 54 keys today.
+        // Sanity: 42 scalar + 13 external_id sources = 55 keys today.
         assert_eq!(all.len(), SCALAR_FIELDS.len() + ALL_SOURCES.len());
     }
 

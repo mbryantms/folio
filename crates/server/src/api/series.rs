@@ -613,44 +613,18 @@ pub async fn update_series(
         am.text_language = Set(v);
     }
     am.updated_at = Set(chrono::Utc::now().fixed_offset());
-    match am.update(&app.db).await {
+    // Pin the scalars the user just touched so a later provider apply
+    // treats them as user-set (audit DI-3). The per-issue PATCH does the
+    // same through `patch_field_key_to_metadata_field`.
+    let mut pinned: Vec<crate::metadata::MetadataField> = identity.pinned_fields();
+    if normalized_summary.is_some() {
+        pinned.push(crate::metadata::MetadataField::Summary);
+    }
+    if normalized_status.is_some() {
+        pinned.push(crate::metadata::MetadataField::Status);
+    }
+    match update_series_with_user_pins(&app.db, am, &pinned).await {
         Ok(updated) => {
-            // Pin the scalars the user just touched so a later provider
-            // apply treats them as user-set. The per-issue PATCH does
-            // the same through `patch_field_key_to_metadata_field`;
-            // series edits used to write no provenance at all, so a
-            // `replace_all` apply overwrote a hand-written summary
-            // (audit DI-3). Non-fatal: the row already updated.
-            {
-                use crate::metadata::MetadataField;
-                use crate::metadata::writers::{SetBy, write_field_provenance};
-                let mut pinned: Vec<MetadataField> = identity.pinned_fields();
-                if normalized_summary.is_some() {
-                    pinned.push(MetadataField::Summary);
-                }
-                if normalized_status.is_some() {
-                    pinned.push(MetadataField::Status);
-                }
-                for field in pinned {
-                    if let Err(e) = write_field_provenance(
-                        &app.db,
-                        "series",
-                        &updated.id.to_string(),
-                        field,
-                        SetBy::User,
-                        None,
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            series_id = %updated.id,
-                            field = %field,
-                            error = %e,
-                            "series PATCH: field_provenance write failed (non-fatal)"
-                        );
-                    }
-                }
-            }
             // Apply external-ID edits the user touched. Mirrors the
             // per-issue PATCH flow in api/issues.rs.
             use crate::metadata::writers::{self as writers, SetBy};
@@ -722,12 +696,15 @@ pub async fn update_series(
             }
             // WP-7.4: publisher / imprint feed the similar-series scores.
             app.similarity.invalidate_all();
-            // WP-2.10: identity fields ride in every issue's ComicInfo /
-            // MetronInfo, so in a writeback library the whole series is
-            // rewritten (one job per active issue, then a single
-            // series-scoped rescan — the same shape as a series-level
-            // provider apply). Never fails the request.
-            let sidecar_rewrite = if identity.pinned_fields().is_empty() {
+            // WP-2.10: identity fields and the series-level ids ride in
+            // every issue's ComicInfo / MetronInfo, so in a writeback
+            // library the whole series is rewritten (one job per active
+            // issue, then a single series-scoped rescan — the same shape
+            // as a series-level provider apply). Never fails the request.
+            let sidecar_rewrite = if identity.pinned_fields().is_empty()
+                && pending_cv.is_none()
+                && pending_metron.is_none()
+            {
                 None
             } else {
                 let actor = crate::metadata::manual_writeback::Actor {
@@ -794,6 +771,30 @@ pub async fn update_series(
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
         }
     }
+}
+
+/// Persist a series edit and pin every touched field as `set_by='user'`
+/// in ONE transaction, mirroring the issue path's
+/// `update_issue_with_user_pins` (WP-2.5). The pins used to be written
+/// after the row update, outside any transaction, with failures logged as
+/// non-fatal (audit 2026-11 N-M6): a lost pin meant the next provider
+/// apply silently undid the edit. Now a pin that cannot be written rolls
+/// the edit back and the request fails.
+async fn update_series_with_user_pins(
+    db: &sea_orm::DatabaseConnection,
+    am: series::ActiveModel,
+    pinned: &[crate::metadata::MetadataField],
+) -> Result<series::Model, sea_orm::DbErr> {
+    use crate::metadata::writers::{SetBy, write_field_provenance};
+    use sea_orm::TransactionTrait;
+    let txn = db.begin().await?;
+    let updated = am.update(&txn).await?;
+    let id = updated.id.to_string();
+    for &field in pinned {
+        write_field_provenance(&txn, "series", &id, field, SetBy::User, None).await?;
+    }
+    txn.commit().await?;
+    Ok(updated)
 }
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]

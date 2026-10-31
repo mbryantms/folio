@@ -2,7 +2,8 @@
 //! writeback mode. `PATCH` on an issue enqueues one sidecar rewrite; a
 //! series identity edit fans out one rewrite per active issue plus a single
 //! series-scoped rescan; non-writeback libraries and refused formats
-//! enqueue nothing.
+//! enqueue nothing. External-id adds and unlinks (audit 2026-11 N-M5) take
+//! the same path: an issue id is one rewrite, a series id is the fan-out.
 
 mod common;
 
@@ -36,13 +37,17 @@ fn build_cbz_bytes(label: &str) -> Vec<u8> {
     buf.into_inner()
 }
 
-fn read_comicinfo(path: &Path) -> String {
+fn read_entry(path: &Path, name: &str) -> String {
     let mut a = archive::open(path, ArchiveLimits::default()).unwrap();
     String::from_utf8(
-        a.read_entry_bytes("ComicInfo.xml")
-            .expect("ComicInfo.xml present"),
+        a.read_entry_bytes(name)
+            .unwrap_or_else(|e| panic!("{name} present: {e}")),
     )
     .unwrap()
+}
+
+fn read_comicinfo(path: &Path) -> String {
+    read_entry(path, "ComicInfo.xml")
 }
 
 async fn body_json(b: Body) -> serde_json::Value {
@@ -101,35 +106,48 @@ async fn register_admin(app: &TestApp) -> Authed {
     }
 }
 
+async fn send(
+    app: &TestApp,
+    auth: &Authed,
+    method: Method,
+    uri: &str,
+    body: Option<serde_json::Value>,
+) -> (StatusCode, serde_json::Value) {
+    let mut req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={}; __Host-comic_csrf={}",
+                auth.session, auth.csrf
+            ),
+        )
+        .header("X-CSRF-Token", auth.csrf.clone());
+    let body = match body {
+        Some(v) => {
+            req = req.header(header::CONTENT_TYPE, "application/json");
+            Body::from(v.to_string())
+        }
+        None => Body::empty(),
+    };
+    let resp = app
+        .router
+        .clone()
+        .oneshot(req.body(body).unwrap())
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
 async fn patch(
     app: &TestApp,
     auth: &Authed,
     uri: &str,
     body: serde_json::Value,
 ) -> (StatusCode, serde_json::Value) {
-    let resp = app
-        .router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::PATCH)
-                .uri(uri)
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(
-                    header::COOKIE,
-                    format!(
-                        "__Host-comic_session={}; __Host-comic_csrf={}",
-                        auth.session, auth.csrf
-                    ),
-                )
-                .header("X-CSRF-Token", auth.csrf.clone())
-                .body(Body::from(body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let status = resp.status();
-    (status, body_json(resp.into_body()).await)
+    send(app, auth, Method::PATCH, uri, Some(body)).await
 }
 
 /// Every queued sidecar rewrite job (decoded from the apalis data hash).
@@ -574,4 +592,169 @@ async fn cbr_without_conversion_is_refused_and_the_edit_stays_in_the_database() 
             .as_deref(),
         Some("user")
     );
+}
+
+// ───────── external ids (audit 2026-11 N-M5) ─────────
+
+/// Adding and unlinking an issue identifier enqueues one rewrite each,
+/// composed from the database and attributed to the editor, and the
+/// archive's ComicInfo / MetronInfo carry (then drop) the id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_external_id_add_and_unlink_land_in_the_archive() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let (_lib, _series, series_slug, issues) = seed(&app, dir.path(), true, 1, "cbz").await;
+    let (issue_id, issue_slug, path) = issues.into_iter().next().unwrap();
+    let uri = format!("/api/series/{series_slug}/issues/{issue_slug}/external-ids");
+
+    let (status, body) = send(
+        &app,
+        &auth,
+        Method::POST,
+        &uri,
+        Some(serde_json::json!({ "source": "comicvine", "external_id": "12345" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["set_by"], "user");
+
+    let jobs = queued_rewrite_jobs(&app).await;
+    assert_eq!(jobs.len(), 1, "{jobs:?}");
+    let job = &jobs[0];
+    assert_eq!(job.issue_id, issue_id);
+    assert!(!job.skip_rescan);
+    assert!(job.post_apply.is_none());
+    assert!(job.actor_id.is_some(), "rewrite audit names the editor");
+    assert!(
+        job.comic_info_xml
+            .contains("<ComicVineID>12345</ComicVineID>"),
+        "{}",
+        job.comic_info_xml
+    );
+    assert!(
+        job.metron_info_xml
+            .contains(r#"<ID source="comicvine">12345</ID>"#),
+        "{}",
+        job.metron_info_xml
+    );
+    let scans_before = queued_scan_jobs(&app).await;
+    assert_eq!(run_queued_rewrite_jobs(&app).await, 1);
+    assert!(
+        read_comicinfo(&path).contains("<ComicVineID>12345</ComicVineID>"),
+        "{}",
+        read_comicinfo(&path)
+    );
+    assert!(
+        read_entry(&path, "MetronInfo.xml").contains(r#"<ID source="comicvine">12345</ID>"#),
+        "{}",
+        read_entry(&path, "MetronInfo.xml")
+    );
+    assert!(
+        queued_scan_jobs(&app).await > scans_before,
+        "rewrite worker enqueues the scoped rescan"
+    );
+
+    // Unlinking is an edit too: the archive must stop claiming the id.
+    let (status, body) = send(
+        &app,
+        &auth,
+        Method::DELETE,
+        &format!("{uri}/comicvine"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let jobs = queued_rewrite_jobs(&app).await;
+    assert_eq!(jobs.len(), 1, "{jobs:?}");
+    assert!(
+        !jobs[0].comic_info_xml.contains("<ComicVineID>"),
+        "{}",
+        jobs[0].comic_info_xml
+    );
+    assert_eq!(run_queued_rewrite_jobs(&app).await, 1);
+    let xml = read_comicinfo(&path);
+    assert!(!xml.contains("<ComicVineID>"), "{xml}");
+    let metron = read_entry(&path, "MetronInfo.xml");
+    assert!(!metron.contains(r#"source="comicvine""#), "{metron}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue_external_id_edits_in_non_writeback_library_touch_nothing() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let (_lib, _series, series_slug, issues) = seed(&app, dir.path(), false, 1, "cbz").await;
+    let (_issue_id, issue_slug, path) = issues.into_iter().next().unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let uri = format!("/api/series/{series_slug}/issues/{issue_slug}/external-ids");
+
+    let (status, body) = send(
+        &app,
+        &auth,
+        Method::POST,
+        &uri,
+        Some(serde_json::json!({ "source": "comicvine", "external_id": "12345" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert!(queued_rewrite_jobs(&app).await.is_empty(), "DB-only edit");
+
+    let (status, _) = send(
+        &app,
+        &auth,
+        Method::DELETE,
+        &format!("{uri}/comicvine"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(queued_rewrite_jobs(&app).await.is_empty(), "DB-only edit");
+    assert_eq!(std::fs::read(&path).unwrap(), before, "file untouched");
+}
+
+/// A series-level id rides in every issue's sidecars, so it fans out like
+/// a series identity edit: one rewrite per active issue with the rescan
+/// deferred to a single series-scoped scan.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_external_id_add_fans_out_and_schedules_one_series_rescan() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let dir = tempdir().unwrap();
+    let (_lib, _series, series_slug, issues) = seed(&app, dir.path(), true, 2, "cbz").await;
+
+    let (status, body) = send(
+        &app,
+        &auth,
+        Method::POST,
+        &format!("/api/series/{series_slug}/external-ids"),
+        Some(serde_json::json!({ "source": "metron", "external_id": "987" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    let jobs = queued_rewrite_jobs(&app).await;
+    assert_eq!(jobs.len(), 2, "one rewrite per active issue: {jobs:?}");
+    assert!(
+        jobs.iter().all(|j| j.skip_rescan),
+        "fan-out defers to one series-scoped rescan"
+    );
+    assert!(
+        jobs.iter().all(|j| j
+            .comic_info_xml
+            .contains("<MetronSeriesID>987</MetronSeriesID>")),
+        "{jobs:?}"
+    );
+    assert!(
+        queued_scan_jobs(&app).await >= 1,
+        "series id edit schedules the series-scoped rescan"
+    );
+    assert_eq!(run_queued_rewrite_jobs(&app).await, 2);
+    for (_, _, path) in &issues {
+        let xml = read_comicinfo(path);
+        assert!(
+            xml.contains("<MetronSeriesID>987</MetronSeriesID>"),
+            "{xml}"
+        );
+    }
 }

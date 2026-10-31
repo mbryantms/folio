@@ -22,7 +22,7 @@ use axum::http::{Method, Request, StatusCode, header};
 use chrono::Utc;
 use common::TestApp;
 use common::seed::LibrarySeed;
-use entity::{field_provenance, issue, metadata_run, metadata_run_candidate};
+use entity::{field_provenance, issue, library, metadata_run, metadata_run_candidate};
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -42,16 +42,32 @@ const NEW_SUMMARY: &str = "Cibopath showdown!";
 // ───────── fixtures ─────────
 
 fn comicinfo(title: &str, summary: &str) -> String {
+    comicinfo_with(title, summary, "14", None, None)
+}
+
+fn comicinfo_with(
+    title: &str,
+    summary: &str,
+    number: &str,
+    notes: Option<&str>,
+    web: Option<&str>,
+) -> String {
+    let notes = notes
+        .map(|n| format!("  <Notes>{n}</Notes>\n"))
+        .unwrap_or_default();
+    let web = web
+        .map(|w| format!("  <Web>{w}</Web>\n"))
+        .unwrap_or_default();
     format!(
         r#"<?xml version="1.0"?>
 <ComicInfo>
   <Title>{title}</Title>
   <Series>Chew</Series>
-  <Number>14</Number>
+  <Number>{number}</Number>
   <Year>2010</Year>
   <Month>9</Month>
   <Summary>{summary}</Summary>
-  <Writer>John Layman</Writer>
+{notes}{web}  <Writer>John Layman</Writer>
   <Publisher>Image</Publisher>
 </ComicInfo>"#
     )
@@ -209,6 +225,10 @@ async fn register_admin(app: &TestApp) -> (String, String) {
 /// A completed issue-scope search run with a ComicVine (ordinal 0) and a
 /// Metron (ordinal 1) candidate whose details sit in the provider cache.
 async fn seed_run(f: &Fixture, cv_desc: &str, metron_desc: &str) -> Uuid {
+    seed_run_with(f, cv_detail(cv_desc), metron_detail(metron_desc)).await
+}
+
+async fn seed_run_with(f: &Fixture, cv: GenericMetadata, metron: GenericMetadata) -> Uuid {
     let db = &f.app.state().db;
     let now = Utc::now().fixed_offset();
     let run_id = Uuid::now_v7();
@@ -268,24 +288,12 @@ async fn seed_run(f: &Fixture, cv_desc: &str, metron_desc: &str) -> Uuid {
         .await
         .unwrap();
     }
-    cache::put(
-        db,
-        Source::ComicVine,
-        CacheEntity::Issue,
-        "cv14",
-        &cv_detail(cv_desc),
-    )
-    .await
-    .unwrap();
-    cache::put(
-        db,
-        Source::Metron,
-        CacheEntity::Issue,
-        "m14",
-        &metron_detail(metron_desc),
-    )
-    .await
-    .unwrap();
+    cache::put(db, Source::ComicVine, CacheEntity::Issue, "cv14", &cv)
+        .await
+        .unwrap();
+    cache::put(db, Source::Metron, CacheEntity::Issue, "m14", &metron)
+        .await
+        .unwrap();
     run_id
 }
 
@@ -485,6 +493,97 @@ async fn selected_description_reaches_the_db_in_a_writeback_library() {
     run_pipeline(&f).await;
     assert_eq!(archive_summary(&f.archive).as_deref(), Some("Second pick."));
     assert_eq!(issue_row(&f).await.summary.as_deref(), Some("Second pick."));
+}
+
+/// Audit 2026-11 N-M8: `SIDECAR_ISSUE_PROVENANCE_FIELDS` omitted
+/// `Number`, `Notes` and `WebUrl`, so after a writeback apply the issue
+/// number, the provider's notes and the `<Web>` URL the composer had put
+/// in the archive read as file-tier — the next non-writeback scan or
+/// `fill_missing` treated them as unowned. The composer writes them
+/// whatever the preview pane's selection was (they are not rows the pane
+/// shows), so their provider rows must land even for a
+/// `selected_fields = ["description"]` apply.
+#[tokio::test]
+async fn number_notes_and_web_url_carry_provider_provenance_after_a_sidecar_apply() {
+    const URL: &str = "https://comicvine.gamespot.com/chew-14/4000-14/";
+    let f = fixture(true).await;
+    let mut cv = cv_detail(NEW_SUMMARY);
+    cv.issue_number = Some("14A".into());
+    cv.notes = Some("Provider editorial note.".into());
+    cv.source_url = Some(URL.into());
+    let run_id = seed_run_with(&f, cv, metron_detail("unused")).await;
+
+    apply_single(&f, run_id, 0, &["description"]).await;
+    run_pipeline(&f).await;
+
+    let xml = archive_entry(&f.archive, "ComicInfo.xml");
+    let ci = parsers::comicinfo::parse(xml.as_bytes()).unwrap();
+    assert_eq!(ci.number.as_deref(), Some("14A"), "{xml}");
+    assert!(
+        ci.notes
+            .as_deref()
+            .is_some_and(|n| n.contains("Provider editorial note.")),
+        "{xml}"
+    );
+    assert_eq!(ci.web.as_deref(), Some(URL), "{xml}");
+
+    let row = issue_row(&f).await;
+    assert_eq!(row.number_raw.as_deref(), Some("14A"));
+    assert!(
+        row.notes
+            .as_deref()
+            .is_some_and(|n| n.contains("Provider editorial note.")),
+        "{:?}",
+        row.notes
+    );
+    assert_eq!(row.web_url.as_deref(), Some(URL));
+    for field in ["number", "notes", "web_url"] {
+        assert_eq!(
+            provenance(&f, field).await.as_deref(),
+            Some("comicvine"),
+            "{field} must be attributed to the provider that supplied it"
+        );
+    }
+
+    // Writeback switched off later: the library is DB-canonical again, so
+    // an external retag must not replace values a provider owns (WP-2.5).
+    library::ActiveModel {
+        id: Set(f.lib_id),
+        metadata_writeback_enabled: Set(false),
+        ..Default::default()
+    }
+    .update(&f.app.state().db)
+    .await
+    .unwrap();
+    write_cbz(
+        &f.archive,
+        &comicinfo_with(
+            "Retagged title",
+            "Retagged.",
+            "99",
+            Some("Retagged notes."),
+            Some("https://example.com/retagged"),
+        ),
+        9,
+    );
+    scanner::scan_library_with(&f.app.state(), f.lib_id, true)
+        .await
+        .unwrap();
+    let row = issue_row(&f).await;
+    assert_eq!(
+        row.title.as_deref(),
+        Some("Retagged title"),
+        "file-tier columns still refresh"
+    );
+    assert_eq!(row.number_raw.as_deref(), Some("14A"));
+    assert!(
+        row.notes
+            .as_deref()
+            .is_some_and(|n| n.contains("Provider editorial note.")),
+        "{:?}",
+        row.notes
+    );
+    assert_eq!(row.web_url.as_deref(), Some(URL));
 }
 
 /// Once Folio has written a provider value into the archive, the archive

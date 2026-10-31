@@ -2358,7 +2358,7 @@ pub async fn clear_user_pin<C: ConnectionTrait>(
 /// ([`issue_column_pin_field`]): the column key drives the per-field
 /// pin UI and the scanner's gates for columns without a `MetadataField`
 /// slot (`sort_number`, `number_raw`, `black_and_white`,
-/// `alternate_series`, `web_url`); the `MetadataField` key drives the
+/// `alternate_series`); the `MetadataField` key drives the
 /// apply / composer / scanner precedence checks. The per-issue JSON
 /// edit list retired in WP-3.7 held exactly the column keys; its
 /// entries were backfilled here by that WP's migration.
@@ -2410,9 +2410,12 @@ pub const ISSUE_COLUMN_PIN_KEYS: &[&str] = &[
 
 /// The [`MetadataField`](crate::metadata::MetadataField) an issue
 /// column pin key rolls up into, or `None` for columns with no slot
-/// (`sort_number`, `black_and_white`, `alternate_series`, `web_url`).
+/// (`sort_number`, `black_and_white`, `alternate_series`).
 /// The composer / apply pipeline read the `MetadataField` key; the
-/// column key stays the precise per-column pin.
+/// column key stays the precise per-column pin. `web_url` is both: the
+/// [`MetadataField::WebUrl`](crate::metadata::MetadataField::WebUrl)
+/// key is the column key, so the pins written before the slot existed
+/// already protect the field.
 pub fn issue_column_pin_field(key: &str) -> Option<crate::metadata::MetadataField> {
     use crate::metadata::MetadataField as F;
     match key {
@@ -2427,6 +2430,7 @@ pub fn issue_column_pin_field(key: &str) -> Option<crate::metadata::MetadataFiel
         "manga" => Some(F::Manga),
         "volume" => Some(F::Volume),
         "number_raw" => Some(F::Number),
+        "web_url" => Some(F::WebUrl),
         // The user edits per-role credit columns and the character /
         // team / location CSV strings; the composer reads the
         // junction-shaped fields. Map each to its junction.

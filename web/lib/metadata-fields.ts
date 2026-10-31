@@ -36,6 +36,7 @@ const METADATA_FIELD_LABELS: Record<string, string> = {
   status: "Status",
   publisher: "Publisher",
   imprint: "Imprint",
+  web_url: "Web page",
   credits: "Credits",
   characters: "Characters",
   teams: "Teams",

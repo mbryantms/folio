@@ -242,6 +242,9 @@ pub fn field_value_as_string(
         MetadataField::Deck => norm(&detail.deck),
         MetadataField::Description => norm(&detail.description),
         MetadataField::Notes => norm(&detail.notes),
+        MetadataField::Number => norm(&detail.issue_number),
+        // The composer writes the provider's page URL into `<Web>`.
+        MetadataField::WebUrl => norm(&detail.source_url),
         MetadataField::ScanInformation => norm(&detail.scan_information),
         MetadataField::AgeRating => norm(&detail.age_rating),
         MetadataField::Format => norm(&detail.format),
