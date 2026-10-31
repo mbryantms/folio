@@ -369,6 +369,10 @@ impl JobRuntime {
                 .run_monitor_once(state.clone(), &shutdown)
                 .await;
             if shutdown.is_cancelled() {
+                // The monitor has drained its in-flight jobs; write the
+                // cover stamps they left buffered so a restart does not
+                // redo those jobs (post_scan::ThumbStampBuffer).
+                post_scan::flush_done_stamps(&state).await;
                 tracing::info!("apalis monitor: shutdown observed after run; exiting");
                 return;
             }
@@ -385,6 +389,7 @@ impl JobRuntime {
             tokio::select! {
                 () = tokio::time::sleep(delay) => {}
                 () = shutdown.cancelled() => {
+                    post_scan::flush_done_stamps(&state).await;
                     tracing::info!("apalis monitor: shutdown observed during backoff; exiting");
                     return;
                 }

@@ -634,5 +634,18 @@ not covered here.
   not cover the `slug` unique index, so the second insert fails with a
   unique violation. Every credit row still landed (verified with a
   writer/penciller-without-credit query), so this is log noise, not data
-  loss. A conflict-free person upsert would be worth doing as a follow-up;
-  it is not part of this WP.
+  loss — but the `?` on that insert aborted the rest of the series'
+  best-effort rollup for the pass (CSV read-cache, entity rows,
+  `series_credits`), which then lagged until the next scan.
+  **Fixed 2026-10-31 (audit 2026-11, N-L2):** the person insert is
+  `ON CONFLICT DO NOTHING` with no arbiter, so either unique index
+  swallows the race; when the insert is a no-op and no row with that
+  `normalized_name` exists (the slug collided with a *different* name),
+  the slug is re-allocated once and the insert retried. The credit
+  linking that follows joins on `normalized_name`, so credits always
+  attach to the row that survived. Independently, `rollup_series_metadata`
+  now runs its sub-steps to completion, logging each failure with the
+  series id and returning the first one afterwards, instead of stopping
+  at the first `?` (it still stops early inside an aborted transaction,
+  SQLSTATE 25P02, where every later statement would fail too).
+  Guards: `crates/server/tests/metadata_rollup_persons.rs`.
