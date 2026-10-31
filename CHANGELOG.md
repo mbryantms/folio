@@ -13,6 +13,25 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.68.0](https://github.com/mbryantms/folio/compare/v0.67.2...v0.68.0) (2026-10-31)
+
+
+### Added
+
+* **web:** one top bar on phones — no shell topbar below md, Search tab ([#1376](https://github.com/mbryantms/folio/issues/1376)) ([f070840](https://github.com/mbryantms/folio/commit/f070840ff7146947d99c4d16addcd96abc00ee47))
+
+
+### Fixed
+
+* **web:** sticky sidebar rail so the iPad bounce moves the whole shell ([#1375](https://github.com/mbryantms/folio/issues/1375)) ([22e810c](https://github.com/mbryantms/folio/commit/22e810c99771437b382e50b10b1047b567b9bffa))
+
+
+### Dependencies
+
+* update node.js to v26 ([#1374](https://github.com/mbryantms/folio/issues/1374)) ([a60e353](https://github.com/mbryantms/folio/commit/a60e3533ee4d42f03e7f3f75087729b86118fafe))
+* update rust crate globset to v0.4.21 ([#1371](https://github.com/mbryantms/folio/issues/1371)) ([96f5a51](https://github.com/mbryantms/folio/commit/96f5a51f25c04192d24efb93349d5ff33eb2d069))
+* update rust crate zip to v9.1.3 ([#1373](https://github.com/mbryantms/folio/issues/1373)) ([32828f0](https://github.com/mbryantms/folio/commit/32828f0e38f14877a1c80a4e78f36f06bd741c63))
+
 ## [0.67.2](https://github.com/mbryantms/folio/compare/v0.67.1...v0.67.2) (2026-10-30)
 
 
