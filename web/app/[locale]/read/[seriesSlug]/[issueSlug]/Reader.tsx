@@ -42,6 +42,7 @@ import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
 import { pageBytesSrcSet, withContentVersion } from "@/lib/urls";
 import { EDGE_GUARD_ATTR, useReaderGestures } from "@/lib/reader/use-swipe";
 import { useWheelZoom } from "@/lib/reader/use-wheel-zoom";
+import { usePinchZoom } from "@/lib/reader/use-pinch-zoom";
 import { useReaderKeymap } from "@/lib/reader/use-keymap";
 import {
   DOUBLE_TAP_MS,
@@ -50,6 +51,7 @@ import {
   clampPan,
   clampZoomPan,
   nextZoomStep,
+  readerTouchAction,
   sameZoom,
   zoomAboutPoint,
   zoomAfterPageTurn,
@@ -277,7 +279,7 @@ export function Reader({
   const togglePageStrip = useReaderStore((s) => s.togglePageStrip);
   const chromeVisible = useReaderStore((s) => s.chromeVisible);
   const pageStripVisible = useReaderStore((s) => s.pageStripVisible);
-  const setChromeVisible = useReaderStore((s) => s.setChromeVisible);
+  const dismissChrome = useReaderStore((s) => s.dismissChrome);
   const toggleMarkersHidden = useReaderStore((s) => s.toggleMarkersHidden);
   const beginMarkerEdit = useReaderStore((s) => s.beginMarkerEdit);
   const setMarkerMode = useReaderStore((s) => s.setMarkerMode);
@@ -961,30 +963,39 @@ export function Reader({
     }));
   }, []);
 
-  // Ctrl+wheel / trackpad-pinch zoom at the cursor (audit UX-3). The
-  // zoom surface is whichever view element carries `data-zoom-surface`;
+  // The zoom surface is whichever view element carries `data-zoom-surface`;
   // its untransformed layout box is its parent's rect origin + its own
   // offset size (getBoundingClientRect on the surface itself would
-  // include the transform).
+  // include the transform). Shared by the wheel and the touch-pinch paths.
+  const zoomSurfaceBox = useCallback(() => {
+    const surface = gestureRef.current?.querySelector<HTMLElement>(
+      "[data-zoom-surface]",
+    );
+    const parent = surface?.parentElement;
+    if (!surface || !parent) return null;
+    const r = parent.getBoundingClientRect();
+    return {
+      left: r.left,
+      top: r.top,
+      w: surface.offsetWidth,
+      h: surface.offsetHeight,
+    };
+  }, []);
+  // Ctrl+wheel / trackpad-pinch zoom at the cursor (audit UX-3).
   const onZoomTo = useCallback(
     (scale: number, clientX: number, clientY: number) => {
-      const surface = gestureRef.current?.querySelector<HTMLElement>(
-        "[data-zoom-surface]",
-      );
-      const parent = surface?.parentElement;
-      if (!surface || !parent) return;
-      const r = parent.getBoundingClientRect();
-      const box = { w: surface.offsetWidth, h: surface.offsetHeight };
+      const s = zoomSurfaceBox();
+      if (!s) return;
       setZoom((z) =>
         zoomAboutPoint(
           z,
           scale,
-          { x: clientX - r.left, y: clientY - r.top },
-          box,
+          { x: clientX - s.left, y: clientY - s.top },
+          { w: s.w, h: s.h },
         ),
       );
     },
-    [],
+    [zoomSurfaceBox],
   );
 
   // Reset transient zoom/pan when the fit / view / marker-mode key
@@ -1041,7 +1052,7 @@ export function Reader({
     toggleMarkerDrawer,
     onQuitReader: handleQuitReader,
     onDismissEndCard: dismissEndCard,
-    onCollapseChrome: () => setChromeVisible(false),
+    onCollapseChrome: dismissChrome,
   });
 
   // Peek mode: when on, both the progress write and the session
@@ -1198,16 +1209,26 @@ export function Reader({
     visiblePages.length === 1 &&
     !isEffectiveSpread(pages, visiblePages[0]!, spreadOverrides);
 
-  // Gestures: horizontal drag (swipe) for page nav. Pinch is left
-  // to the browser as native pinch-to-zoom so mobile users can
-  // zoom into small letterer text. Pinch used to cycle fit modes
-  // (v0.3.x and earlier), but a discoverable hidden gesture isn't
-  // worth blocking the platform zoom — fit-mode toggling stays on
-  // the `f` key and the chrome toggle button.
+  // Gestures: horizontal drag (swipe) for page nav; a two-finger pinch
+  // is the reader's transform zoom (audit N-R9, `use-pinch-zoom.ts`) in
+  // single + double view so the fixed chrome stays put — the browser
+  // used to own it as native page zoom, which scaled the chrome along
+  // with the art. Pinch used to cycle fit modes (v0.3.x and earlier);
+  // fit-mode toggling stays on the `f` key and the chrome button.
   //
-  // Webtoon mode skips swipe — vertical scroll is the native
-  // interaction there.
+  // Webtoon mode skips swipe and keeps native pinch — vertical scroll
+  // is the native interaction there and a transform over the windowed
+  // strip is not safe.
   const gestureRef = useRef<HTMLDivElement>(null);
+  const pinchEnabled =
+    viewMode !== "webtoon" && markerModeForKeybinds === "idle";
+  const { isPinching } = usePinchZoom({
+    target: gestureRef,
+    enabled: pinchEnabled,
+    getZoom: () => zoomRef.current,
+    setZoom,
+    getSurface: zoomSurfaceBox,
+  });
   // Disable swipe while the user is drawing a highlight or has a
   // pending marker editor open: `@use-gesture/react` attaches
   // native pointer listeners on this container that fire BEFORE
@@ -1229,10 +1250,11 @@ export function Reader({
     panActive,
     onPanStart,
     onPan,
+    isPinching,
   });
   useWheelZoom({
     target: gestureRef,
-    enabled: viewMode !== "webtoon" && markerModeForKeybinds === "idle",
+    enabled: pinchEnabled,
     getScale: () => zoomRef.current.scale,
     onZoomTo,
   });
@@ -1240,9 +1262,11 @@ export function Reader({
   return (
     <div
       ref={gestureRef}
-      // `touch-action: pan-y pinch-zoom` keeps native vertical
-      // scroll AND native pinch-zoom, while leaving the horizontal
-      // axis available for the JS swipe-to-turn handler above.
+      // `touch-action` (see `readerTouchAction`): native vertical scroll
+      // stays, the horizontal axis is left for the JS swipe-to-turn
+      // handler above, and `pinch-zoom` is dropped only while the
+      // reader's own pinch is live (single / double view, no marker
+      // being drawn) — webtoon and marker drawing keep native pinch.
       //
       // `overflow-anchor: none` opts the whole reader subtree out of
       // the browser's scroll-anchoring heuristic. Page images carry no
@@ -1253,10 +1277,9 @@ export function Reader({
       // landing the viewport mid-page. Off, our explicit scroll-to-top
       // stays put and new pages always start at the top.
       // While panning (zoom/overflow) the JS gesture owns the drag, so
-      // drop native pan/scroll to "none"; otherwise keep native vertical
-      // scroll + pinch-zoom and leave the horizontal axis for swipe.
+      // native pan/scroll drops to "none".
       style={{
-        touchAction: panActive ? "none" : "pan-y pinch-zoom",
+        touchAction: readerTouchAction(panActive, pinchEnabled),
         overflowAnchor: "none",
       }}
       // Reader surface token (see globals.css `--reader-bg`): the

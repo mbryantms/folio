@@ -121,17 +121,20 @@ export function ReaderFirstRunOverlay({
           </li>
           <li className="flex items-center gap-3">
             <ZoomIn className="text-muted-foreground size-4 shrink-0" />
-            <span>Double-tap to zoom; drag to pan while zoomed in.</span>
+            <span>
+              Pinch or double-tap to zoom; drag to pan while zoomed in.
+            </span>
           </li>
-          {/* WP-4.8 (audit AC-2): the chrome starts hidden, so say how to
-              get it back — in words, not only as a desktop key chip, so
-              screen-reader and touch users hear it too. */}
+          {/* WP-4.8 (audit AC-2): say how the controls come and go — in
+              words, not only as a desktop key chip, so screen-reader and
+              touch users hear it too. On touch they start shown (C5) and
+              hide after a few seconds idle; on desktop they start hidden. */}
           <li className="flex items-center gap-3">
             <PanelTop className="text-muted-foreground size-4 shrink-0" />
             <span>
-              Controls stay hidden while you read. Tap the center or press{" "}
+              Controls hide while you read. Tap the center or press{" "}
               <Kbd className="h-auto min-w-5 px-1 py-0.5 text-xs">T</Kbd> to
-              show them.
+              show or hide them.
             </span>
           </li>
         </ul>

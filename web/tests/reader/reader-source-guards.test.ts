@@ -55,6 +55,27 @@ describe("reader route source guards", () => {
     expect(src).not.toMatch(/eslint-disable[^\n]*react-hooks\/exhaustive-deps/);
   });
 
+  it("the reader route declares no viewport of its own (N-R9 / WCAG 1.4.4)", () => {
+    // Native pinch is blocked on the reader surface by `touch-action` +
+    // cancelled multi-touch events (pinch-zoom.ts), not by a route-level
+    // `user-scalable=no` — axe's wcag2aa `meta-viewport` rule runs on the
+    // reader in docker-smoke, and the rest of the app stays scalable.
+    const offenders = files.filter((f) =>
+      /export\s+(const\s+viewport|(async\s+)?function\s+generateViewport)\b/.test(
+        readFileSync(f, "utf8"),
+      ),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("the gesture container's touch-action comes from readerTouchAction (N-R9)", () => {
+    const src = readFileSync(join(READER_DIR, "Reader.tsx"), "utf8");
+    expect(src).toMatch(
+      /touchAction: readerTouchAction\(panActive, pinchEnabled\)/,
+    );
+    expect(src).not.toMatch(/"pan-y pinch-zoom"/);
+  });
+
   it("page images do not hard-code a plain 'Page N' alt (N-R4)", () => {
     const src = readFileSync(join(READER_DIR, "Reader.tsx"), "utf8");
     expect(src).not.toMatch(/alt=\{`Page \$\{/);
